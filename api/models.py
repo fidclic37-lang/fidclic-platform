@@ -10,9 +10,10 @@ from uuid import uuid4
 # api/server.py). PLAN_PRICES is the monthly euro price shown in the UI.
 #
 # Trial: every new tenant starts with `subscription_status="trialing"` and
-# trial_duration_days = the value in PLAN_TRIAL_DAYS below. After that
-# many days the tenant is reminded; after 3 more days the trial expires
-# and paid features lock until they pick a plan.
+# trial_duration_days = the value in PLAN_TRIAL_DAYS below (28 days, no
+# card). On day 27 (TRIAL_REMINDER_DAYS_BEFORE = 1) the owner gets an
+# email + in-app banner asking them to pick a plan; on day 28 the trial
+# expires and paid features lock until they subscribe.
 PLAN_FEATURES = {
     "silver": {
         "max_customers": 1000,
@@ -46,18 +47,19 @@ PLAN_PRICES = {
     "vip": 109,
 }
 
-# Trial period, per plan, in days. Default 21 (3 weeks). Admin can override
+# Trial period, per plan, in days. Default 28 (4 weeks). Admin can override
 # any of these from the /admin/plans editor — same DB-backed overrides
 # mechanism as PLAN_FEATURES uses (see plan_settings collection).
 PLAN_TRIAL_DAYS = {
-    "silver": 21,
-    "gold": 21,
-    "vip": 21,
+    "silver": 28,
+    "gold": 28,
+    "vip": 28,
 }
 
-# Number of days BEFORE trial_end that we start surfacing "your trial is
-# ending soon — pick a plan" reminders. Admin-overridable.
-TRIAL_REMINDER_DAYS_BEFORE = 3
+# Number of days BEFORE trial_end that we surface the "your trial is ending
+# — pick a plan" reminder (email via the daily cron + dashboard banner).
+# 1 = the reminder lands on day 27 of a 28-day trial. Admin-overridable.
+TRIAL_REMINDER_DAYS_BEFORE = 1
 
 class Token(BaseModel):
     access_token: str
@@ -72,12 +74,25 @@ class UserBase(BaseModel):
     email: str
     role: str
     tenant_id: Optional[str] = None
+    # Captured at self-serve signup (step 1). Optional so every pre-existing
+    # user document (email + password only) still validates.
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    # "password" | "google" | "apple" — how the account was first created.
+    # A password user can later link Google/Apple; see features/oauth.py.
+    auth_provider: Optional[str] = "password"
+    # CGU + Politique de confidentialité + DPA acceptance. Stamped once at
+    # signup; the version string lets us re-prompt if the legal texts change.
+    terms_accepted_at: Optional[datetime] = None
+    terms_version: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
 
 class UserInDB(UserBase):
-    hashed_password: str
+    # Optional: Google/Apple accounts have no password. Login with a password
+    # against such an account is refused (see /api/auth/login).
+    hashed_password: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class TenantBase(BaseModel):
@@ -93,6 +108,14 @@ class TenantBase(BaseModel):
     branches: List[Dict[str, Any]] = []
     parent_tenant_id: Optional[str] = None
     sector: Optional[str] = None  # restaurant, pizzeria, spa, gym, etc. — drives reactivation templates
+    activity: Optional[str] = None  # free-text precision ("Boulangerie artisanale bio")
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    # Self-serve onboarding progress. "company" = the owner created their
+    # personal account (step 1) but has not filled the company details yet
+    # (step 2); the UI keeps them on /onboarding/entreprise until "done".
+    # Defaults to "done" so every legacy tenant is unaffected.
+    onboarding_status: str = "done"
     campaign_sender_name: Optional[str] = None  # custom "from" name for push notifications/emails
     # --- Facturation module (French e-invoicing). All optional / default-off so
     #     existing loyalty-only tenants are completely unaffected. A tenant only

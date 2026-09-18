@@ -9,7 +9,7 @@
 1. This is the single source of truth for project state. Trust it over assumptions.
 2. The workspace folder is `website_antiG/`. The live codebase is in `website_antiG/fidelitour-deploy/`.
 3. Copy of this file also lives at `fidelitour-deploy/CLAUDE.md` — keep both in sync when updating.
-4. ALWAYS commit + push to `main` after each completed change (Vercel auto-deploys from main, ~90s).
+4. Work on a feature branch → push → Vercel preview URL → user validates → merge to `main` (production). Never push straight to `main` for product changes.
 5. User (yrrx / Akshansh) communicates in Hinglish — respond in Hinglish for discussions, English for code/commits.
 6. User prefers: concise, direct, no unnecessary explanation. Detailed only when he asks "explain".
 7. NEVER take autonomous product decisions — propose, let him decide. He says "don't take autonomous decisions."
@@ -25,8 +25,8 @@
 | Possible rebrand (client docs) | **FidClic** — client's business plan documents use this name. NOT yet decided/applied in code. Ask user before renaming anything. |
 | What it is | Loyalty-platform SaaS for French cafés/restaurants. Digital wallet card (PWA), push campaigns, analytics, AI copilot. |
 | Local repo path | `website_antiG/fidelitour-deploy/` |
-| GitHub | `https://github.com/AKSHANSH-SHUKLA/fidelitour-loyalty-platform` (branch: main) |
-| Git remote auth | Token embedded in remote URL (user: AKSHANSH-SHUKLA). If push fails, ask user for a fresh GitHub token and run `git remote set-url origin https://AKSHANSH-SHUKLA:<TOKEN>@github.com/AKSHANSH-SHUKLA/fidelitour-loyalty-platform.git` |
+| GitHub | `https://github.com/fidclic37-lang/fidclic-platform` (official FidClic account; branch: main). The old personal repo `AKSHANSH-SHUKLA/fidelitour-loyalty-platform` is retired. |
+| Git remote auth | **NEVER embed a token in the remote URL** (that leaked a PAT once). Remote is plain HTTPS; auth comes from `gh auth login` / GitHub Desktop keychain as `fidclic37-lang`. Commits are authored as `fidclic37-lang <fidclic37@gmail.com>` (global git identity — no per-repo override). |
 | Deploy | Vercel, auto-deploy from main. URL: `https://fidelitour-deploy.vercel.app` |
 | Vercel project | projectId `prj_v4iikwhAgcH4HABksyrQ9e5aYZn7`, orgId `team_ls8ri2DnKqRPK3LymOvyem0O` (in `.vercel/project.json`). Note: Vercel MCP token may lack scope for this team (403 seen). |
 | User email | akshanshshukla963@gmail.com (platform admin) |
@@ -75,7 +75,7 @@ SECURITY TODO pre-production: rotate all, gate seed behind env flag, add email v
 fidelitour-deploy/
 ├─ api/
 │  ├─ server.py            # THE monolith. Auth, scan, campaigns, analytics, support, push-recovery, admin
-│  ├─ models.py            # PLAN_FEATURES: silver €29/1000cust, gold €79/3000, vip €109/6000; PLAN_TRIAL_DAYS=21
+│  ├─ models.py            # PLAN_FEATURES: silver €29/1000cust, gold €79/3000, vip €109/6000; PLAN_TRIAL_DAYS=28, reminder 1 day before (day 27)
 │  ├─ services/sms.py      # Twilio send_sms
 │  ├─ services/web_push.py # VAPID send_push, is_configured
 │  └─ features/
@@ -144,9 +144,11 @@ Applied across dashboard+analytics (commit 07bcf7f). USE THESE, not the old elec
 
 ## 8. EVERYTHING BUILT (feature inventory)
 
+**Self-serve onboarding + social login (Sept 2026):** `/register` = step 1 (prénom, nom, email, téléphone, mot de passe, CGU+Confidentialité+DPA checkbox; auto-login) → `/onboarding/entreprise` = step 2 (raison sociale, nom commercial, secteur, activité, SIRET, adresse) → trial starts → `/modules`. Route guards (`needsOnboarding` in App.jsx) park any owner with `tenant.onboarding_status="company"` on step 2. Google/Apple: `src/components/SocialAuthButtons.jsx` + `api/features/oauth.py` (ID-token verification via JWKS, email = identity, existing accounts linked; env `GOOGLE_CLIENT_ID`, `APPLE_CLIENT_ID`, `APPLE_REDIRECT_URI` — a missing ID hides that button). OAuth users accept the CGU on step 2. Legal links → `src/lib/legal.js` (fidclic.com/cgu, /confidentialite, /dpa — pages must exist on the landing site). Tests: `api/tests/test_onboarding_oauth.py` (boots real server.py on mongomock). Local e2e runner: `scripts/dev_local.py` (dist + api on :8765, no Mongo).
+
 **Core loyalty:** tenant/customer/visit model, QR wallet card (PWA), staff scan page (geo-fenced, catalog item picker, amount, reward unlock celebration, tier-up banner), tiers bronze/silver/gold/vip, points (per_visit or per_euro modes), reward redemption (no visit decrement + self-healing migration for old broken customers).
 
-**Plans/billing:** silver €29 / gold €79 / vip €109, 21-day trial (`subscription_status='trialing'`, trial_started_at/ends_at), BillingBanner with countdown + picker (NO payment integration — Stripe not wired, plan picker is visual), admin plan editor (/admin/plans, get_plan_features() merges PLAN_FEATURES + db.plan_settings overrides), hard cap on /api/join/{slug}.
+**Plans/billing:** silver €29 / gold €79 / vip €109, 28-day trial without card (`subscription_status='trialing'`, trial_started_at/ends_at — starts when onboarding step 2 completes), day-27 email reminder via cron (features/onboarding.py), BillingBanner with countdown + picker, Stripe Checkout/Portal/webhook coded in features/billing.py (keys to be added in Vercel at the end), admin plan editor (/admin/plans, get_plan_features() merges PLAN_FEATURES + db.plan_settings overrides), hard cap on /api/join/{slug}.
 
 **Campaigns:** composer (name, message, image, audience builder, preview count, scheduled), typed notifications endpoint `/api/owner/notifications/typed` (supports filters: tier, customer_ids[], birthday_month), open tracking (pixel `/api/campaigns/{id}/pixel/{customerId}.png`), click tracking (`/track-click`), campaign attribution on scans (15-day window), AI campaign analyzer button (per campaign), quick-send panel.
 

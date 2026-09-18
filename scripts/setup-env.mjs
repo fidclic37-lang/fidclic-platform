@@ -132,6 +132,16 @@ TWILIO_FROM_NUMBER=+33000000000
 # subscribe to events: checkout.session.completed, invoice.paid,
 # invoice.payment_failed, customer.subscription.updated,
 # customer.subscription.deleted.
+# --- Social login (optional; a missing ID simply hides that button) ---
+# Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Web client
+GOOGLE_CLIENT_ID=
+# Apple Developer → Identifiers → Services IDs (NOT the App ID), e.g. com.fidclic.web
+APPLE_CLIENT_ID=
+# Must match the Services ID "Return URLs" exactly
+APPLE_REDIRECT_URI=https://app.fidclic.com/login
+# Version string stamped on CGU/DPA acceptance; bump it when the legal texts change
+TERMS_VERSION=2026-09
+
 STRIPE_SECRET_KEY=sk_live_REPLACE_ME
 STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
 
