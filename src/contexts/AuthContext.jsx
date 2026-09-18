@@ -32,8 +32,23 @@ export const AuthProvider = ({ children }) => {
     return res.data;
   };
 
+  // Register now auto-logs-in server-side (cookie + token in the response)
+  // so the new owner lands on step 2 without a second /login round-trip.
   const register = async (data) => {
-    await authAPI.register(data);
+    const res = await authAPI.register(data);
+    if (res.data?.access_token) setAuthToken(res.data.access_token);
+    await checkAuth();
+    return res.data;
+  };
+
+  // Google / Apple: `payload` is { credential } or { id_token, first_name, last_name }.
+  const oauthLogin = async (provider, payload) => {
+    const res = provider === 'google'
+      ? await authAPI.oauthGoogle(payload.credential)
+      : await authAPI.oauthApple(payload);
+    if (res.data?.access_token) setAuthToken(res.data.access_token);
+    await checkAuth();
+    return res.data;
   };
 
   const logout = async () => {
@@ -44,7 +59,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, register, oauthLogin, logout, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );

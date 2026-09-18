@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import SocialAuthButtons, { routeAfterAuth } from '../components/SocialAuthButtons';
 
 const LoginPage = () => {
   const { t } = useTranslation();
@@ -15,15 +16,16 @@ const LoginPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
     try {
       const res = await login(formData);
-      if (res.role === 'super_admin') navigate('/admin');
-      else if (res.role === 'staff') navigate('/dashboard/scan');
-      else if (res.role === 'business_owner') navigate('/modules');
-      else if (res.role === 'comptable') navigate('/cabinet');
-      else navigate('/dashboard');
+      // An owner who never finished step 2 goes back to it, everyone else to their home.
+      routeAfterAuth(navigate, res);
     } catch (err) {
-      setError('Invalid credentials');
+      // The backend explains OAuth-only accounts ("utilisez le bouton Google") —
+      // surface that; keep the generic message for a plain wrong password.
+      const detail = err?.response?.data?.detail;
+      setError(detail && detail !== 'Incorrect credentials' ? detail : t('auth.invalid_credentials'));
     }
   };
 
@@ -105,6 +107,10 @@ const LoginPage = () => {
             {t('auth.login_button')}
           </button>
         </form>
+
+        <div className="mt-5">
+          <SocialAuthButtons onError={setError} />
+        </div>
 
         <div className="mt-6 pt-6 border-t border-[#E7E5E4] text-center">
           <p className="text-[#57534E] text-sm mb-2">{t('auth.no_account')}</p>
