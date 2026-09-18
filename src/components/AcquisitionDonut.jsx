@@ -14,12 +14,12 @@ import { useBranch } from '../contexts/BranchContext';
  * breakdown. We sort descending so the largest source is always on top.
  */
 const SOURCE_LABELS = {
-  qr_store:   { label: 'QR in-store',  color: '#B85C38' },
-  instagram:  { label: 'Instagram',    color: '#5B7AB7' },
-  facebook:   { label: 'Facebook',     color: '#3B82F6' },
-  tiktok:     { label: 'TikTok',       color: '#171412' },
-  website:    { label: 'Website',      color: '#8D857D' },
-  manual:     { label: 'Saisie staff', color: '#D4A574' },
+  qr_store:   { label: 'QR in-store',  color: '#2F6BFF' },
+  instagram:  { label: 'Instagram',    color: '#5B8DEF' },
+  facebook:   { label: 'Facebook',     color: '#2F6BFF' },
+  tiktok:     { label: 'TikTok',       color: '#0F172A' },
+  website:    { label: 'Website',      color: '#64748B' },
+  manual:     { label: 'Saisie staff', color: '#C7D7FF' },
 };
 
 export default function AcquisitionDonut() {
@@ -39,7 +39,7 @@ export default function AcquisitionDonut() {
         const entries = Object.entries(raw)
           .filter(([k, v]) => typeof v === 'number' && v >= 0)
           .map(([k, v]) => {
-            const meta = SOURCE_LABELS[k] || { label: k.replace(/_/g, ' '), color: '#9C9590' };
+            const meta = SOURCE_LABELS[k] || { label: k.replace(/_/g, ' '), color: '#94A3B8' };
             return { key: k, name: meta.label, color: meta.color, value: v };
           })
           .sort((a, b) => b.value - a.value);
@@ -94,7 +94,7 @@ export default function AcquisitionDonut() {
                 </Pie>
                 <Tooltip
                   contentStyle={{
-                    background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #EFEDE9)',
+                    background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #E6EAF2)',
                     borderRadius: 8, padding: '4px 8px', fontSize: 11,
                     boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
                   }}

@@ -56,18 +56,18 @@ export default function BranchPillsBanner({ compact = false } = {}) {
         <div className="flex items-center gap-2.5 min-w-0">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-            style={{ background: '#171412', color: '#F4D8A8' }}
+            style={{ background: 'var(--flc-accent, #2F6BFF)', color: '#FFFFFF' }}
           >
             <Sun size={14} />
           </div>
           <div className="min-w-0">
             <p
               className="text-[9.5px] uppercase tracking-[0.14em] truncate"
-              style={{ color: '#9C4427', fontWeight: 700, letterSpacing: '0.14em' }}
+              style={{ color: 'var(--flc-accent-deep, #1D4ED8)', fontWeight: 700, letterSpacing: '0.14em' }}
             >
               Données en temps réel · {isAll ? 'toutes vos branches' : (activeBranch?.name || 'branche')}
             </p>
-            <p className="text-[11px] truncate mt-0.5" style={{ color: '#5C4A3E' }}>
+            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--flc-ink3, #64748B)' }}>
               Suivez vos performances, comprenez vos clients, optimisez vos campagnes.
             </p>
           </div>
@@ -122,25 +122,25 @@ export default function BranchPillsBanner({ compact = false } = {}) {
     <div
       className="rounded-2xl px-4 py-3 mb-4 flex items-center justify-between gap-3 flex-wrap"
       style={{
-        background: 'linear-gradient(135deg, #F8E8E2 0%, #FCE3DC 60%, #F7D9CF 100%)',
-        border: '1px solid #DD9F8B',
+        background: 'var(--flc-accent-soft, #EAF0FF)',
+        border: '1px solid #C7D7FF',
       }}
     >
       <div className="flex items-center gap-3 min-w-0">
         <div
           className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-          style={{ background: '#171412', color: '#F4D8A8' }}
+          style={{ background: 'var(--flc-accent, #2F6BFF)', color: '#FFFFFF' }}
         >
           <Sun size={18} />
         </div>
         <div className="min-w-0">
           <p
             className="text-[10px] uppercase"
-            style={{ color: '#9C4427', fontWeight: 600, letterSpacing: '0.16em' }}
+            style={{ color: 'var(--flc-accent-deep, #1D4ED8)', fontWeight: 600, letterSpacing: '0.16em' }}
           >
             Données en temps réel · {isAll ? 'toutes vos branches' : activeBranch?.name || 'branche'}
           </p>
-          <p className="text-[12px] mt-0.5" style={{ color: '#4A4441' }}>
+          <p className="text-[12px] mt-0.5" style={{ color: 'var(--flc-ink2, #334155)' }}>
             Suivez vos performances, comprenez vos clients, optimisez vos campagnes.
           </p>
         </div>

@@ -2218,3 +2218,76 @@ textarea::placeholder {
 }
 .av2-light-skin.av2-cobalt .av2-legacy-wrapper [class*="border-[#E7E5E4]"],
 .av2-light-skin.av2-cobalt .av2-legacy-wrapper [class*="border-[#ECE3D2]"] { border-color: #E6EAF2 !important; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   COBALT — platform-wide LIGHT theme ("jour"). Approved 2026-09-18 from the
+   analytics mockup: flat #F5F7FB canvas, white cards with a visible
+   #DCE3EF border, blue accent, no sunset gradient, no glass. Every page
+   that reads --flc-* tokens follows automatically; "nuit" is untouched.
+   Declared last so it wins over the Éclat Aurora pass at equal specificity.
+   ═══════════════════════════════════════════════════════════════════ */
+.flc:not(.flc-nuit) {
+  --flc-paper: #F5F7FB;  --flc-paper2: #EEF2F9;  --flc-card: #FFFFFF;
+  --flc-ink: #0F172A;    --flc-ink2: #334155;    --flc-ink3: #64748B;
+  --flc-line: #DCE3EF;   --flc-line-hi: #C9D6F2;
+  --flc-accent: #2F6BFF; --flc-accent-deep: #1D4ED8; --flc-accent-2: #5B8DEF;
+  --flc-ok: #16A34A;     --flc-info: #2F6BFF;    --flc-risk: #E11D48;  --flc-warn: #D97706;
+  --flc-cta: linear-gradient(135deg, #3B7BFF, #1D4ED8);  --flc-on-cta: #FFFFFF;
+  --hairline: 222 30% 90%;
+  --tone-success-line: #16A34A;
+  background: #F5F7FB;
+  background-attachment: scroll;
+  color: #0F172A;
+}
+/* Sidebar: white, one clear border, blue active pill (mockup). */
+.flc:not(.flc-nuit) aside.fd-sidebar-host {
+  background: #FFFFFF !important;
+  border-right: 1px solid #DCE3EF !important;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.flc:not(.flc-nuit) .flc-nav { color: #64748B; }
+.flc:not(.flc-nuit) .flc-nav:hover { color: #0F172A; background: #EEF2F9; }
+.flc:not(.flc-nuit) .flc-nav.on { color: #1D4ED8; background: #EAF0FF; box-shadow: none; }
+.flc:not(.flc-nuit) .flc-nav.on::before { background: #2F6BFF; }
+/* Every glass surface → flat white card with a visible border. */
+.flc:not(.flc-nuit) .fdt-dash .fd-panel,
+.flc:not(.flc-nuit) .fdt-dash .fd-chart,
+.flc:not(.flc-nuit) .fdt-dash .fd-side-panel,
+.flc:not(.flc-nuit) .av2-light-skin .av2-card,
+.flc:not(.flc-nuit) .ftf {
+  background: #FFFFFF !important;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-color: #DCE3EF !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04);
+}
+.flc:not(.flc-nuit) .av2-light-skin { background: transparent !important; }
+/* Tailwind arbitrary warm classes that survive in older pages. */
+.flc:not(.flc-nuit) [class*="hover:bg-[#FAEDEB]"]:hover,
+.flc:not(.flc-nuit) [class*="hover:bg-[#FAFAF8]"]:hover { background-color: #EEF2F9 !important; }
+.flc:not(.flc-nuit) [class*="border-[#EFEDE9]"],
+.flc:not(.flc-nuit) [class*="border-[#E7E5E4]"],
+.flc:not(.flc-nuit) [class*="border-[#ECE3D2]"] { border-color: #DCE3EF !important; }
+
+/* Analytics page under Cobalt: stronger, visible separations. */
+.av2-light-skin.av2-cobalt .av2-card,
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt .av2-card { border: 1px solid #DCE3EF !important; }
+.av2-light-skin.av2-cobalt .av2-card > h3:first-child,
+.av2-light-skin.av2-cobalt .av2-card > div:first-child > h3 { padding-bottom: 10px; }
+.av2-light-skin.av2-cobalt .av2-legacy-wrapper { border-top: 1px solid #DCE3EF; padding-top: 18px; margin-top: 8px; }
+.av2-light-skin.av2-cobalt .av2-legacy-wrapper .ft-lift { border: 1px solid #DCE3EF !important; }
+/* Tier badges inside the analytics tables: blue ladder, not bronze/gold. */
+.av2-cobalt .tier-badge[data-tier="bronze"] { background: #EAF0FF !important; border-color: #C7D7FF !important; color: #1D4ED8 !important; }
+.av2-cobalt .tier-badge[data-tier="silver"] { background: #EEF2F9 !important; border-color: #CBD5E1 !important; color: #334155 !important; }
+.av2-cobalt .tier-badge[data-tier="gold"]   { background: #C7D7FF !important; border-color: #93B4FF !important; color: #1D4ED8 !important; }
+.av2-cobalt .tier-badge[data-tier="vip"]    { background: #1D4ED8 !important; border-color: #1D4ED8 !important; color: #FFFFFF !important; }
+.av2-cobalt .tier-badge svg { color: currentColor !important; }
+/* Recharts safety net: any pie sector / bar that still carries an inline
+   warm fill inside the analytics page is forced onto the blue ladder. */
+.av2-cobalt .recharts-pie-sector:nth-child(1) path { fill: #2F6BFF; }
+.av2-cobalt .recharts-pie-sector:nth-child(2) path { fill: #5B8DEF; }
+.av2-cobalt .recharts-pie-sector:nth-child(3) path { fill: #93B4FF; }
+.av2-cobalt .recharts-pie-sector:nth-child(4) path { fill: #C7D7FF; }
+.av2-cobalt .recharts-pie-sector:nth-child(5) path { fill: #1D4ED8; }
+.av2-cobalt .recharts-pie-sector:nth-child(n+6) path { fill: #CBD5E1; }
+.av2-cobalt .recharts-cartesian-grid line { stroke: #E6EAF2; }
+.av2-cobalt .recharts-text { fill: #64748B; }

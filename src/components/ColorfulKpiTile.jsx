@@ -32,25 +32,25 @@ import PeriodPicker from './PeriodPicker';
 //     white glyph — the only category cue.
 //   • Sparklines pick up the tone's vivid line so the trend reads.
 // Same surface everywhere so the dashboard reads as one cohesive product.
-const SHARED_SURFACE = '#FAFAF8';
-const SHARED_LINE    = '#ECE3D5';
+const SHARED_SURFACE = '#F5F7FB';
+const SHARED_LINE    = '#DCE3EF';
 // The vibrant hero accent used for every big number, regardless of tone.
 // Joyful teal-blue, picks up well against the cream surface.
-const HERO_INK       = '#1E88B8';
+const HERO_INK       = '#2F6BFF';
 
 const TONE_STYLE = {
   // Saturated vivid colors for the icon chip + sparkline + corner glow.
-  success: { vivid: '#20714C', glow: 'rgba(63, 168, 106, 0.25)',  line: '#20714C' },
-  danger:  { vivid: '#E15A47', glow: 'rgba(225, 90, 71, 0.25)',   line: '#E15A47' },
-  warning: { vivid: '#E8A53B', glow: 'rgba(232, 165, 59, 0.25)',  line: '#E8A53B' },
-  info:    { vivid: '#3FA9D9', glow: 'rgba(63, 169, 217, 0.25)',  line: '#3FA9D9' },
-  purple:  { vivid: 'var(--flc-accent, #C73E2C)', glow: 'color-mix(in srgb, var(--flc-accent, #C73E2C) 25%, transparent)', line: 'var(--flc-accent, #C73E2C)' },
-  neutral: { vivid: '#8D857D', glow: 'rgba(122, 113, 108, 0.22)', line: '#8D857D' },
+  success: { vivid: '#16A34A', glow: 'rgba(22,163,74,0.22)',  line: '#16A34A' },
+  danger:  { vivid: '#5B8DEF', glow: 'rgba(91,141,239,0.25)',   line: '#5B8DEF' },
+  warning: { vivid: '#93B4FF', glow: 'rgba(147,180,255,0.3)',  line: '#93B4FF' },
+  info:    { vivid: '#0EA5E9', glow: 'rgba(14,165,233,0.25)',  line: '#0EA5E9' },
+  purple:  { vivid: 'var(--flc-accent, #2F6BFF)', glow: 'color-mix(in srgb, var(--flc-accent, #2F6BFF) 25%, transparent)', line: 'var(--flc-accent, #2F6BFF)' },
+  neutral: { vivid: '#64748B', glow: 'rgba(122, 113, 108, 0.22)', line: '#64748B' },
 };
 
 /** Inline sparkline with bigger presence: thicker stroke + denser fill
  *  so the chart reads as part of the tile, not decoration. */
-const Sparkline = ({ points = [], stroke = '#8D857D', width = 100, height = 32 }) => {
+const Sparkline = ({ points = [], stroke = '#64748B', width = 100, height = 32 }) => {
   if (!Array.isArray(points) || points.length < 2) return null;
   const min = Math.min(...points);
   const max = Math.max(...points);
@@ -77,9 +77,9 @@ const Sparkline = ({ points = [], stroke = '#8D857D', width = 100, height = 32 }
 // Delta colors are DIRECTION-based, never metric-based: a "+" delta is
 // always green, a "-" delta is always red. A flat delta is muted.
 const DELTA_STYLE = {
-  up:   { bg: 'rgba(56, 130, 80, 0.14)',  fg: '#2F6A3C', dot: '#3F8A52' },
-  down: { bg: 'rgba(184, 60, 50, 0.14)',  fg: '#8A2E24', dot: '#B53D32' },
-  flat: { bg: 'rgba(122, 113, 108, 0.12)', fg: '#5C544F', dot: '#8D857D' },
+  up:   { bg: 'rgba(22,163,74,0.12)',  fg: '#15803D', dot: '#16A34A' },
+  down: { bg: 'rgba(225,29,72,0.12)',  fg: '#1D4ED8', dot: '#E11D48' },
+  flat: { bg: 'rgba(100,116,139,0.12)', fg: '#334155', dot: '#64748B' },
 };
 
 const DeltaPill = ({ delta }) => {
@@ -112,7 +112,7 @@ const ColorfulKpiTile = ({
   sublabel,
   delta,
   trend,
-  accent = '#B85C38',
+  accent = '#2F6BFF',
   tone,
   onClick,
   period,

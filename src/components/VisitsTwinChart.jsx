@@ -95,7 +95,7 @@ export default function VisitsTwinChart({ controlledDays = null } = {}) {
                     key={o.days}
                     type="button"
                     onClick={() => { setOpt(o); setOpen(false); }}
-                    className="block w-full text-left px-3 py-1.5 text-[12px] hover:bg-[#FAFAF8]"
+                    className="block w-full text-left px-3 py-1.5 text-[12px] hover:bg-[#F5F7FB]"
                     style={{ color: o.days === opt.days ? 'var(--brand-deep)' : 'var(--ink)' }}
                   >
                     {o.label}
@@ -110,11 +110,11 @@ export default function VisitsTwinChart({ controlledDays = null } = {}) {
       {/* Legend — two coloured dots, calm spacing */}
       <div className="flex items-center gap-4 mb-2 text-[11.5px]" style={{ color: 'var(--ink-soft)' }}>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: '#B85C38' }} />
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: '#2F6BFF' }} />
           Visites totales
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#5B7AB7' }} />
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#5B8DEF' }} />
           Clients uniques
         </span>
       </div>
@@ -125,40 +125,40 @@ export default function VisitsTwinChart({ controlledDays = null } = {}) {
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: -10 }}>
-              <CartesianGrid stroke="var(--flc-line, #EFEDE9)" strokeDasharray="3 3" vertical={false} />
+              <CartesianGrid stroke="var(--flc-line, #E6EAF2)" strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="idx" tickLine={false} axisLine={false}
-                tick={{ fontSize: 10, fill: 'var(--flc-ink3, #9C9590)' }}
+                tick={{ fontSize: 10, fill: 'var(--flc-ink3, #94A3B8)' }}
                 interval="preserveStartEnd"
               />
               <YAxis
                 tickLine={false} axisLine={false}
-                tick={{ fontSize: 10, fill: 'var(--flc-ink3, #9C9590)' }}
+                tick={{ fontSize: 10, fill: 'var(--flc-ink3, #94A3B8)' }}
                 width={32}
               />
               <Tooltip
                 cursor={{ fill: 'rgba(184,92,56,0.06)' }}
                 contentStyle={{
-                  background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #EFEDE9)',
+                  background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #E6EAF2)',
                   borderRadius: 8, padding: '6px 10px',
-                  fontSize: 12, color: 'var(--flc-ink, #171412)',
+                  fontSize: 12, color: 'var(--flc-ink, #0F172A)',
                   boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
                 }}
-                labelStyle={{ color: 'var(--flc-ink3, #8D857D)', fontSize: 10, marginBottom: 2 }}
+                labelStyle={{ color: 'var(--flc-ink3, #64748B)', fontSize: 10, marginBottom: 2 }}
                 formatter={(v, name) => [v, name === 'visits' ? 'Visites totales' : 'Clients uniques']}
                 labelFormatter={(l) => `Période ${l}`}
               />
               <defs>
                 <linearGradient id="vtc-bar" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--flc-accent-2, #E8703A)" />
+                  <stop offset="0%" stopColor="var(--flc-accent-2, #5B8DEF)" />
                   <stop offset="100%" stopColor="var(--flc-accent-deep, #A82843)" />
                 </linearGradient>
               </defs>
               <Bar dataKey="visits" fill="url(#vtc-bar)" radius={[3, 3, 0, 0]} maxBarSize={18} />
               <Line
                 type="monotone" dataKey="uniques"
-                stroke="#5B7AB7" strokeWidth={1.8}
-                dot={{ r: 2.5, fill: '#5B7AB7', stroke: 'var(--flc-card, #FFFFFF)', strokeWidth: 1 }}
+                stroke="#5B8DEF" strokeWidth={1.8}
+                dot={{ r: 2.5, fill: '#5B8DEF', stroke: 'var(--flc-card, #FFFFFF)', strokeWidth: 1 }}
                 activeDot={{ r: 3.5 }}
               />
             </ComposedChart>

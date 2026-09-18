@@ -26,8 +26,8 @@ import WeeklyAcquisitionPanel from '../components/WeeklyAcquisitionPanel';
 import useTileMetric from '../hooks/useTileMetric';
 import { Trash2, UserPlus2, RefreshCcw, Repeat as RepeatIcon, BadgeCheck } from 'lucide-react';
 
-const TIER_COLORS = { bronze: '#8B6914', silver: '#A8A8A8', gold: '#E3A869', vip: '#96431F' };
-const ACQ_COLORS = ['#B85C38', '#E3A869', '#4A5D23', '#96431F', '#5B8DEF', '#AA6EBE', '#8B6914'];
+const TIER_COLORS = { bronze: '#C7D7FF', silver: '#CBD5E1', gold: '#93B4FF', vip: '#1D4ED8' };
+const ACQ_COLORS = ['#2F6BFF', '#93B4FF', '#2F6BFF', '#1D4ED8', '#5B8DEF', '#5B8DEF', '#C7D7FF'];
 
 // ─────────────────────────────────────────────────────────────────────
 // DEMO REVIEW ANALYTICS — paints the "Customer reviews & sentiment"
@@ -95,8 +95,8 @@ const SendCampaignButton = ({ label = 'Send campaign', onClick, compact = false,
     }}
     className={
       compact
-        ? 'inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-[#B85C38]/10 text-[#B85C38] rounded-full hover:bg-[#B85C38] hover:text-white transition'
-        : 'inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#B85C38]/10 text-[#B85C38] rounded-full hover:bg-[#B85C38] hover:text-white transition font-medium'
+        ? 'inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-[#2F6BFF]/10 text-[#2F6BFF] rounded-full hover:bg-[#2F6BFF] hover:text-white transition'
+        : 'inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#2F6BFF]/10 text-[#2F6BFF] rounded-full hover:bg-[#2F6BFF] hover:text-white transition font-medium'
     }
     title="Send a campaign to this segment"
   >
@@ -242,12 +242,12 @@ const SharedTimeFilter = ({ value, onChange, sharedDays }) => {
 // KPI card with optional Send Campaign CTA in top-right corner.
 // ------------------------------------------------------------------
 const KPICard = ({
-  icon: Icon, title, value, sublabel, onClick, accent = '#B85C38',
+  icon: Icon, title, value, sublabel, onClick, accent = '#2F6BFF',
   segment, openComposer, presetName, presetContent,
 }) => (
   <div
     onClick={onClick}
-    className={`relative bg-white p-3 rounded-xl border border-[#E9E5E0] ${
+    className={`relative bg-white p-3 rounded-xl border border-[#DCE3EF] ${
       onClick ? 'cursor-pointer hover:shadow-md transition' : ''
     }`}
   >
@@ -268,9 +268,9 @@ const KPICard = ({
         <Icon size={17} />
       </div>
       <div className="min-w-0 pr-5">
-        <p className="text-[10px] text-[#57504A] uppercase tracking-wide font-semibold truncate">{title}</p>
-        <p className="text-lg font-bold text-[#171412] leading-tight">{value}</p>
-        {sublabel && <p className="text-[10.5px] text-[#8D857D] mt-0.5 truncate">{sublabel}</p>}
+        <p className="text-[10px] text-[#334155] uppercase tracking-wide font-semibold truncate">{title}</p>
+        <p className="text-lg font-bold text-[#0F172A] leading-tight">{value}</p>
+        {sublabel && <p className="text-[10.5px] text-[#64748B] mt-0.5 truncate">{sublabel}</p>}
       </div>
     </div>
   </div>
@@ -280,10 +280,10 @@ const KPICard = ({
 // ChartCard with optional Send CTA
 // ------------------------------------------------------------------
 const ChartCard = ({ title, hint, children, segment, openComposer, presetName, presetContent }) => (
-  <div className="bg-white p-4 rounded-xl border border-[#E9E5E0]">
+  <div className="bg-white p-4 rounded-xl border border-[#DCE3EF]">
     <div className="flex items-start justify-between gap-2 mb-0.5">
       <h2
-        className="text-base font-semibold text-[#171412]"
+        className="text-base font-semibold text-[#0F172A]"
         style={{ fontFamily: 'Cormorant Garamond' }}
       >
         {title}
@@ -295,7 +295,7 @@ const ChartCard = ({ title, hint, children, segment, openComposer, presetName, p
         />
       )}
     </div>
-    {hint && <p className="text-[10.5px] text-[#8D857D] mt-0.5 mb-2">{hint}</p>}
+    {hint && <p className="text-[10.5px] text-[#64748B] mt-0.5 mb-2">{hint}</p>}
     {children}
   </div>
 );
@@ -377,43 +377,43 @@ const CampaignComposer = ({ segment, presetName, presetContent, onClose, onSent 
       >
         <div className="flex justify-between items-center mb-4">
           <div>
-            <h3 className="text-2xl font-bold text-[#171412]" style={{ fontFamily: 'Cormorant Garamond' }}>
-              <Megaphone className="inline mr-2 text-[#B85C38]" size={22} /> Composer une campagne
+            <h3 className="text-2xl font-bold text-[#0F172A]" style={{ fontFamily: 'Cormorant Garamond' }}>
+              <Megaphone className="inline mr-2 text-[#2F6BFF]" size={22} /> Composer une campagne
             </h3>
-            <p className="text-xs text-[#8D857D] mt-1">
-              Cible : <span className="font-medium text-[#B85C38]">{segmentLabel(segment)}</span>
+            <p className="text-xs text-[#64748B] mt-1">
+              Cible : <span className="font-medium text-[#2F6BFF]">{segmentLabel(segment)}</span>
               {preview != null && <span className="ml-2">({preview} destinataires)</span>}
             </p>
           </div>
-          <button onClick={onClose} className="text-[#A8A29E] hover:text-[#171412]"><X size={22} /></button>
+          <button onClick={onClose} className="text-[#94A3B8] hover:text-[#0F172A]"><X size={22} /></button>
         </div>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-[#57504A] uppercase mb-1">Sujet</label>
+            <label className="block text-xs font-semibold text-[#334155] uppercase mb-1">Sujet</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ex : Offre spéciale {first_name} 🎁"
-              className="w-full px-3 py-2 border border-[#E9E5E0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#B85C38]"
+              className="w-full px-3 py-2 border border-[#DCE3EF] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2F6BFF]"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-[#57504A] uppercase mb-1">Message</label>
+            <label className="block text-xs font-semibold text-[#334155] uppercase mb-1">Message</label>
             <textarea
               rows={6}
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="Bonjour {first_name}, il te reste {points_to_next_reward} points pour débloquer ta récompense chez {business_name} !"
-              className="w-full px-3 py-2 border border-[#E9E5E0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#B85C38] font-['Manrope']"
+              className="w-full px-3 py-2 border border-[#DCE3EF] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#2F6BFF] font-['Manrope']"
             />
-            <p className="text-[11px] text-[#8D857D] mt-1">
+            <p className="text-[11px] text-[#64748B] mt-1">
               Variables : <code>{'{first_name}'}</code>, <code>{'{name}'}</code>, <code>{'{tier}'}</code>, <code>{'{points_to_next_reward}'}</code>, <code>{'{points}'}</code>, <code>{'{business_name}'}</code>
             </p>
           </div>
 
-          <div className="p-3 bg-[#F5F4F1] rounded-lg border border-[#E9E5E0]">
+          <div className="p-3 bg-[#F5F7FB] rounded-lg border border-[#DCE3EF]">
             <div className="flex items-center gap-4 mb-2">
               <label className="inline-flex items-center gap-1 text-sm">
                 <input type="radio" checked={scheduleMode === 'now'} onChange={() => setScheduleMode('now')} />
@@ -430,12 +430,12 @@ const CampaignComposer = ({ segment, presetName, presetContent, onClose, onSent 
                   type="datetime-local"
                   value={runAt}
                   onChange={(e) => setRunAt(e.target.value)}
-                  className="px-2 py-1 border border-[#E9E5E0] rounded"
+                  className="px-2 py-1 border border-[#DCE3EF] rounded"
                 />
                 <select
                   value={recurrence}
                   onChange={(e) => setRecurrence(e.target.value)}
-                  className="px-2 py-1 border border-[#E9E5E0] rounded text-sm"
+                  className="px-2 py-1 border border-[#DCE3EF] rounded text-sm"
                 >
                   <option value="">Une seule fois</option>
                   <option value="daily">Quotidien</option>
@@ -449,14 +449,14 @@ const CampaignComposer = ({ segment, presetName, presetContent, onClose, onSent 
           <div className="flex justify-end gap-3 pt-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 border border-[#E9E5E0] text-[#171412] rounded-lg hover:bg-[#F5F4F1]"
+              className="px-4 py-2 border border-[#DCE3EF] text-[#0F172A] rounded-lg hover:bg-[#F5F7FB]"
             >
               Annuler
             </button>
             <button
               disabled={sending}
               onClick={send}
-              className="px-5 py-2 bg-[#B85C38] text-white rounded-lg font-medium hover:bg-[#9C4E2F] disabled:opacity-50 inline-flex items-center gap-2"
+              className="px-5 py-2 bg-[#2F6BFF] text-white rounded-lg font-medium hover:bg-[#1D4ED8] disabled:opacity-50 inline-flex items-center gap-2"
             >
               {scheduleMode === 'later' ? <Clock size={16} /> : <Send size={16} />}
               {sending ? 'Envoi…' : scheduleMode === 'later' ? 'Programmer' : 'Envoyer maintenant'}
@@ -750,10 +750,10 @@ const AnalyticsPage = () => {
 
   // Per-source styling — consistent colors across the chart and the KPI tiles.
   const SOURCE_STYLE = {
-    instagram: { color: '#E1306C', bg: 'rgba(225,48,108,0.08)', icon: '📸' },
-    facebook:  { color: '#1877F2', bg: 'rgba(24,119,242,0.08)', icon: '👥' },
+    instagram: { color: '#5B8DEF', bg: 'rgba(47,107,255,0.08)', icon: '📸' },
+    facebook:  { color: '#2F6BFF', bg: 'rgba(47,107,255,0.08)', icon: '👥' },
     tiktok:    { color: '#000000', bg: 'rgba(0,0,0,0.06)',       icon: '🎵' },
-    qr_store:  { color: '#B85C38', bg: 'rgba(184,92,56,0.10)',   icon: '📍' },
+    qr_store:  { color: '#2F6BFF', bg: 'rgba(184,92,56,0.10)',   icon: '📍' },
   };
 
   const rankedCustomers = useMemo(() => {
@@ -896,10 +896,10 @@ const AnalyticsPage = () => {
           ═════════════════════════════════════════════════════════════════ */}
       <div>
         <div className="flex items-baseline justify-between mb-2">
-          <h3 className="text-[13px] font-bold text-[#171412]" style={{ fontFamily: 'Cormorant Garamond' }}>
+          <h3 className="text-[13px] font-bold text-[#0F172A]" style={{ fontFamily: 'Cormorant Garamond' }}>
             Vue d'ensemble — depuis le début
           </h3>
-          <span className="text-[10px] uppercase tracking-widest font-bold text-[#8D857D]">Totaux lifetime · pas de filtre temps</span>
+          <span className="text-[10px] uppercase tracking-widest font-bold text-[#64748B]">Totaux lifetime · pas de filtre temps</span>
         </div>
         {/* Lifetime row 1 — base totals, every tile tone-tagged for vivid colour */}
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -985,10 +985,10 @@ const AnalyticsPage = () => {
           ═════════════════════════════════════════════════════════════════ */}
       <div>
         <div className="flex items-baseline justify-between mb-2 gap-3 flex-wrap">
-          <h3 className="text-[13px] font-bold text-[#171412]" style={{ fontFamily: 'Cormorant Garamond' }}>
+          <h3 className="text-[13px] font-bold text-[#0F172A]" style={{ fontFamily: 'Cormorant Garamond' }}>
             Activité dans la période choisie
           </h3>
-          <span className="text-[10px] uppercase tracking-widest font-bold text-[#8D857D]">
+          <span className="text-[10px] uppercase tracking-widest font-bold text-[#64748B]">
             {tilesDays} jour{tilesDays === 1 ? '' : 's'}
           </span>
         </div>
@@ -1031,14 +1031,14 @@ const AnalyticsPage = () => {
 
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
           <MetricTile controlledDays={tilesDays}
-            icon={CreditCard} title="Cartes complétées" accent="#4A5D23"
+            icon={CreditCard} title="Cartes complétées" accent="#2F6BFF"
             metric="cards_filled" branchId={branchId}
             initial={{ value: 1, unit: 'month' }}
             sublabel={(d) => `Récompenses débloquées · ${d}j`}
             onDrill={() => drillCustomers('Clients ayant rempli une carte', { cards_filled: true })}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={RefreshCcw} title="Clients récupérés" accent="#B85C38"
+            icon={RefreshCcw} title="Clients récupérés" accent="#2F6BFF"
             metric="recovered" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `Revenus après ${d}j de silence`}
@@ -1057,7 +1057,7 @@ const AnalyticsPage = () => {
             }
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Gift} title="Récompenses utilisées" accent="#9B7FB8"
+            icon={Gift} title="Récompenses utilisées" accent="#5B8DEF"
             metric="rewards_redeemed" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `Récompenses sur ${d} jours`}
@@ -1079,7 +1079,7 @@ const AnalyticsPage = () => {
             }}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Calendar} title="Premières visites" accent="#3C9D9B"
+            icon={Calendar} title="Premières visites" accent="#0EA5E9"
             metric="first_time_today" branchId={branchId}
             initial={{ value: 1, unit: 'day' }}
             sublabel={(d) => `Inscrits sur les ${d} derniers jours`}
@@ -1089,28 +1089,28 @@ const AnalyticsPage = () => {
 
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
           <MetricTile controlledDays={tilesDays}
-            icon={Trophy} title="Loyal" accent="#96431F"
+            icon={Trophy} title="Loyal" accent="#1D4ED8"
             metric="loyal_customers" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `≥ seuil "Loyal" sur ${d}j`}
             onDrill={() => drillCustomers('Loyal customers', { loyalty_bucket: 'loyal' })}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={RepeatIcon} title="Réguliers" accent="#E8917C"
+            icon={RepeatIcon} title="Réguliers" accent="#5B8DEF"
             metric="regular_customers" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `≥ seuil "Régulier" sur ${d}j`}
             onDrill={() => drillCustomers('Regular customers', { loyalty_bucket: 'regular' })}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Activity} title="Visites totales" accent="#4A5D23"
+            icon={Activity} title="Visites totales" accent="#2F6BFF"
             metric="total_visits" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `Visites enregistrées sur ${d}j`}
             onDrill={(d) => drillCustomers(`Customers visited last ${d}d`, { active_within_days: d })}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Calendar} title="Anniversaires ce mois" accent="#E3A869"
+            icon={Calendar} title="Anniversaires ce mois" accent="#93B4FF"
             metric="birthdays_this_month_static"
             branchId={branchId}
             staticValue={birthdaysThisMonth}
@@ -1127,10 +1127,10 @@ const AnalyticsPage = () => {
           ═════════════════════════════════════════════════════════════════ */}
       {/* Filter A — charts only (Visites + Acquisition). */}
       <div className="flex items-baseline justify-between gap-3 flex-wrap mt-1 mb-0.5">
-        <h3 className="text-[12px] font-bold text-[#171412]" style={{ fontFamily: 'Cormorant Garamond' }}>
+        <h3 className="text-[12px] font-bold text-[#0F172A]" style={{ fontFamily: 'Cormorant Garamond' }}>
           Fenêtre de temps — Visites · Acquisition
         </h3>
-        <span className="text-[10px] uppercase tracking-widest font-bold text-[#8D857D]">
+        <span className="text-[10px] uppercase tracking-widest font-bold text-[#64748B]">
           {chartsDays} jour{chartsDays === 1 ? '' : 's'}
         </span>
       </div>
@@ -1155,15 +1155,15 @@ const AnalyticsPage = () => {
                 key={t.key}
                 type="button"
                 onClick={() => drillCustomers(`${t.name} tier customers`, { tier: t.key })}
-                className="flex flex-col items-center gap-1 p-2 rounded-lg border border-[#E9E5E0] bg-[#FAFAF8] hover:bg-[#B85C38]/5 hover:border-[#B85C38] transition cursor-pointer text-left"
+                className="flex flex-col items-center gap-1 p-2 rounded-lg border border-[#DCE3EF] bg-[#F5F7FB] hover:bg-[#2F6BFF]/5 hover:border-[#2F6BFF] transition cursor-pointer text-left"
                 title={`Click to view ${t.name} customers`}
               >
                 <div className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-full" style={{ background: TIER_COLORS[t.key] }}></span>
-                  <span className="text-xs font-semibold text-[#171412]">{t.name}</span>
+                  <span className="text-xs font-semibold text-[#0F172A]">{t.name}</span>
                 </div>
                 <span className="text-lg font-bold">{t.value}</span>
-                <span className="text-[10px] text-[#8D857D]">
+                <span className="text-[10px] text-[#64748B]">
                   {totalCustomers ? `${Math.round((t.value / totalCustomers) * 100)}%` : '—'} · click to view
                 </span>
                 <SendCampaignButton
@@ -1196,7 +1196,7 @@ const AnalyticsPage = () => {
                 style={{ cursor: 'pointer' }}
               >
                 {tierData.map((t, i) => (
-                  <Cell key={i} fill={TIER_COLORS[t.key] || '#B85C38'} />
+                  <Cell key={i} fill={TIER_COLORS[t.key] || '#2F6BFF'} />
                 ))}
               </Pie>
               <Tooltip />
@@ -1207,17 +1207,17 @@ const AnalyticsPage = () => {
 
         <ChartCard title="Acquisition Sources" hint="Lifetime customers acquired through each channel — all-time totals.">
           {/* Lifetime headline */}
-          <div className="flex items-baseline gap-3 mb-4 pb-4 border-b border-[#E9E5E0]">
-            <p className="text-3xl font-bold text-[#171412]" style={{ fontFamily: 'Cormorant Garamond' }}>
+          <div className="flex items-baseline gap-3 mb-4 pb-4 border-b border-[#DCE3EF]">
+            <p className="text-3xl font-bold text-[#0F172A]" style={{ fontFamily: 'Cormorant Garamond' }}>
               {acquisitionTotal}
             </p>
-            <p className="text-sm text-[#57504A]">customers acquired across all channels (all-time)</p>
+            <p className="text-sm text-[#334155]">customers acquired across all channels (all-time)</p>
           </div>
 
           {/* Per-channel KPI tiles — count + percentage. Click to drill into customer list. */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
             {acquisitionChart.map((a) => {
-              const style = SOURCE_STYLE[a.raw] || { color: '#8D857D', bg: '#F5F4F1', icon: '•' };
+              const style = SOURCE_STYLE[a.raw] || { color: '#64748B', bg: '#F5F7FB', icon: '•' };
               return (
                 <button
                   key={a.raw}
@@ -1226,7 +1226,7 @@ const AnalyticsPage = () => {
                     `Customers acquired via ${a.name}`,
                     { source: a.raw }
                   )}
-                  className="text-left p-3 rounded-lg border border-[#E9E5E0] hover:border-[#B85C38] hover:shadow-sm transition"
+                  className="text-left p-3 rounded-lg border border-[#DCE3EF] hover:border-[#2F6BFF] hover:shadow-sm transition"
                   style={{ backgroundColor: style.bg }}
                 >
                   <div className="flex items-center gap-1.5 mb-1">
@@ -1235,9 +1235,9 @@ const AnalyticsPage = () => {
                       {a.name}
                     </span>
                   </div>
-                  <p className="text-2xl font-bold text-[#171412] leading-tight">
+                  <p className="text-2xl font-bold text-[#0F172A] leading-tight">
                     {a.value}
-                    <span className="text-sm text-[#8D857D] font-normal"> customers</span>
+                    <span className="text-sm text-[#64748B] font-normal"> customers</span>
                   </p>
                   <p className="text-[11px] mt-0.5 font-semibold" style={{ color: style.color }}>
                     {a.pct}% of total
@@ -1249,9 +1249,9 @@ const AnalyticsPage = () => {
 
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={acquisitionChart} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--flc-line, #E9E5E0)" />
-              <XAxis type="number" stroke="var(--flc-ink3, #57504A)" />
-              <YAxis type="category" dataKey="name" stroke="var(--flc-ink3, #57504A)" width={110} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--flc-line, #DCE3EF)" />
+              <XAxis type="number" stroke="var(--flc-ink3, #334155)" />
+              <YAxis type="category" dataKey="name" stroke="var(--flc-ink3, #334155)" width={110} />
               <Tooltip
                 formatter={(value, _name, p) => [`${value} customers (${p?.payload?.pct || 0}%)`, 'Acquired']}
               />
@@ -1276,31 +1276,31 @@ const AnalyticsPage = () => {
       <section
         className="rounded-xl p-4 space-y-3 relative overflow-hidden"
         style={{
-          background: `radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--flc-accent-2, #E8703A) 9%, transparent) 0%, transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--flc-accent, #C73E2C) 7%, transparent) 0%, transparent 60%), var(--flc-card, #FFFFFF)`,
-          border: '1px solid color-mix(in srgb, var(--flc-accent, #C73E2C) 27%, transparent)',
-          boxShadow: '0 6px 18px -10px #B85C3866',
+          background: `radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--flc-accent-2, #5B8DEF) 9%, transparent) 0%, transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--flc-accent, #2F6BFF) 7%, transparent) 0%, transparent 60%), var(--flc-card, #FFFFFF)`,
+          border: '1px solid color-mix(in srgb, var(--flc-accent, #2F6BFF) 27%, transparent)',
+          boxShadow: '0 6px 18px -10px #2F6BFF66',
         }}
       >
         <div className="relative flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h3 className="text-base font-bold" style={{ fontFamily: 'Cormorant Garamond', color: 'var(--flc-ink2, #3A332B)' }}>
+            <h3 className="text-base font-bold" style={{ fontFamily: 'Cormorant Garamond', color: 'var(--flc-ink2, #334155)' }}>
               Customer reviews & sentiment
             </h3>
-            <p className="text-xs max-w-3xl mt-1" style={{ color: 'var(--flc-ink2, #3A332B)' }}>
+            <p className="text-xs max-w-3xl mt-1" style={{ color: 'var(--flc-ink2, #334155)' }}>
               Every rating is /10. Customers leave ratings on their wallet card after a visit.
               Sentiment and topics are computed from the review text on submit — numbers stay up to date
               automatically whenever a new review is posted.
             </p>
           </div>
           {reviewAnalytics?.total_reviews != null && (
-            <div className="flex items-center gap-2 text-xs text-[#57504A]">
+            <div className="flex items-center gap-2 text-xs text-[#334155]">
               <MessageSquare size={14} /> {reviewAnalytics.total_reviews} review{reviewAnalytics.total_reviews === 1 ? '' : 's'} total
             </div>
           )}
         </div>
 
         {reviewAnalytics && reviewAnalytics.total_reviews === 0 ? (
-          <p className="text-sm text-[#8D857D] italic">
+          <p className="text-sm text-[#64748B] italic">
             No reviews yet. Once customers start rating visits from their wallet card, the KPIs will appear here.
           </p>
         ) : reviewAnalytics ? (
@@ -1312,7 +1312,7 @@ const AnalyticsPage = () => {
                 title="Average rating"
                 value={reviewAnalytics.average_rating != null ? `${reviewAnalytics.average_rating}/10` : '—'}
                 sublabel="The mean rating across every review."
-                accent="#E3A869"
+                accent="#93B4FF"
                 onClick={() => drillCustomers('All reviewers', {})}
                 segment={{ type: 'all' }}
                 openComposer={openComposer}
@@ -1324,7 +1324,7 @@ const AnalyticsPage = () => {
                 title="Negative review rate"
                 value={`${reviewAnalytics.negative_review_rate_pct}%`}
                 sublabel="% of reviews at 1–4 / 10. Leading indicator of churn."
-                accent="#B85C38"
+                accent="#2F6BFF"
                 onClick={async () => {
                   try {
                     const r = await ownerAPI.listReviews(params({ max_rating: 4, limit: 200 }));
@@ -1352,7 +1352,7 @@ const AnalyticsPage = () => {
                 title="Sentiment score"
                 value={`${reviewAnalytics.sentiment_score > 0 ? '+' : ''}${reviewAnalytics.sentiment_score}`}
                 sublabel="Positive % minus negative %. -100 = all bad, +100 = all good."
-                accent="#4A5D23"
+                accent="#2F6BFF"
                 onClick={async () => {
                   try {
                     const r = await ownerAPI.listReviews(params({ sentiment: 'negative', limit: 200 }));
@@ -1382,7 +1382,7 @@ const AnalyticsPage = () => {
                     ? `+${reviewAnalytics.review_velocity.delta_pct}% vs. the 30 days before (${reviewAnalytics.review_velocity.prev_30d})`
                     : `${reviewAnalytics.review_velocity.delta_pct}% vs. the 30 days before (${reviewAnalytics.review_velocity.prev_30d})`
                 }
-                accent="#96431F"
+                accent="#1D4ED8"
                 onClick={async () => {
                   try {
                     const r = await ownerAPI.listReviews(params({ limit: 30 }));
@@ -1409,11 +1409,11 @@ const AnalyticsPage = () => {
             {/* Rating distribution + topic breakdown side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2">
               {/* Rating distribution (1-10 histogram) */}
-              <div className="border border-[#E9E5E0] rounded-lg p-4">
-                <p className="text-sm font-bold text-[#171412] mb-2 flex items-center gap-2">
+              <div className="border border-[#DCE3EF] rounded-lg p-4">
+                <p className="text-sm font-bold text-[#0F172A] mb-2 flex items-center gap-2">
                   <Star size={14} /> Rating distribution
                 </p>
-                <p className="text-xs text-[#8D857D] mb-3">
+                <p className="text-xs text-[#64748B] mb-3">
                   How many reviews landed at each score. Bars show share of total.
                 </p>
                 <div className="space-y-1">
@@ -1423,14 +1423,14 @@ const AnalyticsPage = () => {
                     return [10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => {
                       const v = dist[String(n)] || 0;
                       const pct = Math.round((v / max) * 100);
-                      const color = n >= 8 ? '#4A5D23' : n >= 5 ? '#E3A869' : '#B85C38';
+                      const color = n >= 8 ? '#2F6BFF' : n >= 5 ? '#93B4FF' : '#2F6BFF';
                       return (
                         <div key={n} className="flex items-center gap-2 text-xs">
-                          <span className="w-6 text-right font-semibold text-[#171412]">{n}</span>
-                          <div className="flex-1 bg-[#F5F4F1] rounded h-4 overflow-hidden">
+                          <span className="w-6 text-right font-semibold text-[#0F172A]">{n}</span>
+                          <div className="flex-1 bg-[#F5F7FB] rounded h-4 overflow-hidden">
                             <div className="h-full rounded" style={{ width: `${pct}%`, backgroundColor: color }} />
                           </div>
-                          <span className="w-8 text-right text-[#57504A]">{v}</span>
+                          <span className="w-8 text-right text-[#334155]">{v}</span>
                         </div>
                       );
                     });
@@ -1439,16 +1439,16 @@ const AnalyticsPage = () => {
               </div>
 
               {/* Topic breakdown */}
-              <div className="border border-[#E9E5E0] rounded-lg p-4">
-                <p className="text-sm font-bold text-[#171412] mb-2 flex items-center gap-2">
+              <div className="border border-[#DCE3EF] rounded-lg p-4">
+                <p className="text-sm font-bold text-[#0F172A] mb-2 flex items-center gap-2">
                   <Activity size={14} /> Topic / theme breakdown
                 </p>
-                <p className="text-xs text-[#8D857D] mb-3">
+                <p className="text-xs text-[#64748B] mb-3">
                   Which themes customers mention and the average rating per theme. Lets you see
                   <em> why</em> ratings move — not just that they did.
                 </p>
                 {(reviewAnalytics.topic_breakdown || []).length === 0 ? (
-                  <p className="text-xs text-[#8D857D] italic">No text mentions to cluster yet.</p>
+                  <p className="text-xs text-[#64748B] italic">No text mentions to cluster yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {reviewAnalytics.topic_breakdown.map((t) => {
@@ -1459,19 +1459,19 @@ const AnalyticsPage = () => {
                         price: '💶 Price / value',
                         wait_time: '⏱ Wait time',
                       }[t.topic] || t.topic;
-                      const avgColor = t.avg_rating >= 8 ? '#4A5D23' : t.avg_rating >= 6 ? '#E3A869' : '#B85C38';
+                      const avgColor = t.avg_rating >= 8 ? '#2F6BFF' : t.avg_rating >= 6 ? '#93B4FF' : '#2F6BFF';
                       return (
-                        <div key={t.topic} className="p-2 rounded bg-[#FAFAF8] border border-[#E9E5E0]">
+                        <div key={t.topic} className="p-2 rounded bg-[#F5F7FB] border border-[#DCE3EF]">
                           <div className="flex items-center justify-between text-xs">
-                            <span className="font-semibold text-[#171412]">{label}</span>
+                            <span className="font-semibold text-[#0F172A]">{label}</span>
                             <span style={{ color: avgColor }} className="font-bold">{t.avg_rating}/10 · {t.count} mention{t.count === 1 ? '' : 's'}</span>
                           </div>
                           <div className="mt-1 flex h-1.5 rounded overflow-hidden">
-                            <div style={{ width: `${t.positive_pct}%`, backgroundColor: '#4A5D23' }} />
-                            <div style={{ width: `${100 - t.positive_pct - t.negative_pct}%`, backgroundColor: '#E3A869' }} />
-                            <div style={{ width: `${t.negative_pct}%`, backgroundColor: '#B85C38' }} />
+                            <div style={{ width: `${t.positive_pct}%`, backgroundColor: '#2F6BFF' }} />
+                            <div style={{ width: `${100 - t.positive_pct - t.negative_pct}%`, backgroundColor: '#93B4FF' }} />
+                            <div style={{ width: `${t.negative_pct}%`, backgroundColor: '#2F6BFF' }} />
                           </div>
-                          <p className="text-[10px] text-[#8D857D] mt-1">
+                          <p className="text-[10px] text-[#64748B] mt-1">
                             {t.positive_pct}% positive · {t.negative_pct}% negative · {t.mention_pct}% of reviews mention this
                           </p>
                         </div>
@@ -1484,26 +1484,26 @@ const AnalyticsPage = () => {
 
             {/* Recent reviews feed */}
             {(reviewAnalytics.recent || []).length > 0 && (
-              <div className="border border-[#E9E5E0] rounded-lg p-4">
-                <p className="text-sm font-bold text-[#171412] mb-2">Most recent reviews</p>
+              <div className="border border-[#DCE3EF] rounded-lg p-4">
+                <p className="text-sm font-bold text-[#0F172A] mb-2">Most recent reviews</p>
                 <div className="space-y-2">
                   {reviewAnalytics.recent.map((r) => (
-                    <div key={r.id} className="p-3 rounded bg-[#FAFAF8] border border-[#E9E5E0] flex items-start gap-3">
+                    <div key={r.id} className="p-3 rounded bg-[#F5F7FB] border border-[#DCE3EF] flex items-start gap-3">
                       <div className={`shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold text-white`}
-                           style={{ backgroundColor: r.rating >= 8 ? '#4A5D23' : r.rating >= 5 ? '#E3A869' : '#B85C38' }}>
+                           style={{ backgroundColor: r.rating >= 8 ? '#2F6BFF' : r.rating >= 5 ? '#93B4FF' : '#2F6BFF' }}>
                         {r.rating}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap text-xs">
-                          <span className="font-semibold text-[#171412]">{r.sentiment}</span>
+                          <span className="font-semibold text-[#0F172A]">{r.sentiment}</span>
                           {r.topics?.length > 0 && (
-                            <span className="text-[#8D857D]">· {r.topics.join(', ')}</span>
+                            <span className="text-[#64748B]">· {r.topics.join(', ')}</span>
                           )}
-                          <span className="text-[#8D857D] ml-auto">
+                          <span className="text-[#64748B] ml-auto">
                             {r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}
                           </span>
                         </div>
-                        {r.text && <p className="text-sm text-[#171412] mt-1">"{r.text}"</p>}
+                        {r.text && <p className="text-sm text-[#0F172A] mt-1">"{r.text}"</p>}
                       </div>
                     </div>
                   ))}
@@ -1512,7 +1512,7 @@ const AnalyticsPage = () => {
             )}
           </>
         ) : (
-          <p className="text-sm text-[#8D857D]">Loading review data…</p>
+          <p className="text-sm text-[#64748B]">Loading review data…</p>
         )}
       </section>
 
@@ -1520,13 +1520,13 @@ const AnalyticsPage = () => {
       <section
         className="rounded-xl p-4 relative overflow-hidden"
         style={{
-          background: `radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--flc-info, #3568B8) 9%, transparent) 0%, transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--flc-ok, #0F8B58) 7%, transparent) 0%, transparent 60%), var(--flc-card, #FFFFFF)`,
-          border: '1px solid color-mix(in srgb, var(--flc-info, #3568B8) 27%, transparent)',
+          background: `radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--flc-info, #2F6BFF) 9%, transparent) 0%, transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--flc-ok, #16A34A) 7%, transparent) 0%, transparent 60%), var(--flc-card, #FFFFFF)`,
+          border: '1px solid color-mix(in srgb, var(--flc-info, #2F6BFF) 27%, transparent)',
           boxShadow: '0 6px 18px -10px #6BA4D955',
         }}
       >
         <div className="relative flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h3 className="text-base font-bold" style={{ fontFamily: 'Cormorant Garamond', color: 'var(--flc-info, #1E40AF)' }}>
+          <h3 className="text-base font-bold" style={{ fontFamily: 'Cormorant Garamond', color: 'var(--flc-info, #1D4ED8)' }}>
             Customer Ranking
           </h3>
           <div className="flex flex-wrap gap-2">
@@ -1544,8 +1544,8 @@ const AnalyticsPage = () => {
                   onClick={() => setRankingMode(t.key)}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-1.5 transition-colors ${
                     active
-                      ? 'bg-[#B85C38] text-white'
-                      : 'bg-[#F5F4F1] text-[#57504A] hover:bg-[#E9E5E0]'
+                      ? 'bg-[#2F6BFF] text-white'
+                      : 'bg-[#F5F7FB] text-[#334155] hover:bg-[#DCE3EF]'
                   }`}
                 >
                   <Icon size={14} />
@@ -1562,7 +1562,7 @@ const AnalyticsPage = () => {
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
-              <tr className="border-b border-[#E9E5E0] text-[#57504A]">
+              <tr className="border-b border-[#DCE3EF] text-[#334155]">
                 <th className="py-2 px-3">#</th>
                 <th className="py-2 px-3">Customer</th>
                 <th className="py-2 px-3">Email</th>
@@ -1573,13 +1573,13 @@ const AnalyticsPage = () => {
             </thead>
             <tbody>
               {rankedCustomers.length === 0 ? (
-                <tr><td colSpan={6} className="py-6 text-center text-[#8D857D]">No customers to rank yet.</td></tr>
+                <tr><td colSpan={6} className="py-6 text-center text-[#64748B]">No customers to rank yet.</td></tr>
               ) : (
                 rankedCustomers.map((c, i) => (
-                  <tr key={c.id || i} className="border-b border-[#E9E5E0] hover:bg-[#F5F4F1]">
-                    <td className="py-2 px-3 text-[#8D857D]">{i + 1}</td>
-                    <td className="py-2 px-3 font-medium text-[#171412]">{c.name || '—'}</td>
-                    <td className="py-2 px-3 text-[#57504A] text-xs">{c.email || '—'}</td>
+                  <tr key={c.id || i} className="border-b border-[#DCE3EF] hover:bg-[#F5F7FB]">
+                    <td className="py-2 px-3 text-[#64748B]">{i + 1}</td>
+                    <td className="py-2 px-3 font-medium text-[#0F172A]">{c.name || '—'}</td>
+                    <td className="py-2 px-3 text-[#334155] text-xs">{c.email || '—'}</td>
                     <td className="py-2 px-3"><TierBadge tier={c.tier} /></td>
                     <td className="py-2 px-3 text-right">{c.total_visits ?? 0}</td>
                     <td className="py-2 px-3 text-right">€{(c.total_amount_paid ?? 0).toFixed(2)}</td>
@@ -1602,23 +1602,23 @@ const AnalyticsPage = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-2xl font-bold text-[#171412]" style={{ fontFamily: 'Cormorant Garamond' }}>
+              <h3 className="text-2xl font-bold text-[#0F172A]" style={{ fontFamily: 'Cormorant Garamond' }}>
                 {drill.title}
               </h3>
-              <button onClick={() => setDrill(null)} className="text-[#A8A29E] hover:text-[#171412]">
+              <button onClick={() => setDrill(null)} className="text-[#94A3B8] hover:text-[#0F172A]">
                 <X size={22} />
               </button>
             </div>
             {drillLoading ? (
-              <p className="text-[#57504A] py-8 text-center">Loading customers…</p>
+              <p className="text-[#334155] py-8 text-center">Loading customers…</p>
             ) : drill.error ? (
-              <p className="text-[#B85C38] py-8 text-center">Error: {drill.error}</p>
+              <p className="text-[#2F6BFF] py-8 text-center">Error: {drill.error}</p>
             ) : (!drill.rows || drill.rows.length === 0) ? (
-              <p className="text-[#57504A] py-8 text-center">No matching records.</p>
+              <p className="text-[#334155] py-8 text-center">No matching records.</p>
             ) : (
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-[#E9E5E0] text-[#57504A]">
+                  <tr className="border-b border-[#DCE3EF] text-[#334155]">
                     {drill.columns.map((c) => (
                       <th key={c.key} className="py-2 px-3">{c.label}</th>
                     ))}
@@ -1626,9 +1626,9 @@ const AnalyticsPage = () => {
                 </thead>
                 <tbody>
                   {drill.rows.map((r, i) => (
-                    <tr key={i} className="border-b border-[#E9E5E0]">
+                    <tr key={i} className="border-b border-[#DCE3EF]">
                       {drill.columns.map((c) => (
-                        <td key={c.key} className="py-2 px-3 text-[#171412]">
+                        <td key={c.key} className="py-2 px-3 text-[#0F172A]">
                           {c.render ? c.render(r[c.key]) : (r[c.key] ?? '—')}
                         </td>
                       ))}
@@ -1655,13 +1655,13 @@ const AnalyticsPage = () => {
       <section
         className="rounded-xl p-4 relative overflow-hidden"
         style={{
-          background: `radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--flc-ok, #0F8B58) 10%, transparent) 0%, transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--flc-ok, #0F8B58) 7%, transparent) 0%, transparent 60%), var(--flc-card, #FFFFFF)`,
-          border: '1px solid color-mix(in srgb, var(--flc-ok, #0F8B58) 27%, transparent)',
+          background: `radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--flc-ok, #16A34A) 10%, transparent) 0%, transparent 55%), radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--flc-ok, #16A34A) 7%, transparent) 0%, transparent 60%), var(--flc-card, #FFFFFF)`,
+          border: '1px solid color-mix(in srgb, var(--flc-ok, #16A34A) 27%, transparent)',
           boxShadow: '0 6px 18px -10px #6FA89C55',
         }}
       >
         <div className="relative flex flex-wrap items-start justify-between gap-3 mb-2">
-          <h3 className="text-base font-bold" style={{ fontFamily: 'Cormorant Garamond', color: 'var(--flc-ok, #2d5016)' }}>
+          <h3 className="text-base font-bold" style={{ fontFamily: 'Cormorant Garamond', color: 'var(--flc-ok, #1D4ED8)' }}>
             Customize Recovered Customers Filter
           </h3>
           <SendCampaignButton
@@ -1673,39 +1673,39 @@ const AnalyticsPage = () => {
             )}
           />
         </div>
-        <p className="text-sm text-[#57504A] mb-4">
+        <p className="text-sm text-[#334155] mb-4">
           "Customers who were quiet for X days and came back in the last Y days"
         </p>
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-2">
-            <label className="text-sm text-[#57504A]">Inactive for</label>
+            <label className="text-sm text-[#334155]">Inactive for</label>
             <NumberInput
               min={1}
               max={730}
               emptyValue={30}
               value={recoveryInactiveDays}
               onChange={(n) => setRecoveryInactiveDays(n || 30)}
-              className="w-20 px-2 py-1 border border-[#E9E5E0] rounded text-center"
+              className="w-20 px-2 py-1 border border-[#DCE3EF] rounded text-center"
             />
-            <span className="text-sm text-[#57504A]">days,</span>
+            <span className="text-sm text-[#334155]">days,</span>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-sm text-[#57504A]">came back in last</label>
+            <label className="text-sm text-[#334155]">came back in last</label>
             <NumberInput
               min={1}
               max={730}
               emptyValue={30}
               value={recoveryWindowDays}
               onChange={(n) => setRecoveryWindowDays(n || 30)}
-              className="w-20 px-2 py-1 border border-[#E9E5E0] rounded text-center"
+              className="w-20 px-2 py-1 border border-[#DCE3EF] rounded text-center"
             />
-            <span className="text-sm text-[#57504A]">days</span>
+            <span className="text-sm text-[#334155]">days</span>
           </div>
-          <div className="ml-auto flex items-center gap-3 text-sm text-[#171412] font-medium">
+          <div className="ml-auto flex items-center gap-3 text-sm text-[#0F172A] font-medium">
             <span>
-              <span className="text-[#B85C38] font-bold">{recovered?.count ?? 0}</span> customers match
+              <span className="text-[#2F6BFF] font-bold">{recovered?.count ?? 0}</span> customers match
               {' '}
-              <span className="text-[#8D857D]">({recovered?.percentage ?? 0}% of base)</span>
+              <span className="text-[#64748B]">({recovered?.percentage ?? 0}% of base)</span>
             </span>
             <button
               type="button"
@@ -1726,7 +1726,7 @@ const AnalyticsPage = () => {
                 })
               }
               className="px-3 py-1.5 rounded-lg border text-sm font-semibold transition disabled:opacity-40"
-              style={{ borderColor: '#B85C38', color: '#B85C38' }}
+              style={{ borderColor: '#2F6BFF', color: '#2F6BFF' }}
               title="Show the list of customers that match the filter above"
             >
               View the {recovered?.count ?? 0} customer{recovered?.count === 1 ? '' : 's'}

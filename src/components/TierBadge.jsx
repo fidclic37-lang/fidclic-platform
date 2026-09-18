@@ -51,6 +51,8 @@ export default function TierBadge({ tier = 'bronze', size = 'md', showLabel = tr
 
   return (
     <span
+      className="tier-badge"
+      data-tier={key}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

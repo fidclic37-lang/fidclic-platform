@@ -30,10 +30,10 @@ const severityIcon = (severity) => {
   return Sparkles;
 };
 const severityColor = (severity) => {
-  if (severity === 'critical') return '#B85C38';
-  if (severity === 'warning')  return '#E3A869';
-  if (severity === 'positive') return '#4A5D23';
-  return '#B85C38';
+  if (severity === 'critical') return '#E11D48';
+  if (severity === 'warning')  return '#D97706';
+  if (severity === 'positive') return '#16A34A';
+  return '#2F6BFF';
 };
 
 // Resolve an alert into "Voir clients" + "Envoyer campagne" navigation
@@ -185,7 +185,7 @@ const NotificationBell = () => {
         onClick={() => (open ? setOpen(false) : handleOpen())}
         className="relative w-11 h-11 rounded-full flex items-center justify-center transition-all hover:scale-105"
         style={{
-          background: 'linear-gradient(135deg, #B85C38 0%, #E3A869 100%)',
+          background: 'var(--flc-cta, linear-gradient(135deg, #3B7BFF, #1D4ED8))',
           border: '2px solid color-mix(in srgb, var(--flc-card, #FFFFFF) 85%, transparent)',
           boxShadow: unreadCount > 0
             ? '0 4px 14px -4px rgba(184,92,56,0.55)'
@@ -202,7 +202,7 @@ const NotificationBell = () => {
             style={{
               background: 'var(--flc-card, #FFFFFF)',
               color: 'var(--flc-accent, #B85C38)',
-              border: '1.5px solid #B85C38',
+              border: '1.5px solid var(--flc-accent, #2F6BFF)',
               boxShadow: '0 2px 4px rgba(184,92,56,0.4)',
             }}
           >
@@ -220,8 +220,8 @@ const NotificationBell = () => {
           <div
             className="px-4 py-3 border-b relative overflow-hidden"
             style={{
-              borderColor: '#EFE9E0',
-              background: 'linear-gradient(135deg, #171412 0%, #2A1C2E 100%)',
+              borderColor: 'var(--flc-line, #DCE3EF)',
+              background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
               color: 'white',
             }}
           >

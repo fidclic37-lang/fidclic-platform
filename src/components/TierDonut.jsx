@@ -17,10 +17,10 @@ import { useBranch } from '../contexts/BranchContext';
  * tenants.
  */
 const TIER_META = {
-  bronze: { label: 'Bronze', color: '#8B6914' },
-  silver: { label: 'Silver', color: '#A8A8A8' },
-  gold:   { label: 'Gold',   color: '#E3A869' },
-  vip:    { label: 'VIP',    color: '#96431F' },
+  bronze: { label: 'Bronze', color: '#C7D7FF' },
+  silver: { label: 'Silver', color: '#CBD5E1' },
+  gold:   { label: 'Gold',   color: '#93B4FF' },
+  vip:    { label: 'VIP',    color: '#1D4ED8' },
 };
 
 export default function TierDonut() {
@@ -94,7 +94,7 @@ export default function TierDonut() {
                 </Pie>
                 <Tooltip
                   contentStyle={{
-                    background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #EFEDE9)',
+                    background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #E6EAF2)',
                     borderRadius: 8, padding: '4px 8px', fontSize: 11,
                     boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
                   }}

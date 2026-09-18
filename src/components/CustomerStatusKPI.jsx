@@ -84,9 +84,9 @@ const pct = (n, total) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
 const Tile = ({ label, value, pct, icon: Icon, tone }) => {
   const palette = {
-    success: { bg: 'color-mix(in srgb, var(--flc-ok, #0F8B58) 10%, var(--flc-card, #FFFFFF))',   fg: 'var(--flc-ok, #065F46)',   accent: 'var(--flc-ok, #10B981)' },
+    success: { bg: 'color-mix(in srgb, var(--flc-ok, #16A34A) 10%, var(--flc-card, #FFFFFF))',   fg: 'var(--flc-ok, #065F46)',   accent: 'var(--flc-ok, #10B981)' },
     danger:  { bg: 'color-mix(in srgb, var(--flc-risk, #C22F45) 10%, var(--flc-card, #FFFFFF))', fg: 'var(--flc-risk, #991B1B)', accent: 'var(--flc-risk, #DC2626)' },
-    info:    { bg: 'color-mix(in srgb, var(--flc-info, #3568B8) 10%, var(--flc-card, #FFFFFF))', fg: 'var(--flc-info, #1E40AF)', accent: 'var(--flc-info, #3B82F6)' },
+    info:    { bg: 'color-mix(in srgb, var(--flc-info, #2F6BFF) 10%, var(--flc-card, #FFFFFF))', fg: 'var(--flc-info, #1D4ED8)', accent: 'var(--flc-info, #2F6BFF)' },
     default: { bg: 'var(--flc-paper2, #F3F4F6)', fg: 'var(--flc-ink2, #374151)', accent: 'var(--flc-ink3, #6B7280)' },
   }[tone] || { bg: 'var(--flc-paper2, #F3F4F6)', fg: 'var(--flc-ink2, #374151)', accent: 'var(--flc-ink3, #6B7280)' };
 

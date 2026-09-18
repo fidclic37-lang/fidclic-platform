@@ -14,11 +14,11 @@ import React from 'react';
 
 const ACCENT = {
   purple:  'var(--flc-tone-blue, #2F6BFF)',
-  cyan:    'var(--flc-tone-sky, #0EA5E9)',
-  pink:    'var(--flc-tone-red, #E11D48)',
-  emerald: 'var(--flc-tone-green, #16A34A)',
-  orange:  'var(--flc-tone-orange, #F97316)',
-  amber:   'var(--flc-tone-amber, #F59E0B)',
+  cyan:    'var(--flc-tone-blue, #2F6BFF)',
+  pink:    'var(--flc-tone-blue, #2F6BFF)',
+  emerald: 'var(--flc-tone-blue, #2F6BFF)',
+  orange:  'var(--flc-tone-blue, #2F6BFF)',
+  amber:   'var(--flc-tone-blue, #2F6BFF)',
 };
 
 const STATUS_PILL = {

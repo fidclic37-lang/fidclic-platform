@@ -125,17 +125,17 @@ export default function WeeklyAcquisitionPanel({ controlledDays = null } = {}) {
           <div style={{ width: '100%', height: 100 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: -28 }}>
-                <CartesianGrid stroke="var(--flc-line, #EFEDE9)" strokeDasharray="3 3" vertical={false} />
+                <CartesianGrid stroke="var(--flc-line, #E6EAF2)" strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="idx" tickLine={false} axisLine={false}
-                  tick={{ fontSize: 9, fill: 'var(--flc-ink3, #9C9590)' }}
+                  tick={{ fontSize: 9, fill: 'var(--flc-ink3, #94A3B8)' }}
                   interval={3}
                 />
                 <YAxis hide />
                 <Tooltip
                   cursor={{ fill: 'rgba(127,162,105,0.08)' }}
                   contentStyle={{
-                    background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #EFEDE9)',
+                    background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--flc-line, #E6EAF2)',
                     borderRadius: 8, padding: '4px 8px', fontSize: 11,
                     boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
                   }}
@@ -144,7 +144,7 @@ export default function WeeklyAcquisitionPanel({ controlledDays = null } = {}) {
                 />
                 <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={14}>
                   {data.map((d, i) => (
-                    <Cell key={i} fill={d.isBest ? '#5B8A38' : '#7FA269'} />
+                    <Cell key={i} fill={d.isBest ? '#2F6BFF' : '#93B4FF'} />
                   ))}
                 </Bar>
               </BarChart>
