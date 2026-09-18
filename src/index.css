@@ -2093,3 +2093,128 @@ textarea::placeholder {
 .flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-orange .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-amber .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-yellow .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-coral .fd-kpi-value{background:linear-gradient(120deg,#FF7A59,#E0397A);-webkit-background-clip:text;background-clip:text;color:transparent!important}
 .flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-red .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-rose .fd-kpi-value{background:linear-gradient(120deg,#E23D5C,#B02468);-webkit-background-clip:text;background-clip:text;color:transparent!important}
 .flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-purple .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-lilac .fd-kpi-value{background:linear-gradient(120deg,#E0397A,#8B3FC3);-webkit-background-clip:text;background-clip:text;color:transparent!important}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ANALYTICS — "Cobalt" theme (2026-09). White / light-grey surfaces,
+   blue accent, sans-serif everywhere. Scoped to the analytics page root
+   (.av2-light-skin.av2-cobalt) so OwnerDashboard keeps its own skin.
+   Every analytics component reads --flc-* / --av2-* tokens; this block
+   only re-points those tokens, it does not restyle components one by one.
+   ═══════════════════════════════════════════════════════════════════ */
+.av2-light-skin.av2-cobalt {
+  /* hue fragments consumed by hsl(var(--x)) */
+  --bg: 220 33% 97%;              /* #F5F7FB page */
+  --bg-2: 0 0% 100%;
+  --surface: 0 0% 100%;
+  --surface-2: 0 0% 100%;
+  --surface-3: 220 30% 95%;
+  --sidebar-dark: 0 0% 100%;
+  --hairline: 222 30% 92%;        /* #E6EAF2 border */
+  --av2-border: 222 30% 92%;
+  --av2-border-strong: 222 22% 85%;
+  --av2-text: 222 47% 11%;        /* #0F172A */
+  --av2-text-dim: 215 25% 27%;    /* #334155 */
+  --av2-text-muted: 215 16% 47%;  /* #64748B */
+  --av2-text-faint: 215 20% 65%;
+  --av2-purple: 222 100% 59%;     /* glow / focus → blue */
+  --av2-purple-300: 222 100% 90%;
+  --av2-purple-400: 222 100% 70%;
+  --av2-purple-600: 224 76% 48%;
+  --av2-indigo: 222 100% 59%;
+  --av2-pink: 347 77% 50%;
+  --av2-cyan: 199 89% 48%;
+  --av2-emerald: 142 71% 45%;
+  --av2-amber: 38 92% 50%;
+  --av2-orange: 25 95% 53%;
+  --av2-radius-sm: 10px;
+  --av2-radius: 12px;
+  --av2-radius-lg: 14px;
+  --av2-radius-xl: 16px;
+
+  /* full colours consumed by var(--flc-*) */
+  --flc-paper: #F5F7FB;  --flc-paper2: #EEF2F9;  --flc-card: #FFFFFF;
+  --flc-ink: #0F172A;    --flc-ink2: #334155;    --flc-ink3: #64748B;
+  --flc-line: #E6EAF2;   --flc-line-hi: #C9D6F2;
+  --flc-accent: #2F6BFF; --flc-accent-deep: #1D4ED8; --flc-accent-2: #5B8DEF;
+  --flc-accent-soft: #EAF0FF;
+  --flc-ok: #16A34A;     --flc-risk: #E11D48;    --flc-warn: #D97706;  --flc-info: #2F6BFF;
+  --flc-cta: linear-gradient(135deg, #3B7BFF, #1D4ED8);  --flc-on-cta: #FFFFFF;
+  /* chart series: primary blue, then lighter blues, then a neutral */
+  --flc-series-1: #2F6BFF; --flc-series-2: #93B4FF; --flc-series-3: #C7D7FF;
+  --flc-series-4: #1D4ED8; --flc-series-5: #CBD5E1;
+  /* icon-chip tones (light square + coloured glyph, like the mockup) */
+  --flc-tone-blue: #2F6BFF; --flc-tone-sky: #0EA5E9; --flc-tone-green: #16A34A;
+  --flc-tone-purple: #7C3AED; --flc-tone-red: #E11D48; --flc-tone-orange: #F97316; --flc-tone-amber: #F59E0B;
+
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #0F172A;
+}
+.av2-cobalt .fdt-analytics-v2 { background: #F5F7FB; }
+.av2-cobalt, .av2-cobalt *, .av2-cobalt h1, .av2-cobalt h2, .av2-cobalt h3, .av2-cobalt .vwcc h3 {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif !important;
+}
+.av2-cobalt .av2-mono, .av2-cobalt .av2-mono * { font-family: 'JetBrains Mono', ui-monospace, monospace !important; }
+.av2-cobalt .av2-h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; color: #0F172A; }
+.av2-cobalt .av2-sub { color: #64748B; font-size: 13px; }
+.av2-cobalt .av2-card, .av2-cobalt .fdt-analytics-v2 .av2-card {
+  background: #FFFFFF;
+  border: 1px solid #E6EAF2;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .03);
+}
+.av2-cobalt .av2-card.av2-glow, .av2-cobalt .fdt-analytics-v2 .av2-card.av2-glow {
+  box-shadow: 0 0 0 1px rgba(47, 107, 255, .16), 0 10px 28px -14px rgba(47, 107, 255, .30);
+  border-color: rgba(47, 107, 255, .28);
+}
+
+/* Cobalt must win over the Éclat Aurora glass pass above (which uses
+   !important on .flc:not(.flc-nuit) …). Same prefix + one more class =
+   higher specificity, so these rules apply without touching Aurora. */
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt {
+  background: #F5F7FB !important;
+  /* bleed over <main>'s padding (px-6 py-5 / lg:px-8) so the light canvas
+     fills the content area edge to edge instead of showing the sunset. */
+  margin: -20px -24px -20px;
+  padding: 20px 24px 28px;
+  min-height: calc(100vh - 64px);
+}
+@media (min-width: 1024px) {
+  .flc:not(.flc-nuit) .av2-light-skin.av2-cobalt { margin: -20px -32px -20px; padding: 20px 32px 28px; }
+}
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt .av2-card,
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt .ftf {
+  background: #FFFFFF !important;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid #E6EAF2 !important;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .03);
+}
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt .av2-card.av2-glow {
+  box-shadow: 0 0 0 1px rgba(47, 107, 255, .16), 0 10px 28px -14px rgba(47, 107, 255, .30);
+  border-color: rgba(47, 107, 255, .28) !important;
+}
+.av2-light-skin.av2-cobalt .av2-card h3,
+.av2-light-skin.av2-cobalt .vwcc h3,
+.av2-light-skin.av2-cobalt h2,
+.av2-light-skin.av2-cobalt h3 {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  letter-spacing: -0.01em !important;
+  color: #0F172A;
+}
+/* Legacy analytics block under the divider: same white cards, no sunset
+   washes, flat borders — it must read as one page with the V2 block. */
+.av2-light-skin.av2-cobalt .av2-legacy-wrapper .ft-lift {
+  border-color: #E6EAF2 !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .03) !important;
+}
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt .av2-legacy-wrapper section[style*="radial-gradient"],
+.av2-light-skin.av2-cobalt .av2-legacy-wrapper section[style*="radial-gradient"] {
+  background: #FFFFFF !important;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid #E6EAF2;
+  border-radius: 14px;
+}
+.av2-light-skin.av2-cobalt .av2-legacy-wrapper [class*="border-[#E7E5E4]"],
+.av2-light-skin.av2-cobalt .av2-legacy-wrapper [class*="border-[#ECE3D2]"] { border-color: #E6EAF2 !important; }

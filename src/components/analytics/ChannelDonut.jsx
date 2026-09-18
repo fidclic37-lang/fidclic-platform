@@ -16,11 +16,11 @@ import React from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 const DEFAULT_PALETTE = [
-  { from: 'var(--flc-accent, #C73E2C)', to: 'var(--flc-accent-deep, #A82843)' }, // purple
-  { from: 'hsl(215 65% 48%)', to: 'hsl(208 55% 40%)' }, // cyan
-  { from: 'var(--flc-risk, #C22F45)', to: 'var(--flc-risk, #C22F45)' }, // pink
-  { from: 'hsl(105 30% 38%)', to: 'hsl(95 32% 50%)' }, // emerald
-  { from: 'hsl(32 80% 50%)',  to: 'hsl(42 78% 52%)' },  // orange→amber
+  { from: 'var(--flc-series-1, #2F6BFF)', to: 'var(--flc-series-4, #1D4ED8)' }, // blue
+  { from: 'var(--flc-series-2, #93B4FF)', to: 'var(--flc-series-2, #93B4FF)' }, // light blue
+  { from: 'var(--flc-series-3, #C7D7FF)', to: 'var(--flc-series-3, #C7D7FF)' }, // pale blue
+  { from: 'var(--flc-series-5, #CBD5E1)', to: 'var(--flc-series-5, #CBD5E1)' }, // neutral
+  { from: 'var(--flc-tone-sky, #0EA5E9)', to: 'var(--flc-tone-sky, #0EA5E9)' }, // sky
 ];
 
 const TOOLTIP_STYLE = {
@@ -30,7 +30,7 @@ const TOOLTIP_STYLE = {
   color: 'var(--flc-ink, #191410)',
   fontSize: 12,
   padding: '8px 10px',
-  boxShadow: '0 12px 30px -12px rgba(0,0,0,.6)',
+  boxShadow: '0 8px 24px -12px rgba(16,24,40,.25)',
 };
 
 const ChannelDonut = ({

@@ -20,7 +20,7 @@ const TOOLTIP_STYLE = {
   color: 'var(--flc-ink, #191410)',
   fontSize: 12,
   padding: '8px 10px',
-  boxShadow: '0 12px 30px -12px rgba(0,0,0,.6)',
+  boxShadow: '0 8px 24px -12px rgba(16,24,40,.25)',
 };
 
 const LegendDot = ({ color, label }) => (
@@ -49,7 +49,7 @@ const VisitsBarLineChart = ({ data = [], height = 200, ariaLabel }) => {
     <>
       <div style={{ display: 'flex', gap: 14, marginBottom: 4 }}>
         <LegendDot color="var(--flc-accent, #C73E2C)" label="Visites totales" />
-        <LegendDot color="hsl(208 55% 40%)" label="Clients uniques" />
+        <LegendDot color="var(--flc-series-2, #93B4FF)" label="Clients uniques" />
       </div>
       <div role="img" aria-label={ariaLabel || summary} style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -91,7 +91,7 @@ const VisitsBarLineChart = ({ data = [], height = 200, ariaLabel }) => {
             <Line
               type="monotone"
               dataKey="uniques"
-              stroke="hsl(208 55% 40%)"
+              stroke="var(--flc-series-2, #93B4FF)"
               strokeWidth={2}
               dot={{ r: 2.5, fill: 'hsl(208 55% 40%)', stroke: 'var(--flc-card, #FFFFFF)', strokeWidth: 1 }}
               activeDot={{ r: 4 }}

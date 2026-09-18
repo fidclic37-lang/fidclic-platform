@@ -44,7 +44,7 @@ const SectionTitle = ({ children, action }) => (
 );
 
 const InsightItem = ({ text, cta, onClick }) => (
-  <div style={{ display: 'flex', gap: 10, padding: '10px 0', borderTop: '1px solid #ECE3D2' }}>
+  <div style={{ display: 'flex', gap: 10, padding: '10px 0', borderTop: '1px solid var(--flc-line, #E6EAF2)' }}>
     <div
       aria-hidden="true"
       style={{

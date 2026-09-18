@@ -14,12 +14,12 @@ import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 // hsl(...) strings sourced from the .fdt-analytics-v2 token table so each
 // sparkline reads as part of the same family as its parent card's icon chip.
 const ACCENT = {
-  purple:  { stroke: 'var(--flc-accent-2, #E8703A)', fill: 'var(--flc-accent, #C73E2C)' },
-  pink:    { stroke: 'hsl(351, 95%, 71%)', fill: 'hsl(352, 89%, 60%)' },
-  cyan:    { stroke: 'hsl(187, 85%, 53%)', fill: 'hsl(189, 94%, 43%)' },
-  emerald: { stroke: 'hsl(158, 64%, 52%)', fill: 'hsl(160, 84%, 39%)' },
-  orange:  { stroke: 'hsl(21, 90%, 53%)',  fill: 'hsl(21, 90%, 53%)' },
-  amber:   { stroke: 'hsl(38, 92%, 50%)',  fill: 'hsl(38, 92%, 50%)' },
+  purple:  { stroke: 'var(--flc-tone-blue, #2F6BFF)', fill: 'var(--flc-tone-blue, #2F6BFF)' },
+  pink:    { stroke: 'var(--flc-tone-blue, #2F6BFF)', fill: 'var(--flc-tone-blue, #2F6BFF)' },
+  cyan:    { stroke: 'var(--flc-tone-blue, #2F6BFF)', fill: 'var(--flc-tone-blue, #2F6BFF)' },
+  emerald: { stroke: 'var(--flc-tone-blue, #2F6BFF)', fill: 'var(--flc-tone-blue, #2F6BFF)' },
+  orange:  { stroke: 'var(--flc-tone-blue, #2F6BFF)', fill: 'var(--flc-tone-blue, #2F6BFF)' },
+  amber:   { stroke: 'var(--flc-tone-blue, #2F6BFF)', fill: 'var(--flc-tone-blue, #2F6BFF)' },
 };
 
 const Sparkline = ({ data, accent = 'purple', height = 32, ariaLabel }) => {

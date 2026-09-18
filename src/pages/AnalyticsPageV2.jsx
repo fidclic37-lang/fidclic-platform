@@ -67,7 +67,7 @@ const HeaderChip = ({ icon: Icon, children, badge, onClick, label }) => (
       width: children ? undefined : 36, height: 36,
       justifyContent: 'center',
       background: 'var(--flc-card, #FFFFFF)',
-      border: '1px solid #E9E5E0',
+      border: '1px solid var(--flc-line, #E6EAF2)',
       borderRadius: children ? 99 : 10,
       color: 'var(--flc-ink2, #3A332B)',
       fontSize: 12.5, fontWeight: 500,
@@ -107,7 +107,7 @@ const PrimaryButton = ({ icon: Icon, children, onClick }) => (
       color: 'var(--flc-on-cta, #FFFFFF)',
       fontSize: 12.5, fontWeight: 500,
       cursor: 'pointer',
-      boxShadow: '0 6px 18px -8px rgb(184 92 56 / .55), 0 0 0 1px hsl(42 78% 52% / .15) inset',
+      boxShadow: '0 6px 18px -8px rgba(47, 107, 255, .55)',
       font: 'inherit',
     }}
   >
@@ -123,14 +123,14 @@ const SectionDivider = ({ children }) => (
       margin: '24px 0 6px',
     }}
   >
-    <div style={{ height: 1, flex: 1, background: '#E9E5E0' }} />
+    <div style={{ height: 1, flex: 1, background: 'var(--flc-line, #E6EAF2)' }} />
     <span style={{
       fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
       color: 'var(--flc-ink3, #524A40)', fontWeight: 500, whiteSpace: 'nowrap',
     }}>
       {children}
     </span>
-    <div style={{ height: 1, flex: 1, background: '#E9E5E0' }} />
+    <div style={{ height: 1, flex: 1, background: 'var(--flc-line, #E6EAF2)' }} />
   </div>
 );
 
@@ -399,9 +399,9 @@ export default function AnalyticsPageV2() {
   // New vs Returning segments for the donut.
   const nvrSegments = (nvr.newPct > 0 || nvr.returningPct > 0) ? [
     { name: 'Récurrents', value: Number(nvr.returningPct) || 0,
-      gradientFrom: '#B85C38', gradientTo: '#96431F' },
+      gradientFrom: 'var(--flc-series-1, #2F6BFF)', gradientTo: 'var(--flc-series-4, #1D4ED8)' },
     { name: 'Nouveaux',   value: Number(nvr.newPct) || 0,
-      gradientFrom: 'hsl(208 55% 40%)', gradientTo: 'hsl(215 65% 48%)' },
+      gradientFrom: 'var(--flc-series-2, #93B4FF)', gradientTo: 'var(--flc-series-3, #C7D7FF)' },
   ] : [];
 
   // Loyalty score — same blend as before.
@@ -522,9 +522,9 @@ export default function AnalyticsPageV2() {
   const displayNvrSegments = (nvrSegments.length > 0) ? nvrSegments
     : (isEmpty ? [
         { name: 'Récurrents', value: DEMO.newVsReturning.returningPct,
-          gradientFrom: '#B85C38', gradientTo: '#96431F' },
+          gradientFrom: 'var(--flc-series-1, #2F6BFF)', gradientTo: 'var(--flc-series-4, #1D4ED8)' },
         { name: 'Nouveaux',   value: DEMO.newVsReturning.newPct,
-          gradientFrom: 'hsl(208 55% 40%)', gradientTo: 'hsl(215 65% 48%)' },
+          gradientFrom: 'var(--flc-series-2, #93B4FF)', gradientTo: 'var(--flc-series-3, #C7D7FF)' },
       ] : []);
 
   // Today's date in French — for the "14 Mai – 14 Juin 2026" pill.
@@ -539,7 +539,7 @@ export default function AnalyticsPageV2() {
   }, []);
 
   return (
-    <div className="av2-light-skin">
+    <div className="av2-light-skin av2-cobalt">
       {/* ─── V2 MOCKUP BLOCK ───────────────────────────────────────── */}
       <div className="av2-mockup">
 

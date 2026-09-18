@@ -11,7 +11,7 @@ const AutomationEmpty = ({ onClick, label = 'Créer' }) => (
     onClick={onClick}
     aria-label={`${label} une automatisation`}
     style={{
-      border: '1px dashed hsl(228 30% 26%)',
+      border: '1px dashed var(--flc-line-hi, #C9D6F2)',
       borderRadius: 14,
       padding: 12,
       background: 'transparent',
@@ -31,7 +31,7 @@ const AutomationEmpty = ({ onClick, label = 'Créer' }) => (
       e.currentTarget.style.background = 'color-mix(in srgb, var(--flc-accent, #C73E2C) 5%, transparent)';
     }}
     onMouseLeave={(e) => {
-      e.currentTarget.style.borderColor = 'hsl(228 30% 26%)';
+      e.currentTarget.style.borderColor = 'var(--flc-line-hi, #C9D6F2)';
       e.currentTarget.style.color = 'var(--flc-ink3, #524A40)';
       e.currentTarget.style.background = 'transparent';
     }}

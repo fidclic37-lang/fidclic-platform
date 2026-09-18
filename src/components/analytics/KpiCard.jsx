@@ -19,13 +19,19 @@ import Sparkline from './Sparkline';
 
 // Chip colors are full CSS colors (not hue fragments) so the brand accent
 // can ride the --flc-* vars and flip with the theme.
+const chip = (tone) => ({
+  chipBg: `color-mix(in srgb, ${tone} 12%, transparent)`,
+  chipFg: tone,
+});
+// Cobalt mockup: every KPI chip is the same light-blue square with a blue
+// glyph — the tone prop is kept for the sparkline and for other skins.
 const ACCENT = {
-  purple:  { chipBg: 'linear-gradient(135deg, color-mix(in srgb, var(--flc-accent-2, #E8703A) 26%, transparent), color-mix(in srgb, var(--flc-accent, #C73E2C) 12%, transparent))', chipFg: 'var(--flc-accent, #C73E2C)' },
-  pink:    { chipBg: 'linear-gradient(135deg, hsl(355 60% 48% / .24), hsl(355 60% 48% / .10))', chipFg: 'hsl(355 60% 52%)' },
-  cyan:    { chipBg: 'linear-gradient(135deg, hsl(215 65% 48% / .24), hsl(215 65% 48% / .10))', chipFg: 'hsl(213 60% 46%)' },
-  emerald: { chipBg: 'linear-gradient(135deg, hsl(105 30% 38% / .24), hsl(105 30% 38% / .10))', chipFg: 'hsl(150 45% 34%)' },
-  orange:  { chipBg: 'linear-gradient(135deg, hsl(32 80% 50% / .26), hsl(32 80% 50% / .10))',  chipFg: 'hsl(28 78% 44%)' },
-  amber:   { chipBg: 'linear-gradient(135deg, hsl(42 78% 52% / .26), hsl(42 78% 52% / .10))',  chipFg: 'hsl(38 70% 42%)' },
+  purple:  chip('var(--flc-tone-blue, #2F6BFF)'),
+  cyan:    chip('var(--flc-tone-blue, #2F6BFF)'),
+  emerald: chip('var(--flc-tone-blue, #2F6BFF)'),
+  pink:    chip('var(--flc-tone-blue, #2F6BFF)'),
+  orange:  chip('var(--flc-tone-blue, #2F6BFF)'),
+  amber:   chip('var(--flc-tone-blue, #2F6BFF)'),
 };
 
 const DeltaPill = ({ delta }) => {
@@ -78,7 +84,7 @@ const KpiCard = ({
         border: '1px solid var(--flc-line, #ECE3D2)',
         borderRadius: 18,
         padding: '14px 14px 0',
-        boxShadow: '0 1px 0 0 rgba(255,255,255,.03) inset, 0 18px 40px -22px rgba(0,0,0,.7)',
+        boxShadow: '0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.03)',
         color: 'var(--flc-ink, #191410)',
         font: 'inherit',
         transition: 'transform 180ms cubic-bezier(.2,.7,.3,1), border-color 180ms ease',

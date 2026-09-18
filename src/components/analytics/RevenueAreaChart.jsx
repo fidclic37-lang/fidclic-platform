@@ -19,7 +19,7 @@ const TOOLTIP_STYLE = {
   color: 'var(--flc-ink, #191410)',
   fontSize: 12,
   padding: '6px 10px',
-  boxShadow: '0 12px 30px -12px rgba(0,0,0,.6)',
+  boxShadow: '0 8px 24px -12px rgba(16,24,40,.25)',
 };
 
 const RevenueAreaChart = ({ total, unit = '€', delta, data = [], height = 80, label = 'Revenu mensuel' }) => {
