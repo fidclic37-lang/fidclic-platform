@@ -528,7 +528,7 @@ const DashboardLayout = () => {
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shadow-sm shrink-0"
               style={{ background: `linear-gradient(135deg, ${theme.from} 0%, ${theme.to} 100%)`, fontWeight: 500 }}
-              title={collapsed ? `FidéliTour · ${theme.label}` : undefined}
+              title={collapsed ? `FidClic · ${theme.label}` : undefined}
             >
               F
             </div>
@@ -538,7 +538,7 @@ const DashboardLayout = () => {
                   className="text-[15px] leading-none"
                   style={{ color: 'var(--ink)', fontWeight: 500, letterSpacing: '-0.015em' }}
                 >
-                  FidéliTour
+                  FidClic
                 </p>
                 <p
                   className="text-[9px] uppercase tracking-[0.16em] mt-1"

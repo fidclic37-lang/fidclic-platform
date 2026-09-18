@@ -86,7 +86,7 @@ const RegisterPage = () => {
          style={{ background: 'radial-gradient(circle at 30% 0%, #FCE3DC 0%, transparent 50%), radial-gradient(circle at 100% 100%, #FDE7C7 0%, transparent 60%), #FDFBF7' }}>
       <div className="bg-white p-8 rounded-3xl shadow-xl border border-[#E7E5E4] w-full max-w-md">
         <div className="text-center mb-6">
-          <Link to="/" className="font-['Cormorant_Garamond'] text-3xl font-bold ft-gradient-text">FidéliTour</Link>
+          <Link to="/" className="font-['Cormorant_Garamond'] text-3xl font-bold ft-gradient-text">FidClic</Link>
           <h2 className="text-2xl font-bold text-[#1C1917] mt-4" style={{ fontFamily: 'Cormorant Garamond' }}>
             {t('auth.register_title')}
           </h2>

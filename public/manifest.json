@@ -1,6 +1,6 @@
 {
-  "name": "FidéliTour",
-  "short_name": "FidéliTour",
+  "name": "FidClic",
+  "short_name": "FidClic",
   "description": "Votre carte de fidélité, dans votre poche.",
   "start_url": "/",
   "scope": "/",

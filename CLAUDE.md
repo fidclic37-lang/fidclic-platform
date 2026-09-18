@@ -21,13 +21,12 @@
 
 | Item | Value |
 |---|---|
-| Product name (current code) | **FidéliTour** |
-| Possible rebrand (client docs) | **FidClic** — client's business plan documents use this name. NOT yet decided/applied in code. Ask user before renaming anything. |
+| Product name | **FidClic** — rebrand approved and applied 2026-09-18 (branch feat/rebrand-fidclic). Every user-visible string says FidClic. Internal identifiers deliberately kept: DB `fidelitour_db`, localStorage keys `fidelitour_access_token` / `fidelitour:last_card`, SW cache `fidelitour-meta`, logger names, seed emails `@fidelitour.com`. Do not rename those. |
 | What it is | Loyalty-platform SaaS for French cafés/restaurants. Digital wallet card (PWA), push campaigns, analytics, AI copilot. |
 | Local repo path | `website_antiG/fidelitour-deploy/` |
 | GitHub | `https://github.com/fidclic37-lang/fidclic-platform` (official FidClic account; branch: main). The old personal repo `AKSHANSH-SHUKLA/fidelitour-loyalty-platform` is retired. |
 | Git remote auth | **NEVER embed a token in the remote URL** (that leaked a PAT once). Remote is plain HTTPS; auth comes from `gh auth login` / GitHub Desktop keychain as `fidclic37-lang`. Commits are authored as `fidclic37-lang <fidclic37@gmail.com>` (global git identity — no per-repo override). |
-| Deploy | Vercel, auto-deploy from main. URL: `https://fidelitour-deploy.vercel.app` |
+| Deploy | Official Vercel team `fidclic`, project `fidclic-platform`, Git-connected to the official repo. Production = `main` → **https://app.fidclic.com** (CNAME at OVH). Preview URL per branch. The old personal project `fidelitour-deploy` is retired. |
 | Vercel project | projectId `prj_v4iikwhAgcH4HABksyrQ9e5aYZn7`, orgId `team_ls8ri2DnKqRPK3LymOvyem0O` (in `.vercel/project.json`). Note: Vercel MCP token may lack scope for this team (403 seen). |
 | User email | akshanshshukla963@gmail.com (platform admin) |
 | Support inbox | shuklaakshansh38@gmail.com (receives support tickets; also seeded as test customer "Akshansh", barcode FT-AKSH0001, Tours 37000) |

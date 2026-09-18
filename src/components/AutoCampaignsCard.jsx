@@ -352,7 +352,7 @@ const RunButtons = ({ which, running, onDry, onSend, disabled }) => (
    on Render before relying on auto-campaigns. */
 const TwilioTestBench = () => {
   const [phone, setPhone] = React.useState('');
-  const [msg, setMsg] = React.useState('Test SMS from FidéliTour — Twilio is wired correctly! 🎉');
+  const [msg, setMsg] = React.useState('Test SMS from FidClic — Twilio is wired correctly! 🎉');
   const [busy, setBusy] = React.useState(false);
   const [last, setLast] = React.useState(null);
 

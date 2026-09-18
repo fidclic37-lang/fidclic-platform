@@ -4,7 +4,7 @@
  * Shows a "tap the coffee beans" mini-game. Beans drift around a soft
  * canvas; tapping one earns a point. Score persists in component state
  * only. After 5 seconds the score also fades into a "did you know…"
- * tip about FidéliTour to make the wait feel learn-y instead of empty.
+ * tip about FidClic to make the wait feel learn-y instead of empty.
  *
  * Tunable via props:
  *   - title:   string (default "Chargement de votre tableau de bord")
@@ -16,7 +16,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 const TIPS_FR = [
-  "Le saviez-vous ? Une carte FidéliTour s'ajoute au wallet en 5 secondes.",
+  "Le saviez-vous ? Une carte FidClic s'ajoute au wallet en 5 secondes.",
   "Astuce : 22% des clients reviennent quand on souhaite leur anniversaire.",
   "Vos clients endormis restent endormis… jusqu'à ce qu'on les réveille.",
   "Le mardi est souvent le jour le plus calme. Idéal pour une promo ciblée.",

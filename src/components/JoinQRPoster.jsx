@@ -84,7 +84,7 @@ const JoinQRPoster = ({ joinUrl, businessName }) => {
       const pngUrl = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = pngUrl;
-      a.download = `affiche-fidelitour-${(businessName || 'poster').replace(/[^a-z0-9]/gi, '-').toLowerCase()}.png`;
+      a.download = `affiche-fidclic-${(businessName || 'poster').replace(/[^a-z0-9]/gi, '-').toLowerCase()}.png`;
       a.click();
     } catch (e) {
       console.error('Poster download failed', e);
@@ -102,7 +102,7 @@ const JoinQRPoster = ({ joinUrl, businessName }) => {
       <html lang="fr">
       <head>
         <meta charset="utf-8" />
-        <title>Affiche FidéliTour — ${businessName || ''}</title>
+        <title>Affiche FidClic — ${businessName || ''}</title>
         <style>
           @page { size: A4 portrait; margin: 1cm; }
           body { font-family: -apple-system, system-ui, sans-serif; text-align: center; padding: 40px 20px; color: #171412; }

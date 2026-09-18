@@ -515,7 +515,7 @@ const SceneNotifications = () => {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-bold leading-tight" style={{ color: '#171412' }}>FidéliTour</p>
+                  <p className="text-[10px] font-bold leading-tight" style={{ color: '#171412' }}>FidClic</p>
                   <p className="text-[8px]" style={{ color: '#57504A' }}>maintenant</p>
                 </div>
                 <p className="text-[10px] font-semibold mt-0.5" style={{ color: '#171412' }}>{n.title}</p>
@@ -1037,7 +1037,7 @@ const DashboardEcho = ({ scene }) => (
         <span className="w-2 h-2 rounded-full" style={{ background: '#FF5F57' }} />
         <span className="w-2 h-2 rounded-full" style={{ background: '#FEBC2E' }} />
         <span className="w-2 h-2 rounded-full" style={{ background: '#28C840' }} />
-        <span className="ml-2 text-[9px] font-mono" style={{ color: C.inkMute }}>fidelitour.fr/{scene}</span>
+        <span className="ml-2 text-[9px] font-mono" style={{ color: C.inkMute }}>app.fidclic.com/{scene}</span>
       </div>
       <AnimatePresence mode="wait">
         <motion.div

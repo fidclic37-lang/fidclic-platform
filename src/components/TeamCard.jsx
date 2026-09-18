@@ -54,7 +54,7 @@ const CredentialsCard = ({ creds, onDismiss }) => {
         </div>
       </div>
       <button
-        onClick={() => copy(`Connexion FidéliTour\n${loginUrl}\nEmail : ${creds.email}\nMot de passe : ${creds.password}`)}
+        onClick={() => copy(`Connexion FidClic\n${loginUrl}\nEmail : ${creds.email}\nMot de passe : ${creds.password}`)}
         className="mt-3 w-full text-sm font-semibold text-white py-2 rounded-lg"
         style={{ background: '#B85C38' }}
       >
