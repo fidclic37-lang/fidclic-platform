@@ -77,14 +77,11 @@ const envOutput = `# ───────────────────�
 # MongoDB Atlas connection string. Get one from
 # https://cloud.mongodb.com → cluster → Connect → Drivers → copy the URI.
 MONGODB_URI=mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/fidelitour?retryWrites=true&w=majority
-DB_NAME=fidelitour
 
 # ---- Auth -------------------------------------------------------------
 # JWT signing secret (used for owner + staff tokens). Already generated.
 JWT_SECRET=${jwtSecret}
 
-# Cookie signing secret (HttpOnly cookie that carries the JWT).
-COOKIE_SECRET=${cookieSecret}
 
 # Cron auth: Vercel Cron passes this in the Authorization header automatically
 # when set as a project env var. Used by /api/cron/daily-triggers and
@@ -98,10 +95,8 @@ CRON_SECRET=${cronSecret}
 # invalid the moment the public key changes.
 VAPID_PUBLIC_KEY=${vapid.publicKey}
 VAPID_PRIVATE_KEY=${vapid.privateKey}
-VAPID_SUBJECT=mailto:contact@fidelitour.fr
+VAPID_SUBJECT=mailto:contact@fidclic.com
 
-# Frontend also needs the public key (Vite exposes only VITE_-prefixed vars).
-VITE_VAPID_PUBLIC_KEY=${vapid.publicKey}
 
 # ---- LLM providers (at least ONE required for AI features) ------------
 # AI insights, AI campaign analyzer, voice-to-campaign all use this router.
@@ -122,16 +117,6 @@ TWILIO_ACCOUNT_SID=REPLACE_ME_OR_LEAVE_BLANK
 TWILIO_AUTH_TOKEN=REPLACE_ME_OR_LEAVE_BLANK
 TWILIO_FROM_NUMBER=+33000000000
 
-# ---- Stripe billing (required for paid plans) -------------------------
-# This is the RESELLER's Stripe account — the businesses (your tenants) pay
-# the reseller. The reseller pays you separately.
-#
-# Get keys: https://dashboard.stripe.com/apikeys
-# Webhook signing secret: https://dashboard.stripe.com/webhooks → add
-# endpoint pointing to https://YOUR_DOMAIN/api/billing/webhook,
-# subscribe to events: checkout.session.completed, invoice.paid,
-# invoice.payment_failed, customer.subscription.updated,
-# customer.subscription.deleted.
 # --- Social login (optional; a missing ID simply hides that button) ---
 # Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Web client
 GOOGLE_CLIENT_ID=
@@ -142,6 +127,16 @@ APPLE_REDIRECT_URI=https://app.fidclic.com/login
 # Version string stamped on CGU/DPA acceptance; bump it when the legal texts change
 TERMS_VERSION=2026-09
 
+# ---- Stripe billing (required for paid plans) -------------------------
+# This is the RESELLER's Stripe account — the businesses (your tenants) pay
+# the reseller. The reseller pays you separately.
+#
+# Get keys: https://dashboard.stripe.com/apikeys
+# Webhook signing secret: https://dashboard.stripe.com/webhooks → add
+# endpoint pointing to https://YOUR_DOMAIN/api/billing/webhook,
+# subscribe to events: checkout.session.completed, invoice.paid,
+# invoice.payment_failed, customer.subscription.updated,
+# customer.subscription.deleted.
 STRIPE_SECRET_KEY=sk_live_REPLACE_ME
 STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
 
@@ -151,13 +146,11 @@ STRIPE_PRICE_STARTER=price_REPLACE_ME
 STRIPE_PRICE_GROWTH=price_REPLACE_ME
 STRIPE_PRICE_PRO=price_REPLACE_ME
 
-# Frontend uses publishable key for Checkout redirect.
-VITE_STRIPE_PUBLISHABLE_KEY=pk_live_REPLACE_ME
 
-# ---- Frontend ---------------------------------------------------------
-# Public URL the wallet card lives at. Used to build absolute links in push
-# payloads, QR codes, and SMS messages.
-VITE_PUBLIC_URL=https://fidelitour.fr
+# ---- Public URL -------------------------------------------------------
+# Where the platform lives. Used in password-reset + trial-reminder emails
+# and Stripe return URLs.
+PUBLIC_SITE_URL=https://app.fidclic.com
 
 # ---- Optional: Sentry / error tracking --------------------------------
 # SENTRY_DSN=REPLACE_ME
