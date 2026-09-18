@@ -30,8 +30,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from auth import require_role, get_current_user_data
 
+import os
+
 from services.pdp_connector import (
     get_pdp_connector, InvoiceState, IdempotencyGuard, PdpError, KNOWN_PROVIDERS,
+    MockPdp,
 )
 from services import statuses as st
 from services.statuses import ReviewStatus, PaymentStatus, ExportStatus
@@ -135,12 +138,32 @@ def _assert_invoice_compliant(tenant: Dict[str, Any], buyer: Dict[str, Any],
     """
     errors: List[str] = []
 
-    if not (buyer.get("name") or "").strip():
+    # The buyer record arrives in two shapes and the checks must accept both,
+    # because the PDP mapper (services.pdp_connector._addr / to_b2brouter_invoice)
+    # already does: `name` or `legal_name`, and `address` as a plain string or a
+    # structured dict. Treating address as a string here crashed with 500 on
+    # every structured-address invoice — found by the failure-path e2e run.
+    if not ((buyer.get("name") or buyer.get("legal_name") or "").strip()):
         errors.append("Le nom du client est obligatoire.")
-    if not (buyer.get("address") or "").strip():
+
+    addr = buyer.get("address")
+    if isinstance(addr, dict):
+        has_addr = bool((addr.get("street") or addr.get("line1") or "").strip()
+                        and (addr.get("city") or "").strip())
+    else:
+        has_addr = bool((addr or "").strip())
+    if not has_addr:
         errors.append("L'adresse du client est obligatoire.")
+
     if buyer.get("is_company", True):
         siren = "".join(ch for ch in str(buyer.get("siren") or "") if ch.isdigit())
+        if not siren:
+            # A SIRET is SIREN + 5-digit NIC, so a record carrying only the
+            # SIRET still identifies the company. Same derivation the annuaire
+            # uses; requiring a separate siren field was a false rejection.
+            siret = "".join(ch for ch in str(buyer.get("siret") or "") if ch.isdigit())
+            if len(siret) == 14:
+                siren = siret[:9]
         if len(siren) != 9:
             errors.append("Le SIREN du client est obligatoire pour une facture B2B (réforme 2026).")
         elif not _luhn_ok(siren):
@@ -671,7 +694,12 @@ def get_invoice(invoice_id: str,
         try:
             st = get_pdp_connector(t).get_status(inv["pdp_invoice_id"])
             if st.get("state") and st["state"] != inv.get("state"):
-                _update_state(invoice_id, st["state"])
+                # Carry the motif with the state. The connector surfaces it from
+                # the PA's errors payload; dropping it here left refusals with
+                # no reason on screen (found by the app-through-sandbox run).
+                _update_state(invoice_id, st["state"],
+                              code=st.get("reject_code"),
+                              reason=st.get("reject_reason"))
                 inv = _db.fact_invoices.find_one({"id": invoice_id})
         except PdpError:
             pass
@@ -1021,24 +1049,66 @@ def coherence(token_data=Depends(require_role(["business_owner", "manager"]))):
 @router.post("/api/facturation/webhook")
 async def facturation_webhook(request: Request):
     raw = await request.body()
-    conn = get_pdp_connector()
-    if not conn.verify_webhook(dict(request.headers), raw):
-        raise HTTPException(401, "Invalid webhook signature")
     try:
         import json as _json
         event = _json.loads(raw.decode() or "{}")
     except Exception:
         raise HTTPException(400, "Bad payload")
-    pdp_id = event.get("invoice_id") or (event.get("invoice") or {}).get("id")
-    raw_state = event.get("state") or (event.get("invoice") or {}).get("state")
+    # Accept the payload shapes we may receive:
+    #   flat            {"invoice_id": .., "state": ..}          (MockPdp, tests)
+    #   nested invoice  {"invoice": {"id": .., "state": ..}}
+    #   B2Brouter live  {"account_id": .., "object": {"object": "invoice",
+    #                    "id": .., "state": ..}}                 (verified shape
+    #                    from their Flux-10 webhook docs; issued_invoice.state_change
+    #                    follows the same envelope)
+    obj = event.get("object") if isinstance(event.get("object"), dict) else {}
+    pdp_id = (event.get("invoice_id")
+              or (event.get("invoice") or {}).get("id")
+              or obj.get("id"))
+    raw_state = (event.get("state")
+                 or (event.get("invoice") or {}).get("state")
+                 or obj.get("state"))
+
+    # SECURITY — verify against the connector of the invoice's OWN tenant.
+    #
+    # The previous code called get_pdp_connector() with no tenant, which
+    # resolves to the app-wide default: MockPdp unless PDP_PROVIDER is set,
+    # and MockPdp.verify_webhook returns True for everything. Net effect: a
+    # public, unauthenticated endpoint where anyone who knew a pdp_invoice_id
+    # could flip that invoice's state with a bare curl. Found while preparing
+    # the real-webhook test; the parse had to move above the check because the
+    # tenant is only knowable from the payload.
+    #
+    # Looking the invoice up before verifying does not weaken anything: the
+    # lookup has no side effects, and signature verification still gates every
+    # write. An unknown pdp_id gets a 200 (idempotent no-op) only AFTER the
+    # signature check against the strictest available connector.
+    inv = _db.fact_invoices.find_one({"pdp_invoice_id": pdp_id}) if pdp_id else None
+    if inv:
+        t = _db.tenants.find_one({"id": inv["tenant_id"]})
+        conn = get_pdp_connector(t)
+    else:
+        conn = get_pdp_connector()
+    if isinstance(conn, MockPdp) and not os.environ.get("FACTURATION_ALLOW_MOCK_WEBHOOK"):
+        # A Mock connector cannot authenticate anything. Refusing here closes
+        # the open-door default in production; local test runs opt in via env.
+        raise HTTPException(401, "Webhook verification unavailable for this tenant")
+    if not conn.verify_webhook(dict(request.headers), raw):
+        raise HTTPException(401, "Invalid webhook signature")
+
     if pdp_id and raw_state:
-        # adapters normalize; Mock/webhook may already send normalized state
-        inv = _db.fact_invoices.find_one({"pdp_invoice_id": pdp_id})
+        # A live PA sends its RAW vendor state ('registered', ...), not ours.
+        # Writing it straight to the DB skipped the registered->received mapping
+        # and left states no screen understands. Normalize through the tenant's
+        # own connector when it knows how; Mock/tests already send ours.
+        norm = getattr(conn, "_norm_state", None)
+        state = norm(raw_state) if callable(norm) else raw_state
+        # `inv` was already looked up above for connector resolution.
         if inv:
-            _update_state(inv["id"], raw_state)
+            _update_state(inv["id"], state)
             # A rejection arriving asynchronously is exactly the one that used
             # to vanish into an inbox — so it becomes a case here too.
-            if raw_state in (InvoiceState.REFUSED, InvoiceState.ERROR):
+            if state in (InvoiceState.REFUSED, InvoiceState.ERROR):
                 _open_case(inv["tenant_id"], "pa_rejection",
                            detail_fr=f"Facture {inv.get('number')} refusée (notification plateforme)",
                            related_kind="invoice", related_id=inv["id"],

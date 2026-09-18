@@ -857,11 +857,40 @@ def mock_seed_data():
 
     # Check and seed customers — Café Lumière is a 2-branch café in Tours.
     # Reseed when count is low OR when the customers haven't been tagged to a
-    # branch yet (legacy data from before branch_id was wired into the seed).
+    # branch yet (legacy data from before branch_id was wired into the seed),
+    # OR when the demo has gone STALE.
+    #
+    # Staleness matters because every windowed chart (évolution des visites,
+    # acquisition, campaign impact) filters on recent dates. The seed writes
+    # 14 months of history relative to "now", but the count-based conditions
+    # meant it ran exactly once per database: months later the lifetime tiles
+    # still show totals while every "last 30 days" panel is empty, which reads
+    # as a broken product in a demo. A cold start lands here anyway, so a
+    # date check makes the demo self-refreshing with no cron and no endpoint.
     cafe_branches = ["branch-lumiere-main", "branch-lumiere-plumereau"]
+
+    def _demo_is_stale() -> bool:
+        # Measure freshness on the BULK of the data, not the newest single
+        # visit: the c-akshansh test customer below is re-seeded with fresh
+        # dates on every cold start, so "newest visit" is always young and a
+        # newest-visit check never fires (which is exactly how the first
+        # version of this check silently did nothing in production).
+        #
+        # A café with 110 customers should show dozens of visits a month.
+        # Fewer than 15 in the last 30 days (excluding the always-fresh test
+        # customer) means the window charts are running on fumes.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        recent = db.visits.count_documents({
+            "tenant_id": "tenant-1",
+            "customer_id": {"$ne": "c-akshansh"},
+            "created_at": {"$gte": cutoff},
+        })
+        return recent < 15
+
     needs_cafe_reseed = (
         db.customers.count_documents({"tenant_id": "tenant-1"}) < 80
         or db.customers.count_documents({"tenant_id": "tenant-1", "branch_id": {"$in": cafe_branches}}) == 0
+        or _demo_is_stale()
     )
     if needs_cafe_reseed:
         db.customers.delete_many({"tenant_id": "tenant-1"})
@@ -900,9 +929,28 @@ def mock_seed_data():
     #    makes the "Promo Printemps" example actually visible to existing
     #    deploys instead of being permanently shadowed by old seed data.
     existing_camp1 = db.campaigns.find_one({"id": "camp-1", "tenant_id": "tenant-1"})
+
+    def _camp_is_stale() -> bool:
+        # Campaign dates are written relative to seed-time "now" (J-2, J-14,
+        # J-21). Once camp-1 drifts past ~30 days every campaign-impact chart
+        # windows it out — same staleness disease as the visits above.
+        if not existing_camp1 or not existing_camp1.get("sent_at"):
+            return False  # covered by the count condition
+        ts = existing_camp1["sent_at"]
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except ValueError:
+                return True
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts) > timedelta(days=30)
+
     needs_reseed = (
         db.campaigns.count_documents({"tenant_id": "tenant-1"}) < 3
         or (existing_camp1 is not None and not existing_camp1.get("image_url"))
+        or _camp_is_stale()
+        or needs_cafe_reseed  # fresh visits deserve campaigns dated with them
     )
     if needs_reseed:
         db.campaigns.delete_many({"tenant_id": "tenant-1"})
@@ -1475,7 +1523,10 @@ def seed_extended_tenants():
             spend = round(visits * random.uniform(avg_spend * 0.7, avg_spend * 1.3), 2)
             source = random.choices(
                 ACQUISITION_SOURCES,
-                weights=[5, 4, 3, 2],  # QR + Instagram most common, then FB, then TikTok
+                # One weight per source — ["qr_store","instagram","facebook","tiktok","website"].
+                # "website" was appended to the list without a weight, which made
+                # random.choices raise and killed server startup on a fresh DB.
+                weights=[5, 4, 3, 2, 2],
                 k=1
             )[0]
             pass_issued = random.random() < 0.7 if visits >= 3 else random.random() < 0.3
@@ -5760,6 +5811,20 @@ def _serialize_card_payload(cust: dict) -> dict:
             # 3-band wallet-pass layout fields — may have been overridden
             # per-customer by an active card override (filtered offer overlay).
             "layout_style":         tpl.get("layout_style"),
+            # Wallet-anatomy render inputs (layout_style == "wallet"). The
+            # merchant picks brand_color + surface + code_type; every other
+            # colour is derived client-side in cardTheme.js. CardTemplate has
+            # extra="allow", so these persist through the save endpoints
+            # without model changes.
+            "brand_color":          tpl.get("brand_color"),
+            "surface":              tpl.get("surface"),
+            "surface_color":        tpl.get("surface_color"),
+            "code_type":            tpl.get("code_type"),
+            "hero_mode":            tpl.get("hero_mode"),
+            "visits_label":         tpl.get("visits_label"),
+            "stamps_label":         tpl.get("stamps_label"),
+            "show_stamps":          tpl.get("show_stamps"),
+            "show_visits":          tpl.get("show_visits"),
             "card_bg_color":        tpl.get("card_bg_color"),
             "card_ink_color":       tpl.get("card_ink_color"),
             "strip_type":           tpl.get("strip_type"),
@@ -5768,6 +5833,7 @@ def _serialize_card_payload(cust: dict) -> dict:
             "strip_title":          tpl.get("strip_title"),
             "strip_subtitle":       tpl.get("strip_subtitle"),
             "hero_image_url":       tpl.get("hero_image_url"),
+            "hero_front_url":       tpl.get("hero_front_url"),
             "show_offer_box":       tpl.get("show_offer_box"),
             "offer_box_text":       tpl.get("offer_box_text"),
             "offer_box_subtext":    tpl.get("offer_box_subtext"),
