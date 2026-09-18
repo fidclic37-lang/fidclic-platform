@@ -880,7 +880,7 @@ export default function CampaignsPage() {
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {[
-                    // Only the channels FidéliTour actually delivers on today.
+                    // Only the channels FidClic actually delivers on today.
                     // EMAIL channel hidden — re-enable by uncommenting the line below.
                     { key: 'push', label: 'Wallet Push' },
                     // { key: 'email', label: 'Email' },
@@ -1525,7 +1525,7 @@ export default function CampaignsPage() {
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {[
-                    // Only the channels FidéliTour actually delivers on today.
+                    // Only the channels FidClic actually delivers on today.
                     // EMAIL channel hidden — re-enable by uncommenting the line below.
                     { key: 'push', label: 'Wallet Push' },
                     // { key: 'email', label: 'Email' },

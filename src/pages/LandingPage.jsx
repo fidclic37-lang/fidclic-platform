@@ -154,7 +154,7 @@ function HeroDashboardMockup() {
           <span className="w-3 h-3 rounded-full" style={{ background: '#28C840' }} />
           <span className="ml-3 px-3 py-1 rounded-md text-xs font-mono"
                 style={{ background: 'white', color: C.inkMute, border: '1px solid ' + C.hairline }}>
-            fidelitour.fr/dashboard
+            app.fidclic.com/dashboard
           </span>
         </div>
 
@@ -413,7 +413,7 @@ const LandingPage = () => {
                  style={{ background: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>F</div>
             <span className="font-['Cormorant_Garamond'] text-2xl font-bold bg-clip-text text-transparent"
                   style={{ backgroundImage: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>
-              FidéliTour
+              FidClic
             </span>
           </Link>
           <div className="hidden md:flex items-center gap-8 font-medium text-sm">
@@ -584,7 +584,7 @@ const LandingPage = () => {
                 {/* Après */}
                 <div className="px-5 py-4" style={{ background: row.bg }}>
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-1.5" style={{ color: row.tone }}>
-                    Avec FidéliTour
+                    Avec FidClic
                   </p>
                   <p className="text-sm font-bold leading-snug" style={{ color: C.inkDeep }}>
                     {row.after}
@@ -651,7 +651,7 @@ const LandingPage = () => {
                    style={{ background: C.rose }} />
               <span className="inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-4 relative"
                     style={{ background: C.terracotta, color: 'white' }}>
-                Avec FidéliTour
+                Avec FidClic
               </span>
               <h3 className="font-['Cormorant_Garamond'] text-3xl font-bold mb-4 relative" style={{ color: C.inkDeep }}>
                 Une carte qui travaille pour vous
@@ -680,11 +680,11 @@ const LandingPage = () => {
             <Eyebrow color={C.ochre} bg={C.butter}>Conçu pour vous</Eyebrow>
             <h2 className="font-['Cormorant_Garamond'] text-4xl md:text-5xl font-bold leading-tight">
               Quel que soit votre métier,<br/>
-              <span style={{ color: C.ochre }}>FidéliTour s'adapte.</span>
+              <span style={{ color: C.ochre }}>FidClic s'adapte.</span>
             </h2>
             <p className="text-base mt-5 max-w-2xl mx-auto" style={{ color: C.inkMute }}>
               Restauration, beauté, mode, artisanat, services de quartier — chaque commerçant
-              configure FidéliTour à son rythme et à ses règles. Voici ce que ça donne, concrètement.
+              configure FidClic à son rythme et à ses règles. Voici ce que ça donne, concrètement.
             </p>
           </div>
 
@@ -694,7 +694,7 @@ const LandingPage = () => {
                 icon: '☕',
                 title: 'Café · Bistrot',
                 lead: 'Un café avec 800 clients fidèles.',
-                story: 'FidéliTour relance automatiquement les 47 qui ne sont pas revenus depuis 3 semaines. Les anniversaires sont souhaités. Les habitués du midi reçoivent une offre pour le mardi creux.',
+                story: 'FidClic relance automatiquement les 47 qui ne sont pas revenus depuis 3 semaines. Les anniversaires sont souhaités. Les habitués du midi reçoivent une offre pour le mardi creux.',
                 wins: [
                   'Mardis remplis grâce à une campagne ciblée',
                   '+1 visite par mois en moyenne sur les habitués',
@@ -834,7 +834,7 @@ const LandingPage = () => {
           </div>
 
           <p className="text-xs text-center mt-8 italic" style={{ color: C.inkFaint }}>
-            Scénarios illustratifs — chaque commerçant configure FidéliTour selon ses propres règles.
+            Scénarios illustratifs — chaque commerçant configure FidClic selon ses propres règles.
           </p>
         </div>
       </section>
@@ -1946,7 +1946,7 @@ const LandingPage = () => {
           <div className="grid md:grid-cols-3 gap-6">
             {[
               {
-                quote: '«&nbsp;En trois mois, j\'ai vu mon taux de retour grimper de manière nette. Et le plus beau&nbsp;? Je n\'ai littéralement rien fait — FidéliTour gère les anniversaires et les relances tout seul.&nbsp;»',
+                quote: '«&nbsp;En trois mois, j\'ai vu mon taux de retour grimper de manière nette. Et le plus beau&nbsp;? Je n\'ai littéralement rien fait — FidClic gère les anniversaires et les relances tout seul.&nbsp;»',
                 name: 'Une gérante de café',
                 role: 'Restauration · 1 boutique',
                 location: 'Île-de-France',
@@ -1960,7 +1960,7 @@ const LandingPage = () => {
                 color: C.lavender, bg: C.lilac,
               },
               {
-                quote: '«&nbsp;On a déployé FidéliTour dans plusieurs boutiques. Les visites répétées ont clairement décollé. Le retour sur investissement est arrivé en quelques semaines.&nbsp;»',
+                quote: '«&nbsp;On a déployé FidClic dans plusieurs boutiques. Les visites répétées ont clairement décollé. Le retour sur investissement est arrivé en quelques semaines.&nbsp;»',
                 name: 'Une responsable marketing',
                 role: 'Réseau · plusieurs boutiques',
                 location: 'France',
@@ -2343,7 +2343,7 @@ const LandingPage = () => {
                       </span>
                     </h3>
                     <p className="text-base md:text-lg leading-relaxed mb-7" style={{ color: '#D4C8B5' }}>
-                      Si vous gérez 2 boutiques ou plus et souhaitez déployer FidéliTour sur l'ensemble — base clients partagée,
+                      Si vous gérez 2 boutiques ou plus et souhaitez déployer FidClic sur l'ensemble — base clients partagée,
                       analytics par boutique, campagnes centralisées — parlons-en. Nous adaptons le tarif et l'accompagnement à votre réseau.
                     </p>
 
@@ -2363,7 +2363,7 @@ const LandingPage = () => {
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-3">
-                      <a href="mailto:contact@fidelitour.fr?subject=Demande%20de%20d%C3%A9ploiement%20multi-boutiques"
+                      <a href="mailto:contact@fidclic.com?subject=Demande%20de%20d%C3%A9ploiement%20multi-boutiques"
                          className="inline-flex items-center justify-center gap-2 text-white px-7 py-4 rounded-full text-base font-semibold transition-all shadow-xl hover:-translate-y-0.5"
                          style={{ background: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>
                         Nous contacter <ArrowRight size={18} />
@@ -2440,14 +2440,14 @@ const LandingPage = () => {
                     style={{ background: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>
                 Démarrer mon essai gratuit <ArrowRight size={18} />
               </Link>
-              <a href="mailto:contact@fidelitour.fr"
+              <a href="mailto:contact@fidclic.com"
                  className="inline-flex items-center justify-center px-8 py-4 rounded-full text-base font-semibold border transition-all hover:bg-white/10"
                  style={{ borderColor: 'rgba(255,255,255,0.25)', color: 'white' }}>
                 Parler à un humain
               </a>
             </div>
             <p className="text-xs mt-6" style={{ color: 'rgba(255,255,255,0.55)' }}>
-              01&nbsp;23&nbsp;45&nbsp;67&nbsp;89 · contact@fidelitour.fr
+              01&nbsp;23&nbsp;45&nbsp;67&nbsp;89 · contact@fidclic.com
             </p>
           </div>
         </div>
@@ -2463,9 +2463,9 @@ const LandingPage = () => {
                  style={{ background: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>
               F
             </div>
-            <p className="font-['Cormorant_Garamond'] text-2xl font-bold ft-gradient-text-slow">FidéliTour</p>
+            <p className="font-['Cormorant_Garamond'] text-2xl font-bold ft-gradient-text-slow">FidClic</p>
           </div>
-          <p className="text-sm">© {new Date().getFullYear()} FidéliTour · Conçu en France pour les commerçants français.</p>
+          <p className="text-sm">© {new Date().getFullYear()} FidClic · Conçu en France pour les commerçants français.</p>
           <div className="flex justify-center gap-2 mt-6">
             {[C.terracotta, C.rose, C.lavender, C.sky, C.teal, C.sage, C.ochre].map((c, i) => (
               <span key={i} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />

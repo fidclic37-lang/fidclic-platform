@@ -38,7 +38,7 @@ from io import BytesIO
 
 # Setup FastAPI App
 app = FastAPI(
-    title="FidéliTour API",
+    title="FidClic API",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -415,7 +415,7 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
 
 def send_email_to_customer(to_email: str, from_name: str, subject: str, body_html: str) -> bool:
     """
-    EMAIL CHANNEL DISABLED — FidéliTour now uses web push + SMS only.
+    EMAIL CHANNEL DISABLED — FidClic now uses web push + SMS only.
 
     Kept as a no-op shim so existing call-sites compile. Always returns False so
     the caller falls through to push/SMS instead. Do NOT re-enable: the client
@@ -561,7 +561,7 @@ def _campaign_html(tenant_name: str, subject: str, rendered_body: str, customer:
       <p style="color:#57534E;font-size:13px;">Points: {points} | Visites: {visits}</p>
     </div>
   </div>
-  <p style="text-align:center;color:#A8A29E;font-size:12px;margin-top:25px;">Envoyé via FidéliTour</p>
+  <p style="text-align:center;color:#A8A29E;font-size:12px;margin-top:25px;">Envoyé via FidClic</p>
 </div>
 """
 
@@ -1497,7 +1497,7 @@ def seed_extended_tenants():
         ).model_dump())
 
         # Owner user — shared password hash reused across all demo owners
-        owner_email = f"owner+{slug}@fidelitour.fr"
+        owner_email = f"owner+{slug}@fidclic.com"
         users_docs.append(UserInDB(
             email=owner_email,
             role="business_owner",
@@ -1785,7 +1785,7 @@ def _support_email_html(subject: str, message: str, ticket: dict) -> str:
 <div style="font-family:'Manrope',Arial,sans-serif;max-width:600px;margin:0 auto;background:#FBF7EE;padding:24px;color:#1C1917;">
   <div style="background:#FFFFFF;border-radius:12px;padding:24px;border:1px solid #E8DEC8;">
     <div style="border-bottom:2px solid #6B2E5A;padding-bottom:10px;margin-bottom:18px;">
-      <p style="margin:0;font-size:11px;letter-spacing:.18em;color:#6B2E5A;text-transform:uppercase;font-weight:600;">FidéliTour · Support</p>
+      <p style="margin:0;font-size:11px;letter-spacing:.18em;color:#6B2E5A;text-transform:uppercase;font-weight:600;">FidClic · Support</p>
       <h2 style="margin:6px 0 0;font-size:18px;color:#1C1917;">New support query</h2>
     </div>
     <table style="width:100%;font-size:13px;color:#57534E;margin-bottom:14px;">
@@ -1828,8 +1828,8 @@ def _support_send_smtp(subject: str, message: str, ticket: dict) -> tuple[bool, 
         from email.utils import formataddr
 
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[FidéliTour Support] {subject}"
-        msg["From"]    = formataddr(("FidéliTour Support", smtp_from))
+        msg["Subject"] = f"[FidClic Support] {subject}"
+        msg["From"]    = formataddr(("FidClic Support", smtp_from))
         msg["To"]      = SUPPORT_RECIPIENT_EMAIL
         # Set Reply-To to the business's email so support can hit reply.
         reply_to = ticket.get("from_email") or smtp_from
@@ -1837,7 +1837,7 @@ def _support_send_smtp(subject: str, message: str, ticket: dict) -> tuple[bool, 
 
         # Plain-text fallback for clients that block HTML.
         plain = (
-            f"New FidéliTour support query\n\n"
+            f"New FidClic support query\n\n"
             f"From: {ticket.get('from_email') or '(not provided)'}\n"
             f"Tenant: {ticket.get('tenant_slug') or '(unknown)'}\n"
             f"Submitted: {ticket['created_at'].isoformat()}\n"
@@ -1865,14 +1865,14 @@ def _support_send_resend(subject: str, message: str, ticket: dict) -> tuple[bool
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     if not api_key:
         return (False, "not_configured")
-    from_addr = os.getenv("RESEND_FROM", "FidéliTour Support <onboarding@resend.dev>").strip()
+    from_addr = os.getenv("RESEND_FROM", "FidClic Support <onboarding@resend.dev>").strip()
     try:
         import requests as _req
         reply_to = ticket.get("from_email") or None
         body = {
             "from":     from_addr,
             "to":       [SUPPORT_RECIPIENT_EMAIL],
-            "subject":  f"[FidéliTour Support] {subject}",
+            "subject":  f"[FidClic Support] {subject}",
             "html":     _support_email_html(subject, message, ticket),
         }
         if reply_to:
@@ -1898,11 +1898,11 @@ def _support_send_formsubmit(subject: str, message: str, ticket: dict) -> tuple[
     try:
         import requests as _req
         fs_payload = {
-            "_subject":     f"[FidéliTour Support] {subject}",
+            "_subject":     f"[FidClic Support] {subject}",
             "_template":    "table",
             "_captcha":     "false",
-            "_replyto":     ticket.get("from_email") or "no-reply@fidelitour.app",
-            "from_email":   ticket.get("from_email") or "no-reply@fidelitour.app",
+            "_replyto":     ticket.get("from_email") or "no-reply@fidclic.com",
+            "from_email":   ticket.get("from_email") or "no-reply@fidclic.com",
             "tenant_slug":  ticket.get("tenant_slug") or "(unknown)",
             "subject":      subject,
             "message":      message,
@@ -2117,7 +2117,7 @@ def send_re_enablement_sms(
     slug = tenant_doc.get("slug") or ""
     # Build the URL the SMS will deep-link to. The card page reads the
     # `?notify=1` param and auto-triggers the notification permission flow.
-    base = os.getenv("PUBLIC_APP_URL", "").rstrip("/") or "https://fidelitour-deploy.vercel.app"
+    base = os.getenv("PUBLIC_APP_URL", "").rstrip("/") or "https://app.fidclic.com"
 
     # Find subscribed customer IDs (to exclude) and the rest of customers.
     subscribed_ids = set()
@@ -2431,7 +2431,7 @@ def admin_env_status(token_data: TokenData = Depends(require_role(["super_admin"
             # public key, never to the subject.
             "key": "VAPID_SUBJECT",
             "present": bool(os.environ.get("VAPID_SUBJECT", "")),
-            "value": os.environ.get("VAPID_SUBJECT", "") or "(unset — defaults to mailto:contact@fidelitour.fr)",
+            "value": os.environ.get("VAPID_SUBJECT", "") or "(unset — defaults to mailto:contact@fidclic.com)",
             "feature": "Web Push — contact address sent to Apple/Google/Mozilla",
             "required": False,
             "consequence": (
@@ -2579,7 +2579,7 @@ def create_tenant(
     db.tenants.insert_one(tenant.model_dump())
 
     # Create business owner account
-    owner_email = req.get("owner_email", f"owner-{slug}@fidelitour-generated.com")
+    owner_email = req.get("owner_email", f"owner-{slug}@fidclic-generated.com")
     generated_password = str(uuid.uuid4())[:12]
 
     owner_user = UserInDB(
@@ -3766,7 +3766,7 @@ def create_campaign(
     """Create campaign for tenant"""
     # Normalize and validate the channel/source label if provided
     raw_source = (req.get("source") or "").strip().lower() or None
-    # FidéliTour delivers via wallet push and email today. We keep the schema
+    # FidClic delivers via wallet push and email today. We keep the schema
     # tolerant of legacy / external channel labels, but the composer only
     # surfaces push + email + other to avoid promising channels we don't ship.
     ALLOWED_CAMPAIGN_SOURCES = {"push", "email", "other"}
@@ -4192,8 +4192,8 @@ def _call_vision_openrouter(image_b64: str, mime: str, prompt: str) -> tuple:
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://fidelitour-deploy.vercel.app",
-                "X-Title": "FidéliTour",
+                "HTTP-Referer": "https://app.fidclic.com",
+                "X-Title": "FidClic",
             },
             json={
                 "model": model,
@@ -5451,8 +5451,8 @@ def per_card_manifest(barcode_id: str):
     # Best-effort enrichment: look up the customer + tenant so we can
     # personalise the PWA name to the business. If the customer doesn't
     # exist we still return a valid manifest — just with generic labels.
-    name = "FidéliTour"
-    short_name = "FidéliTour"
+    name = "FidClic"
+    short_name = "FidClic"
     try:
         cust = db.customers.find_one({"barcode_id": bc}) if db is not None else None
         if cust:
@@ -6529,7 +6529,7 @@ def send_campaign_to_group(
     name = req.get("name") or "Campagne ciblée"
     content = req.get("content") or ""
     image_url = req.get("image_url") or None
-    sender_name = (tenant.get("campaign_sender_name") or tenant.get("name") or "FidéliTour")
+    sender_name = (tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic")
 
     # Dispatch per-customer with template rendering.
     delivered = 0
@@ -6790,8 +6790,8 @@ def _call_openrouter(prompt: str) -> Optional[list]:
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://fidelitour.com",
-                "X-Title": "FidéliTour",
+                "HTTP-Referer": "https://app.fidclic.com",
+                "X-Title": "FidClic",
             },
             json={
                 "model": OPENROUTER_MODEL,
@@ -10089,7 +10089,7 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
     if not customer_list:
         return None
     tid = tenant.get("id")
-    sender_name = tenant.get("campaign_sender_name") or tenant.get("name") or "FidéliTour"
+    sender_name = tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic"
     now = datetime.now(timezone.utc)
     delivered = 0
     for cust in customer_list:
@@ -10134,7 +10134,7 @@ class ScheduleCampaignRequest(BaseModel):
     # Same filter shape as live send (tiers/minPoints/minVisits/postalCodes/minAmountPaid).
     # If provided, takes precedence over segment when the cron drains it.
     filters: Optional[Dict[str, Any]] = None
-    source: Optional[str] = None  # push | email | other  — only the channels FidéliTour delivers on today
+    source: Optional[str] = None  # push | email | other  — only the channels FidClic delivers on today
     recurrence: Optional[str] = None  # None | "daily" | "weekly" | "monthly"
 
 
@@ -10558,16 +10558,16 @@ def run_monthly_report_dispatch(request: Request):
             f"• {visits_count} visites enregistrées\n"
             f"• €{revenue:,.0f} de chiffre d'affaires fidélité\n"
             f"• €{avg_ticket} de panier moyen\n\n"
-            f"Le détail complet est disponible sur votre tableau de bord FidéliTour.\n\n"
-            f"Bonne continuation !\n— L'équipe FidéliTour"
+            f"Le détail complet est disponible sur votre tableau de bord FidClic.\n\n"
+            f"Bonne continuation !\n— L'équipe FidClic"
         ).replace(",", " ")
         html = _campaign_html(
-            "FidéliTour",
+            "FidClic",
             f"Récap {last_month_start.strftime('%B %Y')} — {tenant.get('name','')}",
             body,
             {"name": owner["email"].split("@")[0].title(), "tier": "owner", "visits": 0, "points": 0},
         )
-        if send_email_to_customer(owner["email"], "FidéliTour", f"Récap {last_month_start.strftime('%B %Y')}", html):
+        if send_email_to_customer(owner["email"], "FidClic", f"Récap {last_month_start.strftime('%B %Y')}", html):
             sent += 1
         else:
             skipped += 1
@@ -10600,7 +10600,7 @@ def admin_broadcast(
     if not req.subject.strip() or not req.body.strip():
         raise HTTPException(status_code=400, detail="subject and body required")
     filters = req.filters or {}
-    sender_name = (req.sender_name or "FidéliTour").strip()
+    sender_name = (req.sender_name or "FidClic").strip()
     now = datetime.now(timezone.utc)
 
     # Build customer query

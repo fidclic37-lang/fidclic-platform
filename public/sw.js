@@ -1,6 +1,6 @@
 /* eslint-disable no-restricted-globals */
 /**
- * FidéliTour service worker.
+ * FidClic service worker.
  *
  * Responsibilities:
  *   1. Receive Web Push payloads from the backend (VAPID-signed)
@@ -32,11 +32,11 @@ self.addEventListener('push', (event) => {
     payload = event.data ? event.data.json() : {};
   } catch (_e) {
     // Backend always sends JSON, but be defensive in case raw text arrives.
-    try { payload = { title: 'FidéliTour', body: event.data.text() }; }
-    catch { payload = { title: 'FidéliTour', body: 'Vous avez un nouveau message.' }; }
+    try { payload = { title: 'FidClic', body: event.data.text() }; }
+    catch { payload = { title: 'FidClic', body: 'Vous avez un nouveau message.' }; }
   }
 
-  const title = payload.title || 'FidéliTour';
+  const title = payload.title || 'FidClic';
   const body = payload.body || '';
   const url = payload.url || '/';
   const icon = payload.icon || '/favicon.svg';

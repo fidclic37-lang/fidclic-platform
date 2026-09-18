@@ -4,7 +4,7 @@ Web Push wrapper using VAPID protocol — free, no third-party SaaS needed.
 Reads two env vars on Vercel:
     VAPID_PRIVATE_KEY   (PEM-encoded EC private key, base64-stripped)
     VAPID_PUBLIC_KEY    (URL-safe base64 of the public key)
-    VAPID_SUBJECT       ("mailto:contact@fidelitour.fr" or your business email)
+    VAPID_SUBJECT       ("mailto:contact@fidclic.com" or your business email)
 
 Generate keys once with:
     from py_vapid import Vapid
@@ -26,7 +26,7 @@ logger = logging.getLogger("fidelitour.webpush")
 
 _VAPID_PRIV = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
 _VAPID_PUB = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
-_VAPID_SUB = os.environ.get("VAPID_SUBJECT", "mailto:contact@fidelitour.fr").strip()
+_VAPID_SUB = os.environ.get("VAPID_SUBJECT", "mailto:contact@fidclic.com").strip()
 
 
 def is_configured() -> bool:

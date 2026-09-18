@@ -98,7 +98,7 @@ export default function BillingBanner() {
         <div className="flex-1 min-w-0">
           {isExpired ? (
             <span>
-              <strong>{timeLeftText}.</strong> Paid features are locked — pick a plan to keep using FidéliTour.
+              <strong>{timeLeftText}.</strong> Paid features are locked — pick a plan to keep using FidClic.
             </span>
           ) : isReminder ? (
             <span>
@@ -192,7 +192,7 @@ function PlanPicker({ trial, upgrading, onPick, onClose }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
           <div style={{ flex: 1 }}>
             <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: '#B85C38', margin: 0 }}>
-              FidéliTour Plans
+              FidClic Plans
             </p>
             <h2 style={{ fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: 28, fontWeight: 700, margin: '6px 0 4px', color: '#171412' }}>
               {trial.is_expired ? 'Your trial has ended — pick a plan to continue' : 'Pick the plan that fits your business'}

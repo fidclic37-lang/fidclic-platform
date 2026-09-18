@@ -38,7 +38,7 @@ export const ROLE_THEME = {
   business_owner: { from: C.ochre,      mid: C.amber,    to: C.terracotta, label: 'Business Owner', ring: C.ochre },
   manager:        { from: C.teal,       mid: C.mint,     to: C.sky,      label: 'Manager',         ring: C.teal },
   staff:          { from: C.sky,        mid: C.azure,    to: C.lavender, label: 'Staff',           ring: C.sky },
-  default:        { from: C.terracotta, mid: C.ochre,    to: C.rose,     label: 'FidéliTour',      ring: C.terracotta },
+  default:        { from: C.terracotta, mid: C.ochre,    to: C.rose,     label: 'FidClic',      ring: C.terracotta },
 };
 
 export const themeForRole = (role) => ROLE_THEME[role] || ROLE_THEME.default;

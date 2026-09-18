@@ -102,7 +102,7 @@
 
 /* ─────────────────────────────────────────────────────────────────────
  * Brand-signature animated gradient text
- * Used wherever we want the title to "breathe" the FidéliTour palette.
+ * Used wherever we want the title to "breathe" the FidClic palette.
  * Apply with: <span class="ft-gradient-text">…</span> or on any heading.
  *
  * The colours are fixed to the brand palette (terracotta → ochre → rose →
@@ -1009,7 +1009,7 @@ textarea::placeholder {
    ─────────────────────────────────────────────────────────────────────────
    The v2 chart primitives (av2-card, KpiCard, ChartCard, RightAiPanel)
    read these CSS variables. Originally a dark navy palette; flipped to
-   the FidéliTour warm-white palette so Analytics matches the rest of
+   the FidClic warm-white palette so Analytics matches the rest of
    the dashboard. All colors are HSL triplets so Tailwind opacity
    modifiers (bg-purple/20) keep working.
    ═════════════════════════════════════════════════════════════════════════ */

@@ -1,6 +1,6 @@
 # `features/` — additive-only feature package
 
-This folder adds new functionality to FidéliTour **without modifying any existing
+This folder adds new functionality to FidClic **without modifying any existing
 file, endpoint, model, or page**. Every feature is a standalone module that
 registers its own routes and (optionally) initialises its own MongoDB collection.
 

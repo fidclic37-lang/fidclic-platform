@@ -65,7 +65,7 @@ def _audit(*args, **kwargs):
 
 
 def _site_url() -> str:
-    return os.getenv("PUBLIC_SITE_URL", "https://fidelitour-deploy.vercel.app")
+    return os.getenv("PUBLIC_SITE_URL", "https://app.fidclic.com")
 
 
 @router.post("/api/auth/forgot-password")

@@ -736,8 +736,8 @@ const MyWalletCardPage = () => {
                   try {
                     if (navigator.share) {
                       await navigator.share({
-                        title: `${tenant?.name || 'FidéliTour'} — ma carte de fidélité`,
-                        text: `Ma carte de fidélité ${tenant?.name || 'FidéliTour'}`,
+                        title: `${tenant?.name || 'FidClic'} — ma carte de fidélité`,
+                        text: `Ma carte de fidélité ${tenant?.name || 'FidClic'}`,
                         url: window.location.href,
                       });
                     } else {
@@ -854,7 +854,7 @@ const MyWalletCardPage = () => {
                 disabled={savingPrefs}
               />
               {/* Self-service push test. Hitting POST /api/card/<bc>/test-push
-                  fires a "FidéliTour — test push ✓" notification to all of
+                  fires a "FidClic — test push ✓" notification to all of
                   this customer's subscribed devices. Surfaces the actual
                   failure reason in a toast (no_subscription, vapid_not_configured,
                   endpoint expired, etc) so the customer can debug without

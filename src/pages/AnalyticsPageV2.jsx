@@ -16,7 +16,7 @@
  *
  * The page is wrapped in `.av2-light-skin` — the same skin OwnerDashboard
  * uses so the two pages look like one cohesive product. The skin rebinds
- * the dashboard's --fd-* CSS variables to the FidéliTour warm-white
+ * the dashboard's --fd-* CSS variables to the FidClic warm-white
  * palette and gives every panel the elevated card look without touching
  * any sub-component JSX.
  */

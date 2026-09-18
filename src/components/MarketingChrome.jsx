@@ -76,7 +76,7 @@ export function MarketingNav({ active }) {
                style={{ background: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>F</div>
           <span className="font-['Cormorant_Garamond'] text-2xl font-bold bg-clip-text text-transparent"
                 style={{ backgroundImage: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>
-            FidéliTour
+            FidClic
           </span>
         </Link>
         <div className="hidden md:flex items-center gap-7 font-medium text-sm">
@@ -109,7 +109,7 @@ export function MarketingFooter() {
             <div className="flex items-center gap-2 mb-3">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg"
                    style={{ background: `linear-gradient(135deg, ${C.terracotta} 0%, ${C.rose} 100%)` }}>F</div>
-              <p className="font-['Cormorant_Garamond'] text-2xl font-bold ft-gradient-text-slow">FidéliTour</p>
+              <p className="font-['Cormorant_Garamond'] text-2xl font-bold ft-gradient-text-slow">FidClic</p>
             </div>
             <p className="text-sm">Fidélité et facturation électronique, dans un seul outil pensé pour les TPE françaises.</p>
           </div>
@@ -131,7 +131,7 @@ export function MarketingFooter() {
           </div>
         </div>
         <div className="text-center border-t pt-8" style={{ borderColor: C.hairline }}>
-          <p className="text-sm">© {new Date().getFullYear()} FidéliTour · Conçu en France pour les commerçants français.</p>
+          <p className="text-sm">© {new Date().getFullYear()} FidClic · Conçu en France pour les commerçants français.</p>
           <div className="flex justify-center gap-2 mt-5">
             {[C.terracotta, C.rose, C.lavender, C.sky, C.teal, C.sage, C.ochre].map((c, i) => (
               <span key={i} className="w-1.5 h-1.5 rounded-full" style={{ background: c }} />

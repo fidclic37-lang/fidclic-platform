@@ -6,7 +6,7 @@ Mounts at: /api/owner/settings/hours/*
 Storage: tenant doc fields `weekly_schedule`, `holiday_closures`, `annual_closures`
 
 Why this exists:
-  Without it, FidéliTour would happily fire 'come visit today!' messages on
+  Without it, FidClic would happily fire 'come visit today!' messages on
   Easter Monday (when most cafés are closed) — embarrassing the merchant
   and frustrating the customer. This module:
 

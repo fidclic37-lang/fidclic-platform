@@ -162,7 +162,7 @@ export default function PremiumLoyaltyCard({ customer, tenant, card = {}, compac
                 <img src={card.logo_url} alt="" className="w-auto object-contain" style={{ height: 44, maxWidth: 160 }} />
               ) : (
                 <span className="text-[17px] font-semibold" style={{ color: cardInk, letterSpacing: '-0.01em' }}>
-                  {tenant?.name || 'FidéliTour'}
+                  {tenant?.name || 'FidClic'}
                 </span>
               )}
               {showTier && (
