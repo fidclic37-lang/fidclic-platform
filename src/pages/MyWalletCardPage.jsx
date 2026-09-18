@@ -8,6 +8,7 @@ import { ensureSubscribed, unsubscribe as unsubscribePush, isSupported as isPush
 import InstallPwaPrompt from '../components/InstallPwaPrompt';
 import GeoConsentCard from '../components/GeoConsentCard';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
+import WalletPassPreview from '../components/WalletPassPreview';
 import TierBadge from '../components/TierBadge';
 
 // ---------------------------------------------------------------------------
@@ -710,11 +711,19 @@ const MyWalletCardPage = () => {
               literally the same component the customer sees on their phone. */}
           <section>
             <WalletCardErrorBoundary>
-              <PremiumLoyaltyCard
-                customer={customer}
-                tenant={tenant}
-                card={card}
-              />
+              {/* Wallet templates render the pkpass-FAITHFUL card — the same
+                  component the designer previews, real Apple Wallet geometry.
+                  The interim PWA-styled render (WalletCard) is gone at the
+                  owner's request: the merchant launches with real passes, and
+                  this page must show exactly that. Legacy templates keep the
+                  old render until they opt in. */}
+              {card?.layout_style === 'wallet' ? (
+                <div style={{ maxWidth: 375, width: '100%' }}>
+                  <WalletPassPreview customer={customer} tenant={tenant} card={card} width={375} />
+                </div>
+              ) : (
+                <PremiumLoyaltyCard customer={customer} tenant={tenant} card={card} />
+              )}
             </WalletCardErrorBoundary>
 
             {/* Save / share actions — the previous "Add to Apple/Google Wallet"

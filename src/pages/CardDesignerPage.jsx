@@ -4,6 +4,11 @@ import { ownerAPI } from '../lib/api';
 import NumberInput from '../components/NumberInput';
 import { PageHeader, C as C_PS } from '../components/PageShell';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
+import WalletPassPreview from '../components/WalletPassPreview';
+
+// Crop viewport for the band photo — exactly the strip's 375:144 ratio.
+const CROP_W = 500;
+const CROP_H = 192;
 
 // Defaults for the loyalty rules — kept in sync with the backend CardTemplate model.
 const DEFAULT_RULES = {
@@ -27,6 +32,7 @@ const DEFAULT_BRAND = {
   // Images
   logo_url:         '',
   hero_image_url:   '',
+  hero_front_url:   '',
   // Where the logo sits on the card. 'top_left' is the Apple-Wallet default
   // (matches Maison 123, FNAC, GÉMO). 'middle_overlay' puts it centred over
   // the middle band, 'top_center' centres it on the top strip.
@@ -50,6 +56,20 @@ const DEFAULT_BRAND = {
   show_back_link:   true,   // "Au dos →" right side
   show_card_number: true,   // "N° CARTE 4E62" footer
   show_barcode:     true,   // Code 128 strip
+
+  // ── Wallet-anatomy design (layout_style: 'wallet') ───────────────
+  // The redesigned card (FidClic-Card-Redesign-Spec). Duo-tone contract:
+  // the merchant picks a surface (card body) + a brand colour (accent);
+  // cardTheme.js derives every other colour with contrast arithmetic.
+  // These keys ride brand_fields into the customer payload automatically.
+  layout_style:     '',          // '' = legacy render · 'wallet' = new anatomy
+  surface:          'anthracite',// curated: noir|anthracite|marine|foret|espresso|blanc|creme|sable
+  surface_color:    '',          // optional custom hex — overrides `surface`
+  brand_color:      '#B85C38',   // THE accent (stamps, meter, offer chip, tier ring)
+  code_type:        'qr',        // 'qr' | 'barcode' | 'both' — QR default: Apple
+                                 // notes Code128 is unsupported on watchOS and
+                                 // square codes scan better on small screens
+  hero_mode:        'image',     // 'image' | 'brand' | 'none'
 
   // ── Layout selector + Wallet-pass-specific fields ────────────────
   // Two ways to render the card:
@@ -200,6 +220,35 @@ export default function CardDesignerPage() {
   const [pushing, setPushing] = useState(false);
   const [ok, setOk] = useState('');
   const [err, setErr] = useState('');
+  // Crop step for the band photo: {src, imgW, imgH, scale, minScale, x, y}.
+  // The merchant frames their photo in the band's exact 375:144 ratio, so the
+  // strip is ALWAYS full — no empty space — and THEY choose what's in frame.
+  const [cropper, setCropper] = useState(null);
+  const cropDrag = React.useRef(null);
+
+  const clampCrop = (c) => ({
+    ...c,
+    x: Math.min(0, Math.max(CROP_W - c.imgW * c.scale, c.x)),
+    y: Math.min(0, Math.max(CROP_H - c.imgH * c.scale, c.y)),
+  });
+
+  const confirmCrop = () => {
+    if (!cropper) return;
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas');
+      cv.width = 1125; cv.height = 432;                 // Apple @3x strip
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(img,
+        -cropper.x / cropper.scale, -cropper.y / cropper.scale,
+        CROP_W / cropper.scale, CROP_H / cropper.scale,
+        0, 0, 1125, 432);
+      setBrand((b) => ({ ...b, hero_image_url: cv.toDataURL('image/jpeg', 0.85),
+                          hero_mode: 'image' }));
+      setCropper(null);
+    };
+    img.src = cropper.src;
+  };
 
   useEffect(() => {
     (async () => {
@@ -227,8 +276,20 @@ export default function CardDesignerPage() {
           accent_color: tplData.accent_color || DEFAULT_BRAND.accent_color,
           logo_url: tplData.logo_url || '',
           hero_image_url: tplData.hero_image_url || '',
+          hero_front_url: tplData.hero_front_url || '',
           title_label: tplData.title_label || DEFAULT_BRAND.title_label,
           points_label: tplData.points_label || DEFAULT_BRAND.points_label,
+          // Wallet-anatomy keys may exist only at top level (set via API
+          // before this UI existed — the demo tenant, for one). Seed them
+          // from there so opening the designer and hitting Save doesn't
+          // silently flip a live wallet card back to the legacy render.
+          layout_style: tplData.layout_style ?? tplData.brand_fields?.layout_style ?? '',
+          surface: tplData.surface ?? tplData.brand_fields?.surface ?? DEFAULT_BRAND.surface,
+          surface_color: tplData.surface_color ?? tplData.brand_fields?.surface_color ?? '',
+          brand_color: tplData.brand_color ?? tplData.brand_fields?.brand_color ?? DEFAULT_BRAND.brand_color,
+          code_type: (() => { const v = tplData.code_type ?? tplData.brand_fields?.code_type ?? DEFAULT_BRAND.code_type;
+            return v === 'both' ? 'qr' : v; })(),
+          hero_mode: tplData.hero_mode ?? tplData.brand_fields?.hero_mode ?? DEFAULT_BRAND.hero_mode,
         });
         // Legacy auchan_layout is preserved on save but no longer edited.
       } catch (e) {
@@ -285,8 +346,18 @@ export default function CardDesignerPage() {
         accent_color: brand.accent_color || DEFAULT_BRAND.accent_color,
         logo_url: brand.logo_url || '',
         hero_image_url: brand.hero_image_url || '',
+        hero_front_url: brand.hero_front_url || '',
         title_label: (brand.title_label || '').trim() || DEFAULT_BRAND.title_label,
         points_label: (brand.points_label || '').trim() || DEFAULT_BRAND.points_label,
+        // Wallet-anatomy keys mirrored at top level: the customer payload
+        // reads these via tpl.get(...), which would override the brand_fields
+        // spread with None if they only lived inside brand_fields.
+        layout_style: brand.layout_style || '',
+        surface: brand.surface || 'anthracite',
+        surface_color: brand.surface_color || '',
+        brand_color: brand.brand_color || DEFAULT_BRAND.brand_color,
+        code_type: brand.code_type || 'qr',
+        hero_mode: brand.hero_mode || 'image',
       };
       delete payload._id; // mongo internal field — never round-trip
       const payloadSize = JSON.stringify(payload).length;
@@ -336,7 +407,7 @@ export default function CardDesignerPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 card-designer-page">
       <PageHeader
         eyebrow="Visual Design"
         title="Card Designer"
@@ -363,6 +434,81 @@ export default function CardDesignerPage() {
           </div>
         }
       />
+
+      {/* Floating save — the header button scrolls away and the phone preview
+          hides it on small screens; this one is ALWAYS on screen. */}
+      <button
+        onClick={save}
+        disabled={saving}
+        className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 px-6 py-3 rounded-full text-sm font-bold text-white shadow-xl transition-all hover:-translate-y-0.5 disabled:opacity-50"
+        style={{ background: `linear-gradient(135deg, ${C_PS.ochre}, ${C_PS.terracotta})`,
+                 boxShadow: '0 10px 30px rgba(0,0,0,0.35)' }}
+      >
+        <Save size={16} /> {saving ? 'Enregistrement…' : 'Enregistrer'}
+      </button>
+
+      {/* ── Crop step: frame the photo in the band's exact ratio ── */}
+      {cropper && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+             style={{ background: 'rgba(15,14,12,0.72)' }}>
+          <div className="bg-white rounded-2xl p-5 shadow-2xl" style={{ maxWidth: CROP_W + 40 }}>
+            <p className="text-sm font-bold text-[#171412] mb-1">Cadrez votre photo</p>
+            <p className="text-[11px] text-[#8D857D] mb-3">
+              Glissez pour déplacer, zoomez avec le curseur. Ce que vous voyez ici est
+              exactement ce qui remplira le bandeau — aucun espace vide, aucun recadrage surprise.
+            </p>
+            <div
+              style={{ width: CROP_W, height: CROP_H, overflow: 'hidden', borderRadius: 10,
+                       position: 'relative', cursor: 'grab', touchAction: 'none',
+                       background: '#111', maxWidth: '100%' }}
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture(e.pointerId);
+                cropDrag.current = { sx: e.clientX, sy: e.clientY, x: cropper.x, y: cropper.y };
+              }}
+              onPointerMove={(e) => {
+                if (!cropDrag.current) return;
+                const d = cropDrag.current;
+                setCropper((c) => c && clampCrop({ ...c,
+                  x: d.x + (e.clientX - d.sx), y: d.y + (e.clientY - d.sy) }));
+              }}
+              onPointerUp={() => { cropDrag.current = null; }}
+            >
+              <img src={cropper.src} alt="" draggable={false}
+                style={{ position: 'absolute', left: cropper.x, top: cropper.y,
+                         width: cropper.imgW * cropper.scale,
+                         height: cropper.imgH * cropper.scale,
+                         maxWidth: 'none', userSelect: 'none', pointerEvents: 'none' }} />
+            </div>
+            <input
+              type="range" className="w-full mt-3"
+              min={cropper.minScale} max={cropper.minScale * 3} step={0.001}
+              value={cropper.scale}
+              onChange={(e) => {
+                const ns = parseFloat(e.target.value);
+                setCropper((c) => {
+                  if (!c) return c;
+                  // zoom about the viewport centre
+                  const cx = (CROP_W / 2 - c.x) / c.scale;
+                  const cy = (CROP_H / 2 - c.y) / c.scale;
+                  return clampCrop({ ...c, scale: ns,
+                    x: CROP_W / 2 - cx * ns, y: CROP_H / 2 - cy * ns });
+                });
+              }}
+            />
+            <div className="flex justify-end gap-2 mt-3">
+              <button onClick={() => setCropper(null)}
+                className="px-4 py-2 rounded-full text-sm font-medium border border-[#E9E5E0] text-[#57504A]">
+                Annuler
+              </button>
+              <button onClick={confirmCrop}
+                className="px-5 py-2 rounded-full text-sm font-bold text-white"
+                style={{ background: `linear-gradient(135deg, ${C_PS.ochre}, ${C_PS.terracotta})` }}>
+                Valider le cadrage
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {ok && (
         <div className="rounded-lg bg-green-50 border border-green-200 text-green-800 px-4 py-2 text-sm flex items-center gap-2">
@@ -523,6 +669,126 @@ export default function CardDesignerPage() {
         </div>
       </div>
 
+      {/* ── Nouveau design Wallet — the wallet-anatomy card ──────────────
+          Duo-tone contract: surface + brand colour, everything else derived.
+          Four curated presets follow the PassKit research: template-led with
+          premium constraints, never a freeform canvas. */}
+      <div className="rounded-xl border border-[#E9E5E0] bg-white p-5 space-y-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-lg font-bold text-[#171412]">
+            Nouveau design Wallet
+            <span className="ml-2 text-[10px] font-bold uppercase tracking-wider align-middle px-2 py-0.5 rounded-full"
+              style={{ background: brand.layout_style === 'wallet' ? '#DCF0E4' : '#F2F2F2',
+                       color: brand.layout_style === 'wallet' ? '#0F6B45' : '#8D857D' }}>
+              {brand.layout_style === 'wallet' ? 'Actif' : 'Inactif'}
+            </span>
+          </h2>
+          <button
+            type="button"
+            onClick={() => setBrand((b) => ({ ...b, layout_style: b.layout_style === 'wallet' ? '' : 'wallet' }))}
+            className="text-xs font-bold px-3 py-1.5 rounded-lg border"
+            style={brand.layout_style === 'wallet'
+              ? { borderColor: '#E9E5E0', color: '#57504A', background: '#FAFAF8' }
+              : { borderColor: '#171412', color: '#FFFFFF', background: '#171412' }}
+          >
+            {brand.layout_style === 'wallet' ? 'Revenir à l’ancien design' : 'Activer le nouveau design'}
+          </button>
+        </div>
+        <p className="text-xs text-[#57504A] -mt-2 max-w-xl">
+          Style « carte Apple Wallet » : vous choisissez la couleur de la carte, la couleur
+          d’accent, le logo et la photo — la lisibilité (contrastes, tailles, typographie)
+          est garantie automatiquement. Vos anciennes cartes ne changent pas tant que vous
+          n’activez pas ce design.
+        </p>
+
+        {brand.layout_style === 'wallet' && (
+          <div className="space-y-5">
+            {/* Duo-tone pickers */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Couleur de la carte (fond)</p>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[['noir','#141519'],['anthracite','#1C1D22'],['marine','#101B2E'],['foret','#12211A'],
+                    ['espresso','#211711'],['blanc','#FDFCFA'],['creme','#F6EFE3'],['sable','#EFE9DD']].map(([k, hex]) => (
+                    <button key={k} type="button" title={k}
+                      onClick={() => setBrand((b) => ({ ...b, surface: k, surface_color: '' }))}
+                      className="w-8 h-8 rounded-lg border-2"
+                      style={{ background: hex,
+                               borderColor: (brand.surface === k && !brand.surface_color) ? '#171412' : '#E9E5E0' }} />
+                  ))}
+                  <label className="w-8 h-8 rounded-lg border-2 overflow-hidden cursor-pointer grid place-items-center text-[10px] font-bold"
+                    style={{ borderColor: brand.surface_color ? '#171412' : '#E9E5E0',
+                             background: brand.surface_color || '#FFFFFF', color: '#8D857D' }}
+                    title="Couleur personnalisée">
+                    {!brand.surface_color && '+'}
+                    <input type="color" className="sr-only"
+                      value={brand.surface_color || '#1C1D22'}
+                      onChange={(e) => setBrand((b) => ({ ...b, surface_color: e.target.value }))} />
+                  </label>
+                </div>
+                <p className="text-[10px] text-[#8D857D]">Le texte s’adapte automatiquement — même une couleur personnalisée reste lisible.</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Couleur d’accent (marque)</p>
+                <div className="flex items-center gap-2">
+                  <input type="color"
+                    value={brand.brand_color || '#B85C38'}
+                    onChange={(e) => setBrand((b) => ({ ...b, brand_color: e.target.value }))}
+                    className="w-10 h-10 rounded-lg border border-[#E9E5E0] cursor-pointer" />
+                  <div className="text-[11px] text-[#57504A]">
+                    Tampons, jauge, offre, accents.<br />
+                    <span className="text-[#8D857D]">Duo gagnant : noir + or, marine + orange…</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Hero + code */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Bandeau (haut de carte)</p>
+                <div className="flex gap-1.5">
+                  {[['image','Photo'],['logo','Logo'],['brand','Couleur'],['none','Aucun']].map(([v, lbl]) => (
+                    <button key={v} type="button"
+                      onClick={() => setBrand((b) => ({ ...b, hero_mode: v }))}
+                      className="text-xs px-3 py-1.5 rounded-lg border font-medium"
+                      style={brand.hero_mode === v
+                        ? { background: '#171412', color: '#FFF', borderColor: '#171412' }
+                        : { background: '#FFF', color: '#57504A', borderColor: '#E9E5E0' }}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-[#8D857D] mt-1.5">
+                  <b>Photo</b> : votre photo remplit tout le bandeau, sans espace vide — comme sur une vraie carte Apple Wallet. Une photo paysage (large) s'affiche en entier ; une photo carrée ou verticale est légèrement rognée en haut et en bas. <b>Logo</b> : votre logo seul sur la couleur de la carte. Le bandeau garde toujours la même taille.
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Code scanné en caisse</p>
+                <div className="flex gap-1.5">
+                  {/* ONE code only — a real Apple Wallet pass can't carry two,
+                      so offering "Les deux" was a lie. Legacy 'both' → QR. */}
+                  {[['qr','QR'],['barcode','Code-barres']].map(([v, lbl]) => (
+                    <button key={v} type="button"
+                      onClick={() => setBrand((b) => ({ ...b, code_type: v }))}
+                      className="text-xs px-3 py-1.5 rounded-lg border font-medium"
+                      style={brand.code_type === v
+                        ? { background: '#171412', color: '#FFF', borderColor: '#171412' }
+                        : { background: '#FFF', color: '#57504A', borderColor: '#E9E5E0' }}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-[#8D857D] mt-1.5">
+                  QR recommandé : lisible sur petit écran, et le Code128 n’est pas supporté
+                  sur Apple Watch.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Premium brand block — drives the new wallet card surface
           (logo, hero image, brand colours, title + points labels). The Auchan
           editor below is for fine-tuning the back-of-card / legacy layout. */}
@@ -588,13 +854,14 @@ export default function CardDesignerPage() {
               </div>
             </div>
 
-            {/* Hero image */}
+            {/* Hero image — the single photo shown on the card's band */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#57504A] mb-1">
-                Image héros (photo produit, paysage 16:9 idéal)
+                Photo de la carte (votre salon, boutique, produit)
               </label>
               <p className="text-[11px] text-[#8D857D] mb-2">
-                Affichée en filigrane derrière le titre de la carte — donne instantanément un côté premium type KFC, Starbucks, etc.
+                À l'envoi, un cadreur s'ouvre : glissez et zoomez votre photo dans le format
+                exact du bandeau. Résultat : bandeau toujours plein, cadrage choisi par vous.
               </p>
               <div className="flex items-center gap-3">
                 {brand.hero_image_url ? (
@@ -625,8 +892,19 @@ export default function CardDesignerPage() {
                       const f = e.target.files?.[0];
                       if (!f) return;
                       try {
-                        const dataUrl = await compressImage(f, 1200, 0.82);
-                        setBrand((b) => ({ ...b, hero_image_url: dataUrl }));
+                        // Open the crop step instead of setting directly: the
+                        // merchant frames their photo in the band's exact
+                        // ratio, so the strip is always FULL with THEIR crop.
+                        const dataUrl = await compressImage(f, 2000, 0.9);
+                        const img = new Image();
+                        img.onload = () => {
+                          const minScale = Math.max(CROP_W / img.width, CROP_H / img.height);
+                          setCropper({ src: dataUrl, imgW: img.width, imgH: img.height,
+                                       scale: minScale, minScale,
+                                       x: (CROP_W - img.width * minScale) / 2,
+                                       y: (CROP_H - img.height * minScale) / 2 });
+                        };
+                        img.src = dataUrl;
                       } catch (_e) { flash('err', 'Impossible de lire l\'image.'); }
                       e.target.value = '';
                     }}
@@ -635,544 +913,28 @@ export default function CardDesignerPage() {
               </div>
             </div>
 
-            {/* 5 Colour pickers — primary, secondary, accent, text-on-brand, back-link */}
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Palette de marque</p>
-              <div className="grid grid-cols-5 gap-2">
-                {[
-                  { key: 'primary_color',   label: 'Principale' },
-                  { key: 'secondary_color', label: 'Dégradé' },
-                  { key: 'accent_color',    label: 'Accent' },
-                  { key: 'text_on_brand',   label: 'Texte sur marque' },
-                  { key: 'back_link_color', label: 'Lien "Au dos"' },
-                ].map(({ key, label }) => (
-                  <div key={key}>
-                    <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">{label}</label>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="color"
-                        value={brand[key]}
-                        onChange={(e) => setBrand((b) => ({ ...b, [key]: e.target.value }))}
-                        className="w-9 h-9 rounded-md border border-[#E9E5E0] cursor-pointer shrink-0"
-                      />
-                      <input
-                        type="text"
-                        value={brand[key]}
-                        onChange={(e) => setBrand((b) => ({ ...b, [key]: e.target.value }))}
-                        className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-[#E9E5E0] font-mono text-[10px]"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Map text / "Au dos" fields removed — they belonged to the
-                legacy hero layout and don't appear anywhere on the 3-band
-                card. The 3-band design has its own clearly-labelled controls
-                in the "Disposition Apple Wallet" section below
-                (points top-right, greeting, action prompt, etc.). */}
-
-            {/* Typography — font + italic + bold + underline */}
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Typographie du titre</p>
-              <div className="grid grid-cols-1 gap-3">
-                <select
-                  value={brand.title_font}
-                  onChange={(e) => setBrand((b) => ({ ...b, title_font: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm"
-                  style={{ fontFamily: brand.title_font }}
-                >
-                  {TITLE_FONTS.map((f) => (
-                    <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
-                  ))}
-                </select>
-                <div className="flex items-center gap-4 flex-wrap">
-                <label className="inline-flex items-center gap-2 text-sm text-[#171412] select-none cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={brand.title_italic}
-                    onChange={(e) => setBrand((b) => ({ ...b, title_italic: e.target.checked }))}
-                  />
-                  <span style={{ fontStyle: 'italic' }}>Italique</span>
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm text-[#171412] select-none cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={brand.title_bold !== false}
-                    onChange={(e) => setBrand((b) => ({ ...b, title_bold: e.target.checked }))}
-                  />
-                  <span style={{ fontWeight: 700 }}>Gras</span>
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm text-[#171412] select-none cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!brand.title_underline}
-                    onChange={(e) => setBrand((b) => ({ ...b, title_underline: e.target.checked }))}
-                  />
-                  <span style={{ textDecoration: 'underline' }}>Souligné</span>
-                </label>
-                </div>
-              </div>
-              <p className="text-[10px] text-[#8D857D] mt-1.5">
-                Choisissez la police qui correspond à l'identité de votre marque. Cormorant Garamond = boutique chic. Inter = SaaS moderne. Bebas Neue = sport / urbain.
-              </p>
-            </div>
-
-            {/* Visibility toggles — show or hide each element */}
+            {/* Éléments visibles — ONLY what the wallet pass actually renders.
+                Everything else (palette, typography, 3-band layout, stamp
+                shapes) belonged to the retired legacy card and was noise. */}
             <div>
               <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A] mb-2">Éléments visibles</p>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { key: 'show_tier',        label: 'Palier (Membre Gold)' },
-                  { key: 'show_points',      label: 'Bloc points (top droit)' },
-                  { key: 'show_title',       label: 'Titre éditorial' },
-                  { key: 'show_greeting',    label: 'Salutation (Bonjour Marie)' },
-                  { key: 'show_back_link',   label: 'Lien "Au dos"' },
-                  { key: 'show_card_number', label: 'N° de carte (footer)' },
-                  { key: 'show_barcode',     label: 'Code-barres Code 128' },
+                  { key: 'show_tier',   label: 'Statut (Or, VIP…)' },
+                  { key: 'show_points', label: 'Points' },
+                  { key: 'show_visits', label: 'Visites' },
+                  { key: 'show_stamps', label: 'Tampons' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 text-[12px] text-[#171412] cursor-pointer py-1 px-2 rounded hover:bg-[#FAFAF8]">
                     <input
                       type="checkbox"
-                      checked={brand[key]}
+                      checked={brand[key] !== false}
                       onChange={(e) => setBrand((b) => ({ ...b, [key]: e.target.checked }))}
                     />
                     {label}
                   </label>
                 ))}
               </div>
-            </div>
-
-            {/* Layout picker removed — the card now uses ONE design (the
-                3-band Apple-Wallet style). brand.layout_style is hard-wired
-                to 'wallet_pass' so the user gets the FNAC / Maison 123 /
-                GÉMO pattern strictly: top + bottom share the same colour,
-                middle is the fully-customizable promotional band. */}
-
-            {/* ────────────────────────────────────────────────────────
-                Wallet-pass specific controls — only shown when that
-                layout is selected. They're additive: every existing
-                control above still works in this mode.
-                ──────────────────────────────────────────────────────── */}
-            <div className="pt-4 mt-2 space-y-4" style={{ borderTop: '1px solid #EFEDE9' }}>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-[#57504A]">3 bandes — Top, Milieu, Bas</p>
-
-                {/* Card surface colours (top + bottom strips) */}
-                <div>
-                  <p className="text-[10px] text-[#8D857D] mb-1">Couleur des bandes haut + bas (mêmes)</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">Fond bandes</label>
-                      <div className="flex items-center gap-1">
-                        <input type="color" value={brand.card_bg_color}
-                               onChange={(e) => setBrand((b) => ({ ...b, card_bg_color: e.target.value }))}
-                               className="w-9 h-9 rounded-md border border-[#E9E5E0] cursor-pointer shrink-0" />
-                        <input type="text" value={brand.card_bg_color}
-                               onChange={(e) => setBrand((b) => ({ ...b, card_bg_color: e.target.value }))}
-                               className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-[#E9E5E0] font-mono text-[10px]" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">Texte sur bandes</label>
-                      <div className="flex items-center gap-1">
-                        <input type="color" value={brand.card_ink_color}
-                               onChange={(e) => setBrand((b) => ({ ...b, card_ink_color: e.target.value }))}
-                               className="w-9 h-9 rounded-md border border-[#E9E5E0] cursor-pointer shrink-0" />
-                        <input type="text" value={brand.card_ink_color}
-                               onChange={(e) => setBrand((b) => ({ ...b, card_ink_color: e.target.value }))}
-                               className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-[#E9E5E0] font-mono text-[10px]" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Middle band — type + content */}
-                <div>
-                  <p className="text-[10px] text-[#8D857D] mb-1">Bande promotionnelle (milieu)</p>
-                  <p className="text-[10.5px] text-[#8D857D] mb-2 leading-snug">
-                    <b>Couleur unie</b> = la bande du milieu est un aplat de couleur (style GÉMO vert, Maison 123 brun) avec votre titre + sous-titre en surimpression.
-                    <br />
-                    <b>Image</b> = vous téléversez une photo promotionnelle qui remplit la bande (style FNAC Black Friday).
-                  </p>
-                  <div className="flex gap-2 mb-2">
-                    {[
-                      { key: 'color', label: 'Couleur unie' },
-                      { key: 'image', label: 'Image' },
-                    ].map((t) => {
-                      const active = brand.strip_type === t.key;
-                      return (
-                        <button key={t.key} type="button"
-                                onClick={() => setBrand((b) => ({ ...b, strip_type: t.key }))}
-                                className="px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors"
-                                style={{ background: active ? 'var(--flc-ink, #171412)' : 'var(--flc-card, #FFFFFF)', color: active ? 'var(--flc-paper, #FFFFFF)' : 'var(--flc-ink, #171412)', border: '1px solid var(--flc-line, #E9E5E0)' }}>
-                          {t.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {brand.strip_type === 'color' && (
-                    <div className="grid grid-cols-2 gap-3 mb-2">
-                      <div>
-                        <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">Couleur bande</label>
-                        <div className="flex items-center gap-1">
-                          <input type="color" value={brand.strip_color}
-                                 onChange={(e) => setBrand((b) => ({ ...b, strip_color: e.target.value }))}
-                                 className="w-9 h-9 rounded-md border border-[#E9E5E0] cursor-pointer shrink-0" />
-                          <input type="text" value={brand.strip_color}
-                                 onChange={(e) => setBrand((b) => ({ ...b, strip_color: e.target.value }))}
-                                 className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-[#E9E5E0] font-mono text-[10px]" />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">Texte sur bande</label>
-                        <div className="flex items-center gap-1">
-                          <input type="color" value={brand.strip_text_color}
-                                 onChange={(e) => setBrand((b) => ({ ...b, strip_text_color: e.target.value }))}
-                                 className="w-9 h-9 rounded-md border border-[#E9E5E0] cursor-pointer shrink-0" />
-                          <input type="text" value={brand.strip_text_color}
-                                 onChange={(e) => setBrand((b) => ({ ...b, strip_text_color: e.target.value }))}
-                                 className="flex-1 min-w-0 px-1.5 py-1 rounded-md border border-[#E9E5E0] font-mono text-[10px]" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {brand.strip_type === 'image' && (
-                    <p className="text-[10px] text-[#8D857D] mb-2">Téléversez l'image héros plus haut — elle remplit la bande quand ce mode est actif.</p>
-                  )}
-                  <div className="grid grid-cols-1 gap-2">
-                    <input type="text" value={brand.strip_title}
-                           onChange={(e) => setBrand((b) => ({ ...b, strip_title: e.target.value }))}
-                           placeholder="Titre principal de la bande (ex: HÔTEL MAGIQUE)"
-                           className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                    <input type="text" value={brand.strip_subtitle}
-                           onChange={(e) => setBrand((b) => ({ ...b, strip_subtitle: e.target.value }))}
-                           placeholder="Sous-titre (optionnel)"
-                           className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                  </div>
-                </div>
-
-                {/* Offer callout box */}
-                <div>
-                  <label className="flex items-center gap-2 text-[12px] text-[#171412] cursor-pointer mb-2">
-                    <input type="checkbox" checked={brand.show_offer_box}
-                           onChange={(e) => setBrand((b) => ({ ...b, show_offer_box: e.target.checked }))} />
-                    Afficher l'encart d'offre (façon « 10€ cagnottés » de GÉMO)
-                  </label>
-                  {brand.show_offer_box && (
-                    <div className="space-y-2 pl-6">
-                      <input type="text" value={brand.offer_box_text}
-                             onChange={(e) => setBrand((b) => ({ ...b, offer_box_text: e.target.value }))}
-                             placeholder="Texte principal (ex: 10€ cagnottés*)"
-                             className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                      <input type="text" value={brand.offer_box_subtext}
-                             onChange={(e) => setBrand((b) => ({ ...b, offer_box_subtext: e.target.value }))}
-                             placeholder="Sous-texte (ex: Dès 3 articles achetés)"
-                             className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">Fond encart</label>
-                          <input type="color" value={brand.offer_box_color}
-                                 onChange={(e) => setBrand((b) => ({ ...b, offer_box_color: e.target.value }))}
-                                 className="w-full h-8 rounded-md border border-[#E9E5E0] cursor-pointer" />
-                        </div>
-                        <div>
-                          <label className="block text-[9px] font-bold uppercase tracking-wider text-[#8D857D] mb-1">Texte encart</label>
-                          <input type="color" value={brand.offer_box_ink_color}
-                                 onChange={(e) => setBrand((b) => ({ ...b, offer_box_ink_color: e.target.value }))}
-                                 className="w-full h-8 rounded-md border border-[#E9E5E0] cursor-pointer" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Orphan "top-right link" + "member fields" blocks removed.
-                    Their fields didn't render anywhere on the 3-band card.
-                    The active fields (points top-right label, action prompt,
-                    greeting label) live in the "Disposition Apple Wallet"
-                    section below. */}
-              </div>
-
-            {/* ─── Disposition Apple Wallet — logo, top-right, action prompt, QR, anniversaire, tiers ─── */}
-            <div className="rounded-xl border border-[#E9E5E0] bg-white p-4 space-y-4 mt-3">
-              <div className="flex items-center gap-2">
-                <Palette size={16} className="text-[#B85C38]" />
-                <h3 className="text-[14px] font-bold text-[#171412]">Disposition Apple Wallet</h3>
-              </div>
-              <p className="text-[11.5px] text-[#8D857D] -mt-2">
-                Réglez où va le logo, ce qui s'affiche en haut à droite, l'invite d'action en bas, la taille du QR, l'anniversaire et les badges de palier.
-              </p>
-
-              {/* Logo position */}
-              <div>
-                <p className="text-[10px] uppercase tracking-wider text-[#8D857D] mb-2 font-bold">Position du logo</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { key: 'top_left',       label: 'Haut gauche' },
-                    { key: 'top_center',     label: 'Haut centre' },
-                    { key: 'middle_overlay', label: 'Sur la bande centrale' },
-                  ].map(({ key, label }) => {
-                    const active = brand.logo_position === key;
-                    return (
-                      <button key={key} type="button"
-                        onClick={() => setBrand((b) => ({ ...b, logo_position: key }))}
-                        className={`p-2 rounded-lg border text-[11px] text-center transition ${active ? 'border-[#B85C38] bg-[#FEF6F0] text-[#B85C38] font-semibold' : 'border-[#E9E5E0] bg-white hover:bg-[#FAFAF8] text-[#171412]'}`}>
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Top-right pts label */}
-              <div>
-                <label className="flex items-center gap-2 text-[12px] font-bold text-[#171412] mb-2 cursor-pointer">
-                  <input type="checkbox" checked={brand.show_points_top_right !== false}
-                         onChange={(e) => setBrand((b) => ({ ...b, show_points_top_right: e.target.checked }))} />
-                  Afficher les points en haut à droite ("+ D'INFOS / N pts")
-                </label>
-                {brand.show_points_top_right !== false && (
-                  <input type="text" value={brand.points_top_right_label}
-                         onChange={(e) => setBrand((b) => ({ ...b, points_top_right_label: e.target.value }))}
-                         placeholder="+ D'INFOS"
-                         className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                )}
-              </div>
-
-              {/* Action prompt section removed — the bottom-right of the
-                  card now shows "Total visites / N" (computed from the
-                  customer's visits count). The points meter underneath
-                  shows points earned / points needed for next reward. */}
-
-              {/* Greeting label */}
-              <div>
-                <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Étiquette d'accueil</label>
-                <input type="text" value={brand.bottom_greeting_label}
-                       onChange={(e) => setBrand((b) => ({ ...b, bottom_greeting_label: e.target.value }))}
-                       placeholder="Bienvenue / Membre / Bonjour"
-                       className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-              </div>
-
-              {/* QR / barcode / birthday toggles */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <label className="flex items-center gap-2 text-[12px] text-[#171412] cursor-pointer">
-                  <input type="checkbox" checked={brand.show_qr !== false}
-                         onChange={(e) => setBrand((b) => ({ ...b, show_qr: e.target.checked }))} />
-                  QR code
-                </label>
-                <label className="flex items-center gap-2 text-[12px] text-[#171412] cursor-pointer">
-                  <input type="checkbox" checked={brand.show_barcode !== false}
-                         onChange={(e) => setBrand((b) => ({ ...b, show_barcode: e.target.checked }))} />
-                  Code-barres
-                </label>
-                <label className="flex items-center gap-2 text-[12px] text-[#171412] cursor-pointer">
-                  <input type="checkbox" checked={!!brand.show_birthday}
-                         onChange={(e) => setBrand((b) => ({ ...b, show_birthday: e.target.checked }))} />
-                  Anniversaire
-                </label>
-              </div>
-
-              {/* QR size + birthday label */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Taille du QR (px)</label>
-                  <input type="range" min="48" max="140" value={brand.qr_size}
-                         onChange={(e) => setBrand((b) => ({ ...b, qr_size: parseInt(e.target.value, 10) }))}
-                         className="w-full" />
-                  <p className="text-[11px] text-[#171412] mt-1">{brand.qr_size}px</p>
-                </div>
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Étiquette anniversaire</label>
-                  <input type="text" value={brand.birthday_label}
-                         onChange={(e) => setBrand((b) => ({ ...b, birthday_label: e.target.value }))}
-                         placeholder="Anniversaire"
-                         className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                </div>
-              </div>
-
-              {/* Tier badge colours */}
-              <div>
-                <label className="flex items-center gap-2 text-[12px] font-bold text-[#171412] mb-2 cursor-pointer">
-                  <input type="checkbox" checked={brand.show_tier_badge !== false}
-                         onChange={(e) => setBrand((b) => ({ ...b, show_tier_badge: e.target.checked }))} />
-                  Afficher le badge de palier sur la carte
-                </label>
-                {brand.show_tier_badge !== false && (
-                  <div className="grid grid-cols-4 gap-2">
-                    {[
-                      { key: 'tier_badge_bronze', label: 'Bronze' },
-                      { key: 'tier_badge_silver', label: 'Silver' },
-                      { key: 'tier_badge_gold',   label: 'Gold' },
-                      { key: 'tier_badge_vip',    label: 'VIP' },
-                    ].map(({ key, label }) => (
-                      <div key={key}>
-                        <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">{label}</label>
-                        <input type="color" value={brand[key]}
-                               onChange={(e) => setBrand((b) => ({ ...b, [key]: e.target.value }))}
-                               className="w-full h-8 rounded border border-[#E9E5E0]" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* ─── Tampons & progression — punch-card stamps + meter ─── */}
-            <div className="rounded-xl border border-[#E9E5E0] bg-white p-4 space-y-4 mt-3">
-              <div className="flex items-center gap-2">
-                <Award size={16} className="text-[#B85C38]" />
-                <h3 className="text-[14px] font-bold text-[#171412]">Tampons & progression</h3>
-              </div>
-              <p className="text-[11.5px] text-[#8D857D] -mt-2">
-                Personnalisez le design des tampons et de la jauge affichés en bas de la carte.
-                Le nombre de tampons se synchronise automatiquement avec la règle "Stamps to unlock the reward".
-              </p>
-
-              {/* Stamp shape picker */}
-              <div>
-                <p className="text-[10px] uppercase tracking-wider text-[#8D857D] mb-2 font-bold">Forme du tampon</p>
-                <div className="grid grid-cols-5 gap-2">
-                  {[
-                    { key: 'circle',  label: 'Cercle',  preview: { borderRadius: '50%' } },
-                    { key: 'hexagon', label: 'Hexagone', preview: { clipPath: 'polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%)' } },
-                    { key: 'octagon', label: 'Octogone', preview: { clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)' } },
-                    { key: 'square',  label: 'Carré',   preview: { borderRadius: 4 } },
-                    { key: 'custom',  label: 'Personnalisé', preview: { borderRadius: 4, border: '2px dashed #B85C38', background: '#FFF' } },
-                  ].map(({ key, label, preview }) => {
-                    const active = brand.stamp_shape === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setBrand((b) => ({ ...b, stamp_shape: key }))}
-                        className={`flex flex-col items-center gap-1.5 p-2 rounded-lg border transition ${active ? 'border-[#B85C38] bg-[#FEF6F0]' : 'border-[#E9E5E0] bg-white hover:bg-[#FAFAF8]'}`}
-                      >
-                        <div style={{ width: 26, height: 26, background: active ? brand.stamp_fill_color : '#D6CFC1', ...preview }} />
-                        <span className="text-[10px] text-[#171412] font-medium">{label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Custom stamp image upload (only when shape === 'custom') */}
-              {brand.stamp_shape === 'custom' && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[#8D857D] mb-2 font-bold">Image de tampon personnalisée</p>
-                  <div className="flex items-center gap-3">
-                    {brand.stamp_custom_url ? (
-                      <div className="relative">
-                        <img src={brand.stamp_custom_url} alt="" className="w-12 h-12 rounded object-cover border border-[#E9E5E0]" />
-                        <button type="button" onClick={() => setBrand((b) => ({ ...b, stamp_custom_url: '' }))}
-                                className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-[#171412] text-white flex items-center justify-center"
-                                aria-label="Supprimer">
-                          <X size={11} />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="w-12 h-12 rounded border-2 border-dashed border-[#E9E5E0] flex items-center justify-center text-[#8D857D]">
-                        <ImagePlus size={18} />
-                      </div>
-                    )}
-                    <label className="cursor-pointer text-[12px] text-[#B85C38] font-semibold hover:underline">
-                      Choisir une image…
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={async (e) => {
-                          const f = e.target.files && e.target.files[0];
-                          if (!f) return;
-                          try {
-                            const dataUrl = await compressImage(f, 200, 0.85);
-                            setBrand((b) => ({ ...b, stamp_custom_url: dataUrl }));
-                          } catch { /* swallow — bad image */ }
-                        }}
-                      />
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Colour pickers — stamp fill, empty, ink */}
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Tampon rempli</label>
-                  <input type="color" value={brand.stamp_fill_color}
-                         onChange={(e) => setBrand((b) => ({ ...b, stamp_fill_color: e.target.value }))}
-                         className="w-full h-9 rounded border border-[#E9E5E0]" />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Tampon vide</label>
-                  <input type="color" value={brand.stamp_empty_color}
-                         onChange={(e) => setBrand((b) => ({ ...b, stamp_empty_color: e.target.value }))}
-                         className="w-full h-9 rounded border border-[#E9E5E0]" />
-                </div>
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Icône (✓)</label>
-                  <input type="color" value={brand.stamp_ink_color}
-                         onChange={(e) => setBrand((b) => ({ ...b, stamp_ink_color: e.target.value }))}
-                         className="w-full h-9 rounded border border-[#E9E5E0]" />
-                </div>
-              </div>
-
-              {/* Size + label */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Taille (px)</label>
-                  <input type="range" min="18" max="40" value={brand.stamp_size}
-                         onChange={(e) => setBrand((b) => ({ ...b, stamp_size: parseInt(e.target.value, 10) }))}
-                         className="w-full" />
-                  <p className="text-[11px] text-[#171412] mt-1">{brand.stamp_size}px</p>
-                </div>
-                <div>
-                  <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Étiquette</label>
-                  <input type="text" value={brand.stamps_label}
-                         onChange={(e) => setBrand((b) => ({ ...b, stamps_label: e.target.value }))}
-                         placeholder="Vos tampons"
-                         className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                </div>
-              </div>
-
-              {/* Meter (progress bar) settings */}
-              <div className="border-t border-[#F0EAE0] pt-4">
-                <label className="flex items-center gap-2 text-[12px] font-bold text-[#171412] cursor-pointer mb-2">
-                  <input type="checkbox" checked={brand.show_meter !== false}
-                         onChange={(e) => setBrand((b) => ({ ...b, show_meter: e.target.checked }))} />
-                  Afficher la jauge de points
-                </label>
-                {brand.show_meter !== false && (
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Couleur de remplissage</label>
-                      <input type="color" value={brand.meter_fill_color}
-                             onChange={(e) => setBrand((b) => ({ ...b, meter_fill_color: e.target.value }))}
-                             className="w-full h-9 rounded border border-[#E9E5E0]" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Couleur de fond</label>
-                      <input type="color" value={brand.meter_track_color}
-                             onChange={(e) => setBrand((b) => ({ ...b, meter_track_color: e.target.value }))}
-                             className="w-full h-9 rounded border border-[#E9E5E0]" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-[#8D857D] mb-1 font-bold uppercase tracking-wider">Étiquette jauge points</label>
-                      <input type="text" value={brand.meter_label}
-                             onChange={(e) => setBrand((b) => ({ ...b, meter_label: e.target.value }))}
-                             placeholder="Progression"
-                             className="w-full px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Toggle: show stamps grid */}
-              <label className="flex items-center gap-2 text-[12px] font-bold text-[#171412] cursor-pointer">
-                <input type="checkbox" checked={brand.show_stamps_grid !== false}
-                       onChange={(e) => setBrand((b) => ({ ...b, show_stamps_grid: e.target.checked }))} />
-                Afficher la grille de tampons sur la carte
-              </label>
             </div>
           </div>
 
@@ -1203,104 +965,119 @@ export default function CardDesignerPage() {
             >
               {/* Inner black bezel ring */}
               <div style={{ position: 'absolute', inset: 4, borderRadius: 46, background: '#000', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04)' }} />
-              {/* Screen */}
-              <div style={{ position: 'absolute', inset: 8, borderRadius: 42, overflow: 'hidden', background: '#000000' }}>
+              {/* Screen. Wallet mode shows Apple Wallet's LIGHT detail view
+                  (#F2F2F7) — a dark pass on a dark screen just disappears,
+                  and the reference passes all sit on this light ground. */}
+              {(() => {
+                const light = brand?.layout_style === 'wallet';
+                const screenBg = light ? '#F2F2F7' : '#000000';
+                const inkP = light ? '#111111' : '#FFFFFF';
+                return (
+              <div style={{ position: 'absolute', inset: 8, borderRadius: 42, overflow: 'hidden', background: screenBg }}>
                 {/* Status bar */}
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px 0', color: '#FFFFFF', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px 0', color: inkP, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
                   <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: '-0.01em' }}>9:41</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                     <svg width="16" height="10" viewBox="0 0 16 10" aria-hidden="true">
-                      <rect x="0"  y="6" width="3" height="4"  rx="0.6" fill="#FFFFFF" />
-                      <rect x="4"  y="4" width="3" height="6"  rx="0.6" fill="#FFFFFF" />
-                      <rect x="8"  y="2" width="3" height="8"  rx="0.6" fill="#FFFFFF" />
-                      <rect x="12" y="0" width="3" height="10" rx="0.6" fill="#FFFFFF" />
+                      <rect x="0"  y="6" width="3" height="4"  rx="0.6" fill={inkP} />
+                      <rect x="4"  y="4" width="3" height="6"  rx="0.6" fill={inkP} />
+                      <rect x="8"  y="2" width="3" height="8"  rx="0.6" fill={inkP} />
+                      <rect x="12" y="0" width="3" height="10" rx="0.6" fill={inkP} />
                     </svg>
                     <svg width="14" height="10" viewBox="0 0 15 11" aria-hidden="true">
-                      <path d="M7.5 10.2a1.1 1.1 0 100-2.2 1.1 1.1 0 000 2.2zM7.5 6.6a3.3 3.3 0 012.35.97l1.05-1.05a4.8 4.8 0 00-6.8 0L5.15 7.57A3.3 3.3 0 017.5 6.6zm0-3.6a6.9 6.9 0 014.93 2.05l1.05-1.05A8.4 8.4 0 007.5 1.4 8.4 8.4 0 001.52 4l1.05 1.05A6.9 6.9 0 017.5 3z" fill="#FFFFFF"/>
+                      <path d="M7.5 10.2a1.1 1.1 0 100-2.2 1.1 1.1 0 000 2.2zM7.5 6.6a3.3 3.3 0 012.35.97l1.05-1.05a4.8 4.8 0 00-6.8 0L5.15 7.57A3.3 3.3 0 017.5 6.6zm0-3.6a6.9 6.9 0 014.93 2.05l1.05-1.05A8.4 8.4 0 007.5 1.4 8.4 8.4 0 001.52 4l1.05 1.05A6.9 6.9 0 017.5 3z" fill={inkP}/>
                     </svg>
                     <svg width="26" height="11" viewBox="0 0 26 11" aria-hidden="true">
-                      <rect x="0.5" y="0.5" width="21" height="10" rx="2.4" fill="none" stroke="#FFFFFF" strokeOpacity="0.55" />
-                      <rect x="2.2" y="2.2" width="15.6" height="6.6" rx="1.2" fill="#FFFFFF" />
-                      <rect x="22.5" y="3.5" width="2" height="4" rx="0.6" fill="#FFFFFF" fillOpacity="0.55" />
+                      <rect x="0.5" y="0.5" width="21" height="10" rx="2.4" fill="none" stroke={inkP} strokeOpacity="0.55" />
+                      <rect x="2.2" y="2.2" width="15.6" height="6.6" rx="1.2" fill={inkP} />
+                      <rect x="22.5" y="3.5" width="2" height="4" rx="0.6" fill={inkP} fillOpacity="0.55" />
                     </svg>
                   </div>
                 </div>
                 {/* Dynamic Island */}
                 <div style={{ position: 'absolute', top: 11, left: '50%', transform: 'translateX(-50%)', width: 96, height: 28, borderRadius: 999, background: '#000000', border: '1px solid #1A1A1A' }} />
-                {/* Apple Wallet detail-view top bar */}
-                <div style={{ position: 'absolute', top: 50, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px', color: '#FFFFFF', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-                  <span style={{ fontSize: 16, fontWeight: 400 }}>OK</span>
-                  <div style={{ width: 28, height: 28, borderRadius: 14, background: 'rgba(255,255,255,0.15)', display: 'grid', placeItems: 'center', fontSize: 14, fontWeight: 700, color: '#FFFFFF', letterSpacing: 1 }}>⋯</div>
+                {/* Apple Wallet detail-view top bar — two translucent circular
+                    controls, back-chevron left + more right, like the real
+                    pass detail screen (not a bare "OK / …" text row). */}
+                <div style={{ position: 'absolute', top: 52, left: 0, right: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px' }}>
+                  {[('back'), ('more')].map((k) => (
+                    <div key={k} style={{ width: 30, height: 30, borderRadius: 15,
+                      background: light ? 'rgba(120,120,128,0.16)' : 'rgba(255,255,255,0.18)',
+                      backdropFilter: 'blur(8px)', display: 'grid', placeItems: 'center' }}>
+                      {k === 'back' ? (
+                        <svg width="9" height="15" viewBox="0 0 9 15" aria-hidden="true">
+                          <path d="M7.5 1L1.5 7.5L7.5 14" fill="none" stroke={light ? '#007AFF' : '#FFFFFF'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : (
+                        <svg width="16" height="4" viewBox="0 0 16 4" aria-hidden="true">
+                          {[2, 8, 14].map((cx) => <circle key={cx} cx={cx} cy="2" r="1.6" fill={light ? '#007AFF' : '#FFFFFF'} />)}
+                        </svg>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                {/* Card surface — sits just below the Wallet top bar */}
-                <div style={{ position: 'absolute', top: 92, left: 10, right: 10, bottom: 26, overflowY: 'auto' }}>
-                  <div className="relative">
-                <PremiumLoyaltyCard
-                  customer={{
-                    name: 'Marie Lefèvre',
-                    first_name: 'Marie',
-                    tier: 'Gold',
-                    barcode_id: 'FT-1DFC4E62',
-                    // Sample customer at 60% of one reward cycle so the
-                    // owner sees a half-filled card. Visits are EXPRESSED
-                    // as raw visits (not stamps), so we multiply by
-                    // visits_per_stamp to get the correct underlying count.
-                    visits: Math.floor((parseInt(rules.reward_threshold_stamps, 10) || 10) * 0.6) * (Math.max(1, parseInt(rules.visits_per_stamp, 10) || 1)),
-                    reward_threshold: parseInt(rules.reward_threshold_stamps, 10) || 10,
-                    offers_count: 1,
-                    birthday: '12/05',
-                  }}
-                  tenant={{ name: tenant?.name || tenant?.business_name || 'Mon commerce' }}
-                  card={{
-                    ...brand,
-                    // Merge loyalty rules so the points meter on the preview
-                    // reflects the owner's current points-per-visit setting.
-                    points_per_visit: parseInt(rules.points_per_visit, 10) || 10,
-                    visits_per_stamp: parseInt(rules.visits_per_stamp, 10) || 1,
-                  }}
-                  compact
-                />
-                {/* Numbered band tags overlaid on the card so the owner can
-                    visually anchor each editor section to a strip. */}
-                {/* Numbered band tags overlaid on the card (legend below) */}
-                <span className="absolute -left-1 top-[8%] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded" style={{ background: '#3FA9D9', color: '#FFFFFF', letterSpacing: '0.10em' }}>1</span>
-                <span className="absolute -left-1 top-[40%] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded" style={{ background: '#E8A53B', color: '#FFFFFF', letterSpacing: '0.10em' }}>2</span>
-                <span className="absolute -left-1 top-[74%] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded" style={{ background: '#20714C', color: '#FFFFFF', letterSpacing: '0.10em' }}>3</span>
+                {/* Card surface — full pass width, centred, so the strip runs
+                    edge-to-edge INSIDE the phone (a real pass never bleeds
+                    past the screen). Width is computed to fit the screen. */}
+                <div style={{ position: 'absolute', top: 96, left: 0, right: 0, bottom: 26, overflowY: 'auto', display: 'flex', justifyContent: 'center', padding: '0 14px' }}>
+                  <div className="relative" style={{ width: '100%', maxWidth: 268 }}>
+                {(() => {
+                  // Wallet mode previews the pkpass-FAITHFUL render — the
+                  // merchant launches with real Apple Wallet passes, so the
+                  // phone frame must show exactly what PassKit will draw
+                  // (stamps in the strip, one barcode, text-only fields).
+                  // Legacy mode keeps previewing the customer-page component.
+                  const CardPreview = brand?.layout_style === 'wallet' ? WalletPassPreview : PremiumLoyaltyCard;
+                  return (
+                    <CardPreview
+                      customer={{
+                        name: 'Marie Lefèvre',
+                        first_name: 'Marie',
+                        tier: 'Gold',
+                        barcode_id: 'FT-1DFC4E62',
+                        // Sample customer at 60% of one reward cycle so the
+                        // owner sees a half-filled card. Visits are EXPRESSED
+                        // as raw visits (not stamps), so we multiply by
+                        // visits_per_stamp to get the correct underlying count.
+                        visits: Math.floor((parseInt(rules.reward_threshold_stamps, 10) || 10) * 0.6) * (Math.max(1, parseInt(rules.visits_per_stamp, 10) || 1)),
+                        reward_threshold: parseInt(rules.reward_threshold_stamps, 10) || 10,
+                        offers_count: 1,
+                        birthday: '12/05',
+                      }}
+                      tenant={{ name: tenant?.name || tenant?.business_name || 'Mon commerce' }}
+                      card={{
+                        ...brand,
+                        // Merge loyalty rules so the points meter on the preview
+                        // reflects the owner's current points-per-visit setting.
+                        points_per_visit: parseInt(rules.points_per_visit, 10) || 10,
+                        visits_per_stamp: parseInt(rules.visits_per_stamp, 10) || 1,
+                      }}
+                      width={268}
+                      compact
+                    />
+                  );
+                })()}
+                {/* Numbered band tags — legacy-layout anchors only. The wallet
+                    preview follows pkpass anatomy, not the 3-band editor map. */}
+                {brand?.layout_style !== 'wallet' && (
+                  <>
+                    <span className="absolute -left-1 top-[8%] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded" style={{ background: '#3FA9D9', color: '#FFFFFF', letterSpacing: '0.10em' }}>1</span>
+                    <span className="absolute -left-1 top-[40%] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded" style={{ background: '#E8A53B', color: '#FFFFFF', letterSpacing: '0.10em' }}>2</span>
+                    <span className="absolute -left-1 top-[74%] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded" style={{ background: '#20714C', color: '#FFFFFF', letterSpacing: '0.10em' }}>3</span>
+                  </>
+                )}
                   </div>
                 </div>
                 {/* Home indicator bar */}
-                <div aria-hidden="true" style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', width: 110, height: 5, background: 'var(--flc-card, #FFFFFF)', borderRadius: 3, opacity: 0.9 }} />
+                <div aria-hidden="true" style={{ position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)', width: 110, height: 5, background: light ? '#111111' : 'var(--flc-card, #FFFFFF)', borderRadius: 3, opacity: 0.9 }} />
               </div>
+                );
+              })()}
             </div>
 
-            {/* Map text — pictorial legend that shows what each band contains
-                and which editor section controls it. */}
-            <div className="mt-3 rounded-xl border bg-white p-3" style={{ borderColor: 'var(--flc-line, #E9E5E0)' }}>
-              <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-[#8D857D] mb-2">Carte — légende</p>
-              <ul className="space-y-2 text-[11.5px]">
-                <li className="flex items-start gap-2">
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-[0.12em]" style={{ background: '#3FA9D9', color: '#FFFFFF' }}>1</span>
-                  <div>
-                    <div className="font-semibold text-[#171412]">Bande HAUT</div>
-                    <div className="text-[#8D857D] leading-snug">Logo · nom du commerce · badge palier · "+ D'INFOS / N pts". Couleur = <span className="font-mono text-[10.5px] text-[#171412]">card_bg_color</span> (partagée avec la bande bas).</div>
-                  </div>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-[0.12em]" style={{ background: '#E8A53B', color: '#FFFFFF' }}>2</span>
-                  <div>
-                    <div className="font-semibold text-[#171412]">Bande MILIEU</div>
-                    <div className="text-[#8D857D] leading-snug">Image ou couleur · titre · sous-titre · encart offre. Couleur indépendante via <span className="font-mono text-[10.5px] text-[#171412]">strip_color</span> ou l'image téléversée.</div>
-                  </div>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-[0.12em]" style={{ background: '#20714C', color: '#FFFFFF' }}>3</span>
-                  <div>
-                    <div className="font-semibold text-[#171412]">Bande BAS</div>
-                    <div className="text-[#8D857D] leading-snug">Salutation · prénom · total visites · grille de tampons · jauge de points · QR code · code-barres · anniversaire. Même couleur que la bande haut.</div>
-                  </div>
-                </li>
-              </ul>
-            </div>
+            {/* (Legacy 3-band legend removed — it described the retired card
+                anatomy and its dead knobs, pure noise next to the wallet
+                preview.) */}
           </div>
         </div>
       </div>

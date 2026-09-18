@@ -994,10 +994,12 @@ textarea::placeholder {
     overflow-y: auto;
     z-index: 30;
   }
-  /* When the preview is fixed, the grid cell still reserves the 300px
-     column — but we also need to make sure the page content doesn't run
-     under it on narrow desktops. The grid template already includes the
-     reserved column, so no extra padding needed. */
+  /* The fixed pane floats over EVERYTHING — full-width sections like
+     Loyalty Rules ran underneath it and were unreadable. Reserve the
+     pane's footprint (340px + gutters) on the whole page instead. */
+  .card-designer-page {
+    padding-right: 372px;
+  }
 }
 .card-designer-preview-pane::-webkit-scrollbar { width: 6px; }
 .card-designer-preview-pane::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); border-radius: 3px; }
