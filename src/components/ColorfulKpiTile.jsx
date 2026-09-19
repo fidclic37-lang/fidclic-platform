@@ -125,7 +125,7 @@ const ColorfulKpiTile = ({
   const palette     = tone ? TONE_STYLE[tone] || TONE_STYLE.neutral : null;
   const vivid       = palette ? palette.vivid : accent;
   const glow        = palette ? palette.glow  : `${accent}33`;
-  const sparkLine   = palette ? palette.line  : HERO_INK;
+  const sparkLine   = palette ? palette.line  : vivid;
   // Mockup "Activité" tiles: the number carries the tone — blue for a normal
   // count, green for growth, red for at-risk, grey for zero; navy otherwise.
   const numberInk   = vivid;
