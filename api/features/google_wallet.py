@@ -26,6 +26,7 @@ Never logs: private key, OAuth assertion/token, or the signed Save JWT.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -35,6 +36,7 @@ from typing import Optional
 
 import jwt
 import requests
+from cryptography.hazmat.primitives import serialization
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -87,11 +89,66 @@ def _get_config() -> dict:
             status_code=503,
             detail="Google Wallet n'est pas configuré sur ce serveur.",
         )
-    # Vercel env values often carry literal "\n" sequences — restore real newlines.
-    cfg["GOOGLE_WALLET_PRIVATE_KEY"] = cfg["GOOGLE_WALLET_PRIVATE_KEY"].replace("\\n", "\n")
+    cfg["GOOGLE_WALLET_PRIVATE_KEY"] = _normalize_private_key(cfg["GOOGLE_WALLET_PRIVATE_KEY"])
     cfg["GOOGLE_WALLET_PROJECT_ID"] = (os.environ.get("GOOGLE_WALLET_PROJECT_ID") or "").strip()
     cfg["GOOGLE_WALLET_ENV"] = (os.environ.get("GOOGLE_WALLET_ENV") or "").strip()
     return cfg
+
+
+_PEM_BODY_RE = re.compile(
+    r"-----BEGIN (?:RSA )?PRIVATE KEY-----(.*?)-----END (?:RSA )?PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _normalize_private_key(raw: str) -> str:
+    """Turn whatever was pasted into the Vercel env into a loadable PKCS#8 PEM.
+
+    Handles the usual paste accidents without ever logging the value:
+    surrounding quotes, the whole service-account JSON instead of just the
+    key, literal "\\n" (or double-escaped "\\\\n") sequences, CRLF, spaces
+    instead of newlines, missing trailing newline. Raises a 503 with a
+    safe, structural-only log line if the result still doesn't parse.
+    """
+    value = (raw or "").strip()
+    # Whole service-account JSON pasted → take its private_key field.
+    if value.startswith("{"):
+        try:
+            value = (json.loads(value).get("private_key") or "").strip()
+        except ValueError:
+            value = ""
+    # Surrounding quotes from a `KEY="..."` style paste.
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1].strip()
+    # Escaped newlines (single or double escaped) and CRLF → real newlines.
+    value = value.replace("\\\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+
+    m = _PEM_BODY_RE.search(value)
+    if m:
+        header = "RSA PRIVATE KEY" if "BEGIN RSA PRIVATE KEY" in value else "PRIVATE KEY"
+        body = m.group(1)
+    else:
+        # No framing at all → assume a bare base64 PKCS#8 body.
+        header = "PRIVATE KEY"
+        body = value
+    body = re.sub(r"\s+", "", body)
+    lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+    pem = f"-----BEGIN {header}-----\n" + "\n".join(lines) + f"\n-----END {header}-----\n"
+
+    try:
+        serialization.load_pem_private_key(pem.encode(), password=None)
+    except (ValueError, TypeError):
+        # Structural facts only — never the content.
+        logger.error(
+            "google_wallet: GOOGLE_WALLET_PRIVATE_KEY unparseable (len=%d, had_begin=%s, "
+            "had_literal_backslash_n=%s, body_len=%d)",
+            len(raw or ""), bool(m), "\\n" in (raw or ""), len(body),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Google Wallet n'est pas configuré correctement sur ce serveur.",
+        )
+    return pem
 
 
 def _get_tenant_class_id(tenant: Optional[dict], cfg: dict) -> str:
