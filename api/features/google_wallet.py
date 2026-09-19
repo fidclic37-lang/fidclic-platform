@@ -339,7 +339,13 @@ def _ensure_wallet_object(customer: dict, tenant: Optional[dict], cfg: dict) -> 
             if existing_class:
                 class_id = existing_class
         elif ins_resp.status_code != 200:
-            logger.error("google_wallet: insert object ..%s status=%s msg=%s", _object_id_tail(object_id), ins_resp.status_code, _google_error(ins_resp))
+            # Which service account / class the request was made with — both are
+            # public identifiers shown in the Wallet Console, not credentials.
+            logger.error(
+                "google_wallet: insert object ..%s status=%s msg=%s sa=%s class=%s",
+                _object_id_tail(object_id), ins_resp.status_code, _google_error(ins_resp),
+                cfg["GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL"], class_id,
+            )
             raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
         else:
             logger.info("google_wallet: created object ..%s", _object_id_tail(object_id))
