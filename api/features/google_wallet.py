@@ -203,7 +203,7 @@ def _get_access_token(cfg: dict) -> str:
         logger.error("google_wallet: oauth token request failed (network)")
         raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
     if resp.status_code != 200:
-        logger.error("google_wallet: oauth token request failed status=%s", resp.status_code)
+        logger.error("google_wallet: oauth token request failed status=%s msg=%s", resp.status_code, _google_error(resp))
         raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
     token = (resp.json() or {}).get("access_token")
     if not token:
@@ -227,6 +227,16 @@ def _wallet_request(method: str, path: str, access_token: str, json_body: Option
 
 
 # ---------- Object helpers ----------
+def _google_error(resp: requests.Response) -> str:
+    """Google's own error message (e.g. "Class X not found") — never a credential."""
+    try:
+        err = (resp.json() or {}).get("error") or {}
+        msg = err.get("message") or err.get("status") or ""
+    except ValueError:
+        msg = ""
+    return str(msg)[:200]
+
+
 def _safe_id_part(value: str) -> str:
     return _SAFE_ID_RE.sub("_", (value or "").replace("-", "_"))
 
@@ -313,7 +323,7 @@ def _ensure_wallet_object(customer: dict, tenant: Optional[dict], cfg: dict) -> 
             class_id = existing_class
         patch_resp = _wallet_request("PATCH", f"/loyaltyObject/{object_id}", access_token, body)
         if patch_resp.status_code != 200:
-            logger.error("google_wallet: patch object ..%s status=%s", _object_id_tail(object_id), patch_resp.status_code)
+            logger.error("google_wallet: patch object ..%s status=%s msg=%s", _object_id_tail(object_id), patch_resp.status_code, _google_error(patch_resp))
             raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
         logger.info("google_wallet: reused object ..%s", _object_id_tail(object_id))
     elif get_resp.status_code == 404:
@@ -323,18 +333,18 @@ def _ensure_wallet_object(customer: dict, tenant: Optional[dict], cfg: dict) -> 
             logger.info("google_wallet: insert conflict, reusing object ..%s", _object_id_tail(object_id))
             re_get = _wallet_request("GET", f"/loyaltyObject/{object_id}", access_token)
             if re_get.status_code != 200:
-                logger.error("google_wallet: refetch after 409 ..%s status=%s", _object_id_tail(object_id), re_get.status_code)
+                logger.error("google_wallet: refetch after 409 ..%s status=%s msg=%s", _object_id_tail(object_id), re_get.status_code, _google_error(re_get))
                 raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
             existing_class = (re_get.json() or {}).get("classId")
             if existing_class:
                 class_id = existing_class
         elif ins_resp.status_code != 200:
-            logger.error("google_wallet: insert object ..%s status=%s", _object_id_tail(object_id), ins_resp.status_code)
+            logger.error("google_wallet: insert object ..%s status=%s msg=%s", _object_id_tail(object_id), ins_resp.status_code, _google_error(ins_resp))
             raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
         else:
             logger.info("google_wallet: created object ..%s", _object_id_tail(object_id))
     else:
-        logger.error("google_wallet: get object ..%s status=%s", _object_id_tail(object_id), get_resp.status_code)
+        logger.error("google_wallet: get object ..%s status=%s msg=%s", _object_id_tail(object_id), get_resp.status_code, _google_error(get_resp))
         raise HTTPException(status_code=502, detail="Google Wallet est temporairement indisponible.")
 
     now = datetime.now(timezone.utc)
