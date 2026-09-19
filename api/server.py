@@ -5442,6 +5442,21 @@ class JoinRequest(BaseModel):
     consent: Optional[bool] = False
     consent_policy_version: Optional[str] = None
 
+def _wallet_claim_token(customer_id: str, tenant_id: str, barcode_id: str) -> str:
+    """Short-lived (10 min), customer-specific token consumed by
+    POST /api/wallet/claim (features/google_wallet.py). Signed with the
+    same secret/algorithm as app auth so the claim route can verify it."""
+    return create_access_token(
+        {
+            "sub": "wallet-claim",
+            "purpose": "google_wallet_claim",
+            "customer_id": customer_id,
+            "tenant_id": tenant_id,
+            "barcode_id": barcode_id,
+        },
+        expires_delta=timedelta(minutes=10),
+    )
+
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
     # Normalize acquisition_source to exactly the 5 allowed values
@@ -5501,7 +5516,14 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
                 {"_id": existing["_id"]},
                 {"$set": {"latitude": req.latitude, "longitude": req.longitude}}
             )
-        return {"barcode_id": existing["barcode_id"], "message": "Already joined"}
+        return {
+            "barcode_id": existing["barcode_id"],
+            "message": "Already joined",
+            "wallet_claim_token": _wallet_claim_token(
+                existing["id"], tid, existing["barcode_id"]
+            ),
+            "already_joined": True,
+        }
 
     # ─── Plan cap enforcement ───────────────────────────────────────────
     # Block new customer creation once the tenant reaches the cap defined
@@ -5600,7 +5622,12 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     log_audit("gdpr.consent_given", actor=barcode_id, actor_type="customer",
               tenant_id=tid, target=cust_doc["id"], request=request,
               meta={"policy_version": cust_doc["consent"]["policy_version"]})
-    return {"barcode_id": barcode_id, "message": "Welcome!"}
+    return {
+        "barcode_id": barcode_id,
+        "message": "Welcome!",
+        "wallet_claim_token": _wallet_claim_token(c.id, tid, barcode_id),
+        "already_joined": False,
+    }
 
 # ========================
 # WALLET CARD (public, barcode-keyed) — Captain Wallet style

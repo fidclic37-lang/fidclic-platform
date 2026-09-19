@@ -86,6 +86,12 @@ const JoinPage = () => {
   // customer cap and we surface a friendly message instead of a generic
   // alert. All other failures fall back to a single-line error message.
   const [joinError, setJoinError] = useState(null);
+  // Google Wallet: save URL fetched right after a NEW signup via the
+  // short-lived claim token returned by /api/join. Never shown for
+  // already_joined responses on this screen.
+  const [walletSaveUrl, setWalletSaveUrl] = useState(null);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletError, setWalletError] = useState(null);
 
   useEffect(() => {
     publicAPI.getJoinInfo(slug).then(res => setTenant(res.data)).catch(console.error);
@@ -238,6 +244,21 @@ const JoinPage = () => {
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);  // chain has been persisted server-side, no need to keep it here
       setSuccess(res.data);
+      setWalletSaveUrl(null);
+      setWalletError(null);
+      setWalletLoading(false);
+      if (!res.data.already_joined && res.data.wallet_claim_token) {
+        setWalletLoading(true);
+        try {
+          const wres = await publicAPI.claimGoogleWalletPass(res.data.wallet_claim_token);
+          setWalletSaveUrl(wres.data?.save_url || null);
+          if (!wres.data?.save_url) setWalletError(true);
+        } catch (_werr) {
+          setWalletError(true);
+        } finally {
+          setWalletLoading(false);
+        }
+      }
     } catch (err) {
       // Plan-cap hit: the backend returns 403 with a structured detail.
       // Surface its `message` field directly so the visitor sees the
@@ -287,6 +308,22 @@ const JoinPage = () => {
                 {t('join.open_card_hint')}
               </p>
             </div>
+            {walletLoading && (
+              <p className="text-sm text-[#57534E]">Préparation de votre carte Google Wallet…</p>
+            )}
+            {!walletLoading && walletSaveUrl && (
+              <a
+                href={walletSaveUrl}
+                className="block text-center w-full bg-[#1F1F1F] text-white py-3 rounded-xl font-medium hover:bg-black transition-colors"
+              >
+                Ajouter à Google Wallet
+              </a>
+            )}
+            {!walletLoading && walletError && (
+              <p className="text-sm text-[#57534E]">
+                Votre carte est créée. Google Wallet est temporairement indisponible, veuillez réessayer depuis votre carte.
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">

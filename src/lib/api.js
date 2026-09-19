@@ -362,6 +362,8 @@ export const publicAPI = {
   proximityPing: (data) => api.post('/public/proximity-ping', data),
   // -- Customer review submission (wallet card → rate-your-visit panel) --
   submitReview: (data) => api.post('/public/reviews', data),
+  // -- Google Wallet: exchange the short-lived join claim token for a save URL --
+  claimGoogleWalletPass: (token) => api.post('/wallet/claim', { wallet_claim_token: token }),
 };
 
 export default api;
