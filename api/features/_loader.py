@@ -99,7 +99,7 @@ MODULES = [
     # It was a planned/described feature in the docs but never had its own
     # backend module mounted. So there's nothing to disable here.
     # Google Wallet — test pass creation + Add to Google Wallet save URL.
-    "features.google_wallet",
+    "features.google_wallet", 
 ]
 
 
