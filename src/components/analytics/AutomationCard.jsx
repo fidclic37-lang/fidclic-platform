@@ -13,12 +13,12 @@
 import React from 'react';
 
 const ACCENT = {
-  purple:  'var(--flc-tone-blue, #2F6BFF)',
-  cyan:    'var(--flc-tone-blue, #2F6BFF)',
-  pink:    'var(--flc-tone-blue, #2F6BFF)',
-  emerald: 'var(--flc-tone-blue, #2F6BFF)',
-  orange:  'var(--flc-tone-blue, #2F6BFF)',
-  amber:   'var(--flc-tone-blue, #2F6BFF)',
+  purple:  '#2F6BFF',
+  cyan:    '#0EA5E9',
+  pink:    '#EC4899',
+  emerald: '#16A34A',
+  orange:  '#F97316',
+  amber:   '#F59E0B',
 };
 
 const STATUS_PILL = {

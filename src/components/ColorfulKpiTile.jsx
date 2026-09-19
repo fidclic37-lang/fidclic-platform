@@ -39,13 +39,14 @@ const SHARED_LINE    = '#DCE3EF';
 const HERO_INK       = '#2F6BFF';
 
 const TONE_STYLE = {
-  // Saturated vivid colors for the icon chip + sparkline + corner glow.
-  success: { vivid: '#16A34A', glow: 'rgba(22,163,74,0.22)',  line: '#16A34A' },
-  danger:  { vivid: '#5B8DEF', glow: 'rgba(91,141,239,0.25)',   line: '#5B8DEF' },
-  warning: { vivid: '#93B4FF', glow: 'rgba(147,180,255,0.3)',  line: '#93B4FF' },
-  info:    { vivid: '#0EA5E9', glow: 'rgba(14,165,233,0.25)',  line: '#0EA5E9' },
-  purple:  { vivid: 'var(--flc-accent, #2F6BFF)', glow: 'color-mix(in srgb, var(--flc-accent, #2F6BFF) 25%, transparent)', line: 'var(--flc-accent, #2F6BFF)' },
-  neutral: { vivid: '#64748B', glow: 'rgba(122, 113, 108, 0.22)', line: '#64748B' },
+  // Mockup semantics: blue is the default; green marks a healthy rate or
+  // active count, red an at-risk count, amber a warning, grey a zero.
+  success: { vivid: '#16A34A', glow: 'rgba(22,163,74,0.18)',   line: '#16A34A' },
+  danger:  { vivid: '#E11D48', glow: 'rgba(225,29,72,0.16)',   line: '#E11D48' },
+  warning: { vivid: '#F59E0B', glow: 'rgba(245,158,11,0.18)',  line: '#F59E0B' },
+  info:    { vivid: '#2F6BFF', glow: 'rgba(47,107,255,0.18)',  line: '#2F6BFF' },
+  purple:  { vivid: 'var(--flc-accent, #2F6BFF)', glow: 'color-mix(in srgb, var(--flc-accent, #2F6BFF) 18%, transparent)', line: 'var(--flc-accent, #2F6BFF)' },
+  neutral: { vivid: '#94A3B8', glow: 'rgba(148,163,184,0.16)', line: '#94A3B8' },
 };
 
 /** Inline sparkline with bigger presence: thicker stroke + denser fill

@@ -752,7 +752,7 @@ const AnalyticsPage = () => {
   const SOURCE_STYLE = {
     instagram: { color: '#5B8DEF', bg: 'rgba(47,107,255,0.08)', icon: '📸' },
     facebook:  { color: '#2F6BFF', bg: 'rgba(47,107,255,0.08)', icon: '👥' },
-    tiktok:    { color: '#000000', bg: 'rgba(0,0,0,0.06)',       icon: '🎵' },
+    tiktok:    { color: '#1D4ED8', bg: 'rgba(29,78,216,0.08)',    icon: '🎵' },
     qr_store:  { color: '#2F6BFF', bg: 'rgba(184,92,56,0.10)',   icon: '📍' },
   };
 
@@ -1423,7 +1423,7 @@ const AnalyticsPage = () => {
                     return [10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => {
                       const v = dist[String(n)] || 0;
                       const pct = Math.round((v / max) * 100);
-                      const color = n >= 8 ? '#2F6BFF' : n >= 5 ? '#93B4FF' : '#2F6BFF';
+                      const color = n >= 8 ? '#16A34A' : n >= 5 ? '#5B8DEF' : '#E11D48';
                       return (
                         <div key={n} className="flex items-center gap-2 text-xs">
                           <span className="w-6 text-right font-semibold text-[#0F172A]">{n}</span>
@@ -1459,7 +1459,7 @@ const AnalyticsPage = () => {
                         price: '💶 Price / value',
                         wait_time: '⏱ Wait time',
                       }[t.topic] || t.topic;
-                      const avgColor = t.avg_rating >= 8 ? '#2F6BFF' : t.avg_rating >= 6 ? '#93B4FF' : '#2F6BFF';
+                      const avgColor = t.avg_rating >= 8 ? '#16A34A' : t.avg_rating >= 6 ? '#1D4ED8' : '#E11D48';
                       return (
                         <div key={t.topic} className="p-2 rounded bg-[#F5F7FB] border border-[#DCE3EF]">
                           <div className="flex items-center justify-between text-xs">
@@ -1467,9 +1467,9 @@ const AnalyticsPage = () => {
                             <span style={{ color: avgColor }} className="font-bold">{t.avg_rating}/10 · {t.count} mention{t.count === 1 ? '' : 's'}</span>
                           </div>
                           <div className="mt-1 flex h-1.5 rounded overflow-hidden">
-                            <div style={{ width: `${t.positive_pct}%`, backgroundColor: '#2F6BFF' }} />
-                            <div style={{ width: `${100 - t.positive_pct - t.negative_pct}%`, backgroundColor: '#93B4FF' }} />
-                            <div style={{ width: `${t.negative_pct}%`, backgroundColor: '#2F6BFF' }} />
+                            <div style={{ width: `${t.positive_pct}%`, backgroundColor: '#16A34A' }} />
+                            <div style={{ width: `${100 - t.positive_pct - t.negative_pct}%`, backgroundColor: '#CBD5E1' }} />
+                            <div style={{ width: `${t.negative_pct}%`, backgroundColor: '#E11D48' }} />
                           </div>
                           <p className="text-[10px] text-[#64748B] mt-1">
                             {t.positive_pct}% positive · {t.negative_pct}% negative · {t.mention_pct}% of reviews mention this
@@ -1490,7 +1490,7 @@ const AnalyticsPage = () => {
                   {reviewAnalytics.recent.map((r) => (
                     <div key={r.id} className="p-3 rounded bg-[#F5F7FB] border border-[#DCE3EF] flex items-start gap-3">
                       <div className={`shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold text-white`}
-                           style={{ backgroundColor: r.rating >= 8 ? '#2F6BFF' : r.rating >= 5 ? '#93B4FF' : '#2F6BFF' }}>
+                           style={{ backgroundColor: r.rating >= 8 ? '#16A34A' : r.rating >= 5 ? '#5B8DEF' : '#E11D48' }}>
                         {r.rating}
                       </div>
                       <div className="flex-1 min-w-0">

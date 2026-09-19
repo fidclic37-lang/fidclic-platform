@@ -84,10 +84,12 @@ const pct = (n, total) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
 const Tile = ({ label, value, pct, icon: Icon, tone }) => {
   const palette = {
-    success: { bg: 'color-mix(in srgb, var(--flc-ok, #16A34A) 10%, var(--flc-card, #FFFFFF))',   fg: 'var(--flc-ok, #065F46)',   accent: 'var(--flc-ok, #10B981)' },
-    danger:  { bg: 'color-mix(in srgb, var(--flc-risk, #C22F45) 10%, var(--flc-card, #FFFFFF))', fg: 'var(--flc-risk, #991B1B)', accent: 'var(--flc-risk, #DC2626)' },
-    info:    { bg: 'color-mix(in srgb, var(--flc-info, #2F6BFF) 10%, var(--flc-card, #FFFFFF))', fg: 'var(--flc-info, #1D4ED8)', accent: 'var(--flc-info, #2F6BFF)' },
-    default: { bg: 'var(--flc-paper2, #F3F4F6)', fg: 'var(--flc-ink2, #374151)', accent: 'var(--flc-ink3, #6B7280)' },
+    // White tile + hairline for every status; only the NUMBER carries meaning
+    // (blue = healthy, grey = dormant, red = at risk) — mockup style, no tints.
+    success: { bg: 'var(--flc-card, #FFFFFF)', fg: 'var(--flc-ok, #16A34A)',           accent: 'var(--flc-ok, #16A34A)' },
+    danger:  { bg: 'var(--flc-card, #FFFFFF)', fg: 'var(--flc-risk, #E11D48)',        accent: 'var(--flc-risk, #E11D48)' },
+    info:    { bg: 'var(--flc-card, #FFFFFF)', fg: 'var(--flc-accent-deep, #1D4ED8)', accent: 'var(--flc-accent, #2F6BFF)' },
+    default: { bg: 'var(--flc-card, #FFFFFF)', fg: 'var(--flc-ink2, #334155)',        accent: 'var(--flc-ink3, #64748B)' },
   }[tone] || { bg: 'var(--flc-paper2, #F3F4F6)', fg: 'var(--flc-ink2, #374151)', accent: 'var(--flc-ink3, #6B7280)' };
 
   return (
