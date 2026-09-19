@@ -917,7 +917,7 @@ const AnalyticsPage = () => {
             title="Total Visits"
             value={totalVisits.toLocaleString()}
             sublabel="Toutes les visites enregistrées"
-            tone="success"
+            tone="info"
             onClick={() => drillCustomers('Customers with ≥ 1 visit', { min_visits: 1 })}
           />
           <ColorfulKpiTile
@@ -925,7 +925,7 @@ const AnalyticsPage = () => {
             title="Repeat Rate"
             value={`${repeatRate.toFixed(1)}%`}
             sublabel="Clients revenus au moins 2 fois"
-            tone="warning"
+            tone="success"
             onClick={() => drillCustomers('Repeat customers (≥ 2 visits)', { min_visits: 2 })}
           />
           <ColorfulKpiTile
@@ -933,7 +933,7 @@ const AnalyticsPage = () => {
             title="Wallet Passes"
             value={walletPasses.toLocaleString()}
             sublabel={`${totalCustomers ? Math.round((walletPasses / totalCustomers) * 100) : 0}% des clients`}
-            tone="purple"
+            tone="info"
             onClick={() => drillCustomers('Wallet pass holders', { has_wallet_pass: true })}
           />
         </section>
@@ -945,7 +945,7 @@ const AnalyticsPage = () => {
             title="Active Cards"
             value={(summary?.wallet_active_count ?? 0).toLocaleString()}
             sublabel="Dans Apple/Google Wallet"
-            tone="success"
+            tone="info"
             onClick={() => drillCustomers('Active wallet cards', { wallet_state: 'active' })}
           />
           <ColorfulKpiTile
@@ -953,7 +953,7 @@ const AnalyticsPage = () => {
             title="Never Added"
             value={(summary?.wallet_never_added_count ?? 0).toLocaleString()}
             sublabel="Inscrits, mais carte non ajoutée"
-            tone="warning"
+            tone="neutral"
             onClick={() => drillCustomers('Never added to wallet', { wallet_state: 'never_added' })}
           />
           <ColorfulKpiTile
@@ -969,7 +969,7 @@ const AnalyticsPage = () => {
             title="VIP Customers"
             value={vipCount.toLocaleString()}
             sublabel="Top tier — 40+ visites ou panier €60+"
-            tone="purple"
+            tone="info"
             onClick={() => drillCustomers('VIP customers', { tier: 'vip' })}
           />
         </section>
@@ -1057,7 +1057,7 @@ const AnalyticsPage = () => {
             }
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Gift} title="Récompenses utilisées" accent="#5B8DEF"
+            icon={Gift} title="Récompenses utilisées" accent="#2F6BFF"
             metric="rewards_redeemed" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `Récompenses sur ${d} jours`}
@@ -1079,7 +1079,7 @@ const AnalyticsPage = () => {
             }}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Calendar} title="Premières visites" accent="#0EA5E9"
+            icon={Calendar} title="Premières visites" accent="#2F6BFF"
             metric="first_time_today" branchId={branchId}
             initial={{ value: 1, unit: 'day' }}
             sublabel={(d) => `Inscrits sur les ${d} derniers jours`}
@@ -1089,14 +1089,14 @@ const AnalyticsPage = () => {
 
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
           <MetricTile controlledDays={tilesDays}
-            icon={Trophy} title="Loyal" accent="#1D4ED8"
+            icon={Trophy} title="Loyal" accent="#2F6BFF"
             metric="loyal_customers" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `≥ seuil "Loyal" sur ${d}j`}
             onDrill={() => drillCustomers('Loyal customers', { loyalty_bucket: 'loyal' })}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={RepeatIcon} title="Réguliers" accent="#5B8DEF"
+            icon={RepeatIcon} title="Réguliers" accent="#2F6BFF"
             metric="regular_customers" branchId={branchId}
             initial={{ value: 30, unit: 'day' }}
             sublabel={(d) => `≥ seuil "Régulier" sur ${d}j`}
@@ -1110,7 +1110,7 @@ const AnalyticsPage = () => {
             onDrill={(d) => drillCustomers(`Customers visited last ${d}d`, { active_within_days: d })}
           />
           <MetricTile controlledDays={tilesDays}
-            icon={Calendar} title="Anniversaires ce mois" accent="#93B4FF"
+            icon={Calendar} title="Anniversaires ce mois" accent="#2F6BFF"
             metric="birthdays_this_month_static"
             branchId={branchId}
             staticValue={birthdaysThisMonth}

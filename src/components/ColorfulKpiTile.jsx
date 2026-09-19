@@ -36,17 +36,17 @@ const SHARED_SURFACE = '#F5F7FB';
 const SHARED_LINE    = '#DCE3EF';
 // The vibrant hero accent used for every big number, regardless of tone.
 // Joyful teal-blue, picks up well against the cream surface.
-const HERO_INK       = '#2F6BFF';
+const HERO_INK       = '#0F172A';
 
 const TONE_STYLE = {
-  // Mockup semantics: blue is the default; green marks a healthy rate or
-  // active count, red an at-risk count, amber a warning, grey a zero.
-  success: { vivid: '#16A34A', glow: 'rgba(22,163,74,0.18)',   line: '#16A34A' },
-  danger:  { vivid: '#E11D48', glow: 'rgba(225,29,72,0.16)',   line: '#E11D48' },
-  warning: { vivid: '#F59E0B', glow: 'rgba(245,158,11,0.18)',  line: '#F59E0B' },
-  info:    { vivid: '#2F6BFF', glow: 'rgba(47,107,255,0.18)',  line: '#2F6BFF' },
-  purple:  { vivid: 'var(--flc-accent, #2F6BFF)', glow: 'color-mix(in srgb, var(--flc-accent, #2F6BFF) 18%, transparent)', line: 'var(--flc-accent, #2F6BFF)' },
-  neutral: { vivid: '#94A3B8', glow: 'rgba(148,163,184,0.16)', line: '#94A3B8' },
+  // Mockup rule: blue = normal, green = growth / healthy, red = decrease /
+  // at risk, grey = zero. The chip is a LIGHT tint with a coloured glyph.
+  success: { vivid: '#16A34A', glow: 'rgba(22,163,74,0.12)',   line: '#16A34A' },
+  danger:  { vivid: '#E11D48', glow: 'rgba(225,29,72,0.12)',   line: '#E11D48' },
+  warning: { vivid: '#E11D48', glow: 'rgba(225,29,72,0.12)',   line: '#E11D48' },
+  info:    { vivid: '#2F6BFF', glow: 'rgba(47,107,255,0.12)',  line: '#2F6BFF' },
+  purple:  { vivid: '#2F6BFF', glow: 'rgba(47,107,255,0.12)',  line: '#2F6BFF' },
+  neutral: { vivid: '#94A3B8', glow: 'rgba(148,163,184,0.14)', line: '#94A3B8' },
 };
 
 /** Inline sparkline with bigger presence: thicker stroke + denser fill
@@ -126,8 +126,9 @@ const ColorfulKpiTile = ({
   const vivid       = palette ? palette.vivid : accent;
   const glow        = palette ? palette.glow  : `${accent}33`;
   const sparkLine   = palette ? palette.line  : HERO_INK;
-  // The big number is always the joyful teal-blue hero ink, regardless of tone.
-  const numberInk   = HERO_INK;
+  // Mockup "Activité" tiles: the number carries the tone — blue for a normal
+  // count, green for growth, red for at-risk, grey for zero; navy otherwise.
+  const numberInk   = vivid;
 
   const Tag = onClick ? 'button' : 'div';
   return (
@@ -138,28 +139,13 @@ const ColorfulKpiTile = ({
         background: SHARED_SURFACE,
         color: 'var(--ink)',
         border: `1px solid ${SHARED_LINE}`,
-        boxShadow: '0 1px 2px rgba(28,25,23,0.04), 0 6px 18px -12px rgba(28,25,23,0.10)',
+        boxShadow: '0 1px 2px rgba(16,24,40,0.04)',
         padding: '11px 13px 9px',
         minHeight: 112,
       }}
     >
       {/* Subtle corner glow in the tone colour — only added when there's a
           tone. Adds restraint-level depth without competing with the number. */}
-      {palette && (
-        <div
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            top: -14, right: -14,
-            width: 70, height: 70,
-            background: glow,
-            borderRadius: '50%',
-            filter: 'blur(18px)',
-            opacity: 0.6,
-            pointerEvents: 'none',
-          }}
-        />
-      )}
 
       {topRight && (
         <div className="absolute top-1.5 right-1.5 z-10" onClick={(e) => e.stopPropagation()}>
@@ -212,9 +198,8 @@ const ColorfulKpiTile = ({
           <div
             className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center relative"
             style={{
-              background: vivid,
-              color: '#FFFFFF',
-              boxShadow: `0 3px 10px -4px ${glow}, inset 0 1px 0 rgba(255,255,255,0.22)`,
+              background: glow,
+              color: vivid,
             }}
           >
             <Icon size={16} strokeWidth={2} />

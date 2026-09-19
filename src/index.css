@@ -2291,3 +2291,13 @@ textarea::placeholder {
 .av2-cobalt .recharts-pie-sector:nth-child(n+6) path { fill: #CBD5E1; }
 .av2-cobalt .recharts-cartesian-grid line { stroke: #E6EAF2; }
 .av2-cobalt .recharts-text { fill: #64748B; }
+
+/* Cobalt balance pass: the AI card is a plain white card (mockup), tier
+   badges are light tints, chips never solid blue. */
+.flc:not(.flc-nuit) .av2-light-skin.av2-cobalt .av2-card.av2-glow,
+.av2-light-skin.av2-cobalt .av2-card.av2-glow {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important;
+  border-color: #DCE3EF !important;
+}
+.av2-cobalt .tier-badge[data-tier="vip"]  { background: #EAF0FF !important; border-color: #C7D7FF !important; color: #1D4ED8 !important; }
+.av2-cobalt .tier-badge[data-tier="gold"] { background: #F5F7FB !important; border-color: #DCE3EF !important; color: #334155 !important; }
