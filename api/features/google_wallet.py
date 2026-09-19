@@ -95,10 +95,14 @@ def _get_config() -> dict:
     return cfg
 
 
+# Tolerant PEM framing: any dash count, any whitespace (incl. NBSP) inside the
+# marker words, any case — copy/paste through docs and chat UIs mangles these.
 _PEM_BODY_RE = re.compile(
-    r"-----BEGIN (?:RSA )?PRIVATE KEY-----(.*?)-----END (?:RSA )?PRIVATE KEY-----",
-    re.DOTALL,
+    r"-{2,}\s*BEGIN\s+(RSA\s+)?PRIVATE\s+KEY\s*-{2,}(.*?)-{2,}\s*END\s+(?:RSA\s+)?PRIVATE\s+KEY\s*-{2,}",
+    re.DOTALL | re.IGNORECASE,
 )
+_UNICODE_DASHES_RE = re.compile("[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]")
+_NOT_BASE64_RE = re.compile(r"[^A-Za-z0-9+/=]")
 
 
 def _normalize_private_key(raw: str) -> str:
@@ -122,16 +126,19 @@ def _normalize_private_key(raw: str) -> str:
         value = value[1:-1].strip()
     # Escaped newlines (single or double escaped) and CRLF → real newlines.
     value = value.replace("\\\\n", "\n").replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+    # Unicode dashes / non-breaking spaces from rich-text copy → ASCII.
+    value = _UNICODE_DASHES_RE.sub("-", value).replace("\u00a0", " ").replace("\u200b", "")
 
     m = _PEM_BODY_RE.search(value)
     if m:
-        header = "RSA PRIVATE KEY" if "BEGIN RSA PRIVATE KEY" in value else "PRIVATE KEY"
-        body = m.group(1)
+        header = "RSA PRIVATE KEY" if m.group(1) else "PRIVATE KEY"
+        body = m.group(2)
     else:
-        # No framing at all → assume a bare base64 PKCS#8 body.
+        # No recognisable framing → assume a bare base64 PKCS#8 body.
         header = "PRIVATE KEY"
         body = value
-    body = re.sub(r"\s+", "", body)
+    # Keep only base64 characters (drops stray quotes, spaces, invisible chars).
+    body = _NOT_BASE64_RE.sub("", body)
     lines = [body[i:i + 64] for i in range(0, len(body), 64)]
     pem = f"-----BEGIN {header}-----\n" + "\n".join(lines) + f"\n-----END {header}-----\n"
 
@@ -141,8 +148,9 @@ def _normalize_private_key(raw: str) -> str:
         # Structural facts only — never the content.
         logger.error(
             "google_wallet: GOOGLE_WALLET_PRIVATE_KEY unparseable (len=%d, had_begin=%s, "
-            "had_literal_backslash_n=%s, body_len=%d)",
-            len(raw or ""), bool(m), "\\n" in (raw or ""), len(body),
+            "begin_word=%s, non_ascii=%d, had_literal_backslash_n=%s, body_len=%d)",
+            len(raw or ""), bool(m), "begin" in (raw or "").lower(),
+            sum(1 for ch in (raw or "") if ord(ch) > 127), "\\n" in (raw or ""), len(body),
         )
         raise HTTPException(
             status_code=503,
