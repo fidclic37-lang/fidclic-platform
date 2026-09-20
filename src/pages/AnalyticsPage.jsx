@@ -20,14 +20,12 @@ import CustomerStatusKPI from '../components/CustomerStatusKPI';
 import ColorfulKpiTile from '../components/ColorfulKpiTile';
 import AiRecommendationBanner from '../components/AiRecommendationBanner';
 import VisitsTwinChart from '../components/VisitsTwinChart';
-import AcquisitionDonut from '../components/AcquisitionDonut';
-import TierDonut from '../components/TierDonut';
 import WeeklyAcquisitionPanel from '../components/WeeklyAcquisitionPanel';
 import useTileMetric from '../hooks/useTileMetric';
 import { Trash2, UserPlus2, RefreshCcw, Repeat as RepeatIcon, BadgeCheck } from 'lucide-react';
 
 // Tier identity colours — metals, like the badges: bronze, silver, gold, platinum (VIP).
-const TIER_COLORS = { bronze: '#B87333', silver: '#9CA3AF', gold: '#D4A017', vip: '#7F8FA6' };
+const TIER_COLORS = { bronze: '#B87333', silver: '#9CA3AF', gold: '#D4A017', vip: '#1E293B' };
 const ACQ_COLORS = ['#2F6BFF', '#8FB0FF', '#C7D7FF', '#DCE3EF', '#5B8DEF', '#A9C2FF', '#E6EAF2'];
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1142,11 +1140,6 @@ const AnalyticsPage = () => {
         <VisitsTwinChart controlledDays={chartsDays} />
         <WeeklyAcquisitionPanel controlledDays={chartsDays} />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <AcquisitionDonut />
-        <TierDonut />
-      </div>
-
       {/* Row 3 — tier + acquisition, each tier / source wired to a send CTA */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <ChartCard title="Customer Tier Distribution" hint="How your loyalty tiers are spread. Click any tier to see its customers.">

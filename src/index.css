@@ -2279,7 +2279,15 @@ textarea::placeholder {
 .av2-cobalt .tier-badge[data-tier="bronze"] { background: linear-gradient(135deg, #D9A066, #B87333) !important; border-color: #A8652A !important; color: #FFFFFF !important; }
 .av2-cobalt .tier-badge[data-tier="silver"] { background: linear-gradient(135deg, #E5E7EB, #B8BFC8) !important; border-color: #9CA3AF !important; color: #1F2937 !important; }
 .av2-cobalt .tier-badge[data-tier="gold"]   { background: linear-gradient(135deg, #F3D46B, #D4A017) !important; border-color: #B8860B !important; color: #3B2F0B !important; }
-.av2-cobalt .tier-badge[data-tier="vip"]    { background: linear-gradient(135deg, #E8ECF2, #A9B4C2 60%, #7F8FA6) !important; border-color: #6B7A90 !important; color: #1E293B !important; }
+/* VIP = black & gold: near-black gradient, gold hairline + crown, champagne text, soft gold glow. */
+.av2-cobalt .tier-badge[data-tier="vip"] {
+  background: linear-gradient(135deg, #1E293B 0%, #0B1220 55%, #1F2A44 100%) !important;
+  border: 1px solid #C9A227 !important;
+  color: #F3E5B5 !important;
+  letter-spacing: 0.06em; font-weight: 700 !important;
+  box-shadow: 0 0 0 1px rgba(201,162,39,.25), 0 4px 12px -4px rgba(201,162,39,.45);
+}
+.av2-cobalt .tier-badge[data-tier="vip"] svg { color: #E4C25B !important; filter: drop-shadow(0 0 2px rgba(228,194,91,.6)); }
 .av2-cobalt .tier-badge svg { color: currentColor !important; }
 .av2-cobalt .recharts-cartesian-grid line { stroke: #E6EAF2; }
 .av2-cobalt .recharts-text { fill: #64748B; }
