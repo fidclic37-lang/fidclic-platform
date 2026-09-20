@@ -102,6 +102,7 @@ class GoogleLogin(BaseModel):
 
 class AppleLogin(BaseModel):
     id_token: str
+    nonce: str                         # random value the browser generated and passed to AppleID.auth.init
     first_name: Optional[str] = None   # only present on the very first Apple authorisation
     last_name: Optional[str] = None
 
@@ -210,6 +211,10 @@ def apple_login(body: AppleLogin, request: Request, response: Response):
     if not cid:
         raise HTTPException(status_code=503, detail="Connexion Apple non configurée (APPLE_CLIENT_ID).")
     claims = _verify(body.id_token, APPLE_JWKS, cid, {APPLE_ISSUER})
+    # Replay protection: the token must carry the nonce this very login started
+    # with, otherwise a captured id_token could be replayed by someone else.
+    if not body.nonce or len(body.nonce) < 16 or claims.get("nonce") != body.nonce:
+        raise HTTPException(status_code=401, detail="Nonce Apple invalide — réessayez.")
     email = claims.get("email")
     if not email:
         # Happens if the user hid their email AND revoked the relay — rare.
