@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Building2, Store, Coffee, Tag, Hash, MapPin, Phone, ArrowRight } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
 import { LEGAL_LINKS } from '../lib/legal';
+import OnboardingShell from '../components/OnboardingShell';
 
 /**
  * OnboardingCompanyPage — STEP 2 of 2: the COMPANY.
@@ -37,8 +38,8 @@ const SECTOR_KEYS = [
 
 function IconField({ icon: Icon, children }) {
   return (
-    <div className="flex items-stretch border border-[#E7E5E4] rounded-xl bg-white overflow-hidden focus-within:ring-2 focus-within:ring-[#B85C38]/20 focus-within:border-[#B85C38] transition">
-      <div className="flex items-center justify-center px-3 text-[#B85C38] bg-[#FAF5F2] border-r border-[#E7E5E4] shrink-0"
+    <div className="flex items-stretch border border-[#E7E5E4] rounded-xl bg-white overflow-hidden focus-within:ring-2 focus-within:ring-[#2F6BFF]/10 focus-within:ring-4 focus-within:border-[#2F6BFF] transition">
+      <div className="flex items-center justify-center px-3 text-[#2F6BFF] bg-white border-r border-[#EEF2F9] shrink-0"
            style={{ width: 44 }} aria-hidden="true">
         <Icon size={16} />
       </div>
@@ -97,7 +98,7 @@ const OnboardingCompanyPage = () => {
     try {
       await onboardingAPI.company({ ...form, siret: siretDigits || null });
       await checkAuth();            // refreshes user.onboarding_status → guards let us through
-      navigate('/modules', { replace: true });
+      navigate('/onboarding/carte', { replace: true });
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || t('onboarding.failed'));
     } finally {
@@ -106,19 +107,13 @@ const OnboardingCompanyPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4"
-         style={{ background: 'radial-gradient(circle at 30% 0%, #FCE3DC 0%, transparent 50%), radial-gradient(circle at 100% 100%, #FDE7C7 0%, transparent 60%), #FDFBF7' }}>
-      <div className="bg-white p-8 rounded-3xl shadow-xl border border-[#E7E5E4] w-full max-w-2xl">
-        <div className="text-center mb-6">
-          <Link to="/" className="font-['Cormorant_Garamond'] text-3xl font-bold ft-gradient-text">FidClic</Link>
-          <h2 className="text-2xl font-bold text-[#1C1917] mt-4" style={{ fontFamily: 'Cormorant Garamond' }}>
-            {t('onboarding.title', { name: user?.first_name || '' }).trim()}
-          </h2>
-          <p className="text-[#57534E] mt-1 text-sm">{t('onboarding.subtitle')}</p>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-[#8B8680] mt-3">
-            {t('auth.step_of', { n: 2, total: 2 })} · {t('auth.step2_label')}
-          </p>
-        </div>
+    <OnboardingShell step={2}>
+      <div className="mt-7 text-center">
+        <h1 className="text-[30px] font-extrabold tracking-[-0.02em] text-[#0B1C3F]">
+          {t('onboarding.title', { name: user?.first_name || '' }).trim()}
+        </h1>
+        <p className="mt-2 text-[15px] text-[#4B5C7A]">{t('onboarding.subtitle')}</p>
+      </div>
 
         {error && (
           <div className="bg-red-50 text-red-700 border border-red-200 p-3 rounded-xl text-sm mb-4">⚠ {error}</div>
@@ -204,7 +199,7 @@ const OnboardingCompanyPage = () => {
           {needsTerms && (
             <label className="flex items-start gap-2.5 text-xs text-[#57534E] leading-relaxed cursor-pointer pt-1">
               <input type="checkbox" checked={form.accepted_terms} onChange={set('accepted_terms')}
-                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#D6D3D1] accent-[#B85C38]" />
+                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#D6D3D1] accent-[#2F6BFF]" />
               <span>
                 {t('auth.terms_prefix')}{' '}
                 <a href={LEGAL_LINKS.cgu} target="_blank" rel="noreferrer" className="underline text-[#1C1917]">{t('auth.terms_cgu')}</a>,{' '}
@@ -217,14 +212,13 @@ const OnboardingCompanyPage = () => {
           )}
 
           <button type="submit" disabled={loading}
-                  className="w-full text-white py-3.5 rounded-full font-semibold text-sm mt-4 transition-all hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
-                  style={{ background: 'linear-gradient(135deg, #B85C38 0%, #E8917C 100%)', boxShadow: '0 8px 22px -8px rgba(184,92,56,0.55)' }}>
+                  className="w-full text-white py-4 rounded-2xl font-semibold text-[17px] mt-4 transition-all hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                  style={{ background: '#0A6CFF', boxShadow: '0 12px 28px -12px rgba(10,108,255,.6)' }}>
             {loading ? t('auth.creating') : <>{t('onboarding.submit')} <ArrowRight size={16} /></>}
           </button>
           <p className="text-center text-[11px] text-[#8B8680]">{t('onboarding.trial_note')}</p>
         </form>
-      </div>
-    </div>
+    </OnboardingShell>
   );
 };
 export default OnboardingCompanyPage;

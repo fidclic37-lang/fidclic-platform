@@ -43,6 +43,8 @@ export const authAPI = {
 
 // Self-serve onboarding step 2 (company details). See features/onboarding.py.
 export const onboardingAPI = {
+  cardTemplate: () => api.get('/owner/card-template'),
+  saveCardTemplate: (data) => api.post('/owner/card-template', data),
   status: () => api.get('/onboarding/status'),
   company: (data) => api.post('/onboarding/company', data),
 };
