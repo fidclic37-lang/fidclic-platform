@@ -446,7 +446,10 @@
     "secure_note": "Vos données sont sécurisées et confidentielles.",
     "reset_help": "Recevez un lien de réinitialisation par email (valable 30 min).",
     "reset_send": "Envoyer",
-    "reset_sent": "Si un compte existe pour cette adresse, l'email est parti — vérifiez votre boîte (et les spams)."
+    "reset_sent": "Si un compte existe pour cette adresse, l'email est parti — vérifiez votre boîte (et les spams).",
+    "benefit_loyal": "Des clients plus fidèles",
+    "benefit_sales": "Plus de ventes durablement",
+    "benefit_simple": "Une gestion plus simple"
   },
   "signup": {
     "nav_features": "Fonctionnalités",
