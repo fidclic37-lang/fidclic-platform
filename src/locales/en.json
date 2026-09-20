@@ -432,5 +432,20 @@
     "submit": "Create my workspace",
     "failed": "Could not save. Please retry.",
     "trial_note": "Your 28-day free trial starts now — no credit card required."
+  },
+  "login": {
+    "welcome_line1": "Welcome to",
+    "welcome_sub": "Sign in to your workspace and keep growing your business.",
+    "quote": "Businesses closer to their customers.",
+    "create_account": "Create an account",
+    "title": "Sign in",
+    "subtitle": "Access your workspace in one click.",
+    "password_placeholder": "Your password",
+    "loading": "Signing in…",
+    "or_continue": "Or continue with",
+    "secure_note": "Your data is secure and confidential.",
+    "reset_help": "Get a reset link by email (valid 30 min).",
+    "reset_send": "Send",
+    "reset_sent": "If an account exists for this address, the email is on its way — check your inbox (and spam)."
   }
 }

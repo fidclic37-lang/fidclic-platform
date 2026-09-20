@@ -432,5 +432,20 @@
     "submit": "Créer mon espace",
     "failed": "Enregistrement impossible. Réessayez.",
     "trial_note": "Votre essai gratuit de 28 jours démarre maintenant — aucune carte bancaire requise."
+  },
+  "login": {
+    "welcome_line1": "Bienvenue chez",
+    "welcome_sub": "Connectez-vous à votre espace et continuez à développer votre activité.",
+    "quote": "Des commerces plus proches de leurs clients.",
+    "create_account": "Créer un compte",
+    "title": "Se connecter",
+    "subtitle": "Accédez à votre espace en toute simplicité.",
+    "password_placeholder": "Votre mot de passe",
+    "loading": "Connexion…",
+    "or_continue": "Ou continuer avec",
+    "secure_note": "Vos données sont sécurisées et confidentielles.",
+    "reset_help": "Recevez un lien de réinitialisation par email (valable 30 min).",
+    "reset_send": "Envoyer",
+    "reset_sent": "Si un compte existe pour cette adresse, l'email est parti — vérifiez votre boîte (et les spams)."
   }
 }
