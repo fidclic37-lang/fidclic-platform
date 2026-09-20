@@ -31,6 +31,7 @@ export default function LanguageSwitcher({ variant = 'full' }) {
 
   const change = (code) => {
     if (code === current) return;
+    try { localStorage.setItem('fidclic:lang-chosen', '1'); } catch { /* ignore */ }
     // 1) Flip our own t() strings (sidebar, page titles, etc.).
     i18n.changeLanguage(code);
     // 2) Trigger Google Translate Element to retranslate EVERY remaining

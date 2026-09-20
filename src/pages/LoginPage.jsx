@@ -81,8 +81,10 @@ const LoginPage = () => {
             <img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[58px] w-auto" />
           </div>
           <div className="absolute inset-x-12 bottom-12 text-white">
-            <h1 className="text-[46px] font-extrabold leading-[1.05] tracking-[-0.02em]">
-              {t('login.welcome_line1')} FIDCLIC <span aria-hidden="true">👋</span>
+            <h1 className="text-[46px] font-extrabold leading-[1.05] tracking-[-0.02em]" style={{ textShadow: '0 2px 18px rgba(11,28,63,.45)' }}>
+              {t('login.welcome_line1')}{' '}
+              <span style={{ color: '#5B93FF' }}>FID</span><span style={{ color: '#FFB020' }}>CLIC</span>{' '}
+              <span aria-hidden="true">👋</span>
             </h1>
             <p className="mt-4 max-w-md text-[18px] leading-relaxed text-white/85">{t('login.welcome_sub')}</p>
             <div className="mt-8 h-[3px] w-9 rounded-full bg-white/80" />
@@ -125,8 +127,8 @@ const LoginPage = () => {
         <div className="w-full max-w-[640px] rounded-[22px] border border-[#E6EEFB] bg-white px-7 py-10 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-11">
           <div className="text-center">
             {variant === 1
-              ? <img src={ICON} alt="FidClic" className="mx-auto h-[52px] w-[52px] rounded-xl" />
-              : <img src={LOGO} alt="FidClic" className="mx-auto h-[46px] w-auto" />}
+              ? <img src={ICON} alt="FidClic" className="mx-auto h-[40px] w-[40px] rounded-lg" />
+              : <img src={LOGO} alt="FidClic" className="mx-auto h-[34px] w-auto" />}
             <h2 className="mt-5 text-[40px] font-extrabold tracking-[-0.025em] text-[#0B1C3F]">{t('login.title')}</h2>
             <p className="mt-2 text-[16px] text-[#4B5C7A]">{t('login.subtitle')}</p>
           </div>
