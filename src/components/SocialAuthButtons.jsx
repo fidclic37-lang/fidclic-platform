@@ -124,11 +124,15 @@ export default function SocialAuthButtons({ onError, layout = 'row' }) {
 
   const handleApple = async () => {
     try {
-      const data = await window.AppleID.auth.signIn();
+      // Fresh nonce per attempt; Apple echoes it inside the id_token and the
+      // backend refuses a token whose nonce does not match (no replay).
+      const nonce = Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, '0')).join('');
+      const data = await window.AppleID.auth.signIn({ nonce });
       const idToken = data?.authorization?.id_token;
       if (!idToken) throw new Error("Apple n'a pas renvoyé de jeton.");
       await finish('apple', {
         id_token: idToken,
+        nonce,
         first_name: data?.user?.name?.firstName || null,
         last_name: data?.user?.name?.lastName || null,
       });
