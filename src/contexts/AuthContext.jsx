@@ -44,7 +44,7 @@ export const AuthProvider = ({ children }) => {
   // Google / Apple: `payload` is { credential } or { id_token, first_name, last_name }.
   const oauthLogin = async (provider, payload) => {
     const res = provider === 'google'
-      ? await authAPI.oauthGoogle(payload.credential)
+      ? await authAPI.oauthGoogle(payload)
       : await authAPI.oauthApple(payload);
     if (res.data?.access_token) setAuthToken(res.data.access_token);
     await checkAuth();

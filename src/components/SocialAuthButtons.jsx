@@ -1,28 +1,23 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authAPI } from '../lib/api';
 
 /**
- * SocialAuthButtons — "Continuer avec Google" / "Continuer avec Apple".
+ * SocialAuthButtons — "Continuer avec Google" / "Continuer avec Apple",
+ * drawn by us (white pill, brand glyph) so they match the login mockup.
  *
- * Shared by /login and /register. Both providers hand the browser a signed
- * ID token; we POST it to /api/auth/oauth/<provider> (features/oauth.py)
- * which verifies it and issues the normal session. Nothing secret lives in
- * the frontend — only the public client IDs, fetched from
- * /api/auth/oauth/config so a provider that isn't configured simply does
- * not render its button (never a dead control).
+ * Google: Google's ID-token flow only works through Google's own rendered
+ * button, so a custom button uses the OAuth2 *token client* instead
+ * (google.accounts.oauth2.initTokenClient). It opens Google's account
+ * chooser in a popup and hands us an access token; the backend checks with
+ * Google that the token was issued for OUR client id and reads the profile.
+ * Apple: AppleID.auth.signIn() works from any button (popup mode).
  *
- * Google: the ID-token flow only works through Google's own rendered
- * button (google.accounts.id.renderButton) — a custom-styled button can't
- * trigger it. We render it full-width, "continue_with", French locale, and
- * wrap it so it sits at the same height as the Apple button.
- * Apple: AppleID.auth.signIn() CAN be called from our own button, in popup
- * mode, so we draw a matching black button ourselves. Apple only sends the
- * user's name on the very first authorisation — we forward it.
- *
- * After login the caller decides where to go: a brand-new account (or one
- * that never finished step 2) goes to /onboarding/entreprise.
+ * The public client IDs come from /api/auth/oauth/config. A provider that
+ * isn't configured yet shows its button disabled with a tooltip instead of
+ * silently doing nothing — that is what "not configured" looks like, so it
+ * can't be mistaken for a broken button.
  */
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 const APPLE_SRC = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/fr-FR/appleid.auth.js';
@@ -46,12 +41,34 @@ export function routeAfterAuth(navigate, session) {
   return navigate('/dashboard');
 }
 
-export default function SocialAuthButtons({ onError }) {
+const GoogleGlyph = () => (
+  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+    <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.5l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/>
+    <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.6 5.9c4.4-4.1 7-10.1 7-17.6z"/>
+    <path fill="#FBBC05" d="M10.5 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.1.8-4.6l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.7l7.9-6.1z"/>
+    <path fill="#34A853" d="M24 48c6.3 0 11.7-2.1 15.6-5.7l-7.6-5.9c-2.1 1.4-4.8 2.3-8 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/>
+  </svg>
+);
+
+const AppleGlyph = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="#000" aria-hidden="true">
+    <path d="M16.365 1.43c0 1.14-.42 2.08-1.25 2.93-1 1.04-2.2 1.62-3.44 1.52-.16-1.11.34-2.28 1.17-3.12.86-.9 2.32-1.55 3.52-1.33zM20.9 17.07c-.57 1.3-.84 1.88-1.57 3.03-1.02 1.6-2.45 3.6-4.23 3.61-1.58.02-1.99-1.04-4.13-1.02-2.15.01-2.6 1.04-4.18 1.02-1.78-.02-3.14-1.82-4.16-3.42C.8 16.6-.03 12.05 1.63 9.11c1.07-1.9 2.98-3.1 4.8-3.1 1.85 0 3.01 1.03 4.54 1.03 1.49 0 2.4-1.03 4.55-1.03 1.62 0 3.33.88 4.55 2.4-4 2.2-3.35 7.9.83 8.66z"/>
+  </svg>
+);
+
+const Btn = ({ onClick, disabled, title, children }) => (
+  <button type="button" onClick={onClick} disabled={disabled} title={title}
+          className="flex-1 inline-flex items-center justify-center gap-2.5 rounded-xl border border-[#E1E8F5] bg-white px-4 py-3 text-[14px] font-semibold text-[#0F172A] shadow-[0_1px_2px_rgba(16,24,40,.04)] transition hover:border-[#BFD0F5] hover:bg-[#F8FAFF] disabled:cursor-not-allowed disabled:opacity-50">
+    {children}
+  </button>
+);
+
+export default function SocialAuthButtons({ onError, layout = 'row' }) {
   const { oauthLogin } = useAuth();
   const navigate = useNavigate();
   const [config, setConfig] = useState(null);
-  const [busy, setBusy] = useState(null); // 'google' | 'apple' | null
-  const googleSlot = useRef(null);
+  const [busy, setBusy] = useState(null);      // 'google' | 'apple' | null
+  const [ready, setReady] = useState({ google: false, apple: false });
 
   useEffect(() => {
     let alive = true;
@@ -60,6 +77,25 @@ export default function SocialAuthButtons({ onError }) {
       .catch(() => { if (alive) setConfig({}); });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    if (config?.google_client_id) {
+      loadScript(GIS_SRC).then(() => setReady((r) => ({ ...r, google: !!window.google?.accounts?.oauth2 })))
+        .catch((e) => onError?.(e.message));
+    }
+    if (config?.apple_client_id) {
+      loadScript(APPLE_SRC).then(() => {
+        window.AppleID?.auth?.init({
+          clientId: config.apple_client_id,
+          scope: 'name email',
+          redirectURI: config.apple_redirect_uri || `${window.location.origin}/login`,
+          usePopup: true,
+        });
+        setReady((r) => ({ ...r, apple: !!window.AppleID?.auth }));
+      }).catch((e) => onError?.(e.message));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config?.google_client_id, config?.apple_client_id, config?.apple_redirect_uri]);
 
   const finish = async (provider, payload) => {
     setBusy(provider);
@@ -73,41 +109,18 @@ export default function SocialAuthButtons({ onError }) {
     }
   };
 
-  // Google — render the official button into our slot once GIS is loaded.
-  useEffect(() => {
-    if (!config?.google_client_id || !googleSlot.current) return;
-    let cancelled = false;
-    loadScript(GIS_SRC).then(() => {
-      if (cancelled || !window.google?.accounts?.id) return;
-      window.google.accounts.id.initialize({
-        client_id: config.google_client_id,
-        callback: (resp) => finish('google', { credential: resp.credential }),
-        ux_mode: 'popup',
-        auto_select: false,
-      });
-      // Width must be a number in px for GIS — measure the slot.
-      const width = Math.min(400, Math.max(200, googleSlot.current.offsetWidth || 320));
-      window.google.accounts.id.renderButton(googleSlot.current, {
-        type: 'standard', theme: 'outline', size: 'large', shape: 'pill',
-        text: 'continue_with', logo_alignment: 'left', locale: 'fr', width,
-      });
-    }).catch((e) => onError?.(e.message));
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config?.google_client_id]);
-
-  // Apple — init once; the click handler opens the popup.
-  useEffect(() => {
-    if (!config?.apple_client_id) return;
-    loadScript(APPLE_SRC).then(() => {
-      window.AppleID?.auth?.init({
-        clientId: config.apple_client_id,
-        scope: 'name email',
-        redirectURI: config.apple_redirect_uri || `${window.location.origin}/login`,
-        usePopup: true,
-      });
-    }).catch((e) => onError?.(e.message));
-  }, [config?.apple_client_id, config?.apple_redirect_uri, onError]);
+  const handleGoogle = () => {
+    const client = window.google.accounts.oauth2.initTokenClient({
+      client_id: config.google_client_id,
+      scope: 'openid email profile',
+      callback: (resp) => {
+        if (resp?.access_token) finish('google', { access_token: resp.access_token });
+        else if (resp?.error && resp.error !== 'popup_closed_by_user') onError?.(`Google : ${resp.error}`);
+      },
+      error_callback: (e) => { if (e?.type !== 'popup_closed') onError?.('Google : connexion annulée.'); },
+    });
+    client.requestAccessToken();
+  };
 
   const handleApple = async () => {
     try {
@@ -120,40 +133,23 @@ export default function SocialAuthButtons({ onError }) {
         last_name: data?.user?.name?.lastName || null,
       });
     } catch (err) {
-      // User closed the popup → Apple rejects with {error: 'popup_closed_by_user'}; stay quiet.
       if (err?.error === 'popup_closed_by_user') return;
       onError?.(err?.message || 'Connexion Apple impossible.');
     }
   };
 
-  const hasGoogle = !!config?.google_client_id;
-  const hasApple = !!config?.apple_client_id;
-  if (config === null || (!hasGoogle && !hasApple)) return null;
+  const gOff = !config?.google_client_id;
+  const aOff = !config?.apple_client_id;
+  const offTip = 'Bientôt disponible — configuration en cours.';
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3 text-[11px] uppercase tracking-widest text-[#A8A29E]">
-        <div className="h-px flex-1 bg-[#E7E5E4]" />
-        <span>ou</span>
-        <div className="h-px flex-1 bg-[#E7E5E4]" />
-      </div>
-
-      {hasGoogle && (
-        <div className="flex justify-center min-h-[44px]" aria-busy={busy === 'google'}>
-          <div ref={googleSlot} className="w-full max-w-[400px] flex justify-center" />
-        </div>
-      )}
-
-      {hasApple && (
-        <button type="button" onClick={handleApple} disabled={busy !== null}
-                className="w-full inline-flex items-center justify-center gap-2.5 rounded-full py-3 text-sm font-semibold text-white transition disabled:opacity-60"
-                style={{ background: '#000' }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M16.365 1.43c0 1.14-.42 2.08-1.25 2.93-1 1.04-2.2 1.62-3.44 1.52-.16-1.11.34-2.28 1.17-3.12.86-.9 2.32-1.55 3.52-1.33zM20.9 17.07c-.57 1.3-.84 1.88-1.57 3.03-1.02 1.6-2.45 3.6-4.23 3.61-1.58.02-1.99-1.04-4.13-1.02-2.15.01-2.6 1.04-4.18 1.02-1.78-.02-3.14-1.82-4.16-3.42C.8 16.6-.03 12.05 1.63 9.11c1.07-1.9 2.98-3.1 4.8-3.1 1.85 0 3.01 1.03 4.54 1.03 1.49 0 2.4-1.03 4.55-1.03 1.62 0 3.33.88 4.55 2.4-4 2.2-3.35 7.9.83 8.66z"/>
-          </svg>
-          {busy === 'apple' ? 'Connexion…' : 'Continuer avec Apple'}
-        </button>
-      )}
+    <div className={layout === 'row' ? 'flex gap-3' : 'flex flex-col gap-3'}>
+      <Btn onClick={handleGoogle} disabled={gOff || !ready.google || busy !== null} title={gOff ? offTip : undefined}>
+        <GoogleGlyph /> {busy === 'google' ? 'Connexion…' : 'Continuer avec Google'}
+      </Btn>
+      <Btn onClick={handleApple} disabled={aOff || !ready.apple || busy !== null} title={aOff ? offTip : undefined}>
+        <AppleGlyph /> {busy === 'apple' ? 'Connexion…' : 'Continuer avec Apple'}
+      </Btn>
     </div>
   );
 }

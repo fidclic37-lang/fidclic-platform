@@ -96,7 +96,8 @@ def _verify(token: str, jwks_url: str, audience: str, issuers) -> Dict[str, Any]
 
 
 class GoogleLogin(BaseModel):
-    credential: str
+    credential: Optional[str] = None     # ID token (Google-rendered button / One Tap)
+    access_token: Optional[str] = None   # OAuth2 token client (our own styled button)
 
 
 class AppleLogin(BaseModel):
@@ -164,11 +165,43 @@ def google_login(body: GoogleLogin, request: Request, response: Response):
     cid = _google_client_id()
     if not cid:
         raise HTTPException(status_code=503, detail="Connexion Google non configurée (GOOGLE_CLIENT_ID).")
-    claims = _verify(body.credential, GOOGLE_JWKS, cid, GOOGLE_ISSUERS)
+    if body.access_token:
+        claims = _google_claims_from_access_token(body.access_token, cid)
+    elif body.credential:
+        claims = _verify(body.credential, GOOGLE_JWKS, cid, GOOGLE_ISSUERS)
+    else:
+        raise HTTPException(status_code=400, detail="credential ou access_token requis.")
     if not claims.get("email") or not claims.get("email_verified", False):
         raise HTTPException(status_code=401, detail="Adresse email Google non vérifiée.")
     return _upsert_user("google", claims["sub"], claims["email"],
                         claims.get("given_name"), claims.get("family_name"), request, response)
+
+
+def _google_claims_from_access_token(token: str, cid: str) -> Dict[str, Any]:
+    """Our own 'Continuer avec Google' button uses the OAuth2 token client
+    (google.accounts.oauth2.initTokenClient) because Google's ID-token flow
+    only works through Google's rendered button. An access token is opaque,
+    so we ask Google two things: tokeninfo (is it ours? → aud must be OUR
+    client id, otherwise any site's Google token could log into FidClic)
+    and userinfo (who is it?)."""
+    import urllib.request, urllib.parse, json
+    try:
+        with urllib.request.urlopen(
+            "https://oauth2.googleapis.com/tokeninfo?" + urllib.parse.urlencode({"access_token": token}), timeout=8
+        ) as r:
+            info = json.load(r)
+        if info.get("aud") != cid:
+            raise HTTPException(status_code=401, detail="Jeton Google émis pour une autre application.")
+        req = urllib.request.Request("https://www.googleapis.com/oauth2/v3/userinfo",
+                                     headers={"Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            u = json.load(r)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=401, detail=f"Jeton Google invalide ({type(e).__name__}).")
+    return {"sub": u.get("sub"), "email": u.get("email"), "email_verified": bool(u.get("email_verified")),
+            "given_name": u.get("given_name"), "family_name": u.get("family_name")}
 
 
 @router.post("/api/auth/oauth/apple")

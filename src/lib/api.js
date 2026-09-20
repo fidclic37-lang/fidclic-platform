@@ -37,7 +37,7 @@ export const authAPI = {
   // Social login — the browser gets a signed ID token from Google / Apple
   // and posts it here; the backend verifies it and issues the same session.
   oauthConfig: () => api.get('/auth/oauth/config'),
-  oauthGoogle: (credential) => api.post('/auth/oauth/google', { credential }),
+  oauthGoogle: (payload) => api.post('/auth/oauth/google', payload),   // { access_token } or { credential }
   oauthApple: (payload) => api.post('/auth/oauth/apple', payload),
 };
 
