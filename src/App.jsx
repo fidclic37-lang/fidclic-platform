@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BranchProvider } from './contexts/BranchContext';
@@ -68,58 +68,68 @@ class RootErrorBoundary extends React.Component {
   }
 }
 
-import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
-import DashboardLayout from './pages/DashboardLayout';
-import OwnerDashboard from './pages/OwnerDashboard';
 // Legacy AnalyticsPage kept for rollback during the dark-redesign rollout.
 // AnalyticsPageV2 is the new dark redesign that replaces it on the
 // /dashboard/analytics route. To revert: swap the imports here.
 // import AnalyticsPage from './pages/AnalyticsPage';
-import AnalyticsPage from './pages/AnalyticsPageV2';
-import CustomersPage from './pages/CustomersPage';
-import CustomerMapPage from './pages/CustomerMapPage';
-import ScanPage from './pages/ScanPage';
-import CampaignsPage from './pages/CampaignsPage';
-import AIAssistantPage from './pages/AIAssistantPage';
-import SettingsPage from './pages/SettingsPage';
-import JoinPage from './pages/JoinPage';
-import MyWalletCardPage from './pages/MyWalletCardPage';
-import InsightsPage from './pages/InsightsPage';
-import HistoryPage from './pages/HistoryPage';
 
-import AdminDashboard from './pages/AdminDashboard';
-import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
-import AdminTenantsPage from './pages/AdminTenantsPage';
-import AdminPlansPage from './pages/AdminPlansPage';
-import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
-import CardDesignerPage from './pages/CardDesignerPage';
-import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
-import AdminCampaignsPage from './pages/AdminCampaignsPage';
-import AdminInsightsPage from './pages/AdminInsightsPage';
 import GoogleTranslateBridge, { RouteAwareRetranslator } from './components/GoogleTranslateBridge';
 // Facturation module (French e-invoicing) — post-login module chooser + home.
-import ModuleChooserPage from './pages/ModuleChooserPage';
-import FacturationHome from './pages/FacturationHome';
-import CabinetDashboard from './pages/CabinetDashboard';
-import CabinetTeam from './pages/CabinetTeam';
-import CabinetCases from './pages/CabinetCases';
-import CabinetReview from './pages/CabinetReview';
 import CabinetPasswordGate from './components/CabinetPasswordGate';
-import CabinetSignup from './pages/CabinetSignup';
-import ResetPasswordPage from './pages/ResetPasswordPage';
+// Route-level code splitting: every page below is fetched only when its
+// route is first visited. The initial bundle shrinks from ~2.1 MB to the
+// shell + auth pages; Suspense shows a light placeholder for the ~100 ms
+// the chunk takes to arrive.
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const DashboardLayout = lazy(() => import('./pages/DashboardLayout'));
+const OwnerDashboard = lazy(() => import('./pages/OwnerDashboard'));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPageV2'));
+const CustomersPage = lazy(() => import('./pages/CustomersPage'));
+const CustomerMapPage = lazy(() => import('./pages/CustomerMapPage'));
+const ScanPage = lazy(() => import('./pages/ScanPage'));
+const CampaignsPage = lazy(() => import('./pages/CampaignsPage'));
+const AIAssistantPage = lazy(() => import('./pages/AIAssistantPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const JoinPage = lazy(() => import('./pages/JoinPage'));
+const MyWalletCardPage = lazy(() => import('./pages/MyWalletCardPage'));
+const InsightsPage = lazy(() => import('./pages/InsightsPage'));
+const HistoryPage = lazy(() => import('./pages/HistoryPage'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminAnalyticsPage = lazy(() => import('./pages/AdminAnalyticsPage'));
+const AdminTenantsPage = lazy(() => import('./pages/AdminTenantsPage'));
+const AdminPlansPage = lazy(() => import('./pages/AdminPlansPage'));
+const AdminCardDesignerPage = lazy(() => import('./pages/AdminCardDesignerPage'));
+const CardDesignerPage = lazy(() => import('./pages/CardDesignerPage'));
+const AdminAIAssistantPage = lazy(() => import('./pages/AdminAIAssistantPage'));
+const AdminCampaignsPage = lazy(() => import('./pages/AdminCampaignsPage'));
+const AdminInsightsPage = lazy(() => import('./pages/AdminInsightsPage'));
+const ModuleChooserPage = lazy(() => import('./pages/ModuleChooserPage'));
+const FacturationHome = lazy(() => import('./pages/FacturationHome'));
+const CabinetDashboard = lazy(() => import('./pages/CabinetDashboard'));
+const CabinetTeam = lazy(() => import('./pages/CabinetTeam'));
+const CabinetCases = lazy(() => import('./pages/CabinetCases'));
+const CabinetReview = lazy(() => import('./pages/CabinetReview'));
+const CabinetSignup = lazy(() => import('./pages/CabinetSignup'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
+const FacturationLanding = lazy(() => import('./pages/FacturationLanding'));
+const CabinetLanding = lazy(() => import('./pages/CabinetLanding'));
 // Public marketing pages — one per product line, so each audience gets a whole
 // page instead of an anchor buried in the homepage.
-import FacturationLanding from './pages/FacturationLanding';
-import CabinetLanding from './pages/CabinetLanding';
 
 /**
  * ScrollToTop — without this, navigating from the landing page to a product
  * page keeps the old scroll position and the visitor lands mid-page, which
  * feels broken. Anchor links (#pricing) are left alone.
  */
+const RouteFallback = () => (
+  <div style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: '#94A3B8', fontSize: 13 }}>
+    Chargement…
+  </div>
+);
+
 const ScrollToTop = () => {
   const { pathname, hash } = useLocation();
   React.useEffect(() => {
@@ -182,6 +192,7 @@ function App() {
             from scratch and don't stay in French after navigation. */}
         <RouteAwareRetranslator />
         <ScrollToTop />
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
@@ -323,6 +334,7 @@ function App() {
             <Route path="ai" element={<AdminAIAssistantPage />} />
           </Route>
         </Routes>
+        </Suspense>
        </Router>
       </BranchProvider>
     </AuthProvider>
