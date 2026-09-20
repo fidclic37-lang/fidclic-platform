@@ -5,6 +5,7 @@ import NumberInput from '../components/NumberInput';
 import { PageHeader, C as C_PS } from '../components/PageShell';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import WalletPassPreview from '../components/WalletPassPreview';
+import GoogleWalletSection from '../components/GoogleWalletSection';
 
 // Crop viewport for the band photo — exactly the strip's 375:144 ratio.
 const CROP_W = 500;
@@ -1081,6 +1082,11 @@ export default function CardDesignerPage() {
           </div>
         </div>
       </div>
+
+      {/* Google Wallet — merchant-branded pass. Reuses the design above
+          (logo, brand colour, business name, reward, links) and adds only
+          the Wallet-specific extras + the "Publier" action. */}
+      <GoogleWalletSection brand={brand} rules={rules} tenant={tenant} saveDesign={save} />
 
     </div>
   );

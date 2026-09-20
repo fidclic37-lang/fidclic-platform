@@ -91,6 +91,12 @@ export const ownerAPI = {
   register: (data) => api.post('/owner/register', data),
   getCardTemplate: () => api.get('/owner/card-template'),
   saveCardTemplate: (data) => api.post('/owner/card-template', data),
+  // -- Google Wallet (merchant class) — Card Designer "Google Wallet" section --
+  getGoogleWalletStatus: () => api.get('/owner/wallet/status'),
+  saveGoogleWalletSettings: (data) => api.post('/owner/wallet/settings', data),
+  uploadGoogleWalletHero: (dataUrl) => api.post('/owner/wallet/hero', { data_url: dataUrl }),
+  deleteGoogleWalletHero: () => api.delete('/owner/wallet/hero'),
+  publishGoogleWallet: () => api.post('/owner/wallet/publish'),
   getCampaigns: () => api.get('/owner/campaigns'),
   createCampaign: (data) => api.post('/owner/campaigns', data),
   updateCampaign: (id, data) => api.put('/owner/campaigns/' + id, data),

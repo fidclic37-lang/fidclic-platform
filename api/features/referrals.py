@@ -185,6 +185,14 @@ def redeem(req: RedeemRequest):
     referrer_credited_now = referee.get("visits", 0) >= int(config.get("minimum_visits_to_earn", 1))
     if referrer_credited_now:
         _db.customers.update_one({"id": code_doc["customer_id"]}, {"$inc": {"points": referrer_pts}})
+    # Google Wallet — live points sync on existing passes (no-op otherwise; never raises).
+    try:
+        from features.google_wallet import sync_wallet_after_points_change  # noqa: WPS433
+        sync_wallet_after_points_change(referee["id"])
+        if referrer_credited_now:
+            sync_wallet_after_points_change(code_doc["customer_id"])
+    except Exception:
+        pass
 
     _db.referral_redemptions.insert_one({
         "tenant_id": tenant["id"],

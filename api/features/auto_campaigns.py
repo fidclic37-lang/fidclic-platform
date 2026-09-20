@@ -315,6 +315,13 @@ def run_birthdays(
         _dispatch_message(token_data.tenant_id, c, "birthday", title, body)
         if cfg.birthday_bonus_points > 0:
             _db.customers.update_one({"id": c["id"]}, {"$inc": {"points": cfg.birthday_bonus_points}})
+            # Google Wallet — live points/tier sync on the customer's existing pass
+            # (no-op unless they already added one; never raises).
+            try:
+                from features.google_wallet import sync_wallet_after_points_change  # noqa: WPS433
+                sync_wallet_after_points_change(c["id"])
+            except Exception:
+                pass
         sent += 1
     return {"found": len(customers), "sent": sent, "dry_run": False}
 

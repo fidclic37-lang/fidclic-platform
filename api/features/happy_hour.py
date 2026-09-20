@@ -172,6 +172,13 @@ def apply_to_scan(
         return {"credited": 0, "active_rule": rule.get("name")}
 
     _db.customers.update_one({"id": customer["id"]}, {"$inc": {"points": bonus}})
+    # Google Wallet — live points/tier sync on the customer's existing pass
+    # (no-op unless they already added one; never raises).
+    try:
+        from features.google_wallet import sync_wallet_after_points_change  # noqa: WPS433
+        sync_wallet_after_points_change(customer["id"])
+    except Exception:
+        pass
     _db.happy_hour_credits.insert_one({
         "tenant_id": token_data.tenant_id,
         "customer_id": customer["id"],

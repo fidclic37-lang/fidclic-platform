@@ -117,6 +117,13 @@ def claim_welcome_bonus(req: WelcomeBonusClaim):
         return {"claimed": False, "reason": "first_visit_only_violated"}
 
     _db.customers.update_one({"id": customer["id"]}, {"$inc": {"points": bonus}})
+    # Google Wallet — live points/tier sync on the customer's existing pass
+    # (no-op unless they already added one; never raises).
+    try:
+        from features.google_wallet import sync_wallet_after_points_change  # noqa: WPS433
+        sync_wallet_after_points_change(customer["id"])
+    except Exception:
+        pass
     _db.welcome_bonus_claims.insert_one({
         "tenant_id": tenant_id,
         "customer_id": customer["id"],

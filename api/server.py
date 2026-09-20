@@ -4454,6 +4454,13 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
 
     # Update customer — must succeed.
     db.customers.update_one({"id": cid}, {"$set": update_set})
+    # Google Wallet — live points/tier sync on the customer's existing pass
+    # (no-op unless they already added one; never raises).
+    try:
+        from features.google_wallet import sync_wallet_after_points_change  # noqa: WPS433
+        sync_wallet_after_points_change(cid)
+    except Exception:
+        pass
 
     # Insert visit row — must succeed for analytics.
     try:
@@ -4702,6 +4709,14 @@ def save_card_template(req: CardTemplate, token_data: TokenData = Depends(requir
     old_notify = int(old_tpl.get("notify_before_reward", 1) or 1)
 
     db.card_templates.update_one({"tenant_id": tid}, {"$set": payload}, upsert=True)
+
+    # Google Wallet — if the owner already published a Wallet class, re-push
+    # the branding (logo / colour / reward text) so saved passes update too.
+    try:
+        from features.google_wallet import resync_tenant_class_if_published  # noqa: WPS433
+        resync_tenant_class_if_published(tid)
+    except Exception:
+        pass
 
     # Retroactive notification sweep — only worth running when the rules
     # got *more permissive* (lower threshold, or earlier notify trigger).
@@ -9577,6 +9592,13 @@ def redeem_reward(
              "visits_at_last_redemption": current_visits,
          }},
     )
+    # Google Wallet — live points/tier sync on the customer's existing pass
+    # (no-op unless they already added one; never raises).
+    try:
+        from features.google_wallet import sync_wallet_after_points_change  # noqa: WPS433
+        sync_wallet_after_points_change(cust["id"])
+    except Exception:
+        pass
     reward.pop("_id", None)
     return reward
 
