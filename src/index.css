@@ -2140,8 +2140,8 @@ textarea::placeholder {
   --flc-ok: #16A34A;     --flc-risk: #E11D48;    --flc-warn: #D97706;  --flc-info: #2F6BFF;
   --flc-cta: linear-gradient(135deg, #3B7BFF, #1D4ED8);  --flc-on-cta: #FFFFFF;
   /* chart series: primary blue, then lighter blues, then a neutral */
-  --flc-series-1: #2F6BFF; --flc-series-2: #93B4FF; --flc-series-3: #C7D7FF;
-  --flc-series-4: #1D4ED8; --flc-series-5: #CBD5E1;
+  --flc-series-1: #2F6BFF; --flc-series-2: #8FB0FF; --flc-series-3: #C7D7FF;
+  --flc-series-4: #5B8DEF; --flc-series-5: #DCE3EF;
   /* icon-chip tones (light square + coloured glyph, like the mockup) */
   --flc-tone-blue: #2F6BFF; --flc-tone-sky: #0EA5E9; --flc-tone-green: #16A34A;
   --flc-tone-purple: #7C3AED; --flc-tone-red: #E11D48; --flc-tone-orange: #F97316; --flc-tone-amber: #F59E0B;
@@ -2284,11 +2284,11 @@ textarea::placeholder {
 /* Recharts safety net: any pie sector / bar that still carries an inline
    warm fill inside the analytics page is forced onto the blue ladder. */
 .av2-cobalt .recharts-pie-sector:nth-child(1) path { fill: #2F6BFF; }
-.av2-cobalt .recharts-pie-sector:nth-child(2) path { fill: #5B8DEF; }
-.av2-cobalt .recharts-pie-sector:nth-child(3) path { fill: #93B4FF; }
-.av2-cobalt .recharts-pie-sector:nth-child(4) path { fill: #C7D7FF; }
-.av2-cobalt .recharts-pie-sector:nth-child(5) path { fill: #1D4ED8; }
-.av2-cobalt .recharts-pie-sector:nth-child(n+6) path { fill: #CBD5E1; }
+.av2-cobalt .recharts-pie-sector:nth-child(2) path { fill: #8FB0FF; }
+.av2-cobalt .recharts-pie-sector:nth-child(3) path { fill: #C7D7FF; }
+.av2-cobalt .recharts-pie-sector:nth-child(4) path { fill: #DCE3EF; }
+.av2-cobalt .recharts-pie-sector:nth-child(5) path { fill: #5B8DEF; }
+.av2-cobalt .recharts-pie-sector:nth-child(n+6) path { fill: #E6EAF2; }
 .av2-cobalt .recharts-cartesian-grid line { stroke: #E6EAF2; }
 .av2-cobalt .recharts-text { fill: #64748B; }
 

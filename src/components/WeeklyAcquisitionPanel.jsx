@@ -144,7 +144,7 @@ export default function WeeklyAcquisitionPanel({ controlledDays = null } = {}) {
                 />
                 <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={14}>
                   {data.map((d, i) => (
-                    <Cell key={i} fill={d.isBest ? '#2F6BFF' : '#93B4FF'} />
+                    <Cell key={i} fill={d.isBest ? '#2F6BFF' : '#8FB0FF'} />
                   ))}
                 </Bar>
               </BarChart>

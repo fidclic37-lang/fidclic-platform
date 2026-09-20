@@ -26,8 +26,8 @@ import WeeklyAcquisitionPanel from '../components/WeeklyAcquisitionPanel';
 import useTileMetric from '../hooks/useTileMetric';
 import { Trash2, UserPlus2, RefreshCcw, Repeat as RepeatIcon, BadgeCheck } from 'lucide-react';
 
-const TIER_COLORS = { bronze: '#C7D7FF', silver: '#CBD5E1', gold: '#93B4FF', vip: '#1D4ED8' };
-const ACQ_COLORS = ['#2F6BFF', '#93B4FF', '#2F6BFF', '#1D4ED8', '#5B8DEF', '#5B8DEF', '#C7D7FF'];
+const TIER_COLORS = { bronze: '#C7D7FF', silver: '#DCE3EF', gold: '#8FB0FF', vip: '#2F6BFF' };
+const ACQ_COLORS = ['#2F6BFF', '#8FB0FF', '#C7D7FF', '#DCE3EF', '#5B8DEF', '#A9C2FF', '#E6EAF2'];
 
 // ─────────────────────────────────────────────────────────────────────
 // DEMO REVIEW ANALYTICS — paints the "Customer reviews & sentiment"
@@ -751,8 +751,8 @@ const AnalyticsPage = () => {
   // Per-source styling — consistent colors across the chart and the KPI tiles.
   const SOURCE_STYLE = {
     instagram: { color: '#5B8DEF', bg: 'rgba(47,107,255,0.08)', icon: '📸' },
-    facebook:  { color: '#2F6BFF', bg: 'rgba(47,107,255,0.08)', icon: '👥' },
-    tiktok:    { color: '#1D4ED8', bg: 'rgba(29,78,216,0.08)',    icon: '🎵' },
+    facebook:  { color: '#8FB0FF', bg: 'rgba(47,107,255,0.08)', icon: '👥' },
+    tiktok:    { color: '#DCE3EF', bg: 'rgba(220,227,239,0.5)',    icon: '🎵' },
     qr_store:  { color: '#2F6BFF', bg: 'rgba(184,92,56,0.10)',   icon: '📍' },
   };
 
@@ -1423,7 +1423,7 @@ const AnalyticsPage = () => {
                     return [10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => {
                       const v = dist[String(n)] || 0;
                       const pct = Math.round((v / max) * 100);
-                      const color = n >= 8 ? '#16A34A' : n >= 5 ? '#5B8DEF' : '#E11D48';
+                      const color = n >= 8 ? '#2F6BFF' : n >= 5 ? '#8FB0FF' : '#C7D7FF';
                       return (
                         <div key={n} className="flex items-center gap-2 text-xs">
                           <span className="w-6 text-right font-semibold text-[#0F172A]">{n}</span>

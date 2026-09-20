@@ -49,15 +49,15 @@ const VisitsBarLineChart = ({ data = [], height = 200, ariaLabel }) => {
     <>
       <div style={{ display: 'flex', gap: 14, marginBottom: 4 }}>
         <LegendDot color="var(--flc-accent, #C73E2C)" label="Visites totales" />
-        <LegendDot color="var(--flc-series-2, #93B4FF)" label="Clients uniques" />
+        <LegendDot color="#8FB0FF" label="Clients uniques" />
       </div>
       <div role="img" aria-label={ariaLabel || summary} style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -22 }}>
             <defs>
               <linearGradient id="av2-vis-bar" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%"   stopColor="var(--flc-accent, #C73E2C)" />
-                <stop offset="100%" stopColor="var(--flc-accent-deep, #A82843)" />
+                <stop offset="0%"   stopColor="#2F6BFF" />
+                <stop offset="100%" stopColor="#5B8DEF" />
               </linearGradient>
             </defs>
             <CartesianGrid stroke="var(--flc-line, #ECE3D2)" vertical={false} strokeDasharray="2 4" />
@@ -91,7 +91,7 @@ const VisitsBarLineChart = ({ data = [], height = 200, ariaLabel }) => {
             <Line
               type="monotone"
               dataKey="uniques"
-              stroke="var(--flc-series-2, #93B4FF)"
+              stroke="#8FB0FF"
               strokeWidth={2}
               dot={{ r: 2.5, fill: 'hsl(208 55% 40%)', stroke: 'var(--flc-card, #FFFFFF)', strokeWidth: 1 }}
               activeDot={{ r: 4 }}

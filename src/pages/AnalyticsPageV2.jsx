@@ -268,11 +268,25 @@ export default function AnalyticsPageV2() {
       getRfmMatrix(branchId).catch(() => [[0,0,0],[0,0,0],[0,0,0]]),
       getTopProducts(branchId).catch(() => []),
       getNewVsReturning(branchId).catch(() => ({ newPct: 0, returningPct: 0 })),
-    ]).then(([s, a, rfm, top, nv]) => {
+      // /owner/analytics is the only endpoint that carries the daily series
+      // (visits_by_day) and the hour×day heatmap (visit_time_heatmap);
+      // /owner/analytics/summary never did — which is why "Visits over
+      // time", "Peak hours" and "Busiest weekdays" rendered empty.
+      ownerAPI.getAnalytics?.({ ...p, days: 30 }).catch(() => null),
+    ]).then(([s, a, rfm, top, nv, full]) => {
       if (!alive) return;
-      const summaryData = s?.data || null;
+      const summaryData = s?.data
+        ? { ...s.data,
+            visits_by_day: full?.data?.visits_by_day || s.data.visits_by_day,
+            visit_time_heatmap: full?.data?.visit_time_heatmap || s.data.visit_time_heatmap }
+        : (full?.data || null);
       setSummary(summaryData);
-      setAcqSources(a?.data?.breakdown || a?.data?.acquisition_breakdown || a?.data || null);
+      // /owner/analytics/acquisition-sources answers { sources: [...] }.
+      const acq = a?.data;
+      setAcqSources(
+        Array.isArray(acq?.sources) ? acq.sources
+        : acq?.breakdown || acq?.acquisition_breakdown || (Array.isArray(acq) ? acq : null),
+      );
       setRfmMatrix(rfm);
       setTopProducts(top);
       setNvr(nv);
@@ -399,9 +413,9 @@ export default function AnalyticsPageV2() {
   // New vs Returning segments for the donut.
   const nvrSegments = (nvr.newPct > 0 || nvr.returningPct > 0) ? [
     { name: 'Récurrents', value: Number(nvr.returningPct) || 0,
-      gradientFrom: 'var(--flc-series-1, #2F6BFF)', gradientTo: 'var(--flc-series-4, #1D4ED8)' },
+      gradientFrom: '#2F6BFF', gradientTo: '#2F6BFF' },
     { name: 'Nouveaux',   value: Number(nvr.newPct) || 0,
-      gradientFrom: 'var(--flc-series-2, #93B4FF)', gradientTo: 'var(--flc-series-3, #C7D7FF)' },
+      gradientFrom: '#C7D7FF', gradientTo: '#C7D7FF' },
   ] : [];
 
   // Loyalty score — same blend as before.
@@ -522,9 +536,9 @@ export default function AnalyticsPageV2() {
   const displayNvrSegments = (nvrSegments.length > 0) ? nvrSegments
     : (isEmpty ? [
         { name: 'Récurrents', value: DEMO.newVsReturning.returningPct,
-          gradientFrom: 'var(--flc-series-1, #2F6BFF)', gradientTo: 'var(--flc-series-4, #1D4ED8)' },
+          gradientFrom: '#2F6BFF', gradientTo: '#2F6BFF' },
         { name: 'Nouveaux',   value: DEMO.newVsReturning.newPct,
-          gradientFrom: 'var(--flc-series-2, #93B4FF)', gradientTo: 'var(--flc-series-3, #C7D7FF)' },
+          gradientFrom: '#C7D7FF', gradientTo: '#C7D7FF' },
       ] : []);
 
   // Today's date in French — for the "14 Mai – 14 Juin 2026" pill.

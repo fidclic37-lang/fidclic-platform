@@ -8,11 +8,11 @@
 import React from 'react';
 
 const GRADIENTS = [
-  ['var(--flc-series-1, #2F6BFF)', 'var(--flc-series-4, #1D4ED8)'],
-  ['var(--flc-series-1, #2F6BFF)', 'var(--flc-series-2, #93B4FF)'],
-  ['var(--flc-series-2, #93B4FF)', 'var(--flc-series-2, #93B4FF)'],
-  ['var(--flc-series-2, #93B4FF)', 'var(--flc-series-3, #C7D7FF)'],
-  ['var(--flc-series-3, #C7D7FF)', 'var(--flc-series-3, #C7D7FF)'],
+  ['#2F6BFF', '#2F6BFF'],
+  ['#5B8DEF', '#5B8DEF'],
+  ['#8FB0FF', '#8FB0FF'],
+  ['#C7D7FF', '#C7D7FF'],
+  ['#DCE3EF', '#DCE3EF'],
 ];
 
 const fmtEUR = (n) =>

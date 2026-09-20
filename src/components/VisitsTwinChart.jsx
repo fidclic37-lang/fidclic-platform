@@ -114,7 +114,7 @@ export default function VisitsTwinChart({ controlledDays = null } = {}) {
           Visites totales
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#5B8DEF' }} />
+          <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#8FB0FF' }} />
           Clients uniques
         </span>
       </div>
@@ -150,14 +150,14 @@ export default function VisitsTwinChart({ controlledDays = null } = {}) {
               />
               <defs>
                 <linearGradient id="vtc-bar" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--flc-accent-2, #5B8DEF)" />
-                  <stop offset="100%" stopColor="var(--flc-accent-deep, #A82843)" />
+                  <stop offset="0%" stopColor="#2F6BFF" />
+                  <stop offset="100%" stopColor="#5B8DEF" />
                 </linearGradient>
               </defs>
               <Bar dataKey="visits" fill="url(#vtc-bar)" radius={[3, 3, 0, 0]} maxBarSize={18} />
               <Line
                 type="monotone" dataKey="uniques"
-                stroke="#5B8DEF" strokeWidth={1.8}
+                stroke="#8FB0FF" strokeWidth={1.8}
                 dot={{ r: 2.5, fill: '#5B8DEF', stroke: 'var(--flc-card, #FFFFFF)', strokeWidth: 1 }}
                 activeDot={{ r: 3.5 }}
               />

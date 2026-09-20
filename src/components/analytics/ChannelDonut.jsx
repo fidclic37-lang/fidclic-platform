@@ -16,11 +16,11 @@ import React from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 const DEFAULT_PALETTE = [
-  { from: 'var(--flc-series-1, #2F6BFF)', to: 'var(--flc-series-4, #1D4ED8)' }, // blue
-  { from: 'var(--flc-series-2, #93B4FF)', to: 'var(--flc-series-2, #93B4FF)' }, // light blue
-  { from: 'var(--flc-series-3, #C7D7FF)', to: 'var(--flc-series-3, #C7D7FF)' }, // pale blue
-  { from: 'var(--flc-series-5, #CBD5E1)', to: 'var(--flc-series-5, #CBD5E1)' }, // neutral
-  { from: 'var(--flc-tone-sky, #0EA5E9)', to: 'var(--flc-tone-sky, #0EA5E9)' }, // sky
+  { from: '#2F6BFF', to: '#2F6BFF' }, // blue
+  { from: '#8FB0FF', to: '#8FB0FF' }, // light blue
+  { from: '#C7D7FF', to: '#C7D7FF' }, // pale blue
+  { from: '#DCE3EF', to: '#DCE3EF' }, // grey
+  { from: '#5B8DEF', to: '#5B8DEF' }, // mid blue
 ];
 
 const TOOLTIP_STYLE = {

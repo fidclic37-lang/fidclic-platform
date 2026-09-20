@@ -15,8 +15,8 @@ import { useBranch } from '../contexts/BranchContext';
  */
 const SOURCE_LABELS = {
   qr_store:   { label: 'QR in-store',  color: '#2F6BFF' },
-  instagram:  { label: 'Instagram',    color: '#5B8DEF' },
-  facebook:   { label: 'Facebook',     color: '#2F6BFF' },
+  instagram:  { label: 'Instagram',    color: '#8FB0FF' },
+  facebook:   { label: 'Facebook',     color: '#5B8DEF' },
   tiktok:     { label: 'TikTok',       color: '#0F172A' },
   website:    { label: 'Website',      color: '#64748B' },
   manual:     { label: 'Saisie staff', color: '#C7D7FF' },

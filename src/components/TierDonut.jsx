@@ -18,9 +18,9 @@ import { useBranch } from '../contexts/BranchContext';
  */
 const TIER_META = {
   bronze: { label: 'Bronze', color: '#C7D7FF' },
-  silver: { label: 'Silver', color: '#CBD5E1' },
-  gold:   { label: 'Gold',   color: '#93B4FF' },
-  vip:    { label: 'VIP',    color: '#1D4ED8' },
+  silver: { label: 'Silver', color: '#DCE3EF' },
+  gold:   { label: 'Gold',   color: '#8FB0FF' },
+  vip:    { label: 'VIP',    color: '#2F6BFF' },
 };
 
 export default function TierDonut() {
