@@ -36,14 +36,13 @@ export default function TierDonut() {
       .then((r) => {
         if (!alive) return;
         const dist = r?.data?.tier_distribution || {};
+        // Blue → grey ladder by size, like the other donuts on the page.
+        const LADDER = ['#2F6BFF', '#5B8DEF', '#8FB0FF', '#C7D7FF', '#DCE3EF'];
         const entries = ['bronze', 'silver', 'gold', 'vip']
-          .map((key) => ({
-            key,
-            name: TIER_META[key].label,
-            color: TIER_META[key].color,
-            value: Number(dist[key] || 0),
-          }))
-          .filter((e) => e.value > 0);
+          .map((key) => ({ key, name: TIER_META[key].label, value: Number(dist[key] || 0) }))
+          .filter((e) => e.value > 0)
+          .sort((a, b) => b.value - a.value)
+          .map((e, i) => ({ ...e, color: LADDER[Math.min(i, LADDER.length - 1)] }));
         const sum = entries.reduce((s, e) => s + e.value, 0);
         setData(entries);
         setTotal(sum);
@@ -102,15 +101,6 @@ export default function TierDonut() {
                 />
               </PieChart>
             </ResponsiveContainer>
-            <div
-              className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
-              style={{ color: 'var(--ink)' }}
-            >
-              <p style={{ fontSize: 19, fontWeight: 500, letterSpacing: '-0.022em', lineHeight: 1 }}>{total}</p>
-              <p className="text-[9px] mt-0.5" style={{ color: 'var(--ink-mute)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
-                Total clients
-              </p>
-            </div>
           </div>
 
           <div className="flex-1 min-w-0 space-y-1.5">

@@ -34,15 +34,19 @@ export default function AcquisitionDonut() {
     ownerAPI.getAcquisitionSources?.({ ...(branchId ? { branch_id: branchId } : {}) })
       .then((r) => {
         if (!alive) return;
-        const raw = r?.data?.breakdown || r?.data?.acquisition_breakdown || r?.data || {};
-        // Normalise into [{ key, label, color, value }]
-        const entries = Object.entries(raw)
-          .filter(([k, v]) => typeof v === 'number' && v >= 0)
-          .map(([k, v]) => {
-            const meta = SOURCE_LABELS[k] || { label: k.replace(/_/g, ' '), color: '#94A3B8' };
-            return { key: k, name: meta.label, color: meta.color, value: v };
-          })
-          .sort((a, b) => b.value - a.value);
+        // The endpoint answers { sources: [{source,label,count,percentage}], total, period_days }.
+        // (Iterating the whole object used to turn "total" and "period_days"
+        // into fake sources.) Colours are assigned by rank — biggest slice
+        // gets the primary blue, then lighter blues, then grey — like every
+        // other chart on the page.
+        const LADDER = ['#2F6BFF', '#5B8DEF', '#8FB0FF', '#C7D7FF', '#DCE3EF', '#E6EAF2'];
+        const list = Array.isArray(r?.data?.sources) ? r.data.sources
+          : Object.entries(r?.data?.breakdown || {}).map(([source, count]) => ({ source, count }));
+        const entries = list
+          .map((row) => ({ key: row.source, name: (SOURCE_LABELS[row.source] || {}).label || String(row.label || row.source).replace(/_/g, ' '), value: Number(row.count) || 0 }))
+          .filter((e) => e.value > 0)
+          .sort((a, b) => b.value - a.value)
+          .map((e, i) => ({ ...e, color: LADDER[Math.min(i, LADDER.length - 1)] }));
         const sum = entries.reduce((s, e) => s + e.value, 0);
         setData(entries);
         setTotal(sum);
@@ -102,15 +106,6 @@ export default function AcquisitionDonut() {
                 />
               </PieChart>
             </ResponsiveContainer>
-            <div
-              className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
-              style={{ color: 'var(--ink)' }}
-            >
-              <p style={{ fontSize: 19, fontWeight: 500, letterSpacing: '-0.022em', lineHeight: 1 }}>{total}</p>
-              <p className="text-[9px] mt-0.5" style={{ color: 'var(--ink-mute)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
-                Total clients
-              </p>
-            </div>
           </div>
 
           {/* Legend */}

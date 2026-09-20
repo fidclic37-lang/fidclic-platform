@@ -2276,19 +2276,11 @@ textarea::placeholder {
 .av2-light-skin.av2-cobalt .av2-legacy-wrapper { border-top: 1px solid #DCE3EF; padding-top: 18px; margin-top: 8px; }
 .av2-light-skin.av2-cobalt .av2-legacy-wrapper .ft-lift { border: 1px solid #DCE3EF !important; }
 /* Tier badges inside the analytics tables: blue ladder, not bronze/gold. */
-.av2-cobalt .tier-badge[data-tier="bronze"] { background: #EAF0FF !important; border-color: #C7D7FF !important; color: #1D4ED8 !important; }
-.av2-cobalt .tier-badge[data-tier="silver"] { background: #EEF2F9 !important; border-color: #CBD5E1 !important; color: #334155 !important; }
-.av2-cobalt .tier-badge[data-tier="gold"]   { background: #C7D7FF !important; border-color: #93B4FF !important; color: #1D4ED8 !important; }
-.av2-cobalt .tier-badge[data-tier="vip"]    { background: #1D4ED8 !important; border-color: #1D4ED8 !important; color: #FFFFFF !important; }
+.av2-cobalt .tier-badge[data-tier="bronze"] { background: linear-gradient(135deg, #D9A066, #B87333) !important; border-color: #A8652A !important; color: #FFFFFF !important; }
+.av2-cobalt .tier-badge[data-tier="silver"] { background: linear-gradient(135deg, #E5E7EB, #B8BFC8) !important; border-color: #9CA3AF !important; color: #1F2937 !important; }
+.av2-cobalt .tier-badge[data-tier="gold"]   { background: linear-gradient(135deg, #F3D46B, #D4A017) !important; border-color: #B8860B !important; color: #3B2F0B !important; }
+.av2-cobalt .tier-badge[data-tier="vip"]    { background: linear-gradient(135deg, #E8ECF2, #A9B4C2 60%, #7F8FA6) !important; border-color: #6B7A90 !important; color: #1E293B !important; }
 .av2-cobalt .tier-badge svg { color: currentColor !important; }
-/* Recharts safety net: any pie sector / bar that still carries an inline
-   warm fill inside the analytics page is forced onto the blue ladder. */
-.av2-cobalt .recharts-pie-sector:nth-child(1) path { fill: #2F6BFF; }
-.av2-cobalt .recharts-pie-sector:nth-child(2) path { fill: #8FB0FF; }
-.av2-cobalt .recharts-pie-sector:nth-child(3) path { fill: #C7D7FF; }
-.av2-cobalt .recharts-pie-sector:nth-child(4) path { fill: #DCE3EF; }
-.av2-cobalt .recharts-pie-sector:nth-child(5) path { fill: #5B8DEF; }
-.av2-cobalt .recharts-pie-sector:nth-child(n+6) path { fill: #E6EAF2; }
 .av2-cobalt .recharts-cartesian-grid line { stroke: #E6EAF2; }
 .av2-cobalt .recharts-text { fill: #64748B; }
 
@@ -2299,5 +2291,3 @@ textarea::placeholder {
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04) !important;
   border-color: #DCE3EF !important;
 }
-.av2-cobalt .tier-badge[data-tier="vip"]  { background: #EAF0FF !important; border-color: #C7D7FF !important; color: #1D4ED8 !important; }
-.av2-cobalt .tier-badge[data-tier="gold"] { background: #F5F7FB !important; border-color: #DCE3EF !important; color: #334155 !important; }

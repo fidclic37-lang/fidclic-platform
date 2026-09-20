@@ -26,7 +26,8 @@ import WeeklyAcquisitionPanel from '../components/WeeklyAcquisitionPanel';
 import useTileMetric from '../hooks/useTileMetric';
 import { Trash2, UserPlus2, RefreshCcw, Repeat as RepeatIcon, BadgeCheck } from 'lucide-react';
 
-const TIER_COLORS = { bronze: '#C7D7FF', silver: '#DCE3EF', gold: '#8FB0FF', vip: '#2F6BFF' };
+// Tier identity colours — metals, like the badges: bronze, silver, gold, platinum (VIP).
+const TIER_COLORS = { bronze: '#B87333', silver: '#9CA3AF', gold: '#D4A017', vip: '#7F8FA6' };
 const ACQ_COLORS = ['#2F6BFF', '#8FB0FF', '#C7D7FF', '#DCE3EF', '#5B8DEF', '#A9C2FF', '#E6EAF2'];
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1178,31 +1179,59 @@ const AnalyticsPage = () => {
               </button>
             ))}
           </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <PieChart>
-              <Pie
-                data={tierData}
-                cx="50%"
-                cy="50%"
-                outerRadius={100}
-                dataKey="value"
-                labelLine={false}
-                label={({ name, value }) =>
-                  totalCustomers
-                    ? `${name}: ${value} (${Math.round((value / totalCustomers) * 100)}%)`
-                    : `${name}: ${value}`
-                }
-                onClick={(data) => data && drillCustomers(`${data.name} tier customers`, { tier: data.key })}
-                style={{ cursor: 'pointer' }}
-              >
-                {tierData.map((t, i) => (
-                  <Cell key={i} fill={TIER_COLORS[t.key] || '#2F6BFF'} />
-                ))}
-              </Pie>
-              <Tooltip />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
+          {/* Donut + side legend. The previous pie drew its labels on top of
+              the slices and the legend, so nothing was readable. */}
+          <div className="flex items-center gap-6">
+            <div className="shrink-0" style={{ width: 200, height: 200 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={tierData.filter((t) => t.value > 0)}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={62}
+                    outerRadius={94}
+                    paddingAngle={2}
+                    dataKey="value"
+                    stroke="#FFFFFF"
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                    onClick={(data) => data && drillCustomers(`${data.name} tier customers`, { tier: data.key })}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {tierData.filter((t) => t.value > 0).map((t, i) => (
+                      <Cell key={i} fill={TIER_COLORS[t.key] || '#9CA3AF'} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ background: '#FFFFFF', border: '1px solid #DCE3EF', borderRadius: 8, padding: '4px 8px', fontSize: 11 }}
+                    formatter={(v, n) => [`${v} clients`, n]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex-1 min-w-0 space-y-2">
+              {tierData.map((t) => {
+                const pct = totalCustomers ? Math.round((t.value / totalCustomers) * 100) : 0;
+                return (
+                  <button key={t.key} type="button"
+                          onClick={() => drillCustomers(`${t.name} tier customers`, { tier: t.key })}
+                          className="w-full text-left" title={`Click to view ${t.name} customers`}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-2 text-[#0F172A] font-semibold">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: TIER_COLORS[t.key] }} />
+                        {t.name}
+                      </span>
+                      <span className="text-[#64748B]"><span className="text-[#0F172A] font-semibold">{t.value}</span> · {pct}%</span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full bg-[#EEF2F9] overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: TIER_COLORS[t.key] }} />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </ChartCard>
 
         <ChartCard title="Acquisition Sources" hint="Lifetime customers acquired through each channel — all-time totals.">
