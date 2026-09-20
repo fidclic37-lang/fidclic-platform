@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck } from 'lucide-react';
 import SocialAuthButtons, { routeAfterAuth } from '../components/SocialAuthButtons';
@@ -17,6 +17,8 @@ import api from '../lib/api';
  * APPLE_CLIENT_ID are set in Vercel; disabled-with-tooltip until then).
  */
 const LOGO = '/brand/fidclic-logo.png';
+const ICON = '/brand/fidclic-icon.png';
+const HERO = '/brand/login-hero.jpg';
 
 const Field = ({ icon: Icon, children, trailing }) => (
   <div className="flex items-stretch rounded-xl border border-[#E1E8F5] bg-white transition focus-within:border-[#2F6BFF] focus-within:ring-4 focus-within:ring-[#2F6BFF]/10">
@@ -40,6 +42,10 @@ const LoginPage = () => {
   // forgot-password: 'idle' → 'open' → 'sent'
   const [forgot, setForgot] = useState('idle');
   const [resetEmail, setResetEmail] = useState('');
+  // Design variants under review: 1 = icon-only mark on the card, 2 = small full
+  // logo on the card, 3 = variant 2 + photo panel on the left.
+  const [params] = useSearchParams();
+  const variant = ['1', '2', '3'].includes(params.get('v')) ? Number(params.get('v')) : 2;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -66,25 +72,40 @@ const LoginPage = () => {
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-2" style={{ background: '#F4F8FE' }}>
       {/* ───────── Left: welcome panel ───────── */}
+      {variant === 3 ? (
+        <aside className="relative hidden overflow-hidden lg:block">
+          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-[60%_center]" />
+          <div aria-hidden="true" className="absolute inset-0"
+               style={{ background: 'linear-gradient(180deg, rgba(11,28,63,.10) 0%, rgba(11,28,63,0) 35%, rgba(11,28,63,.72) 100%)' }} />
+          <div className="absolute left-12 top-12 rounded-2xl bg-white/95 px-4 py-3 shadow-lg backdrop-blur">
+            <img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[58px] w-auto" />
+          </div>
+          <div className="absolute inset-x-12 bottom-12 text-white">
+            <h1 className="text-[46px] font-extrabold leading-[1.05] tracking-[-0.02em]">
+              {t('login.welcome_line1')} FIDCLIC <span aria-hidden="true">👋</span>
+            </h1>
+            <p className="mt-4 max-w-md text-[18px] leading-relaxed text-white/85">{t('login.welcome_sub')}</p>
+            <div className="mt-8 h-[3px] w-9 rounded-full bg-white/80" />
+            <p className="mt-3 max-w-xs text-[19px] leading-snug text-white/90" style={{ fontFamily: "'Caveat', 'Segoe Script', cursive" }}>
+              {t('login.quote')}
+            </p>
+          </div>
+        </aside>
+      ) : (
       <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"
              style={{ background: 'linear-gradient(160deg, #F1F7FF 0%, #E6F0FF 100%)' }}>
-        {/* soft blue blobs */}
         <div aria-hidden="true" className="pointer-events-none absolute -right-32 -top-24 h-[520px] w-[520px] rounded-full"
              style={{ background: 'radial-gradient(closest-side, #DCE9FF 0%, rgba(220,233,255,0) 72%)' }} />
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -left-24 h-[560px] w-[620px] rounded-[45%]"
              style={{ background: 'radial-gradient(closest-side, #D3E3FF 0%, rgba(211,227,255,0) 70%)' }} />
-
         <div className="relative">
-          <img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[92px] w-auto" />
+          <img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[64px] w-auto" />
           <h1 className="mt-16 text-[56px] font-extrabold leading-[1.02] tracking-[-0.02em] text-[#0B1C3F]">
             {t('login.welcome_line1')}<br />
             <span className="text-[#2F6BFF]">FIDCLIC</span> <span aria-hidden="true">👋</span>
           </h1>
-          <p className="mt-6 max-w-md text-[19px] leading-relaxed text-[#4B5C7A]">
-            {t('login.welcome_sub')}
-          </p>
+          <p className="mt-6 max-w-md text-[19px] leading-relaxed text-[#4B5C7A]">{t('login.welcome_sub')}</p>
         </div>
-
         <div className="relative">
           <div className="mb-5 h-[3px] w-9 rounded-full bg-[#2F6BFF]" />
           <p className="max-w-xs text-[19px] leading-snug text-[#3B4A66]" style={{ fontFamily: "'Caveat', 'Segoe Script', cursive" }}>
@@ -92,6 +113,7 @@ const LoginPage = () => {
           </p>
         </div>
       </aside>
+      )}
 
       {/* ───────── Right: sign-in card ───────── */}
       <main className="relative flex min-h-screen flex-col items-center justify-center px-5 py-10 lg:px-12">
@@ -102,8 +124,10 @@ const LoginPage = () => {
 
         <div className="w-full max-w-[640px] rounded-[22px] border border-[#E6EEFB] bg-white px-7 py-10 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-11">
           <div className="text-center">
-            <img src={LOGO} alt="FidClic" className="mx-auto h-[68px] w-auto" />
-            <h2 className="mt-5 text-[34px] font-extrabold tracking-[-0.02em] text-[#0B1C3F]">{t('login.title')}</h2>
+            {variant === 1
+              ? <img src={ICON} alt="FidClic" className="mx-auto h-[52px] w-[52px] rounded-xl" />
+              : <img src={LOGO} alt="FidClic" className="mx-auto h-[46px] w-auto" />}
+            <h2 className="mt-5 text-[40px] font-extrabold tracking-[-0.025em] text-[#0B1C3F]">{t('login.title')}</h2>
             <p className="mt-2 text-[16px] text-[#4B5C7A]">{t('login.subtitle')}</p>
           </div>
 

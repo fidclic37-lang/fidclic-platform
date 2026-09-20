@@ -38,7 +38,7 @@ i18n
     supportedLngs: ['fr', 'en', 'ar'],
     interpolation: { escapeValue: false }, // React already escapes
     detection: {
-      order: ['localStorage', 'htmlTag', 'navigator'],
+      order: ['localStorage', 'htmlTag'],   // FR by default (html lang); the browser locale never overrides it
       lookupLocalStorage: 'fidelitour:lang',
       caches: ['localStorage'],
     },
