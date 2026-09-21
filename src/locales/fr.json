@@ -481,7 +481,10 @@
     "password_hint": "10 caractères minimum, avec majuscule, chiffre et caractère spécial.",
     "terms_cgu": "Conditions Générales d'Utilisation",
     "terms_privacy": "la Politique de Confidentialité",
-    "continue": "Continuer"
+    "continue": "Continuer",
+    "compatible": "Compatible",
+    "wallet_apple": "Apple Wallet",
+    "wallet_google": "Google Wallet"
   },
   "card_step": {
     "title": "Configurez votre carte",
