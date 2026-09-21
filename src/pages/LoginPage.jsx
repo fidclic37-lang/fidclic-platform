@@ -67,14 +67,16 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-2" style={{ background: '#F4F8FE' }}>
+    // App-shell on desktop: no page scroll — the photo stays put and only the
+    // form column scrolls if it ever outgrows the viewport.
+    <div className="min-h-screen lg:grid lg:h-screen lg:grid-cols-2 lg:overflow-hidden" style={{ background: '#F4F8FE' }}>
       {/* ───────── Left: welcome panel ───────── */}
       {variant === 3 ? (
         /* The approved mockup's left panel ("Bienvenue chez FIDCLIC", photo,
            benefits) as one image. It fills the panel edge to edge (no side
            bars), anchored to the bottom so the headline + benefits are always
            in frame — only sky/window at the top is trimmed on wide screens. */
-        <aside className="relative hidden self-start overflow-hidden lg:sticky lg:top-0 lg:block lg:h-screen">
+        <aside className="relative hidden overflow-hidden lg:block lg:h-full">
           <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-bottom" />
         </aside>
       ) : (
@@ -102,13 +104,13 @@ const LoginPage = () => {
       )}
 
       {/* ───────── Right: sign-in card ───────── */}
-      <main className="relative flex min-h-screen flex-col items-center justify-center px-5 py-10 lg:px-12">
+      <main className="relative flex min-h-screen flex-col items-center justify-center px-5 py-10 lg:min-h-0 lg:h-full lg:justify-start lg:overflow-y-auto lg:px-12">
         <div className="absolute right-6 top-6 text-[14px] text-[#4B5C7A] lg:right-12 lg:top-10">
           {t('auth.no_account')}{' '}
           <Link to="/register" className="font-semibold text-[#2F6BFF] hover:underline">{t('login.create_account')}</Link>
         </div>
 
-        <div className="w-full max-w-[640px] rounded-[22px] border border-[#E6EEFB] bg-white px-7 py-10 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-11">
+        <div className="w-full max-w-[640px] rounded-[22px] border border-[#E6EEFB] bg-white px-7 py-10 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-11 lg:my-auto">
           <div className="text-center">
             {variant === 1
               ? <img src={ICON} alt="FidClic" className="mx-auto h-[40px] w-[40px] rounded-lg" />
