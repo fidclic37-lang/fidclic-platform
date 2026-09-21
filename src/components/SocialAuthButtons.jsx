@@ -20,7 +20,7 @@ import { authAPI } from '../lib/api';
  * can't be mistaken for a broken button.
  */
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
-const APPLE_SRC = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/fr-FR/appleid.auth.js';
+const APPLE_SRC = 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/fr_FR/appleid.auth.js';
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
