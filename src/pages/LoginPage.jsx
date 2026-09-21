@@ -70,11 +70,12 @@ const LoginPage = () => {
     <div className="min-h-screen lg:grid lg:grid-cols-2" style={{ background: '#F4F8FE' }}>
       {/* ───────── Left: welcome panel ───────── */}
       {variant === 3 ? (
-        /* The approved mockup's left panel (photo, logo, "Bienvenue chez
-           FIDCLIC", benefits) is used as one image so it matches exactly. */
-        <aside className="relative hidden self-start overflow-hidden lg:sticky lg:top-0 lg:flex lg:h-screen lg:items-center lg:justify-center">
-          <img src={HERO} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(28px)', transform: 'scale(1.15)', opacity: .9 }} />
-          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="relative h-full w-full object-contain object-center" />
+        /* The approved mockup's left panel ("Bienvenue chez FIDCLIC", photo,
+           benefits) as one image. It fills the panel edge to edge (no side
+           bars), anchored to the bottom so the headline + benefits are always
+           in frame — only sky/window at the top is trimmed on wide screens. */
+        <aside className="relative hidden self-start overflow-hidden lg:sticky lg:top-0 lg:block lg:h-screen">
+          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-bottom" />
         </aside>
       ) : (
       <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"
