@@ -107,7 +107,12 @@ export default function WalletCard({ customer, tenant, card = {}, compact = fals
               {(tenant?.name || 'F').charAt(0)}
             </div>
           )}
-          <span style={S.bizName}>{tenant?.name || 'Votre commerce'}</span>
+          <div style={{ minWidth: 0 }}>
+            {/* card_name / tagline come from onboarding step 3 ("Nom sur la
+                carte", "Slogan") — the shop's legal name stays on the tenant. */}
+            <span style={S.bizName}>{card.card_name || tenant?.name || 'Votre commerce'}</span>
+            {card.tagline ? <span style={S.tagline}>{card.tagline}</span> : null}
+          </div>
         </div>
         {showTier && (
           <span style={{ ...S.tierChip, background: tierChip.bg, color: tierChip.ink }}>
@@ -248,8 +253,12 @@ function styles(t, compact) {
       fontWeight: 600, fontSize: 15,
     },
     bizName: {
-      fontWeight: 600, fontSize: 15, letterSpacing: '-0.01em',
+      display: 'block', fontWeight: 600, fontSize: 15, letterSpacing: '-0.01em',
       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    },
+    tagline: {
+      display: 'block', fontSize: 10.5, letterSpacing: '0.06em', textTransform: 'uppercase',
+      color: t.inkSoft, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1,
     },
     tierChip: {
       fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',

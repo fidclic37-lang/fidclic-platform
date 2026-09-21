@@ -2387,6 +2387,7 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "terms_accepted": bool(user.get("terms_accepted_at")),
         "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
         "tenant_name": (tenant or {}).get("name"),
+        "tenant_slug": (tenant or {}).get("slug"),
     }
 
 @app.post("/api/auth/logout")

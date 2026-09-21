@@ -103,10 +103,21 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
             <img src={card.logo_url} alt=""
               style={{ maxHeight: px(28), maxWidth: px(88), borderRadius: px(4), objectFit: 'contain' }} />
           ) : null}
-          <span style={{ fontSize: px(13.5), fontWeight: 600, color: t.ink,
-                         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {tenant?.name || 'Votre commerce'}
-          </span>
+          <div style={{ minWidth: 0 }}>
+            {/* card_name / tagline = onboarding step 3 ("Nom sur la carte",
+                "Slogan"). On the real pass these ship as logoText + the
+                second logo line, so they belong in this row and nowhere else. */}
+            <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.ink,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {card.card_name || tenant?.name || 'Votre commerce'}
+            </div>
+            {card.tagline ? (
+              <div style={{ ...label, fontSize: px(8), marginTop: px(1),
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {card.tagline}
+              </div>
+            ) : null}
+          </div>
         </div>
         {showTier && (
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
