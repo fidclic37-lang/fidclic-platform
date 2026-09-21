@@ -73,7 +73,7 @@ const LoginPage = () => {
         /* The approved mockup's left panel (photo, logo, "Bienvenue chez
            FIDCLIC", benefits) is used as one image so it matches exactly. */
         <aside className="relative hidden overflow-hidden lg:block">
-          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-left" />
+          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-center" />
         </aside>
       ) : (
       <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"

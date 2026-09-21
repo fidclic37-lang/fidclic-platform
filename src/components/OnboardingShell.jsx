@@ -101,7 +101,7 @@ export default function OnboardingShell({ step, children, wide = false }) {
       <div className="grid min-h-[calc(100vh-76px)] lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         {/* ── left: the mockup visual, identical on every step ── */}
         <aside className="relative hidden overflow-hidden lg:block">
-          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-left" />
+          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
         </aside>
 
         {/* ── right: step card ── */}
