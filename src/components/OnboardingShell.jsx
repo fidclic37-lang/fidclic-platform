@@ -85,9 +85,12 @@ export const Stepper = ({ step }) => {
 export default function OnboardingShell({ step, children, wide = false }) {
   const { t } = useTranslation();
   return (
-    <div className="min-h-screen bg-white">
+    // App-shell on desktop: the page itself never scrolls — nav and the
+    // visual stay put, only the step column scrolls when a form is taller
+    // than the viewport. Mobile keeps the normal document scroll.
+    <div className="min-h-screen bg-white lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
       {/* ── marketing nav ── */}
-      <header className="flex h-[76px] items-center justify-between px-6 lg:px-12">
+      <header className="flex h-[76px] shrink-0 items-center justify-between px-6 lg:px-12">
         <a href={SITE} className="flex items-center"><img src={LOGO} alt="FidClic" className="h-11 w-auto" /></a>
         <nav className="hidden items-center gap-8 text-[15px] text-[#0B1C3F] lg:flex">
           {NAV.map((n) => <a key={n.key} href={n.href} className="hover:text-[#2F6BFF]">{t(`signup.nav_${n.key}`)}</a>)}
@@ -98,18 +101,17 @@ export default function OnboardingShell({ step, children, wide = false }) {
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100vh-76px)] lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+      <div className="grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         {/* ── left: the mockup visual, identical on every step ── */}
-        {/* Locked to the viewport height (sticky) so a tall form on the right
-            never stretches this column — the visual is shown WHOLE, never
-            cropped or zoomed; a blurred copy fills any leftover edge. */}
-        <aside className="relative hidden self-start overflow-hidden lg:sticky lg:top-[76px] lg:flex lg:h-[calc(100vh-76px)] lg:items-center lg:justify-center">
-          <img src={HERO} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(28px)', transform: 'scale(1.15)', opacity: .9 }} />
-          <img src={HERO} alt="" className="relative h-full w-full object-contain object-center" />
+        {/* The visual is a square with extra background on both sides, so
+            object-cover only ever trims that background — phone, chips and
+            badge stay in frame, edge to edge, no side bars, at any width. */}
+        <aside className="relative hidden overflow-hidden lg:block lg:h-full">
+          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
         </aside>
 
         {/* ── right: step card ── */}
-        <main className="flex items-start justify-center px-4 py-6 lg:px-8">
+        <main className="flex items-start justify-center px-4 py-6 lg:h-full lg:overflow-y-auto lg:px-8">
           <div className={`w-full ${wide ? 'max-w-[680px]' : 'max-w-[640px]'} rounded-[22px] border border-[#E6EEFB] bg-white px-6 py-8 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-9`}>
             <Stepper step={step} />
             {children}
