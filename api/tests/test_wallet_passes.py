@@ -1,0 +1,141 @@
+"""
+Wallet passes — builds a real, signed .pkpass against a throwaway self-signed
+certificate chain (so no Apple secret is needed to run this), then checks the
+bundle Apple's Wallet would receive: manifest hashes, pass.json contents that
+mirror the onboarding step-3 design, and the PassKit web-service auth.
+
+    cd api && python3 tests/test_wallet_passes.py
+"""
+from __future__ import annotations
+
+import base64
+import datetime as dt
+import hashlib
+import io
+import json
+import os
+import sys
+import time
+import zipfile
+
+import mongomock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# ---- throwaway cert chain (never Apple's) ----------------------------------
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+
+
+def _selfsigned(cn: str):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = dt.datetime.now(dt.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - dt.timedelta(days=1))
+            .not_valid_after(now + dt.timedelta(days=30)).sign(key, hashes.SHA256()))
+    return key, cert
+
+
+key, cert = _selfsigned("Pass Type ID: pass.com.fidclic.test")
+_, wwdr = _selfsigned("Fake WWDR")
+os.environ.update({
+    "APPLE_PASS_TYPE_ID": "pass.com.fidclic.test",
+    "APPLE_TEAM_ID": "TEAM123456",
+    "APPLE_PASS_CERT_B64": base64.b64encode(cert.public_bytes(serialization.Encoding.PEM)).decode(),
+    "APPLE_PASS_KEY_B64": base64.b64encode(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())).decode(),
+    "APPLE_WWDR_B64": base64.b64encode(wwdr.public_bytes(serialization.Encoding.PEM)).decode(),
+    "PASS_AUTH_SECRET": "test-secret",
+    "DISABLE_SEED": "1",
+})
+
+with mongomock.patch(servers=(("localhost", 27017),)):
+    import server
+    from fastapi import HTTPException
+    from features import wallet_passes as WP
+
+    db = server.db
+
+    # a merchant who finished onboarding step 3 with the black/gold design
+    db.tenants.insert_one({"id": "t1", "slug": "royal-trim", "name": "Royal Trim SARL", "address": "12 rue Nationale, 37000 Tours"})
+    logo_png = base64.b64encode(bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000101"
+        "0d6d6b5e0000000049454e44ae426082")).decode()
+    db.card_templates.insert_one({
+        "tenant_id": "t1", "layout_style": "wallet", "surface_color": "#000000", "brand_color": "#D4AF37",
+        "card_name": "ROYAL TRIM", "tagline": "Coupe • Barbe • Soin", "logo_url": "data:image/png;base64," + logo_png,
+        "reward_threshold_stamps": 10, "reward_description": "Une coupe offerte", "hero_mode": "none",
+        "brand_fields": {"card_name": "ROYAL TRIM"},
+    })
+    db.customers.insert_one({"id": "c1", "tenant_id": "t1", "barcode_id": "FT-TEST0001", "name": "Marie Dupont",
+                             "visits": 7, "points": 70, "tier": "gold", "created_at": dt.datetime.now(dt.timezone.utc)})
+
+    passed = failed = 0
+
+    def check(label, cond):
+        global passed, failed
+        passed += cond; failed += (not cond)
+        print(("  ✓ " if cond else "  ✗ ") + label)
+
+    def status(fn, *a, **k):
+        try:
+            r = fn(*a, **k)
+            return getattr(r, "status_code", 200), r
+        except HTTPException as e:
+            return e.status_code, None
+
+    check("config: apple on, google off", WP.wallet_config() == {"apple": True, "google": False})
+
+    resp = WP.download_apple_pass("FT-TEST0001")
+    check("pkpass response mime", resp.media_type == "application/vnd.apple.pkpass" and "attachment" in resp.headers["content-disposition"])
+    data = WP.build_pkpass(WP._card_payload("FT-TEST0001"))
+    z = zipfile.ZipFile(io.BytesIO(data))
+    names = set(z.namelist())
+    check("bundle has pass.json/manifest/signature/icon/logo", {"pass.json", "manifest.json", "signature", "icon.png", "logo.png"} <= names)
+    check("retina variants present", {"icon@2x.png", "icon@3x.png", "logo@2x.png"} <= names)
+    check("no strip when hero_mode=none", "strip.png" not in names)
+    manifest = json.loads(z.read("manifest.json"))
+    check("manifest sha1 matches every file", all(manifest[n] == hashlib.sha1(z.read(n)).hexdigest() for n in names - {"manifest.json", "signature"}))
+    sig = z.read("signature")
+    check("signature is DER PKCS#7", sig[:1] == b"\x30" and len(sig) > 500)
+    pj = json.loads(z.read("pass.json"))
+    check("storeCard + ids", pj["formatVersion"] == 1 and pj["passTypeIdentifier"] == "pass.com.fidclic.test" and pj["teamIdentifier"] == "TEAM123456" and "storeCard" in pj)
+    check("serial = barcode; QR altText", pj["serialNumber"] == "FT-TEST0001" and pj["barcodes"][0]["format"] == "PKBarcodeFormatQR" and pj["barcodes"][0]["altText"] == "FT-TEST0001")
+    check("design → colours (black surface, light ink)", pj["backgroundColor"] == "rgb(0, 0, 0)" and pj["foregroundColor"] == "rgb(244, 243, 240)")
+    check("card_name → logoText", pj["logoText"] == "ROYAL TRIM")
+    sc = pj["storeCard"]
+    check("tier header Or", sc["headerFields"][0]["value"] == "Or")
+    check("points primary 70", sc["primaryFields"][0]["value"] == 70)
+    sec = {f["key"]: f["value"] for f in sc["secondaryFields"]}
+    check("member/visits/stamps fields", sec == {"member": "Marie", "visits": 7, "stamps": "7 / 10"})
+    check("reward text", sc["auxiliaryFields"][0]["value"] == "Encore 3 tampons · Une coupe offerte")
+    check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
+    check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)
+    tok = pj["authenticationToken"]
+
+    # ---- PassKit web service --------------------------------------------
+    hdr = "ApplePass " + tok
+    reg = WP.Registration(pushToken="abc")
+    check("register → 201", status(WP.register_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", reg, hdr)[0] == 201)
+    check("re-register → 200", status(WP.register_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", reg, hdr)[0] == 200)
+    check("bad token → 401", status(WP.register_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", reg, "ApplePass nope")[0] == 401)
+    st, r = status(WP.serials_for_device, "dev1", "pass.com.fidclic.test", None)
+    check("serials for device", st == 200 and r["serialNumbers"] == ["FT-TEST0001"])
+    st, r = status(WP.serials_for_device, "dev1", "pass.com.fidclic.test", str(int(time.time()) + 60))
+    check("nothing changed since → 204", st == 204)
+    check("latest pass via web service (auth ok)", status(WP.latest_pass, "pass.com.fidclic.test", "FT-TEST0001", hdr)[0] == 200)
+    check("latest pass bad auth → 401", status(WP.latest_pass, "pass.com.fidclic.test", "FT-TEST0001", "ApplePass x")[0] == 401)
+    check("unregister → 200", status(WP.unregister_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", hdr)[0] == 200)
+    check("no registrations → 204", status(WP.serials_for_device, "dev1", "pass.com.fidclic.test", None)[0] == 204)
+
+    # ---- unconfigured is a clean 503, never a 500 ------------------------
+    os.environ["APPLE_PASS_KEY_B64"] = ""
+    check("unconfigured → 503", status(WP.download_apple_pass, "FT-TEST0001")[0] == 503)
+    check("google unconfigured → 503", status(WP.google_wallet_link, "FT-TEST0001")[0] == 503)
+    check("unknown card → 404", status(WP.serials_for_device, "nobody", "x", None)[0] == 204 and status(lambda: WP._card_payload("FT-NOPE"))[0] == 404)
+
+    print(f"\n{passed} passed, {failed} failed")
+    sys.exit(1 if failed else 0)

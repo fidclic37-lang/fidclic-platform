@@ -13,3 +13,4 @@ pywebpush==2.0.0
 cryptography==42.0.5
 python-dateutil==2.9.0.post0
 stripe==11.4.1
+Pillow==10.4.0

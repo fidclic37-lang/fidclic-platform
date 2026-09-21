@@ -9,6 +9,7 @@ import InstallPwaPrompt from '../components/InstallPwaPrompt';
 import GeoConsentCard from '../components/GeoConsentCard';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import WalletPassPreview from '../components/WalletPassPreview';
+import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
 
 // ---------------------------------------------------------------------------
@@ -726,11 +727,12 @@ const MyWalletCardPage = () => {
               )}
             </WalletCardErrorBoundary>
 
-            {/* Save / share actions — the previous "Add to Apple/Google Wallet"
-                buttons were fake because real .pkpass generation needs a paid
-                Apple Developer cert. Until that's set up, give the customer
-                three actions that actually work today. */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-5">
+            {/* Native wallets — real signed passes (features/wallet_passes.py).
+                The buttons only appear once the certificates are configured. */}
+            <WalletButtons barcodeId={barcodeId} onError={showToast} />
+
+            {/* Share / home-screen / print — always available, any browser. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
               <button
                 onClick={async () => {
                   try {
@@ -769,7 +771,7 @@ const MyWalletCardPage = () => {
               </button>
             </div>
             <p className="text-[10px] text-[#8D857D] text-center mt-2">
-              💡 La carte fonctionne dans n'importe quel navigateur. Apple Wallet / Google Wallet natifs nécessitent un compte développeur payant — disponibles sur demande.
+              💡 La carte fonctionne dans n'importe quel navigateur, et se met à jour automatiquement après chaque visite.
             </p>
 
             {/* PWA install prompt — quietly invites the customer to install

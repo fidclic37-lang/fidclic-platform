@@ -48,6 +48,9 @@ MODULES = [
     # Billing — Stripe Checkout + Customer Portal + webhook handler.
     # Boots safely (no-ops) when STRIPE_SECRET_KEY isn't set.
     "features.billing",
+    # Native wallet passes — Apple .pkpass + Google Wallet. No-ops (503) until
+    # APPLE_PASS_* / GOOGLE_WALLET_* are set in Vercel.
+    "features.wallet_passes",
     # Facturation électronique (French e-invoicing) — second product module.
     # Gated: only tenants with facturation_enabled=True reach any route.
     # PA-agnostic via services.pdp_connector (Mock by default; B2Brouter via env).

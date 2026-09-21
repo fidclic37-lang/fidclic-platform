@@ -127,6 +127,23 @@ APPLE_REDIRECT_URI=https://app.fidclic.com/login
 # Version string stamped on CGU/DPA acceptance; bump it when the legal texts change
 TERMS_VERSION=2026-09
 
+# --- Native wallet passes (optional; buttons appear on the card once set) ---
+# Apple: Pass Type ID + its certificate (Certificates, Identifiers & Profiles)
+#   openssl pkcs12 -in pass.p12 -clcerts -nokeys -out pass-cert.pem
+#   openssl pkcs12 -in pass.p12 -nocerts -nodes -out pass-key.pem
+#   openssl x509 -inform der -in AppleWWDRCAG4.cer -out wwdr.pem
+#   values = base64 of each PEM file (base64 -i file)
+APPLE_PASS_TYPE_ID=pass.com.fidclic.loyalty
+APPLE_TEAM_ID=
+APPLE_PASS_CERT_B64=
+APPLE_PASS_KEY_B64=
+APPLE_WWDR_B64=
+# random string used to derive each pass's authenticationToken (openssl rand -hex 24)
+PASS_AUTH_SECRET=
+# Google Wallet: issuer id (pay.google.com/business/console) + service-account JSON key (base64)
+GOOGLE_WALLET_ISSUER_ID=
+GOOGLE_WALLET_SA_B64=
+
 # ---- Stripe billing (required for paid plans) -------------------------
 # This is the RESELLER's Stripe account — the businesses (your tenants) pay
 # the reseller. The reseller pays you separately.

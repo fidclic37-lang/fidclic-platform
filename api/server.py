@@ -4483,6 +4483,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                 {"$set": {
                     "visits": current_visits,
                     "visits_at_last_redemption": current_visits,
+                    "updated_at": datetime.now(timezone.utc),
                 }},
             )
         except Exception:
@@ -4535,6 +4536,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "total_amount_paid": round(new_paid, 2),
         "last_visit_date": datetime.now(timezone.utc),
         "tier": new_tier,
+        # Read by the Apple PassKit web service (passesUpdatedSince) so a
+        # wallet pass refreshes after every scan.
+        "updated_at": datetime.now(timezone.utc),
     }
     # Stamp home branch on first scan only.
     if req.branch_id and not cust.get("branch_id"):
@@ -5905,6 +5909,10 @@ def _serialize_card_payload(cust: dict) -> dict:
             # extra="allow", so these persist through the save endpoints
             # without model changes.
             "brand_color":          tpl.get("brand_color"),
+            # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
+            # WalletCard / WalletPassPreview and the native pass builder.
+            "card_name":            tpl.get("card_name"),
+            "tagline":              tpl.get("tagline"),
             "surface":              tpl.get("surface"),
             "surface_color":        tpl.get("surface_color"),
             "code_type":            tpl.get("code_type"),
@@ -9636,6 +9644,7 @@ def redeem_reward(
          "$set": {
              "last_reward_redeemed_at": reward["redeemed_at"],
              "visits_at_last_redemption": current_visits,
+             "updated_at": datetime.now(timezone.utc),
          }},
     )
     reward.pop("_id", None)
