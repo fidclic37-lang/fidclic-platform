@@ -481,7 +481,10 @@
     "password_hint": "At least 10 characters, with an uppercase letter, a digit and a symbol.",
     "terms_cgu": "Terms of Service",
     "terms_privacy": "the Privacy Policy",
-    "continue": "Continue"
+    "continue": "Continue",
+    "compatible": "Compatible with",
+    "wallet_apple": "Apple Wallet",
+    "wallet_google": "Google Wallet"
   },
   "card_step": {
     "title": "Set up your card",

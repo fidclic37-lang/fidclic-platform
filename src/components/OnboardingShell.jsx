@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  CreditCard, Users, Bell, BarChart3, MapPin, Store, Gift, Share2, Settings2, ShieldCheck,
+  CreditCard, Users, Bell, BarChart3, MapPin, Store, Gift, Share2, Settings2,
 } from 'lucide-react';
 
 /**
@@ -39,6 +39,21 @@ const CHIPS = [
   { key: 'referral',  icon: Share2,     bg: '#EAF0FF', fg: '#2F6BFF' },
   { key: 'marketing', icon: Settings2,  bg: '#E8F8EE', fg: '#22A559' },
 ];
+
+// Apple Wallet / Google Wallet marks, drawn inline (no external assets).
+const WalletGlyph = ({ kind }) => kind === 'apple' ? (
+  <svg width="24" height="20" viewBox="0 0 24 20" aria-hidden="true">
+    <rect x="1" y="1" width="22" height="18" rx="3" fill="#1F2937" />
+    <rect x="1" y="4" width="22" height="4" fill="#F59E0B" /><rect x="1" y="8" width="22" height="4" fill="#22C55E" />
+    <rect x="1" y="12" width="22" height="7" rx="2" fill="#3B82F6" />
+  </svg>
+) : (
+  <svg width="24" height="20" viewBox="0 0 24 20" aria-hidden="true">
+    <rect x="1" y="1" width="22" height="18" rx="4" fill="#F1F5F9" />
+    <path d="M3 8c0-2 1.5-3.5 3.5-3.5H21v4H3z" fill="#EA4335" /><path d="M3 8h18v4H3z" fill="#FBBC05" />
+    <path d="M3 12h18v2.5c0 2-1.5 3.5-3.5 3.5H3z" fill="#34A853" /><path d="M3 8v10h6V8z" fill="#4285F4" />
+  </svg>
+);
 
 export const Stepper = ({ step }) => {
   const { t } = useTranslation();
@@ -77,16 +92,16 @@ export default function OnboardingShell({ step, children }) {
         </div>
       </header>
 
-      <div className="grid min-h-[calc(100vh-76px)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+      <div className="grid min-h-[calc(100vh-76px)] lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         {/* ── left: photo + chips ── */}
         <aside className="relative hidden overflow-hidden lg:block">
-          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-left" />
+          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-[15%_center]" />
           <div aria-hidden="true" className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(255,255,255,0) 45%, rgba(244,248,254,.55) 100%)' }} />
           {/* chips column, along a soft arc on the right side of the panel */}
-          <ul className="absolute right-6 top-8 flex w-[260px] flex-col gap-2.5">
+          <ul className="absolute right-5 top-16 flex w-[250px] flex-col gap-3">
             {CHIPS.map((c, i) => {
               const Icon = c.icon;
-              const offset = [64, 40, 22, 12, 8, 12, 22, 40, 64][i]; // arc
+              const offset = [52, 30, 14, 4, 0, 4, 14, 30, 52][i]; // arc
               return (
                 <li key={c.key} style={{ marginRight: offset }}
                     className="flex items-center gap-3 rounded-2xl bg-white/95 px-3.5 py-2.5 text-[14px] font-semibold text-[#0B1C3F] shadow-[0_8px_24px_-12px_rgba(11,28,63,.35)] backdrop-blur">
@@ -98,12 +113,18 @@ export default function OnboardingShell({ step, children }) {
               );
             })}
           </ul>
-          <div className="absolute bottom-8 left-8 flex items-center gap-3 rounded-2xl bg-white/95 px-4 py-3 shadow-[0_8px_24px_-12px_rgba(11,28,63,.35)] backdrop-blur">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#0B1C3F] text-white"><ShieldCheck size={22} /></span>
-            <span>
-              <span className="block text-[15px] font-bold text-[#0B1C3F]">{t('signup.secure_title')}</span>
-              <span className="block text-[13px] text-[#4B5C7A]">{t('signup.secure_sub')}</span>
-            </span>
+          <div className="absolute bottom-8 left-8 flex gap-3">
+            {[['apple', t('signup.wallet_apple')], ['google', t('signup.wallet_google')]].map(([k, label]) => (
+              <div key={k} className="flex items-center gap-3 rounded-2xl bg-white/95 px-4 py-3 shadow-[0_8px_24px_-12px_rgba(11,28,63,.35)] backdrop-blur">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl" style={{ background: k === 'apple' ? '#111827' : '#FFFFFF', border: k === 'google' ? '1px solid #E6EAF2' : 'none' }}>
+                  <WalletGlyph kind={k} />
+                </span>
+                <span>
+                  <span className="block text-[12px] text-[#4B5C7A]">{t('signup.compatible')}</span>
+                  <span className="block text-[15px] font-bold text-[#0B1C3F]">{label}</span>
+                </span>
+              </div>
+            ))}
           </div>
         </aside>
 

@@ -481,7 +481,10 @@
     "password_hint": "10 أحرف على الأقل مع حرف كبير ورقم ورمز.",
     "terms_cgu": "الشروط العامة للاستخدام",
     "terms_privacy": "سياسة الخصوصية",
-    "continue": "متابعة"
+    "continue": "متابعة",
+    "compatible": "متوافق مع",
+    "wallet_apple": "Apple Wallet",
+    "wallet_google": "Google Wallet"
   },
   "card_step": {
     "title": "أعدّ بطاقتك",

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { User, Mail, Lock, Phone, ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { passwordRules, passwordValid } from '../lib/passwordPolicy';
 import OnboardingShell from '../components/OnboardingShell';
+import SocialAuthButtons from '../components/SocialAuthButtons';
 import { LEGAL_LINKS } from '../lib/legal';
 
 /**
@@ -92,6 +93,8 @@ const RegisterPage = () => {
           </Field>
           <p className="mt-1.5 text-[12px] text-[#94A3B8]">{t('signup.password_hint')}</p>
         </div>
+
+        <div className="pt-1"><SocialAuthButtons onError={setError} layout="row" /></div>
 
         <label className="flex cursor-pointer items-start gap-3 pt-1 text-[14px] leading-relaxed text-[#4B5C7A]">
           <input type="checkbox" checked={form.accepted_terms} onChange={set('accepted_terms')} className="mt-1 h-[18px] w-[18px] shrink-0 rounded border-[#CBD5E1] accent-[#2F6BFF]" />
