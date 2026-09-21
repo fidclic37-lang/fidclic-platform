@@ -72,8 +72,9 @@ const LoginPage = () => {
       {variant === 3 ? (
         /* The approved mockup's left panel (photo, logo, "Bienvenue chez
            FIDCLIC", benefits) is used as one image so it matches exactly. */
-        <aside className="relative hidden overflow-hidden lg:block">
-          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-center" />
+        <aside className="relative hidden self-start overflow-hidden lg:sticky lg:top-0 lg:flex lg:h-screen lg:items-center lg:justify-center">
+          <img src={HERO} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(28px)', transform: 'scale(1.15)', opacity: .9 }} />
+          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="relative h-full w-full object-contain object-center" />
         </aside>
       ) : (
       <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"

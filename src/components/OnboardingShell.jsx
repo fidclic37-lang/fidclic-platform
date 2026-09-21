@@ -100,8 +100,12 @@ export default function OnboardingShell({ step, children, wide = false }) {
 
       <div className="grid min-h-[calc(100vh-76px)] lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         {/* ── left: the mockup visual, identical on every step ── */}
-        <aside className="relative hidden overflow-hidden lg:block">
-          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
+        {/* Locked to the viewport height (sticky) so a tall form on the right
+            never stretches this column — the visual is shown WHOLE, never
+            cropped or zoomed; a blurred copy fills any leftover edge. */}
+        <aside className="relative hidden self-start overflow-hidden lg:sticky lg:top-[76px] lg:flex lg:h-[calc(100vh-76px)] lg:items-center lg:justify-center">
+          <img src={HERO} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'blur(28px)', transform: 'scale(1.15)', opacity: .9 }} />
+          <img src={HERO} alt="" className="relative h-full w-full object-contain object-center" />
         </aside>
 
         {/* ── right: step card ── */}
