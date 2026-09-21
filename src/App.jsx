@@ -73,6 +73,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
 import OnboardingCardPage from './pages/OnboardingCardPage';
+import OnboardingDonePage from './pages/OnboardingDonePage';
 import DashboardLayout from './pages/DashboardLayout';
 import OwnerDashboard from './pages/OwnerDashboard';
 // Legacy AnalyticsPage kept for rollback during the dark-redesign rollout.
@@ -196,6 +197,11 @@ function App() {
           <Route path="/onboarding/carte" element={
             <ProtectedRoute allowedRoles={['business_owner']}>
               <OnboardingCardPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/onboarding/termine" element={
+            <ProtectedRoute allowedRoles={['business_owner']}>
+              <OnboardingDonePage />
             </ProtectedRoute>
           } />
           <Route path="/join/:slug" element={<JoinPage />} />

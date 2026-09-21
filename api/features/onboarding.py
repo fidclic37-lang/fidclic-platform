@@ -71,6 +71,7 @@ class CompanyDetails(BaseModel):
     address: str                         # rue
     postal_code: str
     city: str
+    country: Optional[str] = "FR"          # ISO-3166 alpha-2 (step-2 select)
     phone: Optional[str] = None
     accepted_terms: Optional[bool] = None  # required only for Google/Apple users (no step 1 checkbox)
 
@@ -83,6 +84,8 @@ def onboarding_status(token_data: TokenData = Depends(require_role(["business_ow
         "onboarding_status": tenant.get("onboarding_status", "done"),
         "subscription_status": tenant.get("subscription_status"),
         "terms_accepted": bool(user.get("terms_accepted_at")),
+        "slug": tenant.get("slug"),
+        "tenant_name": tenant.get("name"),
         "prefill": {
             "name": tenant.get("name"),
             "sector": tenant.get("sector"),
@@ -140,6 +143,7 @@ def complete_company(body: CompanyDetails, request: Request,
         "address": f"{body.address.strip()}, {body.postal_code.strip()} {body.city.strip()}",
         "postal_code": body.postal_code.strip(),
         "city": body.city.strip(),
+        "country": (body.country or "FR").strip().upper()[:2],
         "onboarding_status": "done",
     }
     if siret:

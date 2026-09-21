@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Users, BarChart3, Store } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck } from 'lucide-react';
 import SocialAuthButtons, { routeAfterAuth } from '../components/SocialAuthButtons';
 import api from '../lib/api';
 
@@ -70,30 +70,10 @@ const LoginPage = () => {
     <div className="min-h-screen lg:grid lg:grid-cols-2" style={{ background: '#F4F8FE' }}>
       {/* ───────── Left: welcome panel ───────── */}
       {variant === 3 ? (
+        /* The approved mockup's left panel (photo, logo, "Bienvenue chez
+           FIDCLIC", benefits) is used as one image so it matches exactly. */
         <aside className="relative hidden overflow-hidden lg:block">
-          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-[60%_center]" />
-          <div aria-hidden="true" className="absolute inset-0"
-               style={{ background: 'linear-gradient(180deg, rgba(11,28,63,0) 0%, rgba(11,28,63,0) 45%, rgba(11,28,63,.78) 100%)' }} />
-          {/* logo straight on the photo, no chip (mockup) */}
-          <img src={LOGO} alt="FidClic — La fidélité en un clic" className="absolute left-12 top-10 h-[74px] w-auto drop-shadow-[0_2px_10px_rgba(255,255,255,.6)]" />
-          <div className="absolute inset-x-12 bottom-10 text-white">
-            <h1 className="text-[50px] font-extrabold leading-[1.04] tracking-[-0.02em]" style={{ textShadow: '0 2px 18px rgba(11,28,63,.5)' }}>
-              {t('login.welcome_line1')}<br />
-              <span style={{ color: '#3B82F6' }}>FID</span><span style={{ color: '#FFB020' }}>CLIC</span>{' '}
-              <span aria-hidden="true">👋</span>
-            </h1>
-            <p className="mt-4 max-w-lg text-[19px] leading-relaxed text-white/90">{t('login.welcome_sub')}</p>
-            <div className="mt-6 h-[3px] w-14 rounded-full bg-[#3B82F6]" />
-            <p className="mt-3 text-[17px] italic text-white/90">{t('login.quote')}</p>
-            <ul className="mt-7 flex gap-8">
-              {[[Users, 'benefit_loyal'], [BarChart3, 'benefit_sales'], [Store, 'benefit_simple']].map(([Icon, k]) => (
-                <li key={k} className="flex items-center gap-3">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#0B1C3F]/90 text-white"><Icon size={22} /></span>
-                  <span className="w-[120px] text-[14px] leading-snug text-white/95">{t(`login.${k}`)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-left" />
         </aside>
       ) : (
       <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"
@@ -191,7 +171,7 @@ const LoginPage = () => {
 
             <button type="submit" disabled={loading}
                     className="mt-2 inline-flex w-full items-center justify-center gap-3 rounded-2xl py-4 text-[17px] font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-                    style={{ background: 'linear-gradient(90deg, #2F6BFF 0%, #1A8CFF 100%)', boxShadow: '0 12px 28px -12px rgba(47,107,255,.6)' }}>
+                    style={{ background: '#0A6CFF', boxShadow: '0 12px 28px -12px rgba(10,108,255,.6)' }}>
               {loading ? t('login.loading') : <>{t('auth.login_button')} <ArrowRight size={20} /></>}
             </button>
           </form>
