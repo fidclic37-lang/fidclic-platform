@@ -566,7 +566,7 @@ def test_sms(
             "hint": "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER on Render.",
         }
     to = (body or {}).get("to") or ""
-    msg = (body or {}).get("message") or "Test SMS from FidéliTour — Twilio is wired correctly!"
+    msg = (body or {}).get("message") or "Test SMS from FidClic — Twilio is wired correctly!"
     result = send_sms(to, msg)
     _db.delivery_log.insert_one({
         "tenant_id": token_data.tenant_id,

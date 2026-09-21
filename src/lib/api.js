@@ -34,6 +34,19 @@ export const authAPI = {
   register: (data) => api.post('/auth/register', data),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
+  // Social login — the browser gets a signed ID token from Google / Apple
+  // and posts it here; the backend verifies it and issues the same session.
+  oauthConfig: () => api.get('/auth/oauth/config'),
+  oauthGoogle: (payload) => api.post('/auth/oauth/google', payload),   // { access_token } or { credential }
+  oauthApple: (payload) => api.post('/auth/oauth/apple', payload),
+};
+
+// Self-serve onboarding step 2 (company details). See features/onboarding.py.
+export const onboardingAPI = {
+  cardTemplate: () => api.get('/owner/card-template'),
+  saveCardTemplate: (data) => api.post('/owner/card-template', data),
+  status: () => api.get('/onboarding/status'),
+  company: (data) => api.post('/onboarding/company', data),
 };
 
 export const adminAPI = {

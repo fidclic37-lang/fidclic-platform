@@ -1,8 +1,8 @@
-"""Stripe billing for FidéliTour.
+"""Stripe billing for FidClic.
 
 The platform is sold as a B2B2B SaaS:
 
-  - The PLATFORM OWNER (the developer) sells FidéliTour to a RESELLER.
+  - The PLATFORM OWNER (the developer) sells FidClic to a RESELLER.
   - The RESELLER configures the Stripe account stored in env vars and resells
     the platform as their own SaaS product to many BUSINESSES (tenants).
   - Each BUSINESS pays the RESELLER monthly via Stripe Subscriptions.
@@ -177,7 +177,7 @@ def create_checkout(req: CheckoutRequest, token_data: TokenData = Depends(requir
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     customer_id = _ensure_customer(tenant)
-    base = PUBLIC_URL or "https://fidelitour.fr"
+    base = PUBLIC_URL or "https://app.fidclic.com"
     session = stripe.checkout.Session.create(
         mode="subscription",
         customer=customer_id,
@@ -207,7 +207,7 @@ def create_portal(req: PortalRequest, token_data: TokenData = Depends(require_ro
     tenant = db.tenants.find_one({"id": token_data.tenant_id})
     if not tenant or not tenant.get("stripe_customer_id"):
         raise HTTPException(status_code=400, detail="Tenant has no Stripe customer. Subscribe first.")
-    base = PUBLIC_URL or "https://fidelitour.fr"
+    base = PUBLIC_URL or "https://app.fidclic.com"
     portal = stripe.billing_portal.Session.create(
         customer=tenant["stripe_customer_id"],
         return_url=f"{base}{req.return_path}",

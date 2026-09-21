@@ -35,7 +35,7 @@ export default function PhoneFrame({
   width = 280,
   time = '9:41',
   carrier = 'Orange F',
-  url = 'fidelitour.fr',
+  url = 'app.fidclic.com',
   label,
 }) {
   // Aspect ratio tightened so the phone reads as normal-sized. iPhone 15 Pro

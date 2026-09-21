@@ -44,8 +44,8 @@ class SubscribeRequest(BaseModel):
 
 class TestPushRequest(BaseModel):
     barcode_id: str
-    title: Optional[str] = "FidéliTour"
-    body: Optional[str] = "Test web push from FidéliTour"
+    title: Optional[str] = "FidClic"
+    body: Optional[str] = "Test web push from FidClic"
 
 
 @router.get("/api/public/vapid-public-key")
@@ -126,7 +126,7 @@ def test_push(
     sent = 0
     expired = []
     for s in subs:
-        result = send_push(s["subscription"], req.title or "FidéliTour", req.body or "Test")
+        result = send_push(s["subscription"], req.title or "FidClic", req.body or "Test")
         if result.get("sent"):
             sent += 1
         elif result.get("expired"):
@@ -206,7 +206,7 @@ def customer_self_test_push(barcode_id: str):
     for s in subs:
         result = send_push(
             s["subscription"],
-            "FidéliTour — test push ✓",
+            "FidClic — test push ✓",
             "If you see this, push notifications are working. Tap to open your card.",
         )
         if result.get("sent"):

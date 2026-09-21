@@ -2,121 +2,211 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, ShieldCheck, Users, BarChart3, Store } from 'lucide-react';
+import SocialAuthButtons, { routeAfterAuth } from '../components/SocialAuthButtons';
+import api from '../lib/api';
+
+/**
+ * LoginPage — the approved mockup: a soft-blue welcome panel on the left,
+ * the sign-in card on the right, "Créer un compte" top-right.
+ *
+ * Everything on it works: email + password → /api/auth/login; "Mot de passe
+ * oublié ?" → /api/auth/forgot-password (magic link by email, neutral
+ * response so accounts can't be enumerated); Google / Apple → the OAuth
+ * flows in SocialAuthButtons (live as soon as GOOGLE_CLIENT_ID /
+ * APPLE_CLIENT_ID are set in Vercel; disabled-with-tooltip until then).
+ */
+const LOGO = '/brand/fidclic-logo.png';
+const ICON = '/brand/fidclic-icon.png';
+const HERO = '/brand/login-hero.jpg';
+
+const Field = ({ icon: Icon, children, trailing }) => (
+  <div className="flex items-stretch rounded-xl border border-[#E1E8F5] bg-white transition focus-within:border-[#2F6BFF] focus-within:ring-4 focus-within:ring-[#2F6BFF]/10">
+    <div className="flex w-12 shrink-0 items-center justify-center border-r border-[#EEF2F9] text-[#2F6BFF]" aria-hidden="true">
+      <Icon size={18} strokeWidth={1.8} />
+    </div>
+    <div className="min-w-0 flex-1">{children}</div>
+    {trailing}
+  </div>
+);
+const INPUT = 'w-full bg-transparent px-4 py-3.5 text-[15px] text-[#0F172A] outline-none placeholder:text-[#94A3B8]';
 
 const LoginPage = () => {
   const { t } = useTranslation();
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({ email: '', password: '' });
+  const [form, setForm] = useState({ email: '', password: '' });
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
-  const [showForgot, setShowForgot] = useState(false);
+  const [loading, setLoading] = useState(false);
+  // forgot-password: 'idle' → 'open' → 'sent'
+  const [forgot, setForgot] = useState('idle');
   const [resetEmail, setResetEmail] = useState('');
-  const [resetSent, setResetSent] = useState(false);
+  const variant = 3; // approved design: photo panel + full logo on the card
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
+    setLoading(true);
     try {
-      const res = await login(formData);
-      if (res.role === 'super_admin') navigate('/admin');
-      else if (res.role === 'staff') navigate('/dashboard/scan');
-      else if (res.role === 'business_owner') navigate('/modules');
-      else if (res.role === 'comptable') navigate('/cabinet');
-      else navigate('/dashboard');
+      const res = await login(form);
+      routeAfterAuth(navigate, res);
     } catch (err) {
-      setError('Invalid credentials');
+      const detail = err?.response?.data?.detail;
+      setError(detail && detail !== 'Incorrect credentials' ? detail : t('auth.invalid_credentials'));
+    } finally {
+      setLoading(false);
     }
   };
 
+  const sendReset = async () => {
+    const email = (resetEmail || form.email).trim();
+    if (!email.includes('@')) return setError(t('auth.email_required'));
+    try { await api.post('/auth/forgot-password', { email }); } catch (_e) { /* neutral by design */ }
+    setForgot('sent');
+  };
+
   return (
-    <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center p-4">
-      <div className="bg-white p-8 rounded-3xl shadow-sm border border-[#E7E5E4] w-full max-w-md">
-        <div className="text-center mb-8">
-          <Link to="/" className="font-['Cormorant_Garamond'] text-3xl font-bold ft-gradient-text">FidéliTour</Link>
-          <h2 className="text-2xl font-bold text-[#1C1917] mt-6">{t('auth.login_title')}</h2>
+    <div className="min-h-screen lg:grid lg:grid-cols-2" style={{ background: '#F4F8FE' }}>
+      {/* ───────── Left: welcome panel ───────── */}
+      {variant === 3 ? (
+        <aside className="relative hidden overflow-hidden lg:block">
+          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-[60%_center]" />
+          <div aria-hidden="true" className="absolute inset-0"
+               style={{ background: 'linear-gradient(180deg, rgba(11,28,63,0) 0%, rgba(11,28,63,0) 45%, rgba(11,28,63,.78) 100%)' }} />
+          {/* logo straight on the photo, no chip (mockup) */}
+          <img src={LOGO} alt="FidClic — La fidélité en un clic" className="absolute left-12 top-10 h-[74px] w-auto drop-shadow-[0_2px_10px_rgba(255,255,255,.6)]" />
+          <div className="absolute inset-x-12 bottom-10 text-white">
+            <h1 className="text-[50px] font-extrabold leading-[1.04] tracking-[-0.02em]" style={{ textShadow: '0 2px 18px rgba(11,28,63,.5)' }}>
+              {t('login.welcome_line1')}<br />
+              <span style={{ color: '#3B82F6' }}>FID</span><span style={{ color: '#FFB020' }}>CLIC</span>{' '}
+              <span aria-hidden="true">👋</span>
+            </h1>
+            <p className="mt-4 max-w-lg text-[19px] leading-relaxed text-white/90">{t('login.welcome_sub')}</p>
+            <div className="mt-6 h-[3px] w-14 rounded-full bg-[#3B82F6]" />
+            <p className="mt-3 text-[17px] italic text-white/90">{t('login.quote')}</p>
+            <ul className="mt-7 flex gap-8">
+              {[[Users, 'benefit_loyal'], [BarChart3, 'benefit_sales'], [Store, 'benefit_simple']].map(([Icon, k]) => (
+                <li key={k} className="flex items-center gap-3">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#0B1C3F]/90 text-white"><Icon size={22} /></span>
+                  <span className="w-[120px] text-[14px] leading-snug text-white/95">{t(`login.${k}`)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </aside>
+      ) : (
+      <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"
+             style={{ background: 'linear-gradient(160deg, #F1F7FF 0%, #E6F0FF 100%)' }}>
+        <div aria-hidden="true" className="pointer-events-none absolute -right-32 -top-24 h-[520px] w-[520px] rounded-full"
+             style={{ background: 'radial-gradient(closest-side, #DCE9FF 0%, rgba(220,233,255,0) 72%)' }} />
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -left-24 h-[560px] w-[620px] rounded-[45%]"
+             style={{ background: 'radial-gradient(closest-side, #D3E3FF 0%, rgba(211,227,255,0) 70%)' }} />
+        <div className="relative">
+          <img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[64px] w-auto" />
+          <h1 className="mt-16 text-[56px] font-extrabold leading-[1.02] tracking-[-0.02em] text-[#0B1C3F]">
+            {t('login.welcome_line1')}<br />
+            <span className="text-[#2F6BFF]">FIDCLIC</span> <span aria-hidden="true">👋</span>
+          </h1>
+          <p className="mt-6 max-w-md text-[19px] leading-relaxed text-[#4B5C7A]">{t('login.welcome_sub')}</p>
+        </div>
+        <div className="relative">
+          <div className="mb-5 h-[3px] w-9 rounded-full bg-[#2F6BFF]" />
+          <p className="max-w-xs text-[19px] leading-snug text-[#3B4A66]" style={{ fontFamily: "'Caveat', 'Segoe Script', cursive" }}>
+            {t('login.quote')}
+          </p>
+        </div>
+      </aside>
+      )}
+
+      {/* ───────── Right: sign-in card ───────── */}
+      <main className="relative flex min-h-screen flex-col items-center justify-center px-5 py-10 lg:px-12">
+        <div className="absolute right-6 top-6 text-[14px] text-[#4B5C7A] lg:right-12 lg:top-10">
+          {t('auth.no_account')}{' '}
+          <Link to="/register" className="font-semibold text-[#2F6BFF] hover:underline">{t('login.create_account')}</Link>
         </div>
 
-        {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4">{error}</div>}
+        <div className="w-full max-w-[640px] rounded-[22px] border border-[#E6EEFB] bg-white px-7 py-10 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-11">
+          <div className="text-center">
+            {variant === 1
+              ? <img src={ICON} alt="FidClic" className="mx-auto h-[40px] w-[40px] rounded-lg" />
+              : <img src={LOGO} alt="FidClic" className="mx-auto h-[52px] w-auto" />}
+            <h2 className="mt-5 text-[40px] font-extrabold tracking-[-0.025em] text-[#0B1C3F]">{t('login.title')}</h2>
+            <p className="mt-2 text-[16px] text-[#4B5C7A]">{t('login.subtitle')}</p>
+          </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('auth.email')}</label>
-            <input required type="email" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('auth.password')}</label>
-            <input required type="password" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
-          </div>
-          {/* Forgot password — honest v1. Email-based reset needs a mail
-              provider (S3 backlog); until then this panel routes each kind of
-              user to the recovery path that ALREADY works, instead of a dead
-              link or a fake "check your inbox". */}
-          <div className="text-right">
-            <button type="button" onClick={() => setShowForgot(!showForgot)}
-                    className="text-xs font-medium text-[#B85C38] hover:underline">
-              Mot de passe oublié ?
-            </button>
-          </div>
-          {showForgot && (
-            <div className="rounded-xl border p-3 text-xs space-y-2"
-                 style={{ borderColor: '#EFE2D4', background: '#FBF6EE', color: '#57534E' }}>
-              <div>
-                <span className="font-semibold text-[#1C1917]">Employé d'un cabinet ?</span>{' '}
-                Demandez à votre expert-comptable : page Équipe → « Réinitialiser MDP ».
-                Vous recevrez un mot de passe temporaire à changer à la connexion.
-              </div>
-              <div>
-                <span className="font-semibold text-[#1C1917]">Employé d'un commerce ?</span>{' '}
-                Votre gérant peut recréer votre accès depuis ses Paramètres.
-              </div>
-              <div>
-                <span className="font-semibold text-[#1C1917]">Gérant ou expert-comptable ?</span>{' '}
-                Recevez un lien de réinitialisation par email (valable 30 min) :
-                {resetSent ? (
-                  <div key="reset-sent" className="mt-1.5 font-semibold" style={{ color: '#2F7A52' }}>
-                    ✓ Si un compte existe pour cette adresse, l'email est parti — vérifiez
-                    votre boîte (et les spams).
-                  </div>
-                ) : (
-                  <div className="flex gap-1.5 mt-1.5">
-                    <input type="email" value={resetEmail}
-                           onChange={(e) => setResetEmail(e.target.value)}
-                           placeholder="votre@email.fr"
-                           className="flex-1 border border-[#E7E5E4] rounded-lg px-2 py-1.5 text-xs" />
-                    <button type="button"
-                            disabled={!resetEmail.includes('@')}
-                            onClick={async () => {
-                              try {
-                                const api = (await import('../lib/api')).default;
-                                await api.post('/auth/forgot-password', { email: resetEmail });
-                              } catch (e) { /* neutral by design */ }
-                              setResetSent(true);
-                            }}
-                            className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold disabled:opacity-40"
-                            style={{ background: '#B85C38' }}>
-                      Envoyer
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+          {error && (
+            <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">⚠ {error}</div>
           )}
 
-          <button type="submit" className="w-full bg-[#B85C38] text-white py-3 rounded-full font-medium hover:bg-[#9C4E2F] transition-colors mt-6">
-            {t('auth.login_button')}
-          </button>
-        </form>
+          <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+            <div>
+              <label className="mb-2 block text-[15px] font-semibold text-[#0B1C3F]">{t('auth.email')} *</label>
+              <Field icon={Mail}>
+                <input required type="email" autoComplete="email" placeholder="votre@email.com"
+                       className={INPUT} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              </Field>
+            </div>
 
-        <div className="mt-6 pt-6 border-t border-[#E7E5E4] text-center">
-          <p className="text-[#57534E] text-sm mb-2">{t('auth.no_account')}</p>
-          <Link
-            to="/register"
-            className="inline-flex items-center justify-center gap-2 w-full text-white px-5 py-3 rounded-full text-sm font-semibold transition-all hover:-translate-y-0.5"
-            style={{ background: 'linear-gradient(135deg, #B85C38 0%, #E8917C 100%)', boxShadow: '0 6px 18px -6px rgba(184,92,56,0.55)' }}
-          >
-            ✨ {t('auth.sign_up')}
-          </Link>
+            <div>
+              <label className="mb-2 block text-[15px] font-semibold text-[#0B1C3F]">{t('auth.password')} *</label>
+              <Field icon={Lock} trailing={
+                <button type="button" onClick={() => setShowPw((v) => !v)}
+                        aria-label={showPw ? t('auth.hide_password') : t('auth.show_password')}
+                        className="px-4 text-[#2F6BFF] hover:text-[#1D4ED8]">
+                  {showPw ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              }>
+                <input required type={showPw ? 'text' : 'password'} autoComplete="current-password"
+                       placeholder={t('login.password_placeholder')}
+                       className={INPUT} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+              </Field>
+              <div className="mt-2 text-right">
+                <button type="button" onClick={() => { setForgot(forgot === 'idle' ? 'open' : 'idle'); setError(''); }}
+                        className="text-[14px] font-semibold text-[#2F6BFF] hover:underline">
+                  {t('auth.forgot_password')}
+                </button>
+              </div>
+              {forgot !== 'idle' && (
+                <div className="mt-3 rounded-xl border border-[#E1E8F5] bg-[#F8FAFF] p-4 text-[13px] text-[#4B5C7A]">
+                  {forgot === 'sent' ? (
+                    <p className="font-semibold text-[#15803D]">✓ {t('login.reset_sent')}</p>
+                  ) : (
+                    <>
+                      <p>{t('login.reset_help')}</p>
+                      <div className="mt-2 flex gap-2">
+                        <input type="email" value={resetEmail || form.email} onChange={(e) => setResetEmail(e.target.value)}
+                               placeholder="votre@email.com"
+                               className="flex-1 rounded-lg border border-[#E1E8F5] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#2F6BFF]" />
+                        <button type="button" onClick={sendReset}
+                                className="rounded-lg bg-[#2F6BFF] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#1D4ED8]">
+                          {t('login.reset_send')}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <button type="submit" disabled={loading}
+                    className="mt-2 inline-flex w-full items-center justify-center gap-3 rounded-2xl py-4 text-[17px] font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{ background: 'linear-gradient(90deg, #2F6BFF 0%, #1A8CFF 100%)', boxShadow: '0 12px 28px -12px rgba(47,107,255,.6)' }}>
+              {loading ? t('login.loading') : <>{t('auth.login_button')} <ArrowRight size={20} /></>}
+            </button>
+          </form>
+
+          <div className="my-7 flex items-center gap-4 text-[14px] text-[#6B7A99]">
+            <div className="h-px flex-1 bg-[#E6EEFB]" /><span>{t('login.or_continue')}</span><div className="h-px flex-1 bg-[#E6EEFB]" />
+          </div>
+
+          <SocialAuthButtons onError={setError} layout="row" />
+
+          <p className="mt-9 flex items-center justify-center gap-2 text-[14px] text-[#4B5C7A]">
+            <ShieldCheck size={16} className="text-[#2F6BFF]" /> {t('login.secure_note')}
+          </p>
         </div>
-      </div>
+      </main>
     </div>
   );
 };

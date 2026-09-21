@@ -657,7 +657,7 @@ export default function InsightsPage() {
                       requested_plan: activeCards.next_plan,
                       message: msg || '',
                     });
-                    alert('Votre demande de montée de plan a été envoyée à l\'équipe FidéliTour. On revient vers vous très vite.');
+                    alert('Votre demande de montée de plan a été envoyée à l\'équipe FidClic. On revient vers vous très vite.');
                   } catch (e) {
                     alert('Erreur: ' + (e?.response?.data?.detail || e?.message));
                   }

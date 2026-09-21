@@ -121,7 +121,7 @@ const BusinessHoursCard = () => {
           </h2>
           <p className="text-sm mt-1" style={{ color: C_PS.inkMute }}>
             Définissez vos horaires hebdomadaires, vos jours de fermeture sur les jours fériés
-            français, et vos vacances annuelles. <b>FidéliTour ne déclenche aucune notification
+            français, et vos vacances annuelles. <b>FidClic ne déclenche aucune notification
             « venez aujourd'hui » un jour où vous êtes fermé.</b>
           </p>
         </div>

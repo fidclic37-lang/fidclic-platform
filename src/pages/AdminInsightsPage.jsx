@@ -94,7 +94,7 @@ const AdminInsightsPage = () => {
       <PageHeader
         eyebrow="Platform-Wide"
         title="Platform Insights"
-        description="Smart alerts, churn signals, lifetime-value benchmarks and reactivation opportunities — aggregated across every business on FidéliTour."
+        description="Smart alerts, churn signals, lifetime-value benchmarks and reactivation opportunities — aggregated across every business on FidClic."
         role="super_admin"
       />
 

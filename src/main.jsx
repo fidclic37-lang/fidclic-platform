@@ -85,7 +85,7 @@ if ('serviceWorker' in navigator) {
       .catch((err) => {
         // Don't crash the app if SW registration fails — push just won't work.
         // eslint-disable-next-line no-console
-        console.warn('[FidéliTour] Service worker registration failed:', err);
+        console.warn('[FidClic] Service worker registration failed:', err);
       });
   });
 }

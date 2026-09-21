@@ -25,6 +25,13 @@ import fr from '../locales/fr.json';
 import en from '../locales/en.json';
 import ar from '../locales/ar.json';
 
+// A language stored by the OLD browser-locale detection is not a choice the
+// user made. Drop it unless the switcher set the "chosen" flag, so every
+// French merchant whose browser is in English lands on French.
+try {
+  if (!localStorage.getItem('fidclic:lang-chosen')) localStorage.removeItem('fidelitour:lang');
+} catch { /* storage blocked — nothing to clean */ }
+
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
@@ -38,7 +45,7 @@ i18n
     supportedLngs: ['fr', 'en', 'ar'],
     interpolation: { escapeValue: false }, // React already escapes
     detection: {
-      order: ['localStorage', 'htmlTag', 'navigator'],
+      order: ['localStorage', 'htmlTag'],   // FR by default (html lang); the browser locale never overrides it
       lookupLocalStorage: 'fidelitour:lang',
       caches: ['localStorage'],
     },

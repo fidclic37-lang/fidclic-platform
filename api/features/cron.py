@@ -137,4 +137,10 @@ def agent_daily(authorization: str = Header(default="")):
         except Exception as e:                                   # noqa: BLE001
             summary["failures"].append({"cabinet": cab.get("name"),
                                         "step": "gardien", "error": str(e)[:120]})
+    # Loyalty-side: day-27 "choose your plan" reminder for trialing tenants.
+    try:
+        from features.onboarding import run_trial_reminders
+        summary["trial_reminders"] = run_trial_reminders()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "trial_reminders", "error": str(e)[:120]})
     return summary

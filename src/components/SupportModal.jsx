@@ -1,5 +1,5 @@
 /**
- * SupportModal — lets a business send a query to the FidéliTour
+ * SupportModal — lets a business send a query to the FidClic
  * support team from inside their dashboard.
  *
  * UX:

@@ -328,7 +328,7 @@ const BroadcastSection = () => {
   const [form, setForm] = useState({
     subject: '',
     body: '',
-    sender_name: 'FidéliTour',
+    sender_name: 'FidClic',
     tier: '',
     sector: '',
     department_code: '',

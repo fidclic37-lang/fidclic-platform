@@ -71,6 +71,8 @@ class RootErrorBoundary extends React.Component {
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
+import OnboardingCardPage from './pages/OnboardingCardPage';
 import DashboardLayout from './pages/DashboardLayout';
 import OwnerDashboard from './pages/OwnerDashboard';
 // Legacy AnalyticsPage kept for rollback during the dark-redesign rollout.
@@ -127,10 +129,16 @@ const ScrollToTop = () => {
   return null;
 };
 
-const ProtectedRoute = ({ children, allowedRoles }) => {
+// An owner who created their account but never completed the company step
+// (onboarding_status="company") is parked on /onboarding/entreprise: no
+// dashboard, no modules, until step 2 is done and the trial has started.
+const needsOnboarding = (user) => user?.role === 'business_owner' && user?.onboarding_status === 'company';
+
+const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     // Staff and managers land on the page they *are* allowed to use instead of
     // being kicked to the landing page. Staff → /dashboard/scan; everyone else
@@ -147,6 +155,7 @@ const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (user) {
+    if (needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
     if (user.role === 'super_admin') return <Navigate to="/admin" replace />;
     // Owners land on the module chooser (CRM+Fidélité vs Facturation).
     // Handles already-logged-in sessions too (not just fresh logins).
@@ -178,6 +187,17 @@ function App() {
           <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+          {/* Onboarding step 2 — the only protected page a half-registered owner may see. */}
+          <Route path="/onboarding/entreprise" element={
+            <ProtectedRoute allowedRoles={['business_owner']} skipOnboardingGate>
+              <OnboardingCompanyPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/onboarding/carte" element={
+            <ProtectedRoute allowedRoles={['business_owner']}>
+              <OnboardingCardPage />
+            </ProtectedRoute>
+          } />
           <Route path="/join/:slug" element={<JoinPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
 

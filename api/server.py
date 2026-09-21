@@ -38,7 +38,7 @@ from io import BytesIO
 
 # Setup FastAPI App
 app = FastAPI(
-    title="FidéliTour API",
+    title="FidClic API",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -281,7 +281,7 @@ def get_plan_features(plan: str) -> Dict[str, Any]:
     baseline = dict(PLAN_FEATURES.get(plan) or PLAN_FEATURES["silver"])
     # Fold trial + price baselines in too, so the admin editor and any
     # consumer that calls get_plan_features() sees a uniform shape.
-    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 21)
+    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 28)
     baseline["trial_reminder_days_before"] = TRIAL_REMINDER_DAYS_BEFORE
     baseline["price"] = PLAN_PRICES.get(plan, 0)
     try:
@@ -415,7 +415,7 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
 
 def send_email_to_customer(to_email: str, from_name: str, subject: str, body_html: str) -> bool:
     """
-    EMAIL CHANNEL DISABLED — FidéliTour now uses web push + SMS only.
+    EMAIL CHANNEL DISABLED — FidClic now uses web push + SMS only.
 
     Kept as a no-op shim so existing call-sites compile. Always returns False so
     the caller falls through to push/SMS instead. Do NOT re-enable: the client
@@ -561,7 +561,7 @@ def _campaign_html(tenant_name: str, subject: str, rendered_body: str, customer:
       <p style="color:#57534E;font-size:13px;">Points: {points} | Visites: {visits}</p>
     </div>
   </div>
-  <p style="text-align:center;color:#A8A29E;font-size:12px;margin-top:25px;">Envoyé via FidéliTour</p>
+  <p style="text-align:center;color:#A8A29E;font-size:12px;margin-top:25px;">Envoyé via FidClic</p>
 </div>
 """
 
@@ -1497,7 +1497,7 @@ def seed_extended_tenants():
         ).model_dump())
 
         # Owner user — shared password hash reused across all demo owners
-        owner_email = f"owner+{slug}@fidelitour.fr"
+        owner_email = f"owner+{slug}@fidclic.com"
         users_docs.append(UserInDB(
             email=owner_email,
             role="business_owner",
@@ -1785,7 +1785,7 @@ def _support_email_html(subject: str, message: str, ticket: dict) -> str:
 <div style="font-family:'Manrope',Arial,sans-serif;max-width:600px;margin:0 auto;background:#FBF7EE;padding:24px;color:#1C1917;">
   <div style="background:#FFFFFF;border-radius:12px;padding:24px;border:1px solid #E8DEC8;">
     <div style="border-bottom:2px solid #6B2E5A;padding-bottom:10px;margin-bottom:18px;">
-      <p style="margin:0;font-size:11px;letter-spacing:.18em;color:#6B2E5A;text-transform:uppercase;font-weight:600;">FidéliTour · Support</p>
+      <p style="margin:0;font-size:11px;letter-spacing:.18em;color:#6B2E5A;text-transform:uppercase;font-weight:600;">FidClic · Support</p>
       <h2 style="margin:6px 0 0;font-size:18px;color:#1C1917;">New support query</h2>
     </div>
     <table style="width:100%;font-size:13px;color:#57534E;margin-bottom:14px;">
@@ -1828,8 +1828,8 @@ def _support_send_smtp(subject: str, message: str, ticket: dict) -> tuple[bool, 
         from email.utils import formataddr
 
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[FidéliTour Support] {subject}"
-        msg["From"]    = formataddr(("FidéliTour Support", smtp_from))
+        msg["Subject"] = f"[FidClic Support] {subject}"
+        msg["From"]    = formataddr(("FidClic Support", smtp_from))
         msg["To"]      = SUPPORT_RECIPIENT_EMAIL
         # Set Reply-To to the business's email so support can hit reply.
         reply_to = ticket.get("from_email") or smtp_from
@@ -1837,7 +1837,7 @@ def _support_send_smtp(subject: str, message: str, ticket: dict) -> tuple[bool, 
 
         # Plain-text fallback for clients that block HTML.
         plain = (
-            f"New FidéliTour support query\n\n"
+            f"New FidClic support query\n\n"
             f"From: {ticket.get('from_email') or '(not provided)'}\n"
             f"Tenant: {ticket.get('tenant_slug') or '(unknown)'}\n"
             f"Submitted: {ticket['created_at'].isoformat()}\n"
@@ -1865,14 +1865,14 @@ def _support_send_resend(subject: str, message: str, ticket: dict) -> tuple[bool
     api_key = os.getenv("RESEND_API_KEY", "").strip()
     if not api_key:
         return (False, "not_configured")
-    from_addr = os.getenv("RESEND_FROM", "FidéliTour Support <onboarding@resend.dev>").strip()
+    from_addr = os.getenv("RESEND_FROM", "FidClic Support <onboarding@resend.dev>").strip()
     try:
         import requests as _req
         reply_to = ticket.get("from_email") or None
         body = {
             "from":     from_addr,
             "to":       [SUPPORT_RECIPIENT_EMAIL],
-            "subject":  f"[FidéliTour Support] {subject}",
+            "subject":  f"[FidClic Support] {subject}",
             "html":     _support_email_html(subject, message, ticket),
         }
         if reply_to:
@@ -1898,11 +1898,11 @@ def _support_send_formsubmit(subject: str, message: str, ticket: dict) -> tuple[
     try:
         import requests as _req
         fs_payload = {
-            "_subject":     f"[FidéliTour Support] {subject}",
+            "_subject":     f"[FidClic Support] {subject}",
             "_template":    "table",
             "_captcha":     "false",
-            "_replyto":     ticket.get("from_email") or "no-reply@fidelitour.app",
-            "from_email":   ticket.get("from_email") or "no-reply@fidelitour.app",
+            "_replyto":     ticket.get("from_email") or "no-reply@fidclic.com",
+            "from_email":   ticket.get("from_email") or "no-reply@fidclic.com",
             "tenant_slug":  ticket.get("tenant_slug") or "(unknown)",
             "subject":      subject,
             "message":      message,
@@ -2117,7 +2117,7 @@ def send_re_enablement_sms(
     slug = tenant_doc.get("slug") or ""
     # Build the URL the SMS will deep-link to. The card page reads the
     # `?notify=1` param and auto-triggers the notification permission flow.
-    base = os.getenv("PUBLIC_APP_URL", "").rstrip("/") or "https://fidelitour-deploy.vercel.app"
+    base = os.getenv("PUBLIC_APP_URL", "").rstrip("/") or "https://app.fidclic.com"
 
     # Find subscribed customer IDs (to exclude) and the rest of customers.
     subscribed_ids = set()
@@ -2189,115 +2189,19 @@ def reset_and_reseed():
 # AUTH ENDPOINTS
 # ========================
 
-@app.post("/api/auth/register")
-def register(payload: Dict[str, Any]):
-    """Self-serve registration for a business owner (or customer).
+# ============================================================
+# SESSION HELPER — one place that turns a user document into a logged-in
+# browser. Used by password login, self-serve register (auto-login) and
+# the Google / Apple flows in features/oauth.py, so the cookie flags and
+# the JWT claims can never drift between entry points.
+# ============================================================
+TERMS_VERSION = os.environ.get("TERMS_VERSION", "2026-09")
 
-    Accepts the standard email/password/role plus OPTIONAL business fields:
-      - business_name : displayed everywhere ("Café Lumière", etc.)
-      - sector        : café, restaurant, pizzeria, spa, gym, autre…
-      - phone         : business phone, used by SMS and Twilio test bench
-      - postal_code   : populates the geo helpers + city autodetect
-      - owner_name    : free-form display name for the owner
 
-    All optional — if the client sends just email + password it still works
-    (with a slug-derived tenant name) so the old simple form keeps working.
-    """
-    email = (payload.get("email") or "").strip().lower()
-    password = payload.get("password") or ""
-    role = (payload.get("role") or "business_owner").strip()
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password are required")
-
-    # S3 — password policy. Enforced server-side because the browser can be
-    # bypassed, and this account will eventually hold financial data.
-    from services import password_policy
-    password_policy.assert_valid(password)
-
-    existing = db.users.find_one({"email": email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Only customers and business_owners can self-register.
-    if role not in ("customer", "business_owner"):
-        raise HTTPException(status_code=403, detail="This role cannot self-register")
-
-    tenant_id = None
-    if role == "business_owner":
-        tenant_id = str(uuid.uuid4())
-
-        # Business display name + slug. Prefer the business_name the form sends;
-        # fall back to the email local-part so old clients keep working.
-        biz_name = (payload.get("business_name") or "").strip()
-        if not biz_name:
-            biz_name = email.split("@")[0].replace(".", " ").replace("-", " ").title()
-        # URL-safe slug from the chosen name
-        raw_slug = re.sub(r"[^a-z0-9]+", "-", biz_name.lower()).strip("-") or "shop"
-        # Avoid slug collision with existing tenants
-        slug = raw_slug
-        n = 2
-        while db.tenants.find_one({"slug": slug}):
-            slug = f"{raw_slug}-{n}"
-            n += 1
-
-        # Every new business starts on the Silver plan with a free trial.
-        # subscription_status='trialing' is the signal every UI surface uses
-        # to show the trial countdown + upgrade nudge. trial_started_at +
-        # trial_duration_days (read from the plan's PLAN_TRIAL_DAYS, which
-        # admins can override) drive the days-left math everywhere.
-        starting_plan = "silver"
-        trial_days = get_plan_features(starting_plan).get("trial_duration_days", 21)
-        now_utc = datetime.now(timezone.utc)
-        t = Tenant(
-            id=tenant_id,
-            slug=slug,
-            name=biz_name,
-            plan=starting_plan,
-            sector=(payload.get("sector") or None),
-            phone=(payload.get("phone") or ""),
-            address="",
-        )
-        tenant_doc = t.model_dump()
-        tenant_doc["subscription_status"] = "trialing"
-        tenant_doc["trial_started_at"] = now_utc
-        tenant_doc["trial_duration_days"] = int(trial_days)
-        tenant_doc["trial_ends_at"] = now_utc + timedelta(days=int(trial_days))
-        # Stamp postal_code + owner_name as extras so they're easy to surface in Settings
-        if payload.get("postal_code"):
-            tenant_doc["postal_code"] = payload["postal_code"]
-        if payload.get("owner_name"):
-            tenant_doc["owner_name"] = payload["owner_name"]
-        db.tenants.insert_one(tenant_doc)
-
-    new_user = UserInDB(
-        email=email,
-        role=role,
-        tenant_id=tenant_id,
-        hashed_password=hash_password(password),
+def _issue_session(response: Response, user: Dict[str, Any]) -> Dict[str, Any]:
+    access_token = create_access_token(
+        data={"sub": user["email"], "role": user["role"], "tenant_id": user.get("tenant_id")}
     )
-    db.users.insert_one(new_user.model_dump())
-    return {"message": "Success", "tenant_id": tenant_id}
-
-@app.post("/api/auth/login")
-def login(req: LoginRequest, response: Response, request: Request = None):
-    user_dict = db.users.find_one({"email": req.email})
-    if not user_dict:
-        log_audit("auth.login_failed", actor=req.email, actor_type="user",
-                  request=request, meta={"reason": "unknown_email"})
-        raise HTTPException(status_code=400, detail="Incorrect credentials")
-
-    user = UserInDB(**user_dict)
-    if not verify_password(req.password, user.hashed_password):
-        log_audit("auth.login_failed", actor=req.email, actor_type="user",
-                  tenant_id=user.tenant_id, request=request,
-                  meta={"reason": "bad_password"})
-        raise HTTPException(status_code=400, detail="Incorrect credentials")
-
-    log_audit("auth.login", actor=user.email, actor_type="user",
-              tenant_id=user.tenant_id, request=request,
-              meta={"role": user.role})
-
-    access_token = create_access_token(data={"sub": user.email, "role": user.role, "tenant_id": user.tenant_id})
     response.set_cookie(
         key="access_token",
         value=access_token,
@@ -2306,13 +2210,184 @@ def login(req: LoginRequest, response: Response, request: Request = None):
         expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         samesite="lax",
         secure=True,
-        path="/"
+        path="/",
     )
-    return {"access_token": access_token, "role": user.role}
+    tenant = db.tenants.find_one({"id": user.get("tenant_id")}) if user.get("tenant_id") else None
+    return {
+        "access_token": access_token,
+        "role": user["role"],
+        "tenant_id": user.get("tenant_id"),
+        "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
+    }
+
+
+def _unique_slug(name: str) -> str:
+    # Strip accents first ("Café Lumière" → "cafe-lumiere", not "caf-lumi-re"):
+    # the slug is the customer-facing /join/<slug> URL and most shops are French.
+    import unicodedata
+    ascii_name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
+    raw_slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "shop"
+    slug, n = raw_slug, 2
+    while db.tenants.find_one({"slug": slug}):
+        slug = f"{raw_slug}-{n}"
+        n += 1
+    return slug
+
+
+def _start_trial(tenant_doc: Dict[str, Any], plan: str = "silver") -> None:
+    """Stamp the trial fields on a tenant document (in place). Called when the
+    company details are complete — that is the moment the 28 days start,
+    not the moment the personal account was created."""
+    trial_days = int(get_plan_features(plan).get("trial_duration_days", 28))
+    now_utc = datetime.now(timezone.utc)
+    tenant_doc["subscription_status"] = "trialing"
+    tenant_doc["trial_started_at"] = now_utc
+    tenant_doc["trial_duration_days"] = trial_days
+    tenant_doc["trial_ends_at"] = now_utc + timedelta(days=trial_days)
+
+
+@app.post("/api/auth/register")
+def register(payload: Dict[str, Any], response: Response, request: Request = None):
+    """Self-serve registration — STEP 1 of the onboarding (personal account).
+
+    New flow (app.fidclic.com/register):
+      first_name, last_name, email, phone, password, accepted_terms=true
+      → user + a tenant STUB with onboarding_status="company". The trial does
+        NOT start yet: it starts when /api/onboarding/company completes step 2.
+      → the response carries a session (cookie + token) so the browser goes
+        straight to /onboarding/entreprise without a second login round-trip.
+
+    Legacy flow (kept so old clients / tests keep working): a payload with
+    `business_name` creates a fully onboarded tenant with the trial started,
+    exactly as before.
+    """
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+    role = (payload.get("role") or "business_owner").strip()
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    # S3 — password policy. Enforced server-side because the browser can be
+    # bypassed, and this account will eventually hold financial data.
+    from services import password_policy
+    password_policy.assert_valid(password)
+    existing = db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    # Only customers and business_owners can self-register.
+    if role not in ("customer", "business_owner"):
+        raise HTTPException(status_code=403, detail="This role cannot self-register")
+
+    first_name = (payload.get("first_name") or "").strip()
+    last_name = (payload.get("last_name") or "").strip()
+    legacy = bool((payload.get("business_name") or "").strip())
+    if not legacy and role == "business_owner":
+        if not first_name or not last_name:
+            raise HTTPException(status_code=400, detail="Prénom et nom sont requis")
+        if not payload.get("accepted_terms"):
+            raise HTTPException(
+                status_code=400,
+                detail="Vous devez accepter les Conditions Générales, la Politique de Confidentialité et le DPA",
+            )
+
+    now_utc = datetime.now(timezone.utc)
+    tenant_id = None
+    if role == "business_owner":
+        tenant_id = str(uuid.uuid4())
+        if legacy:
+            biz_name = payload["business_name"].strip()
+        else:
+            # Placeholder until step 2 — never shown as-is because the UI
+            # keeps the owner on /onboarding/entreprise until it is replaced.
+            biz_name = f"{first_name} {last_name}".strip() or email.split("@")[0]
+        t = Tenant(
+            id=tenant_id,
+            slug=_unique_slug(biz_name),
+            name=biz_name,
+            plan="silver",
+            sector=(payload.get("sector") or None),
+            phone=(payload.get("phone") or ""),
+            address="",
+            onboarding_status="done" if legacy else "company",
+        )
+        tenant_doc = t.model_dump()
+        if legacy:
+            _start_trial(tenant_doc, "silver")
+        else:
+            tenant_doc["subscription_status"] = "onboarding"
+        # Stamp postal_code + owner_name as extras so they're easy to surface in Settings
+        if payload.get("postal_code"):
+            tenant_doc["postal_code"] = payload["postal_code"]
+        owner_name = (payload.get("owner_name") or f"{first_name} {last_name}").strip()
+        if owner_name:
+            tenant_doc["owner_name"] = owner_name
+        db.tenants.insert_one(tenant_doc)
+
+    new_user = UserInDB(
+        email=email,
+        role=role,
+        tenant_id=tenant_id,
+        hashed_password=hash_password(password),
+        first_name=first_name or None,
+        last_name=last_name or None,
+        auth_provider="password",
+        terms_accepted_at=now_utc if payload.get("accepted_terms") else None,
+        terms_version=TERMS_VERSION if payload.get("accepted_terms") else None,
+    )
+    user_doc = new_user.model_dump()
+    db.users.insert_one(user_doc)
+    log_audit("auth.register", actor=email, actor_type="user", tenant_id=tenant_id,
+              request=request, meta={"role": role, "legacy_form": legacy})
+    session = _issue_session(response, user_doc)
+    return {"message": "Success", **session}
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest, response: Response, request: Request = None):
+    user_dict = db.users.find_one({"email": req.email.strip().lower()})
+    if not user_dict:
+        log_audit("auth.login_failed", actor=req.email, actor_type="user",
+                  request=request, meta={"reason": "unknown_email"})
+        raise HTTPException(status_code=400, detail="Incorrect credentials")
+    user = UserInDB(**user_dict)
+    if not user.hashed_password:
+        # Google / Apple account without a password: tell them which button
+        # to use instead of a misleading "incorrect credentials".
+        log_audit("auth.login_failed", actor=req.email, actor_type="user",
+                  tenant_id=user.tenant_id, request=request,
+                  meta={"reason": "oauth_only", "provider": user.auth_provider})
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ce compte utilise la connexion {str(user.auth_provider or '').title()} — utilisez le bouton correspondant.",
+        )
+    if not verify_password(req.password, user.hashed_password):
+        log_audit("auth.login_failed", actor=req.email, actor_type="user",
+                  tenant_id=user.tenant_id, request=request,
+                  meta={"reason": "bad_password"})
+        raise HTTPException(status_code=400, detail="Incorrect credentials")
+    log_audit("auth.login", actor=user.email, actor_type="user",
+              tenant_id=user.tenant_id, request=request,
+              meta={"role": user.role})
+    return _issue_session(response, user_dict)
+
 
 @app.get("/api/auth/me")
 def get_me(token_data: TokenData = Depends(get_current_user_data)):
-    return {"email": token_data.email, "role": token_data.role, "tenant_id": token_data.tenant_id}
+    """Identity + onboarding state. The route guards in App.jsx read
+    onboarding_status to keep a half-registered owner on step 2."""
+    user = db.users.find_one({"email": token_data.email}) or {}
+    tenant = db.tenants.find_one({"id": token_data.tenant_id}) if token_data.tenant_id else None
+    return {
+        "email": token_data.email,
+        "role": token_data.role,
+        "tenant_id": token_data.tenant_id,
+        "first_name": user.get("first_name"),
+        "last_name": user.get("last_name"),
+        "auth_provider": user.get("auth_provider") or "password",
+        "has_password": bool(user.get("hashed_password")),
+        "terms_accepted": bool(user.get("terms_accepted_at")),
+        "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
+        "tenant_name": (tenant or {}).get("name"),
+    }
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
@@ -2356,7 +2431,7 @@ def admin_env_status(token_data: TokenData = Depends(require_role(["super_admin"
             # public key, never to the subject.
             "key": "VAPID_SUBJECT",
             "present": bool(os.environ.get("VAPID_SUBJECT", "")),
-            "value": os.environ.get("VAPID_SUBJECT", "") or "(unset — defaults to mailto:contact@fidelitour.fr)",
+            "value": os.environ.get("VAPID_SUBJECT", "") or "(unset — defaults to mailto:contact@fidclic.com)",
             "feature": "Web Push — contact address sent to Apple/Google/Mozilla",
             "required": False,
             "consequence": (
@@ -2407,6 +2482,18 @@ def admin_env_status(token_data: TokenData = Depends(require_role(["super_admin"
             "present": bool(os.environ.get("STRIPE_SECRET_KEY", "")) and bool(os.environ.get("STRIPE_WEBHOOK_SECRET", "")),
             "feature": "Subscription billing", "required": False,
             "consequence": "Tenants cannot subscribe; billing UI is hidden. All tenants are treated as 'active' for now.",
+        },
+        {
+            "key": "GOOGLE_CLIENT_ID",
+            "present": bool(os.environ.get("GOOGLE_CLIENT_ID", "")),
+            "feature": "Sign in with Google", "required": False,
+            "consequence": "The Google button is hidden on /login and /register; email + password still works.",
+        },
+        {
+            "key": "APPLE_CLIENT_ID + APPLE_REDIRECT_URI",
+            "present": bool(os.environ.get("APPLE_CLIENT_ID", "")) and bool(os.environ.get("APPLE_REDIRECT_URI", "")),
+            "feature": "Sign in with Apple", "required": False,
+            "consequence": "The Apple button is hidden on /login and /register; email + password still works.",
         },
     ]
     overall_ok = all(c["present"] for c in checks if c["required"])
@@ -2492,7 +2579,7 @@ def create_tenant(
     db.tenants.insert_one(tenant.model_dump())
 
     # Create business owner account
-    owner_email = req.get("owner_email", f"owner-{slug}@fidelitour-generated.com")
+    owner_email = req.get("owner_email", f"owner-{slug}@fidclic-generated.com")
     generated_password = str(uuid.uuid4())[:12]
 
     owner_user = UserInDB(
@@ -2589,7 +2676,7 @@ def _plan_row(plan: str) -> Dict[str, Any]:
     # Build the full baseline shape, including trial + price fields, so the
     # UI can render a uniform table for the 3 plans.
     baseline = dict(PLAN_FEATURES.get(plan) or {})
-    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 21)
+    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 28)
     baseline["trial_reminder_days_before"] = TRIAL_REMINDER_DAYS_BEFORE
     baseline["price"] = PLAN_PRICES.get(plan, 0)
     effective = get_plan_features(plan)
@@ -2724,7 +2811,7 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
             base = tenant["created_at"]
             if isinstance(base, str):
                 base = datetime.fromisoformat(base.replace("Z", "+00:00"))
-            trial_ends_at = base + timedelta(days=int(features.get("trial_duration_days", 21)))
+            trial_ends_at = base + timedelta(days=int(features.get("trial_duration_days", 28)))
         except Exception:
             trial_ends_at = None
 
@@ -2757,7 +2844,7 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
         "days_left": days_left,
         "hours_left": hours_left,
         "trial_ends_at": trial_ends_at.isoformat() if trial_ends_at else None,
-        "trial_duration_days": int(features.get("trial_duration_days", 21)),
+        "trial_duration_days": int(features.get("trial_duration_days", 28)),
         "reminder_window": in_reminder,
         "reminder_days_before": reminder_days,
         "plan": plan,
@@ -3679,7 +3766,7 @@ def create_campaign(
     """Create campaign for tenant"""
     # Normalize and validate the channel/source label if provided
     raw_source = (req.get("source") or "").strip().lower() or None
-    # FidéliTour delivers via wallet push and email today. We keep the schema
+    # FidClic delivers via wallet push and email today. We keep the schema
     # tolerant of legacy / external channel labels, but the composer only
     # surfaces push + email + other to avoid promising channels we don't ship.
     ALLOWED_CAMPAIGN_SOURCES = {"push", "email", "other"}
@@ -4105,8 +4192,8 @@ def _call_vision_openrouter(image_b64: str, mime: str, prompt: str) -> tuple:
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://fidelitour-deploy.vercel.app",
-                "X-Title": "FidéliTour",
+                "HTTP-Referer": "https://app.fidclic.com",
+                "X-Title": "FidClic",
             },
             json={
                 "model": model,
@@ -5364,8 +5451,8 @@ def per_card_manifest(barcode_id: str):
     # Best-effort enrichment: look up the customer + tenant so we can
     # personalise the PWA name to the business. If the customer doesn't
     # exist we still return a valid manifest — just with generic labels.
-    name = "FidéliTour"
-    short_name = "FidéliTour"
+    name = "FidClic"
+    short_name = "FidClic"
     try:
         cust = db.customers.find_one({"barcode_id": bc}) if db is not None else None
         if cust:
@@ -6442,7 +6529,7 @@ def send_campaign_to_group(
     name = req.get("name") or "Campagne ciblée"
     content = req.get("content") or ""
     image_url = req.get("image_url") or None
-    sender_name = (tenant.get("campaign_sender_name") or tenant.get("name") or "FidéliTour")
+    sender_name = (tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic")
 
     # Dispatch per-customer with template rendering.
     delivered = 0
@@ -6703,8 +6790,8 @@ def _call_openrouter(prompt: str) -> Optional[list]:
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://fidelitour.com",
-                "X-Title": "FidéliTour",
+                "HTTP-Referer": "https://app.fidclic.com",
+                "X-Title": "FidClic",
             },
             json={
                 "model": OPENROUTER_MODEL,
@@ -10002,7 +10089,7 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
     if not customer_list:
         return None
     tid = tenant.get("id")
-    sender_name = tenant.get("campaign_sender_name") or tenant.get("name") or "FidéliTour"
+    sender_name = tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic"
     now = datetime.now(timezone.utc)
     delivered = 0
     for cust in customer_list:
@@ -10047,7 +10134,7 @@ class ScheduleCampaignRequest(BaseModel):
     # Same filter shape as live send (tiers/minPoints/minVisits/postalCodes/minAmountPaid).
     # If provided, takes precedence over segment when the cron drains it.
     filters: Optional[Dict[str, Any]] = None
-    source: Optional[str] = None  # push | email | other  — only the channels FidéliTour delivers on today
+    source: Optional[str] = None  # push | email | other  — only the channels FidClic delivers on today
     recurrence: Optional[str] = None  # None | "daily" | "weekly" | "monthly"
 
 
@@ -10471,16 +10558,16 @@ def run_monthly_report_dispatch(request: Request):
             f"• {visits_count} visites enregistrées\n"
             f"• €{revenue:,.0f} de chiffre d'affaires fidélité\n"
             f"• €{avg_ticket} de panier moyen\n\n"
-            f"Le détail complet est disponible sur votre tableau de bord FidéliTour.\n\n"
-            f"Bonne continuation !\n— L'équipe FidéliTour"
+            f"Le détail complet est disponible sur votre tableau de bord FidClic.\n\n"
+            f"Bonne continuation !\n— L'équipe FidClic"
         ).replace(",", " ")
         html = _campaign_html(
-            "FidéliTour",
+            "FidClic",
             f"Récap {last_month_start.strftime('%B %Y')} — {tenant.get('name','')}",
             body,
             {"name": owner["email"].split("@")[0].title(), "tier": "owner", "visits": 0, "points": 0},
         )
-        if send_email_to_customer(owner["email"], "FidéliTour", f"Récap {last_month_start.strftime('%B %Y')}", html):
+        if send_email_to_customer(owner["email"], "FidClic", f"Récap {last_month_start.strftime('%B %Y')}", html):
             sent += 1
         else:
             skipped += 1
@@ -10513,7 +10600,7 @@ def admin_broadcast(
     if not req.subject.strip() or not req.body.strip():
         raise HTTPException(status_code=400, detail="subject and body required")
     filters = req.filters or {}
-    sender_name = (req.sender_name or "FidéliTour").strip()
+    sender_name = (req.sender_name or "FidClic").strip()
     now = datetime.now(timezone.utc)
 
     # Build customer query

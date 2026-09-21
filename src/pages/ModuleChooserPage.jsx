@@ -7,7 +7,7 @@ import { facturationAPI } from '../lib/api';
 /**
  * ModuleChooserPage — the post-login "which module?" screen (Option A).
  *
- * Shows two products of the FidéliTour suite:
+ * Shows two products of the FidClic suite:
  *   1. CRM + Fidélité  (always available)  -> /dashboard
  *   2. Facturation électronique            -> /facturation (if enabled)
  *                                           or an "activate" prompt (if not)
@@ -52,7 +52,7 @@ export default function ModuleChooserPage() {
           className="font-['Cormorant_Garamond'] text-2xl font-bold"
           style={{ color: '#6B2E5A' }}
         >
-          FidéliTour
+          FidClic
         </div>
         <button
           onClick={() => { logout(); navigate('/login'); }}
