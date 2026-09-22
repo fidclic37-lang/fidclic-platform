@@ -48,6 +48,9 @@ MODULES = [
     # Billing — Stripe Checkout + Customer Portal + webhook handler.
     # Boots safely (no-ops) when STRIPE_SECRET_KEY isn't set.
     "features.billing",
+    # Plan catalogue (public) + live usage counters — the marketing site
+    # builds its pricing table from /api/public/plans.
+    "features.plans_public",
     # Facturation électronique (French e-invoicing) — second product module.
     # Gated: only tenants with facturation_enabled=True reach any route.
     # PA-agnostic via services.pdp_connector (Mock by default; B2Brouter via env).

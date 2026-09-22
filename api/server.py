@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from models import (
     UserInDB, UserCreate, Tenant, Customer, Visit, CardTemplate, Campaign, PaymentTransaction, AIQueryRequest,
-    PLAN_FEATURES, PLAN_PRICES, PLAN_TRIAL_DAYS, TRIAL_REMINDER_DAYS_BEFORE, TierDesign,
+    PLAN_FEATURES, PLAN_LABELS, PLAN_PRICES, PLAN_TRIAL_DAYS, TRIAL_REMINDER_DAYS_BEFORE, TierDesign,
     CardPromotion, CardDetails, CardTypedNotification,
     Review,
 )
@@ -254,7 +254,10 @@ POSTAL_CODE_OVERRIDES = {
 # ---------------------------------------------------------------------------
 _PLAN_LIMIT_FIELDS = (
     "max_customers",
+    "push_per_month",
     "campaigns_per_month",
+    "staff_accounts",
+    "establishments",
     "ai_queries_per_day",
     "csv_export",
     "geo_proximity",
@@ -284,6 +287,7 @@ def get_plan_features(plan: str) -> Dict[str, Any]:
     baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 28)
     baseline["trial_reminder_days_before"] = TRIAL_REMINDER_DAYS_BEFORE
     baseline["price"] = PLAN_PRICES.get(plan, 0)
+    baseline["label"] = PLAN_LABELS.get(plan, plan.title())
     try:
         doc = db.plan_settings.find_one({"plan": plan}) if db is not None else None
     except Exception:
@@ -448,6 +452,20 @@ def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
     """Deliver one message to one customer. Returns {sent, channel}."""
     now = datetime.now(timezone.utc)
     result = {"sent": False, "channel": None}
+
+    # Monthly push quota — what the pricing page sells ("2 000 push / mois")
+    # is what is counted here. Transactional messages the customer asked for
+    # (reward unlocked, near reward) are never blocked; marketing sends are.
+    if kind in ("campaign", "offer", "news"):
+        try:
+            from features.plans_public import push_quota_state          # noqa: WPS433
+            tenant = db.tenants.find_one({"id": tenant_id}, {"plan": 1}) or {}
+            quota = push_quota_state(tenant_id, tenant.get("plan") or "silver")
+            if quota["exceeded"]:
+                return {"sent": False, "channel": None, "reason": "push_quota_exceeded",
+                        "quota": quota}
+        except Exception as exc:  # never let the counter break a send
+            print(f"dispatch_to_customer: quota check skipped ({exc})")
 
     # 1. Web Push
     try:

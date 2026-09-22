@@ -15,41 +15,63 @@ from uuid import uuid4
 # email + in-app banner asking them to pick a plan; on day 28 the trial
 # expires and paid features lock until they subscribe.
 PLAN_FEATURES = {
-    "silver": {
-        "max_customers": 1000,
-        "campaigns_per_month": 4,
-        "ai_queries_per_day": 0,       # AI disabled on silver
-        "csv_export": False,
-        "geo_proximity": False,         # geo disabled on silver
+    # Internal keys stay silver/gold/vip — every tenant row, Stripe price and
+    # admin override already references them. PLAN_LABELS below carries the
+    # commercial names shown to merchants (Starter / Pro / Pro AI), so a
+    # rename never has to touch the database.
+    "silver": {                         # Starter — 39 €
+        "max_customers": 1500,
+        "push_per_month": 2000,         # 0 = unlimited; counted from delivery_log
+        "campaigns_per_month": 20,      # Starter can run targeted campaigns
+        "staff_accounts": 2,            # owner + 1 collaborator
+        "establishments": 1,
+        "ai_queries_per_day": 0,        # AI disabled on Starter
+        "csv_export": True,             # importing/exporting your own customers
+        "geo_proximity": False,
         "multi_branch": False,
     },
-    "gold": {
-        "max_customers": 3000,
-        "campaigns_per_month": 20,
+    "gold": {                           # Pro — 79 €
+        "max_customers": 4500,
+        "push_per_month": 6000,
+        "campaigns_per_month": 100,
+        "staff_accounts": 6,
+        "establishments": 1,
         "ai_queries_per_day": 20,
         "csv_export": True,
-        "geo_proximity": True,          # geo unlocked on gold
+        "geo_proximity": True,
         "multi_branch": False,
     },
-    "vip": {
-        "max_customers": 6000,
-        "campaigns_per_month": 100,
-        "ai_queries_per_day": 50,       # full AI access
+    "vip": {                            # Pro AI — 129 €
+        "max_customers": 15000,
+        "push_per_month": 0,            # unlimited
+        "campaigns_per_month": 0,       # unlimited
+        "staff_accounts": 15,
+        "establishments": 3,
+        "ai_queries_per_day": 50,
         "csv_export": True,
         "geo_proximity": True,
-        "multi_branch": True,           # everything unlocked
+        "multi_branch": True,
     },
 }
 
+# Commercial names + order, shared with the marketing site through
+# GET /api/public/plans. fidclic.com/tarifs reads THIS, never its own copy.
+PLAN_LABELS = {
+    "silver": "Starter",
+    "gold": "Pro",
+    "vip": "Pro AI",
+}
+PLAN_ORDER = ("silver", "gold", "vip")
+
 PLAN_PRICES = {
-    "silver": 29,
+    "silver": 39,
     "gold": 79,
-    "vip": 109,
+    "vip": 129,
 }
 
-# Trial period, per plan, in days. Default 28 (4 weeks). Admin can override
-# any of these from the /admin/plans editor — same DB-backed overrides
-# mechanism as PLAN_FEATURES uses (see plan_settings collection).
+# Annual billing: 20 % off (≈ 2 months free), same discount on every plan.
+ANNUAL_DISCOUNT = 0.20
+
 PLAN_TRIAL_DAYS = {
     "silver": 28,
     "gold": 28,
