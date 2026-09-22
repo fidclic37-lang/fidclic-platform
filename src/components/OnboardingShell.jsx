@@ -1,6 +1,7 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 
 /**
@@ -84,6 +85,18 @@ export const Stepper = ({ step }) => {
 
 export default function OnboardingShell({ step, children, wide = false }) {
   const { t } = useTranslation();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  // Steps 2 and 3 are reached WITH a session (step 1 or Google/Apple just
+  // created it). Offering "Se connecter" there sent the owner to /login, which
+  // the onboarding guard bounced straight back here — a dead button. A signed-in
+  // owner gets "Se déconnecter" instead, which actually leaves the flow.
+  const signedIn = Boolean(user);
+  const leave = async () => {
+    try { await logout(); } finally { navigate('/login', { replace: true }); }
+  };
+
   return (
     // App-shell on desktop: the page itself never scrolls — nav and the
     // visual stay put, only the step column scrolls when a form is taller
@@ -96,8 +109,19 @@ export default function OnboardingShell({ step, children, wide = false }) {
           {NAV.map((n) => <a key={n.key} href={n.href} className="hover:text-[#2F6BFF]">{t(`signup.nav_${n.key}`)}</a>)}
         </nav>
         <div className="text-[14px] text-[#4B5C7A]">
-          <span className="hidden sm:inline">{t('auth.have_account')} </span>
-          <Link to="/login" className="font-semibold text-[#2F6BFF] hover:underline">{t('auth.sign_in')}</Link>
+          {signedIn ? (
+            <>
+              <span className="hidden sm:inline">{user.email} · </span>
+              <button type="button" onClick={leave} className="font-semibold text-[#2F6BFF] hover:underline">
+                {t('nav.sign_out')}
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="hidden sm:inline">{t('auth.have_account')} </span>
+              <Link to="/login" className="font-semibold text-[#2F6BFF] hover:underline">{t('auth.sign_in')}</Link>
+            </>
+          )}
         </div>
       </header>
 
