@@ -1235,8 +1235,16 @@ export default function OwnerDashboard() {
                               background: nuit ? T.ok : 'hsl(150 70% 30%)', borderRadius: 3 }} />
               </div>
               <div style={{ fontSize: 11, color: 'var(--fd-text-2)', lineHeight: 1.4 }}>
-                {walletStats.devices} appareil{walletStats.devices > 1 ? 's' : ''} synchronisé{walletStats.devices > 1 ? 's' : ''} —
-                {' '}les tampons s'y mettent à jour à chaque passage en caisse.
+                {walletStats.push_ready ? (
+                  <>
+                    {walletStats.devices} appareil{walletStats.devices > 1 ? 's' : ''} synchronisé{walletStats.devices > 1 ? 's' : ''} —
+                    {' '}les tampons s'y mettent à jour à chaque passage en caisse.
+                  </>
+                ) : (
+                  <span style={{ color: nuit ? T.warn : 'hsl(42 78% 34%)' }}>
+                    Les cartes se mettent à jour à l'ouverture seulement — la mise à jour automatique n'est pas active.
+                  </span>
+                )}
               </div>
               <button
                 type="button"

@@ -58,6 +58,18 @@ def is_configured() -> bool:
                 and _b64_env("APPLE_PASS_KEY_B64"))
 
 
+def transport_ready() -> bool:
+    """Is the HTTP/2 client actually available in this deployment? Reported in
+    the owner's Wallet panel so a missing dependency shows up as a fact rather
+    than as passes that quietly never update."""
+    try:
+        import httpx  # noqa: F401
+        import h2     # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _cert_files() -> Optional[tuple]:
     """httpx wants files on disk for the client certificate. The PEMs live in
     env vars, so they are written once to the function's private tmp dir."""

@@ -682,8 +682,14 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     installed = len({r["serial"] for r in regs})
     last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
                default=None)
+    try:
+        from services import apns_passes
+        push_ready = apns_passes.is_configured() and apns_passes.transport_ready()
+    except Exception:
+        push_ready = False
     return {
         "apple_configured": apple_configured(),
+        "push_ready": push_ready,             # can we actually wake devices?
         "customers": customers,
         "passes_installed": installed,        # customers carrying the pass
         "devices": len(regs),                 # iPhone + Watch count as two
