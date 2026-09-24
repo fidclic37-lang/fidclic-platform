@@ -499,7 +499,12 @@
     "name_required": "Indiquez le nom à afficher sur la carte.",
     "slogan": "Slogan / Message (optionnel)",
     "slogan_placeholder": "Coupe • Barbe • Soin",
-    "finish": "Créer ma carte"
+    "finish": "Créer ma carte",
+    "banner": "Image de bannière",
+    "banner_hint": "Photo large (ratio 375 × 144)",
+    "banner_add": "Ajouter une bannière",
+    "banner_change": "Changer la bannière",
+    "banner_remove": "Retirer"
   },
   "done": {
     "title": "Votre carte {{name}} est créée !",

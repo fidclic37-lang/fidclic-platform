@@ -55,12 +55,14 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, time as dt_time, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+from auth import require_role, TokenData
 
 router = APIRouter(tags=["wallet-passes"])
 _db = None
@@ -170,7 +172,12 @@ def derive_colors(card: Dict[str, Any]) -> Dict[str, str]:
         or (_rgb(SURFACE_PRESETS["blanc"]) if card.get("surface") == "clair" else _rgb(SURFACE_PRESETS["anthracite"]))
     ink = _rgb(INK_LIGHT) if _contrast(_rgb(INK_LIGHT), bg) >= _contrast(_rgb(INK_DARK), bg) else _rgb(INK_DARK)  # type: ignore[arg-type]
     label = _blend(ink, bg, 0.55)  # type: ignore[arg-type]
-    return {"backgroundColor": _css(bg), "foregroundColor": _css(ink), "labelColor": _css(label)}  # type: ignore[arg-type]
+    brand = _rgb(card.get("brand_color")) or (184, 92, 56)
+    return {
+        "backgroundColor": _css(bg), "foregroundColor": _css(ink), "labelColor": _css(label),  # type: ignore[arg-type]
+        # not part of pass.json — read by compose_strip()
+        "surface_hex": "#%02X%02X%02X" % bg, "brand_hex": "#%02X%02X%02X" % brand,  # type: ignore[str-format]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +251,108 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
 
 
 # ---------------------------------------------------------------------------
+# The strip — the only place a pass can show a progress meter
+# ---------------------------------------------------------------------------
+# PassKit has no progress element: a pass can show text, images and a barcode,
+# nothing else. Every loyalty card you have seen with a filling gauge (Starbucks,
+# Loopy-built cards…) draws it INTO the strip image, server-side, per customer.
+# That is what this does — so the meter updates with the pass, like the fields.
+STRIP_W, STRIP_H = 1125, 432          # Apple's 375 × 144 pt at 3×
+
+
+def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
+                  with_meter: bool) -> Optional[bytes]:
+    """Build the strip: the merchant's photo (or a brand gradient when there is
+    none) with a segmented progress meter burnt into the bottom band.
+    Returns PNG bytes at 3×, or None when Pillow is unavailable."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        return None
+
+    surface = _rgb(theme.get("surface_hex")) or (28, 29, 34)
+    brand = _rgb(theme.get("brand_hex")) or (184, 92, 56)
+
+    base: Optional["Image.Image"] = None
+    if raw:
+        try:
+            base = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception:
+            base = None
+
+    if base is not None:
+        scale = max(STRIP_W / base.width, STRIP_H / base.height)
+        base = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.LANCZOS)
+        left, top = (base.width - STRIP_W) // 2, (base.height - STRIP_H) // 2
+        img = base.crop((left, top, left + STRIP_W, top + STRIP_H))
+    else:
+        # No photo: a diagonal brand sheen over the card surface — quiet, but
+        # it reads as designed rather than as a flat rectangle.
+        def mix(a, b, t):
+            return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+        img = Image.new("RGB", (STRIP_W, STRIP_H), surface)
+        sheen = Image.new("RGB", (STRIP_W, STRIP_H), mix(surface, brand, 0.55))
+        diag = Image.linear_gradient("L").resize((STRIP_W * 2, STRIP_W * 2)).rotate(-35, resample=Image.BICUBIC)
+        diag = diag.crop(((diag.width - STRIP_W) // 2, (diag.height - STRIP_H) // 2,
+                          (diag.width + STRIP_W) // 2, (diag.height + STRIP_H) // 2))
+        img = Image.composite(sheen, img, diag.point(lambda v: 255 - v))
+        # a soft highlight where the sheen is strongest, then a touch of blur
+        halo = Image.new("RGB", (STRIP_W, STRIP_H), mix(surface, brand, 0.85))
+        img = Image.composite(halo, img, diag.point(lambda v: max(0, 255 - v * 3) // 3))
+        img = img.filter(ImageFilter.GaussianBlur(14))
+
+    if not with_meter or threshold <= 0:
+        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True); return buf.getvalue()
+
+    # ---- meter: scrim + segmented track, one segment per stamp -------------
+    # The scrim follows the card: dark on a dark surface, light on a crème or
+    # blanc one, so the bar never sits in a heavy black band on a pale card.
+    light_card = raw is None and _lum(surface) > 0.45
+    scrim_rgb = (255, 255, 255) if light_card else (0, 0, 0)
+    empty_fill = (0, 0, 0, 38) if light_card else (255, 255, 255, 46)
+    empty_line = (0, 0, 0, 64) if light_card else (255, 255, 255, 80)
+
+    d = ImageDraw.Draw(img, "RGBA")
+    band = 150
+    for i in range(band):                      # soft scrim so the bar reads on any photo
+        a = int((150 if light_card else 165) * (i / band) ** 1.6)
+        d.line([(0, STRIP_H - band + i), (STRIP_W, STRIP_H - band + i)], fill=scrim_rgb + (a,))
+
+    pad, bar_h = 64, 26
+    y0 = STRIP_H - 62
+    inner = STRIP_W - 2 * pad
+    gap = 10
+    seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
+    done = max(0, min(threshold, stamps))
+    for i in range(threshold):
+        x0 = pad + i * (seg + gap)
+        box = [x0, y0, x0 + seg, y0 + bar_h]
+        if i < done:
+            d.rounded_rectangle(box, radius=bar_h // 2, fill=brand + (255,))
+        else:
+            d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
+            d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
+
+    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _strip_variants(png3x: bytes) -> Dict[str, bytes]:
+    """3× master → the @2x and 1× Wallet also asks for."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return {"@3x": png3x}
+    master = Image.open(io.BytesIO(png3x)).convert("RGB")
+    out: Dict[str, bytes] = {}
+    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
+        img = master if k == 3 else master.resize((375 * k, 144 * k), Image.LANCZOS)
+        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+        out[suffix] = buf.getvalue()
+    return out
+
+
+# ---------------------------------------------------------------------------
 # pass.json
 # ---------------------------------------------------------------------------
 TIER_LABELS = {"bronze": "Bronze", "silver": "Argent", "gold": "Or", "vip": "VIP"}
@@ -255,6 +364,69 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
     return core._serialize_card_payload(cust)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    """Apple wants W3C date-time with an offset."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            d = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _next_opening(tenant_id: str, now: Optional[datetime] = None) -> Optional[datetime]:
+    """When does this shop next open? Used as the pass's relevantDate so the
+    card surfaces on the lock screen at opening time — exactly when the
+    customer might walk in — instead of never."""
+    now = now or _now()
+    try:
+        from features import business_hours as bh
+        tenant = _db.tenants.find_one({"id": tenant_id}) or {}
+        weekly = bh._resolve_weekly(tenant)
+    except Exception:
+        return None
+    for ahead in range(0, 8):
+        day = (now + timedelta(days=ahead)).date()
+        try:
+            if not bh.is_open_on(tenant_id, day):
+                continue
+        except Exception:
+            return None
+        row = weekly[day.weekday()] if day.weekday() < len(weekly) else {}
+        opens = (row or {}).get("open_from") or "09:00"
+        try:
+            hh, mm = (int(x) for x in str(opens).split(":")[:2])
+        except ValueError:
+            hh, mm = 9, 0
+        when = datetime.combine(day, dt_time(hh, mm), tzinfo=timezone.utc)
+        if when > now:
+            return when
+    return None
+
+
+def _void_reason(cust: Dict[str, Any], tenant_doc: Dict[str, Any]) -> Optional[str]:
+    """A pass stays in Wallet forever unless it says otherwise. These are the
+    cases where it must stop pretending to be usable."""
+    if cust.get("gdpr_erased_at") or cust.get("deleted_at"):
+        return "erased"
+    if cust.get("card_deleted_at"):
+        return "deleted"
+    if tenant_doc.get("is_active") is False:
+        return "tenant_inactive"
+    return None
 
 
 def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -276,18 +448,44 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     show = lambda k, default=True: card.get(k) is not False if card.get(k) is not None else default  # noqa: E731
 
+    # A banner (strip) image changes the layout. In a storeCard, Wallet draws
+    # the primary fields ON TOP of the strip — so a merchant who uploaded a
+    # photo would get their own artwork covered by a big number. With a banner
+    # we therefore leave primaryFields empty (clean image, edge to edge) and
+    # move the points up to the header, exactly like Apple's own sample passes.
+    has_banner = (
+        ((card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")) in ("image", "composite")
+         and bool(card.get("hero_image_url")))
+        # the meter is painted into a strip too, so the same layout applies
+        or (card.get("show_meter") is not False and threshold > 0)
+    )
+
+    tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
+    points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points,
+                    "changeMessage": "Vous avez maintenant %@ points"}
+    show_tier = show("show_tier") and show("show_tier_badge")
+
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
+    if has_banner and show_tier:
+        # Statut moves down next to the member name (the header now holds points).
+        secondary.append(tier_field)
     if show("show_visits"):
         secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
     if show("show_stamps"):
-        secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(), "value": f"{stamps} / {threshold}"})
+        secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
+                          "value": f"{stamps} / {threshold}", "changeMessage": "Tampons : %@"})
 
+    # changeMessage is what makes Wallet raise a lock-screen notification when
+    # the value changes after an update push. Without it the pass changes in
+    # silence — which is why the offer and the reward both carry one.
     auxiliary = [{
         "key": "reward", "label": "PROCHAINE RÉCOMPENSE",
         "value": "Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} · {reward}",
+        "changeMessage": "%@",
     }]
     if card.get("show_offer_box") is not False and card.get("offer_box_text"):
-        auxiliary.append({"key": "offer", "label": "OFFRE", "value": card["offer_box_text"]})
+        auxiliary.append({"key": "offer", "label": "OFFRE", "value": card["offer_box_text"],
+                          "changeMessage": "%@"})
 
     back = [
         {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
@@ -310,21 +508,51 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "webServiceURL": f"{_site_url()}/api/passes",
         "authenticationToken": _auth_token(serial),
         "sharingProhibited": True,
-        **colors,
+        **{k: v for k, v in colors.items() if k.endswith("Color")},
         "barcodes": [{
             "format": "PKBarcodeFormatCode128" if card.get("code_type") == "barcode" else "PKBarcodeFormatQR",
             "message": serial, "messageEncoding": "iso-8859-1", "altText": serial,
         }],
         "storeCard": {
-            "headerFields": [{"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}]
-            if show("show_tier") and show("show_tier_badge") else [],
-            "primaryFields": [{"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points}]
-            if show("show_points") else [],
+            # With a banner: points in the header, nothing over the image.
+            # Without: the classic big number, statut in the header.
+            "headerFields": ([points_field] if show("show_points") else []) if has_banner
+            else ([tier_field] if show_tier else []),
+            "primaryFields": [] if has_banner
+            else ([points_field] if show("show_points") else []),
             "secondaryFields": secondary[:4],
             "auxiliaryFields": auxiliary[:4],
             "backFields": back,
         },
     }
+    # ---- lifecycle: relevance, expiry, void -------------------------------
+    # relevantDate — Wallet surfaces the pass on the lock screen around this
+    # moment. An offer that ends soon wins; otherwise the shop's next opening.
+    offer_until = _parse_dt(card.get("offer_expires_at") or card.get("active_offer_expires_at"))
+    if offer_until and offer_until > _now():
+        pass_json["relevantDate"] = _iso(_now())
+    else:
+        opening = _next_opening(tenant.get("id") or "")
+        if opening:
+            pass_json["relevantDate"] = _iso(opening)
+
+    # expirationDate — set by the merchant for a seasonal or campaign card.
+    expires = _parse_dt(card.get("pass_expiration_date"))
+    if expires:
+        pass_json["expirationDate"] = _iso(expires)
+
+    # voided — the card was deleted by the customer, erased under the GDPR, or
+    # the business was deactivated. Wallet then greys the pass out instead of
+    # letting someone present a card that no longer exists.
+    cust_doc = _db.customers.find_one({"barcode_id": serial}) or {}
+    tenant_doc = _db.tenants.find_one({"id": tenant.get("id")}) or {}
+    reason = _void_reason(cust_doc, tenant_doc)
+    if reason:
+        pass_json["voided"] = True
+        pass_json["expirationDate"] = pass_json.get("expirationDate") or _iso(_now())
+        back.insert(0, {"key": "voided", "label": "Carte inactive",
+                        "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
+
     lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
     if lat and lng:
         pass_json["locations"] = [{"latitude": float(lat), "longitude": float(lng), "relevantText": f"Vous êtes près de {org} — pensez à scanner votre carte."}]
@@ -360,10 +588,24 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         files[f"icon{suffix}.png"] = png
     for suffix, png in _png_variants(logo_raw, (160, 50), fallback_rgb=brand).items():
         files[f"logo{suffix}.png"] = png
+    # ---- strip: banner photo and/or the progress meter ---------------------
+    # A strip is produced when the merchant uploaded a banner OR when the meter
+    # is on (show_meter, default true) — in that case the photo is replaced by a
+    # quiet brand gradient, which still reads far better than a flat card.
     hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
-    if hero_mode in ("image", "composite") and card.get("hero_image_url"):
-        hero_raw = _fetch_image(card.get("hero_image_url"))
-        if hero_raw:
+    hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
+    with_meter = card.get("show_meter") is not False and int(card.get("reward_threshold") or 0) > 0
+    if hero_raw or with_meter:
+        cust = payload["customer"]
+        threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
+        visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
+        stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
+                     else int(cust.get("visits") or 0) // visits_per_stamp)
+        strip3x = compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter)
+        if strip3x:
+            for suffix, png in _strip_variants(strip3x).items():
+                files[f"strip{suffix}.png"] = png
+        elif hero_raw:                       # no Pillow → ship the photo as-is
             for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
                 files[f"strip{suffix}.png"] = png
 
@@ -388,6 +630,72 @@ def _pkpass_response(barcode_id: str) -> Response:
                             headers={"Content-Disposition": f'attachment; filename="{fname}"',
                                      "Last-Modified": datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
                                      "Cache-Control": "no-store"})
+
+
+def notify_passes(serials: Iterable[str]) -> Dict[str, Any]:
+    """Tell every device holding these passes to refresh. Best effort — a scan
+    must never fail because a push did. Dead tokens are dropped."""
+    from services import apns_passes
+
+    serials = [s for s in dict.fromkeys(serials) if s]
+    if not serials or not apns_passes.is_configured():
+        return {"devices": 0, "sent": 0, "skipped": "not configured" if serials else "no serials"}
+    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}}, {"push_token": 1, "device_id": 1}))
+    if not regs:
+        return {"devices": 0, "sent": 0}
+    res = apns_passes.push_to_tokens([r.get("push_token") for r in regs])
+    for dead in res.get("gone", []):
+        try:
+            _db.pass_registrations.delete_many({"push_token": dead})
+        except Exception:
+            pass
+    return {"devices": len(regs), "sent": res.get("sent", 0),
+            "dropped": len(res.get("gone", [])), "failed": res.get("failed", 0),
+            "errors": res.get("errors", [])[:3]}
+
+
+def notify_customer(customer_id: str) -> Dict[str, Any]:
+    cust = _db.customers.find_one({"id": customer_id}, {"barcode_id": 1}) or {}
+    return notify_passes([cust.get("barcode_id")]) if cust.get("barcode_id") else {"devices": 0, "sent": 0}
+
+
+def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Every registered pass of a tenant (or just the given customers) — used
+    when the card design or an offer changes."""
+    q: Dict[str, Any] = {"tenant_id": tenant_id}
+    if customer_ids:
+        q["id"] = {"$in": list(customer_ids)}
+    serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
+    return notify_passes(serials)
+
+
+@router.get("/api/owner/wallet/stats")
+def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """How the Wallet side of the programme is doing: how many customers carry
+    a native pass, on how many devices, and when they were last refreshed."""
+    tid = token_data.tenant_id
+    serials = [c["barcode_id"] for c in _db.customers.find(
+        {"tenant_id": tid, "barcode_id": {"$exists": True}}, {"barcode_id": 1}) if c.get("barcode_id")]
+    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
+                                            {"serial": 1, "updated_at": 1, "created_at": 1}))
+    customers = len(serials)
+    installed = len({r["serial"] for r in regs})
+    last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
+               default=None)
+    return {
+        "apple_configured": apple_configured(),
+        "customers": customers,
+        "passes_installed": installed,        # customers carrying the pass
+        "devices": len(regs),                 # iPhone + Watch count as two
+        "install_rate": round(installed / customers * 100) if customers else 0,
+        "last_registration_at": last.isoformat() if last else None,
+    }
+
+
+@router.post("/api/owner/wallet/notify")
+def owner_notify(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """Manual "refresh my customers' passes" — handy after a design change."""
+    return notify_tenant(token_data.tenant_id)
 
 
 @router.get("/api/card/{barcode_id}/apple-wallet.pkpass")

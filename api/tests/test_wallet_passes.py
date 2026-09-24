@@ -96,7 +96,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     names = set(z.namelist())
     check("bundle has pass.json/manifest/signature/icon/logo", {"pass.json", "manifest.json", "signature", "icon.png", "logo.png"} <= names)
     check("retina variants present", {"icon@2x.png", "icon@3x.png", "logo@2x.png"} <= names)
-    check("no strip when hero_mode=none", "strip.png" not in names)
+    # Default template: no photo but the meter is on, so a brand-gradient strip
+    # is generated and the pass uses the banner layout.
+    check("strip generated for the meter even without a photo", "strip.png" in names)
     manifest = json.loads(z.read("manifest.json"))
     check("manifest sha1 matches every file", all(manifest[n] == hashlib.sha1(z.read(n)).hexdigest() for n in names - {"manifest.json", "signature"}))
     sig = z.read("signature")
@@ -107,10 +109,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("design → colours (black surface, light ink)", pj["backgroundColor"] == "rgb(0, 0, 0)" and pj["foregroundColor"] == "rgb(244, 243, 240)")
     check("card_name → logoText", pj["logoText"] == "ROYAL TRIM")
     sc = pj["storeCard"]
-    check("tier header Or", sc["headerFields"][0]["value"] == "Or")
-    check("points primary 70", sc["primaryFields"][0]["value"] == 70)
+    check("points in the header (nothing over the strip)", sc["headerFields"][0]["value"] == 70)
+    check("primaryFields empty with a strip", sc["primaryFields"] == [])
     sec = {f["key"]: f["value"] for f in sc["secondaryFields"]}
-    check("member/visits/stamps fields", sec == {"member": "Marie", "visits": 7, "stamps": "7 / 10"})
+    check("member/tier/visits/stamps fields", sec == {"member": "Marie", "tier": "Or", "visits": 7, "stamps": "7 / 10"})
     check("reward text", sc["auxiliaryFields"][0]["value"] == "Encore 3 tampons · Une coupe offerte")
     check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
     check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)
@@ -130,6 +132,101 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("latest pass bad auth → 401", status(WP.latest_pass, "pass.com.fidclic.test", "FT-TEST0001", "ApplePass x")[0] == 401)
     check("unregister → 200", status(WP.unregister_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", hdr)[0] == 200)
     check("no registrations → 204", status(WP.serials_for_device, "dev1", "pass.com.fidclic.test", None)[0] == 204)
+
+    # ---- banner (strip) layout ------------------------------------------
+    # 1×1 pixel JPEG stand-in for the merchant's artwork.
+    banner = ("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsL"
+              "DBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB"
+              "AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==")
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": banner, "hero_mode": "image"}})
+    pj2 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    sc2 = pj2["storeCard"]
+    check("banner: nothing drawn over the artwork (primaryFields empty)", sc2["primaryFields"] == [])
+    check("banner: points move to the header", [f["key"] for f in sc2["headerFields"]] == ["points"]
+          and sc2["headerFields"][0]["value"] == 70)
+    check("banner: statut joins the secondary row", "tier" in [f["key"] for f in sc2["secondaryFields"]])
+    data2 = WP.build_pkpass(WP._card_payload("FT-TEST0001"))
+    z2 = zipfile.ZipFile(io.BytesIO(data2))
+    check("banner: strip.png at 1x/2x/3x", {"strip.png", "strip@2x.png", "strip@3x.png"} <= set(z2.namelist()))
+    man2 = json.loads(z2.read("manifest.json"))
+    check("banner: manifest still complete",
+          all(man2[n] == hashlib.sha1(z2.read(n)).hexdigest() for n in set(z2.namelist()) - {"manifest.json", "signature"}))
+    from PIL import Image as _I
+    w, h = _I.open(io.BytesIO(z2.read("strip.png"))).size
+    check("banner: strip is Apple's 375x144 at 1x", (w, h) == (375, 144))
+    w3, h3 = _I.open(io.BytesIO(z2.read("strip@3x.png"))).size
+    check("banner: strip@3x is 1125x432", (w3, h3) == (1125, 432))
+    # ---- meter off + no photo → the classic layout (big number) -----------
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": "", "hero_mode": "none",
+                                                               "show_meter": False}})
+    pj3 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("meter off, no photo: classic layout (points primary, statut header)",
+          pj3["storeCard"]["primaryFields"][0]["key"] == "points"
+          and pj3["storeCard"]["headerFields"][0]["key"] == "tier")
+    z3 = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
+    check("meter off, no photo: no strip at all", "strip.png" not in z3.namelist())
+
+    # ---- the meter is really painted into the strip ------------------------
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"show_meter": True}})
+    from PIL import Image as _IM
+    def strip_of(visits):
+        db.customers.update_one({"id": "c1"}, {"$set": {"visits": visits}})
+        zz = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
+        return _IM.open(io.BytesIO(zz.read("strip@3x.png"))).convert("RGB")
+    im2, im9 = strip_of(2), strip_of(9)
+    row = 432 - 50          # inside the meter band
+    def filled(im):         # count pixels close to the brand gold
+        return sum(1 for x in range(0, 1125, 3)
+                   for px in [im.getpixel((x, row))]
+                   if abs(px[0] - 212) < 40 and abs(px[1] - 175) < 40 and abs(px[2] - 55) < 45)
+    f2, f9 = filled(im2), filled(im9)
+    check(f"meter fills with progress (2 stamps: {f2} px < 9 stamps: {f9} px)", 0 < f2 < f9)
+    db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
+
+    # ---- lifecycle: relevantDate / expirationDate / voided ---------------
+    db.tenants.update_one({"id": "t1"}, {"$set": {"weekly_schedule": [
+        {"day": d, "open_from": "09:00", "open_to": "19:00", "closed": False}
+        for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")]}})
+    pj4 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("relevantDate = next opening (lock screen at the right moment)",
+          "relevantDate" in pj4 and pj4["relevantDate"].endswith("Z"))
+    check("points field carries a changeMessage",
+          any(f.get("changeMessage") for grp in pj4["storeCard"].values() for f in grp))
+
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"pass_expiration_date": "2027-01-31T23:59:00Z"}})
+    pj5 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("merchant expiry lands on the pass", pj5.get("expirationDate") == "2027-01-31T23:59:00Z")
+    check("a live card is not voided", "voided" not in pj5)
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"pass_expiration_date": ""}})
+
+    db.customers.update_one({"id": "c1"}, {"$set": {"card_deleted_at": dt.datetime.now(dt.timezone.utc)}})
+    pj6 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("deleted card → voided + expired", pj6.get("voided") is True and "expirationDate" in pj6)
+    check("voided pass explains itself on the back",
+          any(f["key"] == "voided" for f in pj6["storeCard"]["backFields"]))
+    db.customers.update_one({"id": "c1"}, {"$unset": {"card_deleted_at": ""}})
+
+    db.tenants.update_one({"id": "t1"}, {"$set": {"is_active": False}})
+    check("deactivated business → voided", WP.build_pass_json(WP._card_payload("FT-TEST0001")).get("voided") is True)
+    db.tenants.update_one({"id": "t1"}, {"$set": {"is_active": True}})
+
+    # ---- update pushes ----------------------------------------------------
+    import services.apns_passes as APNS
+    calls = {}
+    def fake_push(tokens):
+        calls["tokens"] = list(tokens)
+        return {"sent": len(calls["tokens"]), "gone": ["dead-token"], "failed": 0, "errors": []}
+    APNS.push_to_tokens, APNS.is_configured = fake_push, (lambda: True)
+    db.pass_registrations.insert_one({"device_id": "dev9", "serial": "FT-TEST0001",
+                                      "push_token": "tok9", "pass_type_id": "pass.com.fidclic.test"})
+    db.pass_registrations.insert_one({"device_id": "devX", "serial": "FT-TEST0001",
+                                      "push_token": "dead-token", "pass_type_id": "pass.com.fidclic.test"})
+    res = WP.notify_customer("c1")
+    check("push sent to every device holding the pass", res["devices"] == 2 and res["sent"] == 2)
+    check("dead token dropped from the registrations", db.pass_registrations.count_documents({"push_token": "dead-token"}) == 0)
+    check("notify_tenant covers the whole customer base", WP.notify_tenant("t1")["devices"] == 1)
+    server.refresh_wallet_pass("c1")          # must never raise
+    check("refresh_wallet_pass is fire-and-forget", calls["tokens"] == ["tok9"])
 
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""

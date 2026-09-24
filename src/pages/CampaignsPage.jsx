@@ -2089,6 +2089,9 @@ function CardOverlayPanel() {
               ✓ Overlay déposé sur <b>{result.overlaid}</b> client{result.overlaid > 1 ? 's' : ''}.
               {result.pushed > 0 && <> Push envoyé à <b>{result.pushed}</b>.</>}
               {result.skipped > 0 && <> ({result.skipped} sans push abonné)</>}
+              {result.wallet_passes_updated > 0 && (
+                <> Cartes Wallet mises à jour : <b>{result.wallet_passes_updated}</b>.</>
+              )}
               {result.expires_at && <> Expire le {new Date(result.expires_at).toLocaleDateString('fr-FR')}.</>}
             </div>
           )}

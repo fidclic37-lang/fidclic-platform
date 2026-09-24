@@ -499,7 +499,12 @@
     "name_required": "Enter the name to show on the card.",
     "slogan": "Slogan / Message (optional)",
     "slogan_placeholder": "Cut • Beard • Care",
-    "finish": "Create my card"
+    "finish": "Create my card",
+    "banner": "Banner image",
+    "banner_hint": "Wide photo (375 × 144 ratio)",
+    "banner_add": "Add a banner",
+    "banner_change": "Change banner",
+    "banner_remove": "Remove"
   },
   "done": {
     "title": "Your {{name}} card is ready!",

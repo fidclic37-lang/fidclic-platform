@@ -443,6 +443,17 @@ def send_email_to_customer(to_email: str, from_name: str, subject: str, body_htm
 # triggered it. Every attempt lands in `delivery_log` so a merchant asking
 # "did my message go out?" has an auditable answer.
 # ════════════════════════════════════════════════════════════════════
+def refresh_wallet_pass(customer_id: str) -> None:
+    """Ask Apple to wake every device holding this customer's pass so the
+    stamps, points and status they see match what just happened at the
+    counter. Fire-and-forget: a push must never fail a scan."""
+    try:
+        from features.wallet_passes import notify_customer   # noqa: WPS433
+        notify_customer(customer_id)
+    except Exception as exc:
+        print(f"refresh_wallet_pass: {exc}")
+
+
 def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
                          kind: str = "campaign") -> dict:
     """Deliver one message to one customer. Returns {sent, channel}."""
@@ -4648,6 +4659,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
     }
+    # The stamp just changed: push the pass so Wallet updates now, not on the
+    # customer's next pull-to-refresh.
+    refresh_wallet_pass(cust["id"])
 
 
 def _cycle_start_for_customer(customer_id: str, tenant_id: str) -> Optional[datetime]:
@@ -4818,6 +4832,13 @@ def save_card_template(req: CardTemplate, token_data: TokenData = Depends(requir
                 # Sweep must never block the save, even if one customer's
                 # email send fails or their record is malformed.
                 print(f"Reward eval failed for {cust.get('id')}: {e}")
+
+    # The design (colours, banner, reward rules) changed — refresh every pass.
+    try:
+        from features.wallet_passes import notify_tenant     # noqa: WPS433
+        notify_tenant(tid)
+    except Exception as e:
+        print(f"wallet notify failed: {e}")
 
     return payload
 
@@ -5909,6 +5930,9 @@ def _serialize_card_payload(cust: dict) -> dict:
             # extra="allow", so these persist through the save endpoints
             # without model changes.
             "brand_color":          tpl.get("brand_color"),
+            # Optional lifecycle set by the merchant (seasonal / campaign card).
+            "pass_expiration_date":  tpl.get("pass_expiration_date"),
+            "offer_expires_at":      tpl.get("offer_expires_at"),
             # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
             # WalletCard / WalletPassPreview and the native pass builder.
             "card_name":            tpl.get("card_name"),
@@ -6320,11 +6344,23 @@ def push_card_override(
                 print(f"card override push failed for {cust.get('id')}: {_e}")
                 skipped += 1
 
+    # The overlay changed the banner and the OFFRE field of these customers'
+    # cards. Wallet only learns about it when we say so — and because the
+    # offer field carries a changeMessage, iOS raises a lock-screen alert.
+    wallet = {"devices": 0, "sent": 0}
+    try:
+        from features.wallet_passes import notify_tenant          # noqa: WPS433
+        wallet = notify_tenant(tenant_id, [c["id"] for c in targets])
+    except Exception as _e:
+        print(f"wallet notify (override) failed: {_e}")
+
     return {
         "status": "ok",
         "overlaid": overlaid,
         "pushed": pushed,
         "skipped": skipped,
+        "wallet_passes_updated": wallet.get("sent", 0),
+        "wallet_devices": wallet.get("devices", 0),
         "expires_at": expires_at.isoformat() if expires_at else None,
     }
 
@@ -6340,6 +6376,7 @@ def clear_card_override(
         {"customer_id": customer_id, "tenant_id": token_data.tenant_id},
         {"$set": {"is_active": False}},
     )
+    refresh_wallet_pass(customer_id)      # put the normal card back in Wallet
     return {"status": "ok", "cleared": res.modified_count}
 
 
@@ -6352,6 +6389,11 @@ def clear_all_card_overrides(
         {"tenant_id": token_data.tenant_id, "is_active": True},
         {"$set": {"is_active": False}},
     )
+    try:
+        from features.wallet_passes import notify_tenant          # noqa: WPS433
+        notify_tenant(token_data.tenant_id)
+    except Exception as _e:
+        print(f"wallet notify (clear) failed: {_e}")
     return {"status": "ok", "cleared": res.modified_count}
 
 
@@ -9647,6 +9689,7 @@ def redeem_reward(
              "updated_at": datetime.now(timezone.utc),
          }},
     )
+    refresh_wallet_pass(cust["id"])          # the meter resets — show it now
     reward.pop("_id", None)
     return reward
 

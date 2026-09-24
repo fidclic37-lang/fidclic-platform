@@ -111,6 +111,9 @@ export const ownerAPI = {
   previewSegment: (data) => api.post('/owner/campaigns/preview-segment', data),
   // Per-customer card overrides — push a middle-band overlay to a filtered segment.
   pushCardOverride: (data) => api.post('/owner/card-overrides/push', data),
+  // Apple Wallet — adoption stats + a manual "refresh everyone's pass".
+  walletStats: () => api.get('/owner/wallet/stats'),
+  walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
   getActiveCardOverrideCount: () => api.get('/owner/card-overrides/active-count'),
