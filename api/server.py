@@ -4625,6 +4625,37 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         int(scan_tpl.get("visits_per_stamp", 1) or 1),
         1,
     )
+
+    # ── the card restarts by itself ────────────────────────────────────────
+    # A paper loyalty card fills up, the customer claims the free coffee, and
+    # the NEXT purchase starts a fresh card. Ours used to stay at 10/10 for
+    # ever unless staff pressed "redeem" — so the wallet pass showed a full
+    # meter that never moved again. Now, when a visit lands on a card that was
+    # already complete, the finished card is banked as an earned reward and
+    # this visit becomes stamp 1 of the new one.
+    cycles_completed = 0
+    while (new_visits - last_red_visits) > reward_threshold:
+        try:
+            db.rewards_earned.insert_one({
+                "id": str(uuid.uuid4()),
+                "tenant_id": token_data.tenant_id,
+                "customer_id": cid,
+                "threshold": reward_threshold,
+                "reward_description": scan_tpl.get("reward_description") or "Récompense fidélité",
+                "earned_at": datetime.now(timezone.utc),
+                "status": "pending",          # claimed at the counter → "redeemed"
+                "visits_at_completion": last_red_visits + reward_threshold,
+            })
+        except Exception as _e:
+            print(f"scan_visit: could not bank the earned reward: {_e}")
+        last_red_visits += reward_threshold
+        cycles_completed += 1
+    if cycles_completed:
+        db.customers.update_one({"id": cid}, {"$set": {
+            "visits_at_last_redemption": last_red_visits,
+            "updated_at": datetime.now(timezone.utc),
+        }})
+
     stamps_in_cycle = max(0, new_visits - last_red_visits)
     stamps_capped = min(stamps_in_cycle, reward_threshold)
     reward_unlocked = stamps_in_cycle >= reward_threshold
@@ -4632,6 +4663,15 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # Notification subscription status — drives the staff scan-page prompt
     # ("This customer isn't receiving offers — show enable QR?"). We check
     # the push_subscriptions collection for any active row for this customer.
+    try:
+        pending_rewards = db.rewards_earned.count_documents({"customer_id": cid, "status": "pending"})
+    except Exception:
+        pending_rewards = 0
+
+    # The stamp just changed — wake every Wallet pass now, not on the
+    # customer's next pull-to-refresh.
+    refresh_wallet_pass(cid)
+
     notification_status = "subscribed"
     try:
         has_sub = db.push_subscriptions.count_documents({"customer_id": cid}) > 0
@@ -4656,12 +4696,12 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "reward_threshold": reward_threshold,
         "reward_unlocked":  reward_unlocked,
         "visits_at_last_redemption": last_red_visits,
+        # How many completed cards are waiting to be claimed at the counter.
+        "rewards_pending": pending_rewards,
+        "cycle_restarted": cycles_completed > 0,
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
     }
-    # The stamp just changed: push the pass so Wallet updates now, not on the
-    # customer's next pull-to-refresh.
-    refresh_wallet_pass(cust["id"])
 
 
 def _cycle_start_for_customer(customer_id: str, tenant_id: str) -> Optional[datetime]:
@@ -9676,16 +9716,28 @@ def redeem_reward(
     }
     db.rewards_redeemed.insert_one(reward)
 
-    # NO LONGER DECREMENT VISITS. Mark where in the lifetime visit count
-    # this redemption happened, so stamps can be derived as
-    # `visits - visits_at_last_redemption` going forward. Tier stays
-    # intact because it's computed from the (untouched) visits field.
+    # A banked reward is claimed first: the customer completed a card earlier
+    # and the counter already rolled over, so the fresh card's stamps must
+    # survive this redemption.
+    banked = db.rewards_earned.find_one({"customer_id": cust["id"], "status": "pending"},
+                                        sort=[("earned_at", 1)])
+    if banked:
+        db.rewards_earned.update_one({"id": banked["id"]}, {"$set": {
+            "status": "redeemed", "redeemed_at": reward["redeemed_at"],
+            "staff_email": getattr(token_data, "email", None),
+        }})
+
+    # NO LONGER DECREMENT VISITS. Move the cycle marker forward by exactly one
+    # full card (not to the current visit count) so a customer at 13 visits on
+    # a 10-visit card keeps the 3 stamps they have already earned.
+    last_red = int(cust.get("visits_at_last_redemption") or 0)
+    new_marker = last_red if banked else min(current_visits, last_red + threshold)
     db.customers.update_one(
         {"id": cust["id"]},
         {"$inc": {"rewards_redeemed_count": 1},
          "$set": {
              "last_reward_redeemed_at": reward["redeemed_at"],
-             "visits_at_last_redemption": current_visits,
+             "visits_at_last_redemption": new_marker,
              "updated_at": datetime.now(timezone.utc),
          }},
     )
