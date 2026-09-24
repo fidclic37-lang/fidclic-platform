@@ -20,7 +20,11 @@ PLAN_FEATURES = {
     # commercial names shown to merchants (Starter / Pro / Pro AI), so a
     # rename never has to touch the database.
     "silver": {                         # Starter — 39 €
+        # The cap counts ACTIVE customers — those who came at least once in
+        # the last 12 months. A client who stopped coming two years ago stays
+        # in the merchant's database, stays visible, and costs them nothing.
         "max_customers": 1500,
+        "new_cards_per_month": 500,
         "push_per_month": 2000,         # 0 = unlimited; counted from delivery_log
         "campaigns_per_month": 20,      # Starter can run targeted campaigns
         "staff_accounts": 2,            # owner + 1 collaborator
@@ -32,6 +36,7 @@ PLAN_FEATURES = {
     },
     "gold": {                           # Pro — 79 €
         "max_customers": 4500,
+        "new_cards_per_month": 1500,
         "push_per_month": 6000,
         "campaigns_per_month": 100,
         "staff_accounts": 6,
@@ -43,6 +48,7 @@ PLAN_FEATURES = {
     },
     "vip": {                            # Pro AI — 129 €
         "max_customers": 15000,
+        "new_cards_per_month": 4000,
         "push_per_month": 0,            # unlimited
         "campaigns_per_month": 0,       # unlimited
         "staff_accounts": 15,
@@ -68,6 +74,10 @@ PLAN_PRICES = {
     "gold": 79,
     "vip": 129,
 }
+
+# A customer counts against max_customers while they have visited within this
+# window. Dormant customers are kept, shown and campaignable — just not billed.
+ACTIVE_WINDOW_DAYS = 365
 
 # Annual billing: 20 % off (≈ 2 months free), same discount on every plan.
 ANNUAL_DISCOUNT = 0.20

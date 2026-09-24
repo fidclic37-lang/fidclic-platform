@@ -10,7 +10,8 @@ from pydantic import BaseModel
 
 from models import (
     UserInDB, UserCreate, Tenant, Customer, Visit, CardTemplate, Campaign, PaymentTransaction, AIQueryRequest,
-    PLAN_FEATURES, PLAN_LABELS, PLAN_PRICES, PLAN_TRIAL_DAYS, TRIAL_REMINDER_DAYS_BEFORE, TierDesign,
+    ACTIVE_WINDOW_DAYS, PLAN_FEATURES, PLAN_LABELS, PLAN_PRICES, PLAN_TRIAL_DAYS,
+    TRIAL_REMINDER_DAYS_BEFORE, TierDesign,
     CardPromotion, CardDetails, CardTypedNotification,
     Review,
 )
@@ -254,6 +255,7 @@ POSTAL_CODE_OVERRIDES = {
 # ---------------------------------------------------------------------------
 _PLAN_LIMIT_FIELDS = (
     "max_customers",
+    "new_cards_per_month",
     "push_per_month",
     "campaigns_per_month",
     "staff_accounts",
@@ -270,6 +272,35 @@ _PLAN_LIMIT_FIELDS = (
     # Monthly price in euros — admins can re-price plans without a deploy.
     "price",
 )
+
+
+def count_active_customers(tenant_id: str, now: Optional[datetime] = None) -> int:
+    """Customers who visited within the active window (a year by default).
+
+    Deleted and GDPR-erased records never count. Someone who joined recently
+    but has not come back yet counts too — they are a live card the merchant
+    just handed out, not a dormant record.
+    """
+    now = now or datetime.now(timezone.utc)
+    since = now - timedelta(days=ACTIVE_WINDOW_DAYS)
+    if db is None:
+        return 0
+    # Dormancy has to be PROVEN: a customer is inactive only when a date says
+    # so — their last visit is older than the window, or they never visited
+    # and joined before it. A record carrying neither date (an old import, a
+    # row written before these fields existed) counts as active, because
+    # nothing shows otherwise and the merchant should never lose a slot to a
+    # missing field.
+    return db.customers.count_documents({
+        "tenant_id": tenant_id,
+        "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}],
+        "card_deleted_at": {"$exists": False},
+        "$nor": [
+            {"last_visit_date": {"$lt": since}},
+            {"$and": [{"last_visit_date": None}, {"created_at": {"$lt": since}}]},
+            {"$and": [{"last_visit_date": {"$exists": False}}, {"created_at": {"$lt": since}}]},
+        ],
+    })
 
 
 def get_plan_features(plan: str) -> Dict[str, Any]:
@@ -5617,11 +5648,35 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     # block someone who's already in the programme from updating their
     # record.
     plan = t.get("plan", "basic")
-    plan_cap = get_plan_features(plan).get("max_customers", 500)
-    current_count = db.customers.count_documents({
-        "tenant_id": tid,
-        "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}],
-    })
+    features = get_plan_features(plan)
+    plan_cap = features.get("max_customers", 500)
+
+    # The plan counts ACTIVE customers: someone who has come at least once in
+    # the last year. A client who stopped coming two years ago stays in the
+    # merchant's database — visible, exportable, campaignable — and simply
+    # does not count. The merchant pays for the base they actually work with.
+    current_count = count_active_customers(tid)
+
+    # Second, narrower limit: how many NEW cards can be created this calendar
+    # month. This is the growth valve, and it resets on the 1st.
+    monthly_cap = int(features.get("new_cards_per_month") or 0)
+    if monthly_cap > 0:
+        month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        issued_this_month = db.customers.count_documents({"tenant_id": tid, "created_at": {"$gte": month_start}})
+        if issued_this_month >= monthly_cap:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "monthly_cards_limit_reached",
+                    "message": ("Ce programme a atteint son nombre de nouvelles cartes pour ce mois-ci. "
+                                "Réessayez le 1er du mois prochain, ou demandez au commerçant de passer "
+                                "à la formule supérieure."),
+                    "plan": plan,
+                    "monthly_cap": monthly_cap,
+                    "issued_this_month": issued_this_month,
+                },
+            )
+
     if current_count >= plan_cap:
         next_plan = {"basic": "gold", "gold": "vip", "vip": "chain", "chain": None}.get(plan)
         next_plan_cap = get_plan_features(next_plan).get("max_customers") if next_plan else None
@@ -5632,7 +5687,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
                 "code": "plan_limit_reached",
                 "message": (
                     f"Ce programme de fidélité est temporairement complet "
-                    f"({plan_cap} membres). Le commerçant doit augmenter "
+                    f"({plan_cap} clients actifs). Le commerçant doit augmenter "
                     f"sa limite avant que vous puissiez vous inscrire."
                 ),
                 "plan": plan,

@@ -58,6 +58,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("admin re-price shows on the public catalogue", s2["price_monthly"] == 45 and s2["limits"]["max_customers"] == 1600)
     db.plan_settings.delete_many({})
 
+    # ---- what the plan actually counts -------------------------------------
+    check("monthly new-card valve published",
+          [p["limits"]["new_cards_per_month"] for p in cat["plans"]] == [500, 1500, 4000])
+
     # ---- usage counters ---------------------------------------------------
     now = dt.datetime.now(dt.timezone.utc)
     db.tenants.insert_one({"id": "t1", "plan": "silver", "name": "Café"})
@@ -89,6 +93,35 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("campaign push blocked at the cap", out.get("reason") == "push_quota_exceeded")
     out2 = server.dispatch_to_customer("t1", {"id": "c0", "phone": None}, "Titre", "Corps", kind="reward_unlocked")
     check("transactional message never blocked", out2.get("reason") != "push_quota_exceeded")
+
+
+    # ---- active vs dormant, and the monthly valve --------------------------
+    old_client = now - dt.timedelta(days=500)
+    db.customers.insert_one({"id": "dorm", "tenant_id": "t1", "barcode_id": "FT-D",
+                             "created_at": old_client, "last_visit_date": old_client})
+    db.customers.insert_one({"id": "back", "tenant_id": "t1", "barcode_id": "FT-B",
+                             "created_at": old_client, "last_visit_date": now - dt.timedelta(days=30)})
+    # 3 fixture customers (no dates → counted, nothing proves dormancy) + the
+    # one who came back last month; the 500-day-old one drops out.
+    check("a client gone for 500 days stops counting", server.count_active_customers("t1") == 4)
+    u2 = PP.owner_usage(TD())
+    check("dormant clients are reported, not billed", u2["dormant_customers"] == 1)
+    check("new cards this month are counted", u2["new_cards"]["used"] == 0)
+    check("monthly valve comes from the plan", u2["new_cards"]["limit"] == 500)
+
+    # the join endpoint refuses once the month's valve is closed
+    db.tenants.update_one({"id": "t1"}, {"$set": {"slug": "cafe-test"}})
+    db.customers.insert_one({"id": "fresh", "tenant_id": "t1", "barcode_id": "FT-F", "created_at": now})
+    db.plan_settings.update_one({"plan": "silver"}, {"$set": {"overrides": {"new_cards_per_month": 1}}}, upsert=True)
+    try:
+        server.join_program("cafe-test", server.JoinRequest(
+            name="Nouveau", phone="0600000000", postal_code="37000", birthday="05-12", consent=True))
+        check("monthly valve refuses the extra card", False)
+    except Exception as e:
+        detail = getattr(e, "detail", {})
+        check("monthly valve refuses the extra card",
+              isinstance(detail, dict) and detail.get("code") == "monthly_cards_limit_reached")
+    db.plan_settings.delete_many({})
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

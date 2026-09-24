@@ -97,7 +97,8 @@ def public_plans():
             "label": f.get("label"),
             "price_monthly": f.get("price"),
             "limits": {
-                "max_customers": f.get("max_customers"),
+                "max_customers": f.get("max_customers"),          # clients ACTIFS (12 mois)
+                "new_cards_per_month": f.get("new_cards_per_month", 0),
                 "push_per_month": f.get("push_per_month", 0),
                 "campaigns_per_month": f.get("campaigns_per_month", 0),
                 "staff_accounts": f.get("staff_accounts"),
@@ -140,7 +141,16 @@ def owner_usage(token_data: TokenData = Depends(require_role(["business_owner", 
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     plan = tenant.get("plan") or "silver"
     f = core.get_plan_features(plan)
-    customers = _db.customers.count_documents({"tenant_id": token_data.tenant_id})
+    # The plan counts ACTIVE customers (a visit within the year); dormant
+    # records stay in the base and cost the merchant nothing.
+    customers = core.count_active_customers(token_data.tenant_id)
+    dormant = _db.customers.count_documents({
+        "tenant_id": token_data.tenant_id,
+        "card_deleted_at": {"$exists": False}, "deleted_at": {"$exists": False},
+    }) - customers
+    month_start = _month_start()
+    new_cards = _db.customers.count_documents({"tenant_id": token_data.tenant_id,
+                                               "created_at": {"$gte": month_start}})
     staff = _db.users.count_documents({"tenant_id": token_data.tenant_id})
 
     def block(used: int, limit: Optional[int]) -> Dict[str, Any]:
@@ -157,6 +167,8 @@ def owner_usage(token_data: TokenData = Depends(require_role(["business_owner", 
         "plan_label": f.get("label"),
         "period_start": _month_start().isoformat(),
         "customers": block(customers, f.get("max_customers")),
+        "dormant_customers": max(0, dormant),
+        "new_cards": block(new_cards, f.get("new_cards_per_month")),
         "push": block(push_used_this_month(token_data.tenant_id), f.get("push_per_month")),
         "campaigns": block(campaigns_used_this_month(token_data.tenant_id), f.get("campaigns_per_month")),
         "staff_accounts": block(staff, f.get("staff_accounts")),
