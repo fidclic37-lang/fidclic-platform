@@ -51,6 +51,8 @@ MODULES = [
     # Native wallet passes — Apple .pkpass + Google Wallet. No-ops (503) until
     # APPLE_PASS_* / GOOGLE_WALLET_* are set in Vercel.
     "features.wallet_passes",
+    # Carte de fidélité — design, programme rules, tiers and the page's figures.
+    "features.loyalty_card",
     # Facturation électronique (French e-invoicing) — second product module.
     # Gated: only tenants with facturation_enabled=True reach any route.
     # PA-agnostic via services.pdp_connector (Mock by default; B2Brouter via env).

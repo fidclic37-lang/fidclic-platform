@@ -261,12 +261,12 @@ STRIP_W, STRIP_H = 1125, 432          # Apple's 375 × 144 pt at 3×
 
 
 def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
-                  with_meter: bool) -> Optional[bytes]:
+                  with_meter: bool, title: str = "", subtitle: str = "") -> Optional[bytes]:
     """Build the strip: the merchant's photo (or a brand gradient when there is
-    none) with a segmented progress meter burnt into the bottom band.
-    Returns PNG bytes at 3×, or None when Pillow is unavailable."""
+    none), the current offer written across it, and a segmented progress meter
+    burnt into the bottom band. Returns PNG bytes at 3×, or None without Pillow."""
     try:
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
     except ImportError:
         return None
 
@@ -300,6 +300,46 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
         halo = Image.new("RGB", (STRIP_W, STRIP_H), mix(surface, brand, 0.85))
         img = Image.composite(halo, img, diag.point(lambda v: max(0, 255 - v * 3) // 3))
         img = img.filter(ImageFilter.GaussianBlur(14))
+
+    ink = (255, 255, 255) if (raw is not None or _lum(surface) <= 0.45) else (25, 25, 28)
+    shadow = (0, 0, 0, 130) if ink == (255, 255, 255) else (255, 255, 255, 140)
+
+    # ---- the offer, written across the banner ------------------------------
+    # This is the band the customer sees on the web card ("Avantage exclusif
+    # fidélité · 10 € cagnottés"). Wallet cannot lay out text over an image, so
+    # it is drawn here — otherwise the pass looks emptier than the card.
+    if title:
+        d0 = ImageDraw.Draw(img, "RGBA")
+        # Pillow's built-in font has no É, è or € — French copy came out as
+        # tofu boxes. DejaVu (bundled, free licence) covers Latin-1 and the
+        # euro sign; if the file is ever missing we fall back rather than fail.
+        fonts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
+        def font_at(size: int, bold: bool = True):
+            name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+            try:
+                return ImageFont.truetype(os.path.join(fonts_dir, name), size)
+            except Exception:
+                return ImageFont.load_default(size=size)
+
+        def fit(text: str, size: int, max_w: int, bold: bool = True):
+            for s_ in range(size, 22, -2):
+                f_ = font_at(s_, bold)
+                if d0.textlength(text, font=f_) <= max_w:
+                    return f_
+            return font_at(22, bold)
+        max_w = STRIP_W - 140
+        f_title = fit(title.upper(), 62, max_w)
+        f_sub = fit(subtitle, 36, max_w, bold=False) if subtitle else None
+        block_h = 66 + (44 if f_sub else 0)
+        y = (STRIP_H - (150 if with_meter and threshold > 0 else 0) - block_h) // 2
+        for text, font, dy, alpha in ((title.upper(), f_title, 0, 255),
+                                      (subtitle, f_sub, 66, 215) if f_sub else (None, None, 0, 0)):
+            if not text:
+                continue
+            w = d0.textlength(text, font=font)
+            x = (STRIP_W - w) / 2
+            d0.text((x + 2, y + dy + 2), text, font=font, fill=shadow)       # legibility on any photo
+            d0.text((x, y + dy), text, font=font, fill=ink + (alpha,))
 
     if not with_meter or threshold <= 0:
         buf = io.BytesIO(); img.save(buf, "PNG", optimize=True); return buf.getvalue()
@@ -417,6 +457,44 @@ def _next_opening(tenant_id: str, now: Optional[datetime] = None) -> Optional[da
     return None
 
 
+def _offer_text(card: Dict[str, Any]) -> Tuple[str, str]:
+    """The merchant's current offer, wherever the designer stored it: the
+    offer box, the strip band, or the promotion block. The web card shows all
+    three, so the pass must read all three or the customer sees a different
+    card in Wallet than in the browser."""
+    promo = card.get("promotion") if isinstance(card.get("promotion"), dict) else {}
+    if card.get("show_offer_box") is not False and (card.get("offer_box_text") or "").strip():
+        return card["offer_box_text"].strip(), (card.get("offer_box_subtext") or "").strip()
+    if (promo.get("title") or "").strip():
+        return promo["title"].strip(), (promo.get("subtitle") or promo.get("body") or "").strip()
+    if (card.get("strip_title") or "").strip():
+        return card["strip_title"].strip(), (card.get("strip_subtitle") or "").strip()
+    active = card.get("active_offer") if isinstance(card.get("active_offer"), dict) else {}
+    if active.get("active") and (active.get("title") or "").strip():
+        return active["title"].strip(), (active.get("description") or "").strip()
+    return "", ""
+
+
+def _header_fields(card: Dict[str, Any], has_banner: bool, show_points: bool, show_tier: bool,
+                   points_field: Dict[str, Any], tier_field: Dict[str, Any],
+                   visits: int, visits_label: Optional[str]) -> List[Dict[str, Any]]:
+    """Top-right of the pass — the only field visible while the pass is
+    collapsed in the stack, so the merchant gets to choose it."""
+    choice = (card.get("header_field") or "auto").lower()
+    if choice == "none":
+        return []
+    if choice == "points":
+        return [points_field] if show_points else []
+    if choice == "tier":
+        return [tier_field] if show_tier else []
+    if choice == "visits":
+        return [{"key": "visits_h", "label": (visits_label or "Visites").upper(), "value": visits}]
+    # auto — points when a banner leaves no room for the big number, else statut
+    if has_banner:
+        return [points_field] if show_points else ([tier_field] if show_tier else [])
+    return [tier_field] if show_tier else []
+
+
 def _void_reason(cust: Dict[str, Any], tenant_doc: Dict[str, Any]) -> Optional[str]:
     """A pass stays in Wallet forever unless it says otherwise. These are the
     cases where it must stop pretending to be usable."""
@@ -440,10 +518,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
     stamps = min(threshold, int(card.get("stamps_earned") if card.get("stamps_earned") is not None else visits // visits_per_stamp))
     remaining = threshold - stamps
-    points_per_visit = int(card.get("points_per_visit") or 10)
-    points = min(visits * points_per_visit, threshold * visits_per_stamp * points_per_visit)
+    # The card page shows the customer's points balance (1 800 pts). The pass
+    # used to show a figure derived from the current cycle, so the same
+    # customer read 1 800 on the web and 100 in Wallet. One number, one source.
+    points = int(cust.get("points") or 0)
     tier = (cust.get("tier") or "bronze").lower()
-    first_name = (cust.get("name") or "Client").split(" ")[0]
+    # "Marie" or "Marie Dupont" — the merchant's choice in the advanced panel.
+    full_name = (cust.get("name") or "Client").strip()
+    first_name = full_name if card.get("use_full_name") else full_name.split(" ")[0]
     reward = card.get("reward_description") or "Une récompense fidélité"
 
     show = lambda k, default=True: card.get(k) is not False if card.get(k) is not None else default  # noqa: E731
@@ -462,18 +544,22 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
     points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points,
-                    "changeMessage": "Vous avez maintenant %@ points"}
+                    "changeMessage": (card.get("points_change_message") or "Vous avez maintenant %@ points")}
     show_tier = show("show_tier") and show("show_tier_badge")
 
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
     if has_banner and show_tier:
         # Statut moves down next to the member name (the header now holds points).
         secondary.append(tier_field)
-    if show("show_visits"):
+    # Visits only when there is room: a storeCard row that carries four values
+    # squeezes them to the point where the important one (the stamps) is hard
+    # to read on a small screen.
+    if show("show_visits") and len(secondary) < 2:
         secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
     if show("show_stamps"):
         secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
-                          "value": f"{stamps} / {threshold}", "changeMessage": "Tampons : %@"})
+                          "value": f"{stamps} / {threshold}",
+                          "changeMessage": (card.get("stamps_change_message") or "Tampons : %@")})
 
     # changeMessage is what makes Wallet raise a lock-screen notification when
     # the value changes after an update push. Without it the pass changes in
@@ -483,8 +569,10 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "value": "Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} · {reward}",
         "changeMessage": "%@",
     }]
-    if card.get("show_offer_box") is not False and card.get("offer_box_text"):
-        auxiliary.append({"key": "offer", "label": "OFFRE", "value": card["offer_box_text"],
+    offer_title, offer_sub = _offer_text(card)
+    if offer_title:
+        auxiliary.append({"key": "offer", "label": "OFFRE",
+                          "value": f"{offer_title} · {offer_sub}" if offer_sub else offer_title,
                           "changeMessage": "%@"})
 
     back = [
@@ -496,6 +584,11 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
         if tenant.get(k):
             back.append({"key": k, "label": lbl, "value": tenant[k]})
+    # Rows the merchant wrote themselves (horaires, CGU, Instagram…).
+    for i, row in enumerate(card.get("back_fields") or []):
+        label, value = (row.get("label") or "").strip(), (row.get("value") or "").strip()
+        if label and value:
+            back.append({"key": f"custom{i}", "label": label, "value": value})
 
     pass_json: Dict[str, Any] = {
         "formatVersion": 1,
@@ -507,20 +600,29 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "logoText": org,
         "webServiceURL": f"{_site_url()}/api/passes",
         "authenticationToken": _auth_token(serial),
-        "sharingProhibited": True,
+        "sharingProhibited": not bool(card.get("allow_sharing")),
+        "suppressStripShine": not bool(card.get("strip_shine")),
         **{k: v for k, v in colors.items() if k.endswith("Color")},
         "barcodes": [{
-            "format": "PKBarcodeFormatCode128" if card.get("code_type") == "barcode" else "PKBarcodeFormatQR",
-            "message": serial, "messageEncoding": "iso-8859-1", "altText": serial,
+            "format": {
+                "barcode": "PKBarcodeFormatCode128",
+                "pdf417": "PKBarcodeFormatPDF417",
+                "aztec": "PKBarcodeFormatAztec",
+            }.get(card.get("code_type"), "PKBarcodeFormatQR"),
+            "message": (f"{_site_url()}/card/{serial}" if card.get("code_content") == "url" else serial),
+            "messageEncoding": "iso-8859-1",
+            # The human-readable line under the code is the merchant's call.
+            **({"altText": serial} if card.get("show_card_number") is not False else {}),
         }],
         "storeCard": {
             # With a banner: points in the header, nothing over the image.
-            # Without: the classic big number, statut in the header.
-            "headerFields": ([points_field] if show("show_points") else []) if has_banner
-            else ([tier_field] if show_tier else []),
+            # Without: the classic big number, statut in the header. The
+            # merchant can override which value sits top-right.
+            "headerFields": _header_fields(card, has_banner, show("show_points"), show_tier,
+                                           points_field, tier_field, visits, card.get("visits_label")),
             "primaryFields": [] if has_banner
             else ([points_field] if show("show_points") else []),
-            "secondaryFields": secondary[:4],
+            "secondaryFields": secondary[:3],
             "auxiliaryFields": auxiliary[:4],
             "backFields": back,
         },
@@ -554,8 +656,13 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
 
     lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
-    if lat and lng:
-        pass_json["locations"] = [{"latitude": float(lat), "longitude": float(lng), "relevantText": f"Vous êtes près de {org} — pensez à scanner votre carte."}]
+    if lat and lng and card.get("location_reminder") is not False:
+        pass_json["locations"] = [{
+            "latitude": float(lat), "longitude": float(lng),
+            "maxDistance": int(card.get("location_radius_m") or 150),
+            "relevantText": (card.get("location_text")
+                             or f"Vous êtes près de {org} — pensez à scanner votre carte."),
+        }]
     return pass_json
 
 
@@ -601,7 +708,9 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
         stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
                      else int(cust.get("visits") or 0) // visits_per_stamp)
-        strip3x = compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter)
+        offer_title, offer_sub = _offer_text(card)
+        strip3x = compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter,
+                                title=offer_title, subtitle=offer_sub)
         if strip3x:
             for suffix, png in _strip_variants(strip3x).items():
                 files[f"strip{suffix}.png"] = png
@@ -682,8 +791,14 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     installed = len({r["serial"] for r in regs})
     last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
                default=None)
+    try:
+        from services import apns_passes
+        push_ready = apns_passes.is_configured() and apns_passes.transport_ready()
+    except Exception:
+        push_ready = False
     return {
         "apple_configured": apple_configured(),
+        "push_ready": push_ready,             # can we actually wake devices?
         "customers": customers,
         "passes_installed": installed,        # customers carrying the pass
         "devices": len(regs),                 # iPhone + Watch count as two
@@ -853,7 +968,9 @@ def google_save_url(payload: Dict[str, Any]) -> str:
             {"id": "reward", "header": "Prochaine récompense", "body": card.get("reward_description") or "Une récompense fidélité"},
             {"id": "visits", "header": "Visites", "body": str(visits)},
         ],
-        "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]},
+        "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
+                            + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
+                               for l in (card.get("google_links") or []) if l.get("uri")]},
     }
     if card.get("tagline"):
         obj["textModulesData"].insert(0, {"id": "tagline", "header": org, "body": card["tagline"]})

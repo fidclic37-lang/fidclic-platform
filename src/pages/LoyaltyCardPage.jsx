@@ -1,0 +1,835 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
+  QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
+  MapPin, Share2, CalendarClock, Type, ChevronDown,
+} from 'lucide-react';
+import { ownerAPI } from '../lib/api';
+import WalletPassPreview from '../components/WalletPassPreview';
+import WalletCard from '../components/WalletCard';
+
+/**
+ * Carte de fidélité — the one page where a merchant designs their card, sets
+ * the programme rules, reads how the card is performing and edits the reward
+ * ladder. Built to the approved mockup (blue/white), and wired end to end:
+ *
+ *   • design + rules save to card_templates through /api/owner/card/settings,
+ *     which also pushes every customer's Wallet pass so their card follows.
+ *   • the four figures come from /api/owner/card/stats — real counts of
+ *     customers, visits and redemptions, each against the previous window.
+ *     An empty shop reads 0; there is no demo data on this page.
+ *   • "Vue client" renders the card exactly as the customer's page does;
+ *     "Vue wallet" renders the pkpass-faithful preview, so what is designed
+ *     here is what lands in Apple Wallet.
+ *
+ * The programme type is a rule, not a label: "Points" makes points accrue per
+ * euro and reads the ladder in points, "Tampons" keeps one stamp per visit and
+ * reads it in visits.
+ */
+const BLUE = '#2F6BFF';
+const INK = '#0B1C3F';
+
+/* ── small building blocks, all in the mockup's idiom ─────────────────── */
+const Card = ({ icon: Icon, title, subtitle, action, children, className = '' }) => (
+  <section className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
+    <header className="mb-4 flex items-start gap-3">
+      {Icon && (
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EAF1FF] text-[#2F6BFF]">
+          <Icon size={19} />
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <h2 className="text-[15px] font-bold leading-tight text-[#0B1C3F]">{title}</h2>
+        {subtitle && <p className="mt-0.5 text-[12.5px] leading-snug text-[#64748B]">{subtitle}</p>}
+      </div>
+      {action}
+    </header>
+    {children}
+  </section>
+);
+
+const Label = ({ children, hint }) => (
+  <label className="mb-1.5 block text-[12.5px] font-semibold text-[#334155]">
+    {children}{hint && <span className="ml-1 font-normal text-[#94A3B8]">{hint}</span>}
+  </label>
+);
+
+const Input = (props) => (
+  <input
+    {...props}
+    className={`w-full rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none transition placeholder:text-[#94A3B8] focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10 ${props.className || ''}`}
+  />
+);
+
+const Select = ({ children, ...props }) => (
+  <div className="relative">
+    <select
+      {...props}
+      className="w-full appearance-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 pr-9 text-[13.5px] text-[#0F172A] outline-none transition focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10"
+    >
+      {children}
+    </select>
+    <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#64748B]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  </div>
+);
+
+const ColorField = ({ value, onChange }) => (
+  <div className="flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-2.5 py-2">
+    <label className="relative h-7 w-7 shrink-0 cursor-pointer overflow-hidden rounded-md border border-[#E1E8F5]" style={{ background: value }}>
+      <input type="color" value={value} onChange={(e) => onChange(e.target.value.toUpperCase())}
+             className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
+    </label>
+    <input value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} maxLength={7} spellCheck={false}
+           className="min-w-0 flex-1 bg-transparent text-[13px] uppercase tracking-wide text-[#0F172A] outline-none" />
+  </div>
+);
+
+/** Image slot: preview + upload + delete, like the mockup's two thumbnails. */
+const ImageField = ({ value, onChange, label, aspect = '16 / 10', accept = 'image/png,image/jpeg,image/webp', downscale }) => {
+  const ref = useRef(null);
+  const pick = async (e) => {
+    const file = e.target.files?.[0]; e.target.value = '';
+    if (!file) return;
+    onChange(await downscale(file));
+  };
+  return (
+    <div>
+      <Label>{label}</Label>
+      <div className="flex items-stretch gap-2 rounded-xl border border-[#E1E8F5] bg-white p-2">
+        <button type="button" onClick={() => ref.current?.click()}
+                className="relative flex-1 overflow-hidden rounded-lg bg-[#F4F7FC]" style={{ aspectRatio: aspect }}>
+          {value ? (
+            <img src={value} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-[#94A3B8]">
+              <ImageIcon size={16} /><span className="text-[11px]">Ajouter</span>
+            </span>
+          )}
+        </button>
+        {value && (
+          <button type="button" onClick={() => onChange('')} aria-label={`Retirer ${label}`}
+                  className="flex w-9 shrink-0 items-center justify-center rounded-lg text-[#E5484D] hover:bg-[#FEF2F2]">
+            <Trash2 size={16} />
+          </button>
+        )}
+      </div>
+      <input ref={ref} type="file" accept={accept} className="hidden" onChange={pick} />
+    </div>
+  );
+};
+
+const Toggle = ({ icon: Icon, label, checked, onChange }) => (
+  <button type="button" onClick={() => onChange(!checked)}
+          className="flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition hover:bg-[#F7FAFF]">
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#EAF1FF] text-[#2F6BFF]"><Icon size={14} /></span>
+    <span className="flex-1 text-[13px] text-[#334155]">{label}</span>
+    <span className={`relative h-[22px] w-[42px] shrink-0 rounded-full transition ${checked ? 'bg-[#2F6BFF]' : 'bg-[#CBD5E1]'}`}>
+      <span className={`absolute top-[3px] h-4 w-4 rounded-full bg-white shadow transition-all ${checked ? 'left-[23px]' : 'left-[3px]'}`} />
+    </span>
+  </button>
+);
+
+/** One statistic: figure, label, and the change against the previous window. */
+const Stat = ({ icon: Icon, tone, value, label, delta, hint }) => {
+  const up = typeof delta === 'number' && delta >= 0;
+  return (
+    <div className="rounded-xl border border-[#E6EEFB] bg-white p-3.5" title={hint}>
+      <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: tone.bg, color: tone.fg }}>
+        <Icon size={15} />
+      </span>
+      <div className="text-[22px] font-extrabold leading-none tracking-[-0.02em] text-[#0B1C3F]">{value}</div>
+      <div className="mt-1 text-[12px] text-[#64748B]">{label}</div>
+      {typeof delta === 'number' ? (
+        <div className={`mt-2 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold ${up ? 'bg-[#E8F8EE] text-[#15803D]' : 'bg-[#FEECEC] text-[#B91C1C]'}`}>
+          {up ? <TrendingUp size={11} /> : <TrendingDown size={11} />}{up ? '+' : ''}{delta}%
+        </div>
+      ) : (
+        <div className="mt-2 inline-flex rounded-md bg-[#F1F5F9] px-1.5 py-0.5 text-[11px] font-semibold text-[#64748B]">
+          période précédente vide
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ── image helpers ────────────────────────────────────────────────────── */
+const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, reject) => {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    const ctx = c.getContext('2d');
+    if (cover) {
+      c.width = maxW; c.height = maxH;
+      const k = Math.max(maxW / img.width, maxH / img.height);
+      const w = img.width * k; const h = img.height * k;
+      ctx.drawImage(img, (maxW - w) / 2, (maxH - h) / 2, w, h);
+    } else {
+      const k = Math.min(1, maxW / Math.max(img.width, img.height));
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+    }
+    URL.revokeObjectURL(url);
+    resolve(c.toDataURL(cover ? 'image/jpeg' : 'image/png', 0.85));
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+  img.src = url;
+});
+const readLogo = downscaleTo(320, 320, false);
+const readBanner = downscaleTo(1125, 432, true);
+
+const PROGRAMME_HINT = {
+  points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
+  points_visit: 'Chaque passage en caisse crédite le même nombre de points.',
+  stamps: 'Un tampon par visite ; la récompense tombe au bout de N tampons.',
+  cashback: 'Un pourcentage du ticket est rendu au client sous forme de cagnotte.',
+};
+
+const TIER_TONE = ['#B08968', '#94A3B8', '#E0A128', '#7C3AED'];
+const WINDOWS = [{ d: 7, label: '7 derniers jours' }, { d: 30, label: '30 derniers jours' }, { d: 90, label: '90 derniers jours' }];
+
+export default function LoyaltyCardPage() {
+  const [data, setData] = useState(null);          // server truth
+  const [design, setDesign] = useState(null);
+  const [programme, setProgramme] = useState(null);
+  const [toggles, setToggles] = useState(null);
+  const [tiers, setTiers] = useState([]);
+  const [advanced, setAdvanced] = useState(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [customerPreview, setCustomerPreview] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [days, setDays] = useState(30);
+  const [view, setView] = useState('client');      // client | wallet
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [error, setError] = useState('');
+  const [editTiers, setEditTiers] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await ownerAPI.cardSettings();
+      setData(r.data);
+      setDesign(r.data.design);
+      setProgramme(r.data.programme);
+      setToggles(r.data.toggles);
+      setTiers(r.data.tiers);
+      setAdvanced(r.data.advanced);
+    } catch (e) {
+      setError(e?.response?.data?.detail || "Impossible de charger la carte.");
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let alive = true;
+    ownerAPI.cardStats(days).then((r) => { if (alive) setStats(r.data); }).catch(() => {});
+    return () => { alive = false; };
+  }, [days]);
+
+  const isPoints = programme?.type !== 'stamps';
+
+  /* The preview is fed the same fields the customer's card reads, so what is
+     on screen here is what the customer gets — no mock. */
+  const cardForPreview = useMemo(() => ({
+    layout_style: 'wallet',
+    card_name: design?.card_name,
+    surface_color: design?.surface_color,
+    brand_color: design?.brand_color,
+    logo_url: design?.logo_url,
+    hero_image_url: design?.hero_image_url,
+    hero_mode: advanced?.hero_mode || (design?.hero_image_url ? 'image' : 'none'),
+    tagline: design?.welcome_text,
+    offer_box_text: toggles?.show_message ? design?.card_message : '',
+    show_offer_box: Boolean(toggles?.show_message && design?.card_message),
+    show_points: toggles?.show_points !== false,
+    show_tier: advanced?.show_tier !== false,
+    show_tier_badge: advanced?.show_tier !== false,
+    show_visits: advanced?.show_visits !== false,
+    show_stamps: advanced?.show_stamps !== false,
+    show_meter: advanced?.show_meter !== false,
+    show_qr: toggles?.show_qr !== false,
+    code_type: toggles?.show_qr === false ? 'barcode' : (advanced?.code_type || 'qr'),
+    show_card_number: advanced?.show_card_number !== false,
+    use_full_name: Boolean(advanced?.use_full_name),
+    greeting_label: advanced?.greeting_label,
+    points_label: advanced?.points_label,
+    visits_label: advanced?.visits_label,
+    stamps_label: advanced?.stamps_label,
+    reward_threshold_stamps: programme?.reward_threshold_stamps,
+    reward_description: programme?.reward_description,
+    points_per_visit: programme?.points_per_visit,
+  }), [design, programme, toggles, advanced]);
+
+  const previewCustomer = useMemo(() => ({
+    name: 'Marie Love', first_name: 'Marie', tier: 'silver',
+    points: isPoints ? 1200 : (programme?.points_per_visit || 10) * 7,
+    visits: 7, barcode_id: 'FIDCLIC-0000-0000',
+    reward_threshold: programme?.reward_threshold_stamps || 10,
+  }), [isPoints, programme]);
+
+  const save = async () => {
+    setSaving(true); setError('');
+    try {
+      const r = await ownerAPI.saveCardSettings({
+        ...design,
+        programme: programme.type,
+        points_per_euro: Number(programme.points_per_euro),
+        cashback_rate: Number(programme.cashback_rate),
+        points_per_visit: Number(programme.points_per_visit),
+        reward_threshold_stamps: Number(programme.reward_threshold_stamps),
+        reward_points: Number(programme.reward_points),
+        reward_description: programme.reward_description,
+        ...toggles,
+        ...(advanced || {}),
+      });
+      setSavedAt({ at: Date.now(), wallet: r.data?.wallet_passes_updated || 0 });
+      load();
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Enregistrement impossible.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveTiers = async () => {
+    setSaving(true); setError('');
+    try {
+      const r = await ownerAPI.saveCardRewards(tiers.map((t) => ({ key: t.key, min: Number(t.min), reward: t.reward })));
+      setTiers(r.data.tiers);
+      setEditTiers(false);
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Paliers invalides.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!design) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center text-[#64748B]">
+        {error ? <span className="text-[#B91C1C]">⚠ {error}</span> : <Loader2 className="animate-spin" />}
+      </div>
+    );
+  }
+
+  const unit = isPoints ? 'points' : 'visites';
+
+  return (
+    <div className="lc lc-wrap space-y-4 pb-10">
+      {/* ── page header ── */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2F6BFF] text-[15px] font-bold text-white">4</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-md bg-[#EAF1FF] px-2 py-0.5 text-[11px] font-bold text-[#2F6BFF]">4 / 10</span>
+              <h1 className="text-[22px] font-extrabold tracking-[-0.02em] text-[#0B1C3F]">Carte de fidélité</h1>
+            </div>
+            <p className="mt-0.5 text-[13px] text-[#64748B]">Créez, personnalisez et gérez votre carte de fidélité digitale.</p>
+            <nav className="mt-1 text-[11.5px] text-[#94A3B8]">
+              <span>Clients</span> <span className="px-1">›</span> <span className="text-[#64748B]">Carte de fidélité</span>
+            </nav>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setCustomerPreview(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+            <Eye size={15} /> Aperçu client
+          </button>
+          <button type="button" onClick={() => setShowAdvanced((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-white"
+                  style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
+            <Sliders size={15} /> Options avancées
+            <ChevronDown size={14} className={showAdvanced ? 'rotate-180 transition' : 'transition'} />
+          </button>
+        </div>
+      </div>
+
+      {/* ── info banner ── */}
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#DCE8FF] bg-[#F2F7FF] p-4">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2F6BFF] text-white"><CreditCard size={18} /></span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-bold text-[#0B1C3F]">Une carte de fidélité moderne et digitale</p>
+          <p className="text-[12.5px] text-[#4B5C7A]">Offrez une expérience unique à vos clients. Votre carte est accessible sur mobile, avec un QR code et un suivi en temps réel.</p>
+        </div>
+        <button type="button" onClick={() => setView(view === 'client' ? 'wallet' : 'client')}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+          <Eye size={14} /> Voir un exemple
+        </button>
+      </div>
+
+      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700">⚠ {error}</div>}
+
+      {/* ── three columns ── */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        {/* 1. design */}
+        <Card icon={Plus} title="Personnalisation de la carte" subtitle="Personnalisez l'apparence de votre carte de fidélité.">
+          <div className="space-y-3.5">
+            <div>
+              <Label>Nom de la carte</Label>
+              <Input value={design.card_name} maxLength={40}
+                     onChange={(e) => setDesign({ ...design, card_name: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Couleur principale</Label>
+                <ColorField value={design.surface_color} onChange={(v) => setDesign({ ...design, surface_color: v })} />
+              </div>
+              <div>
+                <Label>Couleur secondaire</Label>
+                <ColorField value={design.brand_color} onChange={(v) => setDesign({ ...design, brand_color: v })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <ImageField label="Logo de l'établissement" value={design.logo_url} aspect="16 / 10" downscale={readLogo}
+                          onChange={(v) => setDesign({ ...design, logo_url: v })} />
+              <ImageField label="Image de fond (optionnelle)" value={design.hero_image_url} aspect="16 / 10" downscale={readBanner}
+                          onChange={(v) => setDesign({ ...design, hero_image_url: v })} />
+            </div>
+            <div>
+              <Label>Texte d'accueil sur la carte</Label>
+              <textarea rows={3} maxLength={100} value={design.welcome_text}
+                        onChange={(e) => setDesign({ ...design, welcome_text: e.target.value })}
+                        className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
+              <div className="mt-1 text-right text-[11px] text-[#94A3B8]">{(design.welcome_text || '').length}/100</div>
+            </div>
+            <button type="button" onClick={save} disabled={saving}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-60"
+                    style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer les modifications
+            </button>
+            {savedAt && (
+              <p className="flex items-center justify-center gap-1.5 text-[12px] text-[#15803D]">
+                <Check size={13} /> Enregistré{savedAt.wallet > 0 && ` · ${savedAt.wallet} carte${savedAt.wallet > 1 ? 's' : ''} Wallet mise${savedAt.wallet > 1 ? 's' : ''} à jour`}
+              </p>
+            )}
+          </div>
+        </Card>
+
+        {/* 2. preview */}
+        <Card icon={Gift} title="Aperçu de la carte" subtitle="Voici un aperçu de votre carte de fidélité.">
+          <div className="mb-3 inline-flex rounded-xl bg-[#F1F5F9] p-1">
+            {[['client', 'Vue client'], ['wallet', 'Vue wallet']].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setView(k)}
+                      className={`rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition ${view === k ? 'bg-[#2F6BFF] text-white shadow-[0_6px_14px_-8px_rgba(47,107,255,.9)]' : 'text-[#64748B]'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-center rounded-2xl bg-[#F7FAFF] p-3">
+            {/* Same card in both tabs — it is the customer's single card.
+                "Vue client" shows it as the web page renders it, "Vue wallet"
+                inside Apple's pass frame. */}
+            {view === 'wallet' ? (
+              <WalletPassPreview customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} width={250} />
+            ) : (
+              <div style={{ width: 250 }}>
+                <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />
+              </div>
+            )}
+          </div>
+          <p className="mt-2 text-center text-[11.5px] text-[#94A3B8]">
+            {view === 'wallet' ? 'Rendu identique à Apple Wallet.' : 'Rendu identique à la carte ouverte par le client.'}
+          </p>
+        </Card>
+
+        {/* 3. programme */}
+        <Card icon={Settings2} title="Paramètres de la carte" subtitle="Configurez le fonctionnement de votre programme.">
+          <div className="space-y-3.5">
+            <div>
+              <Label>Type de programme</Label>
+              <Select value={programme.type} onChange={(e) => setProgramme({ ...programme, type: e.target.value })}>
+                <option value="points_euro">Points par euro dépensé</option>
+                <option value="points_visit">Points par visite</option>
+                <option value="stamps">Tampons (1 par visite)</option>
+                <option value="cashback">Cagnotte (% du ticket)</option>
+              </Select>
+              <p className="mt-1 text-[11.5px] text-[#94A3B8]">{PROGRAMME_HINT[programme.type]}</p>
+            </div>
+            {programme.type === 'cashback' && (
+              <div>
+                <Label hint="part du ticket rendue au client">Taux de cagnotte</Label>
+                <Select value={String(programme.cashback_rate)}
+                        onChange={(e) => setProgramme({ ...programme, cashback_rate: Number(e.target.value) })}>
+                  {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} % du montant</option>)}
+                </Select>
+                <p className="mt-1 text-[11.5px] text-[#94A3B8]">
+                  Un ticket de 20 € crédite {(20 * (programme.cashback_rate || 5) / 100).toFixed(2).replace('.', ',')} € au client.
+                </p>
+              </div>
+            )}
+            {programme.type === 'points_visit' && (
+              <div>
+                <Label>Points par visite</Label>
+                <Input type="number" min="1" value={programme.points_per_visit}
+                       onChange={(e) => setProgramme({ ...programme, points_per_visit: e.target.value })} />
+              </div>
+            )}
+            {isPoints ? (
+              <>
+                {programme.type === 'points_euro' && (
+                <div>
+                  <Label>Valeur d'un point</Label>
+                  <Select value={String(programme.points_per_euro)}
+                          onChange={(e) => setProgramme({ ...programme, points_per_euro: Number(e.target.value) })}>
+                    {[1, 2, 5, 10, 20].map((n) => <option key={n} value={n}>1 € = {n} point{n > 1 ? 's' : ''}</option>)}
+                  </Select>
+                </div>
+                )}
+                <div>
+                  <Label>Récompense par défaut</Label>
+                  <div className="flex gap-2">
+                    <Input type="number" min="1" value={programme.reward_points} className="w-24"
+                           onChange={(e) => setProgramme({ ...programme, reward_points: e.target.value })} />
+                    <Input value={programme.reward_description} placeholder="1 boisson offerte"
+                           onChange={(e) => setProgramme({ ...programme, reward_description: e.target.value })} />
+                  </div>
+                  <p className="mt-1 text-[11.5px] text-[#94A3B8]">{programme.reward_points} points = {programme.reward_description || '—'}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <Label>Tampons pour une récompense</Label>
+                  <Input type="number" min="1" max="50" value={programme.reward_threshold_stamps}
+                         onChange={(e) => setProgramme({ ...programme, reward_threshold_stamps: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Récompense par défaut</Label>
+                  <Input value={programme.reward_description} placeholder="Un café offert"
+                         onChange={(e) => setProgramme({ ...programme, reward_description: e.target.value })} />
+                  <p className="mt-1 text-[11.5px] text-[#94A3B8]">{programme.reward_threshold_stamps} tampons = {programme.reward_description || '—'}</p>
+                </div>
+              </>
+            )}
+            <div>
+              <Label>Message sur la carte</Label>
+              <Input value={design.card_message} maxLength={120}
+                     onChange={(e) => setDesign({ ...design, card_message: e.target.value })} />
+            </div>
+            <div className="-mx-2 space-y-0.5 pt-1">
+              <Toggle icon={Star} label="Afficher le solde de points" checked={toggles.show_points}
+                      onChange={(v) => setToggles({ ...toggles, show_points: v })} />
+              <Toggle icon={QrCode} label="Afficher le QR code" checked={toggles.show_qr}
+                      onChange={(v) => setToggles({ ...toggles, show_qr: v })} />
+              <Toggle icon={CreditCard} label="Afficher le message sur la carte" checked={toggles.show_message}
+                      onChange={(v) => setToggles({ ...toggles, show_message: v })} />
+              <Toggle icon={Gift} label="Ajouter la carte au wallet" checked={toggles.wallet_enabled}
+                      onChange={(v) => setToggles({ ...toggles, wallet_enabled: v })} />
+              <Toggle icon={Users} label="Notification anniversaire" checked={toggles.birthday_notification}
+                      onChange={(v) => setToggles({ ...toggles, birthday_notification: v })} />
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* ── options avancées — the knobs Apple and Google really expose ── */}
+      {showAdvanced && advanced && (
+        <Card icon={Sliders} title="Options avancées"
+              subtitle="Réglages pris en charge par Apple Wallet et Google Wallet. Tout le reste (police, mise en page, animations) est imposé par Apple.">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            {/* code + identity */}
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="certaines caisses ne lisent que les codes-barres">Type de code</Label>
+                <Select value={advanced.code_type} onChange={(e) => setAdvanced({ ...advanced, code_type: e.target.value })}>
+                  <option value="qr">QR code</option>
+                  <option value="barcode">Code-barres (Code 128)</option>
+                  <option value="pdf417">PDF417</option>
+                  <option value="aztec">Aztec</option>
+                </Select>
+              </div>
+              <div className="-mx-2">
+                <Toggle icon={QrCode} label="Afficher le numéro sous le code" checked={advanced.show_card_number}
+                        onChange={(v) => setAdvanced({ ...advanced, show_card_number: v })} />
+                <Toggle icon={Users} label="Afficher le nom complet du client" checked={advanced.use_full_name}
+                        onChange={(v) => setAdvanced({ ...advanced, use_full_name: v })} />
+                {/* These two are rendered by Apple itself — they change the pass
+                    on the phone, never this preview. Saying so beats letting the
+                    merchant hunt for a change that cannot appear here. */}
+                <Toggle icon={Share2} label="Autoriser le partage de la carte" checked={advanced.allow_sharing}
+                        onChange={(v) => setAdvanced({ ...advanced, allow_sharing: v })} />
+                <Toggle icon={Star} label="Reflet Apple sur la bannière" checked={advanced.strip_shine}
+                        onChange={(v) => setAdvanced({ ...advanced, strip_shine: v })} />
+                <p className="px-2 pt-1 text-[11.5px] leading-snug text-[#94A3B8]">
+                  Ces deux réglages sont appliqués par Apple sur le téléphone : ils ne changent pas l'aperçu ci-dessus.
+                </p>
+              </div>
+            </div>
+
+            {/* labels */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#334155]">
+                <Type size={14} className="text-[#2F6BFF]" /> Libellés affichés sur la carte
+              </div>
+              {[['greeting_label', 'Membre'], ['points_label', 'Points'], ['visits_label', 'Visites'], ['stamps_label', 'Tampons']].map(([k, ph]) => (
+                <Input key={k} value={advanced[k] || ''} placeholder={ph}
+                       onChange={(e) => setAdvanced({ ...advanced, [k]: e.target.value })} />
+              ))}
+              <p className="text-[11.5px] text-[#94A3B8]">Ex. « Tampons » → « Cafés », « Points » → « Étoiles ».</p>
+            </div>
+
+            {/* lifecycle + proximity */}
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="carte saisonnière — laissez vide pour une carte permanente">Date d'expiration</Label>
+                <Input type="date" value={(advanced.pass_expiration_date || '').slice(0, 10)}
+                       onChange={(e) => setAdvanced({ ...advanced, pass_expiration_date: e.target.value ? `${e.target.value}T23:59:00Z` : '' })} />
+              </div>
+              <div className="-mx-2">
+                <Toggle icon={MapPin} label="Rappel quand le client passe devant" checked={advanced.location_reminder}
+                        onChange={(v) => setAdvanced({ ...advanced, location_reminder: v })} />
+              </div>
+              {!advanced.has_coordinates && (
+                <p className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-[11.5px] text-[#92400E]">
+                  Renseignez l'adresse de l'établissement dans Paramètres pour activer le rappel de proximité.
+                </p>
+              )}
+              <div>
+                <Label hint="visibles au dos de la carte">Informations complémentaires</Label>
+                <div className="space-y-2">
+                  {(advanced.back_fields || []).map((row, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Input value={row.label} placeholder="Horaires" className="w-1/3"
+                             onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)) })} />
+                      <Input value={row.value} placeholder="Lun-Sam 8h-19h"
+                             onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })} />
+                      <button type="button" aria-label="Supprimer la ligne"
+                              onClick={() => setAdvanced({ ...advanced, back_fields: advanced.back_fields.filter((_, j) => j !== i) })}
+                              className="shrink-0 rounded-lg px-2 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={15} /></button>
+                    </div>
+                  ))}
+                  {(advanced.back_fields || []).length < 8 && (
+                    <button type="button"
+                            onClick={() => setAdvanced({ ...advanced, back_fields: [...(advanced.back_fields || []), { label: '', value: '' }] })}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[#CBD5E1] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                      <Plus size={13} /> Ajouter une ligne
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* second row — what the card shows, and how it behaves */}
+          <div className="mt-5 grid grid-cols-1 gap-5 border-t border-[#EEF2F9] pt-5 lg:grid-cols-3">
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="seul champ visible quand la carte est empilée">Champ en haut à droite</Label>
+                <Select value={advanced.header_field} onChange={(e) => setAdvanced({ ...advanced, header_field: e.target.value })}>
+                  <option value="auto">Automatique</option>
+                  <option value="points">Solde de points</option>
+                  <option value="tier">Statut (palier)</option>
+                  <option value="visits">Nombre de visites</option>
+                  <option value="none">Aucun</option>
+                </Select>
+              </div>
+              <div>
+                <Label>Style de bannière</Label>
+                <Select value={advanced.hero_mode} onChange={(e) => setAdvanced({ ...advanced, hero_mode: e.target.value })}>
+                  <option value="image">Photo de l'établissement</option>
+                  <option value="brand">Dégradé aux couleurs de la marque</option>
+                  <option value="none">Aucune bannière</option>
+                </Select>
+              </div>
+              <div>
+                <Label hint="ce que lit la caisse">Contenu du code</Label>
+                <Select value={advanced.code_content} onChange={(e) => setAdvanced({ ...advanced, code_content: e.target.value })}>
+                  <option value="number">Numéro de carte</option>
+                  <option value="url">Lien vers la carte du client</option>
+                </Select>
+              </div>
+            </div>
+
+            <div className="-mx-2">
+              <p className="px-2 pb-1 text-[12.5px] font-semibold text-[#334155]">Éléments affichés sur la carte</p>
+              <Toggle icon={Star} label="Statut (Bronze, Argent, Or, VIP)" checked={advanced.show_tier}
+                      onChange={(v) => setAdvanced({ ...advanced, show_tier: v })} />
+              <Toggle icon={Users} label="Nombre de visites" checked={advanced.show_visits}
+                      onChange={(v) => setAdvanced({ ...advanced, show_visits: v })} />
+              <Toggle icon={Gift} label="Tampons" checked={advanced.show_stamps}
+                      onChange={(v) => setAdvanced({ ...advanced, show_stamps: v })} />
+              <Toggle icon={CreditCard} label="Jauge de progression sur la bannière" checked={advanced.show_meter}
+                      onChange={(v) => setAdvanced({ ...advanced, show_meter: v })} />
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="affiché sur l'écran verrouillé">Message de mise à jour — points</Label>
+                <Input value={advanced.points_change_message} placeholder="Vous avez maintenant %@ points"
+                       onChange={(e) => setAdvanced({ ...advanced, points_change_message: e.target.value })} />
+              </div>
+              <div>
+                <Label>Message de mise à jour — tampons</Label>
+                <Input value={advanced.stamps_change_message} placeholder="Tampons : %@"
+                       onChange={(e) => setAdvanced({ ...advanced, stamps_change_message: e.target.value })} />
+                <p className="mt-1 text-[11.5px] text-[#94A3B8]">%@ est remplacé par la nouvelle valeur.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Rayon du rappel</Label>
+                  <Select value={String(advanced.location_radius_m)}
+                          onChange={(e) => setAdvanced({ ...advanced, location_radius_m: Number(e.target.value) })}>
+                    {[50, 100, 150, 300, 500, 1000].map((m) => <option key={m} value={m}>{m} m</option>)}
+                  </Select>
+                </div>
+                <div>
+                  <Label>Texte du rappel</Label>
+                  <Input value={advanced.location_text} placeholder="Un café vous attend !"
+                         onChange={(e) => setAdvanced({ ...advanced, location_text: e.target.value })} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* third row — Google Wallet only */}
+          <div className="mt-5 border-t border-[#EEF2F9] pt-5">
+            <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">
+              Liens sur la carte <span className="font-normal text-[#94A3B8]">— Google Wallet uniquement (Apple n'affiche pas de boutons)</span>
+            </p>
+            <div className="space-y-2">
+              {(advanced.google_links || []).map((row, i) => (
+                <div key={i} className="flex gap-2">
+                  <Input value={row.label} placeholder="Réserver une table" className="w-1/3"
+                         onChange={(e) => setAdvanced({ ...advanced, google_links: advanced.google_links.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)) })} />
+                  <Input value={row.uri} placeholder="https://…"
+                         onChange={(e) => setAdvanced({ ...advanced, google_links: advanced.google_links.map((r, j) => (j === i ? { ...r, uri: e.target.value } : r)) })} />
+                  <button type="button" aria-label="Supprimer le lien"
+                          onClick={() => setAdvanced({ ...advanced, google_links: advanced.google_links.filter((_, j) => j !== i) })}
+                          className="shrink-0 rounded-lg px-2 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={15} /></button>
+                </div>
+              ))}
+              {(advanced.google_links || []).length < 3 && (
+                <button type="button"
+                        onClick={() => setAdvanced({ ...advanced, google_links: [...(advanced.google_links || []), { label: '', uri: '' }] })}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[#CBD5E1] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                  <Plus size={13} /> Ajouter un lien
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center gap-3 border-t border-[#EEF2F9] pt-4">
+            <button type="button" onClick={save} disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60"
+                    style={{ background: BLUE }}>
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer les options
+            </button>
+            <p className="text-[11.5px] text-[#94A3B8]">
+              <CalendarClock size={12} className="mr-1 inline" />
+              Les cartes déjà dans Wallet sont mises à jour automatiquement.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {/* ── statistics + rewards ── */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.15fr]">
+        <Card
+          icon={CreditCard}
+          title="Statistiques de la carte"
+          subtitle="Suivez les performances de votre programme."
+          action={(
+            <div className="w-[160px]">
+              <Select value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
+                {WINDOWS.map((w) => <option key={w.d} value={w.d}>{w.label}</option>)}
+              </Select>
+            </div>
+          )}
+        >
+          {stats ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat icon={CreditCard} tone={{ bg: '#E8F8EE', fg: '#15803D' }} value={stats.cards_active.value}
+                    label="Cartes actives" delta={stats.cards_active.delta} hint={stats.cards_active.hint} />
+              <Stat icon={QrCode} tone={{ bg: '#EAF1FF', fg: '#2F6BFF' }} value={stats.qr_scans.value}
+                    label="Scans QR code" delta={stats.qr_scans.delta} hint={stats.qr_scans.hint} />
+              <Stat icon={Gift} tone={{ bg: '#FFF4D6', fg: '#B45309' }} value={stats.rewards_used.value}
+                    label="Récompenses utilisées" delta={stats.rewards_used.delta} hint={stats.rewards_used.hint} />
+              <Stat icon={Users} tone={{ bg: '#F0E9FF', fg: '#7C3AED' }} value={stats.loyal_customers.value}
+                    label="Clients fidèles" delta={stats.loyal_customers.delta} hint={stats.loyal_customers.hint} />
+            </div>
+          ) : (
+            <div className="flex h-[132px] items-center justify-center text-[#94A3B8]"><Loader2 className="animate-spin" size={18} /></div>
+          )}
+        </Card>
+
+        <Card
+          icon={Gift}
+          title="Récompenses et paliers"
+          subtitle="Configurez les récompenses et visualisez les paliers de fidélité."
+          action={(
+            <button type="button" onClick={() => (editTiers ? saveTiers() : setEditTiers(true))} disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
+              {editTiers ? <><Check size={14} /> Enregistrer</> : <><Settings2 size={14} /> Gérer les récompenses</>}
+            </button>
+          )}
+        >
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {tiers.map((t, i) => (
+              <div key={t.key} className="text-center">
+                <span className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full" style={{ background: `${TIER_TONE[i]}1F`, color: TIER_TONE[i] }}>
+                  <Star size={17} fill="currentColor" />
+                </span>
+                {editTiers ? (
+                  <div className="space-y-1.5">
+                    <Input type="number" min="0" value={t.min} className="py-1.5 text-center text-[12px]"
+                           onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, min: e.target.value } : x)))} />
+                    <Input value={t.reward} className="py-1.5 text-center text-[12px]" placeholder="Récompense"
+                           onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, reward: e.target.value } : x)))} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-[12px] font-semibold text-[#0B1C3F]">{t.range_label}</div>
+                    <div className="mt-1 text-[12px] text-[#64748B]">{t.reward || '—'}</div>
+                    <div className="mt-0.5 text-[11px] font-semibold" style={{ color: TIER_TONE[i] }}>{t.label}</div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          {editTiers && (
+            <p className="mt-3 text-center text-[11.5px] text-[#94A3B8]">
+              Seuils en {unit}, croissants. Le premier palier démarre toujours à 0.
+              <button type="button" onClick={() => { setEditTiers(false); load(); }} className="ml-2 inline-flex items-center gap-1 text-[#64748B] underline">
+                <X size={11} /> annuler
+              </button>
+            </p>
+          )}
+          <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] p-3">
+            <Lightbulb size={16} className="mt-0.5 shrink-0 text-[#B45309]" />
+            <div>
+              <p className="text-[12.5px] font-bold text-[#92400E]">Astuce</p>
+              <p className="text-[12px] text-[#92400E]/90">Proposez des récompenses attractives pour encourager vos clients à revenir plus souvent !</p>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* ── Aperçu client — the card exactly as the customer opens it ── */}
+      {customerPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B1C3F]/60 p-6" onClick={() => setCustomerPreview(false)}>
+          <div className="w-full max-w-[420px] rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-[14px] font-bold text-[#0B1C3F]">Aperçu client</p>
+                <p className="text-[12px] text-[#64748B]">Ce que voit votre client en ouvrant sa carte.</p>
+              </div>
+              <button type="button" onClick={() => setCustomerPreview(false)} aria-label="Fermer"
+                      className="flex h-9 w-9 items-center justify-center rounded-full text-[#64748B] hover:bg-[#F1F5F9]"><X size={18} /></button>
+            </div>
+            <div className="rounded-2xl bg-[#F4F7FC] p-4">
+              <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} />
+            </div>
+            {data?.tenant?.slug && (
+              <a href={`/join/${data.tenant.slug}`} target="_blank" rel="noreferrer"
+                 className="mt-3 block text-center text-[12.5px] font-semibold text-[#2F6BFF] underline underline-offset-2">
+                Ouvrir le formulaire d'inscription client
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

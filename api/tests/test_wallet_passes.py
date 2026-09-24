@@ -112,7 +112,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("points in the header (nothing over the strip)", sc["headerFields"][0]["value"] == 70)
     check("primaryFields empty with a strip", sc["primaryFields"] == [])
     sec = {f["key"]: f["value"] for f in sc["secondaryFields"]}
-    check("member/tier/visits/stamps fields", sec == {"member": "Marie", "tier": "Or", "visits": 7, "stamps": "7 / 10"})
+    # Three fields, not four: a storeCard row squeezes four values to the point
+    # where the stamps — the one that matters — become hard to read.
+    check("member/tier/stamps in one readable row", sec == {"member": "Marie", "tier": "Or", "stamps": "7 / 10"})
+    check("points = the customer's real balance", sc["headerFields"][0]["value"] == 70)
     check("reward text", sc["auxiliaryFields"][0]["value"] == "Encore 3 tampons · Une coupe offerte")
     check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
     check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)

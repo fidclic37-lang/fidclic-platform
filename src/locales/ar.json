@@ -53,7 +53,14 @@
     "collapse_sidebar": "طي الشريط الجانبي",
     "help": "مساعدة",
     "account_menu": "قائمة الحساب",
-    "account_no_name": "بدون اسم"
+    "account_no_name": "بدون اسم",
+    "loyalty_card": "بطاقة الولاء",
+    "automations": "الأتمتة",
+    "reviews": "آراء العملاء",
+    "geolocation": "تحديد الموقع",
+    "surveys": "استبيانات",
+    "segmentation": "التقسيم",
+    "referral": "الإحالة"
   },
   "auth": {
     "login_title": "تسجيل الدخول",

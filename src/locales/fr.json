@@ -53,7 +53,14 @@
     "collapse_sidebar": "Réduire la barre latérale",
     "help": "Aide",
     "account_menu": "Menu du compte",
-    "account_no_name": "Sans nom"
+    "account_no_name": "Sans nom",
+    "loyalty_card": "Carte de fidélité",
+    "automations": "Automatisations",
+    "reviews": "Avis clients",
+    "geolocation": "Géolocalisation",
+    "surveys": "Enquêtes",
+    "segmentation": "Segmentation",
+    "referral": "Parrainage"
   },
   "auth": {
     "login_title": "Connexion",

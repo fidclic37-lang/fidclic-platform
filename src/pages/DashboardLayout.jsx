@@ -10,7 +10,7 @@ import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, CreditCard, Shield, History, ChevronDown,
-  Building2, Menu, LifeBuoy
+  Building2, Menu, LifeBuoy, Star, ClipboardList, PieChart, Share2
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 import SupportModal from '../components/SupportModal';
@@ -588,16 +588,21 @@ const DashboardLayout = () => {
         <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} py-4 space-y-0.5 overflow-y-auto`}>
           {role === 'business_owner' && (
             <>
+              {/* Order follows the approved sidebar mockup. Every row points at
+                  a page that exists — the mockup's "Enquêtes" is not built yet,
+                  so it is absent rather than dead. */}
               <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/settings#settings-status" icon={Shield} label={t('nav.customer_status')}  currentPath={currentPath} role={role} collapsed={collapsed} badge={t('nav.new_badge')} />
-              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.customer_map')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              {/* Scan Visit is intentionally NOT in the owner sidebar — that page
-                  is the staff workspace. Owners can reach it via direct URL. */}
-              <NavLink to="/dashboard/card-designer" icon={CreditCard}   label={t('nav.card_designer')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/settings#settings-auto" icon={Settings2} label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/surveys"       icon={ClipboardList} label={t('nav.surveys')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/analytics#reviews" icon={Star}     label={t('nav.reviews')}       currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/ai-assistant"  icon={BrainCircuit} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               {/* Settings is expandable — click → dropdown of section anchors */}
@@ -611,7 +616,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.customer_map')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
               <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />

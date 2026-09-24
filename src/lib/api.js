@@ -113,6 +113,11 @@ export const ownerAPI = {
   pushCardOverride: (data) => api.post('/owner/card-overrides/push', data),
   // Apple Wallet — adoption stats + a manual "refresh everyone's pass".
   walletStats: () => api.get('/owner/wallet/stats'),
+  // Carte de fidélité page — design + programme + tiers + real figures.
+  cardSettings: () => api.get('/owner/card/settings'),
+  saveCardSettings: (data) => api.put('/owner/card/settings', data),
+  cardStats: (days) => api.get('/owner/card/stats', { params: { days } }),
+  saveCardRewards: (tiers) => api.put('/owner/card/rewards', tiers),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
