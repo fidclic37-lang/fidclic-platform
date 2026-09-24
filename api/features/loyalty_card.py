@@ -40,7 +40,14 @@ from auth import require_role, TokenData
 router = APIRouter(tags=["loyalty-card"])
 _db = None
 
-PROGRAMMES = ("points", "stamps")
+# What a merchant can actually run today. Each one changes how a scan earns,
+# not just the wording on the page.
+#   points_euro  1 € spent → N points        (points_mode per_euro)
+#   points_visit fixed points per visit      (points_mode per_visit)
+#   stamps       one stamp per visit, reward every N stamps
+#   cashback     % of the bill kept as a euro balance (stored in cents)
+PROGRAMMES = ("points_euro", "points_visit", "stamps", "cashback")
+LEGACY_PROGRAMMES = {"points": "points_euro"}
 
 # The ladder the page shows under "Récompenses et paliers". Defaults are a
 # sane starting point for a café; every merchant edits them.
@@ -81,11 +88,21 @@ def _template(tenant_id: str) -> Dict[str, Any]:
 
 def _programme(tpl: Dict[str, Any]) -> str:
     p = (tpl.get("programme") or "").strip().lower()
+    p = LEGACY_PROGRAMMES.get(p, p)
     if p in PROGRAMMES:
         return p
     # Inferred for cards created before the page existed: a tenant already
     # earning per euro was running a points programme.
-    return "points" if tpl.get("points_mode") == "per_euro" else "stamps"
+    return "points_euro" if tpl.get("points_mode") == "per_euro" else "stamps"
+
+
+def _is_points(programme: str) -> bool:
+    """Everything except the stamp card is counted on a balance."""
+    return programme != "stamps"
+
+
+def _unit(programme: str) -> str:
+    return {"cashback": "€ cagnottés", "stamps": "visites"}.get(programme, "points")
 
 
 def tiers_for(tenant_id: str) -> List[Dict[str, Any]]:
@@ -95,7 +112,7 @@ def tiers_for(tenant_id: str) -> List[Dict[str, Any]]:
     programme = _programme(tpl)
     rows = tpl.get("reward_tiers")
     if not isinstance(rows, list) or not rows:
-        rows = DEFAULT_TIERS_POINTS if programme == "points" else DEFAULT_TIERS_STAMPS
+        rows = DEFAULT_TIERS_POINTS if _is_points(programme) else DEFAULT_TIERS_STAMPS
     clean: List[Dict[str, Any]] = []
     for i, row in enumerate(rows[:4]):
         key = row.get("key") or ["bronze", "silver", "gold", "vip"][i]
@@ -106,7 +123,7 @@ def tiers_for(tenant_id: str) -> List[Dict[str, Any]]:
             "reward": (row.get("reward") or "").strip(),
         })
     clean.sort(key=lambda r: r["min"])
-    unit = "points" if programme == "points" else "visites"
+    unit = _unit(programme)
     for i, row in enumerate(clean):
         nxt = clean[i + 1]["min"] if i + 1 < len(clean) else None
         row["max"] = nxt
@@ -118,7 +135,8 @@ def tiers_for(tenant_id: str) -> List[Dict[str, Any]]:
 def classify(customer: Dict[str, Any], tenant_id: str) -> str:
     """Which rung is this customer on? Points or visits, per the programme."""
     tpl = _template(tenant_id)
-    value = int(customer.get("points") or 0) if _programme(tpl) == "points" \
+    programme = _programme(tpl)
+    value = int(customer.get("points") or 0) if _is_points(programme) \
         else int(customer.get("visits") or 0)
     tier = "bronze"
     for row in tiers_for(tenant_id):
@@ -140,8 +158,9 @@ class CardSettings(BaseModel):
     welcome_text: Optional[str] = Field(None, max_length=100)
     card_message: Optional[str] = Field(None, max_length=120)
     # programme
-    programme: Optional[str] = None              # points | stamps
+    programme: Optional[str] = None              # see PROGRAMMES
     points_per_euro: Optional[float] = None
+    cashback_rate: Optional[float] = None        # % of the bill, cashback only
     points_per_visit: Optional[int] = None
     reward_threshold_stamps: Optional[int] = None
     reward_points: Optional[int] = None          # points for the default reward
@@ -163,8 +182,20 @@ class CardSettings(BaseModel):
     back_fields: Optional[List[Dict[str, str]]] = None   # [{label, value}]
     pass_expiration_date: Optional[str] = None
     location_reminder: Optional[bool] = None     # lock screen near the shop
+    location_radius_m: Optional[int] = None      # Apple's maxDistance
+    location_text: Optional[str] = None          # what the lock screen says
     allow_sharing: Optional[bool] = None
     strip_shine: Optional[bool] = None
+    header_field: Optional[str] = None           # tier | points | visits | none
+    show_tier: Optional[bool] = None
+    show_visits: Optional[bool] = None
+    show_stamps: Optional[bool] = None
+    show_meter: Optional[bool] = None            # the gauge painted on the banner
+    hero_mode: Optional[str] = None              # image | brand | none
+    code_content: Optional[str] = None           # number | url
+    points_change_message: Optional[str] = None  # notification wording
+    stamps_change_message: Optional[str] = None
+    google_links: Optional[List[Dict[str, str]]] = None   # [{label, uri}]
 
 
 @router.get("/api/owner/card/settings")
@@ -188,6 +219,8 @@ def get_card_settings(token_data: TokenData = Depends(require_role(["business_ow
         "programme": {
             "type": programme,
             "points_per_euro": float(tpl.get("points_per_euro") or 10),
+            "cashback_rate": float(tpl.get("cashback_rate") or 5),
+            "unit": _unit(programme),
             "points_per_visit": int(tpl.get("points_per_visit") or 10),
             "reward_threshold_stamps": int(tpl.get("reward_threshold_stamps") or 10),
             "reward_points": int(tpl.get("reward_points") or 100),
@@ -212,6 +245,18 @@ def get_card_settings(token_data: TokenData = Depends(require_role(["business_ow
             "back_fields": tpl.get("back_fields") or [],
             "pass_expiration_date": tpl.get("pass_expiration_date") or "",
             "location_reminder": tpl.get("location_reminder") is not False,
+            "location_radius_m": int(tpl.get("location_radius_m") or 150),
+            "location_text": tpl.get("location_text") or "",
+            "header_field": tpl.get("header_field") or "auto",
+            "show_tier": tpl.get("show_tier") is not False,
+            "show_visits": tpl.get("show_visits") is not False,
+            "show_stamps": tpl.get("show_stamps") is not False,
+            "show_meter": tpl.get("show_meter") is not False,
+            "hero_mode": tpl.get("hero_mode") or ("image" if tpl.get("hero_image_url") else "brand"),
+            "code_content": tpl.get("code_content") or "number",
+            "points_change_message": tpl.get("points_change_message") or "",
+            "stamps_change_message": tpl.get("stamps_change_message") or "",
+            "google_links": tpl.get("google_links") or [],
             "allow_sharing": bool(tpl.get("allow_sharing")),
             "strip_shine": bool(tpl.get("strip_shine")),
             # read-only context the panel needs to explain itself
@@ -230,13 +275,31 @@ def put_card_settings(body: CardSettings,
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
 
     if "programme" in payload:
+        payload["programme"] = LEGACY_PROGRAMMES.get(payload["programme"], payload["programme"])
         if payload["programme"] not in PROGRAMMES:
             raise HTTPException(status_code=400, detail="Type de programme inconnu")
-        # The programme is not a label: it drives how points are earned.
-        payload["points_mode"] = "per_euro" if payload["programme"] == "points" else "per_visit"
+        # The programme is not a label: it drives how a scan earns.
+        payload["points_mode"] = ("per_euro" if payload["programme"] in ("points_euro", "cashback")
+                                  else "per_visit")
+    if payload.get("cashback_rate") is not None:
+        payload["cashback_rate"] = max(0.5, min(50, float(payload["cashback_rate"])))
 
     if payload.get("code_type") is not None and payload["code_type"] not in ("qr", "barcode", "pdf417", "aztec"):
         raise HTTPException(status_code=400, detail="Type de code inconnu")
+    if payload.get("header_field") is not None and payload["header_field"] not in ("auto", "tier", "points", "visits", "none"):
+        raise HTTPException(status_code=400, detail="Champ d'en-tête inconnu")
+    if payload.get("hero_mode") is not None and payload["hero_mode"] not in ("image", "brand", "none"):
+        raise HTTPException(status_code=400, detail="Style de bannière inconnu")
+    if payload.get("code_content") is not None and payload["code_content"] not in ("number", "url"):
+        raise HTTPException(status_code=400, detail="Contenu du code inconnu")
+    if payload.get("location_radius_m") is not None:
+        payload["location_radius_m"] = max(50, min(2000, int(payload["location_radius_m"])))
+    if payload.get("google_links") is not None:
+        payload["google_links"] = [
+            {"label": (r.get("label") or "").strip()[:30], "uri": (r.get("uri") or "").strip()[:300]}
+            for r in payload["google_links"][:3]
+            if (r.get("uri") or "").strip().startswith(("http://", "https://", "tel:", "mailto:"))
+        ]
     if payload.get("back_fields") is not None:
         # Keep it to rows the customer can actually read on the back.
         payload["back_fields"] = [

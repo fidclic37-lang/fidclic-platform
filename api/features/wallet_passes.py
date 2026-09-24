@@ -475,6 +475,26 @@ def _offer_text(card: Dict[str, Any]) -> Tuple[str, str]:
     return "", ""
 
 
+def _header_fields(card: Dict[str, Any], has_banner: bool, show_points: bool, show_tier: bool,
+                   points_field: Dict[str, Any], tier_field: Dict[str, Any],
+                   visits: int, visits_label: Optional[str]) -> List[Dict[str, Any]]:
+    """Top-right of the pass — the only field visible while the pass is
+    collapsed in the stack, so the merchant gets to choose it."""
+    choice = (card.get("header_field") or "auto").lower()
+    if choice == "none":
+        return []
+    if choice == "points":
+        return [points_field] if show_points else []
+    if choice == "tier":
+        return [tier_field] if show_tier else []
+    if choice == "visits":
+        return [{"key": "visits_h", "label": (visits_label or "Visites").upper(), "value": visits}]
+    # auto — points when a banner leaves no room for the big number, else statut
+    if has_banner:
+        return [points_field] if show_points else ([tier_field] if show_tier else [])
+    return [tier_field] if show_tier else []
+
+
 def _void_reason(cust: Dict[str, Any], tenant_doc: Dict[str, Any]) -> Optional[str]:
     """A pass stays in Wallet forever unless it says otherwise. These are the
     cases where it must stop pretending to be usable."""
@@ -524,7 +544,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
     points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points,
-                    "changeMessage": "Vous avez maintenant %@ points"}
+                    "changeMessage": (card.get("points_change_message") or "Vous avez maintenant %@ points")}
     show_tier = show("show_tier") and show("show_tier_badge")
 
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
@@ -538,7 +558,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
     if show("show_stamps"):
         secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
-                          "value": f"{stamps} / {threshold}", "changeMessage": "Tampons : %@"})
+                          "value": f"{stamps} / {threshold}",
+                          "changeMessage": (card.get("stamps_change_message") or "Tampons : %@")})
 
     # changeMessage is what makes Wallet raise a lock-screen notification when
     # the value changes after an update push. Without it the pass changes in
@@ -588,15 +609,17 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "pdf417": "PKBarcodeFormatPDF417",
                 "aztec": "PKBarcodeFormatAztec",
             }.get(card.get("code_type"), "PKBarcodeFormatQR"),
-            "message": serial, "messageEncoding": "iso-8859-1",
+            "message": (f"{_site_url()}/card/{serial}" if card.get("code_content") == "url" else serial),
+            "messageEncoding": "iso-8859-1",
             # The human-readable line under the code is the merchant's call.
             **({"altText": serial} if card.get("show_card_number") is not False else {}),
         }],
         "storeCard": {
             # With a banner: points in the header, nothing over the image.
-            # Without: the classic big number, statut in the header.
-            "headerFields": ([points_field] if show("show_points") else []) if has_banner
-            else ([tier_field] if show_tier else []),
+            # Without: the classic big number, statut in the header. The
+            # merchant can override which value sits top-right.
+            "headerFields": _header_fields(card, has_banner, show("show_points"), show_tier,
+                                           points_field, tier_field, visits, card.get("visits_label")),
             "primaryFields": [] if has_banner
             else ([points_field] if show("show_points") else []),
             "secondaryFields": secondary[:3],
@@ -634,7 +657,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
     if lat and lng and card.get("location_reminder") is not False:
-        pass_json["locations"] = [{"latitude": float(lat), "longitude": float(lng), "relevantText": f"Vous êtes près de {org} — pensez à scanner votre carte."}]
+        pass_json["locations"] = [{
+            "latitude": float(lat), "longitude": float(lng),
+            "maxDistance": int(card.get("location_radius_m") or 150),
+            "relevantText": (card.get("location_text")
+                             or f"Vous êtes près de {org} — pensez à scanner votre carte."),
+        }]
     return pass_json
 
 
@@ -940,7 +968,9 @@ def google_save_url(payload: Dict[str, Any]) -> str:
             {"id": "reward", "header": "Prochaine récompense", "body": card.get("reward_description") or "Une récompense fidélité"},
             {"id": "visits", "header": "Visites", "body": str(visits)},
         ],
-        "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]},
+        "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
+                            + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
+                               for l in (card.get("google_links") or []) if l.get("uri")]},
     }
     if card.get("tagline"):
         obj["textModulesData"].insert(0, {"id": "tagline", "header": org, "body": card["tagline"]})

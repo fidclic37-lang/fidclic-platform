@@ -180,6 +180,13 @@ const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, rejec
 const readLogo = downscaleTo(320, 320, false);
 const readBanner = downscaleTo(1125, 432, true);
 
+const PROGRAMME_HINT = {
+  points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
+  points_visit: 'Chaque passage en caisse crédite le même nombre de points.',
+  stamps: 'Un tampon par visite ; la récompense tombe au bout de N tampons.',
+  cashback: 'Un pourcentage du ticket est rendu au client sous forme de cagnotte.',
+};
+
 const TIER_TONE = ['#B08968', '#94A3B8', '#E0A128', '#7C3AED'];
 const WINDOWS = [{ d: 7, label: '7 derniers jours' }, { d: 30, label: '30 derniers jours' }, { d: 90, label: '90 derniers jours' }];
 
@@ -221,7 +228,7 @@ export default function LoyaltyCardPage() {
     return () => { alive = false; };
   }, [days]);
 
-  const isPoints = programme?.type === 'points';
+  const isPoints = programme?.type !== 'stamps';
 
   /* The preview is fed the same fields the customer's card reads, so what is
      on screen here is what the customer gets — no mock. */
@@ -232,11 +239,16 @@ export default function LoyaltyCardPage() {
     brand_color: design?.brand_color,
     logo_url: design?.logo_url,
     hero_image_url: design?.hero_image_url,
-    hero_mode: design?.hero_image_url ? 'image' : 'none',
+    hero_mode: advanced?.hero_mode || (design?.hero_image_url ? 'image' : 'none'),
     tagline: design?.welcome_text,
     offer_box_text: toggles?.show_message ? design?.card_message : '',
     show_offer_box: Boolean(toggles?.show_message && design?.card_message),
     show_points: toggles?.show_points !== false,
+    show_tier: advanced?.show_tier !== false,
+    show_tier_badge: advanced?.show_tier !== false,
+    show_visits: advanced?.show_visits !== false,
+    show_stamps: advanced?.show_stamps !== false,
+    show_meter: advanced?.show_meter !== false,
     show_qr: toggles?.show_qr !== false,
     code_type: toggles?.show_qr === false ? 'barcode' : (advanced?.code_type || 'qr'),
     show_card_number: advanced?.show_card_number !== false,
@@ -264,6 +276,7 @@ export default function LoyaltyCardPage() {
         ...design,
         programme: programme.type,
         points_per_euro: Number(programme.points_per_euro),
+        cashback_rate: Number(programme.cashback_rate),
         points_per_visit: Number(programme.points_per_visit),
         reward_threshold_stamps: Number(programme.reward_threshold_stamps),
         reward_points: Number(programme.reward_points),
@@ -428,12 +441,35 @@ export default function LoyaltyCardPage() {
             <div>
               <Label>Type de programme</Label>
               <Select value={programme.type} onChange={(e) => setProgramme({ ...programme, type: e.target.value })}>
-                <option value="points">Points</option>
+                <option value="points_euro">Points par euro dépensé</option>
+                <option value="points_visit">Points par visite</option>
                 <option value="stamps">Tampons (1 par visite)</option>
+                <option value="cashback">Cagnotte (% du ticket)</option>
               </Select>
+              <p className="mt-1 text-[11.5px] text-[#94A3B8]">{PROGRAMME_HINT[programme.type]}</p>
             </div>
+            {programme.type === 'cashback' && (
+              <div>
+                <Label hint="part du ticket rendue au client">Taux de cagnotte</Label>
+                <Select value={String(programme.cashback_rate)}
+                        onChange={(e) => setProgramme({ ...programme, cashback_rate: Number(e.target.value) })}>
+                  {[1, 2, 3, 5, 8, 10].map((n) => <option key={n} value={n}>{n} % du montant</option>)}
+                </Select>
+                <p className="mt-1 text-[11.5px] text-[#94A3B8]">
+                  Un ticket de 20 € crédite {(20 * (programme.cashback_rate || 5) / 100).toFixed(2).replace('.', ',')} € au client.
+                </p>
+              </div>
+            )}
+            {programme.type === 'points_visit' && (
+              <div>
+                <Label>Points par visite</Label>
+                <Input type="number" min="1" value={programme.points_per_visit}
+                       onChange={(e) => setProgramme({ ...programme, points_per_visit: e.target.value })} />
+              </div>
+            )}
             {isPoints ? (
               <>
+                {programme.type === 'points_euro' && (
                 <div>
                   <Label>Valeur d'un point</Label>
                   <Select value={String(programme.points_per_euro)}
@@ -441,6 +477,7 @@ export default function LoyaltyCardPage() {
                     {[1, 2, 5, 10, 20].map((n) => <option key={n} value={n}>1 € = {n} point{n > 1 ? 's' : ''}</option>)}
                   </Select>
                 </div>
+                )}
                 <div>
                   <Label>Récompense par défaut</Label>
                   <div className="flex gap-2">
@@ -509,10 +546,16 @@ export default function LoyaltyCardPage() {
                         onChange={(v) => setAdvanced({ ...advanced, show_card_number: v })} />
                 <Toggle icon={Users} label="Afficher le nom complet du client" checked={advanced.use_full_name}
                         onChange={(v) => setAdvanced({ ...advanced, use_full_name: v })} />
+                {/* These two are rendered by Apple itself — they change the pass
+                    on the phone, never this preview. Saying so beats letting the
+                    merchant hunt for a change that cannot appear here. */}
                 <Toggle icon={Share2} label="Autoriser le partage de la carte" checked={advanced.allow_sharing}
                         onChange={(v) => setAdvanced({ ...advanced, allow_sharing: v })} />
                 <Toggle icon={Star} label="Reflet Apple sur la bannière" checked={advanced.strip_shine}
                         onChange={(v) => setAdvanced({ ...advanced, strip_shine: v })} />
+                <p className="px-2 pt-1 text-[11.5px] leading-snug text-[#94A3B8]">
+                  Ces deux réglages sont appliqués par Apple sur le téléphone : ils ne changent pas l'aperçu ci-dessus.
+                </p>
               </div>
             </div>
 
@@ -569,6 +612,104 @@ export default function LoyaltyCardPage() {
               </div>
             </div>
           </div>
+          {/* second row — what the card shows, and how it behaves */}
+          <div className="mt-5 grid grid-cols-1 gap-5 border-t border-[#EEF2F9] pt-5 lg:grid-cols-3">
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="seul champ visible quand la carte est empilée">Champ en haut à droite</Label>
+                <Select value={advanced.header_field} onChange={(e) => setAdvanced({ ...advanced, header_field: e.target.value })}>
+                  <option value="auto">Automatique</option>
+                  <option value="points">Solde de points</option>
+                  <option value="tier">Statut (palier)</option>
+                  <option value="visits">Nombre de visites</option>
+                  <option value="none">Aucun</option>
+                </Select>
+              </div>
+              <div>
+                <Label>Style de bannière</Label>
+                <Select value={advanced.hero_mode} onChange={(e) => setAdvanced({ ...advanced, hero_mode: e.target.value })}>
+                  <option value="image">Photo de l'établissement</option>
+                  <option value="brand">Dégradé aux couleurs de la marque</option>
+                  <option value="none">Aucune bannière</option>
+                </Select>
+              </div>
+              <div>
+                <Label hint="ce que lit la caisse">Contenu du code</Label>
+                <Select value={advanced.code_content} onChange={(e) => setAdvanced({ ...advanced, code_content: e.target.value })}>
+                  <option value="number">Numéro de carte</option>
+                  <option value="url">Lien vers la carte du client</option>
+                </Select>
+              </div>
+            </div>
+
+            <div className="-mx-2">
+              <p className="px-2 pb-1 text-[12.5px] font-semibold text-[#334155]">Éléments affichés sur la carte</p>
+              <Toggle icon={Star} label="Statut (Bronze, Argent, Or, VIP)" checked={advanced.show_tier}
+                      onChange={(v) => setAdvanced({ ...advanced, show_tier: v })} />
+              <Toggle icon={Users} label="Nombre de visites" checked={advanced.show_visits}
+                      onChange={(v) => setAdvanced({ ...advanced, show_visits: v })} />
+              <Toggle icon={Gift} label="Tampons" checked={advanced.show_stamps}
+                      onChange={(v) => setAdvanced({ ...advanced, show_stamps: v })} />
+              <Toggle icon={CreditCard} label="Jauge de progression sur la bannière" checked={advanced.show_meter}
+                      onChange={(v) => setAdvanced({ ...advanced, show_meter: v })} />
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="affiché sur l'écran verrouillé">Message de mise à jour — points</Label>
+                <Input value={advanced.points_change_message} placeholder="Vous avez maintenant %@ points"
+                       onChange={(e) => setAdvanced({ ...advanced, points_change_message: e.target.value })} />
+              </div>
+              <div>
+                <Label>Message de mise à jour — tampons</Label>
+                <Input value={advanced.stamps_change_message} placeholder="Tampons : %@"
+                       onChange={(e) => setAdvanced({ ...advanced, stamps_change_message: e.target.value })} />
+                <p className="mt-1 text-[11.5px] text-[#94A3B8]">%@ est remplacé par la nouvelle valeur.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Rayon du rappel</Label>
+                  <Select value={String(advanced.location_radius_m)}
+                          onChange={(e) => setAdvanced({ ...advanced, location_radius_m: Number(e.target.value) })}>
+                    {[50, 100, 150, 300, 500, 1000].map((m) => <option key={m} value={m}>{m} m</option>)}
+                  </Select>
+                </div>
+                <div>
+                  <Label>Texte du rappel</Label>
+                  <Input value={advanced.location_text} placeholder="Un café vous attend !"
+                         onChange={(e) => setAdvanced({ ...advanced, location_text: e.target.value })} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* third row — Google Wallet only */}
+          <div className="mt-5 border-t border-[#EEF2F9] pt-5">
+            <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">
+              Liens sur la carte <span className="font-normal text-[#94A3B8]">— Google Wallet uniquement (Apple n'affiche pas de boutons)</span>
+            </p>
+            <div className="space-y-2">
+              {(advanced.google_links || []).map((row, i) => (
+                <div key={i} className="flex gap-2">
+                  <Input value={row.label} placeholder="Réserver une table" className="w-1/3"
+                         onChange={(e) => setAdvanced({ ...advanced, google_links: advanced.google_links.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)) })} />
+                  <Input value={row.uri} placeholder="https://…"
+                         onChange={(e) => setAdvanced({ ...advanced, google_links: advanced.google_links.map((r, j) => (j === i ? { ...r, uri: e.target.value } : r)) })} />
+                  <button type="button" aria-label="Supprimer le lien"
+                          onClick={() => setAdvanced({ ...advanced, google_links: advanced.google_links.filter((_, j) => j !== i) })}
+                          className="shrink-0 rounded-lg px-2 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={15} /></button>
+                </div>
+              ))}
+              {(advanced.google_links || []).length < 3 && (
+                <button type="button"
+                        onClick={() => setAdvanced({ ...advanced, google_links: [...(advanced.google_links || []), { label: '', uri: '' }] })}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[#CBD5E1] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                  <Plus size={13} /> Ajouter un lien
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="mt-4 flex items-center gap-3 border-t border-[#EEF2F9] pt-4">
             <button type="button" onClick={save} disabled={saving}
                     className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60"

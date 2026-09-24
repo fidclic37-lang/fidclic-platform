@@ -4523,8 +4523,15 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         mode = (card_template.get("points_mode") or "per_visit").lower()
         ppe = float(card_template.get("points_per_euro") or 10)
         ppv = int(card_template.get("points_per_visit", 10) or 10)
-        if mode == "per_euro" and float(req.amount_paid or 0) > 0:
-            points_to_add = int(round(ppe * float(req.amount_paid)))
+        programme = (card_template.get("programme") or "").lower()
+        amount = float(req.amount_paid or 0)
+        if programme == "cashback":
+            # The customer builds a euro balance, held in cents so the ledger
+            # stays in integers like every other points programme.
+            rate = float(card_template.get("cashback_rate") or 5)
+            points_to_add = int(round(amount * rate))            # % of euros → cents
+        elif mode == "per_euro" and amount > 0:
+            points_to_add = int(round(ppe * amount))
         else:
             points_to_add = ppv
 
@@ -5977,6 +5984,13 @@ def _serialize_card_payload(cust: dict) -> dict:
             "use_full_name":         tpl.get("use_full_name"),
             "back_fields":           tpl.get("back_fields"),
             "location_reminder":     tpl.get("location_reminder"),
+            "location_radius_m":     tpl.get("location_radius_m"),
+            "location_text":         tpl.get("location_text"),
+            "header_field":          tpl.get("header_field"),
+            "code_content":          tpl.get("code_content"),
+            "points_change_message": tpl.get("points_change_message"),
+            "stamps_change_message": tpl.get("stamps_change_message"),
+            "google_links":          tpl.get("google_links"),
             "allow_sharing":         tpl.get("allow_sharing"),
             "strip_shine":           tpl.get("strip_shine"),
             "offer_expires_at":      tpl.get("offer_expires_at"),

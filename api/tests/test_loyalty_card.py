@@ -48,12 +48,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     LC.put_card_settings(LC.CardSettings(
         card_name="Carte Fidélité – Le Petit Café", surface_color="#8B5E3C", brand_color="#F5E9D7",
         welcome_text="Savourez chaque visite, collectez des points !", card_message="Merci de faire partie de notre communauté !",
-        programme="points", points_per_euro=10, reward_points=100,
+        programme="points_euro", points_per_euro=10, reward_points=100,
         reward_description="1 boisson offerte", show_qr=True, birthday_notification=False), TD())
     tpl = db.card_templates.find_one({"tenant_id": "t1"})
     check("design saved", tpl["surface_color"] == "#8B5E3C" and tpl["brand_color"] == "#F5E9D7")
     check("programme is a rule, not a label (points → per_euro)",
-          tpl["programme"] == "points" and tpl["points_mode"] == "per_euro")
+          tpl["programme"] == "points_euro" and tpl["points_mode"] == "per_euro")
     check("message reaches the card face too", tpl["offer_box_text"] == "Merci de faire partie de notre communauté !")
     check("birthday toggle lands on the automation, not the card",
           db.auto_campaigns.find_one({"tenant_id": "t1"})["birthday"]["enabled"] is False)
@@ -82,6 +82,39 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                     LC.RewardTier(min=20, reward="C"), LC.RewardTier(min=40, reward="D")], TD())
     check("classified on visits in a stamps programme",
           LC.classify({"points": 350, "visits": 12}, "t1") == "silver")
+
+    # ---- the four programmes really change how a scan earns ---------------
+    class STD:
+        email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
+    db.customers.insert_one({"id": "cscan", "tenant_id": "t1", "barcode_id": "FT-SCAN1", "name": "Léa",
+                             "visits": 0, "points": 0, "tier": "bronze",
+                             "created_at": dt.datetime.now(dt.timezone.utc)})
+
+    def scan_once(amount):
+        before = db.customers.find_one({"id": "cscan"})["points"]
+        r = server.scan_visit(server.ScanRequest(barcode_id="FT-SCAN1", amount_paid=amount), STD())
+        return r["points"] - before
+
+    LC.put_card_settings(LC.CardSettings(programme="points_euro", points_per_euro=10), TD())
+    check("points par euro: 20 € → 200 points", scan_once(20.0) == 200)
+    LC.put_card_settings(LC.CardSettings(programme="points_visit", points_per_visit=25), TD())
+    check("points par visite: flat 25 whatever the bill", scan_once(20.0) == 25)
+    LC.put_card_settings(LC.CardSettings(programme="cashback", cashback_rate=5), TD())
+    check("cagnotte 5 %: 20 € → 100 cents (1,00 €)", scan_once(20.0) == 100)
+    LC.put_card_settings(LC.CardSettings(programme="stamps"), TD())
+    check("tampons: the bill does not change the earning", scan_once(20.0) == scan_once(3.0))
+    LC.put_card_settings(LC.CardSettings(programme="cashback"), TD())
+    check("cagnotte ladder reads in euros", "€ cagnottés" in LC.tiers_for("t1")[1]["range_label"])
+    try:
+        LC.put_card_settings(LC.CardSettings(programme="loterie"), TD())
+        check("unknown programme refused", False)
+    except HTTPException as e:
+        check("unknown programme refused", e.status_code == 400)
+    LC.put_card_settings(LC.CardSettings(programme="stamps"), TD())
+    # The scans above wrote real visits; clear them so the statistics block
+    # below measures the fixture it sets up and nothing else.
+    db.customers.delete_one({"id": "cscan"})
+    db.visits.delete_many({"customer_id": "cscan"})
 
     # ---- advanced options (what Apple and Google actually expose) ---------
     LC.put_card_settings(LC.CardSettings(
@@ -115,8 +148,42 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           any(f["label"] == "Horaires" for f in pj["storeCard"]["backFields"]))
     check("sharing allowed when asked", pj["sharingProhibited"] is False)
     check("expiry reaches the pass", pj.get("expirationDate") == "2027-06-30T23:59:00Z")
+    # the second wave of advanced options
+    LC.put_card_settings(LC.CardSettings(
+        header_field="visits", hero_mode="brand", code_content="url",
+        show_tier=False, show_meter=False, location_radius_m=5000,
+        location_text="Un café vous attend !",
+        points_change_message="Nouveau solde : %@ points",
+        google_links=[{"label": "Réserver", "uri": "https://cafe.fr/reserver"},
+                      {"label": "Pirate", "uri": "javascript:alert(1)"}]), TD())
+    adv2 = LC.get_card_settings(TD())["advanced"]
+    check("header field choice saved", adv2["header_field"] == "visits")
+    check("radius clamped to Apple's sane range", adv2["location_radius_m"] == 2000)
+    check("only real links kept", adv2["google_links"] == [{"label": "Réserver", "uri": "https://cafe.fr/reserver"}])
+    db.customers.insert_one({"id": "cadv2", "tenant_id": "t1", "barcode_id": "FT-ADV2", "name": "Lea",
+                             "visits": 6, "points": 60, "tier": "silver",
+                             "created_at": dt.datetime.now(dt.timezone.utc)})
+    pj2 = WP.build_pass_json(WP._card_payload("FT-ADV2"))
+    check("header shows the chosen value", pj2["storeCard"]["headerFields"][0]["value"] == 6)
+    check("code encodes the card link", pj2["barcodes"][0]["message"].endswith("/card/FT-ADV2"))
+    check("statut hidden when asked",
+          all(f["key"] != "tier" for grp in pj2["storeCard"].values() for f in grp))
+    check("custom update wording on the pass", any(
+        f.get("changeMessage") == "Nouveau solde : %@ points"
+        for grp in pj2["storeCard"].values() for f in grp))
+    db.customers.delete_one({"id": "cadv2"})
+    for bad, field in (("hologramme", "code_type"), ("milieu", "header_field"),
+                       ("video", "hero_mode"), ("nfc", "code_content")):
+        try:
+            LC.put_card_settings(LC.CardSettings(**{field: bad}), TD())
+            check(f"{field}={bad} refused", False)
+        except HTTPException as e:
+            check(f"{field}={bad} refused", e.status_code == 400)
+
     LC.put_card_settings(LC.CardSettings(code_type="qr", show_card_number=True, use_full_name=False,
-                                         back_fields=[], pass_expiration_date=""), TD())
+                                         back_fields=[], pass_expiration_date="", header_field="auto",
+                                         hero_mode="image", code_content="number", show_tier=True,
+                                         show_meter=True, google_links=[]), TD())
     db.customers.delete_one({"id": "cadv"})
 
     # ---- statistics -------------------------------------------------------
