@@ -97,8 +97,8 @@ import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminTenantsPage from './pages/AdminTenantsPage';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
-import CardDesignerPage from './pages/CardDesignerPage';
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
+import ComingSoonPage from './pages/ComingSoonPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -293,16 +293,30 @@ function App() {
                 <ScanPage />
               </ProtectedRoute>
             } />
-            {/* Carte de fidélité — the page owners land on; the older
-                designer stays at /card-designer for the advanced knobs. */}
+            {/* Carte de fidélité — the merchant's single card. The old
+                CardDesignerPage it replaces has been removed; its advanced
+                knobs live in the "Options avancées" panel on this page. */}
+            <Route path="surveys" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+                <ComingSoonPage title="Enquêtes"
+                  description="Interrogez vos clients après leur visite : satisfaction, préférences, idées de nouveautés." />
+              </ProtectedRoute>
+            } />
+            <Route path="segmentation" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+                <ComingSoonPage title="Segmentation"
+                  description="Regroupez vos clients par comportement — fréquence, panier, ancienneté — et ciblez chaque groupe." />
+              </ProtectedRoute>
+            } />
+            <Route path="referral" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+                <ComingSoonPage title="Parrainage"
+                  description="Vos clients fidèles invitent leurs proches ; parrain et filleul reçoivent la récompense que vous définissez." />
+              </ProtectedRoute>
+            } />
             <Route path="card" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
                 <LoyaltyCardPage />
-              </ProtectedRoute>
-            } />
-            <Route path="card-designer" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
-                <CardDesignerPage />
               </ProtectedRoute>
             } />
             <Route path="campaigns" element={

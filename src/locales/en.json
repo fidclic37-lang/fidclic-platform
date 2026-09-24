@@ -56,7 +56,11 @@
     "account_no_name": "No name",
     "loyalty_card": "Loyalty card",
     "automations": "Automations",
-    "reviews": "Customer reviews"
+    "reviews": "Customer reviews",
+    "geolocation": "Geolocation",
+    "surveys": "Surveys",
+    "segmentation": "Segmentation",
+    "referral": "Referral"
   },
   "auth": {
     "login_title": "Sign in",

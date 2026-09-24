@@ -83,6 +83,42 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("classified on visits in a stamps programme",
           LC.classify({"points": 350, "visits": 12}, "t1") == "silver")
 
+    # ---- advanced options (what Apple and Google actually expose) ---------
+    LC.put_card_settings(LC.CardSettings(
+        code_type="barcode", show_card_number=False, use_full_name=True,
+        stamps_label="Cafés", allow_sharing=True, location_reminder=False,
+        pass_expiration_date="2027-06-30T23:59:00Z",
+        back_fields=[{"label": "Horaires", "value": "Lun-Sam 8h-19h"},
+                     {"label": "", "value": "ignoré"}]), TD())
+    adv = LC.get_card_settings(TD())["advanced"]
+    check("advanced options saved", adv["code_type"] == "barcode" and adv["use_full_name"] is True
+          and adv["stamps_label"] == "Cafés")
+    check("empty back rows dropped", adv["back_fields"] == [{"label": "Horaires", "value": "Lun-Sam 8h-19h"}])
+    try:
+        LC.put_card_settings(LC.CardSettings(code_type="hologramme"), TD())
+        check("unknown code type refused", False)
+    except HTTPException as e:
+        check("unknown code type refused", e.status_code == 400)
+
+    # they must reach the pass itself, not just the settings document
+    from features import wallet_passes as WP
+    WP.init(db)
+    db.customers.insert_one({"id": "cadv", "tenant_id": "t1", "barcode_id": "FT-ADV1", "name": "Marie Dupont",
+                             "visits": 3, "points": 30, "tier": "bronze",
+                             "created_at": dt.datetime.now(dt.timezone.utc)})
+    os.environ.update({"APPLE_PASS_TYPE_ID": "pass.test", "APPLE_TEAM_ID": "TEAM"})
+    pj = WP.build_pass_json(WP._card_payload("FT-ADV1"))
+    check("code type reaches the pass", pj["barcodes"][0]["format"] == "PKBarcodeFormatCode128")
+    check("card number hidden when asked", "altText" not in pj["barcodes"][0])
+    check("full name honoured", any(f.get("value") == "Marie Dupont" for f in pj["storeCard"]["secondaryFields"]))
+    check("custom back row on the pass",
+          any(f["label"] == "Horaires" for f in pj["storeCard"]["backFields"]))
+    check("sharing allowed when asked", pj["sharingProhibited"] is False)
+    check("expiry reaches the pass", pj.get("expirationDate") == "2027-06-30T23:59:00Z")
+    LC.put_card_settings(LC.CardSettings(code_type="qr", show_card_number=True, use_full_name=False,
+                                         back_fields=[], pass_expiration_date=""), TD())
+    db.customers.delete_one({"id": "cadv"})
+
     # ---- statistics -------------------------------------------------------
     def visit(cid, days_ago):
         db.visits.insert_one({"id": f"v{db.visits.count_documents({})}", "tenant_id": "t1",

@@ -5972,6 +5972,13 @@ def _serialize_card_payload(cust: dict) -> dict:
             "brand_color":          tpl.get("brand_color"),
             # Optional lifecycle set by the merchant (seasonal / campaign card).
             "pass_expiration_date":  tpl.get("pass_expiration_date"),
+            # Advanced wallet options edited on the Carte de fidélité page.
+            "show_card_number":      tpl.get("show_card_number"),
+            "use_full_name":         tpl.get("use_full_name"),
+            "back_fields":           tpl.get("back_fields"),
+            "location_reminder":     tpl.get("location_reminder"),
+            "allow_sharing":         tpl.get("allow_sharing"),
+            "strip_shine":           tpl.get("strip_shine"),
             "offer_expires_at":      tpl.get("offer_expires_at"),
             # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
             # WalletCard / WalletPassPreview and the native pass builder.

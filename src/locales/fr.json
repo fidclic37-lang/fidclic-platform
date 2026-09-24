@@ -56,7 +56,11 @@
     "account_no_name": "Sans nom",
     "loyalty_card": "Carte de fidélité",
     "automations": "Automatisations",
-    "reviews": "Avis clients"
+    "reviews": "Avis clients",
+    "geolocation": "Géolocalisation",
+    "surveys": "Enquêtes",
+    "segmentation": "Segmentation",
+    "referral": "Parrainage"
   },
   "auth": {
     "login_title": "Connexion",

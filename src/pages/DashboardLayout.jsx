@@ -10,7 +10,7 @@ import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, CreditCard, Shield, History, ChevronDown,
-  Building2, Menu, LifeBuoy, Star
+  Building2, Menu, LifeBuoy, Star, ClipboardList, PieChart, Share2
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 import SupportModal from '../components/SupportModal';
@@ -597,8 +597,11 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}  currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/settings#settings-auto" icon={Settings2} label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.customer_map')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/surveys"       icon={ClipboardList} label={t('nav.surveys')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/analytics#reviews" icon={Star}     label={t('nav.reviews')}       currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/ai-assistant"  icon={BrainCircuit} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
@@ -613,7 +616,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.customer_map')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
               <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />

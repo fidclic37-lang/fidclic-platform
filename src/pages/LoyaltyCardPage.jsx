@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
-  QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X,
+  QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
+  MapPin, Share2, CalendarClock, Type, ChevronDown,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import WalletPassPreview from '../components/WalletPassPreview';
-import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
+import WalletCard from '../components/WalletCard';
 
 /**
  * Carte de fidélité — the one page where a merchant designs their card, sets
@@ -188,6 +189,9 @@ export default function LoyaltyCardPage() {
   const [programme, setProgramme] = useState(null);
   const [toggles, setToggles] = useState(null);
   const [tiers, setTiers] = useState([]);
+  const [advanced, setAdvanced] = useState(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [customerPreview, setCustomerPreview] = useState(false);
   const [stats, setStats] = useState(null);
   const [days, setDays] = useState(30);
   const [view, setView] = useState('client');      // client | wallet
@@ -204,6 +208,7 @@ export default function LoyaltyCardPage() {
       setProgramme(r.data.programme);
       setToggles(r.data.toggles);
       setTiers(r.data.tiers);
+      setAdvanced(r.data.advanced);
     } catch (e) {
       setError(e?.response?.data?.detail || "Impossible de charger la carte.");
     }
@@ -233,11 +238,17 @@ export default function LoyaltyCardPage() {
     show_offer_box: Boolean(toggles?.show_message && design?.card_message),
     show_points: toggles?.show_points !== false,
     show_qr: toggles?.show_qr !== false,
-    code_type: toggles?.show_qr === false ? 'barcode' : 'qr',
+    code_type: toggles?.show_qr === false ? 'barcode' : (advanced?.code_type || 'qr'),
+    show_card_number: advanced?.show_card_number !== false,
+    use_full_name: Boolean(advanced?.use_full_name),
+    greeting_label: advanced?.greeting_label,
+    points_label: advanced?.points_label,
+    visits_label: advanced?.visits_label,
+    stamps_label: advanced?.stamps_label,
     reward_threshold_stamps: programme?.reward_threshold_stamps,
     reward_description: programme?.reward_description,
     points_per_visit: programme?.points_per_visit,
-  }), [design, programme, toggles]);
+  }), [design, programme, toggles, advanced]);
 
   const previewCustomer = useMemo(() => ({
     name: 'Marie Love', first_name: 'Marie', tier: 'silver',
@@ -258,6 +269,7 @@ export default function LoyaltyCardPage() {
         reward_points: Number(programme.reward_points),
         reward_description: programme.reward_description,
         ...toggles,
+        ...(advanced || {}),
       });
       setSavedAt({ at: Date.now(), wallet: r.data?.wallet_passes_updated || 0 });
       load();
@@ -309,15 +321,16 @@ export default function LoyaltyCardPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <a href={data?.tenant?.slug ? `/join/${data.tenant.slug}` : '#'} target="_blank" rel="noreferrer"
-             className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+          <button type="button" onClick={() => setCustomerPreview(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <Eye size={15} /> Aperçu client
-          </a>
-          <a href="/dashboard/card-designer"
-             className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-white"
-             style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
-            <Plus size={15} /> Options avancées
-          </a>
+          </button>
+          <button type="button" onClick={() => setShowAdvanced((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold text-white"
+                  style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
+            <Sliders size={15} /> Options avancées
+            <ChevronDown size={14} className={showAdvanced ? 'rotate-180 transition' : 'transition'} />
+          </button>
         </div>
       </div>
 
@@ -393,16 +406,19 @@ export default function LoyaltyCardPage() {
             ))}
           </div>
           <div className="flex justify-center rounded-2xl bg-[#F7FAFF] p-3">
+            {/* Same card in both tabs — it is the customer's single card.
+                "Vue client" shows it as the web page renders it, "Vue wallet"
+                inside Apple's pass frame. */}
             {view === 'wallet' ? (
               <WalletPassPreview customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} width={250} />
             ) : (
               <div style={{ width: 250 }}>
-                <PremiumLoyaltyCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} />
+                <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />
               </div>
             )}
           </div>
           <p className="mt-2 text-center text-[11.5px] text-[#94A3B8]">
-            {view === 'wallet' ? 'Rendu identique à Apple Wallet.' : 'Rendu identique à la page carte du client.'}
+            {view === 'wallet' ? 'Rendu identique à Apple Wallet.' : 'Rendu identique à la carte ouverte par le client.'}
           </p>
         </Card>
 
@@ -471,6 +487,101 @@ export default function LoyaltyCardPage() {
           </div>
         </Card>
       </div>
+
+      {/* ── options avancées — the knobs Apple and Google really expose ── */}
+      {showAdvanced && advanced && (
+        <Card icon={Sliders} title="Options avancées"
+              subtitle="Réglages pris en charge par Apple Wallet et Google Wallet. Tout le reste (police, mise en page, animations) est imposé par Apple.">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            {/* code + identity */}
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="certaines caisses ne lisent que les codes-barres">Type de code</Label>
+                <Select value={advanced.code_type} onChange={(e) => setAdvanced({ ...advanced, code_type: e.target.value })}>
+                  <option value="qr">QR code</option>
+                  <option value="barcode">Code-barres (Code 128)</option>
+                  <option value="pdf417">PDF417</option>
+                  <option value="aztec">Aztec</option>
+                </Select>
+              </div>
+              <div className="-mx-2">
+                <Toggle icon={QrCode} label="Afficher le numéro sous le code" checked={advanced.show_card_number}
+                        onChange={(v) => setAdvanced({ ...advanced, show_card_number: v })} />
+                <Toggle icon={Users} label="Afficher le nom complet du client" checked={advanced.use_full_name}
+                        onChange={(v) => setAdvanced({ ...advanced, use_full_name: v })} />
+                <Toggle icon={Share2} label="Autoriser le partage de la carte" checked={advanced.allow_sharing}
+                        onChange={(v) => setAdvanced({ ...advanced, allow_sharing: v })} />
+                <Toggle icon={Star} label="Reflet Apple sur la bannière" checked={advanced.strip_shine}
+                        onChange={(v) => setAdvanced({ ...advanced, strip_shine: v })} />
+              </div>
+            </div>
+
+            {/* labels */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#334155]">
+                <Type size={14} className="text-[#2F6BFF]" /> Libellés affichés sur la carte
+              </div>
+              {[['greeting_label', 'Membre'], ['points_label', 'Points'], ['visits_label', 'Visites'], ['stamps_label', 'Tampons']].map(([k, ph]) => (
+                <Input key={k} value={advanced[k] || ''} placeholder={ph}
+                       onChange={(e) => setAdvanced({ ...advanced, [k]: e.target.value })} />
+              ))}
+              <p className="text-[11.5px] text-[#94A3B8]">Ex. « Tampons » → « Cafés », « Points » → « Étoiles ».</p>
+            </div>
+
+            {/* lifecycle + proximity */}
+            <div className="space-y-3.5">
+              <div>
+                <Label hint="carte saisonnière — laissez vide pour une carte permanente">Date d'expiration</Label>
+                <Input type="date" value={(advanced.pass_expiration_date || '').slice(0, 10)}
+                       onChange={(e) => setAdvanced({ ...advanced, pass_expiration_date: e.target.value ? `${e.target.value}T23:59:00Z` : '' })} />
+              </div>
+              <div className="-mx-2">
+                <Toggle icon={MapPin} label="Rappel quand le client passe devant" checked={advanced.location_reminder}
+                        onChange={(v) => setAdvanced({ ...advanced, location_reminder: v })} />
+              </div>
+              {!advanced.has_coordinates && (
+                <p className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-[11.5px] text-[#92400E]">
+                  Renseignez l'adresse de l'établissement dans Paramètres pour activer le rappel de proximité.
+                </p>
+              )}
+              <div>
+                <Label hint="visibles au dos de la carte">Informations complémentaires</Label>
+                <div className="space-y-2">
+                  {(advanced.back_fields || []).map((row, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Input value={row.label} placeholder="Horaires" className="w-1/3"
+                             onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)) })} />
+                      <Input value={row.value} placeholder="Lun-Sam 8h-19h"
+                             onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })} />
+                      <button type="button" aria-label="Supprimer la ligne"
+                              onClick={() => setAdvanced({ ...advanced, back_fields: advanced.back_fields.filter((_, j) => j !== i) })}
+                              className="shrink-0 rounded-lg px-2 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={15} /></button>
+                    </div>
+                  ))}
+                  {(advanced.back_fields || []).length < 8 && (
+                    <button type="button"
+                            onClick={() => setAdvanced({ ...advanced, back_fields: [...(advanced.back_fields || []), { label: '', value: '' }] })}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[#CBD5E1] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                      <Plus size={13} /> Ajouter une ligne
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-3 border-t border-[#EEF2F9] pt-4">
+            <button type="button" onClick={save} disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60"
+                    style={{ background: BLUE }}>
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer les options
+            </button>
+            <p className="text-[11.5px] text-[#94A3B8]">
+              <CalendarClock size={12} className="mr-1 inline" />
+              Les cartes déjà dans Wallet sont mises à jour automatiquement.
+            </p>
+          </div>
+        </Card>
+      )}
 
       {/* ── statistics + rewards ── */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.15fr]">
@@ -553,6 +664,31 @@ export default function LoyaltyCardPage() {
           </div>
         </Card>
       </div>
+
+      {/* ── Aperçu client — the card exactly as the customer opens it ── */}
+      {customerPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B1C3F]/60 p-6" onClick={() => setCustomerPreview(false)}>
+          <div className="w-full max-w-[420px] rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-[14px] font-bold text-[#0B1C3F]">Aperçu client</p>
+                <p className="text-[12px] text-[#64748B]">Ce que voit votre client en ouvrant sa carte.</p>
+              </div>
+              <button type="button" onClick={() => setCustomerPreview(false)} aria-label="Fermer"
+                      className="flex h-9 w-9 items-center justify-center rounded-full text-[#64748B] hover:bg-[#F1F5F9]"><X size={18} /></button>
+            </div>
+            <div className="rounded-2xl bg-[#F4F7FC] p-4">
+              <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} />
+            </div>
+            {data?.tenant?.slug && (
+              <a href={`/join/${data.tenant.slug}`} target="_blank" rel="noreferrer"
+                 className="mt-3 block text-center text-[12.5px] font-semibold text-[#2F6BFF] underline underline-offset-2">
+                Ouvrir le formulaire d'inscription client
+              </a>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

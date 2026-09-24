@@ -503,7 +503,9 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # customer read 1 800 on the web and 100 in Wallet. One number, one source.
     points = int(cust.get("points") or 0)
     tier = (cust.get("tier") or "bronze").lower()
-    first_name = (cust.get("name") or "Client").split(" ")[0]
+    # "Marie" or "Marie Dupont" — the merchant's choice in the advanced panel.
+    full_name = (cust.get("name") or "Client").strip()
+    first_name = full_name if card.get("use_full_name") else full_name.split(" ")[0]
     reward = card.get("reward_description") or "Une récompense fidélité"
 
     show = lambda k, default=True: card.get(k) is not False if card.get(k) is not None else default  # noqa: E731
@@ -561,6 +563,11 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
         if tenant.get(k):
             back.append({"key": k, "label": lbl, "value": tenant[k]})
+    # Rows the merchant wrote themselves (horaires, CGU, Instagram…).
+    for i, row in enumerate(card.get("back_fields") or []):
+        label, value = (row.get("label") or "").strip(), (row.get("value") or "").strip()
+        if label and value:
+            back.append({"key": f"custom{i}", "label": label, "value": value})
 
     pass_json: Dict[str, Any] = {
         "formatVersion": 1,
@@ -572,11 +579,18 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "logoText": org,
         "webServiceURL": f"{_site_url()}/api/passes",
         "authenticationToken": _auth_token(serial),
-        "sharingProhibited": True,
+        "sharingProhibited": not bool(card.get("allow_sharing")),
+        "suppressStripShine": not bool(card.get("strip_shine")),
         **{k: v for k, v in colors.items() if k.endswith("Color")},
         "barcodes": [{
-            "format": "PKBarcodeFormatCode128" if card.get("code_type") == "barcode" else "PKBarcodeFormatQR",
-            "message": serial, "messageEncoding": "iso-8859-1", "altText": serial,
+            "format": {
+                "barcode": "PKBarcodeFormatCode128",
+                "pdf417": "PKBarcodeFormatPDF417",
+                "aztec": "PKBarcodeFormatAztec",
+            }.get(card.get("code_type"), "PKBarcodeFormatQR"),
+            "message": serial, "messageEncoding": "iso-8859-1",
+            # The human-readable line under the code is the merchant's call.
+            **({"altText": serial} if card.get("show_card_number") is not False else {}),
         }],
         "storeCard": {
             # With a banner: points in the header, nothing over the image.
@@ -619,7 +633,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
 
     lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
-    if lat and lng:
+    if lat and lng and card.get("location_reminder") is not False:
         pass_json["locations"] = [{"latitude": float(lat), "longitude": float(lng), "relevantText": f"Vous êtes près de {org} — pensez à scanner votre carte."}]
     return pass_json
 

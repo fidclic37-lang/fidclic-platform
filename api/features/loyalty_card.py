@@ -152,6 +152,19 @@ class CardSettings(BaseModel):
     show_message: Optional[bool] = None
     wallet_enabled: Optional[bool] = None
     birthday_notification: Optional[bool] = None
+    # ── advanced: the knobs Apple and Google actually expose ──────────────
+    code_type: Optional[str] = None              # qr | barcode | pdf417 | aztec
+    show_card_number: Optional[bool] = None
+    use_full_name: Optional[bool] = None
+    greeting_label: Optional[str] = None
+    points_label: Optional[str] = None
+    visits_label: Optional[str] = None
+    stamps_label: Optional[str] = None
+    back_fields: Optional[List[Dict[str, str]]] = None   # [{label, value}]
+    pass_expiration_date: Optional[str] = None
+    location_reminder: Optional[bool] = None     # lock screen near the shop
+    allow_sharing: Optional[bool] = None
+    strip_shine: Optional[bool] = None
 
 
 @router.get("/api/owner/card/settings")
@@ -188,6 +201,22 @@ def get_card_settings(token_data: TokenData = Depends(require_role(["business_ow
             "birthday_notification": bool((_db.auto_campaigns.find_one({"tenant_id": tid}) or {})
                                           .get("birthday", {}).get("enabled", True)),
         },
+        "advanced": {
+            "code_type": tpl.get("code_type") or "qr",
+            "show_card_number": tpl.get("show_card_number") is not False,
+            "use_full_name": bool(tpl.get("use_full_name")),
+            "greeting_label": tpl.get("greeting_label") or "Membre",
+            "points_label": tpl.get("points_label") or "Points",
+            "visits_label": tpl.get("visits_label") or "Visites",
+            "stamps_label": tpl.get("stamps_label") or "Tampons",
+            "back_fields": tpl.get("back_fields") or [],
+            "pass_expiration_date": tpl.get("pass_expiration_date") or "",
+            "location_reminder": tpl.get("location_reminder") is not False,
+            "allow_sharing": bool(tpl.get("allow_sharing")),
+            "strip_shine": bool(tpl.get("strip_shine")),
+            # read-only context the panel needs to explain itself
+            "has_coordinates": bool(tenant.get("lat") or tenant.get("latitude")),
+        },
         "tiers": tiers_for(tid),
     }
 
@@ -206,6 +235,15 @@ def put_card_settings(body: CardSettings,
         # The programme is not a label: it drives how points are earned.
         payload["points_mode"] = "per_euro" if payload["programme"] == "points" else "per_visit"
 
+    if payload.get("code_type") is not None and payload["code_type"] not in ("qr", "barcode", "pdf417", "aztec"):
+        raise HTTPException(status_code=400, detail="Type de code inconnu")
+    if payload.get("back_fields") is not None:
+        # Keep it to rows the customer can actually read on the back.
+        payload["back_fields"] = [
+            {"label": (r.get("label") or "").strip()[:40], "value": (r.get("value") or "").strip()[:400]}
+            for r in payload["back_fields"][:8]
+            if (r.get("label") or "").strip() and (r.get("value") or "").strip()
+        ]
     if payload.get("reward_threshold_stamps") is not None:
         payload["reward_threshold_stamps"] = max(1, min(50, int(payload["reward_threshold_stamps"])))
     if payload.get("points_per_euro") is not None:
