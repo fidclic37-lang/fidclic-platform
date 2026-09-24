@@ -96,7 +96,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     names = set(z.namelist())
     check("bundle has pass.json/manifest/signature/icon/logo", {"pass.json", "manifest.json", "signature", "icon.png", "logo.png"} <= names)
     check("retina variants present", {"icon@2x.png", "icon@3x.png", "logo@2x.png"} <= names)
-    check("no strip when hero_mode=none", "strip.png" not in names)
+    # Default template: no photo but the meter is on, so a brand-gradient strip
+    # is generated and the pass uses the banner layout.
+    check("strip generated for the meter even without a photo", "strip.png" in names)
     manifest = json.loads(z.read("manifest.json"))
     check("manifest sha1 matches every file", all(manifest[n] == hashlib.sha1(z.read(n)).hexdigest() for n in names - {"manifest.json", "signature"}))
     sig = z.read("signature")
@@ -107,10 +109,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("design → colours (black surface, light ink)", pj["backgroundColor"] == "rgb(0, 0, 0)" and pj["foregroundColor"] == "rgb(244, 243, 240)")
     check("card_name → logoText", pj["logoText"] == "ROYAL TRIM")
     sc = pj["storeCard"]
-    check("tier header Or", sc["headerFields"][0]["value"] == "Or")
-    check("points primary 70", sc["primaryFields"][0]["value"] == 70)
+    check("points in the header (nothing over the strip)", sc["headerFields"][0]["value"] == 70)
+    check("primaryFields empty with a strip", sc["primaryFields"] == [])
     sec = {f["key"]: f["value"] for f in sc["secondaryFields"]}
-    check("member/visits/stamps fields", sec == {"member": "Marie", "visits": 7, "stamps": "7 / 10"})
+    check("member/tier/visits/stamps fields", sec == {"member": "Marie", "tier": "Or", "visits": 7, "stamps": "7 / 10"})
     check("reward text", sc["auxiliaryFields"][0]["value"] == "Encore 3 tampons · Une coupe offerte")
     check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
     check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)
@@ -154,11 +156,32 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("banner: strip is Apple's 375x144 at 1x", (w, h) == (375, 144))
     w3, h3 = _I.open(io.BytesIO(z2.read("strip@3x.png"))).size
     check("banner: strip@3x is 1125x432", (w3, h3) == (1125, 432))
-    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": "", "hero_mode": "none"}})
+    # ---- meter off + no photo → the classic layout (big number) -----------
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": "", "hero_mode": "none",
+                                                               "show_meter": False}})
     pj3 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
-    check("no banner: classic layout is back (points primary, statut header)",
+    check("meter off, no photo: classic layout (points primary, statut header)",
           pj3["storeCard"]["primaryFields"][0]["key"] == "points"
           and pj3["storeCard"]["headerFields"][0]["key"] == "tier")
+    z3 = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
+    check("meter off, no photo: no strip at all", "strip.png" not in z3.namelist())
+
+    # ---- the meter is really painted into the strip ------------------------
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"show_meter": True}})
+    from PIL import Image as _IM
+    def strip_of(visits):
+        db.customers.update_one({"id": "c1"}, {"$set": {"visits": visits}})
+        zz = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
+        return _IM.open(io.BytesIO(zz.read("strip@3x.png"))).convert("RGB")
+    im2, im9 = strip_of(2), strip_of(9)
+    row = 432 - 50          # inside the meter band
+    def filled(im):         # count pixels close to the brand gold
+        return sum(1 for x in range(0, 1125, 3)
+                   for px in [im.getpixel((x, row))]
+                   if abs(px[0] - 212) < 40 and abs(px[1] - 175) < 40 and abs(px[2] - 55) < 45)
+    f2, f9 = filled(im2), filled(im9)
+    check(f"meter fills with progress (2 stamps: {f2} px < 9 stamps: {f9} px)", 0 < f2 < f9)
+    db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
 
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""

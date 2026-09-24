@@ -170,7 +170,12 @@ def derive_colors(card: Dict[str, Any]) -> Dict[str, str]:
         or (_rgb(SURFACE_PRESETS["blanc"]) if card.get("surface") == "clair" else _rgb(SURFACE_PRESETS["anthracite"]))
     ink = _rgb(INK_LIGHT) if _contrast(_rgb(INK_LIGHT), bg) >= _contrast(_rgb(INK_DARK), bg) else _rgb(INK_DARK)  # type: ignore[arg-type]
     label = _blend(ink, bg, 0.55)  # type: ignore[arg-type]
-    return {"backgroundColor": _css(bg), "foregroundColor": _css(ink), "labelColor": _css(label)}  # type: ignore[arg-type]
+    brand = _rgb(card.get("brand_color")) or (184, 92, 56)
+    return {
+        "backgroundColor": _css(bg), "foregroundColor": _css(ink), "labelColor": _css(label),  # type: ignore[arg-type]
+        # not part of pass.json — read by compose_strip()
+        "surface_hex": "#%02X%02X%02X" % bg, "brand_hex": "#%02X%02X%02X" % brand,  # type: ignore[str-format]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +249,108 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
 
 
 # ---------------------------------------------------------------------------
+# The strip — the only place a pass can show a progress meter
+# ---------------------------------------------------------------------------
+# PassKit has no progress element: a pass can show text, images and a barcode,
+# nothing else. Every loyalty card you have seen with a filling gauge (Starbucks,
+# Loopy-built cards…) draws it INTO the strip image, server-side, per customer.
+# That is what this does — so the meter updates with the pass, like the fields.
+STRIP_W, STRIP_H = 1125, 432          # Apple's 375 × 144 pt at 3×
+
+
+def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
+                  with_meter: bool) -> Optional[bytes]:
+    """Build the strip: the merchant's photo (or a brand gradient when there is
+    none) with a segmented progress meter burnt into the bottom band.
+    Returns PNG bytes at 3×, or None when Pillow is unavailable."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        return None
+
+    surface = _rgb(theme.get("surface_hex")) or (28, 29, 34)
+    brand = _rgb(theme.get("brand_hex")) or (184, 92, 56)
+
+    base: Optional["Image.Image"] = None
+    if raw:
+        try:
+            base = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception:
+            base = None
+
+    if base is not None:
+        scale = max(STRIP_W / base.width, STRIP_H / base.height)
+        base = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.LANCZOS)
+        left, top = (base.width - STRIP_W) // 2, (base.height - STRIP_H) // 2
+        img = base.crop((left, top, left + STRIP_W, top + STRIP_H))
+    else:
+        # No photo: a diagonal brand sheen over the card surface — quiet, but
+        # it reads as designed rather than as a flat rectangle.
+        def mix(a, b, t):
+            return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+        img = Image.new("RGB", (STRIP_W, STRIP_H), surface)
+        sheen = Image.new("RGB", (STRIP_W, STRIP_H), mix(surface, brand, 0.55))
+        diag = Image.linear_gradient("L").resize((STRIP_W * 2, STRIP_W * 2)).rotate(-35, resample=Image.BICUBIC)
+        diag = diag.crop(((diag.width - STRIP_W) // 2, (diag.height - STRIP_H) // 2,
+                          (diag.width + STRIP_W) // 2, (diag.height + STRIP_H) // 2))
+        img = Image.composite(sheen, img, diag.point(lambda v: 255 - v))
+        # a soft highlight where the sheen is strongest, then a touch of blur
+        halo = Image.new("RGB", (STRIP_W, STRIP_H), mix(surface, brand, 0.85))
+        img = Image.composite(halo, img, diag.point(lambda v: max(0, 255 - v * 3) // 3))
+        img = img.filter(ImageFilter.GaussianBlur(14))
+
+    if not with_meter or threshold <= 0:
+        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True); return buf.getvalue()
+
+    # ---- meter: scrim + segmented track, one segment per stamp -------------
+    # The scrim follows the card: dark on a dark surface, light on a crème or
+    # blanc one, so the bar never sits in a heavy black band on a pale card.
+    light_card = raw is None and _lum(surface) > 0.45
+    scrim_rgb = (255, 255, 255) if light_card else (0, 0, 0)
+    empty_fill = (0, 0, 0, 38) if light_card else (255, 255, 255, 46)
+    empty_line = (0, 0, 0, 64) if light_card else (255, 255, 255, 80)
+
+    d = ImageDraw.Draw(img, "RGBA")
+    band = 150
+    for i in range(band):                      # soft scrim so the bar reads on any photo
+        a = int((150 if light_card else 165) * (i / band) ** 1.6)
+        d.line([(0, STRIP_H - band + i), (STRIP_W, STRIP_H - band + i)], fill=scrim_rgb + (a,))
+
+    pad, bar_h = 64, 26
+    y0 = STRIP_H - 62
+    inner = STRIP_W - 2 * pad
+    gap = 10
+    seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
+    done = max(0, min(threshold, stamps))
+    for i in range(threshold):
+        x0 = pad + i * (seg + gap)
+        box = [x0, y0, x0 + seg, y0 + bar_h]
+        if i < done:
+            d.rounded_rectangle(box, radius=bar_h // 2, fill=brand + (255,))
+        else:
+            d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
+            d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
+
+    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _strip_variants(png3x: bytes) -> Dict[str, bytes]:
+    """3× master → the @2x and 1× Wallet also asks for."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return {"@3x": png3x}
+    master = Image.open(io.BytesIO(png3x)).convert("RGB")
+    out: Dict[str, bytes] = {}
+    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
+        img = master if k == 3 else master.resize((375 * k, 144 * k), Image.LANCZOS)
+        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+        out[suffix] = buf.getvalue()
+    return out
+
+
+# ---------------------------------------------------------------------------
 # pass.json
 # ---------------------------------------------------------------------------
 TIER_LABELS = {"bronze": "Bronze", "silver": "Argent", "gold": "Or", "vip": "VIP"}
@@ -281,8 +388,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # photo would get their own artwork covered by a big number. With a banner
     # we therefore leave primaryFields empty (clean image, edge to edge) and
     # move the points up to the header, exactly like Apple's own sample passes.
-    has_banner = (card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")) in ("image", "composite") \
-        and bool(card.get("hero_image_url"))
+    has_banner = (
+        ((card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")) in ("image", "composite")
+         and bool(card.get("hero_image_url")))
+        # the meter is painted into a strip too, so the same layout applies
+        or (card.get("show_meter") is not False and threshold > 0)
+    )
 
     tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
     points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points}
@@ -325,7 +436,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "webServiceURL": f"{_site_url()}/api/passes",
         "authenticationToken": _auth_token(serial),
         "sharingProhibited": True,
-        **colors,
+        **{k: v for k, v in colors.items() if k.endswith("Color")},
         "barcodes": [{
             "format": "PKBarcodeFormatCode128" if card.get("code_type") == "barcode" else "PKBarcodeFormatQR",
             "message": serial, "messageEncoding": "iso-8859-1", "altText": serial,
@@ -377,10 +488,24 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         files[f"icon{suffix}.png"] = png
     for suffix, png in _png_variants(logo_raw, (160, 50), fallback_rgb=brand).items():
         files[f"logo{suffix}.png"] = png
+    # ---- strip: banner photo and/or the progress meter ---------------------
+    # A strip is produced when the merchant uploaded a banner OR when the meter
+    # is on (show_meter, default true) — in that case the photo is replaced by a
+    # quiet brand gradient, which still reads far better than a flat card.
     hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
-    if hero_mode in ("image", "composite") and card.get("hero_image_url"):
-        hero_raw = _fetch_image(card.get("hero_image_url"))
-        if hero_raw:
+    hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
+    with_meter = card.get("show_meter") is not False and int(card.get("reward_threshold") or 0) > 0
+    if hero_raw or with_meter:
+        cust = payload["customer"]
+        threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
+        visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
+        stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
+                     else int(cust.get("visits") or 0) // visits_per_stamp)
+        strip3x = compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter)
+        if strip3x:
+            for suffix, png in _strip_variants(strip3x).items():
+                files[f"strip{suffix}.png"] = png
+        elif hero_raw:                       # no Pillow → ship the photo as-is
             for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
                 files[f"strip{suffix}.png"] = png
 
