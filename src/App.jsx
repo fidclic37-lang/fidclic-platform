@@ -98,6 +98,7 @@ import AdminTenantsPage from './pages/AdminTenantsPage';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
 import CardDesignerPage from './pages/CardDesignerPage';
+import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -290,6 +291,13 @@ function App() {
             <Route path="scan" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff']}>
                 <ScanPage />
+              </ProtectedRoute>
+            } />
+            {/* Carte de fidélité — the page owners land on; the older
+                designer stays at /card-designer for the advanced knobs. */}
+            <Route path="card" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+                <LoyaltyCardPage />
               </ProtectedRoute>
             } />
             <Route path="card-designer" element={

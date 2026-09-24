@@ -53,7 +53,10 @@
     "collapse_sidebar": "Collapse sidebar",
     "help": "Help",
     "account_menu": "Account menu",
-    "account_no_name": "No name"
+    "account_no_name": "No name",
+    "loyalty_card": "Loyalty card",
+    "automations": "Automations",
+    "reviews": "Customer reviews"
   },
   "auth": {
     "login_title": "Sign in",
