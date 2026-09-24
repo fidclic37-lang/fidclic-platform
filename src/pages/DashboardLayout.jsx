@@ -13,7 +13,6 @@ import {
   Building2, Menu, LifeBuoy, Star, ClipboardList, PieChart, Share2
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
-import SupportModal from '../components/SupportModal';
 
 /* =====================================================================
    DashboardLayout — the shell used by every authenticated page.
@@ -222,35 +221,6 @@ const SignOutNavItem = ({ onClick, collapsed }) => {
   );
 };
 
-// Support nav button — same visual treatment as NavLink, but opens
-// the SupportModal instead of navigating. Lives next to Sign-out so
-// businesses can reach the support inbox from every page.
-const SupportNavItem = ({ onClick, collapsed }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    title={collapsed ? 'Support' : undefined}
-    className={`relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-2 rounded-lg text-[13.5px] transition-all w-full text-left`}
-    style={{ color: 'var(--ink-mute)', background: 'transparent', fontWeight: 400 }}
-    onMouseOver={(e) => {
-      e.currentTarget.style.background = 'color-mix(in srgb, var(--flc-accent, #C73E2C) 8%, transparent)';
-      e.currentTarget.style.color = 'var(--flc-accent, #C73E2C)';
-    }}
-    onMouseOut={(e) => {
-      e.currentTarget.style.background = 'transparent';
-      e.currentTarget.style.color = 'var(--ink-mute)';
-    }}
-  >
-    <span
-      className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center transition-colors"
-      style={{ color: 'inherit', border: '1px solid transparent' }}
-    >
-      <LifeBuoy className="w-[18px] h-[18px]" />
-    </span>
-    {!collapsed && <span className="truncate">Support</span>}
-  </button>
-);
-
 /* ────────────────────────────────────────────────────────────────────────
  * UserMenu — clickable avatar in the top toolbar.
  *
@@ -384,9 +354,6 @@ const DashboardLayout = () => {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  // Support modal — opened from any role's sidebar; mounted once at
-  // the layout root so it overlays every dashboard page.
-  const [supportOpen, setSupportOpen] = React.useState(false);
   // Global search — smart routing.
   //
   // The owner expects: "card" → Card Designer, "settings" → Settings,
@@ -607,7 +574,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               {/* Settings is expandable — click → dropdown of section anchors */}
               <SettingsNavLink icon={Settings2} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
+              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -618,14 +585,14 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
+              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
           {role === 'staff' && (
             <>
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
+              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -639,11 +606,41 @@ const DashboardLayout = () => {
               <NavLink to="/admin/card-designer" icon={Palette}      label="Card Designer"      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campaigns"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/ai"            icon={BrainCircuit} label="AI Intelligence"    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
+              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
         </nav>
+
+        {/* Help card — the mockup's footer block. One tap from anywhere in the
+            platform to the support page. Hidden when the rail is collapsed,
+            where the nav's own help row already stands in for it. */}
+        {!collapsed && (
+          <div className="px-3 pb-1 mt-auto">
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard/aide')}
+              className="w-full text-left rounded-xl px-3 py-3 transition-colors"
+              style={{
+                background: 'color-mix(in srgb, var(--flc-accent, #C73E2C) 7%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--flc-accent, #C73E2C) 16%, transparent)',
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <LifeBuoy className="w-[15px] h-[15px]" style={{ color: 'var(--flc-accent, #C73E2C)' }} />
+                <span className="text-[12.5px]" style={{ color: 'var(--ink)', fontWeight: 600 }}>
+                  {t('nav.help')}
+                </span>
+              </span>
+              <span
+                className="block text-[11.5px] mt-1"
+                style={{ color: 'var(--flc-accent, #C73E2C)', fontWeight: 500 }}
+              >
+                {t('nav.help_cta')} →
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* User chip — sign-out moved into the nav, directly below Settings */}
         <div className={`${collapsed ? 'p-3' : 'p-4'} mt-auto`} style={{ borderTop: `1px solid ${C.hairline}` }}>
@@ -780,15 +777,6 @@ const DashboardLayout = () => {
           <Outlet />
         </div>
       </main>
-
-      {/* Support modal — opened from any sidebar "Support" item, mounted
-          once here so it overlays every dashboard page consistently. */}
-      <SupportModal
-        open={supportOpen}
-        onClose={() => setSupportOpen(false)}
-        defaultEmail={user?.email || ''}
-        tenantSlug={user?.tenant_slug || ''}
-      />
     </div>
   );
 };

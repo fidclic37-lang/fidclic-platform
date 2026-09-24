@@ -51,7 +51,7 @@
     "search_enter_hint": "اضغط Enter للبحث",
     "expand_sidebar": "فتح الشريط الجانبي",
     "collapse_sidebar": "طي الشريط الجانبي",
-    "help": "مساعدة",
+    "help": "تحتاج مساعدة؟",
     "account_menu": "قائمة الحساب",
     "account_no_name": "بدون اسم",
     "loyalty_card": "بطاقة الولاء",
@@ -60,7 +60,8 @@
     "geolocation": "تحديد الموقع",
     "surveys": "استبيانات",
     "segmentation": "التقسيم",
-    "referral": "الإحالة"
+    "referral": "الإحالة",
+    "help_cta": "اتصل بالفريق"
   },
   "auth": {
     "login_title": "تسجيل الدخول",
