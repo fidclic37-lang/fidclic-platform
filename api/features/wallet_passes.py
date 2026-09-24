@@ -55,12 +55,14 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, time as dt_time, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+from auth import require_role, TokenData
 
 router = APIRouter(tags=["wallet-passes"])
 _db = None
@@ -364,6 +366,69 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
     return core._serialize_card_payload(cust)
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    """Apple wants W3C date-time with an offset."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str) and value.strip():
+        try:
+            d = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def _next_opening(tenant_id: str, now: Optional[datetime] = None) -> Optional[datetime]:
+    """When does this shop next open? Used as the pass's relevantDate so the
+    card surfaces on the lock screen at opening time — exactly when the
+    customer might walk in — instead of never."""
+    now = now or _now()
+    try:
+        from features import business_hours as bh
+        tenant = _db.tenants.find_one({"id": tenant_id}) or {}
+        weekly = bh._resolve_weekly(tenant)
+    except Exception:
+        return None
+    for ahead in range(0, 8):
+        day = (now + timedelta(days=ahead)).date()
+        try:
+            if not bh.is_open_on(tenant_id, day):
+                continue
+        except Exception:
+            return None
+        row = weekly[day.weekday()] if day.weekday() < len(weekly) else {}
+        opens = (row or {}).get("open_from") or "09:00"
+        try:
+            hh, mm = (int(x) for x in str(opens).split(":")[:2])
+        except ValueError:
+            hh, mm = 9, 0
+        when = datetime.combine(day, dt_time(hh, mm), tzinfo=timezone.utc)
+        if when > now:
+            return when
+    return None
+
+
+def _void_reason(cust: Dict[str, Any], tenant_doc: Dict[str, Any]) -> Optional[str]:
+    """A pass stays in Wallet forever unless it says otherwise. These are the
+    cases where it must stop pretending to be usable."""
+    if cust.get("gdpr_erased_at") or cust.get("deleted_at"):
+        return "erased"
+    if cust.get("card_deleted_at"):
+        return "deleted"
+    if tenant_doc.get("is_active") is False:
+        return "tenant_inactive"
+    return None
+
+
 def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
     serial = cust["barcode_id"]
@@ -396,7 +461,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
-    points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points}
+    points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points,
+                    "changeMessage": "Vous avez maintenant %@ points"}
     show_tier = show("show_tier") and show("show_tier_badge")
 
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
@@ -406,14 +472,20 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     if show("show_visits"):
         secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
     if show("show_stamps"):
-        secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(), "value": f"{stamps} / {threshold}"})
+        secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
+                          "value": f"{stamps} / {threshold}", "changeMessage": "Tampons : %@"})
 
+    # changeMessage is what makes Wallet raise a lock-screen notification when
+    # the value changes after an update push. Without it the pass changes in
+    # silence — which is why the offer and the reward both carry one.
     auxiliary = [{
         "key": "reward", "label": "PROCHAINE RÉCOMPENSE",
         "value": "Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} · {reward}",
+        "changeMessage": "%@",
     }]
     if card.get("show_offer_box") is not False and card.get("offer_box_text"):
-        auxiliary.append({"key": "offer", "label": "OFFRE", "value": card["offer_box_text"]})
+        auxiliary.append({"key": "offer", "label": "OFFRE", "value": card["offer_box_text"],
+                          "changeMessage": "%@"})
 
     back = [
         {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
@@ -453,6 +525,34 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "backFields": back,
         },
     }
+    # ---- lifecycle: relevance, expiry, void -------------------------------
+    # relevantDate — Wallet surfaces the pass on the lock screen around this
+    # moment. An offer that ends soon wins; otherwise the shop's next opening.
+    offer_until = _parse_dt(card.get("offer_expires_at") or card.get("active_offer_expires_at"))
+    if offer_until and offer_until > _now():
+        pass_json["relevantDate"] = _iso(_now())
+    else:
+        opening = _next_opening(tenant.get("id") or "")
+        if opening:
+            pass_json["relevantDate"] = _iso(opening)
+
+    # expirationDate — set by the merchant for a seasonal or campaign card.
+    expires = _parse_dt(card.get("pass_expiration_date"))
+    if expires:
+        pass_json["expirationDate"] = _iso(expires)
+
+    # voided — the card was deleted by the customer, erased under the GDPR, or
+    # the business was deactivated. Wallet then greys the pass out instead of
+    # letting someone present a card that no longer exists.
+    cust_doc = _db.customers.find_one({"barcode_id": serial}) or {}
+    tenant_doc = _db.tenants.find_one({"id": tenant.get("id")}) or {}
+    reason = _void_reason(cust_doc, tenant_doc)
+    if reason:
+        pass_json["voided"] = True
+        pass_json["expirationDate"] = pass_json.get("expirationDate") or _iso(_now())
+        back.insert(0, {"key": "voided", "label": "Carte inactive",
+                        "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
+
     lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
     if lat and lng:
         pass_json["locations"] = [{"latitude": float(lat), "longitude": float(lng), "relevantText": f"Vous êtes près de {org} — pensez à scanner votre carte."}]
@@ -530,6 +630,72 @@ def _pkpass_response(barcode_id: str) -> Response:
                             headers={"Content-Disposition": f'attachment; filename="{fname}"',
                                      "Last-Modified": datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
                                      "Cache-Control": "no-store"})
+
+
+def notify_passes(serials: Iterable[str]) -> Dict[str, Any]:
+    """Tell every device holding these passes to refresh. Best effort — a scan
+    must never fail because a push did. Dead tokens are dropped."""
+    from services import apns_passes
+
+    serials = [s for s in dict.fromkeys(serials) if s]
+    if not serials or not apns_passes.is_configured():
+        return {"devices": 0, "sent": 0, "skipped": "not configured" if serials else "no serials"}
+    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}}, {"push_token": 1, "device_id": 1}))
+    if not regs:
+        return {"devices": 0, "sent": 0}
+    res = apns_passes.push_to_tokens([r.get("push_token") for r in regs])
+    for dead in res.get("gone", []):
+        try:
+            _db.pass_registrations.delete_many({"push_token": dead})
+        except Exception:
+            pass
+    return {"devices": len(regs), "sent": res.get("sent", 0),
+            "dropped": len(res.get("gone", [])), "failed": res.get("failed", 0),
+            "errors": res.get("errors", [])[:3]}
+
+
+def notify_customer(customer_id: str) -> Dict[str, Any]:
+    cust = _db.customers.find_one({"id": customer_id}, {"barcode_id": 1}) or {}
+    return notify_passes([cust.get("barcode_id")]) if cust.get("barcode_id") else {"devices": 0, "sent": 0}
+
+
+def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Every registered pass of a tenant (or just the given customers) — used
+    when the card design or an offer changes."""
+    q: Dict[str, Any] = {"tenant_id": tenant_id}
+    if customer_ids:
+        q["id"] = {"$in": list(customer_ids)}
+    serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
+    return notify_passes(serials)
+
+
+@router.get("/api/owner/wallet/stats")
+def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """How the Wallet side of the programme is doing: how many customers carry
+    a native pass, on how many devices, and when they were last refreshed."""
+    tid = token_data.tenant_id
+    serials = [c["barcode_id"] for c in _db.customers.find(
+        {"tenant_id": tid, "barcode_id": {"$exists": True}}, {"barcode_id": 1}) if c.get("barcode_id")]
+    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
+                                            {"serial": 1, "updated_at": 1, "created_at": 1}))
+    customers = len(serials)
+    installed = len({r["serial"] for r in regs})
+    last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
+               default=None)
+    return {
+        "apple_configured": apple_configured(),
+        "customers": customers,
+        "passes_installed": installed,        # customers carrying the pass
+        "devices": len(regs),                 # iPhone + Watch count as two
+        "install_rate": round(installed / customers * 100) if customers else 0,
+        "last_registration_at": last.isoformat() if last else None,
+    }
+
+
+@router.post("/api/owner/wallet/notify")
+def owner_notify(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """Manual "refresh my customers' passes" — handy after a design change."""
+    return notify_tenant(token_data.tenant_id)
 
 
 @router.get("/api/card/{barcode_id}/apple-wallet.pkpass")

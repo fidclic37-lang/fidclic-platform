@@ -183,6 +183,51 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"meter fills with progress (2 stamps: {f2} px < 9 stamps: {f9} px)", 0 < f2 < f9)
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
 
+    # ---- lifecycle: relevantDate / expirationDate / voided ---------------
+    db.tenants.update_one({"id": "t1"}, {"$set": {"weekly_schedule": [
+        {"day": d, "open_from": "09:00", "open_to": "19:00", "closed": False}
+        for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")]}})
+    pj4 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("relevantDate = next opening (lock screen at the right moment)",
+          "relevantDate" in pj4 and pj4["relevantDate"].endswith("Z"))
+    check("points field carries a changeMessage",
+          any(f.get("changeMessage") for grp in pj4["storeCard"].values() for f in grp))
+
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"pass_expiration_date": "2027-01-31T23:59:00Z"}})
+    pj5 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("merchant expiry lands on the pass", pj5.get("expirationDate") == "2027-01-31T23:59:00Z")
+    check("a live card is not voided", "voided" not in pj5)
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"pass_expiration_date": ""}})
+
+    db.customers.update_one({"id": "c1"}, {"$set": {"card_deleted_at": dt.datetime.now(dt.timezone.utc)}})
+    pj6 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("deleted card → voided + expired", pj6.get("voided") is True and "expirationDate" in pj6)
+    check("voided pass explains itself on the back",
+          any(f["key"] == "voided" for f in pj6["storeCard"]["backFields"]))
+    db.customers.update_one({"id": "c1"}, {"$unset": {"card_deleted_at": ""}})
+
+    db.tenants.update_one({"id": "t1"}, {"$set": {"is_active": False}})
+    check("deactivated business → voided", WP.build_pass_json(WP._card_payload("FT-TEST0001")).get("voided") is True)
+    db.tenants.update_one({"id": "t1"}, {"$set": {"is_active": True}})
+
+    # ---- update pushes ----------------------------------------------------
+    import services.apns_passes as APNS
+    calls = {}
+    def fake_push(tokens):
+        calls["tokens"] = list(tokens)
+        return {"sent": len(calls["tokens"]), "gone": ["dead-token"], "failed": 0, "errors": []}
+    APNS.push_to_tokens, APNS.is_configured = fake_push, (lambda: True)
+    db.pass_registrations.insert_one({"device_id": "dev9", "serial": "FT-TEST0001",
+                                      "push_token": "tok9", "pass_type_id": "pass.com.fidclic.test"})
+    db.pass_registrations.insert_one({"device_id": "devX", "serial": "FT-TEST0001",
+                                      "push_token": "dead-token", "pass_type_id": "pass.com.fidclic.test"})
+    res = WP.notify_customer("c1")
+    check("push sent to every device holding the pass", res["devices"] == 2 and res["sent"] == 2)
+    check("dead token dropped from the registrations", db.pass_registrations.count_documents({"push_token": "dead-token"}) == 0)
+    check("notify_tenant covers the whole customer base", WP.notify_tenant("t1")["devices"] == 1)
+    server.refresh_wallet_pass("c1")          # must never raise
+    check("refresh_wallet_pass is fire-and-forget", calls["tokens"] == ["tok9"])
+
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""
     check("unconfigured → 503", status(WP.download_apple_pass, "FT-TEST0001")[0] == 503)
