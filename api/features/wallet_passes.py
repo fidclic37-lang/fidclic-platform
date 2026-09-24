@@ -276,7 +276,22 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     show = lambda k, default=True: card.get(k) is not False if card.get(k) is not None else default  # noqa: E731
 
+    # A banner (strip) image changes the layout. In a storeCard, Wallet draws
+    # the primary fields ON TOP of the strip — so a merchant who uploaded a
+    # photo would get their own artwork covered by a big number. With a banner
+    # we therefore leave primaryFields empty (clean image, edge to edge) and
+    # move the points up to the header, exactly like Apple's own sample passes.
+    has_banner = (card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")) in ("image", "composite") \
+        and bool(card.get("hero_image_url"))
+
+    tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
+    points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points}
+    show_tier = show("show_tier") and show("show_tier_badge")
+
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
+    if has_banner and show_tier:
+        # Statut moves down next to the member name (the header now holds points).
+        secondary.append(tier_field)
     if show("show_visits"):
         secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
     if show("show_stamps"):
@@ -316,10 +331,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "message": serial, "messageEncoding": "iso-8859-1", "altText": serial,
         }],
         "storeCard": {
-            "headerFields": [{"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}]
-            if show("show_tier") and show("show_tier_badge") else [],
-            "primaryFields": [{"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points}]
-            if show("show_points") else [],
+            # With a banner: points in the header, nothing over the image.
+            # Without: the classic big number, statut in the header.
+            "headerFields": ([points_field] if show("show_points") else []) if has_banner
+            else ([tier_field] if show_tier else []),
+            "primaryFields": [] if has_banner
+            else ([points_field] if show("show_points") else []),
             "secondaryFields": secondary[:4],
             "auxiliaryFields": auxiliary[:4],
             "backFields": back,

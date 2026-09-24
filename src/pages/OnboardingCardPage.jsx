@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Upload, Pipette, Store, PenLine, X } from 'lucide-react';
+import { Upload, Pipette, Store, PenLine, X, ImagePlus, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
 import WalletPassPreview from '../components/WalletPassPreview';
@@ -30,7 +30,7 @@ import OnboardingShell, { Field, FieldLabel, INPUT, StepButtons } from '../compo
  * (logo, background colour, label colour, organisation name, barcode), so the
  * native passes will carry this exact design too.
  */
-const DEFAULTS = { surface_color: '#000000', brand_color: '#D4AF37', card_name: '', tagline: '', logo_url: '' };
+const DEFAULTS = { surface_color: '#000000', brand_color: '#D4AF37', card_name: '', tagline: '', logo_url: '', hero_image_url: '' };
 const HEX = /^#[0-9a-f]{6}$/i;
 
 // Preview customer — the numbers on the mockup card ("Points 150 · Gold").
@@ -49,6 +49,29 @@ function readLogo(file) {
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
       resolve(c.toDataURL(file.type === 'image/png' || file.type === 'image/svg+xml' ? 'image/png' : 'image/jpeg', 0.9));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+    img.src = url;
+  });
+}
+
+/** Banner (Apple calls it the strip): fixed 375×144 pt, so any photo is
+ *  centre-cropped to that ratio at 3× (1125×432) — the size Wallet asks for
+ *  on the sharpest screens — and encoded as JPEG to keep the record small. */
+function readBanner(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const W = 1125; const H = 432;
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const scale = Math.max(W / img.width, H / img.height);
+      const w = img.width * scale; const h = img.height * scale;
+      ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.85));
     };
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
     img.src = url;
@@ -82,6 +105,7 @@ const OnboardingCardPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const fileRef = useRef(null);
+  const bannerRef = useRef(null);
   const [tpl, setTpl] = useState(null);
   const [brand, setBrand] = useState(DEFAULTS);
   const [error, setError] = useState('');
@@ -98,6 +122,7 @@ const OnboardingCardPage = () => {
         card_name: d.card_name || bf.card_name || user?.tenant_name || '',
         tagline: d.tagline || bf.tagline || '',
         logo_url: d.logo_url || bf.logo_url || '',
+        hero_image_url: d.hero_image_url || bf.hero_image_url || '',
       });
     }).catch(() => setTpl({}));
   }, [user?.tenant_name]);
@@ -110,9 +135,16 @@ const OnboardingCardPage = () => {
     try { set('logo_url')(await readLogo(f)); setError(''); } catch { setError(t('card_step.logo_invalid')); }
   };
 
+  const pickBanner = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = '';
+    if (!f) return;
+    try { set('hero_image_url')(await readBanner(f)); setError(''); } catch { setError(t('card_step.logo_invalid')); }
+  };
+
   // The card the customer will see, built from exactly what is being saved.
   const card = useMemo(() => ({
-    layout_style: 'wallet', hero_mode: 'none', code_type: 'qr',
+    layout_style: 'wallet', hero_mode: brand.hero_image_url ? 'image' : 'none', code_type: 'qr',
+    hero_image_url: brand.hero_image_url,
     surface: '', surface_color: brand.surface_color, brand_color: brand.brand_color,
     logo_url: brand.logo_url, card_name: brand.card_name.trim(), tagline: brand.tagline.trim(),
     reward_threshold_stamps: tpl?.reward_threshold_stamps || 10,
@@ -178,6 +210,34 @@ const OnboardingCardPage = () => {
                 <Upload size={16} /> {brand.logo_url ? t('card_step.logo_change') : t('card_step.logo_add')}
               </button>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={pickLogo} />
+            </div>
+          </div>
+          <div>
+            <FieldLabel optional>{t('card_step.banner')}</FieldLabel>
+            <div className="rounded-xl border border-[#E1E8F5] bg-white p-3">
+              <div className="relative overflow-hidden rounded-lg bg-[#F4F7FC]" style={{ aspectRatio: '375 / 144' }}>
+                {brand.hero_image_url ? (
+                  <img src={brand.hero_image_url} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-[#94A3B8]">
+                    <ImagePlus size={22} />
+                    <span className="text-[12px]">{t('card_step.banner_hint')}</span>
+                  </div>
+                )}
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <button type="button" onClick={() => bannerRef.current?.click()}
+                        className="inline-flex items-center gap-2 rounded-xl bg-[#EEF4FF] px-4 py-2.5 text-[14px] font-semibold text-[#2F6BFF] hover:bg-[#E2ECFF]">
+                  <Upload size={16} /> {brand.hero_image_url ? t('card_step.banner_change') : t('card_step.banner_add')}
+                </button>
+                {brand.hero_image_url && (
+                  <button type="button" onClick={() => set('hero_image_url')('')}
+                          className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-[14px] font-medium text-[#64748B] hover:text-[#E5484D]">
+                    <Trash2 size={16} /> {t('card_step.banner_remove')}
+                  </button>
+                )}
+              </div>
+              <input ref={bannerRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={pickBanner} />
             </div>
           </div>
           <ColourField label={t('card_step.colour_primary')} value={brand.surface_color} onChange={set('surface_color')} />

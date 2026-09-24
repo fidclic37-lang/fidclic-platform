@@ -131,6 +131,35 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("unregister → 200", status(WP.unregister_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", hdr)[0] == 200)
     check("no registrations → 204", status(WP.serials_for_device, "dev1", "pass.com.fidclic.test", None)[0] == 204)
 
+    # ---- banner (strip) layout ------------------------------------------
+    # 1×1 pixel JPEG stand-in for the merchant's artwork.
+    banner = ("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsL"
+              "DBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB"
+              "AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==")
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": banner, "hero_mode": "image"}})
+    pj2 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    sc2 = pj2["storeCard"]
+    check("banner: nothing drawn over the artwork (primaryFields empty)", sc2["primaryFields"] == [])
+    check("banner: points move to the header", [f["key"] for f in sc2["headerFields"]] == ["points"]
+          and sc2["headerFields"][0]["value"] == 70)
+    check("banner: statut joins the secondary row", "tier" in [f["key"] for f in sc2["secondaryFields"]])
+    data2 = WP.build_pkpass(WP._card_payload("FT-TEST0001"))
+    z2 = zipfile.ZipFile(io.BytesIO(data2))
+    check("banner: strip.png at 1x/2x/3x", {"strip.png", "strip@2x.png", "strip@3x.png"} <= set(z2.namelist()))
+    man2 = json.loads(z2.read("manifest.json"))
+    check("banner: manifest still complete",
+          all(man2[n] == hashlib.sha1(z2.read(n)).hexdigest() for n in set(z2.namelist()) - {"manifest.json", "signature"}))
+    from PIL import Image as _I
+    w, h = _I.open(io.BytesIO(z2.read("strip.png"))).size
+    check("banner: strip is Apple's 375x144 at 1x", (w, h) == (375, 144))
+    w3, h3 = _I.open(io.BytesIO(z2.read("strip@3x.png"))).size
+    check("banner: strip@3x is 1125x432", (w3, h3) == (1125, 432))
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": "", "hero_mode": "none"}})
+    pj3 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("no banner: classic layout is back (points primary, statut header)",
+          pj3["storeCard"]["primaryFields"][0]["key"] == "points"
+          and pj3["storeCard"]["headerFields"][0]["key"] == "tier")
+
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""
     check("unconfigured → 503", status(WP.download_apple_pass, "FT-TEST0001")[0] == 503)

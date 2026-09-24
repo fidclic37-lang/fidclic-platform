@@ -71,6 +71,9 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const wantsBarcode = card.code_type === 'barcode'
     || (!card.code_type && card.show_qr === false && card.show_barcode !== false);
   const heroMode = card.hero_mode || (card.hero_image_url ? 'image' : 'brand');
+  // Banner = the merchant's own artwork across the strip. It changes the
+  // layout the same way it does in the real pass (see features/wallet_passes.py).
+  const hasBanner = (heroMode === 'image' || heroMode === 'composite') && !!card.hero_image_url;
 
   // Native PassKit typographic rhythm: labels are quiet, values shout.
   const label = {
@@ -119,7 +122,20 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
             ) : null}
           </div>
         </div>
-        {showTier && (
+        {/* With a banner image the header carries the points — Wallet draws
+            primary fields OVER the strip, so we keep the artwork clean and
+            move the number up here (statut drops to the row below). */}
+        {hasBanner ? (
+          showPoints && (
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={label}>{pointsLabel}</div>
+              <div style={{ fontSize: px(15), fontWeight: 700, color: t.ink, lineHeight: 1.15,
+                            fontVariantNumeric: 'tabular-nums' }}>
+                {earned}
+              </div>
+            </div>
+          )
+        ) : showTier && (
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div style={label}>Statut</div>
             <div style={{ fontSize: px(15), fontWeight: 700, color: t.brand, lineHeight: 1.15 }}>
@@ -158,7 +174,7 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
       {/* ── stamps row: its OWN slim band flush under the strip — in flow, not
              an overlay, so the hero image is NEVER covered. Themed to the
              surface so it adapts to light and dark cards alike. ── */}
-      {showStamps && (
+      {showStamps && !hasBanner && (
         <div style={{
           padding: `${px(8)}px ${px(14)}px`, background: t.chipBg,
           borderBottom: `1px solid ${t.hairline}`,
@@ -181,9 +197,36 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
         </div>
       )}
 
+      {/* ── With a banner, the face reads like the real pass: a row of
+             secondary fields under the image, no number over the artwork. ── */}
+      {hasBanner && (
+        <div style={{ display: 'flex', gap: px(22), padding: `${px(11)}px ${px(14)}px 0` }}>
+          <div>
+            <div style={label}>{(card.greeting_label || 'Membre').toUpperCase()}</div>
+            <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.ink }}>{displayName}</div>
+          </div>
+          {showTier && (
+            <div>
+              <div style={label}>Statut</div>
+              <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.brand }}>
+                {tierLabels[tierKey] || 'Bronze'}
+              </div>
+            </div>
+          )}
+          {showStamps && (
+            <div>
+              <div style={label}>{(card.stamps_label || 'Tampons').toUpperCase()}</div>
+              <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.ink,
+                            fontVariantNumeric: 'tabular-nums' }}>{stamps} / {threshold}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── PRIMARY field: the one number the customer glances for. Big.
              The stamps row above already carries the visual count, so the
              primary shows points — no duplicated 6/10. ── */}
+      {!hasBanner && (
       <div style={{ padding: `${px(12)}px ${px(14)}px 0` }}>
         <div style={label}>{showStamps || showPoints ? pointsLabel
                                                       : (card.stamps_label || 'Tampons').toUpperCase()}</div>
@@ -192,6 +235,7 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
           {showStamps || showPoints ? earned : `${stamps} / ${threshold}`}
         </div>
       </div>
+      )}
 
       {/* ── AUXILIARY field: next reward, in plain words. One line. ── */}
       <div style={{ padding: `${px(10)}px ${px(14)}px 0` }}>
