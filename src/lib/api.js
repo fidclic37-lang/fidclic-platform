@@ -118,6 +118,11 @@ export const ownerAPI = {
   saveCardSettings: (data) => api.put('/owner/card/settings', data),
   cardStats: (days) => api.get('/owner/card/stats', { params: { days } }),
   saveCardRewards: (tiers) => api.put('/owner/card/rewards', tiers),
+  // Besoin d'aide ? — the FAQ knowledge base is public; the assistant and the
+  // conversation history are per-merchant.
+  supportKb: () => api.get('/support/kb'),
+  supportAsk: (message) => api.post('/owner/support/chat', { message }),
+  supportHistory: (limit = 12) => api.get('/owner/support/chat', { params: { limit } }),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

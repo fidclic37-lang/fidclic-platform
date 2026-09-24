@@ -99,6 +99,7 @@ import AdminPlansPage from './pages/AdminPlansPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
+import HelpPage from './pages/HelpPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -317,6 +318,13 @@ function App() {
             <Route path="card" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
                 <LoyaltyCardPage />
+              </ProtectedRoute>
+            } />
+            {/* Besoin d'aide ? — FAQ + assistant + the three contact channels.
+                Reachable by every role; the sidebar's help row points here. */}
+            <Route path="aide" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff', 'super_admin']}>
+                <HelpPage />
               </ProtectedRoute>
             } />
             <Route path="campaigns" element={

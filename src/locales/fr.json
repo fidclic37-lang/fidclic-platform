@@ -51,7 +51,7 @@
     "search_enter_hint": "Entrée pour rechercher",
     "expand_sidebar": "Ouvrir la barre latérale",
     "collapse_sidebar": "Réduire la barre latérale",
-    "help": "Aide",
+    "help": "Besoin d'aide ?",
     "account_menu": "Menu du compte",
     "account_no_name": "Sans nom",
     "loyalty_card": "Carte de fidélité",
@@ -60,7 +60,8 @@
     "geolocation": "Géolocalisation",
     "surveys": "Enquêtes",
     "segmentation": "Segmentation",
-    "referral": "Parrainage"
+    "referral": "Parrainage",
+    "help_cta": "Contacter l'équipe"
   },
   "auth": {
     "login_title": "Connexion",

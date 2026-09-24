@@ -53,6 +53,9 @@ MODULES = [
     "features.wallet_passes",
     # Carte de fidélité — design, programme rules, tiers and the page's figures.
     "features.loyalty_card",
+    # Besoin d'aide ? — FAQ knowledge base + the support assistant that answers
+    # from it. Answers from the KB even with no LLM key configured.
+    "features.support_assistant",
     # Facturation électronique (French e-invoicing) — second product module.
     # Gated: only tenants with facturation_enabled=True reach any route.
     # PA-agnostic via services.pdp_connector (Mock by default; B2Brouter via env).

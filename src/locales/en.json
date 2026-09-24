@@ -51,7 +51,7 @@
     "search_enter_hint": "Press Enter to search",
     "expand_sidebar": "Expand sidebar",
     "collapse_sidebar": "Collapse sidebar",
-    "help": "Help",
+    "help": "Need help?",
     "account_menu": "Account menu",
     "account_no_name": "No name",
     "loyalty_card": "Loyalty card",
@@ -60,7 +60,8 @@
     "geolocation": "Geolocation",
     "surveys": "Surveys",
     "segmentation": "Segmentation",
-    "referral": "Referral"
+    "referral": "Referral",
+    "help_cta": "Contact the team"
   },
   "auth": {
     "login_title": "Sign in",

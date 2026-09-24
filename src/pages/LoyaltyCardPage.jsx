@@ -215,7 +215,12 @@ export default function LoyaltyCardPage() {
       setProgramme(r.data.programme);
       setToggles(r.data.toggles);
       setTiers(r.data.tiers);
-      setAdvanced(r.data.advanced);
+      // A photo on file with the banner style still reading "brand" can only be
+      // a card saved before the upload started setting the style — the owner
+      // added a banner and never saw it. Show the photo.
+      setAdvanced(r.data.advanced?.hero_mode === 'brand' && r.data.design?.hero_image_url
+        ? { ...r.data.advanced, hero_mode: 'image' }
+        : r.data.advanced);
     } catch (e) {
       setError(e?.response?.data?.detail || "Impossible de charger la carte.");
     }
@@ -239,7 +244,8 @@ export default function LoyaltyCardPage() {
     brand_color: design?.brand_color,
     logo_url: design?.logo_url,
     hero_image_url: design?.hero_image_url,
-    hero_mode: advanced?.hero_mode || (design?.hero_image_url ? 'image' : 'none'),
+    // Same fallback the server uses, so the preview and the saved card agree.
+    hero_mode: advanced?.hero_mode || (design?.hero_image_url ? 'image' : 'brand'),
     tagline: design?.welcome_text,
     offer_box_text: toggles?.show_message ? design?.card_message : '',
     show_offer_box: Boolean(toggles?.show_message && design?.card_message),
@@ -385,8 +391,17 @@ export default function LoyaltyCardPage() {
             <div className="grid grid-cols-2 gap-3">
               <ImageField label="Logo de l'établissement" value={design.logo_url} aspect="16 / 10" downscale={readLogo}
                           onChange={(v) => setDesign({ ...design, logo_url: v })} />
+              {/* Uploading a banner IS the choice to use it. Without this the
+                  advanced "Style de bannière" select — which reads "brand" for
+                  any shop that never had a photo — silently outranked the image
+                  the owner had just added, on the preview and on the real card
+                  alike. Removing the photo hands the banner back to the brand
+                  colour. */}
               <ImageField label="Image de fond (optionnelle)" value={design.hero_image_url} aspect="16 / 10" downscale={readBanner}
-                          onChange={(v) => setDesign({ ...design, hero_image_url: v })} />
+                          onChange={(v) => {
+                            setDesign({ ...design, hero_image_url: v });
+                            setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
+                          }} />
             </div>
             <div>
               <Label>Texte d'accueil sur la carte</Label>
@@ -626,10 +641,17 @@ export default function LoyaltyCardPage() {
                 </Select>
               </div>
               <div>
-                <Label>Style de bannière</Label>
+                <Label hint={design.hero_image_url ? 'retirez la photo pour revenir aux couleurs' : undefined}>
+                  Style de bannière
+                </Label>
+                {/* With a photo on file the gradient is not an option here —
+                    it is what you get by removing the photo. Offering both
+                    made it possible to save a state where the uploaded banner
+                    was never shown. */}
                 <Select value={advanced.hero_mode} onChange={(e) => setAdvanced({ ...advanced, hero_mode: e.target.value })}>
-                  <option value="image">Photo de l'établissement</option>
-                  <option value="brand">Dégradé aux couleurs de la marque</option>
+                  {design.hero_image_url
+                    ? <option value="image">Photo de l'établissement</option>
+                    : <option value="brand">Dégradé aux couleurs de la marque</option>}
                   <option value="none">Aucune bannière</option>
                 </Select>
               </div>

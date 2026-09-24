@@ -2135,19 +2135,24 @@ aside.fd-sidebar-host .fd-side-divider,
 aside.fd-sidebar-host .h-px { background: #E6EEFB !important; }
 aside.fd-sidebar-host [data-brand-name] { color: #0B1C3F; }
 
-/* The Carte de fidélité page brings its own canvas: the blue-grey of the
-   mockup rather than the cream the older pages sit on. Scoped with :has so
-   only this page is repainted — every other page keeps its skin. */
-main:has(.lc) { background: #F4F7FC !important; }
-/* The top bar belongs to the shell, so it is repainted only while this page
-   is on screen — every other page keeps the bar it has today. */
-main:has(.lc) > div:first-child {
+/* The pages rebuilt to the blue/white mockups (Carte de fidélité, Besoin
+   d'aide) bring their own canvas: the blue-grey of the mockup rather than the
+   cream the older pages sit on. Scoped with :has so only those pages are
+   repainted — every other page keeps its skin. */
+main:has(.lc),
+main:has(.hlp) { background: #F4F7FC !important; }
+/* The top bar belongs to the shell, so it is repainted only while one of these
+   pages is on screen — every other page keeps the bar it has today. */
+main:has(.lc) > div:first-child,
+main:has(.hlp) > div:first-child {
   background: #FFFFFF !important;
   border-bottom: 1px solid #E6EEFB;
   backdrop-filter: none !important;
 }
-main:has(.lc) > div:first-child * { color: #334155; }
-main:has(.lc) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
+main:has(.lc) > div:first-child *,
+main:has(.hlp) > div:first-child * { color: #334155; }
+main:has(.lc) > div:first-child input,
+main:has(.hlp) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
 .lc-wrap { padding: 18px 22px 0; max-width: 1600px; margin-inline: auto; }
 .lc { color: #0B1C3F; }
 .lc input[type="number"]::-webkit-outer-spin-button,
