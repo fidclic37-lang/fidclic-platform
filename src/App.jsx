@@ -101,6 +101,7 @@ import ComingSoonPage from './pages/ComingSoonPage';
 import HelpPage from './pages/HelpPage';
 import GeolocationPage from './pages/GeolocationPage';
 import ReferralPage from './pages/ReferralPage';
+import AutomationsPage from './pages/AutomationsPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -305,6 +306,11 @@ function App() {
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
                 <ComingSoonPage title="Segmentation"
                   description="Regroupez vos clients par comportement — fréquence, panier, ancienneté — et ciblez chaque groupe." />
+              </ProtectedRoute>
+            } />
+            <Route path="automations" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+                <AutomationsPage />
               </ProtectedRoute>
             } />
             <Route path="referral" element={

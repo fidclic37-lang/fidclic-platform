@@ -10,7 +10,7 @@ import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, CreditCard, Shield, History, ChevronDown,
-  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Star, PieChart, Share2
+  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Star, PieChart, Share2, Zap
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 
@@ -525,7 +525,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}  currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/settings#settings-auto" icon={Settings2} label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/analytics#reviews" icon={Star}     label={t('nav.reviews')}       currentPath={currentPath} role={role} collapsed={collapsed} />

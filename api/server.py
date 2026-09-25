@@ -4558,6 +4558,12 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # wallet pass refreshes after every scan.
         "updated_at": datetime.now(timezone.utc),
     }
+    # When the palier actually changes, stamp it: the Push Wallet scenario
+    # "Atteinte d'un palier" fires on this, and without a timestamp there was
+    # no way to tell a client who just levelled up from one who always was gold.
+    if new_tier != previous_tier:
+        update_set["tier_changed_at"] = datetime.now(timezone.utc)
+        update_set["previous_tier"] = previous_tier
     # Stamp home branch on first scan only.
     if req.branch_id and not cust.get("branch_id"):
         update_set["branch_id"] = req.branch_id
@@ -6131,6 +6137,13 @@ def get_wallet_card(barcode_id: str):
         raise HTTPException(status_code=404, detail="Card not found")
     payload = _serialize_card_payload(cust)
     _log_card_message_view(cust, payload)
+    try:
+        # The only observable "open" a wallet push has: the customer came and
+        # looked at their card. Push Wallet's open rate is measured against it.
+        db.customers.update_one({"id": cust["id"]},
+                                {"$set": {"last_card_open_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
     return payload
 
 
@@ -10657,6 +10670,15 @@ def run_daily_triggers(request: Request):
         else:
             db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
 
+    # Push Wallet scenarios — the eight automations fire from here, once a day.
+    # Wrapped: a scenario that blows up must not stop the rest of the cron.
+    push_wallet_summary = {"tenants": 0, "sent": 0}
+    try:
+        from features.push_wallet import run_all_due
+        push_wallet_summary = run_all_due()
+    except Exception as _e:
+        print(f"push wallet runner failed (non-fatal): {_e}")
+
     return {
         "status": "ok",
         "ran_at": now.isoformat(),
@@ -10665,6 +10687,7 @@ def run_daily_triggers(request: Request):
         "almost_there_prepared": almost_there_sent,
         "scheduled_sent": scheduled_sent,
         "tier_up_emitted": tier_up_emitted_count,
+        "push_wallet": push_wallet_summary,
         "tenants_processed": len(tenants),
     }
 

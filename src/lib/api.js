@@ -138,6 +138,15 @@ export const ownerAPI = {
   referralShareLinks: () => api.get('/owner/referrals/share'),
   referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
+  // Automatisations · Push Wallet — the scenarios, their figures, and firing
+  // one by hand.
+  pushWalletScenarios: () => api.get('/owner/push-wallet/scenarios'),
+  pushWalletStats: (params) => api.get('/owner/push-wallet/stats', { params }),
+  createPushWalletScenario: (body) => api.post('/owner/push-wallet/scenarios', body),
+  updatePushWalletScenario: (id, patch) => api.put(`/owner/push-wallet/scenarios/${id}`, patch),
+  deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
+  runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
+  pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
