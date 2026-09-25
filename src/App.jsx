@@ -82,7 +82,6 @@ import OwnerDashboard from './pages/OwnerDashboard';
 // import AnalyticsPage from './pages/AnalyticsPage';
 import AnalyticsPage from './pages/AnalyticsPageV2';
 import CustomersPage from './pages/CustomersPage';
-import CustomerMapPage from './pages/CustomerMapPage';
 import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
 import AIAssistantPage from './pages/AIAssistantPage';
@@ -100,6 +99,7 @@ import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
 import HelpPage from './pages/HelpPage';
+import GeolocationPage from './pages/GeolocationPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -283,9 +283,12 @@ function App() {
                 <CustomersPage />
               </ProtectedRoute>
             } />
+            {/* Géolocalisation clients — catchment rings + travel-time bands.
+                Replaces CustomerMapPage, whose France-wide dot map this page
+                supersedes; the old file stays in the repo, unrouted. */}
             <Route path="map" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <CustomerMapPage />
+                <GeolocationPage />
               </ProtectedRoute>
             } />
             {/* Scan is the ONE page staff can reach. */}

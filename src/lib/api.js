@@ -129,6 +129,10 @@ export const ownerAPI = {
   historyActivity: (params) => api.get('/owner/history/activity', { params }),
   historyStats: (params) => api.get('/owner/history/stats', { params }),
   historyExport: (params) => api.get('/owner/history/export', { params, responseType: 'blob' }),
+  // Géolocalisation — catchment rings, travel-time bands and the communes
+  // behind them, plus the same breakdown as CSV.
+  geoCatchment: (params) => api.get('/owner/geo/catchment', { params }),
+  geoExport: (params) => api.get('/owner/geo/export', { params, responseType: 'blob' }),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

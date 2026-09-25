@@ -685,6 +685,27 @@ def _sign_manifest(manifest: bytes) -> bytes:
             .sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.DetachedSignature, pkcs7.PKCS7Options.Binary]))
 
 
+def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
+    """The 1125×432 strip a card ships with — the merchant's banner with the
+    progress meter painted into it, or the brand gradient with the meter when
+    there is no banner. One function so Apple's strip.png, Google's heroImage
+    and the web preview cannot drift apart."""
+    card = payload["card"]
+    cust = payload["customer"]
+    hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
+    hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
+    with_meter = card.get("show_meter") is not False and int(card.get("reward_threshold") or 0) > 0
+    if not hero_raw and not with_meter:
+        return None
+    threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
+    visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
+    stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
+                 else int(cust.get("visits") or 0) // visits_per_stamp)
+    title, sub = _offer_text(card)
+    return compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter,
+                         title=title, subtitle=sub)
+
+
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
     card = payload["card"]
     files: Dict[str, bytes] = {"pass.json": json.dumps(build_pass_json(payload), ensure_ascii=False).encode("utf-8")}
@@ -699,22 +720,14 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     # A strip is produced when the merchant uploaded a banner OR when the meter
     # is on (show_meter, default true) — in that case the photo is replaced by a
     # quiet brand gradient, which still reads far better than a flat card.
-    hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
-    hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
-    with_meter = card.get("show_meter") is not False and int(card.get("reward_threshold") or 0) > 0
-    if hero_raw or with_meter:
-        cust = payload["customer"]
-        threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
-        visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
-        stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
-                     else int(cust.get("visits") or 0) // visits_per_stamp)
-        offer_title, offer_sub = _offer_text(card)
-        strip3x = compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter,
-                                title=offer_title, subtitle=offer_sub)
-        if strip3x:
-            for suffix, png in _strip_variants(strip3x).items():
-                files[f"strip{suffix}.png"] = png
-        elif hero_raw:                       # no Pillow → ship the photo as-is
+    strip3x = strip_png(payload)
+    if strip3x:
+        for suffix, png in _strip_variants(strip3x).items():
+            files[f"strip{suffix}.png"] = png
+    else:                                    # no Pillow → ship the photo as-is
+        hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
+        hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
+        if hero_raw:
             for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
                 files[f"strip{suffix}.png"] = png
 
@@ -816,6 +829,25 @@ def owner_notify(token_data: TokenData = Depends(require_role(["business_owner",
 @router.get("/api/card/{barcode_id}/apple-wallet.pkpass")
 def download_apple_pass(barcode_id: str):
     return _pkpass_response(barcode_id)
+
+
+@router.get("/api/card/{barcode_id}/wallet-strip.png")
+def wallet_strip(barcode_id: str):
+    """The card's banner with the meter painted on it.
+
+    Google Wallet fetches its hero image over HTTP — it cannot take the bytes
+    inline the way a .pkpass can — so the same picture Apple gets inside the
+    pass is served here. Public by design: it is a banner and a progress bar,
+    carries no personal data beyond what the customer's own card shows, and the
+    card number in the path is already the customer's public identifier.
+    """
+    png = strip_png(_card_payload(barcode_id))
+    if not png:
+        raise HTTPException(status_code=404, detail="No strip for this card")
+    return Response(content=png, media_type="image/png",
+                    # Google re-fetches when the ?v= changes, so a long cache is
+                    # safe and keeps their crawler off the database.
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 # ---------------------------------------------------------------------------
@@ -968,6 +1000,12 @@ def google_save_url(payload: Dict[str, Any]) -> str:
             {"id": "reward", "header": "Prochaine récompense", "body": card.get("reward_description") or "Une récompense fidélité"},
             {"id": "visits", "header": "Visites", "body": str(visits)},
         ],
+        # Google has no strip and no progress element either, but it does have a
+        # hero image — so it gets the very same painted banner Apple's strip
+        # carries, meter included. Without this the card reads "7 / 10" as bare
+        # text on Google while Apple shows the bar.
+        "heroImage": {"sourceUri": {"uri": f"{_site_url()}/api/card/{cust['barcode_id']}/wallet-strip.png"
+                                           f"?v={stamps}-{threshold}"}},
         "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},

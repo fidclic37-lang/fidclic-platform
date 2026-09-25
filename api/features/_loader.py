@@ -28,6 +28,9 @@ MODULES = [
     # Historique — every activity (scans, rewards, signups, messages, card
     # edits) merged into one filterable, paginated, exportable feed.
     "features.activity_history",
+    # Géolocalisation clients — catchment rings + travel-time bands over the
+    # merchant's own clients, with the commune breakdown behind both.
+    "features.geolocation",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
