@@ -72,6 +72,7 @@ const JoinPage = () => {
     email: '',
     phone: '',
     postal_code: '',
+    city: '',
     birthday: '',
     acquisition_source: lockedSource || 'qr_store',
   });
@@ -83,6 +84,29 @@ const JoinPage = () => {
   // Student status — French merchants run student offers all year, so it is
   // asked once at signup rather than guessed later. Optional, never required.
   const [isStudent, setIsStudent] = useState(false);
+  // Suggest the commune as soon as five digits are in. Base Adresse Nationale
+  // is the French government's own address service — free, no key — and it is
+  // what the server falls back to, so the two never disagree.
+  const [cityHint, setCityHint] = useState('');
+
+  useEffect(() => {
+    const code = (formData.postal_code || '').replace(/\D/g, '');
+    if (code.length !== 5) { setCityHint(''); return undefined; }
+    let alive = true;
+    const id = setTimeout(() => {
+      fetch(`https://api-adresse.data.gouv.fr/search/?q=${code}&postcode=${code}&limit=1`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!alive) return;
+          const city = d?.features?.[0]?.properties?.city || '';
+          setCityHint(city);
+          // Only fill an empty field — never overwrite what the customer typed.
+          setFormData((f) => (f.city ? f : { ...f, city }));
+        })
+        .catch(() => { /* offline or blocked — the field stays free text */ });
+    }, 350);
+    return () => { alive = false; clearTimeout(id); };
+  }, [formData.postal_code]);
   const [success, setSuccess] = useState(null);
   // Structured error from the join endpoint. Today the meaningful case
   // is the 403 "plan_limit_reached" — the loyalty programme has hit its
@@ -238,6 +262,7 @@ const JoinPage = () => {
       payload.consent = consentChecked;
       payload.consent_policy_version = '2026-07-21';
       payload.is_student = isStudent;
+      payload.city = (formData.city || cityHint || '').trim();
       setJoinError(null);
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);  // chain has been persisted server-side, no need to keep it here
@@ -313,12 +338,22 @@ const JoinPage = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.postal_code')}</label>
-                <input required type="text" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.postal_code} onChange={e => setFormData({...formData, postal_code: e.target.value})} />
+                <input required type="text" inputMode="numeric" maxLength={5} className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.postal_code} onChange={e => setFormData({...formData, postal_code: e.target.value})} />
               </div>
+              <div>
+                {/* Ville — filled in automatically from the postal code, and
+                    still editable: one code can cover several communes, and the
+                    customer knows which one is theirs. */}
+                <label className="block text-sm font-medium mb-1 text-[#57534E]">Ville</label>
+                <input type="text" placeholder={cityHint || 'Votre ville'} className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.birthday')}</label>
                 <input required type="text" placeholder="MM-DD" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.birthday} onChange={e => setFormData({...formData, birthday: e.target.value})} />
               </div>
+              <div />
             </div>
             {lockedSource ? (
               // Source was deterministically tagged by the landing URL

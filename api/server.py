@@ -5587,6 +5587,9 @@ class JoinRequest(BaseModel):
     email: Optional[str] = ""
     phone: str
     postal_code: str
+    # The town, asked at signup so a merchant's reports read "Tours" and not
+    # "37200". Optional: it is resolved from the postal code when left blank.
+    city: Optional[str] = ""
     birthday: str
     acquisition_source: Optional[str] = None
     # Student status, declared by the customer at signup. French merchants run
@@ -5732,6 +5735,19 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    # What the customer typed wins; otherwise ask the Base Adresse Nationale
+    # what commune this postal code is, so the record is useful either way.
+    typed_city = (req.city or "").strip()
+    if typed_city:
+        cust_doc["city"] = typed_city[:80]
+    else:
+        try:
+            from services import communes
+            resolved = communes.city_for(req.postal_code)
+            if resolved:
+                cust_doc["city"] = resolved
+        except Exception as exc:
+            print(f"commune lookup failed (non-fatal): {exc}")
     # Multi-touch attribution: store the full chain of touchpoints (every
     # ?src= the visitor passed through) plus first-touch + last-touch
     # convenience fields. This makes "joined via QR but originally found

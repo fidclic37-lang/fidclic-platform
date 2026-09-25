@@ -127,6 +127,12 @@ def register_all(app, db) -> None:
     Failures are logged but never raised — a broken feature module must not
     take down the whole server.
     """
+    # Shared services that need the database before any feature uses them.
+    try:
+        from services import communes
+        communes.init(db)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("commune resolver unavailable: %s", exc)
     for dotted_path in MODULES:
         try:
             module = importlib.import_module(dotted_path)
