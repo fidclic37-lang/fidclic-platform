@@ -64,6 +64,9 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const showVisits = card.show_visits !== false;
   const showStamps = card.show_stamps !== false && threshold > 0;
   const showMeter = card.show_meter !== false;
+  // compose_strip lightens the scrim only on a pale card with no photo; over a
+  // banner it always darkens. Mirror that or the bar reads inverted.
+  const meterOnLight = !hasBannerImage(card) && isLight(card.surface_color);
   const offerText = card.offer_box_text || '';
   const showOffer = card.show_offer_box !== false && !!offerText;
 
@@ -168,13 +171,47 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
               style={{ position: 'relative', maxHeight: '78%', maxWidth: '78%',
                        objectFit: 'contain' }} />
           )}
+
+          {/* ── the meter, INSIDE the strip ──────────────────────────────
+                PassKit has no progress element, so the server paints the bar
+                into strip.png itself (compose_strip in features/wallet_passes.py).
+                These percentages are that function's geometry converted from
+                its 1125×432 canvas — scrim over the bottom 150px, a 26px bar
+                inset 64px, 62px off the base, 10px between segments — so this
+                preview shows the customer's real Wallet card, banner and all,
+                instead of dropping the meter the moment a banner exists. */}
+          {showMeter && threshold > 0 && (
+            <>
+              <div style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, height: '34.7%',
+                background: `linear-gradient(to bottom, transparent, ${
+                  meterOnLight ? 'rgba(255,255,255,.59)' : 'rgba(0,0,0,.65)'})`,
+                pointerEvents: 'none',
+              }} />
+              <div style={{
+                position: 'absolute', left: '5.69%', right: '5.69%', bottom: '8.33%',
+                height: '6.02%', display: 'flex', gap: '0.89%', pointerEvents: 'none',
+              }}>
+                {Array.from({ length: threshold }).map((_, i) => (
+                  <span key={i} style={{
+                    flex: 1, borderRadius: 999,
+                    background: i < stamps ? t.brandRaw
+                      : (meterOnLight ? 'rgba(0,0,0,.15)' : 'rgba(255,255,255,.18)'),
+                    border: i < stamps ? 'none'
+                      : `1px solid ${meterOnLight ? 'rgba(0,0,0,.25)' : 'rgba(255,255,255,.31)'}`,
+                    boxSizing: 'border-box',
+                  }} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* ── stamps row: its OWN slim band flush under the strip — in flow, not
              an overlay, so the hero image is NEVER covered. Themed to the
              surface so it adapts to light and dark cards alike. ── */}
-      {showStamps && !hasBanner && (
+      {showStamps && !hasBanner && !showMeter && (
         <div style={{
           padding: `${px(8)}px ${px(14)}px`, background: t.chipBg,
           borderBottom: `1px solid ${t.hairline}`,
@@ -288,4 +325,20 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
       </div>
     </div>
   );
+}
+
+/** The strip carries a photo — mirrors hero_mode handling in wallet_passes.py. */
+function hasBannerImage(card) {
+  const mode = card.hero_mode || (card.hero_image_url ? 'image' : 'brand');
+  return (mode === 'image' || mode === 'composite') && !!card.hero_image_url;
+}
+
+/** Relative luminance of a #rrggbb colour, on the same 0.45 threshold the
+ *  server uses to decide whether the meter's scrim goes light or dark. */
+function isLight(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.45;
 }
