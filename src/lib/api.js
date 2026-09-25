@@ -123,6 +123,12 @@ export const ownerAPI = {
   supportKb: () => api.get('/support/kb'),
   supportAsk: (message) => api.post('/owner/support/chat', { message }),
   supportHistory: (limit = 12) => api.get('/owner/support/chat', { params: { limit } }),
+  // Historique — the merged activity feed, its four figures, its filter
+  // vocabulary and the CSV of exactly what is on screen.
+  historyFilters: () => api.get('/owner/history/filters'),
+  historyActivity: (params) => api.get('/owner/history/activity', { params }),
+  historyStats: (params) => api.get('/owner/history/stats', { params }),
+  historyExport: (params) => api.get('/owner/history/export', { params, responseType: 'blob' }),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

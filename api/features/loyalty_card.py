@@ -333,6 +333,17 @@ def put_card_settings(body: CardSettings,
         payload["tenant_id"] = tid
         payload["updated_at"] = _now()
         _db.card_templates.update_one({"tenant_id": tid}, {"$set": payload}, upsert=True)
+        # The Historique page reads this: "who changed what on the card, when".
+        # Only the field names travel — a logo data-URI has no business in a log.
+        try:
+            from features import audit
+            audit.log("card.settings.updated", tenant_id=tid, actor=token_data,
+                      object_kind="card_template", object_id=tid,
+                      after={k: True for k in payload
+                             if k not in ("tenant_id", "updated_at")},
+                      db=_db)
+        except Exception:
+            pass        # a history line is never worth losing a save over
 
     # The customers' cards must follow the merchant's change.
     wallet = {"devices": 0, "sent": 0}
@@ -373,6 +384,13 @@ def put_rewards(tiers: List[RewardTier],
     _db.card_templates.update_one({"tenant_id": token_data.tenant_id},
                                   {"$set": {"reward_tiers": rows, "tenant_id": token_data.tenant_id,
                                             "updated_at": _now()}}, upsert=True)
+    try:
+        from features import audit
+        audit.log("card.rewards.updated", tenant_id=token_data.tenant_id, actor=token_data,
+                  object_kind="card_template", object_id=token_data.tenant_id,
+                  after={"tiers": True}, db=_db)
+    except Exception:
+        pass
     try:
         from features.wallet_passes import notify_tenant
         notify_tenant(token_data.tenant_id)

@@ -2140,20 +2140,30 @@ aside.fd-sidebar-host [data-brand-name] { color: #0B1C3F; }
    cream the older pages sit on. Scoped with :has so only those pages are
    repainted — every other page keeps its skin. */
 main:has(.lc),
-main:has(.hlp) { background: #F4F7FC !important; }
+main:has(.hlp),
+main:has(.hst) { background: #F4F7FC !important; }
 /* The top bar belongs to the shell, so it is repainted only while one of these
    pages is on screen — every other page keeps the bar it has today. */
 main:has(.lc) > div:first-child,
-main:has(.hlp) > div:first-child {
+main:has(.hlp) > div:first-child,
+main:has(.hst) > div:first-child {
   background: #FFFFFF !important;
   border-bottom: 1px solid #E6EEFB;
   backdrop-filter: none !important;
 }
 main:has(.lc) > div:first-child *,
-main:has(.hlp) > div:first-child * { color: #334155; }
+main:has(.hlp) > div:first-child *,
+main:has(.hst) > div:first-child * { color: #334155; }
 main:has(.lc) > div:first-child input,
-main:has(.hlp) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
+main:has(.hlp) > div:first-child input,
+main:has(.hst) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
 .lc-wrap { padding: 18px 22px 0; max-width: 1600px; margin-inline: auto; }
 .lc { color: #0B1C3F; }
 .lc input[type="number"]::-webkit-outer-spin-button,
 .lc input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
+
+/* Historique — the table's own type scale. The shell's global input styling
+   would otherwise round and pad the native date pickers out of the filter row. */
+.hst input[type="date"] { font-variant-numeric: tabular-nums; }
+.hst table th:first-child, .hst table td:first-child { padding-left: 20px; }
+.hst table th:last-child,  .hst table td:last-child  { padding-right: 20px; }
