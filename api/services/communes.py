@@ -36,6 +36,48 @@ from typing import Dict, Optional
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
 TIMEOUT_S = 4.0
 
+# ---------------------------------------------------------------------------
+# Districts inside one commune
+#
+# A postal code is finer than a commune, and that finer grain is what makes a
+# campaign targetable: 37000, 37100 and 37200 are all "Tours", but they are the
+# centre, the north and the south, and a café in the centre does not want to
+# pay to reach all three.
+#
+# NOTE ON WHERE THESE COME FROM. No French dataset carries them. The Base
+# Adresse Nationale and La Poste's own base officielle both answer "TOURS" for
+# all three codes — the centre/nord/sud split is La Poste's delivery naming, not
+# an INSEE division. So the named districts below are a curated list, verified
+# city by city, and everything not on it falls back to something that is always
+# true (see label_for). Adding a city is one line.
+# ---------------------------------------------------------------------------
+DISTRICTS: Dict[str, str] = {
+    # Tours — the launch city.
+    "37000": "Tours (centre)",
+    "37100": "Tours Nord",
+    "37200": "Tours Sud",
+}
+
+# The three cities whose postal codes ARE arrondissements. Here the district is
+# arithmetic, not a guess: the last two digits are the arrondissement number.
+ARRONDISSEMENT_CITIES = {"75": ("Paris", 20), "69": ("Lyon", 9), "13": ("Marseille", 16)}
+
+
+def _arrondissement(postal: str) -> str:
+    """"75003" → "Paris 3e". Exact, and free of any lookup."""
+    prefix, rest = postal[:2], postal[2:]
+    city_max = ARRONDISSEMENT_CITIES.get(prefix)
+    if not city_max:
+        return ""
+    city, highest = city_max
+    try:
+        n = int(rest)
+    except ValueError:
+        return ""
+    if not 1 <= n <= highest:
+        return ""
+    return f"{city} {n}er" if n == 1 else f"{city} {n}e"
+
 _db = None
 _memory: Dict[str, str] = {}      # process-local, in front of the Mongo cache
 
@@ -113,6 +155,30 @@ def city_for(postal_code: object) -> str:
     if city:
         _remember(postal, city)
     return city
+
+
+def label_for(postal_code: object) -> str:
+    """What to call the place a postal code covers, most precise first.
+
+        1. a named district, where one is known for certain ("Tours Nord")
+        2. an arrondissement, where the code is one ("Paris 3e")
+        3. the commune ("Saint-Cyr-sur-Loire")
+        4. the code itself, when nothing else can be established
+
+    Steps 1 and 2 are what make two codes in one commune tell apart. Where they
+    cannot — no curated name, no arrondissement — the caller disambiguates with
+    the code rather than this inventing a district name it cannot verify.
+    """
+    postal = _clean(postal_code)
+    if not postal:
+        return ""
+    named = DISTRICTS.get(postal)
+    if named:
+        return named
+    arrondissement = _arrondissement(postal)
+    if arrondissement:
+        return arrondissement
+    return city_for(postal) or postal
 
 
 def cities_for(postal_codes) -> Dict[str, str]:
