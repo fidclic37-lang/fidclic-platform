@@ -86,7 +86,7 @@ const SettingsNavLink = ({ icon: Icon, currentPath, role, collapsed }) => {
       <Link
         to="/dashboard/settings"
         title={t('nav.settings')}
-        className={`flc-nav ${active ? 'on' : ''} relative group flex items-center justify-center px-2 py-2 rounded-lg text-[13.5px] transition-all`}
+        className={`flc-nav ${active ? 'on' : ''} relative group flex items-center justify-center px-2 py-[7px] rounded-lg text-[13.5px] transition-all`}
       >
         <span
           className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
@@ -110,7 +110,7 @@ const SettingsNavLink = ({ icon: Icon, currentPath, role, collapsed }) => {
       <button
         type="button"
         onClick={toggle}
-        className={`flc-nav ${active ? 'on' : ''} w-full relative group flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13.5px] transition-all`}
+        className={`flc-nav ${active ? 'on' : ''} w-full relative group flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13.5px] transition-all`}
         style={{ fontWeight: active ? 600 : 450 }}
       >
         <span
@@ -163,7 +163,7 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge })
     <Link
       to={to}
       title={collapsed ? label : undefined}
-      className={`flc-nav ${active ? 'on' : ''} relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-2 rounded-xl text-[13.5px] transition-all`}
+      className={`flc-nav ${active ? 'on' : ''} relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-[7px] rounded-xl text-[13.5px] transition-all`}
       style={{ fontWeight: active ? 600 : 450 }}
     >
       <span
@@ -199,7 +199,7 @@ const SignOutNavItem = ({ onClick, collapsed }) => {
       type="button"
       onClick={onClick}
       title={collapsed ? t('nav.sign_out') : undefined}
-      className={`relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-2 rounded-lg text-[13.5px] transition-all w-full text-left`}
+      className={`relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-[7px] rounded-lg text-[13.5px] transition-all w-full text-left`}
       style={{ color: 'var(--ink-mute)', background: 'transparent', fontWeight: 400 }}
       onMouseOver={(e) => {
         e.currentTarget.style.background = 'color-mix(in srgb, var(--flc-accent, #C73E2C) 10%, transparent)';
@@ -513,7 +513,7 @@ const DashboardLayout = () => {
           <div className="h-px" style={{ background: C.hairline }} />
         </div>
 
-        <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} py-4 space-y-0.5 overflow-y-auto`}>
+        <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} py-2 space-y-[1px] overflow-y-auto`}>
           {role === 'business_owner' && (
             <>
               {/* Order follows the approved sidebar mockup. Every row points at
@@ -602,28 +602,6 @@ const DashboardLayout = () => {
           </button>
         </div>
 
-        {/* User chip — sign-out moved into the nav, directly below Settings */}
-        <div className={`${collapsed ? 'p-3' : 'p-4'} mt-auto`} style={{ borderTop: `1px solid ${C.hairline}` }}>
-          <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5 px-1'}`}>
-            <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
-              style={{ background: `linear-gradient(135deg, ${theme.from}, ${theme.to})` }}
-              title={collapsed ? (user?.email || '') : undefined}
-            >
-              {(user?.email || '?').slice(0, 1).toUpperCase()}
-            </div>
-            {!collapsed && (
-              <div className="min-w-0">
-                <p className="text-xs font-semibold truncate" style={{ color: C.inkDeep }}>
-                  {user?.email || '—'}
-                </p>
-                <p className="text-[10px] uppercase tracking-widest font-bold" style={{ color: theme.from }}>
-                  {theme.label}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
       </aside>
 
       <main className="relative z-10 flex-1 overflow-auto">
@@ -639,7 +617,7 @@ const DashboardLayout = () => {
             slot hidden so staff don't see owner-only alerts. */}
         {role === 'business_owner' && (
           <div
-            className="sticky top-0 z-30 flex items-center gap-3 px-6 lg:px-8 py-2.5 backdrop-blur"
+            className="sticky top-0 z-30 relative flex items-center justify-center px-6 lg:px-8 py-2.5 backdrop-blur"
             style={{
               background: 'color-mix(in srgb, var(--flc-card, #FFFFFF) 82%, transparent)',
               borderBottom: '1px solid var(--hairline, #EFEDE9)',
@@ -696,15 +674,12 @@ const DashboardLayout = () => {
                 else. The branch pills moved into the sidebar's establishment
                 switcher, where picking a shop belongs; help has its own row at
                 the foot of the sidebar. */}
-            <div className="flex-1" />
-
-            {/* Bell */}
-            <div className="shrink-0">
+            <div className="absolute right-6 lg:right-8 flex items-center gap-3">
               <NotificationBell />
-            </div>
 
-            {/* User menu avatar */}
-            <UserMenu user={user} theme={theme} role={role} onLogout={logout} />
+              {/* User menu avatar */}
+              <UserMenu user={user} theme={theme} role={role} onLogout={logout} />
+            </div>
           </div>
         )}
 
