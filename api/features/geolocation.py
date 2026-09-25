@@ -165,27 +165,53 @@ def _client_position(cust: Dict[str, Any]) -> Tuple[Optional[float], Optional[fl
     return None, None, "unknown"
 
 
-def _commune(cust: Dict[str, Any]) -> str:
-    """The town a client lives in.
+def _commune(cust: Dict[str, Any]) -> Tuple[str, str]:
+    """(label, postal code) for where a client lives.
 
-    Their own answer first — the signup form asks for it. Failing that, the
-    commune their postal code belongs to, looked up once and cached for the
-    whole platform. A bare "37200" tells a merchant nothing, which is why the
-    code itself is the last resort and not the first.
+    The postal code leads, because it is finer than the town: 37000, 37100 and
+    37200 are all Tours, and a campaign aimed at the centre should not pay to
+    reach the north. services.communes turns the code into the most precise
+    name it can stand behind — a known district, an arrondissement, the
+    commune, and only then the bare code.
+
+    The client's own `city`, where an import or an older signup left one, is the
+    fallback rather than the lead: it says "Tours" where the code says "Tours
+    Nord".
     """
-    city = str(cust.get("city") or "").strip()
-    if city:
-        return city
     postal = str(cust.get("postal_code") or "").strip()
     if postal:
         try:
             from services import communes
-            resolved = communes.city_for(postal)
-            if resolved:
-                return resolved
+            label = communes.label_for(postal)
+            if label:
+                return label, postal
         except Exception:
             pass        # a missing name must never cost the merchant the page
-    return postal or "Non renseigné"
+    city = str(cust.get("city") or "").strip()
+    if city:
+        return city, postal
+    return (postal or "Non renseigné"), postal
+
+
+def _display_names(seen: Dict[str, set]) -> Dict[str, str]:
+    """(label, code) key → what the merchant reads.
+
+    Two postal codes that resolve to the same name are two different places.
+    The curated districts and the arrondissements already tell themselves apart;
+    everywhere else "Tours" would silently merge 37000 and 37100. Rather than
+    invent a district name that cannot be verified, the code is appended —
+    "Tours (37100)" — and only where it is needed, so a commune with a single
+    code stays plain.
+    """
+    names: Dict[str, str] = {}
+    for label, codes in seen.items():
+        if len(codes) <= 1:
+            for code in codes or {""}:
+                names[f"{label}|{code}"] = label
+        else:
+            for code in codes:
+                names[f"{label}|{code}"] = f"{label} ({code})" if code else label
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +262,10 @@ def _band_of(distance_km: float, speed_kmh: float) -> Optional[int]:
     return None
 
 
-def _top(counter: Dict[str, int], limit: int = 5) -> List[Dict[str, Any]]:
-    return [{"name": name, "clients": n}
-            for name, n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
+def _top(counter: Dict[str, int], names: Dict[str, str], limit: int = 5) -> List[Dict[str, Any]]:
+    """Counters are keyed "label|code"; the merchant reads the display name."""
+    return [{"name": names.get(key, key.split("|")[0]), "clients": n}
+            for key, n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
 
 
 def _pct(part: int, whole: int) -> int:
@@ -283,6 +310,9 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str) -> 
     # A commune's point on the map is the average of its own clients' points —
     # no gazetteer needed, and it lands where the clients actually are.
     commune_sum: Dict[str, List[float]] = {}
+    # Counted against "label|code" so two codes sharing a name stay apart until
+    # the display pass decides whether they need telling apart.
+    seen_codes: Dict[str, set] = {}
     precision = {"gps": 0, "postal": 0, "department": 0, "unknown": 0}
     points: List[Dict[str, Any]] = []
     in_zone = in_band = in_both = 0
@@ -304,7 +334,9 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str) -> 
             out_of_range += 1
             continue
 
-        commune = _commune(cust)
+        label, postal = _commune(cust)
+        commune = f"{label}|{postal}"
+        seen_codes.setdefault(label, set()).add(postal)
         all_communes[commune] = all_communes.get(commune, 0) + 1
         acc = commune_sum.setdefault(commune, [0.0, 0.0, 0.0])
         acc[0] += lat; acc[1] += lng; acc[2] += 1
@@ -323,6 +355,7 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str) -> 
             points.append({"lat": round(lat, 5), "lng": round(lng, 5),
                            "zone": zone, "band": band, "precise": how == "gps"})
 
+    display = _display_names(seen_codes)
     result.update({
         "positioned": True,
         "clients_total": len(clients),
@@ -351,13 +384,13 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str) -> 
             } for m in BANDS_MIN],
         },
         "communes": {
-            "zones": {k: _top(v) for k, v in zone_communes.items()},
-            "bands": {str(k): _top(v) for k, v in band_communes.items()},
-            "combined": _top(all_communes, 15),
+            "zones": {k: _top(v, display) for k, v in zone_communes.items()},
+            "bands": {str(k): _top(v, display) for k, v in band_communes.items()},
+            "combined": _top(all_communes, display, 15),
         },
         "combined": {"catchment_total": in_zone, "isochrone_total": in_band, "both": in_both},
         "commune_pins": [{
-            "name": name,
+            "name": display.get(name, name.split("|")[0]),
             "clients": all_communes[name],
             "lat": round(commune_sum[name][0] / commune_sum[name][2], 5),
             "lng": round(commune_sum[name][1] / commune_sum[name][2], 5),

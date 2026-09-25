@@ -5587,8 +5587,8 @@ class JoinRequest(BaseModel):
     email: Optional[str] = ""
     phone: str
     postal_code: str
-    # The town, asked at signup so a merchant's reports read "Tours" and not
-    # "37200". Optional: it is resolved from the postal code when left blank.
+    # Kept for imports and older clients that still send one; the signup form
+    # no longer asks, because the postal code says it more precisely.
     city: Optional[str] = ""
     birthday: str
     acquisition_source: Optional[str] = None
@@ -5735,16 +5735,17 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
-    # What the customer typed wins; otherwise ask the Base Adresse Nationale
-    # what commune this postal code is, so the record is useful either way.
+    # The place comes from the postal code — finer than a town name, and one
+    # less field between a customer and their card. An import that supplies a
+    # city is still honoured.
     typed_city = (req.city or "").strip()
     if typed_city:
         cust_doc["city"] = typed_city[:80]
     else:
         try:
             from services import communes
-            resolved = communes.city_for(req.postal_code)
-            if resolved:
+            resolved = communes.label_for(req.postal_code)
+            if resolved and resolved != str(req.postal_code).strip():
                 cust_doc["city"] = resolved
         except Exception as exc:
             print(f"commune lookup failed (non-fatal): {exc}")
