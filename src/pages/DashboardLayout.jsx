@@ -2,7 +2,7 @@ import React from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import NotificationBell from '../components/NotificationBell';
-import BranchPillsBanner from '../components/BranchPillsBanner';
+import EstablishmentSwitcher from '../components/EstablishmentSwitcher';
 import BillingBanner from '../components/BillingBanner';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,7 +10,7 @@ import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, CreditCard, Shield, History, ChevronDown,
-  Building2, Menu, LifeBuoy, Star, ClipboardList, PieChart, Share2
+  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Star, ClipboardList, PieChart, Share2
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 
@@ -340,15 +340,12 @@ const DashboardLayout = () => {
   // inline styles flip too.
   // Dark mode shipped with P3/P4: every dashboard page passed the
   // dual-theme probe (no bright surfaces left under .flc-nuit).
-  const FLC_DARK_READY = true;
-  const [nuit, setNuit] = React.useState(() => {
-    if (!FLC_DARK_READY) return false;
-    try { return localStorage.getItem('flc-theme') === 'nuit'; } catch { return false; }
-  });
-  const flipTheme = () => setNuit((v) => {
-    try { localStorage.setItem('flc-theme', v ? 'jour' : 'nuit'); } catch { /* ignore */ }
-    return !v;
-  });
+  // The day/night switch lived in the top bar and went with it when the bar was
+  // rebuilt to the approved design. Rather than leave anyone who had chosen
+  // dark with no way back out, the stored preference is ignored and the light
+  // skin — the one the design is drawn in — is the only one served. The state
+  // stays so a switch can be put back wherever it belongs, in one line.
+  const nuit = false;
 
   const { user, logout } = useAuth();
   const { t } = useTranslation();
@@ -469,9 +466,10 @@ const DashboardLayout = () => {
           alignSelf: 'flex-start',
         }}
       >
-        {/* Collapse toggle — three-line hamburger pinned to the right edge.
-            One symbol for both states; the colour/background flips so the
-            user still gets feedback about open vs collapsed. */}
+        {/* Collapse toggle — pinned to the right edge, same button in both
+            states. The arrow points the way it will move the rail, so the
+            collapsed rail has a visible way back out; a single hamburger in
+            both states never said which. */}
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
@@ -486,67 +484,30 @@ const DashboardLayout = () => {
             color: collapsed ? C.inkSoft : 'var(--flc-paper, #FFFFFF)',
           }}
         >
-          <Menu size={14} strokeWidth={2.25} />
+          {collapsed ? <ChevronsRight size={15} strokeWidth={2.25} />
+                    : <ChevronsLeft size={15} strokeWidth={2.25} />}
         </button>
 
-        {/* Brand mark + role badge */}
-        <div className={collapsed ? 'p-3 pb-2' : 'p-5 pb-3'}>
+        {/* Brand mark, then the shop whose figures are on screen. The account
+            badge that used to sit here became the establishment switcher — one
+            place to say which shop you are looking at. */}
+        <div className={collapsed ? 'px-3 pt-3 pb-1' : 'px-4 pt-4 pb-1'}>
           <Link to="/" className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5'}`}>
             <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shadow-sm shrink-0"
-              style={{ background: `linear-gradient(135deg, ${theme.from} 0%, ${theme.to} 100%)`, fontWeight: 500 }}
-              title={collapsed ? `FidClic · ${theme.label}` : undefined}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[16px] font-bold text-white"
+              style={{ background: '#2F6BFF', boxShadow: '0 8px 18px -10px rgba(47,107,255,.9)' }}
+              title={collapsed ? 'FidClic' : undefined}
             >
               F
             </div>
             {!collapsed && (
-              <div className="min-w-0">
-                <p
-                  className="text-[15px] leading-none"
-                  style={{ color: 'var(--ink)', fontWeight: 500, letterSpacing: '-0.015em' }}
-                >
-                  FidClic
-                </p>
-                <p
-                  className="text-[9px] uppercase tracking-[0.16em] mt-1"
-                  style={{ color: 'var(--ink-mute)', fontWeight: 500 }}
-                >
-                  {theme.label}
-                </p>
-              </div>
+              <span className="text-[19px] font-bold leading-none tracking-[-0.02em]" style={{ color: '#0B1C3F' }}>
+                FidClic
+              </span>
             )}
           </Link>
-
-          {/* Tenant identity badge — only when expanded */}
-          {!collapsed && tenantInfo && (
-            <div
-              className="mt-3 px-2.5 py-2 rounded-lg"
-              style={{ background: 'color-mix(in srgb, var(--flc-card, #FFFFFF) 55%, transparent)', border: '1px solid var(--hairline)' }}
-              title={`${t('nav.account')} : ${tenantInfo.name || t('nav.account_no_name')} · slug: ${tenantInfo.slug || '—'}`}
-            >
-              <p
-                className="text-[9px] uppercase tracking-[0.16em]"
-                style={{ color: 'var(--ink-mute)', fontWeight: 500 }}
-              >
-                {t('nav.account')}
-              </p>
-              <p
-                className="text-[13px] truncate mt-0.5"
-                style={{ color: 'var(--ink)', fontWeight: 500, letterSpacing: '-0.01em' }}
-              >
-                {tenantInfo.name || t('nav.account_no_name')}
-              </p>
-              {tenantInfo.slug && (
-                <p
-                  className="text-[10px] font-mono truncate mt-0.5"
-                  style={{ color: 'var(--ink-mute)' }}
-                >
-                  /join/{tenantInfo.slug}
-                </p>
-              )}
-            </div>
-          )}
         </div>
+        <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
@@ -612,35 +573,34 @@ const DashboardLayout = () => {
           )}
         </nav>
 
-        {/* Help card — the mockup's footer block. One tap from anywhere in the
-            platform to the support page. Hidden when the rail is collapsed,
-            where the nav's own help row already stands in for it. */}
-        {!collapsed && (
-          <div className="px-3 pb-1 mt-auto">
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard/aide')}
-              className="w-full text-left rounded-xl px-3 py-3 transition-colors"
-              style={{
-                background: 'color-mix(in srgb, var(--flc-accent, #C73E2C) 7%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--flc-accent, #C73E2C) 16%, transparent)',
-              }}
-            >
-              <span className="flex items-center gap-2">
-                <LifeBuoy className="w-[15px] h-[15px]" style={{ color: 'var(--flc-accent, #C73E2C)' }} />
-                <span className="text-[12.5px]" style={{ color: 'var(--ink)', fontWeight: 600 }}>
+        {/* Help — one row at the foot of the rail, in both states. The help
+            icon that used to sit in the top bar went with the bar, so this is
+            the single way in and it has to survive the collapsed rail. */}
+        <div className={`mt-auto ${collapsed ? 'flex justify-center px-2 pb-3' : 'px-3 pb-3'}`}>
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard/aide')}
+            title={collapsed ? t('nav.help') : undefined}
+            aria-label={t('nav.help')}
+            className={collapsed
+              ? 'flex h-9 w-9 items-center justify-center rounded-xl transition-colors'
+              : 'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors'}
+            style={{ background: '#EAF1FF', color: '#2F6BFF' }}
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: collapsed ? 'transparent' : '#2F6BFF', color: collapsed ? '#2F6BFF' : '#fff' }}>
+              <LifeBuoy size={collapsed ? 17 : 13} />
+            </span>
+            {!collapsed && (
+              <>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: '#1D4ED8' }}>
                   {t('nav.help')}
                 </span>
-              </span>
-              <span
-                className="block text-[11.5px] mt-1"
-                style={{ color: 'var(--flc-accent, #C73E2C)', fontWeight: 500 }}
-              >
-                {t('nav.help_cta')} →
-              </span>
-            </button>
-          </div>
-        )}
+                <ChevronsRight size={14} className="shrink-0" style={{ color: '#7FA6F5' }} />
+              </>
+            )}
+          </button>
+        </div>
 
         {/* User chip — sign-out moved into the nav, directly below Settings */}
         <div className={`${collapsed ? 'p-3' : 'p-4'} mt-auto`} style={{ borderTop: `1px solid ${C.hairline}` }}>
@@ -691,7 +651,7 @@ const DashboardLayout = () => {
                 text search. */}
             <form
               onSubmit={submitSearch}
-              className="flex items-center gap-1.5 rounded-full px-3 py-1 shrink-0 w-[200px] lg:w-[280px]"
+              className="flex items-center gap-2 rounded-full px-3.5 py-2 shrink-0 w-[260px] lg:w-[420px] xl:w-[520px]"
               style={{ background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--hairline, #EFEDE9)' }}
             >
               <button type="submit" aria-label={t('common.search')} className="shrink-0" style={{ lineHeight: 0 }}>
@@ -706,7 +666,7 @@ const DashboardLayout = () => {
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder={t('nav.search_placeholder')}
                 aria-label={t('common.search')}
-                className="flex-1 min-w-0 bg-transparent outline-none text-[12.5px]"
+                className="flex-1 min-w-0 bg-transparent outline-none text-[13px]"
                 style={{ color: 'var(--ink, #171412)', fontWeight: 400 }}
               />
               {searchQ && (
@@ -728,45 +688,20 @@ const DashboardLayout = () => {
                 }}
                 title={t('nav.search_enter_hint')}
               >
-                ↵
+                ⌘ K
               </kbd>
             </form>
 
-            {/* Branch banner inline — fills the middle */}
-            <div className="flex-1 min-w-0 px-2">
-              <BranchPillsBanner compact />
-            </div>
-
-            {/* Theme: Eclat / Minuit Dore */}
-            {FLC_DARK_READY && (
-            <button type="button" onClick={flipTheme} aria-label="Mode jour / nuit"
-              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ border: '1px solid var(--flc-line,#ECE8E2)', color: 'var(--flc-ink3,#524A40)' }}>
-              {nuit ? '\u2600' : '\u263E'}
-            </button>
-            )}
+            {/* The bar carries the search, the bell and the account — nothing
+                else. The branch pills moved into the sidebar's establishment
+                switcher, where picking a shop belongs; help has its own row at
+                the foot of the sidebar. */}
+            <div className="flex-1" />
 
             {/* Bell */}
             <div className="shrink-0">
               <NotificationBell />
             </div>
-
-            {/* Help icon */}
-            <button
-              type="button"
-              aria-label={t('nav.help')}
-              title={t('nav.help')}
-              className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors"
-              style={{ background: 'transparent', border: '1px solid var(--hairline, #EFEDE9)', color: 'var(--ink-mute, #8D857D)' }}
-              onMouseOver={(e) => { e.currentTarget.style.background = 'var(--flc-paper2, #F5F4F1)'; }}
-              onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-            </button>
 
             {/* User menu avatar */}
             <UserMenu user={user} theme={theme} role={role} onLogout={logout} />
