@@ -253,8 +253,9 @@ export default function LoyaltyCardPage() {
     show_tier: advanced?.show_tier !== false,
     show_tier_badge: advanced?.show_tier !== false,
     show_visits: advanced?.show_visits !== false,
-    show_stamps: advanced?.show_stamps !== false,
-    show_meter: advanced?.show_meter !== false,
+    // Derived from the single choice, so the preview shows exactly one.
+    show_stamps: (advanced?.progress_style || 'meter') === 'stamps',
+    show_meter: (advanced?.progress_style || 'meter') === 'meter',
     show_qr: toggles?.show_qr !== false,
     code_type: toggles?.show_qr === false ? 'barcode' : (advanced?.code_type || 'qr'),
     show_card_number: advanced?.show_card_number !== false,
@@ -670,10 +671,23 @@ export default function LoyaltyCardPage() {
                       onChange={(v) => setAdvanced({ ...advanced, show_tier: v })} />
               <Toggle icon={Users} label="Nombre de visites" checked={advanced.show_visits}
                       onChange={(v) => setAdvanced({ ...advanced, show_visits: v })} />
-              <Toggle icon={Gift} label="Tampons" checked={advanced.show_stamps}
-                      onChange={(v) => setAdvanced({ ...advanced, show_stamps: v })} />
-              <Toggle icon={CreditCard} label="Jauge de progression sur la bannière" checked={advanced.show_meter}
-                      onChange={(v) => setAdvanced({ ...advanced, show_meter: v })} />
+              {/* One control, not two. The stamps row and the progress bar show
+                  the same fact, and offering both let a card carry it twice. */}
+              <div className="col-span-full">
+                <Label hint="une seule jauge sur la carte">Indicateur de progression</Label>
+                <Select
+                  value={advanced.progress_style || 'meter'}
+                  onChange={(e) => {
+                    const style = e.target.value;
+                    setAdvanced({ ...advanced, progress_style: style,
+                                  show_stamps: style === 'stamps', show_meter: style === 'meter' });
+                  }}
+                >
+                  <option value="meter">Jauge de progression sur la bannière</option>
+                  <option value="stamps">Tampons (une pastille par passage)</option>
+                  <option value="none">Aucun indicateur</option>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-3.5">

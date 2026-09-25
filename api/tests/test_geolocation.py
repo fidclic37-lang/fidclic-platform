@@ -205,5 +205,35 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("and 0 km belongs to the first", GEO._zone_of(0.0) == "z1")
     check("a distance past the last ring belongs to none", GEO._zone_of(31.0) is None)
 
+    # ---- commune names, not postal codes ---------------------------------------
+    print("\nA client's town")
+    from services import communes
+    communes.init(db)
+    communes._memory.clear()
+    # The network is not part of this suite: the lookup is stubbed, and what is
+    # tested is that the page asks for a name and prefers the client's own.
+    calls = []
+    communes._fetch = lambda postal: (calls.append(postal) or {"37200": "Tours", "37540": "Saint-Cyr-sur-Loire"}.get(postal, ""))
+    check("a client's own answer is used as-is",
+          GEO._commune({"city": "La Riche", "postal_code": "37200"}) == "La Riche")
+    check("a postal code is resolved to its commune",
+          GEO._commune({"postal_code": "37200"}) == "Tours")
+    check("the lookup happens once, then comes from the cache",
+          GEO._commune({"postal_code": "37200"}) == "Tours" and calls.count("37200") == 1)
+    check("a second code is its own lookup",
+          GEO._commune({"postal_code": "37540"}) == "Saint-Cyr-sur-Loire")
+    check("an unresolvable code falls back to the code, never to blank",
+          GEO._commune({"postal_code": "99999"}) == "99999")
+    check("a client with neither reads as 'Non renseigné'",
+          GEO._commune({}) == "Non renseigné")
+    communes._fetch = lambda postal: (_ for _ in ()).throw(RuntimeError("network down"))
+    communes._memory.clear()
+    db.commune_cache.delete_many({})      # the cache would otherwise answer first
+    check("a lookup that blows up never costs the page its row",
+          GEO._commune({"postal_code": "37200"}) == "37200")
+    check("five digits are required before anything is asked",
+          communes._clean("3720") == "" and communes._clean("37200") == "37200")
+    check("a code with spaces still resolves", communes._clean(" 37 200 ") == "37200")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

@@ -166,10 +166,25 @@ def _client_position(cust: Dict[str, Any]) -> Tuple[Optional[float], Optional[fl
 
 
 def _commune(cust: Dict[str, Any]) -> str:
+    """The town a client lives in.
+
+    Their own answer first — the signup form asks for it. Failing that, the
+    commune their postal code belongs to, looked up once and cached for the
+    whole platform. A bare "37200" tells a merchant nothing, which is why the
+    code itself is the last resort and not the first.
+    """
     city = str(cust.get("city") or "").strip()
     if city:
         return city
     postal = str(cust.get("postal_code") or "").strip()
+    if postal:
+        try:
+            from services import communes
+            resolved = communes.city_for(postal)
+            if resolved:
+                return resolved
+        except Exception:
+            pass        # a missing name must never cost the merchant the page
     return postal or "Non renseigné"
 
 

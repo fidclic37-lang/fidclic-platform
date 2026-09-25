@@ -478,10 +478,12 @@ const DashboardLayout = () => {
           title={collapsed ? t('nav.expand_sidebar') : t('nav.collapse_sidebar')}
           className="absolute -right-3 top-6 z-20 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:scale-110"
           style={{
-            background: collapsed ? 'var(--flc-card, #FFFFFF)' : 'var(--flc-ink, #171412)',
-            border: `1px solid ${collapsed ? C.hairline : 'var(--flc-ink, #171412)'}`,
-            boxShadow: '0 2px 6px rgba(28,25,23,0.10)',
-            color: collapsed ? C.inkSoft : 'var(--flc-paper, #FFFFFF)',
+            // White in both states — a black puck on a white rail read as a
+            // different control depending on which way the arrow pointed.
+            background: '#FFFFFF',
+            border: '1px solid #E6EEFB',
+            boxShadow: '0 2px 8px rgba(11,28,63,0.12)',
+            color: '#334155',
           }}
         >
           {collapsed ? <ChevronsRight size={15} strokeWidth={2.25} />
@@ -596,7 +598,6 @@ const DashboardLayout = () => {
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: '#1D4ED8' }}>
                   {t('nav.help')}
                 </span>
-                <ChevronsRight size={14} className="shrink-0" style={{ color: '#7FA6F5' }} />
               </>
             )}
           </button>

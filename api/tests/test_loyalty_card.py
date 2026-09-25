@@ -210,5 +210,33 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           st["qr_scans"]["delta"] == round((4 - 3) / 3 * 100, 1))
     check("no delta invented out of zero", LC.card_stats(2, TD())["rewards_used"]["delta"] is None)
 
+    # ---- one progress indicator, never two -------------------------------------
+    print("\nIndicateur de progression")
+    LC.put_card_settings(LC.CardSettings(progress_style="stamps"), TD())
+    a = LC.get_card_settings(TD())["advanced"]
+    check("choosing stamps turns the meter off",
+          a["progress_style"] == "stamps" and a["show_stamps"] is True and a["show_meter"] is False)
+    LC.put_card_settings(LC.CardSettings(progress_style="meter"), TD())
+    a = LC.get_card_settings(TD())["advanced"]
+    check("choosing the meter turns the stamps off",
+          a["progress_style"] == "meter" and a["show_meter"] is True and a["show_stamps"] is False)
+    LC.put_card_settings(LC.CardSettings(progress_style="none"), TD())
+    a = LC.get_card_settings(TD())["advanced"]
+    check("choosing none turns both off",
+          a["progress_style"] == "none" and a["show_meter"] is False and a["show_stamps"] is False)
+    check("the card can never carry both at once", not (a["show_meter"] and a["show_stamps"]))
+    try:
+        LC.put_card_settings(LC.CardSettings(progress_style="sparkles"), TD())
+        check("an unknown indicator is refused", False)
+    except HTTPException as exc:
+        check("an unknown indicator is refused", exc.status_code == 400)
+    check("a card saved before the choice existed reads as the meter — what its "
+          "customers already see in Wallet",
+          LC._progress_style({}) == "meter")
+    check("a card that had only stamps keeps them",
+          LC._progress_style({"show_meter": False}) == "stamps")
+    check("a card with neither reads as none",
+          LC._progress_style({"show_meter": False, "show_stamps": False}) == "none")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

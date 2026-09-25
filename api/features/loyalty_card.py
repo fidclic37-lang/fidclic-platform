@@ -46,6 +46,24 @@ _db = None
 #   points_visit fixed points per visit      (points_mode per_visit)
 #   stamps       one stamp per visit, reward every N stamps
 #   cashback     % of the bill kept as a euro balance (stored in cents)
+PROGRESS_STYLES = ("stamps", "meter", "none")
+
+
+def _progress_style(tpl: dict) -> str:
+    """Which single indicator a stored card means.
+
+    Cards saved before this choice existed have both flags on, because both
+    defaulted to true. They are read as the meter: it is what the Wallet pass
+    paints, so it is what those customers are already looking at."""
+    stamps = tpl.get("show_stamps") is not False
+    meter = tpl.get("show_meter") is not False
+    if meter:
+        return "meter"
+    if stamps:
+        return "stamps"
+    return "none"
+
+
 PROGRAMMES = ("points_euro", "points_visit", "stamps", "cashback")
 LEGACY_PROGRAMMES = {"points": "points_euro"}
 
@@ -192,6 +210,7 @@ class CardSettings(BaseModel):
     show_stamps: Optional[bool] = None
     show_meter: Optional[bool] = None            # the gauge painted on the banner
     hero_mode: Optional[str] = None              # image | brand | none
+    progress_style: Optional[str] = None         # stamps | meter | none
     code_content: Optional[str] = None           # number | url
     points_change_message: Optional[str] = None  # notification wording
     stamps_change_message: Optional[str] = None
@@ -252,6 +271,11 @@ def get_card_settings(token_data: TokenData = Depends(require_role(["business_ow
             "show_visits": tpl.get("show_visits") is not False,
             "show_stamps": tpl.get("show_stamps") is not False,
             "show_meter": tpl.get("show_meter") is not False,
+            # The stamps row and the progress bar are the same fact drawn twice,
+            # so the page offers ONE choice. The two flags stay as the storage —
+            # the pass builder and both previews already read them — and this is
+            # what that pair means, read back as a single value.
+            "progress_style": _progress_style(tpl),
             "hero_mode": tpl.get("hero_mode") or ("image" if tpl.get("hero_image_url") else "brand"),
             "code_content": tpl.get("code_content") or "number",
             "points_change_message": tpl.get("points_change_message") or "",
@@ -290,6 +314,14 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Champ d'en-tête inconnu")
     if payload.get("hero_mode") is not None and payload["hero_mode"] not in ("image", "brand", "none"):
         raise HTTPException(status_code=400, detail="Style de bannière inconnu")
+    if payload.get("progress_style") is not None:
+        style = payload.pop("progress_style")
+        if style not in PROGRESS_STYLES:
+            raise HTTPException(status_code=400, detail="Indicateur de progression inconnu")
+        # One control in, two flags out — never both on, so the card can never
+        # show the same progress twice again.
+        payload["show_stamps"] = style == "stamps"
+        payload["show_meter"] = style == "meter"
     if payload.get("code_content") is not None and payload["code_content"] not in ("number", "url"):
         raise HTTPException(status_code=400, detail="Contenu du code inconnu")
     if payload.get("location_radius_m") is not None:
