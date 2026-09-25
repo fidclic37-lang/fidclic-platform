@@ -100,6 +100,7 @@ import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
 import HelpPage from './pages/HelpPage';
 import GeolocationPage from './pages/GeolocationPage';
+import ReferralPage from './pages/ReferralPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -314,8 +315,7 @@ function App() {
             } />
             <Route path="referral" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <ComingSoonPage title="Parrainage"
-                  description="Vos clients fidèles invitent leurs proches ; parrain et filleul reçoivent la récompense que vous définissez." />
+                <ReferralPage />
               </ProtectedRoute>
             } />
             <Route path="card" element={

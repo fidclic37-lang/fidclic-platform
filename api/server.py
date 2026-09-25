@@ -5589,6 +5589,10 @@ class JoinRequest(BaseModel):
     postal_code: str
     birthday: str
     acquisition_source: Optional[str] = None
+    # Student status, declared by the customer at signup. French merchants run
+    # student offers constantly, so this is a first-class segment rather than a
+    # tag — the referral page's breakdown and any "étudiants" campaign read it.
+    is_student: Optional[bool] = False
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     # Multi-touch attribution: every URL ?src=... the visitor landed on
@@ -5727,6 +5731,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         longitude=req.longitude
     )
     cust_doc = c.model_dump()
+    cust_doc["is_student"] = bool(req.is_student)
     # Multi-touch attribution: store the full chain of touchpoints (every
     # ?src= the visitor passed through) plus first-touch + last-touch
     # convenience fields. This makes "joined via QR but originally found

@@ -133,6 +133,11 @@ export const ownerAPI = {
   // behind them, plus the same breakdown as CSV.
   geoCatchment: (params) => api.get('/owner/geo/catchment', { params }),
   geoExport: (params) => api.get('/owner/geo/export', { params, responseType: 'blob' }),
+  // Parrainage — the programme's dashboard, its settings and its share links.
+  referralOverview: (params) => api.get('/owner/referrals/overview', { params }),
+  referralShareLinks: () => api.get('/owner/referrals/share'),
+  referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
+  saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

@@ -80,6 +80,9 @@ const JoinPage = () => {
   // RGPD: explicit, unticked-by-default consent checkbox (Art. 7 — consent
   // must be a positive action, pre-ticked boxes are illegal per CJUE Planet49).
   const [consentChecked, setConsentChecked] = useState(false);
+  // Student status — French merchants run student offers all year, so it is
+  // asked once at signup rather than guessed later. Optional, never required.
+  const [isStudent, setIsStudent] = useState(false);
   const [success, setSuccess] = useState(null);
   // Structured error from the join endpoint. Today the meaningful case
   // is the 403 "plan_limit_reached" — the loyalty programme has hit its
@@ -234,6 +237,7 @@ const JoinPage = () => {
       // RGPD consent proof — backend refuses new signups without it.
       payload.consent = consentChecked;
       payload.consent_policy_version = '2026-07-21';
+      payload.is_student = isStudent;
       setJoinError(null);
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);  // chain has been persisted server-side, no need to keep it here
@@ -392,6 +396,22 @@ const JoinPage = () => {
                 wraps the checkbox so the whole text row is tappable (44px+
                 hit area on mobile). `required` gives free browser-level
                 blocking with a native message if left unticked. */}
+            {/* Student status — asked plainly, ticked by the customer, never
+                required. It drives the merchant's student offers and the
+                parrainage breakdown. */}
+            <label className="flex items-start gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isStudent}
+                onChange={(e) => setIsStudent(e.target.checked)}
+                className="mt-0.5 w-5 h-5 shrink-0 accent-[#B85C38] cursor-pointer"
+              />
+              <span className="text-xs text-[#57534E] leading-relaxed">
+                Je suis <strong>étudiant·e</strong> — pour recevoir les offres
+                réservées aux étudiants.
+              </span>
+            </label>
+
             <label className="flex items-start gap-3 p-3 rounded-lg border border-[#E7E5E4] bg-white cursor-pointer select-none">
               <input
                 type="checkbox"
