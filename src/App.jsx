@@ -301,12 +301,6 @@ function App() {
             {/* Carte de fidélité — the merchant's single card. The old
                 CardDesignerPage it replaces has been removed; its advanced
                 knobs live in the "Options avancées" panel on this page. */}
-            <Route path="surveys" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <ComingSoonPage title="Enquêtes"
-                  description="Interrogez vos clients après leur visite : satisfaction, préférences, idées de nouveautés." />
-              </ProtectedRoute>
-            } />
             <Route path="segmentation" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
                 <ComingSoonPage title="Segmentation"
@@ -350,6 +344,10 @@ function App() {
                 <HistoryPage />
               </ProtectedRoute>
             } />
+            {/* Anything else under /dashboard goes home. Without this a removed
+                page — /dashboard/surveys, say — left a bookmark rendering the
+                shell around nothing at all. */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
 
           {/* Super Admin Routes */}
