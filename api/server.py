@@ -6077,12 +6077,40 @@ def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dic
     return items
 
 
+def _log_card_message_view(cust: dict, payload: dict) -> None:
+    """The merchant writes a message on the card; this records that a customer
+    actually opened the card while it was showing. It is what the Historique's
+    "Messages affichés" counts — an impression, not a send.
+
+    Deduped to one row per customer per message per day: the card is a PWA and
+    gets reopened all day long, and fifty rows for one customer would tell the
+    merchant nothing.
+    """
+    message = (payload.get("offer_box_text") or payload.get("card_message") or "").strip()
+    if not message:
+        return
+    try:
+        now = datetime.now(timezone.utc)
+        day = now.strftime("%Y-%m-%d")
+        db.card_message_views.update_one(
+            {"customer_id": cust["id"], "day": day, "message": message[:200]},
+            {"$setOnInsert": {"tenant_id": cust.get("tenant_id"), "customer_id": cust["id"],
+                              "day": day, "message": message[:200], "at": now},
+             "$inc": {"opens": 1}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"card message view log failed (non-fatal): {exc}")
+
+
 @app.get("/api/card/{barcode_id}")
 def get_wallet_card(barcode_id: str):
     cust = db.customers.find_one({"barcode_id": barcode_id})
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
-    return _serialize_card_payload(cust)
+    payload = _serialize_card_payload(cust)
+    _log_card_message_view(cust, payload)
+    return payload
 
 
 class CardPrefsRequest(BaseModel):
