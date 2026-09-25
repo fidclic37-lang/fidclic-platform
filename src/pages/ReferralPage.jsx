@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
-  Users, User, Gift, Euro, Settings2, Share2, Trophy, BarChart3, ChevronDown,
+  Users, User, Gift, Euro, Settings2, Share2, Trophy, BarChart3, ChevronDown, Eye,
   ChevronRight, ArrowRight, Loader2, X, Check, Copy, QrCode, Link2, Share,
   Download,
 } from 'lucide-react';
@@ -349,6 +349,63 @@ const ShareModal = ({ onClose }) => {
   );
 };
 
+/* ── "Voir un exemple" ─────────────────────────────────────────────────────
+   A programme nobody has used yet is an empty page, which tells a merchant
+   nothing about what it will do for them. This renders the same page from a
+   worked example instead — the shape is exactly what the endpoint returns, so
+   nothing else in the component changes, and NOTHING is written anywhere: no
+   customers, no parrainages, no counting against the plan. The banner stays on
+   screen the whole time so the figures can never be mistaken for real ones. */
+const EXAMPLE = (() => {
+  const day = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); };
+  const curve = [1, 1, 2, 3, 3, 5, 6, 8, 9, 11, 13, 14, 16, 18, 20, 22, 23, 25, 28, 30,
+                 32, 34, 37, 40, 43, 46, 49, 51, 54, 56];
+  return {
+    example: true,
+    enabled: true,
+    config: { referrer_reward_points: 50, referee_reward_points: 25, minimum_visits_to_earn: 2 },
+    cards: [
+      { key: 'referrals', label: 'Parrainages réalisés', icon: 'users', tone: 'teal', value: 56, delta_pct: 42 },
+      { key: 'active', label: 'Parrains actifs', icon: 'user', tone: 'blue', value: 28, delta_pct: 35 },
+      { key: 'points', label: 'Points offerts', icon: 'gift', tone: 'amber', value: 1240, delta_pct: 28 },
+      { key: 'revenue', label: 'CA généré via parrainage', icon: 'euro', tone: 'violet',
+        value: 280, unit: '€', all_time: true, note: 'depuis le début', delta_pct: null },
+    ],
+    series: curve.map((c, i) => ({
+      date: day(29 - i).slice(0, 10), cumulative: c, count: c - (curve[i - 1] ?? 0),
+    })),
+    breakdown: {
+      total: 56,
+      segments: [
+        { key: 'reguliers', label: 'Clients réguliers', tone: 'blue', count: 29, pct: 52 },
+        { key: 'etudiants', label: 'Étudiants', tone: 'teal', count: 16, pct: 28 },
+        { key: 'nouveaux', label: 'Nouveaux clients', tone: 'amber', count: 8, pct: 15 },
+        { key: 'autres', label: 'Autres', tone: 'violet', count: 3, pct: 5 },
+      ],
+    },
+    top_parrains: [
+      { customer_id: 'x1', name: 'Sophie L.', full_name: 'Sophie Lambert', initials: 'SL', tier: 'gold', filleuls: 12, points: 240 },
+      { customer_id: 'x2', name: 'Yassine K.', full_name: 'Yassine Kaddour', initials: 'YK', tier: 'vip', filleuls: 9, points: 180 },
+      { customer_id: 'x3', name: 'Camille R.', full_name: 'Camille Roux', initials: 'CR', tier: 'silver', filleuls: 7, points: 140 },
+      { customer_id: 'x4', name: 'Lucas M.', full_name: 'Lucas Marin', initials: 'LM', tier: 'silver', filleuls: 6, points: 120 },
+      { customer_id: 'x5', name: 'Inès B.', full_name: 'Inès Bouchard', initials: 'IB', tier: 'bronze', filleuls: 5, points: 100 },
+    ],
+    recent: [
+      ['Sophie L.', 'SL', 'gold', 'Emma D.', 'ED', 'validated', 'Validé', 'QR code', 0],
+      ['Yassine K.', 'YK', 'vip', 'Nicolas P.', 'NP', 'validated', 'Validé', 'Lien partagé', 1],
+      ['Camille R.', 'CR', 'silver', 'Léa T.', 'LT', 'validated', 'Validé', 'Réseaux sociaux', 2],
+      ['Lucas M.', 'LM', 'silver', 'Thomas G.', 'TG', 'pending', 'En attente', 'QR code', 3],
+      ['Inès B.', 'IB', 'bronze', 'Sarah M.', 'SM', 'validated', 'Validé', 'Lien partagé', 4],
+    ].map(([pn, pi, pt, fn, fi, st, sl, src, ago], i) => ({
+      id: `ex${i}`, at: day(ago),
+      parrain: { name: pn, initials: pi, tier: pt },
+      filleul: { name: fn, initials: fi, tier: 'bronze' },
+      status: st, status_label: sl, reward_points: 50, source: 'qr', source_label: src,
+    })),
+    total_referrals: 56,
+  };
+})();
+
 /* ── page ─────────────────────────────────────────────────────────────── */
 const RANGES = [
   { key: 7, label: '7 derniers jours' },
@@ -366,6 +423,7 @@ export default function ReferralPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [allRecent, setAllRecent] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [demo, setDemo] = useState(false);
 
   const range = useMemo(() => {
     const end = new Date(); const start = new Date();
@@ -383,6 +441,7 @@ export default function ReferralPage() {
   useEffect(() => { load(); }, [load]);
 
   const exportCsv = async () => {
+    if (demo) return;          // the example is not yours to export
     setExporting(true);
     try {
       const { data: blob } = await ownerAPI.referralExport(range);
@@ -393,8 +452,11 @@ export default function ReferralPage() {
     } catch { setError("L'export n'a pas abouti."); } finally { setExporting(false); }
   };
 
-  const cards = data?.cards || [];
-  const recent = data?.recent || [];
+  // The example stands in for the payload wholesale, so every panel below
+  // reads it without knowing the difference.
+  const view = demo ? EXAMPLE : data;
+  const cards = view?.cards || [];
+  const recent = view?.recent || [];
   const shown = allRecent ? recent : recent.slice(0, 5);
   const growing = (cards[0]?.delta_pct ?? 0) > 0;
 
@@ -416,6 +478,12 @@ export default function ReferralPage() {
           </nav>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
+          <button type="button" onClick={() => setDemo((v) => !v)}
+                  className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] font-semibold transition ${
+                    demo ? 'border-[#C7DBFF] bg-[#EAF1FF] text-[#1D4ED8]'
+                         : 'border-[#E6EEFB] bg-white text-[#0B1C3F] hover:border-[#2F6BFF] hover:text-[#2F6BFF]'}`}>
+            <Eye size={15} /> {demo ? "Revenir à mes données" : "Voir un exemple"}
+          </button>
           <button type="button" onClick={() => setSettingsOpen(true)}
                   className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <Settings2 size={15} /> Paramètres du programme
@@ -429,7 +497,20 @@ export default function ReferralPage() {
 
       {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
 
-      {data && !data.enabled && (
+      {demo && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#C7DBFF] bg-[#EAF1FF] px-4 py-3">
+          <p className="text-[12.5px] text-[#1D4ED8]">
+            <strong>Exemple</strong> — ces chiffres illustrent ce que la page affichera. Aucune donnée
+            n'a été créée dans votre compte.
+          </p>
+          <button type="button" onClick={() => setDemo(false)}
+                  className="shrink-0 rounded-lg bg-[#2F6BFF] px-3 py-1.5 text-[12px] font-semibold text-white">
+            Revenir à mes données
+          </button>
+        </div>
+      )}
+
+      {view && !view.enabled && !demo && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#FDE3C2] bg-[#FFF8EF] px-4 py-3">
           <p className="text-[12.5px] text-[#92400E]">
             Le programme de parrainage est <strong>inactif</strong> — les chiffres ci-dessous portent sur
@@ -448,7 +529,7 @@ export default function ReferralPage() {
         </div>
       )}
 
-      {data && (
+      {view && (
         <>
           {/* the four figures */}
           <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -469,27 +550,27 @@ export default function ReferralPage() {
                   </div>
                 )}
               >
-                <EvolutionChart series={data.series} />
+                <EvolutionChart series={view.series} />
               </Panel>
 
               <Panel title="Répartition des parrainages">
-                {data.breakdown.total === 0 ? (
+                {view.breakdown.total === 0 ? (
                   <p className="py-10 text-center text-[13px] text-[#94A3B8]">
                     Aucun parrainage sur cette période — la répartition apparaîtra dès le premier.
                   </p>
                 ) : (
-                  <Breakdown total={data.breakdown.total} segments={data.breakdown.segments} />
+                  <Breakdown total={view.breakdown.total} segments={view.breakdown.segments} />
                 )}
               </Panel>
             </div>
 
             <div className="grid gap-4">
               <Panel title="Top parrains" icon={Trophy} action={<SeeAll onClick={exportCsv} label="Voir tous" />}>
-                {data.top_parrains.length === 0 && (
+                {view.top_parrains.length === 0 && (
                   <p className="py-8 text-center text-[13px] text-[#94A3B8]">Pas encore de parrain sur cette période.</p>
                 )}
                 <ul className="space-y-1">
-                  {data.top_parrains.map((p, i) => (
+                  {view.top_parrains.map((p, i) => (
                     <li key={p.customer_id} className="flex items-center gap-3 py-2">
                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
                             style={i < 3 ? { background: RANK[i], color: '#fff' } : { background: '#EEF3FB', color: '#64748B' }}>
@@ -614,7 +695,7 @@ export default function ReferralPage() {
       )}
 
       {settingsOpen && data && (
-        <SettingsModal config={data.config} enabled={data.enabled}
+        <SettingsModal config={view.config} enabled={view.enabled}
                        onClose={() => setSettingsOpen(false)}
                        onSaved={() => { setSettingsOpen(false); load(); }} />
       )}
