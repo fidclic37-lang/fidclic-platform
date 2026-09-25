@@ -35,6 +35,9 @@ MODULES = [
     "features.customer_status",         # configurable active/inactive definition
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages
+    # Automatisations · Push Wallet — scenarios that fire on their own and land
+    # on the customer's Apple/Google Wallet pass. Run daily by /cron/daily-triggers.
+    "features.push_wallet",
     "features.push_subscriptions",      # web push subscriptions + dispatch helper
     "features.business_hours",          # weekly schedule + French public holidays + annual closures
     # AI / predictive — fully implemented (math-based)
