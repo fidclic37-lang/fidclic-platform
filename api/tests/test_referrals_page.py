@@ -51,10 +51,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "f0", "tenant_id": "t1", "name": "Refusé Test", "barcode_id": "FT-F0",
          "tier": "bronze", "visits": 1, "created_at": now},
     ])
-    code_p1 = R.get_or_create_code(R.GenerateCodeRequest(tenant_slug="petit-cafe", barcode_id="FT-P1"))["code"]
-    off = R.redeem(R.RedeemRequest(tenant_slug="petit-cafe", new_customer_barcode_id="FT-F0", code=code_p1))
-    check("a disabled programme records nothing", off["redeemed"] is False
-          and off["reason"] == "referrals_disabled")
+    off = R.record("t1", "FT-P1", db.customers.find_one({"barcode_id": "FT-F0"}))
+    check("a disabled programme records nothing", off is None)
     check("and the dashboard shows nothing yet",
           R.overview(token_data=TD())["cards"][0]["value"] == 0)
 
@@ -78,11 +76,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
             "created_at": now - dt.timedelta(days=age)})
     db.customers.update_one({"id": "p1"}, {"$set": {"visits": 24}})
 
-    codes = {cid: R.get_or_create_code(
-        R.GenerateCodeRequest(tenant_slug="petit-cafe", barcode_id=f"FT-{cid.upper()}"))["code"]
-        for cid, *_ in PARRAINS}
-    check("a parrain's code is stable", codes["p1"] == code_p1)
-    check("every parrain gets a different code", len(set(codes.values())) == len(codes))
+    # A parrain is identified by the card a stranger scanned — there is no code.
+    check("a parrain is named by their own card",
+          all(db.customers.find_one({"barcode_id": f"FT-{cid.upper()}"}) for cid, *_ in PARRAINS))
 
     # Filleuls: (id, name, parrain, visits, spend, source, days ago)
     FILLEULS = [
@@ -101,8 +97,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
             "id": cid, "tenant_id": "t1", "name": name, "barcode_id": f"FT-{cid.upper()}",
             "tier": "bronze", "visits": visits, "total_amount_paid": spend,
             "created_at": now - dt.timedelta(days=ago)})
-        R.redeem(R.RedeemRequest(tenant_slug="petit-cafe", new_customer_barcode_id=f"FT-{cid.upper()}",
-                                 code=codes[parrain], source=source))
+        R.record("t1", f"FT-{parrain.upper()}", db.customers.find_one({"id": cid}))
+        # The filleuls below have already been in, so settle what they earned —
+        # in production the till does this on their first visit.
+        R.settle("t1", cid)
+        db.referral_redemptions.update_one({"referee_customer_id": cid}, {"$set": {"source": source}})
     # Spread them across the window so the curve has something to climb.
     for i, (cid, *_rest) in enumerate(FILLEULS):
         db.referral_redemptions.update_one(
@@ -154,25 +153,22 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           rows["Omar S."]["reward_points"] == 50)
     check("a validated one credits the configured points",
           rows["Emma D."]["reward_points"] == 50)
-    check("the filleul is credited either way",
-          db.customers.find_one({"id": "f8"})["points"] == 25)
+    # Points now wait for a real visit — BOTH sides. A signup is free to fake.
+    check("a pending filleul is not credited yet either",
+          db.customers.find_one({"id": "f8"}).get("points", 0) == 0)
     check("the parrain of a pending filleul was not credited",
           db.customers.find_one({"id": "p4"}).get("points", 0) == 0)
+    check("a validated filleul is credited",
+          db.customers.find_one({"id": "f1"}).get("points", 0) == 25)
     check("a parrain with three validated filleuls has three times the points",
           db.customers.find_one({"id": "p1"})["points"] == 150)
 
     print("\nThe same person cannot be referred twice")
-    again = R.redeem(R.RedeemRequest(tenant_slug="petit-cafe", new_customer_barcode_id="FT-F1",
-                                     code=codes["p2"], source="qr"))
-    check("a second redemption is refused", again["redeemed"] is False
-          and again["reason"] == "already_redeemed")
+    again = R.record("t1", "FT-P2", db.customers.find_one({"id": "f1"}))
+    check("a second parrainage for the same filleul is refused", again is None)
     check("and the count does not move", R.overview(token_data=TD())["cards"][0]["value"] == 9)
-    try:
-        R.redeem(R.RedeemRequest(tenant_slug="petit-cafe", new_customer_barcode_id="FT-P1",
-                                 code=codes["p1"]))
-        check("self-referral is refused", False)
-    except Exception as exc:
-        check("self-referral is refused", "self-refer" in str(exc))
+    check("self-referral is refused",
+          R.record("t1", "FT-P1", db.customers.find_one({"id": "p1"})) is None)
 
     # ---- who the parrains are -------------------------------------------------
     print("\nRépartition des parrainages")
@@ -242,14 +238,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("an unknown channel falls back to Autre, never blank",
           R.SOURCES.get("hovercraft", R.SOURCES["other"]) == "Autre")
 
-    # ---- share links -----------------------------------------------------------------
-    print("\nPartager le programme")
-    share = R.share_links(TD())
-    check("one link per channel, minus the catch-all",
-          [l["key"] for l in share["links"]] == ["qr", "link", "social"])
-    check("each link carries its own source", all(f"src={l['key']}" in l["url"] for l in share["links"]))
-    check("they point at this shop's join page", all(f"/join/{share['slug']}" in l["url"] for l in share["links"]))
-    check("the slug is the tenant's own", share["slug"] == "petit-cafe")
+    # ---- the invitation ---------------------------------------------------------------
+    # There is no link to share any more: a customer's own card is the way in.
+    print("\nL'invitation")
+    inv = R.inviter("FT-P1")
+    check("the signup form learns who invited", inv["first_name"] == "Sophie")
+    check("and which shop to sign up for", inv["slug"] == "petit-cafe")
+    check("and what the filleul will get", inv["referee_points"] == 25)
+    check("nothing else about the parrain leaks",
+          "points" not in inv and "visits" not in inv and "tier" not in inv)
 
     # ---- settings ---------------------------------------------------------------------
     print("\nParamètres du programme")
@@ -262,8 +259,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.customers.insert_one({"id": "f10", "tenant_id": "t1", "name": "Nouveau Test",
                              "barcode_id": "FT-F10", "tier": "bronze", "visits": 4,
                              "total_amount_paid": 12.0, "created_at": now})
-    R.redeem(R.RedeemRequest(tenant_slug="petit-cafe", new_customer_barcode_id="FT-F10",
-                             code=codes["p1"], source="social"))
+    R.record("t1", "FT-P1", db.customers.find_one({"id": "f10"}))
+    R.settle("t1", "f10")
+    db.referral_redemptions.update_one({"referee_customer_id": "f10"}, {"$set": {"source": "social"}})
     fresh = {r["filleul"]["name"]: r for r in R.overview(token_data=TD())["recent"]}
     check("a parrainage after the change uses the new reward",
           fresh["Nouveau T."]["reward_points"] == 80)

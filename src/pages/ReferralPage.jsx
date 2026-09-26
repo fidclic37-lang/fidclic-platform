@@ -1,9 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import {
   Users, User, Gift, Euro, Settings2, Share2, Trophy, BarChart3, ChevronDown, Eye,
-  ChevronRight, ArrowRight, Loader2, X, Check, Copy, QrCode, Link2, Share,
-  Download,
+  ChevronRight, ArrowRight, Loader2, X, Check, Download, Info,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 
@@ -304,50 +302,43 @@ const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
   );
 };
 
-const ShareModal = ({ onClose }) => {
-  const [data, setData] = useState(null);
-  const [copied, setCopied] = useState('');
-  useEffect(() => { ownerAPI.referralShareLinks().then(({ data: d }) => setData(d)).catch(() => setData({ links: [] })); }, []);
-  const copy = async (key, url) => {
-    try { await navigator.clipboard.writeText(url); setCopied(key); setTimeout(() => setCopied(''), 1800); } catch { /* clipboard denied */ }
-  };
-  const ICONS = { qr: QrCode, link: Link2, social: Share };
-  return (
-    <Modal title="Partager le programme" onClose={onClose}>
-      <p className="mb-4 text-[12.5px] leading-snug text-[#64748B]">
-        Chaque canal a son propre lien : c'est lui qui remplit la colonne « Source » du tableau,
-        pour que vous sachiez d'où viennent vos parrainages.
-      </p>
-      {!data && <p className="py-6 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-2 inline animate-spin" />Chargement…</p>}
-      {data?.links?.map((l) => {
-        const Icon = ICONS[l.key] || Link2;
-        return (
-          <div key={l.key} className="mb-2.5 rounded-xl border border-[#E6EEFB] p-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#EAF1FF] text-[#2F6BFF]"><Icon size={14} /></span>
-              <span className="text-[13px] font-semibold text-[#0B1C3F]">{l.label}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <input readOnly value={l.url}
-                     className="min-w-0 flex-1 rounded-lg border border-[#E6EEFB] bg-[#F8FAFF] px-2.5 py-2 text-[12px] text-[#475569] outline-none" />
-              <button type="button" onClick={() => copy(l.key, l.url)}
-                      className="shrink-0 rounded-lg border border-[#E6EEFB] px-2.5 py-2 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-                {copied === l.key ? <Check size={14} className="text-[#0F8B58]" /> : <Copy size={14} />}
-              </button>
-            </div>
-          </div>
-        );
-      })}
-      {data?.join_url && (
-        <div className="mt-4 flex flex-col items-center rounded-xl border border-[#E6EEFB] p-4">
-          <p className="mb-3 text-[12.5px] font-semibold text-[#0B1C3F]">QR code à afficher en boutique</p>
-          <QRCodeSVG value={`${data.join_url}?ref=PROGRAMME&src=qr`} size={148} level="M" includeMargin />
-          <p className="mt-2 text-[11.5px] text-[#94A3B8]">Scanné en boutique → source « QR code »</p>
-        </div>
-      )}
-    </Modal>
-  );
-};
+/* ── How it works ─────────────────────────────────────────────────────────
+   There is no link to copy and no second QR to print, so there is nothing to
+   "share": the card every customer already carries IS the invitation. This
+   explains that in four steps, because a merchant who does not understand it
+   cannot explain it to their customers either. */
+const HowModal = ({ onClose }) => (
+  <Modal title="Comment marche le parrainage" onClose={onClose}>
+    <p className="mb-4 text-[12.5px] leading-snug text-[#64748B]">
+      Rien à imprimer, rien à copier. La carte de fidélité de vos clients est déjà l'invitation :
+      son QR code ouvre la page d'inscription pour quiconque la scanne.
+    </p>
+    <ol className="space-y-3">
+      {[
+        ["Un client montre sa carte", "Son QR code est celui qu'il utilise déjà en caisse."],
+        ["Un proche le scanne", "Son téléphone ouvre le formulaire d'inscription, qui affiche le prénom du parrain."],
+        ["Il crée sa carte", "Le parrainage est enregistré. Aucun point n'est encore versé."],
+        ["Il vient une première fois", "Parrain et filleul sont crédités, une seule fois — une visite, ça ne se falsifie pas."],
+      ].map(([title, sub], i) => (
+        <li key={title} className="flex gap-3">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EAF1FF] text-[12px] font-bold text-[#2F6BFF]">
+            {i + 1}
+          </span>
+          <span>
+            <span className="block text-[13px] font-semibold text-[#0B1C3F]">{title}</span>
+            <span className="block text-[12px] leading-snug text-[#64748B]">{sub}</span>
+          </span>
+        </li>
+      ))}
+    </ol>
+    <p className="mt-4 flex items-start gap-1.5 rounded-xl bg-[#F6F9FF] p-3 text-[11.5px] leading-snug text-[#475569]">
+      <Info size={13} className="mt-px shrink-0 text-[#2F6BFF]" />
+      Le téléphone du parrain garde sa carte : c'est ainsi qu'on sait qu'il n'est pas un nouveau
+      venu. S'il change de téléphone, son numéro le ramène à sa carte existante — il n'est donc
+      jamais son propre filleul.
+    </p>
+  </Modal>
+);
 
 /* ── "Voir un exemple" ─────────────────────────────────────────────────────
    A programme nobody has used yet is an empty page, which tells a merchant
@@ -490,7 +481,7 @@ export default function ReferralPage() {
           </button>
           <button type="button" onClick={() => setShareOpen(true)}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
-            <Share2 size={15} /> Partager le programme
+            <Share2 size={15} /> Comment ça marche
           </button>
         </div>
       </header>
@@ -699,7 +690,7 @@ export default function ReferralPage() {
                        onClose={() => setSettingsOpen(false)}
                        onSaved={() => { setSettingsOpen(false); load(); }} />
       )}
-      {shareOpen && <ShareModal onClose={() => setShareOpen(false)} />}
+      {shareOpen && <HowModal onClose={() => setShareOpen(false)} />}
     </div>
   );
 }

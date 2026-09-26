@@ -3,17 +3,31 @@ Referral Program — additive feature module.
 
 Status: ✅ Implemented.
 Mounts at: /api/owner/referrals/* and /api/customer/referral/*
-Collections: `referral_config`, `referral_codes`, `referral_redemptions`
+Collections: `referral_config`, `referral_redemptions`
 
-Flow:
-  1. Existing customer fetches/generates their referral code
-  2. They share the code (or a URL with ?ref=CODE)
-  3. New customer signs up via the existing /api/join/{slug} endpoint
-  4. Frontend calls /api/customer/referral/redeem with new customer's
-     barcode and the ref code → credits both referrer and referee
-  5. Idempotent: a given new-customer can only be redeemed once
+THE ONLY WAY IN IS AN EXISTING CUSTOMER'S OWN CARD
+    There is no referral link and no second QR to share. The card a customer
+    already carries *is* the invitation:
 
-Does NOT modify the existing /api/join/{slug} signup endpoint.
+      1. A stranger points their camera at a customer's loyalty card.
+      2. The QR is that card's public URL, so the phone opens it.
+      3. The phone has no card of its own → it is sent to the signup form,
+         which says who invited them.
+      4. They sign up. The referral is recorded, PENDING — no points yet.
+      5. On their FIRST visit, parrain and filleul are both credited, once.
+
+    Nothing to print, nothing to copy, nothing to explain to a customer.
+
+WHY POINTS WAIT FOR THE FIRST VISIT
+    A signup costs nothing to fake. A visit does not. Crediting at signup
+    would let anyone mint points from a phone; crediting at the first real
+    purchase means the programme only ever pays for a customer who came.
+
+SELF-REFERRAL
+    The parrain's own phone keeps its card, so it never reaches the signup
+    form. If they land there anyway (new phone, cleared browser), the signup
+    dedupes them on their phone number and returns their existing card — no
+    new customer, so no referral.
 """
 from __future__ import annotations
 
@@ -38,8 +52,6 @@ def init(db):
     _db = db
     try:
         db.referral_config.create_index("tenant_id", unique=True)
-        db.referral_codes.create_index("code", unique=True)
-        db.referral_codes.create_index([("tenant_id", 1), ("customer_id", 1)], unique=True)
         db.referral_redemptions.create_index([("tenant_id", 1), ("referee_customer_id", 1)], unique=True)
     except Exception:
         pass
@@ -55,25 +67,6 @@ class ReferralConfig(BaseModel):
     referrer_message: str = "Thanks for sharing! You earned {points} points."
     referee_message: str = "Welcome via a friend! Here are {points} points to start."
 
-
-class GenerateCodeRequest(BaseModel):
-    tenant_slug: str
-    barcode_id: str
-
-
-class RedeemRequest(BaseModel):
-    tenant_slug: str
-    new_customer_barcode_id: str
-    code: str
-    # Which channel the filleul arrived through — the ?src= on the shared link.
-    # Unknown or missing reads as "link", the plain shared-URL case.
-    source: Optional[str] = None
-
-
-# ---------- Helpers ----------
-def _new_code() -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    return "REF-" + "".join(secrets.choice(alphabet) for _ in range(8))
 
 
 # ---------- Owner endpoints ----------
@@ -122,95 +115,112 @@ def leaderboard(token_data: TokenData = Depends(require_role(["business_owner", 
     return {"leaderboard": out}
 
 
-# ---------- Customer endpoints ----------
-@router.post("/api/customer/referral/code")
-def get_or_create_code(req: GenerateCodeRequest):
-    tenant = _db.tenants.find_one({"slug": req.tenant_slug})
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-    customer = _db.customers.find_one({"tenant_id": tenant["id"], "barcode_id": req.barcode_id})
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+# ---------------------------------------------------------------------------
+# Recording a referral
+#
+# There is no code to redeem: the parrain is identified by the barcode of the
+# card that was scanned, and the filleul by the card they just created.
+# ---------------------------------------------------------------------------
+def record(tenant_id: str, parrain_barcode: str, filleul: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Write a PENDING referral. Called by the signup, never by the customer.
 
-    existing = _db.referral_codes.find_one({
-        "tenant_id": tenant["id"], "customer_id": customer["id"]
-    })
-    if existing:
-        return {"code": existing["code"], "share_url": f"/join/{req.tenant_slug}?ref={existing['code']}"}
+    Returns the row, or None with a reason logged — a referral that cannot be
+    recorded must never stop a signup from completing.
+    """
+    if not parrain_barcode or not filleul:
+        return None
+    cfg = _db.referral_config.find_one({"tenant_id": tenant_id}) or {}
+    if not cfg.get("enabled", False):
+        return None
 
-    # Generate a unique code (collisions are astronomically unlikely but guard anyway)
-    for _ in range(5):
-        code = _new_code()
-        if not _db.referral_codes.find_one({"code": code}):
-            break
-    else:
-        raise HTTPException(status_code=500, detail="Could not allocate referral code")
+    parrain = _db.customers.find_one(
+        {"tenant_id": tenant_id, "barcode_id": str(parrain_barcode).strip().upper()})
+    if not parrain or parrain["id"] == filleul.get("id"):
+        return None                       # unknown card, or their own
+    if _db.referral_redemptions.find_one(
+            {"tenant_id": tenant_id, "referee_customer_id": filleul["id"]}):
+        return None                       # a filleul is parrainé exactly once
 
-    _db.referral_codes.insert_one({
-        "tenant_id": tenant["id"],
-        "customer_id": customer["id"],
-        "code": code,
+    row = {
+        "tenant_id": tenant_id,
+        "referrer_customer_id": parrain["id"],
+        "referee_customer_id": filleul["id"],
+        "referee_points": int(cfg.get("referee_reward_points", 25)),
+        "referrer_points": 0,
+        # What each side is owed, frozen now: changing the setting tomorrow
+        # must not rewrite what a referral recorded today promised.
+        "referrer_points_promised": int(cfg.get("referrer_reward_points", 50)),
+        "referee_points_promised": int(cfg.get("referee_reward_points", 25)),
+        "referrer_pending": True,
+        "source": "qr_card",
         "created_at": datetime.now(timezone.utc),
-    })
-    return {"code": code, "share_url": f"/join/{req.tenant_slug}?ref={code}"}
+    }
+    try:
+        _db.referral_redemptions.insert_one(dict(row))
+    except Exception as exc:              # unique index: someone got there first
+        print(f"referrals: could not record ({exc})")
+        return None
+    return row
 
 
-@router.post("/api/customer/referral/redeem")
-def redeem(req: RedeemRequest):
-    tenant = _db.tenants.find_one({"slug": req.tenant_slug})
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
+    """Pay both sides, once, when the filleul has actually come.
 
-    config = _db.referral_config.find_one({"tenant_id": tenant["id"]}) or {}
-    if not config.get("enabled", False):
-        return {"redeemed": False, "reason": "referrals_disabled"}
+    Called after a visit is recorded. Until this runs, a referral has promised
+    points and paid none — which is the whole point: a signup is free to fake,
+    a visit is not.
+    """
+    row = _db.referral_redemptions.find_one(
+        {"tenant_id": tenant_id, "referee_customer_id": filleul_id, "referrer_pending": True})
+    if not row:
+        return None
+    cfg = _db.referral_config.find_one({"tenant_id": tenant_id}) or {}
+    filleul = _db.customers.find_one({"id": filleul_id})
+    if not filleul or int(filleul.get("visits") or 0) < int(cfg.get("minimum_visits_to_earn", 1)):
+        return None
 
-    code_doc = _db.referral_codes.find_one({"code": req.code, "tenant_id": tenant["id"]})
-    if not code_doc:
-        raise HTTPException(status_code=404, detail="Invalid referral code")
+    # Claim it first: two tills scanning the same card at once must not pay twice.
+    claimed = _db.referral_redemptions.update_one(
+        {"_id": row["_id"], "referrer_pending": True},
+        {"$set": {"referrer_pending": False,
+                  "referrer_points": int(row.get("referrer_points_promised") or 0),
+                  "referee_points": int(row.get("referee_points_promised") or row.get("referee_points") or 0),
+                  "settled_at": datetime.now(timezone.utc)}})
+    if not getattr(claimed, "modified_count", 1):
+        return None
 
-    referee = _db.customers.find_one({"tenant_id": tenant["id"], "barcode_id": req.new_customer_barcode_id})
-    if not referee:
-        raise HTTPException(status_code=404, detail="Referee not found")
+    parrain_pts = int(row.get("referrer_points_promised") or 0)
+    filleul_pts = int(row.get("referee_points_promised") or row.get("referee_points") or 0)
+    if parrain_pts:
+        _db.customers.update_one({"id": row["referrer_customer_id"]}, {"$inc": {"points": parrain_pts}})
+    if filleul_pts:
+        _db.customers.update_one({"id": filleul_id}, {"$inc": {"points": filleul_pts}})
+    return {"referrer_customer_id": row["referrer_customer_id"],
+            "referrer_points": parrain_pts, "referee_points": filleul_pts}
 
-    if referee["id"] == code_doc["customer_id"]:
-        raise HTTPException(status_code=400, detail="Cannot self-refer")
 
-    # Idempotency
-    if _db.referral_redemptions.find_one({"tenant_id": tenant["id"], "referee_customer_id": referee["id"]}):
-        return {"redeemed": False, "reason": "already_redeemed"}
+@router.get("/api/card/{barcode_id}/inviter")
+def inviter(barcode_id: str):
+    """Who is inviting, for the signup form — and nothing else.
 
-    referee_pts = int(config.get("referee_reward_points", 25))
-    referrer_pts = int(config.get("referrer_reward_points", 50))
-
-    _db.customers.update_one({"id": referee["id"]}, {"$inc": {"points": referee_pts}})
-
-    # Referrer credit may be deferred until referee hits minimum_visits_to_earn
-    referrer_credited_now = referee.get("visits", 0) >= int(config.get("minimum_visits_to_earn", 1))
-    if referrer_credited_now:
-        _db.customers.update_one({"id": code_doc["customer_id"]}, {"$inc": {"points": referrer_pts}})
-
-    _db.referral_redemptions.insert_one({
-        "tenant_id": tenant["id"],
-        "referrer_customer_id": code_doc["customer_id"],
-        "referee_customer_id": referee["id"],
-        "code": req.code,
-        "referee_points": referee_pts,
-        "referrer_points": referrer_pts if referrer_credited_now else 0,
-        # What the parrain is owed, recorded whether or not it has been paid —
-        # the dashboard shows a pending row's promised reward, and the reward
-        # must not drift if the merchant changes the setting in between.
-        "referrer_points_promised": referrer_pts,
-        "referrer_pending": not referrer_credited_now,
-        "source": (req.source or "link").lower() if (req.source or "link").lower() in SOURCES else "other",
-        "created_at": datetime.now(timezone.utc),
-    })
-
+    A stranger who scanned a card lands on the signup page, and the page says
+    who invited them. It gets a first name and the shop's slug; it never gets
+    the card, the points, or anything else about that customer.
+    """
+    cust = _db.customers.find_one({"barcode_id": (barcode_id or "").strip().upper()},
+                                  {"_id": 0, "tenant_id": 1, "name": 1})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Carte inconnue")
+    tenant = _db.tenants.find_one({"id": cust["tenant_id"]}, {"_id": 0, "slug": 1, "name": 1}) or {}
+    cfg = _db.referral_config.find_one({"tenant_id": cust["tenant_id"]}) or {}
+    first = (cust.get("name") or "").strip().split(" ")[0]
     return {
-        "redeemed": True,
-        "referee_credited": referee_pts,
-        "referrer_credited": referrer_pts if referrer_credited_now else 0,
-        "referrer_pending": not referrer_credited_now,
+        "enabled": bool(cfg.get("enabled", False)),
+        "first_name": first,
+        "slug": tenant.get("slug"),
+        "business_name": tenant.get("name"),
+        "referee_points": int(cfg.get("referee_reward_points", 25)),
+        "referrer_points": int(cfg.get("referrer_reward_points", 50)),
     }
 
 
@@ -218,7 +228,7 @@ def redeem(req: RedeemRequest):
 # The Parrainage page — one payload behind the whole dashboard.
 #
 # Built to the approved mockup. Everything below counts real rows in
-# `referral_redemptions`, `referral_codes` and `customers`; there is no demo
+# `referral_redemptions` and `customers`; there is no demo
 # data, so a programme nobody has used yet reads zero and says so.
 #
 # TWO DEFINITIONS WORTH KNOWING, BOTH DECIDED WITH THE MERCHANT
@@ -238,9 +248,11 @@ import io                                                      # noqa: E402
 from fastapi import Query                                      # noqa: E402
 from fastapi.responses import Response                         # noqa: E402
 
-# Where a referral was shared from. The share sheet stamps one of these into
-# the link, and redeem records whichever came back.
+# Where a referral came from. There is one way in now — a customer's own card
+# was scanned — but the older labels stay so rows recorded under the retired
+# link programme still read correctly in the table and the export.
 SOURCES: Dict[str, str] = {
+    "qr_card": "Carte d'un client",
     "qr": "QR code",
     "link": "Lien partagé",
     "social": "Réseaux sociaux",
@@ -471,25 +483,6 @@ def overview(
         "recent": recent,
         "total_referrals": len(rows),
         "sources": [{"key": k, "label": v} for k, v in SOURCES.items()],
-    }
-
-
-@router.get("/api/owner/referrals/share")
-def share_links(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    """The programme's own invitation links, one per channel.
-
-    A merchant shares the programme itself (a poster, a story, a WhatsApp
-    message); the ?src= is what later fills the table's Source column, so each
-    channel gets its own link rather than one link for everything.
-    """
-    tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
-    slug = tenant.get("slug") or ""
-    base = f"{_public_url()}/join/{slug}"
-    return {
-        "slug": slug,
-        "links": [{"key": k, "label": v, "url": f"{base}?ref=PROGRAMME&src={k}"}
-                  for k, v in SOURCES.items() if k != "other"],
-        "join_url": base,
     }
 
 

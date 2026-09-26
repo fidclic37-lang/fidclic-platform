@@ -609,7 +609,11 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "pdf417": "PKBarcodeFormatPDF417",
                 "aztec": "PKBarcodeFormatAztec",
             }.get(card.get("code_type"), "PKBarcodeFormatQR"),
-            "message": (f"{_site_url()}/card/{serial}" if card.get("code_content") == "url" else serial),
+            # Always the card URL, never the bare id: the same QR has to work
+            # for the till AND for a stranger's camera, which is what makes a
+            # customer's own card an invitation. The till pulls the id back
+            # out of the URL (server.barcode_from).
+            "message": f"{_site_url()}/card/{serial}",
             "messageEncoding": "iso-8859-1",
             # The human-readable line under the code is the merchant's call.
             **({"altText": serial} if card.get("show_card_number") is not False else {}),
@@ -993,7 +997,9 @@ def google_save_url(payload: Dict[str, Any]) -> str:
     obj: Dict[str, Any] = {
         "id": object_id, "classId": class_id, "state": "ACTIVE",
         "accountId": cust["barcode_id"], "accountName": cust.get("name") or "Client",
-        "barcode": {"type": "QR_CODE", "value": cust["barcode_id"], "alternateText": cust["barcode_id"]},
+        "barcode": {"type": "QR_CODE",
+                    "value": f"{_site_url()}/card/{cust['barcode_id']}",
+                    "alternateText": cust["barcode_id"]},
         "loyaltyPoints": {"label": "Tampons", "balance": {"string": f"{stamps} / {threshold}"}},
         "secondaryLoyaltyPoints": {"label": "Statut", "balance": {"string": TIER_LABELS.get((cust.get("tier") or "bronze").lower(), "Bronze")}},
         "textModulesData": [

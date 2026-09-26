@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
+import { cardUrl } from '../components/PremiumLoyaltyCard';
 import Code128Barcode from '../components/Code128Barcode';
 import { Bell, RefreshCw, Trash2, Gift, Sparkles, ChevronRight, Store, MapPin, Phone, Globe, CheckCircle2, XCircle, Clock, ChevronDown, X, Download, ShieldCheck } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
@@ -224,6 +225,39 @@ const MyWalletCardPage = () => {
       };
     }
   }, [barcodeId]);
+
+  // A phone that has never carried this card is not its owner: it is someone
+  // who just scanned it. Send them to the signup form, attributed to the card
+  // they scanned — that is the whole referral programme, and it also means a
+  // stranger never sees somebody else's points.
+  //
+  // The parrain's own phone keeps the card in storage, so it stays here. On a
+  // new phone they land on the signup form instead, where the same phone
+  // number returns their existing card rather than creating a second one.
+  // What this phone carried BEFORE this page claimed the card for it. The
+  // inline script in index.html writes `fidelitour:last_card` before React
+  // boots — and the manifest effect above writes it again — so reading the key
+  // itself would always say "yours" and no stranger would ever be redirected.
+  // The inline script snapshots the previous value for exactly this.
+  const [wasMine] = useState(() => {
+    if (typeof window !== 'undefined' && '__fidclicPrevCard' in window) {
+      return window.__fidclicPrevCard;
+    }
+    try { return localStorage.getItem('fidelitour:last_card'); } catch (_e) { return null; }
+  });
+  const [invited, setInvited] = useState(null);
+  useEffect(() => {
+    if (wasMine === barcodeId) return;
+    let alive = true;
+    api.get(`/card/${barcodeId}/inviter`)
+      .then(({ data }) => {
+        if (!alive || !data?.enabled || !data?.slug) return;
+        setInvited(data);
+        window.location.replace(`/join/${data.slug}?p=${encodeURIComponent(barcodeId)}&src=qr`);
+      })
+      .catch(() => {});      // programme off, or unknown card — show the card
+    return () => { alive = false; };
+  }, [barcodeId, wasMine]);
 
   useEffect(() => {
     (async () => {
@@ -1379,7 +1413,7 @@ const WalletPass = ({ customer, tenant, card, activeOffer, onOpenDetails }) => {
             <Code128Barcode value={customer.barcode_id} ... /> here. */}
         <div className="px-6 pb-5 pt-2">
           <div className="bg-white rounded-xl p-4 mx-auto inline-block">
-            <QRCodeSVG value={customer.barcode_id} size={200} level="M" />
+            <QRCodeSVG value={cardUrl(customer.barcode_id)} size={200} level="M" />
           </div>
           <p className="mt-2 font-mono text-xs opacity-90 text-center">{customer.barcode_id}</p>
         </div>
