@@ -156,8 +156,17 @@ export function deriveCardTheme({ brandColor, surface, surfaceColor } = {}) {
     brandRaw,                         // untouched merchant colour (hero fallback fill)
     onBrand,                          // text/check marks on brand fills
     track: tint(ink, 0.12),           // meter track, empty stamps
-    codeBg: '#FFFFFF',                // QR/barcode block — always white, scanners first
-    codeInk: '#111111',
+    // The QR sits ON the card, not on a white plate: its background is the
+    // card's own surface and its modules are the same ink every other value
+    // uses, so it inherits the contrast the merchant already chose.
+    //
+    // Scanners: a QR needs a quiet zone of four modules, which the white plate
+    // used to provide by being padded — the renderers now ask for it with
+    // marginSize, in the card's own colour. On a dark surface the code comes
+    // out light-on-dark; phone cameras read that, industrial laser readers
+    // historically do not. FidClic scans with phones and tablets.
+    codeBg: bg,
+    codeInk: ink,
     chipBg: tint(ink, 0.08),          // offer chip surface
     tiers: TIER_CHIPS,
   };

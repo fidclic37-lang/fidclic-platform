@@ -1412,8 +1412,11 @@ const WalletPass = ({ customer, tenant, card, activeOffer, onOpenDetails }) => {
             the 1D fallback (for old laser scanners), restore
             <Code128Barcode value={customer.barcode_id} ... /> here. */}
         <div className="px-6 pb-5 pt-2">
-          <div className="bg-white rounded-xl p-4 mx-auto inline-block">
-            <QRCodeSVG value={cardUrl(customer.barcode_id)} size={200} level="M" />
+          {/* On the card's own colour, with its ink — no white plate. The
+              quiet zone the plate used to give the code is now marginSize. */}
+          <div className="mx-auto inline-block">
+            <QRCodeSVG value={cardUrl(customer.barcode_id)} size={200} level="M"
+                       marginSize={4} bgColor={primary} fgColor={textColor} />
           </div>
           <p className="mt-2 font-mono text-xs opacity-90 text-center">{customer.barcode_id}</p>
         </div>

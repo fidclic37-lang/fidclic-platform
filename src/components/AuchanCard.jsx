@@ -549,15 +549,14 @@ export function AuchanPreview({ layout = DEFAULT_LAYOUT, ctx = {}, width = 380 }
           one-code design is much cleaner visually. If a 1D barcode is
           ever needed again, render <Barcode/> alongside this block. */}
       <div className="px-6 py-3 pb-5 flex justify-center">
-        <div className="bg-white rounded-lg p-2.5">
-          <QRCodeSVG
-            value={substitute('{loyalty_number}', ctx) || 'FT-PREVIEW'}
-            size={120}
-            level="M"
-            bgColor="#FFFFFF"
-            fgColor="#0F0F0F"
-          />
-        </div>
+        <QRCodeSVG
+          value={substitute('{loyalty_number}', ctx) || 'FT-PREVIEW'}
+          size={120}
+          level="M"
+          marginSize={4}
+          bgColor={L.card_bg_color}
+          fgColor={L.card_text_color || '#0F0F0F'}
+        />
       </div>
     </div>
   );
