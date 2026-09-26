@@ -175,6 +175,13 @@ export const ownerAPI = {
   deleteSegment: (id) => api.delete(`/owner/segmentation/segments/${id}`),
   segmentClients: (id) => api.get(`/owner/segmentation/segments/${id}/clients`),
 
+  // Insights — « Faites grandir votre commerce ».
+  insightsPage: () => api.get('/owner/insights/page'),
+  insightTemplate: (key) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`),
+  activateInsight: (action) => api.post(`/owner/insights/actions/${action}/activate`),
+  setGoogleReview: (body) => api.put('/owner/insights/google-review', body),
+  insightsExport: () => api.get('/owner/insights/export.pdf', { responseType: 'blob' }),
+
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
@@ -440,6 +447,7 @@ export const publicAPI = {
   proximityPing: (data) => api.post('/public/proximity-ping', data),
   // -- Customer review submission (wallet card → rate-your-visit panel) --
   submitReview: (data) => api.post('/public/reviews', data),
+  googleReviewClick: (barcode) => api.post(`/card/${barcode}/google-review-click`),
 };
 
 export default api;

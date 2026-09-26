@@ -129,6 +129,10 @@ export default function CampagnesPage() {
 
   const [step, setStep] = useState(1);
   const [segment, setSegment] = useState('all');
+  // An audience handed over by Insights (clients within 2 km, one-time new
+  // clients…) that none of the four cards names. Its members were resolved
+  // by the server, so the send goes to exactly those people.
+  const [custom, setCustom] = useState(null);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [image, setImage] = useState('');
@@ -152,9 +156,39 @@ export default function CampagnesPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // "Utiliser ce modèle" / "Relancer ces clients" on Insights land here with
+  // ?template=<key>. The copy comes from the server — one source for the page
+  // that suggests it and the composer that sends it. The parameter is dropped
+  // once applied, so a reload never writes over what the merchant has edited.
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.search).get('template');
+    if (!key) return;
+    ownerAPI.insightTemplate(key)
+      .then(({ data: t }) => {
+        setTitle(t.title || ''); setMessage(t.message || '');
+        setSegment(t.segment || 'all');
+        setCustom(t.audience && t.audience.ids?.length ? t.audience : null);
+        setStep(2);
+        setFlash(t.audience && !t.audience.ids?.length
+          ? `Modèle chargé — mais aucun client ne correspond à « ${t.audience.label} » pour l'instant.`
+          : 'Modèle chargé : relisez le message, puis envoyez.');
+        setTimeout(() => document.getElementById('cg-composer')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+      })
+      .catch(() => setError("Ce modèle n'a pas pu être chargé."))
+      .finally(() => {
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('template');
+          window.history.replaceState({}, '', url);
+        } catch (_e) { /* ignore */ }
+      });
+  }, []);
+
   const limits = data?.limits || { title: 50, message: 160 };
   const segments = data?.segments || [];
-  const chosen = useMemo(() => segments.find((s) => s.key === segment), [segments, segment]);
+  const chosen = useMemo(() => (custom
+    ? { key: 'custom', label: custom.label, count: custom.ids.length }
+    : segments.find((s) => s.key === segment)), [segments, segment, custom]);
   const ready = title.trim() && message.trim();
 
   const scheduleAt = () => {
@@ -167,6 +201,7 @@ export default function CampagnesPage() {
     try {
       const { data: res } = await ownerAPI.composeCampaign({
         title: title.trim(), message: message.trim(), segment,
+        ...(custom ? { customer_ids: custom.ids } : {}),
         image_url: image || null, link_url: link.trim() || null,
         schedule_at: mode === 'draft' ? null : scheduleAt(),
         push, wallet, draft: mode === 'draft',
@@ -177,7 +212,7 @@ export default function CampagnesPage() {
             ? `Planifiée pour ${dayLabel(res.scheduled_for)} · ${nf(res.audience)} destinataires.`
             : `Envoyée à ${nf(res.audience)} client${res.audience > 1 ? 's' : ''}.`);
       setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
-      setLater(false); setDate(''); setStep(1);
+      setLater(false); setDate(''); setStep(1); setCustom(null);
       load();
     } catch (e) {
       setError(e?.response?.data?.detail || "L'envoi n'a pas abouti.");
@@ -292,13 +327,29 @@ export default function CampagnesPage() {
           <div>
             <p className="text-[13px] font-bold text-[#0B1C3F]">1. Choisissez vos destinataires</p>
             <p className="mb-3 text-[11.5px] text-[#64748B]">Sélectionnez une audience pour votre notification.</p>
+            {custom && (
+              <div className="mb-2.5 flex items-start gap-2.5 rounded-xl border border-[#2F6BFF] bg-[#F6F9FF] p-3">
+                <Users size={16} className="mt-0.5 shrink-0 text-[#2F6BFF]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[12.5px] font-semibold text-[#0B1C3F]">{custom.label}</span>
+                  {custom.hint && <span className="block text-[10.5px] text-[#94A3B8]">{custom.hint}</span>}
+                  <span className="mt-1 block text-[11px] font-medium text-[#64748B]">
+                    {nf(custom.ids.length)} client{custom.ids.length > 1 ? 's' : ''} · proposé par Insights
+                  </span>
+                </span>
+                <button type="button" onClick={() => setCustom(null)} title="Choisir une autre audience"
+                        className="shrink-0 text-[#94A3B8] hover:text-[#334155]">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2.5">
               {segments.map((s) => {
                 const Icon = ICONS[s.icon] || Users;
-                const on = segment === s.key;
+                const on = !custom && segment === s.key;
                 return (
                   <button key={s.key} type="button"
-                          onClick={() => { setSegment(s.key); setStep((v) => Math.max(v, 1)); }}
+                          onClick={() => { setCustom(null); setSegment(s.key); setStep((v) => Math.max(v, 1)); }}
                           className={`rounded-xl border p-3 text-left transition ${
                             on ? 'border-[#2F6BFF] bg-[#F6F9FF]' : 'border-[#E6EEFB] bg-white hover:border-[#C9DBFB]'}`}>
                     <span className="flex items-start justify-between">

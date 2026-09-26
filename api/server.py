@@ -9625,7 +9625,16 @@ def submit_review(req: ReviewSubmit):
     ).model_dump()
     db.reviews.insert_one(review)
     review.pop("_id", None)
-    return {"status": "ok", "review": review}
+    # Collectez plus d'avis clients (Insights): a SATISFIED customer is invited
+    # to say so publicly, on the shop's Google profile. An unhappy one is not —
+    # the shop hears from them privately, here, and that is the point.
+    google_review_url = None
+    try:
+        from features.insights_page import google_invite_for
+        google_review_url = google_invite_for(review.get("tenant_id"), review.get("rating"))
+    except Exception as _e:
+        print(f"review: google invite lookup failed (non-fatal): {_e}")
+    return {"status": "ok", "review": review, "google_review_url": google_review_url}
 
 
 def _compute_review_kpis(query: Dict[str, Any]) -> Dict[str, Any]:
