@@ -614,7 +614,7 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
     out.append({
         "key": "panier_moyen", "category": _category("ventes"),
         "title": "Augmentez votre panier moyen", "body": body,
-        "image": "panier" if shop.food else None, "icon": "cart",
+        "image": "panier" if shop.food else "panier_services", "icon": "cart",
         "impact": _benchmark("+5 à 12% de CA", shop),
         "difficulty": {"label": "Facile", "tone": "green", "filled": 3},
         "cta": {"label": "Voir les actions", "kind": "scroll", "target": "actions"},
@@ -685,7 +685,7 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
             "title": "Remplissez vos heures creuses",
             "body": f"Le créneau {a}h–{b}h est le plus calme de votre journée. Une offre ciblée sur "
                     "ce créneau peut remplir vos heures creuses.",
-            "image": "happyhour" if shop.food else None, "icon": "clock",
+            "image": "happyhour" if shop.food else "heures_creuses", "icon": "clock",
             "impact": _benchmark("+5 à 10% de CA", shop),
             "difficulty": {"label": "Moyenne", "tone": "amber", "filled": 2},
             "cta": {"label": "Créer l'offre", "kind": "template",
@@ -730,7 +730,7 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
         out.append({
             "key": "offre_moment", "title": "Mettez en avant une offre du moment",
             "body": "Une offre claire et limitée dans le temps donne une raison de venir cette semaine.",
-            "benefit": "Plus de fréquentation", "image": None, "icon": "sparkles",
+            "benefit": "Plus de fréquentation", "image": "offre_moment", "icon": "sparkles",
             "impact": _benchmark("+5 à 15% de CA", shop), "setup": "10 minutes",
             "cta": {"label": "Créer", "kind": "template", "template": "offre_moment"},
             "score": m * 0.10, "done": False,
@@ -793,7 +793,7 @@ IDEAS = {
                 "body": "-10% sur une sélection de prestations pour attirer de nouveaux clients."},
     "happy_hour": {"category": "ventes", "title": "Happy Hour", "image": "happyhour",
                    "body_food": "-20% sur les boissons de 16h à 18h.", "food_only": True},
-    "heures_creuses": {"category": "ventes", "title": "Offre heures creuses", "image": None,
+    "heures_creuses": {"category": "ventes", "title": "Offre heures creuses", "image": "heures_creuses",
                        "body": "-15% sur les créneaux les plus calmes de la semaine.",
                        "nonfood_only": True},
     "parrainage": {"category": "fidelisation", "title": "Parrainage", "image": "parrainage",
@@ -801,11 +801,11 @@ IDEAS = {
                    "body": "1 ami parrainé = une réduction offerte."},
     "fetes": {"category": "evenement", "title": "Offre spéciale fêtes", "image": "fetes",
               "body": "Des offres exclusives pour augmenter votre CA en fin d'année."},
-    "saint_valentin": {"category": "evenement", "title": "Offre Saint-Valentin", "image": None,
+    "saint_valentin": {"category": "evenement", "title": "Offre Saint-Valentin", "image": "saint_valentin",
                        "body": "Une attention spéciale pour venir à deux."},
-    "printemps": {"category": "printemps", "title": "Offre de printemps", "image": None,
+    "printemps": {"category": "printemps", "title": "Offre de printemps", "image": "printemps",
                   "body": "Une offre de saison pour accueillir les beaux jours."},
-    "ete": {"category": "ete", "title": "Offre d'été", "image": None,
+    "ete": {"category": "ete", "title": "Offre d'été", "image": "ete",
             "body": "Une offre estivale, le temps d'une semaine."},
 }
 
