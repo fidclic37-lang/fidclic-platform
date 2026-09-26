@@ -135,7 +135,6 @@ export const ownerAPI = {
   geoExport: (params) => api.get('/owner/geo/export', { params, responseType: 'blob' }),
   // Parrainage — the programme's dashboard, its settings and its share links.
   referralOverview: (params) => api.get('/owner/referrals/overview', { params }),
-  referralShareLinks: () => api.get('/owner/referrals/share'),
   referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
   // Automatisations · Push Wallet — the scenarios, their figures, and firing

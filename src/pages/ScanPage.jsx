@@ -21,6 +21,23 @@ const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
  * trigger the browser permission dialog (browser security model). The QR
  * is the fastest way to hand the URL across.
  */
+/**
+ * The card id inside whatever the scanner read.
+ *
+ * The QR on a customer's card encodes the card's public URL, not the bare id:
+ * a phone camera can open a URL, which is what lets a stranger who scans a
+ * customer's card land on the signup page as their filleul. The till reads
+ * the very same QR, so it pulls the id back out. A hand-typed "ft-ab12cd34"
+ * still works, and so does an older card that still carries the bare id.
+ */
+const barcodeFrom = (scanned) => {
+  const raw = String(scanned ?? '').trim();
+  if (!raw) return '';
+  const found = raw.match(/FT-[A-Z0-9]+/i);
+  if (found) return found[0].toUpperCase();
+  return raw.replace(/\/+$/, '').split('/').pop().split('?')[0].trim().toUpperCase();
+};
+
 function NotificationEnablePrompt({ customerName, barcodeId }) {
   const [showQR, setShowQR] = useState(false);
   const firstName = (customerName || '').split(' ')[0] || 'votre client';
@@ -299,7 +316,7 @@ const ScanPage = () => {
       const data = ctx.getImageData(0, 0, w, h);
       const result = jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' });
       if (result?.data) {
-        const cleaned = String(result.data).trim();
+        const cleaned = barcodeFrom(result.data);
         if (cleaned) {
           setBarcode(cleaned);
           setStatus({ type: 'success', message: t('scan.code_detected_image') });
@@ -313,7 +330,7 @@ const ScanPage = () => {
           const det = new window.BarcodeDetector({ formats: ['code_128', 'ean_13', 'qr_code', 'pdf417'] });
           const found = await det.detect(canvas);
           if (found?.length && found[0].rawValue) {
-            const cleaned = String(found[0].rawValue).trim();
+            const cleaned = barcodeFrom(found[0].rawValue);
             setBarcode(cleaned);
             setStatus({ type: 'success', message: t('scan.code_detected_image') });
             setMode('manual');
@@ -353,7 +370,7 @@ const ScanPage = () => {
 
     const onHit = (raw) => {
       if (!raw) return false;
-      const cleaned = String(raw).trim();
+      const cleaned = barcodeFrom(raw);
       if (!cleaned) return false;
       setBarcode(cleaned);
       setStatus({ type: 'success', message: t('scan.code_detected') });
@@ -792,7 +809,7 @@ const ScanPage = () => {
                 <input
                   type="text"
                   value={barcode}
-                  onChange={e => setBarcode(e.target.value.toUpperCase())}
+                  onChange={e => setBarcode(barcodeFrom(e.target.value) || e.target.value.toUpperCase())}
                   placeholder={t('scan.barcode_placeholder')}
                   className="w-full pl-14 pr-4 py-4 rounded-xl border-2 border-[#E9E5E0] focus:border-[#B85C38] focus:ring-0 outline-none text-lg font-mono tracking-widest transition-colors uppercase"
                   disabled={loading}

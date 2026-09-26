@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { publicAPI } from '../lib/api';
+import api, { publicAPI } from '../lib/api';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from '../components/Code128Barcode';
 
@@ -66,6 +66,19 @@ const JoinPage = () => {
   const { slug } = useParams();
   const [searchParams] = useSearchParams();
   const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams), [searchParams]);
+  // ?p=FT-XXXX — the card whose QR brought this visitor here. There is no
+  // referral link and no second QR: an existing customer's own card is the
+  // invitation, so the form says who invited them and the signup records it.
+  const parrainBarcode = (searchParams.get('p') || '').trim().toUpperCase();
+  const [inviter, setInviter] = useState(null);
+  useEffect(() => {
+    if (!parrainBarcode) return;
+    let alive = true;
+    api.get(`/card/${parrainBarcode}/inviter`)
+      .then(({ data }) => { if (alive && data?.enabled) setInviter(data); })
+      .catch(() => {});      // an unknown card just means no banner
+    return () => { alive = false; };
+  }, [parrainBarcode]);
   const [tenant, setTenant] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -241,6 +254,7 @@ const JoinPage = () => {
       payload.consent = consentChecked;
       payload.consent_policy_version = '2026-07-21';
       payload.is_student = isStudent;
+      if (parrainBarcode) payload.parrain_barcode = parrainBarcode;
       setJoinError(null);
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);  // chain has been persisted server-side, no need to keep it here
@@ -280,7 +294,7 @@ const JoinPage = () => {
             {/* QR only — the Code 128 1D barcode below was removed per
                 owner spec. Modern POS phones/tablets scan QR reliably. */}
             <div className="p-4 bg-white rounded-xl border border-[#E7E5E4] flex justify-center">
-              <QRCodeSVG value={success.barcode_id} size={200} level="M" />
+              <QRCodeSVG value={`${window.location.origin}/card/${success.barcode_id}`} size={200} level="M" />
             </div>
             <p className="font-mono bg-gray-100 p-2 rounded">{success.barcode_id}</p>
             <div className="space-y-3">
@@ -297,6 +311,20 @@ const JoinPage = () => {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
+            {inviter && (
+              <div className="flex items-start gap-3 rounded-xl border border-[#E6EEFB] bg-[#F6F9FF] p-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#2F6BFF] text-[13px] font-bold text-white">
+                  {(inviter.first_name || '?').slice(0, 1).toUpperCase()}
+                </span>
+                <p className="text-[13px] leading-snug text-[#0B1C3F]">
+                  Vous êtes invité par <strong>{inviter.first_name || 'un client'}</strong>.
+                  {inviter.referee_points > 0 && (
+                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_points} points</strong> dès
+                    votre première visite — {inviter.first_name || 'votre parrain'} aussi.</>
+                  )}
+                </p>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.full_name')}</label>
               <input required type="text" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />

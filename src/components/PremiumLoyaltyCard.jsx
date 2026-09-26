@@ -3,6 +3,21 @@ import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from './Code128Barcode';
 
 /**
+ * What the QR on the card encodes: the card's own public URL, not the bare
+ * id. A phone camera can do something with a URL and nothing at all with
+ * "FT-AB12CD34" — and that is what turns a customer's own card into an
+ * invitation: a stranger who scans it lands on the signup page, already
+ * attributed to them. The till reads the same QR and pulls the id back out
+ * of it, so there is still only one code on the card.
+ */
+export const cardUrl = (barcodeId) => {
+  const id = (barcodeId || '').trim();
+  if (!id) return '';
+  const origin = typeof window !== 'undefined' && window.location ? window.location.origin : '';
+  return `${origin}/card/${id.toUpperCase()}`;
+};
+
+/**
  * PremiumLoyaltyCard — KFC-grade wallet card.
  *
  * What this looks like:
@@ -336,7 +351,7 @@ export default function PremiumLoyaltyCard({ customer, tenant, card = {}, compac
             <div className="mt-3 flex flex-col items-center">
               <div className="rounded-lg p-2 bg-white" style={{ boxShadow: '0 0 0 1px rgba(0,0,0,0.06)' }}>
                 <QRCodeSVG
-                  value={customer?.barcode_id || ''}
+                  value={cardUrl(customer?.barcode_id)}
                   size={qrSize}
                   level="M"
                   bgColor="#FFFFFF"

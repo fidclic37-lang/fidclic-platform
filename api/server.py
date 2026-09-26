@@ -3957,6 +3957,26 @@ def preview_campaign_segment(
     count = db.customers.count_documents(query)
     return {"matching_customers": count}
 
+_BARCODE_RE = re.compile(r"(FT-[A-Z0-9]+)", re.I)
+
+
+def barcode_from(scanned: object) -> str:
+    """The card id inside whatever was scanned or typed.
+
+    The QR on a customer's card encodes the card's public URL, not the bare
+    id: a phone camera can open a URL, and that is what turns a customer's own
+    card into an invitation. The till reads the same QR, so it has to find the
+    id inside it. A hand-typed "ft-c7eaa131" still works.
+    """
+    raw = str(scanned or "").strip()
+    if not raw:
+        return ""
+    found = _BARCODE_RE.search(raw)
+    if found:
+        return found.group(1).upper()
+    return raw.rstrip("/").rsplit("/", 1)[-1].split("?")[0].strip().upper()
+
+
 class ScanRequest(BaseModel):
     barcode_id: str
     points: Optional[int] = None
@@ -4424,9 +4444,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     """MINIMAL fast-path scan — does the essentials inline, defers every
     optional side effect to a best-effort try/except so a single bad
     customer record can't 500 the till."""
-    # Normalise the barcode the staff just typed: trim whitespace and uppercase
-    # the FT-XXXX prefix, so "ft-c7eaa131  " and "FT-C7EAA131" both match.
-    normalized_barcode = (req.barcode_id or "").strip().upper()
+    # Normalise the barcode the staff just typed or scanned: trim whitespace and
+    # uppercase the FT-XXXX prefix, so "ft-c7eaa131  " and "FT-C7EAA131" both
+    # match — and accept the card URL, because the QR on a customer's card now
+    # encodes https://…/card/FT-XXXX so that a stranger's camera can open it.
+    normalized_barcode = barcode_from(req.barcode_id)
 
     cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": normalized_barcode})
     if not cust:
@@ -4592,6 +4614,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
 
     # ---- ALL OPTIONAL SIDE EFFECTS BELOW — wrapped, never block response ----
+    # Parrainage — this may be the visit the referral was waiting for. Points
+    # are promised at signup and paid here, on a visit that really happened.
+    try:
+        from features.referrals import settle as _settle_referral
+        _settle_referral(token_data.tenant_id, cust["id"])
+    except Exception as _e:
+        print(f"scan_visit: referral settle failed (non-fatal): {_e}")
+
     # Campaign attribution (15-day window)
     try:
         now_utc = datetime.now(timezone.utc)
@@ -5614,6 +5644,12 @@ class JoinRequest(BaseModel):
     # refused without it.
     consent: Optional[bool] = False
     consent_policy_version: Optional[str] = None
+    # The loyalty card whose QR brought this person here. There is no referral
+    # link and no second QR: an existing customer's own card IS the invitation.
+    # Recorded as a PENDING referral — nobody is credited until this new
+    # customer actually comes in, because a signup is free to fake and a visit
+    # is not.
+    parrain_barcode: Optional[str] = None
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
@@ -5788,7 +5824,17 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     log_audit("gdpr.consent_given", actor=barcode_id, actor_type="customer",
               tenant_id=tid, target=cust_doc["id"], request=request,
               meta={"policy_version": cust_doc["consent"]["policy_version"]})
-    return {"barcode_id": barcode_id, "message": "Welcome!"}
+    # Parrainage. Wrapped: a referral that cannot be recorded must never cost
+    # someone their loyalty card.
+    parrainage = None
+    if req.parrain_barcode:
+        try:
+            from features.referrals import record as _record_referral
+            parrainage = _record_referral(tid, req.parrain_barcode, cust_doc)
+        except Exception as _e:
+            print(f"join: referral not recorded (non-fatal): {_e}")
+    return {"barcode_id": barcode_id, "message": "Welcome!",
+            "parrainage": bool(parrainage)}
 
 # ========================
 # WALLET CARD (public, barcode-keyed) — Captain Wallet style
