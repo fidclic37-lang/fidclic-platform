@@ -335,6 +335,30 @@ def overview(token_data: TokenData = Depends(require_role(["business_owner", "ma
     }
 
 
+@router.get("/api/owner/clients/ids")
+def list_ids(
+    segment: str = "all",
+    status: str = "",
+    spend: str = "",
+    joined: str = "",
+    search: str = "",
+    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+):
+    """Every client the current filter matches — ids only, no page.
+
+    The table is paginated; messaging is not. Without this the merchant would
+    write to the ten people on screen and believe they had written to the
+    hundred the filter found. Same filter code as /list, so the number here and
+    the number above the table can never disagree.
+    """
+    tid = token_data.tenant_id
+    at = _now()
+    rows = _load(tid)
+    rows = _filtered(rows, at, _shop_average_ticket(rows), _local_ids(tid, rows),
+                     segment, status, spend, joined, search)
+    return {"ids": [c["id"] for c in rows], "total": len(rows)}
+
+
 @router.get("/api/owner/clients/list")
 def list_page(
     segment: str = "all",

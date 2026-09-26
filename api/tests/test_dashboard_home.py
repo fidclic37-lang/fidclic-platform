@@ -221,5 +221,33 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("it is told to set a goal, since it has none",
           "set_goal" in {r["key"] for r in empty["recommendations"]})
 
+    # ---- the header and its period control ---------------------------------------------------
+    print("\nL'en-tête et sa période")
+    src = open(os.path.join(os.path.dirname(__file__), "..", "..",
+                            "src", "pages", "DashboardHomePage.jsx")).read()
+    check("the greeting is the page title, not a boxed panel",
+          "<header className=" in src and "rounded-2xl border border-[#D7E6FF]" not in src)
+    check("only the name is in brand blue",
+          'Bonjour <span className="text-[#2F6BFF]">{firstName' in src)
+    check("the page names itself above the greeting, as the design does",
+          "Tableau de bord\n          </p>" in src)
+
+    check("the period survives a reload", "localStorage.setItem('fidclic:dh_days'" in src)
+    check("and travels in the URL, so a shared link shows the same thing",
+          "url.searchParams.set('days'" in src)
+    check("a period nobody offers never reaches the API",
+          "allowed.includes(Number(next)) ? Number(next) : 30" in src)
+    check("every picker on the page reads the same value",
+          src.count("RangePicker value={days} onChange={setDays}") == 3)
+    check("and none of them can be changed mid-refetch",
+          src.count("busy={loading}") == 3)
+
+    # The four the picker offers are the four the API is asked for, and the
+    # API answers on that period rather than on a fixed month.
+    for n in (7, 30, 90, 365):
+        payload = DH.overview(days=n, token_data=TD())
+        check(f"{n} days is answered as {n} days",
+              payload["days"] == n and len(payload["revenue_series"]) == n)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

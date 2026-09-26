@@ -4,6 +4,7 @@ import {
   Users, Crown, Send, UserPlus, Target, ShoppingBag, MapPin, Gift, Star,
   Plus, Upload, Search, Filter, SlidersHorizontal, ChevronDown, ChevronLeft,
   ChevronRight, Mail, MoreVertical, Loader2, Columns3, Download, X, ArrowRight,
+  Bookmark, BookmarkPlus, Check, Send as SendIcon,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 
@@ -121,6 +122,72 @@ const Select = ({ label, value, onChange, options }) => (
 );
 
 /* ── page ─────────────────────────────────────────────────────────────── */
+/* ── Contacter ─────────────────────────────────────────────────────────────
+   The filter above this page is the whole point of the page, so the message
+   goes to what the filter found — not to the ten rows that happen to be on
+   screen. The modal says which, and how many, before anything is sent. */
+const ComposeModal = ({ count, label, onClose, onSend }) => {
+  const [title, setTitle] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const ready = title.trim() && message.trim();
+
+  const send = async () => {
+    setBusy(true); setErr('');
+    try { await onSend(title.trim(), message.trim()); }
+    catch (e) { setErr(e?.response?.data?.detail || "L'envoi n'a pas abouti."); setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B1C3F]/40 p-4"
+         onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-[0_30px_70px_-30px_rgba(11,28,63,.6)]"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-[16px] font-bold text-[#0B1C3F]">Contacter {label}</h3>
+            <p className="text-[12.5px] text-[#64748B]">
+              {nf(count)} client{count > 1 ? 's' : ''} recevront ce message.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="text-[#94A3B8] hover:text-[#334155]">
+            <X size={18} />
+          </button>
+        </div>
+
+        <label className="mb-1 flex items-center justify-between text-[11.5px] font-medium text-[#475569]">
+          Titre <span className="tabular-nums text-[#94A3B8]">{title.length}/50</span>
+        </label>
+        <input value={title} maxLength={50} onChange={(e) => setTitle(e.target.value)}
+               placeholder="☕ Une attention pour vous"
+               className="mb-3 w-full rounded-xl border border-[#E6EEFB] px-3 py-2.5 text-[13px] outline-none focus:border-[#2F6BFF]" />
+
+        <label className="mb-1 flex items-center justify-between text-[11.5px] font-medium text-[#475569]">
+          Message <span className="tabular-nums text-[#94A3B8]">{message.length}/160</span>
+        </label>
+        <textarea value={message} maxLength={160} rows={3}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="On vous attend cette semaine !"
+                  className="mb-3 w-full resize-none rounded-xl border border-[#E6EEFB] px-3 py-2.5 text-[13px] leading-snug outline-none focus:border-[#2F6BFF]" />
+
+        {err && <p className="mb-3 rounded-xl bg-[#FEECEC] px-3 py-2 text-[12px] text-[#C0392B]">{err}</p>}
+
+        <div className="flex justify-end gap-2.5">
+          <button type="button" onClick={onClose}
+                  className="rounded-xl border border-[#E6EEFB] px-4 py-2.5 text-[13px] font-semibold text-[#334155]">
+            Annuler
+          </button>
+          <button type="button" onClick={send} disabled={!ready || busy}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-50">
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <SendIcon size={14} />} Envoyer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function ClientsPage() {
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
@@ -141,8 +208,73 @@ export default function ClientsPage() {
   const [picked, setPicked] = useState([]);
   const [menuFor, setMenuFor] = useState(null);
   const [exporting, setExporting] = useState(false);
+  // Saved segments — a filter combination the merchant named and wants back.
+  const [saved, setSaved] = useState([]);
+  const [naming, setNaming] = useState(false);
+  const [segName, setSegName] = useState('');
+  const [compose, setCompose] = useState(null);   // { ids, label } | null
+  const [flash, setFlash] = useState('');
 
   useEffect(() => { ownerAPI.clientsOverview().then(({ data }) => setMeta(data)).catch(() => {}); }, []);
+
+  const loadSaved = useCallback(() => {
+    ownerAPI.listSavedSegments()
+      .then(({ data }) => setSaved(Array.isArray(data) ? data : (data?.segments || [])))
+      .catch(() => setSaved([]));
+  }, []);
+  useEffect(() => { loadSaved(); }, [loadSaved]);
+
+  // What the current filter is, in one place: saved as-is, and applied back
+  // as-is, so a reloaded segment shows exactly the rows it showed when it was
+  // saved.
+  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort }),
+                                 [segment, status, spend, joined, search, sort]);
+
+  const saveCurrent = async () => {
+    const name = segName.trim();
+    if (!name) return;
+    try {
+      await ownerAPI.createSavedSegment({ name, segment, filters: currentFilters });
+      setSegName(''); setNaming(false); loadSaved();
+      setFlash(`Segment « ${name} » enregistré.`);
+    } catch (e) { setError(e?.response?.data?.detail || "Le segment n'a pas pu être enregistré."); }
+  };
+
+  const applySaved = (row) => {
+    const f = row.filters || {};
+    setSegment(f.segment || row.segment || 'all');
+    setStatus(f.status || ''); setSpend(f.spend || ''); setJoined(f.joined || '');
+    setTyped(f.search || ''); setSearch(f.search || '');
+    setSort(f.sort || 'recent');
+    setPage(1); setPicked([]);
+  };
+
+  const removeSaved = async (id) => {
+    try { await ownerAPI.deleteSavedSegment(id); loadSaved(); }
+    catch { setError("Le segment n'a pas pu être supprimé."); }
+  };
+
+  // Message the SELECTION when there is one, otherwise everyone the filter
+  // found — never the page that happens to be on screen.
+  const openCompose = async (scope) => {
+    if (scope === 'picked') {
+      setCompose({ ids: picked, label: `${picked.length} client${picked.length > 1 ? 's' : ''} sélectionné${picked.length > 1 ? 's' : ''}` });
+      return;
+    }
+    try {
+      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search });
+      if (!data.ids?.length) { setError('Aucun client ne correspond à ce filtre.'); return; }
+      setCompose({ ids: data.ids, label: activeSegment?.label || 'ce filtre' });
+    } catch (e) { setError(e?.response?.data?.detail || 'Impossible de constituer la liste.'); }
+  };
+
+  const sendCompose = async (title, message) => {
+    await ownerAPI.sendCampaignToGroup({
+      customer_ids: compose.ids, name: title, content: message, message,
+    });
+    setFlash(`Message envoyé à ${nf(compose.ids.length)} client${compose.ids.length > 1 ? 's' : ''}.`);
+    setCompose(null); setPicked([]);
+  };
 
   useEffect(() => {
     const id = setTimeout(() => { setSearch(typed.trim()); setPage(1); }, 300);
@@ -261,7 +393,63 @@ export default function ClientsPage() {
             );
           })}
         </div>
+
+        {/* Saved segments — a filter combination the merchant named. The eight
+            above are ours; these are theirs. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#EEF3FB] pt-3">
+          <span className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-[#64748B]">
+            <Bookmark size={13} className="text-[#2F6BFF]" /> Mes segments
+          </span>
+          {saved.map((row) => (
+            <span key={row.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-[#E6EEFB] bg-white py-1 pl-3 pr-1">
+              <button type="button" onClick={() => applySaved(row)}
+                      className="text-[12px] font-semibold text-[#334155] hover:text-[#2F6BFF]">
+                {row.name}
+              </button>
+              <button type="button" onClick={() => removeSaved(row.id)} title="Supprimer"
+                      className="rounded-full p-1 text-[#94A3B8] transition hover:bg-[#FEECEC] hover:text-[#C0392B]">
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          {!saved.length && !naming && (
+            <span className="text-[11.5px] italic text-[#94A3B8]">
+              Réglez les filtres, puis enregistrez la combinaison pour la retrouver.
+            </span>
+          )}
+          {naming ? (
+            <span className="inline-flex items-center gap-1.5">
+              <input autoFocus value={segName} onChange={(e) => setSegName(e.target.value)}
+                     onKeyDown={(e) => { if (e.key === 'Enter') saveCurrent(); if (e.key === 'Escape') setNaming(false); }}
+                     placeholder="Nom du segment" maxLength={60}
+                     className="w-44 rounded-full border border-[#2F6BFF] px-3 py-1 text-[12px] outline-none" />
+              <button type="button" onClick={saveCurrent} disabled={!segName.trim()}
+                      className="rounded-full bg-[#2F6BFF] p-1.5 text-white disabled:opacity-40">
+                <Check size={12} />
+              </button>
+              <button type="button" onClick={() => { setNaming(false); setSegName(''); }}
+                      className="rounded-full p-1.5 text-[#94A3B8] hover:text-[#334155]">
+                <X size={12} />
+              </button>
+            </span>
+          ) : (
+            <button type="button" onClick={() => setNaming(true)}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-dashed border-[#C9DBFB] px-3 py-1 text-[12px] font-semibold text-[#2F6BFF] transition hover:border-[#2F6BFF]">
+              <BookmarkPlus size={13} /> Enregistrer ce filtre
+            </button>
+          )}
+        </div>
       </section>
+
+      {flash && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-[#E7F7EE] px-4 py-2.5 text-[12.5px] font-medium text-[#0F8B58]">
+          <Check size={15} /> {flash}
+          <button type="button" onClick={() => setFlash('')} className="ml-auto text-[#0F8B58]/70 hover:text-[#0F8B58]">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* search */}
       <div className="relative mb-4">
@@ -323,12 +511,11 @@ export default function ClientsPage() {
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            {picked.length > 0 && (
-              <button type="button" onClick={() => navigate('/dashboard/campaigns')}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-[#2F6BFF] px-3 py-2 text-[12.5px] font-semibold text-white">
-                <Mail size={13} /> Contacter ({picked.length})
-              </button>
-            )}
+            <button type="button" onClick={() => openCompose(picked.length ? 'picked' : 'filter')}
+                    disabled={!feed.total}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#2F6BFF] px-3 py-2 text-[12.5px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-50">
+              <Mail size={13} /> Contacter ({nf(picked.length || feed.total)})
+            </button>
             <div className="relative">
               <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}
                       className="appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2 pl-3 pr-8 text-[12.5px] font-medium text-[#334155] outline-none focus:border-[#2F6BFF]">
@@ -495,6 +682,11 @@ export default function ClientsPage() {
           </label>
         </div>
       </section>
+
+      {compose && (
+        <ComposeModal count={compose.ids.length} label={compose.label}
+                      onClose={() => setCompose(null)} onSend={sendCompose} />
+      )}
     </div>
   );
 }
