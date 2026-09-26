@@ -82,7 +82,6 @@ import OwnerDashboard from './pages/OwnerDashboard';
 // import AnalyticsPage from './pages/AnalyticsPage';
 // import AnalyticsPage from './pages/AnalyticsPageV2';
 import AnalysesPage from './pages/AnalysesPage';
-import CustomersPage from './pages/CustomersPage';
 import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
 import AIAssistantPage from './pages/AIAssistantPage';
@@ -103,6 +102,7 @@ import HelpPage from './pages/HelpPage';
 import GeolocationPage from './pages/GeolocationPage';
 import ReferralPage from './pages/ReferralPage';
 import AutomationsPage from './pages/AutomationsPage';
+import ClientsPage from './pages/ClientsPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -281,9 +281,12 @@ function App() {
                 <InsightsPage />
               </ProtectedRoute>
             } />
+            {/* Clients — rebuilt to the approved design. The previous
+                CustomersPage stays in the repo, unrouted, until its saved
+                segments and campaign composer have a home on the new page. */}
             <Route path="customers" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <CustomersPage />
+                <ClientsPage />
               </ProtectedRoute>
             } />
             {/* Géolocalisation clients — catchment rings + travel-time bands.

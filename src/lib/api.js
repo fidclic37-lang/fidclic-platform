@@ -150,7 +150,10 @@ export const ownerAPI = {
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
-
+  // Clients — the page's four figures, its segments and its paginated table.
+  clientsOverview: () => api.get('/owner/clients/overview'),
+  clientsList: (params) => api.get('/owner/clients/list', { params }),
+  clientsExport: (params) => api.get('/owner/clients/export', { params, responseType: 'blob' }),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

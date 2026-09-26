@@ -33,6 +33,9 @@ MODULES = [
     "features.geolocation",
     # Analyses — eight tabs over one window, one tab answered per request.
     "features.analyses",
+    # Clients — the page's four figures, its eight quick segments and its
+    # paginated table. Sits beside /api/owner/customers, which is untouched.
+    "features.clients_page",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
