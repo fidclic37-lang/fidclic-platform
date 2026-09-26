@@ -75,11 +75,15 @@ import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
 import OnboardingCardPage from './pages/OnboardingCardPage';
 import OnboardingDonePage from './pages/OnboardingDonePage';
 import DashboardLayout from './pages/DashboardLayout';
+// Analyses is the page on /dashboard/analytics. The two older takes
+// (AnalyticsPage, AnalyticsPageV2) are kept on disk for rollback only —
+// to revert, import one of them here instead.
 // Legacy AnalyticsPage kept for rollback during the dark-redesign rollout.
 // AnalyticsPageV2 is the new dark redesign that replaces it on the
 // /dashboard/analytics route. To revert: swap the imports here.
 // import AnalyticsPage from './pages/AnalyticsPage';
-import AnalyticsPage from './pages/AnalyticsPageV2';
+// import AnalyticsPage from './pages/AnalyticsPageV2';
+import AnalysesPage from './pages/AnalysesPage';
 import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
 import AIAssistantPage from './pages/AIAssistantPage';
@@ -275,7 +279,7 @@ function App() {
             } />
             <Route path="analytics" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <AnalyticsPage />
+                <AnalysesPage />
               </ProtectedRoute>
             } />
             <Route path="insights" element={

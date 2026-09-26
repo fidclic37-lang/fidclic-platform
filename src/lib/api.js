@@ -147,6 +147,9 @@ export const ownerAPI = {
   deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
   runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
   pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
+  // Analyses — one tab per request, and the overview as a CSV.
+  analyses: (params) => api.get('/owner/analyses', { params }),
+  analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
   // Tableau de bord — the home page's eleven panels, and the monthly goal.
   homeOverview: (params) => api.get('/owner/home/overview', { params }),
   getHomeGoal: () => api.get('/owner/home/goal'),
