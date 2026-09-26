@@ -2145,6 +2145,7 @@ main:has(.hst),
 main:has(.geo),
 main:has(.pr),
 main:has(.aut),
+main:has(.dh),
 main:has(.cl) { background: #F4F7FC !important; }
 /* The top bar belongs to the shell, so it is repainted only while one of these
    pages is on screen — every other page keeps the bar it has today. */
@@ -2154,6 +2155,7 @@ main:has(.hst) > div:first-child,
 main:has(.geo) > div:first-child,
 main:has(.pr) > div:first-child,
 main:has(.aut) > div:first-child,
+main:has(.dh) > div:first-child,
 main:has(.cl) > div:first-child {
   background: #FFFFFF !important;
   border-bottom: 1px solid #E6EEFB;
@@ -2165,6 +2167,7 @@ main:has(.hst) > div:first-child *,
 main:has(.geo) > div:first-child *,
 main:has(.pr) > div:first-child *,
 main:has(.aut) > div:first-child *,
+main:has(.dh) > div:first-child *,
 main:has(.cl) > div:first-child * { color: #334155; }
 main:has(.lc) > div:first-child input,
 main:has(.hlp) > div:first-child input,
@@ -2172,6 +2175,7 @@ main:has(.hst) > div:first-child input,
 main:has(.geo) > div:first-child input,
 main:has(.pr) > div:first-child input,
 main:has(.aut) > div:first-child input,
+main:has(.dh) > div:first-child input,
 main:has(.cl) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
 .lc-wrap { padding: 18px 22px 0; max-width: 1600px; margin-inline: auto; }
 .lc { color: #0B1C3F; }
