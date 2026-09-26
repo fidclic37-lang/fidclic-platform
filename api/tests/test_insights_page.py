@@ -351,8 +351,23 @@ def main():
     check("the card shows the Google invitation only when the server hands one back",
           "setGoogleReviewUrl(sent?.google_review_url || null)" in card
           and "googleReviewUrl && (" in card)
+    # Every item, in every sector and every season, now has a photo: the icon
+    # tile is a safety net, not a design.
+    shown = set()
+    for tid in ("cafe", "spa"):
+        for month in range(1, 13):
+            pl = I._payload(tid, dt.datetime(2026, month, 15, 12, tzinfo=dt.timezone.utc))
+            for shelf in ("opportunities", "actions", "ideas"):
+                for it in pl[shelf]["all"]:
+                    shown.add((it["key"], it.get("image")))
+    missing = sorted(k for k, img in shown if not img)
+    check("no item in any sector or season falls back to an icon tile", missing == [])
+    for k in sorted({img for _, img in shown if img and img != "google"}):
+        check(f"public/insights/{k}.webp exists for what the page references",
+              os.path.exists(os.path.join(here, "..", "..", "public", "insights", f"{k}.webp")))
     for k in ("panier", "inactifs", "proximite", "anniversaire", "menu", "fidelite",
-              "automne", "happyhour", "parrainage", "fetes"):
+              "automne", "happyhour", "parrainage", "fetes", "panier_services", "heures_creuses",
+              "offre_moment", "saint_valentin", "printemps", "ete"):
         check(f"public/insights/{k}.webp is bundled",
               os.path.exists(os.path.join(here, "..", "..", "public", "insights", f"{k}.webp")))
 
