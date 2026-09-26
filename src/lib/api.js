@@ -151,6 +151,10 @@ export const ownerAPI = {
   homeOverview: (params) => api.get('/owner/home/overview', { params }),
   getHomeGoal: () => api.get('/owner/home/goal'),
   setHomeGoal: (body) => api.put('/owner/home/goal', body),
+  // Clients — the page's four figures, its segments and its paginated table.
+  clientsOverview: () => api.get('/owner/clients/overview'),
+  clientsList: (params) => api.get('/owner/clients/list', { params }),
+  clientsExport: (params) => api.get('/owner/clients/export', { params, responseType: 'blob' }),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

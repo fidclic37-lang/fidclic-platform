@@ -34,6 +34,9 @@ MODULES = [
     # Tableau de bord — the home page's eleven panels, read off one month of
     # visits in a single pass, plus the merchant's monthly revenue goal.
     "features.dashboard_home",
+    # Clients — the page's four figures, its eight quick segments and its
+    # paginated table. Sits beside /api/owner/customers, which is untouched.
+    "features.clients_page",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
