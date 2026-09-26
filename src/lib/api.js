@@ -150,6 +150,10 @@ export const ownerAPI = {
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
+  // Tableau de bord — the home page's eleven panels, and the monthly goal.
+  homeOverview: (params) => api.get('/owner/home/overview', { params }),
+  getHomeGoal: () => api.get('/owner/home/goal'),
+  setHomeGoal: (body) => api.put('/owner/home/goal', body),
   // Clients — the page's four figures, its segments and its paginated table.
   clientsOverview: () => api.get('/owner/clients/overview'),
   clientsList: (params) => api.get('/owner/clients/list', { params }),

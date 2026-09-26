@@ -75,10 +75,12 @@ import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
 import OnboardingCardPage from './pages/OnboardingCardPage';
 import OnboardingDonePage from './pages/OnboardingDonePage';
 import DashboardLayout from './pages/DashboardLayout';
-import OwnerDashboard from './pages/OwnerDashboard';
 // Analyses is the page on /dashboard/analytics. The two older takes
 // (AnalyticsPage, AnalyticsPageV2) are kept on disk for rollback only —
 // to revert, import one of them here instead.
+// Legacy AnalyticsPage kept for rollback during the dark-redesign rollout.
+// AnalyticsPageV2 is the new dark redesign that replaces it on the
+// /dashboard/analytics route. To revert: swap the imports here.
 // import AnalyticsPage from './pages/AnalyticsPage';
 // import AnalyticsPage from './pages/AnalyticsPageV2';
 import AnalysesPage from './pages/AnalysesPage';
@@ -102,6 +104,7 @@ import HelpPage from './pages/HelpPage';
 import GeolocationPage from './pages/GeolocationPage';
 import ReferralPage from './pages/ReferralPage';
 import AutomationsPage from './pages/AutomationsPage';
+import DashboardHomePage from './pages/DashboardHomePage';
 import ClientsPage from './pages/ClientsPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
@@ -266,9 +269,12 @@ function App() {
               <DashboardLayout />
             </ProtectedRoute>
           }>
+            {/* Tableau de bord — rebuilt to the approved design. OwnerDashboard
+                stays in the repo, unrouted, until its smart search and time
+                filter have a home on the new page. */}
             <Route index element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <OwnerDashboard />
+                <DashboardHomePage />
               </ProtectedRoute>
             } />
             <Route path="analytics" element={
