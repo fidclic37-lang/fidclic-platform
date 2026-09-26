@@ -120,6 +120,44 @@ def wallet_config():
     return {"apple": apple_configured(), "google": google_configured()}
 
 
+@router.get("/api/owner/wallet/google-status")
+def google_status(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """Where this issuer stands with Google.
+
+    Google gates production: until the issuer is approved, a pass can only be
+    saved by accounts on the test list. The class carries the verdict as
+    `reviewStatus` — draft / underReview / approved / rejected — so the answer
+    comes from Google rather than from a guess.
+    """
+    if not google_configured():
+        return {"configured": False, "issuer_id": None, "review_status": None,
+                "message": "GOOGLE_WALLET_ISSUER_ID et GOOGLE_WALLET_SA_B64 ne sont pas encore définis."}
+    try:
+        token = _gw_access_token()
+        issuer = _env("GOOGLE_WALLET_ISSUER_ID")
+        class_id = f"{issuer}.fidclic_{token_data.tenant_id}".replace("-", "_")
+        status, body = _gw_call("GET", f"/loyaltyClass/{class_id}", None, token)
+    except Exception as exc:
+        return {"configured": True, "issuer_id": _env("GOOGLE_WALLET_ISSUER_ID"),
+                "review_status": None, "message": f"Google n'a pas répondu : {exc}"}
+    if status != 200:
+        return {"configured": True, "issuer_id": _env("GOOGLE_WALLET_ISSUER_ID"),
+                "review_status": "draft",
+                "message": "La carte n'a pas encore été créée chez Google. "
+                           "Elle le sera au premier « Ajouter à Google Wallet »."}
+    review = body.get("reviewStatus") or "draft"
+    says = {
+        "draft":       "Brouillon : seuls vos comptes de test peuvent ajouter la carte.",
+        "underReview": "En cours d'examen par Google.",
+        "approved":    "Approuvé : tous vos clients peuvent ajouter la carte.",
+        "rejected":    "Refusé par Google — voir les commentaires dans la console.",
+    }
+    return {"configured": True, "issuer_id": _env("GOOGLE_WALLET_ISSUER_ID"),
+            "review_status": review, "class_id": class_id,
+            "review_comments": (body.get("review") or {}).get("comments") or [],
+            "message": says.get(review, review)}
+
+
 # ---------------------------------------------------------------------------
 # Colour derivation — a Python mirror of src/lib/cardTheme.js so the pass
 # colours match the on-screen preview exactly. Keep the two in sync.
@@ -403,7 +441,44 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
     cust = _db.customers.find_one({"barcode_id": barcode_id})
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
-    return core._serialize_card_payload(cust)
+    payload = core._serialize_card_payload(cust)
+    _attach_campaign_offer(payload.get("card") or {}, cust)
+    return payload
+
+
+CAMPAIGN_OFFER_DAYS = 30
+
+
+def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
+    """Put the merchant's newest wallet campaign on the pass as its offer.
+
+    This is what makes a campaign visible in Apple Wallet. The pass has no
+    message of its own — the notification the customer sees is Wallet reacting
+    to a field that changed, which is why the offer field carries a
+    `changeMessage`. So the campaign becomes the field, the pass is woken, and
+    Wallet raises the banner itself.
+
+    Only campaigns the merchant chose to put on the wallet are read, only for
+    the customers they were sent to, and only for CAMPAIGN_OFFER_DAYS — after
+    that the card goes back to the merchant's own offer rather than showing a
+    promotion that has expired.
+    """
+    try:
+        since = _now() - timedelta(days=CAMPAIGN_OFFER_DAYS)
+        rows = _db.campaigns.find(
+            {"tenant_id": cust.get("tenant_id"), "status": "sent",
+             "wallet_offer": True, "recipient_ids": cust.get("id")},
+            {"_id": 0, "name": 1, "content": 1, "sent_at": 1})
+        newest, newest_at = None, None
+        for c in rows:
+            at = _parse_dt(c.get("sent_at"))
+            if at and at >= since and (newest_at is None or at > newest_at):
+                newest, newest_at = c, at
+        if newest and (newest.get("name") or "").strip():
+            card["campaign_offer"] = {"title": newest["name"].strip(),
+                                      "subtitle": (newest.get("content") or "").strip()}
+    except Exception as exc:        # a missing offer must never cost the pass
+        print(f"wallet: campaign offer lookup failed (non-fatal): {exc}")
 
 
 def _now() -> datetime:
@@ -462,6 +537,12 @@ def _offer_text(card: Dict[str, Any]) -> Tuple[str, str]:
     offer box, the strip band, or the promotion block. The web card shows all
     three, so the pass must read all three or the customer sees a different
     card in Wallet than in the browser."""
+    # A campaign the merchant pushed to the wallet is the current offer, and it
+    # wins: it is the most recent thing they decided to say, and it is the
+    # reason the customer's phone just buzzed.
+    campaign = card.get("campaign_offer") if isinstance(card.get("campaign_offer"), dict) else {}
+    if (campaign.get("title") or "").strip():
+        return campaign["title"].strip(), (campaign.get("subtitle") or "").strip()
     promo = card.get("promotion") if isinstance(card.get("promotion"), dict) else {}
     if card.get("show_offer_box") is not False and (card.get("offer_box_text") or "").strip():
         return card["offer_box_text"].strip(), (card.get("offer_box_subtext") or "").strip()
@@ -1012,6 +1093,19 @@ def google_save_url(payload: Dict[str, Any]) -> str:
     }
     if card.get("tagline"):
         obj["textModulesData"].insert(0, {"id": "tagline", "header": org, "body": card["tagline"]})
+    # Google's own message element: the banner the customer sees inside the
+    # card, tappable, with the merchant's campaign in it. This is Google's
+    # equivalent of Apple's changeMessage — Apple has no banner element, it
+    # raises a lock-screen notification when a field changes instead. Only a
+    # campaign the merchant chose to put on the wallet ever lands here.
+    campaign = card.get("campaign_offer") if isinstance(card.get("campaign_offer"), dict) else {}
+    if (campaign.get("title") or "").strip():
+        obj["messages"] = [{
+            "id": "campaign",
+            "header": campaign["title"].strip()[:60],
+            "body": (campaign.get("subtitle") or "").strip()[:300],
+            "messageType": "TEXT",
+        }]
     status, _ = _gw_call("GET", f"/loyaltyObject/{object_id}", None, token)
     _gw_call("PUT" if status == 200 else "POST", f"/loyaltyObject/{object_id}" if status == 200 else "/loyaltyObject", obj, token)
 

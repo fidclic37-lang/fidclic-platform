@@ -106,6 +106,9 @@ import ReferralPage from './pages/ReferralPage';
 import AutomationsPage from './pages/AutomationsPage';
 import DashboardHomePage from './pages/DashboardHomePage';
 import ClientsPage from './pages/ClientsPage';
+// Campagnes — rebuilt to the approved design. CampaignsPage stays in the
+// repo, unrouted, for rollback.
+import CampagnesPage from './pages/CampagnesPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -342,7 +345,7 @@ function App() {
             } />
             <Route path="campaigns" element={
               <ProtectedRoute allowedRoles={['business_owner']}>
-                <CampaignsPage />
+                <CampagnesPage />
               </ProtectedRoute>
             } />
             <Route path="ai-assistant" element={

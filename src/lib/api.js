@@ -158,6 +158,12 @@ export const ownerAPI = {
   clientsOverview: () => api.get('/owner/clients/overview'),
   clientsList: (params) => api.get('/owner/clients/list', { params }),
   clientsExport: (params) => api.get('/owner/clients/export', { params, responseType: 'blob' }),
+  // Campagnes — the page in one call, the composer in one call.
+  campaignsPage: () => api.get('/owner/campaigns/page'),
+  composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
+  campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
+  googleWalletStatus: () => api.get('/owner/wallet/google-status'),
+
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
