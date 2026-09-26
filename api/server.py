@@ -6105,6 +6105,26 @@ def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dic
     return items
 
 
+def _log_card_open(cust: dict) -> None:
+    """Record that this customer opened their card today.
+
+    One row per customer per day — the card is a PWA and gets reopened all day
+    long. It is what the Campagnes page counts as an "ouverture": a wallet push
+    returns no read receipt, so a card opened within 72 h of a send is the only
+    honest signal there is.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        db.card_opens.update_one(
+            {"customer_id": cust["id"], "day": now.strftime("%Y-%m-%d")},
+            {"$setOnInsert": {"tenant_id": cust.get("tenant_id"), "customer_id": cust["id"],
+                              "day": now.strftime("%Y-%m-%d"), "at": now},
+             "$inc": {"opens": 1}},
+            upsert=True)
+    except Exception as exc:
+        print(f"card open log failed (non-fatal): {exc}")
+
+
 def _log_card_message_view(cust: dict, payload: dict) -> None:
     """The merchant writes a message on the card; this records that a customer
     actually opened the card while it was showing. It is what the Historique's
@@ -6145,6 +6165,7 @@ def get_wallet_card(barcode_id: str):
                                 {"$set": {"last_card_open_at": datetime.now(timezone.utc)}})
     except Exception:
         pass
+    _log_card_open(cust)
     return payload
 
 
@@ -10680,6 +10701,16 @@ def run_daily_triggers(request: Request):
     except Exception as _e:
         print(f"push wallet runner failed (non-fatal): {_e}")
 
+    # Campagnes planifiées — the composer's "Planifier pour plus tard" lands
+    # here. Wrapped for the same reason: one tenant's send must not stop the
+    # cron for everybody else.
+    campagnes_summary = {"sent": 0, "recipients": 0}
+    try:
+        from features.campaigns_page import run_due as _run_due_campaigns
+        campagnes_summary = _run_due_campaigns(now)
+    except Exception as _e:
+        print(f"scheduled campaigns runner failed (non-fatal): {_e}")
+
     return {
         "status": "ok",
         "ran_at": now.isoformat(),
@@ -10689,6 +10720,7 @@ def run_daily_triggers(request: Request):
         "scheduled_sent": scheduled_sent,
         "tier_up_emitted": tier_up_emitted_count,
         "push_wallet": push_wallet_summary,
+        "campagnes": campagnes_summary,
         "tenants_processed": len(tenants),
     }
 
