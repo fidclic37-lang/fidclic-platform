@@ -155,7 +155,28 @@ MODELS: List[Dict[str, Any]] = [
     {"key": "locaux", "name": "Clients locaux", "icon": "pin", "tone": "blue",
      "description": "À moins de 5 km de votre commerce.",
      "rules": [{"field": "distance", "op": "lt", "value": 5}]},
+    # Behind the first five: what takes a model's place once it is in use.
+    {"key": "vip", "name": "Clients VIP", "icon": "star", "tone": "amber",
+     "description": "Ont atteint le palier VIP de votre carte.",
+     "rules": [{"field": "tier", "op": "eq", "value": "vip"}]},
+    {"key": "anciens_fideles", "name": "Anciens fidèles", "icon": "users", "tone": "rose",
+     "description": "Plus de 5 achats, mais absents depuis 60 jours.",
+     "rules": [{"field": "visits", "op": "gt", "value": 5},
+               {"field": "last_visit", "op": "gt", "value": 60}]},
+    {"key": "sans_achat", "name": "Inscrits sans achat", "icon": "gift", "tone": "violet",
+     "description": "Ont créé leur carte mais ne sont jamais venus.",
+     "rules": [{"field": "tier", "op": "eq", "value": "non_membre"}]},
+    {"key": "habitues", "name": "Habitués du mois", "icon": "star", "tone": "green",
+     "description": "Plus de 3 achats et venus ce mois-ci.",
+     "rules": [{"field": "visits", "op": "gt", "value": 3},
+               {"field": "last_visit", "op": "lt", "value": 30}]},
+    {"key": "petits_paniers", "name": "Petits paniers", "icon": "cart", "tone": "slate",
+     "description": "Panier moyen inférieur à 8 €.",
+     "rules": [{"field": "spend", "op": "lt", "value": 8}]},
 ]
+# The five the table always shows, as in the design.
+TABLE_MODELS = ("inactifs", "fideles", "nouveaux", "gros_paniers", "locaux")
+SHOWN_MODELS = 5
 
 
 def init(db):
@@ -438,13 +459,28 @@ def _rules_of(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     return _clean_rules(doc.get("rules") or [])
 
 
+def _adopted(tid: str) -> set:
+    """Model keys the merchant has already saved as their own segment — by the
+    key recorded since, or by name for segments saved before it was."""
+    names = {m["name"]: m["key"] for m in MODELS}
+    out = set()
+    for d in _stored(tid):
+        if d.get("model"):
+            out.add(d["model"])
+        elif d.get("name") in names:
+            out.add(names[d["name"]])
+    return out
+
+
 def _model_rows(tid: str) -> List[Dict[str, Any]]:
-    """The five models, as rows. A merchant who has created nothing still has
-    a page that counts their real clients rather than an empty table."""
+    """The design's five models, as rows — minus any the merchant saved, whose
+    own row stands in for it. A merchant who has created nothing still has a
+    page that counts their real clients rather than an empty table."""
+    adopted = _adopted(tid)
     return [{"id": f"model:{m['key']}", "name": m["name"], "description": m["description"],
              "icon": m["icon"], "tone": m["tone"], "rules": m["rules"],
              "builtin": True, "created_at": None, "last_used_at": None}
-            for m in MODELS]
+            for m in MODELS if m["key"] in TABLE_MODELS and m["key"] not in adopted]
 
 
 def _segment_rows(tid: str, at: datetime) -> List[Dict[str, Any]]:
@@ -537,11 +573,10 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
 
     return {
         "strip": strip,
-        "models": [{**m, "count": len(evaluate(tid, m["rules"], people, at, distances))}
-                   for m in MODELS],
+        "models": _recommended_models(tid, people, at, distances),
         "segments": sized,
         "fields": FIELDS,
-        "tips": _tips(sized, total),
+        "tips": _tips(sized, total, tid, at),
         "goal": _goal(tid, at),
         "total_clients": total,
         "potential_note": (
@@ -551,6 +586,27 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
             "semaine moyenne de votre chiffre d'affaires."),
         "empty": total == 0,
     }
+
+
+def _recommended_models(tid, people, at, distances) -> List[Dict[str, Any]]:
+    """Five ready-made segments the merchant has not made their own yet.
+
+    Once one is used, it leaves this row and the next model takes its place.
+    Models that would hold nobody in THIS shop are passed over — recommending
+    an empty segment is not a recommendation.
+    """
+    adopted = _adopted(tid)
+    out = []
+    for m in MODELS:
+        if m["key"] in adopted:
+            continue
+        n = len(evaluate(tid, m["rules"], people, at, distances))
+        if n == 0 and people:
+            continue
+        out.append({**m, "count": n})
+        if len(out) >= SHOWN_MODELS:
+            break
+    return out
 
 
 def _goal(tid: str, at: datetime) -> Dict[str, Any]:
@@ -572,38 +628,48 @@ def _goal(tid: str, at: datetime) -> Dict[str, Any]:
             "is_set": target > 0}
 
 
-def _tips(sized: List[Dict[str, Any]], total: int) -> List[Dict[str, Any]]:
-    """Three suggestions, each pointing at a segment that really exists.
+TIP_TEMPLATES = {"Clients inactifs": "relance_inactifs", "Clients fidèles": "fideles_merci",
+                 "Clients locaux": "offre_locale"}
 
-    Rule-based on purpose: a recommendation the merchant can check against the
-    row above it is worth more than one they have to trust.
+
+def _tips(sized: List[Dict[str, Any]], total: int, tid: Optional[str] = None,
+          at: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Three suggestions, each pointing at a segment that really exists and a
+    campaign ready to send to it.
+
+    A tip whose campaign went out in the last two weeks gives its place to the
+    next one — the page never keeps asking for what was just done.
     """
+    from features import insights_page as E
+    used = E.used_templates(tid, at or _now()) if tid else {}
     by_key = {s["name"]: s for s in sized}
-    out = []
+    candidates = []
     dormant = by_key.get("Clients inactifs")
     if dormant and dormant["count"]:
-        out.append({"title": "Réactivez vos clients inactifs", "segment_id": dormant["id"],
-                    "body": f"{dormant['count']} clients n'ont pas acheté depuis 30 jours. "
-                            f"Une campagne pourrait rapporter environ "
-                            f"{_money(dormant['potential']['amount'])} €."})
+        candidates.append({"title": "Réactivez vos clients inactifs", "segment_id": dormant["id"],
+                           "template": TIP_TEMPLATES["Clients inactifs"],
+                           "body": f"{dormant['count']} clients n'ont pas acheté depuis 30 jours. "
+                                   f"Une campagne pourrait rapporter environ "
+                                   f"{round(dormant['potential']['amount'])} €."})
     loyal = by_key.get("Clients fidèles")
     if loyal and loyal["count"]:
-        out.append({"title": "Valorisez vos clients fidèles", "segment_id": loyal["id"],
-                    "body": f"{loyal['count']} clients, soit {loyal['share']} % de votre base, "
-                            f"reviennent régulièrement. Proposez-leur un avantage exclusif."})
+        candidates.append({"title": "Valorisez vos clients fidèles", "segment_id": loyal["id"],
+                           "template": TIP_TEMPLATES["Clients fidèles"],
+                           "body": f"{loyal['count']} clients, soit {loyal['share']} % de votre base, "
+                                   f"reviennent régulièrement. Proposez-leur un avantage exclusif."})
     local = by_key.get("Clients locaux")
     if local and local["count"]:
-        out.append({"title": "Attirez plus de clients locaux", "segment_id": local["id"],
-                    "body": f"{local['count']} clients habitent à moins de 5 km. "
-                            f"Communiquez sur vos offres de proximité."})
+        candidates.append({"title": "Attirez plus de clients locaux", "segment_id": local["id"],
+                           "template": TIP_TEMPLATES["Clients locaux"],
+                           "body": f"{local['count']} clients habitent à moins de 5 km. "
+                                   f"Communiquez sur vos offres de proximité."})
     for s in sorted(sized, key=lambda s: -s["potential"]["amount"]):
-        if len(out) >= 3:
-            break
-        if s["count"] and not any(o["segment_id"] == s["id"] for o in out):
-            out.append({"title": f"Ciblez « {s['name']} »", "segment_id": s["id"],
-                        "body": f"{s['count']} clients, potentiel estimé "
-                                f"{_money(s['potential']['amount'])} €."})
-    return out[:3]
+        if s["count"] and not any(c["segment_id"] == s["id"] for c in candidates):
+            candidates.append({"title": f"Ciblez « {s['name']} »", "segment_id": s["id"],
+                               "template": f"seg:{s['id']}",
+                               "body": f"{s['count']} clients, potentiel estimé "
+                                       f"{round(s['potential']['amount'])} €."})
+    return [c for c in candidates if c["template"] not in used][:3]
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +732,7 @@ def create(req: SegmentIn,
            "description": (description or "").strip()[:200],
            "icon": icon or "target", "tone": tone or "blue",
            "rules": rules, "filters": {}, "segment": None,
+           "model": req.model or None,
            "created_at": _now(), "last_used_at": None}
     _db.saved_segments.insert_one(dict(doc))
     at = _now()

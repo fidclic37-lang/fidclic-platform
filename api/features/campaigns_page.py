@@ -272,6 +272,10 @@ class Compose(BaseModel):
     push: bool = True
     wallet: bool = True
     draft: bool = False
+    # Which recommendation this campaign came from (Insights, Segmentation,
+    # FidClic IA). Recorded so the recommendation can step aside once it has
+    # been used, and something new can take its place.
+    template: Optional[str] = None
 
 
 def _clean(text: str, limit: int) -> str:
@@ -329,6 +333,7 @@ def compose(req: Compose,
         # How long this stays the card's current offer once sent. Read by the
         # wallet pass builder, so the pass and the web card agree.
         "wallet_offer": bool(req.wallet),
+        "template": (req.template or "").strip()[:40] or None,
     }
 
     if status != "sent":

@@ -86,7 +86,6 @@ import DashboardLayout from './pages/DashboardLayout';
 import AnalysesPage from './pages/AnalysesPage';
 import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
-import AIAssistantPage from './pages/AIAssistantPage';
 import SettingsPage from './pages/SettingsPage';
 import JoinPage from './pages/JoinPage';
 import MyWalletCardPage from './pages/MyWalletCardPage';
@@ -109,6 +108,9 @@ import SegmentationPage from './pages/SegmentationPage';
 // Insights — rebuilt to the approved design. The previous InsightsPage stays
 // in the repo, unrouted, for rollback.
 import InsightsGrowthPage from './pages/InsightsGrowthPage';
+// FidClic IA Copilote — replaces the previous AI assistant, which stays in the
+// repo, unrouted, for rollback.
+import CopilotPage from './pages/CopilotPage';
 // Campagnes — rebuilt to the approved design. CampaignsPage stays in the
 // repo, unrouted, for rollback.
 import CampagnesPage from './pages/CampagnesPage';
@@ -352,7 +354,7 @@ function App() {
             } />
             <Route path="ai-assistant" element={
               <ProtectedRoute allowedRoles={['business_owner']}>
-                <AIAssistantPage />
+                <CopilotPage />
               </ProtectedRoute>
             } />
             <Route path="settings" element={

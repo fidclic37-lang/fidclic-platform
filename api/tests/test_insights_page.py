@@ -159,9 +159,12 @@ def main():
                (0.15, 0.20) if days < 60 else (0.10, 0.15) if days < 90 else (0.05, 0.10))
         lo += basket * rng[0]
         hi += basket * rng[1]
-    a, b = max(1, round(lo / shop.monthly * 100)), max(1, round(hi / shop.monthly * 100))
-    want = f"+{a}% de CA" if a == b else f"+{a} à {b}% de CA"
-    check("its impact is the merchant's own formula, as a range", opp["inactifs"]["impact"]["label"] == want)
+    fmt = lambda n: f"{round(n):,}".replace(",", " ")
+    want = (f"+{fmt(lo)} € de CA" if round(lo) == round(hi) else f"+{fmt(lo)} à {fmt(hi)} € de CA")
+    check("its impact is the merchant's own formula, as a range IN EUROS",
+          opp["inactifs"]["impact"]["label"] == want)
+    check("… with the exact euros kept alongside", opp["inactifs"]["impact"]["euros"]
+          == [round(lo + 1e-9, 2), round(hi + 1e-9, 2)])
     check("and it says it was calculated", opp["inactifs"]["impact"]["kind"] == "calcule"
           and "calculé" in opp["inactifs"]["impact"]["basis"])
 
@@ -171,8 +174,17 @@ def main():
     check("panier moyen reads the items per visit from the scans",
           f"en moyenne {per_visit:.1f}".replace(".", ",") in opp["panier_moyen"]["body"])
     check("a benchmark says it is one",
-          opp["panier_moyen"]["impact"]["basis"] == I.BENCHMARK
+          opp["panier_moyen"]["impact"]["basis"].startswith(I.BENCHMARK)
           and opp["panier_moyen"]["impact"]["kind"] == "secteur")
+    check("… and is applied to THIS shop's revenue, in euros",
+          opp["panier_moyen"]["impact"]["label"] ==
+          f"+{fmt(shop.monthly * 0.05)} à {fmt(shop.monthly * 0.12)} € de CA"
+          and "5–12 %" in opp["panier_moyen"]["impact"]["basis"])
+    check("an acquisition estimate becomes a number of new clients at the shop's own pace",
+          opp["proximite"]["impact"]["label"].endswith("nouveaux clients")
+          and "%" not in opp["proximite"]["impact"]["label"])
+    check("no impact on the page is a percentage any more, where money can be shown",
+          all("%" not in x["impact"]["label"] for x in data["opportunities"]["all"] + data["actions"]["all"]))
 
     locs = I._locals(shop)
     check("proximité counts the clients within 2 km", {c["id"] for c in locs} == {"a1", "a2", "n1"})
@@ -268,7 +280,41 @@ def main():
     check("every one is either calculated or a sector estimate",
           all(f["kind"] in ("calcule", "secteur") for f in figures))
     check("the page prints how the calculation works",
-          "25–35 %" in data["impact_note"] and I.BENCHMARK in data["impact_note"])
+          "25–35 %" in data["impact_note"] and "estimations du secteur" in data["impact_note"]
+          and "en euros" in data["impact_note"])
+
+    # ---- a used recommendation makes way ------------------------------------------------------
+    print("\nCe qui a servi laisse sa place")
+    shown = I._payload("cafe", now)["opportunities"]["shown"]
+    target = next(o for o in shown if o["cta"]["kind"] == "template")
+    db.campaigns.insert_one({"id": "used-1", "tenant_id": "cafe", "template": target["cta"]["template"],
+                             "status": "sent", "sent_at": now - dt.timedelta(days=2), "name": "x"})
+    after = I._payload("cafe", now)["opportunities"]
+    check(f"once « {target['title']} » is sent, it leaves the shelf",
+          target["key"] not in [o["key"] for o in after["shown"]])
+    check("… and something else takes its place", len(after["shown"]) == 3)
+    used = next(o for o in after["all"] if o["key"] == target["key"])
+    check("… it stays in 'Voir toutes', saying when it was sent",
+          used["done"] is True and used["cta"]["done_label"].startswith("Envoyée le 24"))
+    back = I._payload("cafe", now + dt.timedelta(days=I.USED_DAYS + 1))["opportunities"]["shown"]
+    check("after two weeks it may come back — if the data still calls for it",
+          target["key"] in [o["key"] for o in back] or target["key"] in
+          [o["key"] for o in I._payload("cafe", now + dt.timedelta(days=I.USED_DAYS + 1))["opportunities"]["all"]
+           if not o.get("done")])
+    db.campaigns.insert_one({"id": "draft-1", "tenant_id": "cafe", "template": "happy_hour",
+                             "status": "draft", "created_at": now, "name": "y"})
+    check("a draft does not count as used — nothing was sent",
+          "happy_hour" in [i["key"] for i in I._payload("cafe", now)["ideas"]["shown"]])
+    db.campaigns.insert_one({"id": "used-2", "tenant_id": "cafe", "template": "happy_hour",
+                             "status": "scheduled", "scheduled_for": now + dt.timedelta(days=1), "name": "z"})
+    ideas2 = I._payload("cafe", now)["ideas"]
+    check("a scheduled idea gives its place to the next idea",
+          "happy_hour" not in [i["key"] for i in ideas2["shown"]] and len(ideas2["shown"]) == 4)
+    check("… and reads 'Programmée'",
+          next(i for i in ideas2["all"] if i["key"] == "happy_hour")["cta"]["done_label"].startswith("Programmée"))
+    check("another shop's campaigns never retire this shop's advice",
+          I.used_templates("spa", now) == {})
+    db.campaigns.delete_many({"id": {"$in": ["used-1", "draft-1", "used-2"]}})
 
     # ---- templates for the composer ---------------------------------------------------------
     print("\nModèles pour le composeur")
@@ -342,7 +388,9 @@ def main():
           "reportlab" in open(os.path.join(here, "..", "requirements.txt")).read())
     comp = open(os.path.join(here, "..", "..", "src", "pages", "CampagnesPage.jsx")).read()
     check("the composer reads ?template= and asks the server for the copy",
-          "get('template')" in comp and "ownerAPI.insightTemplate(key)" in comp)
+          "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'))" in comp)
+    check("… and sends the recommendation's key with the campaign, so it can step aside",
+          "...(fromTemplate ? { template: fromTemplate } : {})" in comp)
     check("a narrower audience is sent by id, not widened to a card",
           "...(custom ? { customer_ids: custom.ids } : {})" in comp)
     check("the parameter is dropped once applied, so a reload never overwrites edits",
@@ -351,8 +399,23 @@ def main():
     check("the card shows the Google invitation only when the server hands one back",
           "setGoogleReviewUrl(sent?.google_review_url || null)" in card
           and "googleReviewUrl && (" in card)
+    # Every item, in every sector and every season, now has a photo: the icon
+    # tile is a safety net, not a design.
+    shown = set()
+    for tid in ("cafe", "spa"):
+        for month in range(1, 13):
+            pl = I._payload(tid, dt.datetime(2026, month, 15, 12, tzinfo=dt.timezone.utc))
+            for shelf in ("opportunities", "actions", "ideas"):
+                for it in pl[shelf]["all"]:
+                    shown.add((it["key"], it.get("image")))
+    missing = sorted(k for k, img in shown if not img)
+    check("no item in any sector or season falls back to an icon tile", missing == [])
+    for k in sorted({img for _, img in shown if img and img != "google"}):
+        check(f"public/insights/{k}.webp exists for what the page references",
+              os.path.exists(os.path.join(here, "..", "..", "public", "insights", f"{k}.webp")))
     for k in ("panier", "inactifs", "proximite", "anniversaire", "menu", "fidelite",
-              "automne", "happyhour", "parrainage", "fetes"):
+              "automne", "happyhour", "parrainage", "fetes", "panier_services", "heures_creuses",
+              "offre_moment", "saint_valentin", "printemps", "ete"):
         check(f"public/insights/{k}.webp is bundled",
               os.path.exists(os.path.join(here, "..", "..", "public", "insights", f"{k}.webp")))
 

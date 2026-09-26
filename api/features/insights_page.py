@@ -173,23 +173,100 @@ def _worth(people: List[Dict[str, Any]], shop_avg: float, at: datetime) -> Tuple
     return lo, hi
 
 
+def _eur(n: float) -> str:
+    return f"{round(n):,}".replace(",", " ")
+
+
+def _eur_range(lo: float, hi: float) -> str:
+    a, b = round(lo), round(hi)
+    return f"+{_eur(a)} € de CA" if a == b else f"+{_eur(a)} à {_eur(b)} € de CA"
+
+
 def _computed(lo: float, hi: float, monthly: float, basis: str) -> Optional[Dict[str, Any]]:
-    """A range worth showing, in % of a month's revenue — or in euros for a
-    shop too young to have a month to measure against."""
-    if hi <= 0:
+    """A range, in euros — a merchant reads "+180 à 290 €" at a glance, and
+    has to do arithmetic on "+7 à 11 % de CA"."""
+    if hi < 0.5:
         return None
-    if monthly > 0 and hi / monthly * 100 >= 1:
-        a, b = max(1, round(lo / monthly * 100)), max(1, round(hi / monthly * 100))
-        label = f"+{a}% de CA" if a == b else f"+{a} à {b}% de CA"
-    else:
-        a, b = round(lo), round(hi)
-        label = f"+{b} € de CA" if a == b else f"+{a} à {b} € de CA"
-    return {"label": label, "basis": basis, "kind": "calcule",
+    return {"label": _eur_range(lo, hi), "basis": basis, "kind": "calcule",
             "euros": [_money(lo), _money(hi)]}
 
 
-def _benchmark(label: str) -> Dict[str, Any]:
+_PCT_CA = re.compile(r"^\+(\d+) à (\d+)% de CA$")
+_PCT_NEW = re.compile(r"^\+(\d+) à (\d+)% de nouveaux clients$")
+
+
+def _benchmark(label: str, shop: Optional["Shop"] = None) -> Dict[str, Any]:
+    """A sector estimate — turned into euros (or clients) of THIS shop.
+
+    The percentage is the sector's; the base it is applied to is the shop's
+    own last 30 days of revenue, or its own pace of new sign-ups. The basis
+    keeps the original percentage, so nothing is hidden.
+    """
+    if shop is not None:
+        m = _PCT_CA.match(label)
+        if m and shop.monthly > 0:
+            a, b = int(m.group(1)), int(m.group(2))
+            lo, hi = shop.monthly * a / 100, shop.monthly * b / 100
+            return {"label": _eur_range(lo, hi), "kind": "secteur", "euros": [_money(lo), _money(hi)],
+                    "basis": f"{BENCHMARK} ({a}–{b} % de votre CA mensuel)"}
+        m = _PCT_NEW.match(label)
+        signups = shop.signups_30 if shop is not None else 0
+        if m and signups > 0:
+            a, b = int(m.group(1)), int(m.group(2))
+            lo, hi = max(1, round(signups * a / 100)), max(1, round(signups * b / 100))
+            n = f"+{lo}" if lo == hi else f"+{lo} à {hi}"
+            return {"label": f"{n} nouveaux clients", "kind": "secteur", "euros": None,
+                    "basis": f"{BENCHMARK} ({a}–{b} % de vos {signups} inscriptions mensuelles)"}
     return {"label": label, "basis": BENCHMARK, "kind": "secteur", "euros": None}
+
+
+# ---------------------------------------------------------------------------
+# What has been used — so it can make way
+# ---------------------------------------------------------------------------
+USED_DAYS = 14          # a recommendation used within this window steps aside
+
+MONTHS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.",
+             "nov.", "déc."]
+
+
+def used_templates(tid: str, at: datetime, days: int = USED_DAYS) -> Dict[str, Dict[str, Any]]:
+    """Recommendations turned into a campaign in the last `days` days.
+
+    Every campaign created from a recommendation carries its `template` key.
+    Once one is sent or scheduled, the recommendation is done for a while:
+    it drops to the back of its shelf, reads "Envoyée le …", and the next one
+    takes its place. After the window it may come back — if the data still
+    calls for it.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    cut = at - timedelta(days=days)
+    for c in _db.campaigns.find({"tenant_id": tid, "template": {"$ne": None},
+                                 "status": {"$in": ["sent", "scheduled", "sending"]}},
+                                {"_id": 0, "template": 1, "status": 1, "sent_at": 1,
+                                 "scheduled_for": 1, "created_at": 1}):
+        when = _aware(c.get("sent_at")) or _aware(c.get("scheduled_for")) or _aware(c.get("created_at"))
+        if not when or when < cut or not c.get("template"):
+            continue
+        prev = out.get(c["template"])
+        if not prev or when > prev["at"]:
+            out[c["template"]] = {"at": when, "status": c.get("status")}
+    return out
+
+
+def _used_label(u: Dict[str, Any]) -> str:
+    d = u["at"]
+    verb = "Programmée" if u["status"] in ("scheduled", "sending") else "Envoyée"
+    return f"{verb} le {d.day} {MONTHS_FR[d.month - 1]}"
+
+
+def _mark_used(items: List[Dict[str, Any]], used: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for i in items:
+        cta = i.get("cta") or {}
+        u = used.get(cta.get("template")) if cta.get("kind") == "template" else None
+        if u:
+            i["done"] = True
+            i["cta"] = {**cta, "done_label": _used_label(u)}
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +294,9 @@ class Shop:
                            if (t := _aware(v.get("visit_time"))) and t >= at - timedelta(days=30))
         self.reviews = list(_db.reviews.find({"tenant_id": tid}, {"_id": 0, "rating": 1,
                                                                    "customer_id": 1}))
+        self.signups_30 = len([c for c in self.people
+                               if (d := _aware(c.get("created_at"))) and (at - d).days <= 30])
+        self.used = used_templates(tid, at)
 
     # -- recent visits only, for the things that describe "now" -----------
     def recent(self, days: int = 90) -> List[Dict[str, Any]]:
@@ -295,6 +375,61 @@ def _one_timers(shop: Shop) -> List[Dict[str, Any]]:
 def _birthdays(shop: Shop, days: int = 30) -> List[Dict[str, Any]]:
     window = {(shop.at + timedelta(days=i)).strftime("%m-%d") for i in range(days)}
     return [c for c in shop.people if str(c.get("birthday") or "")[-5:] in window]
+
+
+def _at_risk(shop: Shop) -> List[Dict[str, Any]]:
+    """Regulars who have stopped coming — not the long-gone, the slipping.
+
+    A regular is someone with at least 4 visits whose own rhythm is known:
+    their average gap between visits. They are "at risk" once their silence
+    is both longer than 45 days and more than twice their usual gap — a
+    monthly customer silent for 45 days is not the same as a weekly one.
+    """
+    out = []
+    for c in shop.people:
+        visits = int(_num(c.get("visits")))
+        first, last = _aware(c.get("created_at")), _aware(c.get("last_visit_date"))
+        if visits < 4 or not first or not last or last <= first:
+            continue
+        gap = (last - first).days / max(1, visits - 1)
+        silent = (shop.at - last).days
+        if silent > 45 and silent > 2 * gap:
+            out.append(c)
+    return out
+
+
+def _students(shop: Shop) -> List[Dict[str, Any]]:
+    """Clients who declared themselves students at signup."""
+    return [c for c in shop.people if c.get("is_student")]
+
+
+def _best_weekday(shop: Shop) -> Optional[Dict[str, Any]]:
+    """The strongest day of the week and by how much, over eight weeks.
+
+    Needs at least three weeks of that day to say anything.
+    """
+    rows = shop.recent(56)
+    if len(rows) < 20:
+        return None
+    per_day: Dict[int, int] = defaultdict(int)
+    seen_dates: Dict[int, set] = defaultdict(set)
+    for v in rows:
+        t = _aware(v.get("visit_time"))
+        if t:
+            per_day[t.weekday()] += 1
+            seen_dates[t.weekday()].add(t.date())
+    avg = {d: per_day[d] / len(seen_dates[d]) for d in per_day if len(seen_dates[d]) >= 3}
+    if len(avg) < 3:
+        return None
+    best = max(avg, key=avg.get)
+    others = [v for d, v in avg.items() if d != best]
+    mean = sum(others) / len(others)
+    if mean <= 0:
+        return None
+    return {"weekday": best, "lift": round((avg[best] - mean) / mean * 100)}
+
+
+WEEKDAY_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 
 def _locals(shop: Shop) -> Optional[List[Dict[str, Any]]]:
@@ -426,6 +561,26 @@ def _templates(food: bool) -> Dict[str, Dict[str, Any]]:
                       "message": "Le printemps est là ! Profitez de notre offre de saison cette "
                                  "semaine.",
                       "segment": "all"},
+        "fideles_merci": {"title": "💛 Merci pour votre fidélité",
+                          "message": "Pour vous remercier, une attention vous attend à votre prochaine "
+                                     "visite sur présentation de votre carte.",
+                          "segment": "loyal"},
+        "a_risque": {"title": "💬 On pense à vous !",
+                     "message": "Cela fait un moment ! Revenez cette semaine : une attention vous attend "
+                                "sur présentation de votre carte.",
+                     "segment": "all", "audience": "at_risk"},
+        "etudiants": {"title": "🎓 Offre étudiants",
+                      "message": "Sur présentation de votre carte étudiante : -15 % toute la semaine. "
+                                 "On vous attend !",
+                      "segment": "all", "audience": "students"},
+        "anniversaires_semaine": {"title": "🎂 Joyeux anniversaire !",
+                                  "message": "Pour votre anniversaire, une surprise vous attend cette "
+                                             "semaine sur présentation de votre carte.",
+                                  "segment": "birthday"},
+        "offre_jour": {"title": "✨ Offre spéciale du jour",
+                       "message": "Aujourd'hui seulement : une offre spéciale vous attend sur présentation "
+                                  "de votre carte.",
+                       "segment": "all"},
         "ete": {"title": "☀️ Offre d'été",
                 "message": "Profitez de notre offre spéciale été, cette semaine seulement.",
                 "segment": "all"},
@@ -459,8 +614,8 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
     out.append({
         "key": "panier_moyen", "category": _category("ventes"),
         "title": "Augmentez votre panier moyen", "body": body,
-        "image": "panier" if shop.food else None, "icon": "cart",
-        "impact": _benchmark("+5 à 12% de CA"),
+        "image": "panier" if shop.food else "panier_services", "icon": "cart",
+        "impact": _benchmark("+5 à 12% de CA", shop),
         "difficulty": {"label": "Facile", "tone": "green", "filled": 3},
         "cta": {"label": "Voir les actions", "kind": "scroll", "target": "actions"},
         "score": m * 0.085, "done": False,
@@ -477,7 +632,7 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
                     "depuis plus de 30 jours. Une campagne ciblée peut les faire revenir rapidement.",
             "image": "inactifs", "icon": "bell",
             "impact": _computed(lo, hi, m, f"calculé sur vos {len(dormant)} clients inactifs")
-                      or _benchmark("+8 à 15% de CA"),
+                      or _benchmark("+8 à 15% de CA", shop),
             "difficulty": {"label": "Facile", "tone": "green", "filled": 2},
             "cta": {"label": "Relancer ces clients", "kind": "template",
                     "template": "relance_inactifs"},
@@ -496,7 +651,7 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
                     "deuxième visite les fait revenir.",
             "image": "fidelite", "icon": "repeat",
             "impact": _computed(lo, hi, m, f"calculé sur vos {len(once)} nouveaux clients")
-                      or _benchmark("+3 à 8% de CA"),
+                      or _benchmark("+3 à 8% de CA", shop),
             "difficulty": {"label": "Facile", "tone": "green", "filled": 3},
             "cta": {"label": "Leur proposer une offre", "kind": "template",
                     "template": "seconde_visite"},
@@ -515,7 +670,7 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
         "key": "proximite", "category": _category("acquisition"),
         "title": "Attirez plus de clients à proximité", "body": body,
         "image": "proximite", "icon": "pin",
-        "impact": _benchmark("+10 à 20% de nouveaux clients"),
+        "impact": _benchmark("+10 à 20% de nouveaux clients", shop),
         "difficulty": {"label": "Moyenne", "tone": "amber", "filled": 3},
         "cta": {"label": "Créer une campagne locale", "kind": "template", "template": "offre_locale"},
         "score": m * 0.07, "done": False,
@@ -530,8 +685,8 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
             "title": "Remplissez vos heures creuses",
             "body": f"Le créneau {a}h–{b}h est le plus calme de votre journée. Une offre ciblée sur "
                     "ce créneau peut remplir vos heures creuses.",
-            "image": "happyhour" if shop.food else None, "icon": "clock",
-            "impact": _benchmark("+5 à 10% de CA"),
+            "image": "happyhour" if shop.food else "heures_creuses", "icon": "clock",
+            "impact": _benchmark("+5 à 10% de CA", shop),
             "difficulty": {"label": "Moyenne", "tone": "amber", "filled": 2},
             "cta": {"label": "Créer l'offre", "kind": "template",
                     "template": "happy_hour" if shop.food else "heures_creuses"},
@@ -548,9 +703,9 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
     if bdays:
         lo, hi = _worth(bdays, shop.shop_avg, shop.at)
         impact = _computed(lo, hi, m, f"calculé sur vos {len(bdays)} anniversaires du mois") \
-            or _benchmark("+5 à 10% de CA")
+            or _benchmark("+5 à 10% de CA", shop)
     else:
-        impact = _benchmark("+5 à 10% de CA")
+        impact = _benchmark("+5 à 10% de CA", shop)
     out.append({
         "key": "anniversaire", "title": "Lancez une offre anniversaire automatique",
         "body": "Souhaitez automatiquement un joyeux anniversaire avec une offre spéciale (ex : -20%).",
@@ -567,7 +722,7 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
             "key": "menu_du_jour", "title": "Créez un menu du jour attractif",
             "body": "Mettez en avant un menu du jour pour attirer de nouveaux clients en semaine.",
             "benefit": "Plus de fréquentation", "image": "menu", "icon": "utensils",
-            "impact": _benchmark("+10 à 20% de CA"), "setup": "10 minutes",
+            "impact": _benchmark("+10 à 20% de CA", shop), "setup": "10 minutes",
             "cta": {"label": "Créer", "kind": "template", "template": "menu_du_jour"},
             "score": m * 0.15, "done": False,
         })
@@ -575,8 +730,8 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
         out.append({
             "key": "offre_moment", "title": "Mettez en avant une offre du moment",
             "body": "Une offre claire et limitée dans le temps donne une raison de venir cette semaine.",
-            "benefit": "Plus de fréquentation", "image": None, "icon": "sparkles",
-            "impact": _benchmark("+5 à 15% de CA"), "setup": "10 minutes",
+            "benefit": "Plus de fréquentation", "image": "offre_moment", "icon": "sparkles",
+            "impact": _benchmark("+5 à 15% de CA", shop), "setup": "10 minutes",
             "cta": {"label": "Créer", "kind": "template", "template": "offre_moment"},
             "score": m * 0.10, "done": False,
         })
@@ -586,7 +741,7 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
         "body": f"Proposez un palier supplémentaire (ex : 1 {'produit' if shop.food else 'prestation'} "
                 "offert) pour inciter à revenir.",
         "benefit": "Clients plus fidèles", "image": "fidelite", "icon": "card",
-        "impact": _benchmark("+15 à 25% de CA"), "setup": "10 minutes",
+        "impact": _benchmark("+15 à 25% de CA", shop), "setup": "10 minutes",
         "cta": {"label": "Configurer", "kind": "navigate", "to": "/dashboard/card"},
         "score": m * 0.12, "done": False,
     })
@@ -598,7 +753,7 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
                   "basis": f"calculé sur vos {happy} client{'s' if happy > 1 else ''} satisfaits",
                   "kind": "calcule", "euros": None}
     else:
-        impact = _benchmark("+10 à 50 avis")
+        impact = _benchmark("+10 à 50 avis", shop)
     out.append({
         "key": "avis_google", "title": "Collectez plus d'avis clients",
         "body": "Invitez automatiquement vos clients satisfaits à laisser un avis Google.",
@@ -612,7 +767,7 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
         "key": "parrainage", "title": "Lancez votre programme de parrainage",
         "body": "Chaque client devient ambassadeur : un proche scanne sa carte et s'inscrit.",
         "benefit": "Plus de nouveaux clients", "image": "parrainage", "icon": "gift",
-        "impact": _benchmark("+5 à 15% de nouveaux clients"), "setup": "5 minutes",
+        "impact": _benchmark("+5 à 15% de nouveaux clients", shop), "setup": "5 minutes",
         "cta": {"label": "Configurer", "kind": "navigate", "to": "/dashboard/referral"},
         "score": m * 0.05, "done": _referral_on(shop.tid),
     })
@@ -638,7 +793,7 @@ IDEAS = {
                 "body": "-10% sur une sélection de prestations pour attirer de nouveaux clients."},
     "happy_hour": {"category": "ventes", "title": "Happy Hour", "image": "happyhour",
                    "body_food": "-20% sur les boissons de 16h à 18h.", "food_only": True},
-    "heures_creuses": {"category": "ventes", "title": "Offre heures creuses", "image": None,
+    "heures_creuses": {"category": "ventes", "title": "Offre heures creuses", "image": "heures_creuses",
                        "body": "-15% sur les créneaux les plus calmes de la semaine.",
                        "nonfood_only": True},
     "parrainage": {"category": "fidelisation", "title": "Parrainage", "image": "parrainage",
@@ -646,11 +801,11 @@ IDEAS = {
                    "body": "1 ami parrainé = une réduction offerte."},
     "fetes": {"category": "evenement", "title": "Offre spéciale fêtes", "image": "fetes",
               "body": "Des offres exclusives pour augmenter votre CA en fin d'année."},
-    "saint_valentin": {"category": "evenement", "title": "Offre Saint-Valentin", "image": None,
+    "saint_valentin": {"category": "evenement", "title": "Offre Saint-Valentin", "image": "saint_valentin",
                        "body": "Une attention spéciale pour venir à deux."},
-    "printemps": {"category": "printemps", "title": "Offre de printemps", "image": None,
+    "printemps": {"category": "printemps", "title": "Offre de printemps", "image": "printemps",
                   "body": "Une offre de saison pour accueillir les beaux jours."},
-    "ete": {"category": "ete", "title": "Offre d'été", "image": None,
+    "ete": {"category": "ete", "title": "Offre d'été", "image": "ete",
             "body": "Une offre estivale, le temps d'une semaine."},
 }
 
@@ -675,6 +830,13 @@ def _ideas(shop: Shop) -> List[Dict[str, Any]]:
             "cta": {"label": "Utiliser ce modèle", "kind": "template", "template": key},
         })
     return out
+
+
+def _idea_shelf(ideas: List[Dict[str, Any]], show: int = 4) -> Dict[str, Any]:
+    """Ideas keep their seasonal order; a used one gives its place to the next."""
+    live = [i for i in ideas if not i.get("done")]
+    done = [i for i in ideas if i.get("done")]
+    return {"shown": live[:show], "all": live + done, "more": max(0, len(ideas) - min(show, len(live)))}
 
 
 def _tips(shop: Shop) -> List[Dict[str, Any]]:
@@ -763,19 +925,19 @@ def _payload(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
         "sector": shop.sector, "food": shop.food,
         "hero": _hero(shop),
         "goal": _goal(shop),
-        "opportunities": _shelf(_opportunities(shop), 3, by_category=True),
-        "actions": _shelf(_actions(shop), 4),
-        "ideas": {"shown": _ideas(shop)[:4], "all": _ideas(shop),
-                  "more": max(0, len(_ideas(shop)) - 4)},
+        "opportunities": _shelf(_mark_used(_opportunities(shop), shop.used), 3, by_category=True),
+        "actions": _shelf(_mark_used(_actions(shop), shop.used), 4),
+        "ideas": _idea_shelf(_mark_used(_ideas(shop), shop.used)),
         "tips": {"shown": _tips(shop)[:4], "all": _tips(shop),
                  "more": max(0, len(_tips(shop)) - 4)},
         "google_review": {"url": shop.tenant.get("google_review_url") or "",
                           "enabled": _google_on(shop.tenant)},
-        "impact_note": ("Les impacts « calculés » viennent de vos propres clients : leur panier "
-                        "moyen multiplié par une probabilité de retour selon leur dernière visite "
-                        "(25–35 % ce mois-ci, 15–20 % entre 30 et 60 jours, 10–15 % entre 60 et 90, "
-                        "5–10 % au-delà), rapporté à vos 30 derniers jours. Les autres sont des "
-                        f"« {BENCHMARK} »."),
+        "impact_note": ("Les impacts sont en euros. Ceux « calculés sur vos clients » : le panier "
+                        "moyen de chaque client multiplié par sa probabilité de retour selon sa "
+                        "dernière visite (25–35 % ce mois-ci, 15–20 % entre 30 et 60 jours, 10–15 % "
+                        "entre 60 et 90, 5–10 % au-delà). Les « estimations du secteur » appliquent un "
+                        "pourcentage courant du secteur à VOTRE chiffre d'affaires des 30 derniers "
+                        "jours. Une recommandation utilisée laisse sa place pendant 14 jours."),
     }
 
 
@@ -785,7 +947,7 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
 
 
 @router.get("/api/owner/insights/templates/{key}")
-def template(key: str,
+def template(key: str, day: Optional[int] = None,
              token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
     """What a campaign CTA pre-fills the composer with.
 
@@ -796,6 +958,15 @@ def template(key: str,
     """
     tid = token_data.tenant_id
     shop = Shop(tid, _now())
+    # Any segment — a model or one the merchant built — can be messaged: its
+    # members are resolved now, by the same evaluator the Segmentation page uses.
+    if key.startswith("seg:"):
+        from features import segmentation as SEG
+        seg = SEG.members(key[4:], token_data=token_data)
+        return {"key": key, "title": "✨ Une attention pour vous",
+                "message": "Une offre spéciale vous attend cette semaine sur présentation de votre carte.",
+                "segment": "all",
+                "audience": {"label": seg["name"], "hint": "Segment", "ids": seg["ids"]}}
     spec = _templates(shop.food).get(key)
     if not spec:
         raise HTTPException(status_code=404, detail="Modèle introuvable")
@@ -809,6 +980,24 @@ def template(key: str,
         once = _one_timers(shop)
         out["audience"] = {"label": "Nouveaux clients", "hint": "Venus une seule fois",
                            "ids": [c["id"] for c in once]}
+    elif who == "at_risk":
+        risk = _at_risk(shop)
+        out["audience"] = {"label": "Clients à risque", "hint": "Des habitués qui ne viennent plus",
+                           "ids": [c["id"] for c in risk]}
+    elif who == "students":
+        st = _students(shop)
+        out["audience"] = {"label": "Étudiants", "hint": "Déclarés à l'inscription",
+                           "ids": [c["id"] for c in st]}
+    # A day-specific offer names the day it was suggested for — the one asked
+    # for (the Copilote's forecast peak), or else the shop's strongest day.
+    if not isinstance(day, int) or not (0 <= day <= 6):
+        day = None
+    best = ({"weekday": day} if day is not None else _best_weekday(shop)) if key == "offre_jour" else None
+    if best:
+        name = WEEKDAY_FR[best["weekday"]]
+        out["title"] = f"✨ Offre spéciale du {name}"[:50]
+        out["message"] = (f"Ce {name} seulement : une offre spéciale vous attend sur présentation "
+                          "de votre carte.")
     return out
 
 

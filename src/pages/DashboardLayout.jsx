@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
-  Database, BrainCircuit, Megaphone, MapPin, Sparkles, CreditCard, Shield, History, ChevronDown,
+  Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History, ChevronDown,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Star, PieChart, Share2, Zap
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -177,8 +177,7 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge })
           <span className="truncate flex-1">{label}</span>
           {badge && (
             <span
-              className="text-[9px] uppercase tracking-[0.12em] px-1.5 py-0.5 rounded font-bold shrink-0"
-              style={{ background: 'color-mix(in srgb, var(--flc-accent-2, #E8703A) 22%, var(--flc-card, #FFFFFF))', color: 'var(--flc-accent-deep, #9C4427)', letterSpacing: '0.08em' }}
+              className="text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 bg-[#2F6BFF] text-white"
             >
               {badge}
             </span>
@@ -373,7 +372,7 @@ const DashboardLayout = () => {
     { route: '/dashboard/map',                          words: ['map', 'carte (geo)', 'geographie', 'geography', 'géographie', 'localisation', 'lieux'] },
     { route: '/dashboard/card-designer',                words: ['card designer', 'card', 'carte', 'carte de fidélité', 'loyalty card', 'design', 'pass', 'wallet', 'walletpass'] },
     { route: '/dashboard/campaigns',                    words: ['campaigns', 'campaign', 'campagnes', 'campagne', 'sms', 'push', 'message', 'messages', 'notif', 'notifications'] },
-    { route: '/dashboard/ai-assistant',                 words: ['ai assistant', 'assistant', 'chatbot', 'chat', 'assistant ia', 'copilot'] },
+    { route: '/dashboard/ai-assistant',                 words: ['fidclic ia', 'fidclic ai', 'copilote', 'copilot', 'ai assistant', 'assistant', 'chatbot', 'chat', 'assistant ia'] },
     { route: '/dashboard/history',                      words: ['history', 'historique', 'logs', 'journal', 'activity log', 'audit'] },
     { route: '/dashboard/scan',                         words: ['scan', 'scanner', 'qr', 'qr code', 'visit', 'visite', 'check-in', 'checkin'] },
     { route: '/dashboard/customers',                    words: ['customers', 'clients', 'customer', 'client', 'liste clients'] },
@@ -531,7 +530,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/analytics#reviews" icon={Star}     label={t('nav.reviews')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/ai-assistant"  icon={BrainCircuit} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} badge="Nouveau" />
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               {/* Settings is expandable — click → dropdown of section anchors */}
               <SettingsNavLink icon={Settings2} currentPath={currentPath} role={role} collapsed={collapsed} />

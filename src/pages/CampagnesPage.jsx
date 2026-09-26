@@ -133,6 +133,9 @@ export default function CampagnesPage() {
   // clients…) that none of the four cards names. Its members were resolved
   // by the server, so the send goes to exactly those people.
   const [custom, setCustom] = useState(null);
+  // The recommendation this draft came from, sent with the campaign so the
+  // recommendation can make way for the next one once it has been used.
+  const [fromTemplate, setFromTemplate] = useState(null);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [image, setImage] = useState('');
@@ -161,11 +164,12 @@ export default function CampagnesPage() {
   // that suggests it and the composer that sends it. The parameter is dropped
   // once applied, so a reload never writes over what the merchant has edited.
   useEffect(() => {
-    const key = new URLSearchParams(window.location.search).get('template');
+    const params = new URLSearchParams(window.location.search);
+    const key = params.get('template');
     if (!key) return;
-    ownerAPI.insightTemplate(key)
+    ownerAPI.insightTemplate(key, params.get('day'))
       .then(({ data: t }) => {
-        setTitle(t.title || ''); setMessage(t.message || '');
+        setTitle(t.title || ''); setMessage(t.message || ''); setFromTemplate(key);
         setSegment(t.segment || 'all');
         setCustom(t.audience && t.audience.ids?.length ? t.audience : null);
         setStep(2);
@@ -179,6 +183,7 @@ export default function CampagnesPage() {
         try {
           const url = new URL(window.location.href);
           url.searchParams.delete('template');
+          url.searchParams.delete('day');
           window.history.replaceState({}, '', url);
         } catch (_e) { /* ignore */ }
       });
@@ -202,6 +207,7 @@ export default function CampagnesPage() {
       const { data: res } = await ownerAPI.composeCampaign({
         title: title.trim(), message: message.trim(), segment,
         ...(custom ? { customer_ids: custom.ids } : {}),
+        ...(fromTemplate ? { template: fromTemplate } : {}),
         image_url: image || null, link_url: link.trim() || null,
         schedule_at: mode === 'draft' ? null : scheduleAt(),
         push, wallet, draft: mode === 'draft',
@@ -212,7 +218,7 @@ export default function CampagnesPage() {
             ? `Planifiée pour ${dayLabel(res.scheduled_for)} · ${nf(res.audience)} destinataires.`
             : `Envoyée à ${nf(res.audience)} client${res.audience > 1 ? 's' : ''}.`);
       setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
-      setLater(false); setDate(''); setStep(1); setCustom(null);
+      setLater(false); setDate(''); setStep(1); setCustom(null); setFromTemplate(null);
       load();
     } catch (e) {
       setError(e?.response?.data?.detail || "L'envoi n'a pas abouti.");
