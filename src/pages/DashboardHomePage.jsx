@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Sun, BarChart3, Users, Crown, ShoppingBag, Target, TrendingUp, Send,
+  BarChart3, Users, Crown, ShoppingBag, Target, TrendingUp, Send, CalendarDays,
   MousePointerClick, ShoppingCart, ChevronDown, ChevronRight, ArrowRight,
   Loader2, Mail, UserPlus, QrCode, Star, FileDown, Info, Zap, Check, X,
 } from 'lucide-react';
@@ -63,13 +63,29 @@ const SeeAll = ({ onClick, label = 'Voir toutes' }) => (
   </button>
 );
 
-const RangePicker = ({ value, onChange }) => (
+/* One control, three places. Every picker on this page reads and writes the
+   same `days`, so the header, the revenue chart and the new-clients chart can
+   never disagree about which period is on screen. `lead` is the header's
+   version — the calendar pill of the design; the others are plain selects.
+   `busy` greys it out while the page refetches, so a second change cannot race
+   the first. */
+const RangePicker = ({ value, onChange, busy = false, lead = false }) => (
   <div className="relative">
-    <select value={value} onChange={(e) => onChange(Number(e.target.value))}
-            className="appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2 pl-3 pr-8 text-[12.5px] font-medium text-[#334155] outline-none focus:border-[#2F6BFF]">
+    {lead && (
+      <CalendarDays size={15}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#2F6BFF]" />
+    )}
+    <select value={value} disabled={busy}
+            aria-label="Période analysée"
+            onChange={(e) => onChange(Number(e.target.value))}
+            className={`appearance-none rounded-xl border border-[#E6EEFB] bg-white font-medium text-[#334155] outline-none transition focus:border-[#2F6BFF] disabled:opacity-60 ${
+              lead ? 'py-2.5 pl-9 pr-9 text-[13px] shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]'
+                   : 'py-2 pl-3 pr-8 text-[12.5px]'}`}>
       {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
     </select>
-    <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+    {busy
+      ? <Loader2 size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-[#2F6BFF]" />
+      : <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />}
   </div>
 );
 
@@ -279,7 +295,33 @@ const GoalModal = ({ current, onClose, onSaved }) => {
 export default function DashboardHomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [days, setDays] = useState(30);
+  // The period survives a reload and travels in the URL, so a merchant who
+  // works on 90 days does not land back on 30 every morning, and a link they
+  // send shows what they were looking at. Only the four offered values are
+  // accepted — ?days=99999 would otherwise reach the API.
+  const [days, setDaysState] = useState(() => {
+    const allowed = RANGES.map((r) => r.key);
+    const fromUrl = Number(new URLSearchParams(window.location.search).get('days'));
+    if (allowed.includes(fromUrl)) return fromUrl;
+    try {
+      const stored = Number(localStorage.getItem('fidclic:dh_days'));
+      if (allowed.includes(stored)) return stored;
+    } catch (_e) { /* private window — fall through to the default */ }
+    return 30;
+  });
+
+  const setDays = useCallback((next) => {
+    const allowed = RANGES.map((r) => r.key);
+    const value = allowed.includes(Number(next)) ? Number(next) : 30;
+    setDaysState(value);
+    try { localStorage.setItem('fidclic:dh_days', String(value)); } catch (_e) { /* ignore */ }
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('days', String(value));
+      window.history.replaceState({}, '', url);
+    } catch (_e) { /* ignore */ }
+  }, []);
+
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -318,26 +360,23 @@ export default function DashboardHomePage() {
 
   return (
     <div className="dh">
-      {/* hero */}
-      <section className="mb-4 overflow-hidden rounded-2xl border border-[#D7E6FF] bg-gradient-to-r from-[#EEF5FF] to-[#F7FAFF] px-6 py-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2.5 text-[24px] font-bold leading-tight text-[#0B1C3F]">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-[#F59E0B]">
-                <Sun size={19} />
-              </span>
-              Bonjour {firstName || 'à vous'} !
-            </h1>
-            <p className="mt-1 text-[13px] text-[#475569]">
-              Voici la performance de {d?.shop?.name || 'votre commerce'} aujourd'hui.
-            </p>
-            <p className="mt-0.5 text-[12.5px] italic text-[#64748B]">
-              « Des clients plus fidèles, un chiffre d'affaires plus fort. »
-            </p>
-          </div>
-          <RangePicker value={days} onChange={setDays} />
+      {/* The greeting is the page's title, not a panel: no card, no gradient,
+          nothing boxed around it. The name is the only word in brand blue. */}
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[11.5px] font-bold uppercase tracking-[0.14em] text-[#94A3B8]">
+            Tableau de bord
+          </p>
+          <h1 className="mt-1 text-[30px] font-bold leading-tight text-[#0B1C3F]">
+            Bonjour <span className="text-[#2F6BFF]">{firstName || 'à vous'}</span>{' '}
+            <span aria-hidden="true">👋</span>
+          </h1>
+          <p className="mt-1 text-[13.5px] text-[#64748B]">
+            Voici un aperçu de la performance de votre fidélité et de vos dernières actions.
+          </p>
         </div>
-      </section>
+        <RangePicker value={days} onChange={setDays} busy={loading} lead />
+      </header>
 
       {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
 
@@ -425,7 +464,7 @@ export default function DashboardHomePage() {
 
       {/* the two charts */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Panel title="Évolution du chiffre d'affaires" action={<RangePicker value={days} onChange={setDays} />}>
+        <Panel title="Évolution du chiffre d'affaires" action={<RangePicker value={days} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
             <span className="text-[22px] font-bold text-[#0B1C3F] tabular-nums">{money(d?.revenue_total)}</span>
             {d?.revenue_delta !== null && d?.revenue_delta !== undefined && (
@@ -436,7 +475,7 @@ export default function DashboardHomePage() {
           </p>
           <LineChart series={d?.revenue_series} money />
         </Panel>
-        <Panel title="Nouveaux clients" action={<RangePicker value={days} onChange={setDays} />}>
+        <Panel title="Nouveaux clients" action={<RangePicker value={days} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
             <span className="text-[22px] font-bold text-[#0B1C3F] tabular-nums">{nf(d?.new_total)}</span>
             {d?.new_delta !== null && d?.new_delta !== undefined && (

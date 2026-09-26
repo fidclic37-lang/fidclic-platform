@@ -157,6 +157,10 @@ export const ownerAPI = {
   clientsOverview: () => api.get('/owner/clients/overview'),
   clientsList: (params) => api.get('/owner/clients/list', { params }),
   clientsExport: (params) => api.get('/owner/clients/export', { params, responseType: 'blob' }),
+  // Every client the current filter matches — ids only, so a message goes to
+  // the whole filter rather than to the page that happens to be on screen.
+  clientIds: (params) => api.get('/owner/clients/ids', { params }),
+  sendCampaignToGroup: (body) => api.post('/owner/campaigns/send-to-group', body),
   // Campagnes — the page in one call, the composer in one call.
   campaignsPage: () => api.get('/owner/campaigns/page'),
   composeCampaign: (body) => api.post('/owner/campaigns/compose', body),

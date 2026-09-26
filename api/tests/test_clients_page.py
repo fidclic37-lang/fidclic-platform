@@ -189,6 +189,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("nothing found is an empty table, not an error",
           CP.list_page(search="zzzz", token_data=TD())["total"] == 0)
 
+    # ---- messaging the filter, not the page ------------------------------------------------
+    # The table is paginated; a message is not. /ids answers with everyone the
+    # filter found, so the merchant cannot write to the ten rows on screen and
+    # believe they wrote to the hundred the filter matched.
+    print("\nContacter le filtre, pas la page")
+    for seg in ("all", "inactive", "loyal"):
+        page1 = CP.list_page(segment=seg, per_page=5, token_data=TD())
+        ids = CP.list_ids(segment=seg, token_data=TD())
+        check(f"'{seg}': the id list and the table agree on the total",
+              ids["total"] == page1["total"] == len(ids["ids"]))
+        check(f"'{seg}': and it is not merely the page on screen",
+              len(ids["ids"]) >= len(page1["rows"]))
+    everyone = CP.list_ids(segment="all", token_data=TD())["ids"]
+    check("no id is returned twice", len(everyone) == len(set(everyone)))
+    check("and they are all this shop's clients",
+          all(db.customers.find_one({"id": i})["tenant_id"] == "t1" for i in everyone))
+
+    narrowed = CP.list_ids(segment="all", search="zzz-nobody-has-this-name", token_data=TD())
+    check("a filter matching nobody returns nobody, not everybody",
+          narrowed["ids"] == [] and narrowed["total"] == 0)
+
     # ---- CSV -----------------------------------------------------------------------
     print("\nExport")
     resp = CP.export_clients(token_data=TD())
@@ -223,6 +244,19 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the thresholds travel with the payload",
           d["loyal_visits"] == 5 and d["inactive_days"] == 30 and d["local_km"] == 5.0)
     check("so does the sort vocabulary", len(ov["sorts"]) == 6)
+
+    # ---- the page's own wiring ---------------------------------------------------------------
+    print("\nLe câblage de la page")
+    src = open(os.path.join(os.path.dirname(__file__), "..", "..",
+                            "src", "pages", "ClientsPage.jsx")).read()
+    check("saved segments are loaded, applied and deleted",
+          all(x in src for x in ("listSavedSegments", "applySaved", "deleteSavedSegment")))
+    check("saving stores the whole current filter, not just the segment",
+          "createSavedSegment({ name, segment, filters: currentFilters })" in src)
+    check("the compose button counts the filter when nothing is picked",
+          "picked.length || feed.total" in src)
+    check("and it sends to the ids the server resolved",
+          "customer_ids: compose.ids" in src)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
