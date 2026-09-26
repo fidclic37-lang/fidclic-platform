@@ -451,7 +451,12 @@ export default function SegmentationPage() {
     catch (e) { setError(e?.response?.data?.detail || 'Suppression impossible.'); }
   };
 
-  const toCampaign = (row) => navigate('/dashboard/campaigns');
+  // Every "Créer une campagne" opens the composer with this segment's members
+  // already chosen — the tips with their own campaign, rows with their segment.
+  const toCampaign = (row) => {
+    const template = row?.template || (row?.id ? `seg:${row.id}` : null);
+    navigate(template ? `/dashboard/campaigns?template=${encodeURIComponent(template)}` : '/dashboard/campaigns');
+  };
 
   if (loading && !d) {
     return (

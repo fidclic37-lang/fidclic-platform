@@ -118,7 +118,7 @@ const Chip = ({ category }) => {
    itself stays on one line; a short one ("de CA") keeps the figure's size. */
 const Impact = ({ impact }) => {
   // Split before the unit — "+10 à 20%" | "de nouveaux clients" — never inside the range.
-  const m = /^(.+?[%€\d])\s+(de .+|avis)$/.exec(impact.label || '');
+  const m = /^(.+?[%€\d])\s+(de .+|avis|nouveaux clients)$/.exec(impact.label || '');
   const long = m && m[2].length > 8;
   return (
   <div className="min-w-0">

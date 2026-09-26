@@ -177,10 +177,20 @@ export const ownerAPI = {
 
   // Insights — « Faites grandir votre commerce ».
   insightsPage: () => api.get('/owner/insights/page'),
-  insightTemplate: (key) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`),
+  insightTemplate: (key, day) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`, { params: day != null && day !== '' ? { day } : {} }),
   activateInsight: (action) => api.post(`/owner/insights/actions/${action}/activate`),
   setGoogleReview: (body) => api.put('/owner/insights/google-review', body),
   insightsExport: () => api.get('/owner/insights/export.pdf', { responseType: 'blob' }),
+
+  // FidClic IA Copilote.
+  copilotPage: (params) => api.get('/owner/copilot/page', { params }),
+  copilotFeedback: (key, kind) => api.post(`/owner/copilot/recommendations/${encodeURIComponent(key)}/feedback`, { kind }),
+  copilotAutopilot: (enabled) => api.put('/owner/copilot/autopilot', { enabled }),
+  copilotEditPlan: (steps) => api.put('/owner/copilot/plan', { steps }),
+  copilotRebuildPlan: () => api.post('/owner/copilot/plan/rebuild'),
+  copilotApprove: (stepId) => api.post(`/owner/copilot/plan/steps/${stepId}/approve`),
+  copilotChat: (message) => api.post('/owner/copilot/chat', { message }),
+  copilotChatHistory: () => api.get('/owner/copilot/chat'),
 
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),

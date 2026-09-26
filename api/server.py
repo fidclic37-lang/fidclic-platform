@@ -9049,6 +9049,14 @@ def get_proactive_alerts(
              metric=str(len(reactivated)),
              action="/dashboard/insights")
 
+    # --- FidClic IA Autopilot: steps it prepared that are waiting for the OK
+    try:
+        from features.copilot import pending_alerts as _copilot_alerts
+        for _a in _copilot_alerts(tid, now):
+            push(_a["severity"], _a["id"], _a["title"], _a["body"], _a.get("metric"), _a.get("action"))
+    except Exception as _e:
+        print(f"alerts: copilot hook failed (non-fatal): {_e}")
+
     # --- Sort: critical → warning → win → info
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     alerts.sort(key=lambda a: severity_order.get(a["severity"], 99))
@@ -10779,6 +10787,15 @@ def run_daily_triggers(request: Request):
     except Exception as _e:
         print(f"push wallet runner failed (non-fatal): {_e}")
 
+    # FidClic IA Autopilot — prepares (never sends) the week's campaign steps
+    # for the shops that switched it on. Sending waits for the merchant's OK.
+    copilot_summary = {"tenants": 0, "prepared": 0}
+    try:
+        from features.copilot import run_autopilot as _run_autopilot
+        copilot_summary = _run_autopilot(now)
+    except Exception as _e:
+        print(f"copilot autopilot runner failed (non-fatal): {_e}")
+
     # Campagnes planifiées — the composer's "Planifier pour plus tard" lands
     # here. Wrapped for the same reason: one tenant's send must not stop the
     # cron for everybody else.
@@ -10799,6 +10816,7 @@ def run_daily_triggers(request: Request):
         "tier_up_emitted": tier_up_emitted_count,
         "push_wallet": push_wallet_summary,
         "campagnes": campagnes_summary,
+        "copilot": copilot_summary,
         "tenants_processed": len(tenants),
     }
 

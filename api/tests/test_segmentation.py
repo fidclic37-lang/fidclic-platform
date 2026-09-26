@@ -318,6 +318,46 @@ def main():
           "features.segmentation" in open(os.path.join(
               os.path.dirname(__file__), "..", "features", "_loader.py")).read())
 
+    # ---- what was used makes way ---------------------------------------------------------------
+    print("\nCe qui a servi laisse sa place")
+    import features.insights_page as IP
+    IP._db = db
+    db.saved_segments.delete_many({"tenant_id": "t1"})
+    p0 = S.page(token_data=TD())
+    first = [m["key"] for m in p0["models"]]
+    check("five models are recommended", len(first) == 5)
+    check("an empty model is never recommended", all(m["count"] > 0 for m in p0["models"]))
+    S.create(S.SegmentIn(name="", model=first[0]), token_data=TD())
+    p1 = S.page(token_data=TD())
+    check("a model the merchant used leaves the recommended row", first[0] not in [m["key"] for m in p1["models"]])
+    check("… and the next model takes its place",
+          len(p1["models"]) == min(5, len([m for m in S.MODELS if m["key"] != first[0]
+                                           and len(S.evaluate("t1", S._clean_rules(m["rules"]), at=now))])))
+    names = [r["name"] for r in p1["segments"]]
+    check("the saved segment is not listed twice in 'Vos segments'",
+          names.count(next(m["name"] for m in S.MODELS if m["key"] == first[0])) == 1)
+    check("a model saved before keys were recorded is still recognised by its name",
+          S._adopted("t1") >= {first[0]})
+
+    tips = S._tips(p1["segments"], len(CAST), "t1", now)
+    check("each tip carries a real campaign", all(t.get("template") for t in tips))
+    sent = tips[0]["template"]
+    db.campaigns.insert_one({"id": "tip-used", "tenant_id": "t1", "template": sent, "status": "sent",
+                             "sent_at": now - dt.timedelta(days=1), "name": "t"})
+    tips2 = S._tips(p1["segments"], len(CAST), "t1", now)
+    check("a tip whose campaign was just sent gives its place to the next",
+          sent not in [t["template"] for t in tips2])
+    check("the tips of a later fortnight may bring it back",
+          sent in [t["template"] for t in S._tips(p1["segments"], len(CAST), "t1",
+                                                   now + dt.timedelta(days=IP.USED_DAYS + 1))])
+    db.campaigns.delete_many({"id": "tip-used"})
+
+    seg_row = next(r for r in p1["segments"] if not r["builtin"])
+    tpl = IP.template(f"seg:{seg_row['id']}", token_data=TD())
+    check("'Créer une campagne' on any segment sends to its members, by id",
+          set(tpl["audience"]["ids"]) == set(S.members(seg_row["id"], token_data=TD())["ids"])
+          and tpl["audience"]["label"] == seg_row["name"])
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 
