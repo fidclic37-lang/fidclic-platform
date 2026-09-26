@@ -347,17 +347,24 @@ export default function PremiumLoyaltyCard({ customer, tenant, card = {}, compac
           )}
 
           {/* QR code (smaller) — only when enabled */}
+          {/* The QR sits ON the card, not on a white plate: the background is
+              the card's own surface and the modules are its ink, the same pair
+              every other element on the card uses, so the contrast is whatever
+              the merchant already chose for their text.
+
+              `marginSize` is not decoration — a QR needs a quiet zone of four
+              modules around it to be read at all. The white plate used to
+              provide it; now the card's own colour does. */}
           {showQr && (
             <div className="mt-3 flex flex-col items-center">
-              <div className="rounded-lg p-2 bg-white" style={{ boxShadow: '0 0 0 1px rgba(0,0,0,0.06)' }}>
-                <QRCodeSVG
-                  value={cardUrl(customer?.barcode_id)}
-                  size={qrSize}
-                  level="M"
-                  bgColor="#FFFFFF"
-                  fgColor="#0F0F0F"
-                />
-              </div>
+              <QRCodeSVG
+                value={cardUrl(customer?.barcode_id)}
+                size={qrSize}
+                level="M"
+                marginSize={4}
+                bgColor={cardBg}
+                fgColor={cardInk}
+              />
             </div>
           )}
 

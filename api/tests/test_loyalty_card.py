@@ -238,5 +238,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a card with neither reads as none",
           LC._progress_style({"show_meter": False, "show_stamps": False}) == "none")
 
+    # ---- the QR sits on the card, not on a white plate ---------------------------------------
+    print("\nLe QR code sur la carte, pas sur une plaque blanche")
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    theme = open(os.path.join(root, "lib", "cardTheme.js")).read()
+    check("the code's colours are the card's own, not hardcoded white",
+          "codeBg: bg," in theme and "codeInk: ink," in theme
+          and "codeBg: '#FFFFFF'" not in theme)
+
+    for rel in (("components", "WalletCard.jsx"), ("components", "PremiumLoyaltyCard.jsx"),
+                ("components", "AuchanCard.jsx"), ("pages", "MyWalletCardPage.jsx")):
+        name = rel[-1]
+        src = open(os.path.join(root, *rel)).read()
+        block = src[max(0, src.index("<QRCodeSVG") - 400): src.index("<QRCodeSVG") + 400]
+        check(f"{name}: no white plate around the code",
+              'bg-white rounded' not in block and 'bgColor="#FFFFFF"' not in block)
+        check(f"{name}: the quiet zone the plate used to give is asked for",
+              "marginSize={4}" in block)
+
+    check("WalletCard's code block is no longer a filled box",
+          "background: 'transparent', borderRadius: 12, padding: 0," in
+          open(os.path.join(root, "components", "WalletCard.jsx")).read())
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
