@@ -237,5 +237,60 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("google unconfigured → 503", status(WP.google_wallet_link, "FT-TEST0001")[0] == 503)
     check("unknown card → 404", status(WP.serials_for_device, "nobody", "x", None)[0] == 204 and status(lambda: WP._card_payload("FT-NOPE"))[0] == 404)
 
+    # ---- Google Wallet: both ways of configuring it -----------------------------------------
+    # Two shapes are in the wild. A deployment that holds everything Google
+    # needs must not be told it is unconfigured because it used the other pair
+    # of variable names.
+    print("\nGoogle Wallet — les deux façons de le configurer")
+    KEYS = ("GOOGLE_WALLET_ISSUER_ID", "GOOGLE_WALLET_CLASS_ID", "GOOGLE_WALLET_SA_B64",
+            "GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL", "GOOGLE_WALLET_PRIVATE_KEY")
+    saved = {k: os.environ.get(k) for k in KEYS}
+
+    def only(**env):
+        for k in KEYS:
+            os.environ.pop(k, None)
+        os.environ.update(env)
+
+    only()
+    check("nothing configured reads as not configured",
+          WP.google_configured() is False and WP._gw_issuer() == "")
+    check("and asking for the credentials says so rather than crashing",
+          WP._gw_credentials() is None)
+
+    import base64 as _b64, json as _json
+    sa_json = _json.dumps({"client_email": "sa@p.iam.gserviceaccount.com",
+                           "private_key": "-----BEGIN-----\nk\n-----END-----"})
+    only(GOOGLE_WALLET_ISSUER_ID="3388000000012345678",
+         GOOGLE_WALLET_SA_B64=_b64.b64encode(sa_json.encode()).decode())
+    check("the issuer id + the whole JSON key still works",
+          WP.google_configured() and WP._gw_issuer() == "3388000000012345678")
+    check("and a JSON key with no token_uri gets Google's own",
+          WP._gw_credentials()["token_uri"] == "https://oauth2.googleapis.com/token")
+
+    only(GOOGLE_WALLET_CLASS_ID="3388000000012345678.fidclic_loyalty",
+         GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL="sa@p.iam.gserviceaccount.com",
+         GOOGLE_WALLET_PRIVATE_KEY="-----BEGIN-----" + chr(92) + "nkey" + chr(92) + "n-----END-----")
+    check("the class id + the two key fields works too", WP.google_configured())
+    check("the issuer id is read out of the class id",
+          WP._gw_issuer() == "3388000000012345678")
+    key = WP._gw_credentials()["private_key"]
+    check("a key pasted with literal backslash-n is repaired",
+          chr(92) + "n" not in key and key.count(chr(10)) == 2)
+
+    only(GOOGLE_WALLET_CLASS_ID="3388000000012345678.x")
+    check("an issuer with no service account is not 'configured'",
+          WP.google_configured() is False)
+    only(GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL="sa@p.iam.gserviceaccount.com",
+         GOOGLE_WALLET_PRIVATE_KEY="k")
+    check("a service account with no issuer is not 'configured' either",
+          WP.google_configured() is False)
+    only(GOOGLE_WALLET_CLASS_ID="not-a-number.suffix",
+         GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL="sa@p.iam.gserviceaccount.com",
+         GOOGLE_WALLET_PRIVATE_KEY="k")
+    check("a class id whose head is not an issuer number is refused",
+          WP._gw_issuer() == "" and WP.google_configured() is False)
+
+    only(**{k: v for k, v in saved.items() if v is not None})
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

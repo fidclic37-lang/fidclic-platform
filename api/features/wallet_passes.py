@@ -34,7 +34,10 @@ ENV (Vercel — never in git)
     APPLE_WWDR_B64       base64 of Apple WWDR G4 in PEM
     PASS_AUTH_SECRET     any long random string (per-pass auth tokens); JWT_SECRET fallback
     GOOGLE_WALLET_ISSUER_ID   numeric issuer id (pay.google.com/business/console)
+                              — or GOOGLE_WALLET_CLASS_ID, whose head is that id
     GOOGLE_WALLET_SA_B64      base64 of the service-account JSON key
+                              — or GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL plus
+                                GOOGLE_WALLET_PRIVATE_KEY, the two fields of it
 
 UPDATES
     Every pass carries webServiceURL + authenticationToken, so Wallet's
@@ -100,8 +103,25 @@ def apple_configured() -> bool:
                 _b64_env("APPLE_PASS_CERT_B64"), _b64_env("APPLE_PASS_KEY_B64"), _b64_env("APPLE_WWDR_B64")])
 
 
+def _gw_issuer() -> str:
+    """The numeric issuer id, however it was configured.
+
+    Two shapes are in the wild and both are legitimate:
+      GOOGLE_WALLET_ISSUER_ID   the id on its own
+      GOOGLE_WALLET_CLASS_ID    "<issuer>.<suffix>" — the id is the head of it
+    Reading both means a deployment that set one does not silently report
+    "Google is not configured" while holding everything it needs.
+    """
+    direct = _env("GOOGLE_WALLET_ISSUER_ID")
+    if direct:
+        return direct
+    class_id = _env("GOOGLE_WALLET_CLASS_ID")
+    head = class_id.split(".", 1)[0].strip() if class_id else ""
+    return head if head.isdigit() else ""
+
+
 def google_configured() -> bool:
-    return bool(_env("GOOGLE_WALLET_ISSUER_ID") and _b64_env("GOOGLE_WALLET_SA_B64"))
+    return bool(_gw_issuer() and _gw_credentials())
 
 
 def _site_url() -> str:
@@ -131,17 +151,19 @@ def google_status(token_data: TokenData = Depends(require_role(["business_owner"
     """
     if not google_configured():
         return {"configured": False, "issuer_id": None, "review_status": None,
-                "message": "GOOGLE_WALLET_ISSUER_ID et GOOGLE_WALLET_SA_B64 ne sont pas encore définis."}
+                "message": "Google Wallet n'est pas configuré : il manque l'identifiant émetteur "
+                           "(GOOGLE_WALLET_ISSUER_ID ou GOOGLE_WALLET_CLASS_ID) ou le compte de "
+                           "service (GOOGLE_WALLET_SA_B64, ou SERVICE_ACCOUNT_EMAIL + PRIVATE_KEY)."}
     try:
         token = _gw_access_token()
-        issuer = _env("GOOGLE_WALLET_ISSUER_ID")
+        issuer = _gw_issuer()
         class_id = f"{issuer}.fidclic_{token_data.tenant_id}".replace("-", "_")
         status, body = _gw_call("GET", f"/loyaltyClass/{class_id}", None, token)
     except Exception as exc:
-        return {"configured": True, "issuer_id": _env("GOOGLE_WALLET_ISSUER_ID"),
+        return {"configured": True, "issuer_id": _gw_issuer(),
                 "review_status": None, "message": f"Google n'a pas répondu : {exc}"}
     if status != 200:
-        return {"configured": True, "issuer_id": _env("GOOGLE_WALLET_ISSUER_ID"),
+        return {"configured": True, "issuer_id": _gw_issuer(),
                 "review_status": "draft",
                 "message": "La carte n'a pas encore été créée chez Google. "
                            "Elle le sera au premier « Ajouter à Google Wallet »."}
@@ -152,7 +174,7 @@ def google_status(token_data: TokenData = Depends(require_role(["business_owner"
         "approved":    "Approuvé : tous vos clients peuvent ajouter la carte.",
         "rejected":    "Refusé par Google — voir les commentaires dans la console.",
     }
-    return {"configured": True, "issuer_id": _env("GOOGLE_WALLET_ISSUER_ID"),
+    return {"configured": True, "issuer_id": _gw_issuer(),
             "review_status": review, "class_id": class_id,
             "review_comments": (body.get("review") or {}).get("comments") or [],
             "message": says.get(review, review)}
@@ -1019,8 +1041,45 @@ _GW_SCOPE = "https://www.googleapis.com/auth/wallet_object.issuer"
 _GW_API = "https://walletobjects.googleapis.com/walletobjects/v1"
 
 
+def _gw_credentials() -> Optional[Dict[str, Any]]:
+    """The service account, from whichever pair of variables is set.
+
+      GOOGLE_WALLET_SA_B64                                 the whole JSON key
+      GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL + _PRIVATE_KEY   the two fields of it
+
+    Only `client_email`, `private_key` and `token_uri` are ever used, so the
+    second shape is not a lesser one — it carries everything that matters. A
+    key pasted with literal \n instead of newlines (which is what a console
+    copy-paste usually produces) is repaired rather than left to fail at
+    signing time with an opaque error.
+    """
+    blob = _b64_env("GOOGLE_WALLET_SA_B64")
+    if blob:
+        try:
+            sa = json.loads(blob.decode())
+        except Exception:
+            return None
+        if sa.get("client_email") and sa.get("private_key"):
+            sa.setdefault("token_uri", "https://oauth2.googleapis.com/token")
+            return sa
+        return None
+
+    email = _env("GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL")
+    key = _env("GOOGLE_WALLET_PRIVATE_KEY") or _b64_env("GOOGLE_WALLET_PRIVATE_KEY_B64").decode(errors="ignore")
+    if not (email and key):
+        return None
+    if "\\n" in key and "\n" not in key.strip("\n"):
+        key = key.replace("\\n", "\n")
+    return {"client_email": email, "private_key": key,
+            "token_uri": "https://oauth2.googleapis.com/token"}
+
+
 def _gw_sa() -> Dict[str, Any]:
-    return json.loads(_b64_env("GOOGLE_WALLET_SA_B64").decode())
+    sa = _gw_credentials()
+    if not sa:
+        raise HTTPException(status_code=503,
+                            detail="Google Wallet n'est pas configuré sur cette installation.")
+    return sa
 
 
 def _gw_access_token() -> str:
@@ -1053,7 +1112,7 @@ def _hex6(rgb_css: str) -> str:
 def google_save_url(payload: Dict[str, Any]) -> str:
     import jwt
     cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
-    issuer = _env("GOOGLE_WALLET_ISSUER_ID")
+    issuer = _gw_issuer()
     sa = _gw_sa()
     token = _gw_access_token()
     org = card.get("card_name") or tenant.get("name") or "FidClic"
