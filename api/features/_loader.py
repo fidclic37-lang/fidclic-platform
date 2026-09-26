@@ -39,6 +39,9 @@ MODULES = [
     # Clients — the page's four figures, its eight quick segments and its
     # paginated table. Sits beside /api/owner/customers, which is untouched.
     "features.clients_page",
+    # Insights — « Faites grandir votre commerce » : opportunités, actions,
+    # idées de campagnes et conseils, ranked on the shop's own data and sector.
+    "features.insights_page",
     # Segmentation — the segments, what a campaign at each could bring in,
     # and the builder behind them.
     "features.segmentation",

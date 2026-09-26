@@ -90,7 +90,6 @@ import AIAssistantPage from './pages/AIAssistantPage';
 import SettingsPage from './pages/SettingsPage';
 import JoinPage from './pages/JoinPage';
 import MyWalletCardPage from './pages/MyWalletCardPage';
-import InsightsPage from './pages/InsightsPage';
 import HistoryPage from './pages/HistoryPage';
 
 import AdminDashboard from './pages/AdminDashboard';
@@ -107,6 +106,9 @@ import AutomationsPage from './pages/AutomationsPage';
 import DashboardHomePage from './pages/DashboardHomePage';
 import ClientsPage from './pages/ClientsPage';
 import SegmentationPage from './pages/SegmentationPage';
+// Insights — rebuilt to the approved design. The previous InsightsPage stays
+// in the repo, unrouted, for rollback.
+import InsightsGrowthPage from './pages/InsightsGrowthPage';
 // Campagnes — rebuilt to the approved design. CampaignsPage stays in the
 // repo, unrouted, for rollback.
 import CampagnesPage from './pages/CampagnesPage';
@@ -288,7 +290,7 @@ function App() {
             } />
             <Route path="insights" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <InsightsPage />
+                <InsightsGrowthPage />
               </ProtectedRoute>
             } />
             {/* Clients — rebuilt to the approved design. The previous
