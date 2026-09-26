@@ -31,6 +31,9 @@ MODULES = [
     # Géolocalisation clients — catchment rings + travel-time bands over the
     # merchant's own clients, with the commune breakdown behind both.
     "features.geolocation",
+    # Clients — the page's four figures, its eight quick segments and its
+    # paginated table. Sits beside /api/owner/customers, which is untouched.
+    "features.clients_page",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.tier_definitions",        # custom tier thresholds + big-spender rule

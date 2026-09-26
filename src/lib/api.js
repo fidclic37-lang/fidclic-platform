@@ -147,6 +147,10 @@ export const ownerAPI = {
   deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
   runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
   pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
+  // Clients — the page's four figures, its segments and its paginated table.
+  clientsOverview: () => api.get('/owner/clients/overview'),
+  clientsList: (params) => api.get('/owner/clients/list', { params }),
+  clientsExport: (params) => api.get('/owner/clients/export', { params, responseType: 'blob' }),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
