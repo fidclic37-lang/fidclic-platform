@@ -147,6 +147,10 @@ export const ownerAPI = {
   deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
   runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
   pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
+  // Tableau de bord — the home page's eleven panels, and the monthly goal.
+  homeOverview: (params) => api.get('/owner/home/overview', { params }),
+  getHomeGoal: () => api.get('/owner/home/goal'),
+  setHomeGoal: (body) => api.put('/owner/home/goal', body),
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
