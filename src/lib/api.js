@@ -147,6 +147,10 @@ export const ownerAPI = {
   deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
   runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
   pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
+  // Analyses — one tab per request, and the overview as a CSV.
+  analyses: (params) => api.get('/owner/analyses', { params }),
+  analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
+
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),

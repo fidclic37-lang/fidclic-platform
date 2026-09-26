@@ -31,6 +31,8 @@ MODULES = [
     # Géolocalisation clients — catchment rings + travel-time bands over the
     # merchant's own clients, with the commune breakdown behind both.
     "features.geolocation",
+    # Analyses — eight tabs over one window, one tab answered per request.
+    "features.analyses",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
