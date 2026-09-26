@@ -302,5 +302,24 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("and the day-by-day series", "Nouveaux clients" in body)
     check("the filename says the date", "analyses-" in resp.headers["Content-Disposition"])
 
+    # ---- one route, one handler ----------------------------------------------------------
+    # /api/owner/reviews was declared twice — once in server.py and once in
+    # features/reviews.py — and the second one was dead: `register_all` runs at
+    # the bottom of server.py, so server.py's handler always won. They did not
+    # answer the same thing (only server.py's honours sentiment / max_rating /
+    # limit and attaches customer_name), so a shift in registration order would
+    # have silently changed what the page received. Guard it.
+    print("\nOne route, one handler")
+    from collections import Counter
+    mounted = Counter((r.path, m) for r in server.app.routes
+                      if hasattr(r, "methods") for m in r.methods)
+    dupes = sorted(k for k, n in mounted.items() if n > 1)
+    check("GET /api/owner/reviews is mounted exactly once",
+          mounted[("/api/owner/reviews", "GET")] == 1)
+    check("and no other route is declared twice either", dupes == [])
+    check("the surviving handler is the one the page reads",
+          next(r.endpoint.__name__ for r in server.app.routes
+               if getattr(r, "path", None) == "/api/owner/reviews") == "list_owner_reviews")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

@@ -98,20 +98,21 @@ def public_reviews(slug: str, limit: int = 20):
     return {"reviews": out}
 
 
-@router.get("/api/owner/reviews")
-def list_reviews(
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
-    rating: Optional[int] = None,
-    days: int = 90,
-):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    query = {"tenant_id": token_data.tenant_id, "created_at": {"$gte": cutoff}}
-    if rating is not None:
-        query["rating"] = rating
-    rows = list(_db.reviews.find(query).sort("created_at", -1).limit(500))
-    for r in rows:
-        r.pop("_id", None)
-    return {"reviews": rows}
+# NOTE — GET /api/owner/reviews is NOT defined here.
+#
+# It used to be, and it was dead code: server.py declares the same path with
+# its own decorator, and `register_all` runs at the very bottom of server.py,
+# so server.py's handler was always registered first and FastAPI always served
+# that one. This one never ran.
+#
+# Removing it is not cosmetic. The two answered differently — server.py's
+# takes branch_id / sentiment / topic / min_rating / max_rating / limit and
+# attaches customer_name and customer_tier, which is exactly what the reviews
+# drill-down reads; this one took only rating / days and returned bare rows.
+# Had the registration order ever shifted, the page would have silently lost
+# every customer name and every filter.
+#
+# The routes below are this module's own and are not duplicated anywhere.
 
 
 @router.get("/api/owner/reviews/stats")
