@@ -167,6 +167,14 @@ export const ownerAPI = {
   campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
   googleWalletStatus: () => api.get('/owner/wallet/google-status'),
 
+  // Segmentation — the page in one call, the builder counted live.
+  segmentationPage: () => api.get('/owner/segmentation/page'),
+  segmentPreview: (body) => api.post('/owner/segmentation/preview', body),
+  createSegment: (body) => api.post('/owner/segmentation/segments', body),
+  updateSegment: (id, body) => api.put(`/owner/segmentation/segments/${id}`, body),
+  deleteSegment: (id) => api.delete(`/owner/segmentation/segments/${id}`),
+  segmentClients: (id) => api.get(`/owner/segmentation/segments/${id}/clients`),
+
   walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
