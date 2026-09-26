@@ -106,6 +106,7 @@ import ReferralPage from './pages/ReferralPage';
 import AutomationsPage from './pages/AutomationsPage';
 import DashboardHomePage from './pages/DashboardHomePage';
 import ClientsPage from './pages/ClientsPage';
+import SegmentationPage from './pages/SegmentationPage';
 // Campagnes — rebuilt to the approved design. CampaignsPage stays in the
 // repo, unrouted, for rollback.
 import CampagnesPage from './pages/CampagnesPage';
@@ -317,8 +318,7 @@ function App() {
                 knobs live in the "Options avancées" panel on this page. */}
             <Route path="segmentation" element={
               <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <ComingSoonPage title="Segmentation"
-                  description="Regroupez vos clients par comportement — fréquence, panier, ancienneté — et ciblez chaque groupe." />
+                <SegmentationPage />
               </ProtectedRoute>
             } />
             <Route path="automations" element={

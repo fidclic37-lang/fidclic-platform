@@ -39,6 +39,9 @@ MODULES = [
     # Clients — the page's four figures, its eight quick segments and its
     # paginated table. Sits beside /api/owner/customers, which is untouched.
     "features.clients_page",
+    # Segmentation — the segments, what a campaign at each could bring in,
+    # and the builder behind them.
+    "features.segmentation",
     # Campagnes — the composer, its audience, and what the last sends did.
     # Delivers on two channels at once: web push and the wallet card's offer.
     "features.campaigns_page",
