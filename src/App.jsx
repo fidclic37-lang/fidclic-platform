@@ -183,6 +183,31 @@ const PublicRoute = ({ children }) => {
   return children;
 };
 
+// app.fidclic.com is the product; the public site lives at www.fidclic.com
+// (fidclic.fr redirects there too). A visitor who types the app address
+// lands on that site rather than the app's older built-in LandingPage,
+// which is kept (and still shown on localhost) but no longer served.
+const MARKETING_URL = 'https://www.fidclic.com/';
+
+const MarketingHome = () => {
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+  const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    || window.navigator.standalone === true;
+  let card = null;
+  try { card = localStorage.getItem('fidelitour:last_card'); } catch (e) { /* private mode */ }
+  const leave = !local && !standalone;
+  React.useEffect(() => { if (leave) window.location.replace(MARKETING_URL); }, [leave]);
+
+  if (local) return <LandingPage />;
+  // Installed icons can open "/" (iOS ignores start_url): send them back
+  // into the app instead of out to the website.
+  if (standalone) {
+    if (card && /^FT-?[A-Z0-9]+$/i.test(card)) return <Navigate to={`/card/${card}`} replace />;
+    return <Navigate to="/login" replace />;
+  }
+  return null;
+};
+
 function App() {
   return (
     <RootErrorBoundary>
@@ -201,7 +226,7 @@ function App() {
         <RouteAwareRetranslator />
         <ScrollToTop />
         <Routes>
-          <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
+          <Route path="/" element={<PublicRoute><MarketingHome /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
           {/* Onboarding step 2 — the only protected page a half-registered owner may see. */}
