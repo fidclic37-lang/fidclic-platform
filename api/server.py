@@ -9484,6 +9484,21 @@ def _detect_language(text: str) -> Optional[str]:
     if fr == 0 and en == 0: return None
     return "fr" if fr >= en else "en"
 
+def _plain(value):
+    """A parameter's real value, whatever FastAPI left behind.
+
+    A handler declared with `x: Optional[int] = Query(None)` receives a Query
+    object, not None, when it is called outside a request. Every endpoint in
+    here is plain Python that other modules and the tests do call directly, so
+    the defaults have to be unwrapped before they are compared or cast.
+    """
+    from fastapi.params import Query as _Q, Path as _P, Body as _B
+    if isinstance(value, (_Q, _P, _B)):
+        default = getattr(value, "default", None)
+        return None if default is ... else default
+    return value
+
+
 def analyze_review_text(text: str, rating: int) -> Dict[str, Any]:
     """Run sentiment + topic extraction on a review. Deterministic and fast.
 
@@ -9739,6 +9754,14 @@ def list_owner_reviews(
     limit: int = Query(100),
 ):
     """List raw reviews with filters for a "manage reviews" view."""
+    # Unwrap the Query defaults. FastAPI substitutes real values when it calls
+    # this, but anything calling it directly — a test, another module — would
+    # otherwise receive Query objects, and `min_rating is not None` would be
+    # true for a filter nobody asked for.
+    branch_id, sentiment, topic = _plain(branch_id), _plain(sentiment), _plain(topic)
+    min_rating, max_rating = _plain(min_rating), _plain(max_rating)
+    limit = _plain(limit) or 100
+
     q = {"tenant_id": token_data.tenant_id}
     if branch_id: q["branch_id"] = branch_id
     if sentiment: q["sentiment"] = sentiment
@@ -9746,7 +9769,7 @@ def list_owner_reviews(
     if min_rating is not None: q.setdefault("rating", {})["$gte"] = int(min_rating)
     if max_rating is not None: q.setdefault("rating", {})["$lte"] = int(max_rating)
     rows = list(
-        db.reviews.find(q).sort("created_at", -1).limit(max(1, min(limit, 500)))
+        db.reviews.find(q).sort("created_at", -1).limit(max(1, min(int(limit), 500)))
     )
     for r in rows:
         r.pop("_id", None)
