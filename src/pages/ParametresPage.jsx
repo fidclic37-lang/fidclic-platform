@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Settings2, ArrowRight } from 'lucide-react';
 import { PARAMETRES_SECTIONS, sectionPath } from './parametres/sections';
 import ReglesClientsPage from './ReglesClientsPage';
+import LienInscriptionPage from './LienInscriptionPage';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -11,7 +12,7 @@ import ReglesClientsPage from './ReglesClientsPage';
    Sub-pages whose design has not arrived yet show an empty state; where the
    same settings exist on the older all-in-one page, it links straight to
    them so nothing goes out of reach in the meantime. */
-const PAGES = { 'regles-clients': ReglesClientsPage };
+const PAGES = { 'regles-clients': ReglesClientsPage, 'lien-inscription': LienInscriptionPage };
 
 function EmptySection({ section }) {
   const Icon = section.icon;
