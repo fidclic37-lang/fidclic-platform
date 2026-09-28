@@ -87,6 +87,7 @@ import AnalysesPage from './pages/AnalysesPage';
 import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
 import SettingsPage from './pages/SettingsPage';
+import ParametresPage from './pages/ParametresPage';
 import JoinPage from './pages/JoinPage';
 import MyWalletCardPage from './pages/MyWalletCardPage';
 import HistoryPage from './pages/HistoryPage';
@@ -380,6 +381,14 @@ function App() {
             <Route path="ai-assistant" element={
               <ProtectedRoute allowedRoles={['business_owner']}>
                 <CopilotPage />
+              </ProtectedRoute>
+            } />
+            {/* Paramètres — one page, one tab per sub-page (like Analyses). The
+                older all-in-one page stays at /settings for what has not moved yet. */}
+            <Route path="parametres" element={<Navigate to="/dashboard/parametres/regles-clients" replace />} />
+            <Route path="parametres/:section" element={
+              <ProtectedRoute allowedRoles={['business_owner']}>
+                <ParametresPage />
               </ProtectedRoute>
             } />
             <Route path="settings" element={

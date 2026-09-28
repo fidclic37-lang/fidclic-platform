@@ -9,8 +9,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
-  Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History, ChevronDown,
-  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Star, PieChart, Share2, Zap
+  Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
+  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 
@@ -31,133 +31,9 @@ const isNavActive = (currentPath, target) => {
   return currentPath === target || currentPath.startsWith(target + '/');
 };
 
-/* ─── Expandable sidebar Settings entry ───────────────────────────────
- * Click "Settings" → expand a dropdown of section anchors. Picking any
- * item navigates straight to /dashboard/settings#settings-{anchor},
- * which the Settings page scroll-aligns automatically.
- *
- * Clicking the parent again collapses the submenu. Auto-opens when the
- * user is already on /dashboard/settings.
- * ─────────────────────────────────────────────────────────────────── */
-// Translation keys, resolved inside the component via useTranslation.
-const SETTINGS_SECTIONS = [
-  { anchor: 'settings-profile',      i18nKey: 'settings.section_profile' },
-  { anchor: 'settings-join',         i18nKey: 'settings.section_join_link' },
-  { anchor: 'settings-geo',          i18nKey: 'settings.section_geo' },
-  { anchor: 'settings-status',       i18nKey: 'settings.section_status' },
-  { anchor: 'settings-dayparts',     i18nKey: 'settings.section_dayparts' },
-  { anchor: 'settings-hours',        i18nKey: 'settings.section_hours' },
-  { anchor: 'settings-tiers',        i18nKey: 'settings.section_tiers' },
-  { anchor: 'settings-welcome',      i18nKey: 'settings.section_welcome' },
-  { anchor: 'settings-auto-pending', i18nKey: 'settings.section_auto_pending' },
-  { anchor: 'settings-auto',         i18nKey: 'settings.section_auto' },
-  { anchor: 'settings-language',     i18nKey: 'settings.section_language' },
-  { anchor: 'settings-catalog',      i18nKey: 'settings.section_catalog' },
-  { anchor: 'settings-points',       i18nKey: 'settings.section_points' },
-  { anchor: 'settings-team',         i18nKey: 'settings.section_team' },
-  { anchor: 'settings-cleanup',      i18nKey: 'settings.section_cleanup' },
-];
 
-const SettingsNavLink = ({ icon: Icon, currentPath, role, collapsed }) => {
-  const { t } = useTranslation();
-  const active = isNavActive(currentPath, '/dashboard/settings');
-  const theme = themeForRole(role);
-  // The user's manual override (null = follow route default). It resets to
-  // null every time the route changes, so:
-  //   • Navigate to Analytics / Insights / any non-settings page → override
-  //     clears, `open` falls back to `active === false` → dropdown collapses.
-  //   • Navigate to /dashboard/settings → override clears, `open` falls back
-  //     to `active === true` → dropdown auto-expands.
-  //   • While on settings, click the toggle → override drives `open`.
-  // This is intentionally a derived value (not synced state via useEffect)
-  // so it can never get out of sync with the route.
-  const [manualOverride, setManualOverride] = React.useState(null);
-  React.useEffect(() => { setManualOverride(null); }, [currentPath]);
-  const open = manualOverride !== null ? manualOverride : active;
-  const setOpen = (next) => {
-    const nextVal = typeof next === 'function' ? next(open) : next;
-    setManualOverride(nextVal);
-  };
-
-  // When the sidebar is collapsed, Settings becomes a simple icon link —
-  // the inline submenu has no room. Clicking jumps straight to the settings page.
-  if (collapsed) {
-    return (
-      <Link
-        to="/dashboard/settings"
-        title={t('nav.settings')}
-        className={`flc-nav ${active ? 'on' : ''} relative group flex items-center justify-center px-2 py-[7px] rounded-lg text-[13.5px] transition-all`}
-      >
-        <span
-          className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
-          style={{ color: 'inherit' }}
-        >
-          <Icon className="w-[18px] h-[18px]" />
-        </span>
-      </Link>
-    );
-  }
-
-  const toggle = (e) => {
-    // A bare click on the row toggles the dropdown only — does NOT navigate.
-    // The user can still hit the small "↗" pill to jump to the top of the page.
-    e.preventDefault();
-    setOpen((v) => !v);
-  };
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={toggle}
-        className={`flc-nav ${active ? 'on' : ''} w-full relative group flex items-center gap-2.5 px-2.5 py-[7px] rounded-lg text-[13.5px] transition-all`}
-        style={{ fontWeight: active ? 600 : 450 }}
-      >
-        <span
-          className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center transition-colors"
-          style={{ background: 'transparent', color: 'inherit' }}
-        >
-          <Icon className="w-[18px] h-[18px]" />
-        </span>
-        <span className="truncate flex-1 text-left">{t('nav.settings')}</span>
-        <span
-          aria-hidden="true"
-          className="transition-transform shrink-0"
-          style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
-        >
-          <ChevronDown size={14} />
-        </span>
-      </button>
-
-      {open && (
-        <div className="ml-9 mt-1 mb-2 pl-2 space-y-0.5"
-             style={{ borderLeft: `1.5px solid ${theme.from}55` }}>
-          {/* Top-level link to the bare settings page */}
-          <Link
-            to="/dashboard/settings"
-            className="block px-2.5 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-widest transition-colors hover:bg-white/70"
-            style={{ color: theme.from }}
-          >
-            {t('nav.open_settings_page')}
-          </Link>
-          {SETTINGS_SECTIONS.map((s) => (
-            <Link
-              key={s.anchor}
-              to={`/dashboard/settings#${s.anchor}`}
-              className="block px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors hover:bg-white/70"
-              style={{ color: C.inkSoft }}
-            >
-              {t(s.i18nKey)}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge }) => {
-  const active = isNavActive(currentPath, to);
+const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, alsoActive = [] }) => {
+  const active = isNavActive(currentPath, to) || alsoActive.some((p) => isNavActive(currentPath, p));
   const theme = themeForRole(role);
   return (
     <Link
@@ -310,7 +186,7 @@ function UserMenu({ user, theme, role, onLogout }) {
             </div>
           </div>
           <Link
-            to="/dashboard/settings"
+            to="/dashboard/parametres"
             onClick={() => setOpen(false)}
             className="flex items-center gap-2 px-4 py-2.5 text-[13px] hover:bg-[#FAFAF8] transition-colors"
             style={{ color: 'var(--ink)' }}
@@ -367,7 +243,7 @@ const DashboardLayout = () => {
   const ROUTE_SYNONYMS = React.useMemo(() => ([
     { route: '/dashboard',                              words: ['dashboard', 'tableau de bord', 'tableau', 'accueil', 'home', 'overview', 'vue d’ensemble', 'welcome'] },
     { route: '/dashboard/analytics',                    words: ['analytics', 'analyses', 'analyse', 'kpi', 'kpis', 'stats', 'statistiques', 'rapport', 'reports', 'metrics', 'metric', 'métriques'] },
-    { route: '/dashboard/settings#settings-status',     words: ['customer status', 'statut client', 'segment', 'segments', 'statuts'] },
+    { route: '/dashboard/parametres/regles-clients',     words: ['customer status', 'statut client', 'segment', 'segments', 'statuts'] },
     { route: '/dashboard/insights',                     words: ['insights', 'insight', 'reco', 'recommendations', 'recommandations', 'suggestion', 'suggestions', 'ai', 'ia'] },
     { route: '/dashboard/map',                          words: ['map', 'carte (geo)', 'geographie', 'geography', 'géographie', 'localisation', 'lieux'] },
     { route: '/dashboard/card-designer',                words: ['card designer', 'card', 'carte', 'carte de fidélité', 'loyalty card', 'design', 'pass', 'wallet', 'walletpass'] },
@@ -376,7 +252,7 @@ const DashboardLayout = () => {
     { route: '/dashboard/history',                      words: ['history', 'historique', 'logs', 'journal', 'activity log', 'audit'] },
     { route: '/dashboard/scan',                         words: ['scan', 'scanner', 'qr', 'qr code', 'visit', 'visite', 'check-in', 'checkin'] },
     { route: '/dashboard/customers',                    words: ['customers', 'clients', 'customer', 'client', 'liste clients'] },
-    { route: '/dashboard/settings',                     words: ['settings', 'parametres', 'paramètres', 'reglages', 'réglages', 'config', 'configuration', 'preferences', 'préférences', 'compte', 'account', 'profile', 'profil', 'billing', 'facturation', 'plan', 'equipe', 'équipe', 'team', 'staff', 'utilisateurs', 'users'] },
+    { route: '/dashboard/parametres',                   words: ['settings', 'parametres', 'paramètres', 'reglages', 'réglages', 'config', 'configuration', 'preferences', 'préférences', 'compte', 'account', 'profile', 'profil', 'billing', 'facturation', 'plan', 'equipe', 'équipe', 'team', 'staff', 'utilisateurs', 'users'] },
   ]), []);
 
   const submitSearch = (e) => {
@@ -527,14 +403,13 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/analytics#reviews" icon={Star}     label={t('nav.reviews')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/ai-assistant"  icon={Sparkle} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} badge="Nouveau" />
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
-              {/* Settings is expandable — click → dropdown of section anchors */}
-              <SettingsNavLink icon={Settings2} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              {/* Paramètres is one page with tabs, like Analyses. The older
+                  all-in-one settings page stays reachable from its tabs. */}
+              <NavLink to="/dashboard/parametres" icon={Settings2} label={t('nav.settings')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/settings']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -545,14 +420,12 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
           {role === 'staff' && (
             <>
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -566,7 +439,6 @@ const DashboardLayout = () => {
               <NavLink to="/admin/card-designer" icon={Palette}      label="Card Designer"      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campaigns"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/ai"            icon={BrainCircuit} label="AI Intelligence"    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/aide" icon={LifeBuoy} label={t('nav.help')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}

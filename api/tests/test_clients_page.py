@@ -87,28 +87,41 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("clients total counts this shop only", cards["total"]["value"] == 10)
     check("the rival's client is not in it",
           CP.overview(Rival())["cards"][0]["value"] == 1)
-    check("clients fidèles is five visits or more", cards["loyal"]["value"] == 4)
-    check("clients inactifs is thirty days without a visit", cards["inactive"]["value"] == 2)
+    # "Client fidèle" is a Règle client: 4 visits a month by default, averaged
+    # since the client joined (the first month counts as a whole one).
+    rate = lambda v, joined: v / max(joined / 30.0, 1.0)
+    check("clients fidèles follows the 'Client fidèle' rule (4 visits a month)",
+          cards["loyal"]["value"] == sum(1 for c in CAST if rate(c[1], c[4]) >= 4))
+    check("clients inactifs is outside the 30-day 'Client actif' window",
+          cards["inactive"]["value"] == 2)
     check("nouveaux clients is this calendar month", cards["new"]["value"] >= 2)
     check("the inactive card is marked as one where down is good",
           cards["inactive"]["lower_is_better"] is True)
 
     # ---- statuses ------------------------------------------------------------
     print("\nStatut — and what beats what")
-    check("a client who came this week with many visits is fidèle",
-          CP.status_of({"visits": 12, "last_visit_date": now - dt.timedelta(days=2)}, now) == "loyal")
+    joined = lambda days: now - dt.timedelta(days=days)
+    check("twelve visits in its first month, in this week, reads VIP",
+          CP.status_of({"visits": 12, "created_at": joined(30),
+                        "last_visit_date": now - dt.timedelta(days=2)}, now) == "vip")
+    check("five a month reads fidèle",
+          CP.status_of({"visits": 10, "created_at": joined(60),
+                        "last_visit_date": now - dt.timedelta(days=2)}, now) == "fidele")
     check("a client who came this week with few visits is actif",
-          CP.status_of({"visits": 2, "last_visit_date": now - dt.timedelta(days=2)}, now) == "active")
-    check("forty visits but gone three months reads inactif, not fidèle — that is "
+          CP.status_of({"visits": 2, "created_at": joined(60),
+                        "last_visit_date": now - dt.timedelta(days=2)}, now) == "actif")
+    check("forty visits but gone three months reads dormant, not VIP — that is "
           "a problem, not a success",
-          CP.status_of({"visits": 40, "last_visit_date": now - dt.timedelta(days=90)}, now) == "inactive")
-    check("a client who has never been in is inactif", CP.status_of({"visits": 0}, now) == "inactive")
-    check("the boundary belongs to inactif",
-          CP.status_of({"visits": 9, "last_visit_date": now - dt.timedelta(days=CP.INACTIVE_DAYS)}, now)
-          == "inactive")
-    check("one day inside it does not",
-          CP.status_of({"visits": 9, "last_visit_date": now - dt.timedelta(days=CP.INACTIVE_DAYS - 1)}, now)
-          == "loyal")
+          CP.status_of({"visits": 40, "created_at": joined(100),
+                        "last_visit_date": now - dt.timedelta(days=90)}, now) == "dormant")
+    check("a client who signed up and has not come yet reads nouveau",
+          CP.status_of({"visits": 0, "created_at": joined(3)}, now) == "nouveau")
+    check("thirty days ago is still inside 'Client actif'",
+          CP.status_of({"visits": 9, "created_at": joined(400),
+                        "last_visit_date": now - dt.timedelta(days=30)}, now) == "actif")
+    check("thirty-one is 'Client bientôt perdu'",
+          CP.status_of({"visits": 9, "created_at": joined(400),
+                        "last_visit_date": now - dt.timedelta(days=31)}, now) == "bientot_perdu")
 
     # ---- segments -------------------------------------------------------------
     print("\nThe eight quick segments")
@@ -146,7 +159,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("ten per page by default", len(page["rows"]) == 10 and page["per_page"] == 10)
     check("the total is the whole set, not the page", page["total"] == 10)
     check("a row carries both labels, not raw keys",
-          page["rows"][0]["status_label"] in ("Fidèle", "Actif", "Inactif"))
+          page["rows"][0]["status_label"] in {s["label"] for s in ov["statuses"]})
     check("initials come from the name", page["rows"][0]["initials"].isalpha())
     check("the email is shown as the design does",
           "@" in page["rows"][0]["email"])
@@ -173,9 +186,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a segment narrows the table",
           CP.list_page(segment="vip", token_data=TD())["total"] == 2)
     check("a status narrows it",
-          CP.list_page(status="inactive", token_data=TD())["total"] == 2)
+          CP.list_page(status="bientot_perdu", token_data=TD())["total"] == 2)
     check("and the two combine",
-          CP.list_page(segment="loyal", status="inactive", token_data=TD())["total"] <= 2)
+          CP.list_page(segment="inactive", status="bientot_perdu", token_data=TD())["total"] == 2)
     check("a spend band is a band, not a threshold",
           CP.list_page(spend="150_500", token_data=TD())["total"] == 3)
     check("the top band has no ceiling",
