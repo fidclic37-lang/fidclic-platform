@@ -49,13 +49,13 @@ MODULES = [
     # Segmentation — the segments, what a campaign at each could bring in,
     # and the builder behind them.
     "features.segmentation",
+    "features.catalogue_page",          # Catalogue produits (products, categories, what sells)
     # Campagnes — the composer, its audience, and what the last sends did.
     # Delivers on two channels at once: web push and the wallet card's offer.
     "features.campaigns_page",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
-    "features.catalogue_page",          # Catalogue produits (products, categories, what sells)
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages
     # Automatisations · Push Wallet — scenarios that fire on their own and land
