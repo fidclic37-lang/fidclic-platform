@@ -286,9 +286,13 @@ def _audience(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any
     elif trigger == "new_product":
         # Only when something was actually added since the last run.
         since = _aware(row.get("last_run_at")) or (at - timedelta(days=1))
+        # The catalogue is one document per shop with its products in
+        # `items`; a product added since carries a later created_at.
         try:
-            added = _db.tenant_catalog.count_documents(
-                {"tenant_id": tid, "created_at": {"$gt": since}})
+            doc = _db.tenant_catalog.find_one({"tenant_id": tid}) or {}
+            added = sum(1 for it in doc.get("items") or []
+                        if (_aware(it.get("created_at")) or since) > since
+                        and it.get("active", True) is not False)
         except Exception:
             added = 0
         if not added:

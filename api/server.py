@@ -4036,6 +4036,11 @@ def put_owner_catalog(
 ):
     """Owner-only: replace the catalog. Server assigns UUIDs to new
     rows so the IDs are stable across edits."""
+    # This older editor only knows name / price / category. What the
+    # Catalogue produits page adds to a row (photo, description, on/off,
+    # dates) is carried over by id, so saving here never erases it.
+    existing_doc = db.tenant_catalog.find_one({"tenant_id": token_data.tenant_id}) or {}
+    before = {it.get("id"): it for it in existing_doc.get("items") or []}
     cleaned: List[Dict[str, Any]] = []
     for raw in req.items:
         name = (raw.name or "").strip()
@@ -4043,12 +4048,16 @@ def put_owner_catalog(
             continue
         if raw.price is None or raw.price < 0:
             raise HTTPException(status_code=400, detail=f"Prix invalide pour « {name} »")
-        cleaned.append({
+        row = {k: v for k, v in (before.get(raw.id) or {}).items()
+               if k in ("subtitle", "active", "image_id", "created_at")}
+        row.update({
             "id": raw.id or str(uuid.uuid4()),
             "name": name,
             "price": round(float(raw.price), 2),
             "category": (raw.category or "").strip() or None,
         })
+        row.setdefault("created_at", datetime.now(timezone.utc))
+        cleaned.append(row)
     db.tenant_catalog.update_one(
         {"tenant_id": token_data.tenant_id},
         {"$set": {

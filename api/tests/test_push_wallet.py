@@ -174,8 +174,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nNouveautés waits for something new")
     np = db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "new_products"})
     check("with an empty catalogue it stays quiet", fire("new_products")["targeted"] == 0)
-    db.tenant_catalog.insert_one({"tenant_id": "t1", "name": "Café latte",
-                                  "created_at": now + dt.timedelta(seconds=1)})
+    # The real shape: one catalogue document per shop, products in `items`.
+    db.tenant_catalog.insert_one({"tenant_id": "t1", "items": [
+        {"id": "p1", "name": "Café latte", "price": 3.5, "created_at": now + dt.timedelta(seconds=1)}]})
     check("a product added since the last run wakes it",
           fire("new_products", now + dt.timedelta(seconds=2))["targeted"] == 5)
     db.push_wallet_log.delete_many({"scenario_id": np["id"]})

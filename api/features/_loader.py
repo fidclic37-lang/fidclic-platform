@@ -55,6 +55,7 @@ MODULES = [
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
+    "features.catalogue_page",          # Catalogue produits (products, categories, what sells)
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages
     # Automatisations · Push Wallet — scenarios that fire on their own and land

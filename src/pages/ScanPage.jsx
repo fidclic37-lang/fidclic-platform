@@ -169,7 +169,8 @@ const ScanPage = () => {
     (async () => {
       try {
         const c = await ownerAPI.getCatalog?.();
-        setCatalog(Array.isArray(c?.data?.items) ? c.data.items : []);
+        // A product switched off on Catalogue produits is not offered at the till.
+        setCatalog(Array.isArray(c?.data?.items) ? c.data.items.filter((i) => i.active !== false) : []);
       } catch (_e) { /* empty catalog is fine, picker hides itself */ }
     })();
     // Load the tenant's points rule from the card template.
