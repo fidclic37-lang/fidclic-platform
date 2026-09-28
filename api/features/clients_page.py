@@ -18,9 +18,12 @@ THE VOCABULARY, DEFINED ONCE
     to mean the same thing in the figures, the chips and the rows. They are
     computed in one place — `classify` — from real columns:
 
-      Statut    Inactif   no visit for INACTIVE_DAYS (30) or never
-                Fidèle    LOYAL_VISITS (5) visits or more
-                Actif     everyone else who has been in
+      Statut    the shop's own Règles clients (features/customer_rules.py):
+                dormant, bientôt perdu, the owner's rules, VIP, fidèle,
+                régulier, nouveau, actif — first that holds wins. The
+                figures "Clients fidèles" / "Clients inactifs" and their
+                chips read the same rules ("Client fidèle", and the
+                "Client actif" window).
 
       Segments  the eight chips, each a plain predicate over the same row.
                 "Clients locaux" is the only one that needs more than the
@@ -39,22 +42,17 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
 from auth import require_role, TokenData
+from features import customer_rules as R
 
 router = APIRouter(tags=["clients"])
 _db = None
 
-INACTIVE_DAYS = 30          # no visit for this long → inactif
 LOYAL_VISITS = 5            # this many visits or more → fidèle
 NEW_DAYS = 30               # joined inside this → nouveau
 BIG_BASKET_FACTOR = 1.5     # average ticket this many times the shop's → gros panier
 LOCAL_KM = 5.0              # inside the catchment's first ring → client local
 MAX_PER_PAGE = 100
 
-STATUSES = {
-    "loyal":    {"label": "Fidèle",  "tone": "green"},
-    "active":   {"label": "Actif",   "tone": "blue"},
-    "inactive": {"label": "Inactif", "tone": "rose"},
-}
 
 SEGMENTS: List[Dict[str, str]] = [
     {"key": "all",       "label": "Tous les clients",     "icon": "users",  "tone": "blue"},
@@ -96,15 +94,34 @@ def _aware(value: Any) -> Optional[datetime]:
 # ---------------------------------------------------------------------------
 # the vocabulary
 # ---------------------------------------------------------------------------
-def status_of(cust: Dict[str, Any], at: datetime) -> str:
-    """Inactif wins over fidèle: a client with forty visits who has not been in
-    for three months is a problem, not a success, and the page should say so."""
+def status_of(cust: Dict[str, Any], at: datetime,
+              rules: Optional[List[Dict[str, Any]]] = None) -> str:
+    """The Statut column: the one kind the shop's Règles clients give this
+    client. Losing a client is said before anything else — a client with forty
+    visits who has not been in for three months is a problem, not a success."""
+    return R.status_key(R.primary(cust, at, rules if rules is not None else R.defaults()))
+
+
+def _status_meta(rules: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    return {s["key"]: s for s in R.statuses(rules)}
+
+
+def is_loyal(cust: Dict[str, Any], at: datetime,
+             rules: Optional[List[Dict[str, Any]]] = None) -> bool:
+    """"Client fidèle" as the shop defined it; the old visit count only while
+    that rule is switched off or deleted."""
+    rule = R.rule(rules if rules is not None else R.defaults(), "fidele")
+    if rule and rule.get("enabled", True):
+        return R.matches(rule, cust, at)
+    return int(cust.get("visits") or 0) >= LOYAL_VISITS
+
+
+def is_inactive(cust: Dict[str, Any], at: datetime,
+                rules: Optional[List[Dict[str, Any]]] = None) -> bool:
+    """Not seen inside the "Client actif" window — never-seen clients included."""
+    days = R.active_days(rules if rules is not None else R.defaults())
     last = _aware(cust.get("last_visit_date"))
-    if not last or (at - last).days >= INACTIVE_DAYS:
-        return "inactive"
-    if int(cust.get("visits") or 0) >= LOYAL_VISITS:
-        return "loyal"
-    return "active"
+    return not last or (at - last).total_seconds() / 86400.0 >= days + 1
 
 
 def _avg_ticket(cust: Dict[str, Any]) -> float:
@@ -115,7 +132,8 @@ def _avg_ticket(cust: Dict[str, Any]) -> float:
 
 
 def segment_of(cust: Dict[str, Any], at: datetime, shop_avg: float,
-               local_ids: Optional[set] = None) -> str:
+               local_ids: Optional[set] = None,
+               rules: Optional[List[Dict[str, Any]]] = None) -> str:
     """The one chip a client is shown under in the table. Most specific first,
     so a VIP reads VIP rather than "fidèle like everybody else"."""
     if (cust.get("tier") or "").lower() == "vip":
@@ -125,7 +143,7 @@ def segment_of(cust: Dict[str, Any], at: datetime, shop_avg: float,
         return "new"
     if shop_avg and _avg_ticket(cust) >= shop_avg * BIG_BASKET_FACTOR:
         return "big"
-    if int(cust.get("visits") or 0) >= LOYAL_VISITS:
+    if is_loyal(cust, at, rules):
         return "loyal"
     if local_ids is not None and cust.get("id") in local_ids:
         return "local"
@@ -133,16 +151,17 @@ def segment_of(cust: Dict[str, Any], at: datetime, shop_avg: float,
 
 
 def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
-                     shop_avg: float, local_ids: set) -> bool:
+                     shop_avg: float, local_ids: set,
+                     rules: Optional[List[Dict[str, Any]]] = None) -> bool:
     """A chip's own predicate. Deliberately NOT `segment_of(...) == key`: the
     chips overlap on purpose — a VIP is also a fidèle, and clicking "Clients
     fidèles" should show them."""
     if key == "all":
         return True
     if key == "loyal":
-        return int(cust.get("visits") or 0) >= LOYAL_VISITS
+        return is_loyal(cust, at, rules)
     if key == "inactive":
-        return status_of(cust, at) == "inactive"
+        return is_inactive(cust, at, rules)
     if key == "new":
         created = _aware(cust.get("created_at"))
         return bool(created and (at - created).days <= NEW_DAYS)
@@ -204,9 +223,12 @@ def _initials(name: str) -> str:
     return (parts[0][:2] if len(parts) == 1 else parts[0][0] + parts[-1][0]).upper()
 
 
-def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set) -> Dict[str, Any]:
-    st = status_of(cust, at)
-    seg = segment_of(cust, at, shop_avg, local_ids)
+def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
+            rules: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    rules = rules if rules is not None else R.defaults()
+    st = status_of(cust, at, rules)
+    meta = _status_meta(rules).get(st) or {"label": st, "tone": "blue"}
+    seg = segment_of(cust, at, shop_avg, local_ids, rules)
     last = _aware(cust.get("last_visit_date"))
     joined = _aware(cust.get("created_at"))
     return {
@@ -215,7 +237,7 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set)
         "email": cust.get("email") or "", "phone": cust.get("phone") or "",
         "barcode_id": cust.get("barcode_id"),
         "tier": (cust.get("tier") or "bronze").lower(),
-        "status": st, "status_label": STATUSES[st]["label"], "status_tone": STATUSES[st]["tone"],
+        "status": st, "status_label": meta["label"], "status_tone": meta["tone"],
         "segment": seg,
         "segment_label": next((s["label"] for s in SEGMENTS if s["key"] == seg), "Actif"),
         "visits": int(cust.get("visits") or 0),
@@ -251,13 +273,15 @@ JOINED_BANDS = {"30d": 30, "90d": 90, "1y": 365}
 
 
 def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_ids: set,
-              segment: str, status: str, spend: str, joined: str, search: str) -> List[Dict[str, Any]]:
+              segment: str, status: str, spend: str, joined: str, search: str,
+              rules: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    rules = rules if rules is not None else R.defaults()
     out = []
     needle = (search or "").strip().lower()
     for c in rows:
-        if segment and segment != "all" and not _matches_segment(segment, c, at, shop_avg, local_ids):
+        if segment and segment != "all" and not _matches_segment(segment, c, at, shop_avg, local_ids, rules):
             continue
-        if status and status_of(c, at) != status:
+        if status and status_of(c, at, rules) != status:
             continue
         if spend in SPEND_BANDS:
             low, high = SPEND_BANDS[spend]
@@ -292,10 +316,11 @@ def overview(token_data: TokenData = Depends(require_role(["business_owner", "ma
     rows = _load(tid)
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
+    rules = R.load(tid)
 
     total = len(rows)
-    loyal = sum(1 for c in rows if int(c.get("visits") or 0) >= LOYAL_VISITS)
-    inactive = sum(1 for c in rows if status_of(c, at) == "inactive")
+    loyal = sum(1 for c in rows if is_loyal(c, at, rules))
+    inactive = sum(1 for c in rows if is_inactive(c, at, rules))
     month_start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     new_this_month = sum(1 for c in rows
                          if (_aware(c.get("created_at")) or at) >= month_start)
@@ -306,8 +331,8 @@ def overview(token_data: TokenData = Depends(require_role(["business_owner", "ma
     before = [c for c in rows if (_aware(c.get("created_at")) or at) < month_start]
     prev_new = sum(1 for c in rows
                    if prev_start <= (_aware(c.get("created_at")) or at) <= prev_end)
-    prev_loyal = sum(1 for c in before if int(c.get("visits") or 0) >= LOYAL_VISITS)
-    prev_inactive = sum(1 for c in before if status_of(c, prev_end) == "inactive")
+    prev_loyal = sum(1 for c in before if is_loyal(c, prev_end, rules))
+    prev_inactive = sum(1 for c in before if is_inactive(c, prev_end, rules))
 
     return {
         "cards": [
@@ -323,13 +348,13 @@ def overview(token_data: TokenData = Depends(require_role(["business_owner", "ma
              "note": "ce mois-ci"},
         ],
         "segments": [{**s, "count": sum(1 for c in rows
-                                        if _matches_segment(s["key"], c, at, shop_avg, local))}
+                                        if _matches_segment(s["key"], c, at, shop_avg, local, rules))}
                      for s in SEGMENTS],
         "sorts": SORT_LABELS,
-        "statuses": [{"key": k, "label": v["label"], "tone": v["tone"]} for k, v in STATUSES.items()],
+        "statuses": R.statuses(rules),
         "shop_average_ticket": round(shop_avg, 2),
         "definitions": {
-            "loyal_visits": LOYAL_VISITS, "inactive_days": INACTIVE_DAYS,
+            "loyal_visits": LOYAL_VISITS, "inactive_days": R.active_days(rules),
             "new_days": NEW_DAYS, "big_basket_factor": BIG_BASKET_FACTOR, "local_km": LOCAL_KM,
         },
     }
@@ -355,7 +380,7 @@ def list_ids(
     at = _now()
     rows = _load(tid)
     rows = _filtered(rows, at, _shop_average_ticket(rows), _local_ids(tid, rows),
-                     segment, status, spend, joined, search)
+                     segment, status, spend, joined, search, R.load(tid))
     return {"ids": [c["id"] for c in rows], "total": len(rows)}
 
 
@@ -379,7 +404,8 @@ def list_page(
     rows = _load(tid)
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
-    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search)
+    rules = R.load(tid)
+    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules)
 
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
@@ -387,7 +413,7 @@ def list_page(
     total = len(rows)
     window = rows[(page - 1) * per_page: page * per_page]
     return {
-        "rows": [_public(c, at, shop_avg, local) for c in window],
+        "rows": [_public(c, at, shop_avg, local, rules) for c in window],
         "total": total, "page": page, "per_page": per_page,
         "pages": max(1, math.ceil(total / per_page)),
     }
@@ -405,7 +431,8 @@ def export_clients(
     rows = _load(tid)
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
-    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search)
+    rules = R.load(tid)
+    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules)
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
 
@@ -414,7 +441,7 @@ def export_clients(
     w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Visites",
                 "Total dépensé (€)", "Dernière visite", "Inscription", "Ville"])
     for c in rows:
-        p = _public(c, at, shop_avg, local)
+        p = _public(c, at, shop_avg, local, rules)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
                     p["visits"], f"{p['spent']:.2f}".replace(".", ","),
                     (p["last_visit"] or "")[:10], (p["joined"] or "")[:10], p["city"]])

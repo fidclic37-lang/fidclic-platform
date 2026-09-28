@@ -29,6 +29,7 @@ const TONES = {
   violet: { bg: '#F3EEFF', fg: '#6D28D9', dot: '#8B5CF6' },
   orange: { bg: '#FFF3E8', fg: '#C2410C', dot: '#F97316' },
   green:  { bg: '#E7F7EE', fg: '#0F8B58', dot: '#10B981' },
+  slate:  { bg: '#F1F5F9', fg: '#475569', dot: '#94A3B8' },
 };
 /* Avatars carry the tier, as they do everywhere else on the platform. */
 const TIER = {

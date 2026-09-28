@@ -169,6 +169,9 @@ export const ownerAPI = {
 
   // Segmentation — the page in one call, the builder counted live.
   segmentationPage: () => api.get('/owner/segmentation/page'),
+  customerRules: () => api.get('/owner/customer-rules'),
+  saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
+  restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),
   segmentPreview: (body) => api.post('/owner/segmentation/preview', body),
   createSegment: (body) => api.post('/owner/segmentation/segments', body),
   updateSegment: (id, body) => api.put(`/owner/segmentation/segments/${id}`, body),

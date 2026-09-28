@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import api, { ownerAPI } from '../lib/api';
 import { Save, Phone, MapPin, Globe, Share2 } from 'lucide-react';
 import LoadingDistraction from '../components/LoadingDistraction';
 import { PageHeader, C as C_PS } from '../components/PageShell';
-import CustomerStatusConfigCard from '../components/CustomerStatusConfigCard';
 import DaypartConfigCard from '../components/DaypartConfigCard';
 import BusinessHoursCard from '../components/BusinessHoursCard';
 import TierDefinitionCard from '../components/TierDefinitionCard';
@@ -306,7 +305,19 @@ const SettingsPage = () => {
             </div>
 
             {/* Additive: configurable Active/Inactive customer definition. */}
-            <div id="settings-status" className="scroll-mt-24"><CustomerStatusConfigCard /></div>
+            {/* Moved: the client statuses are now Paramètres › Règles clients. The
+                old card wrote the same figures by another road; two editors
+                for one setting would drift, so this points there instead. */}
+            <div id="settings-status" className="scroll-mt-24">
+              <Link to="/dashboard/parametres/regles-clients"
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-[#E9E5E0] bg-white p-6 hover:border-[#B85C38]">
+                <span>
+                  <span className="block text-lg font-bold text-[#171412]">Statuts clients</span>
+                  <span className="block text-sm text-[#57504A]">Déplacé dans Paramètres › Règles clients.</span>
+                </span>
+                <span className="text-sm font-bold text-[#B85C38]">Ouvrir →</span>
+              </Link>
+            </div>
 
             {/* Additive: editable time-of-day periods (replaces hard-coded breakfast/lunch/dinner). */}
             <div id="settings-dayparts" className="scroll-mt-24"><DaypartConfigCard /></div>
