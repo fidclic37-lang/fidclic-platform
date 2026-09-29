@@ -122,6 +122,9 @@ export const ownerAPI = {
   saveCardSettings: (data) => api.put('/owner/card/settings', data),
   cardStats: (days) => api.get('/owner/card/stats', { params: { days } }),
   saveCardRewards: (tiers) => api.put('/owner/card/rewards', tiers),
+  // Bonus de bienvenue — lives on the card page (features/welcome_bonus.py).
+  earnRules: () => api.get('/owner/earn-rules'),
+  saveEarnRules: (rules) => api.put('/owner/earn-rules', rules),
   // Besoin d'aide ? — the FAQ knowledge base is public; the assistant and the
   // conversation history are per-merchant.
   supportKb: () => api.get('/support/kb'),

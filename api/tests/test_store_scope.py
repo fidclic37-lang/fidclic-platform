@@ -35,9 +35,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import copilot as CO
     from features import catalogue_page as CAT
     from features import loyalty_card as LC
+    from features import welcome_bonus as WB
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT, LC):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT, LC, WB):
         m.init(db)
     passed = failed = 0
 
@@ -434,6 +435,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("everyone reads the same card", LC.get_card_settings(SARA)["design"] == LC.get_card_settings(OWNER)["design"])
     check("the card opens to them", guard(SARA, LC.READERS, partial_ok=True) == 200 and guard(ALI, LC.READERS, partial_ok=True) == 200)
     check("only the owner changes it", guard(ALI, ["business_owner"]) == 403)
+
+    print("\nLe bonus de bienvenue, sur la carte")
+    WB.update_earn_rules(WB.EarnRules(welcome_bonus_points=50, welcome_bonus_message="Bienvenue !"), token_data=OWNER)
+    check("the owner's bonus is read by everyone on the card page", WB.get_earn_rules(token_data=SARA)["welcome_bonus_points"] == 50)
+    check("it opens to them, read-only", guard(ALI, ["business_owner", "administrateur", "manager"], partial_ok=True) == 200
+          and guard(ALI, ["business_owner"]) == 403)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

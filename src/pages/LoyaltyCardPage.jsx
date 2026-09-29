@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
-  MapPin, Share2, CalendarClock, Type, ChevronDown,
+  MapPin, Share2, CalendarClock, Type, ChevronDown, Sparkles,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -188,6 +188,77 @@ const PROGRAMME_HINT = {
   stamps: 'Un tampon par visite ; la récompense tombe au bout de N tampons.',
   cashback: 'Un pourcentage du ticket est rendu au client sous forme de cagnotte.',
 };
+
+/* ── Bonus de bienvenue — moved here from Paramètres: it is a loyalty rule.
+   Same backend as before (/owner/earn-rules), so nothing already set is lost. */
+function WelcomeBonus({ edit }) {
+  const [cfg, setCfg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    ownerAPI.earnRules().then((r) => setCfg(r.data)).catch(() => setErr('Le bonus de bienvenue n\'a pas pu être chargé.'));
+  }, []);
+  const set = (patch) => { setCfg((c) => ({ ...c, ...patch })); setSaved(false); };
+  const save = async () => {
+    setSaving(true); setErr('');
+    try {
+      const r = await ownerAPI.saveEarnRules({ ...cfg, welcome_bonus_points: Math.max(0, parseInt(cfg.welcome_bonus_points || 0, 10) || 0) });
+      setCfg(r.data); setSaved(true);
+    } catch (e) { setErr(e?.response?.data?.detail || 'Enregistrement impossible.'); }
+    finally { setSaving(false); }
+  };
+  return (
+    <Card icon={Sparkles} title="Bonus de bienvenue"
+          subtitle="Le premier message qu'un nouveau client voit en rejoignant votre programme, avec des points offerts pour bien commencer."
+          locked={!edit}>
+      {!cfg ? (
+        err ? <p className="text-[12.5px] text-red-700">⚠ {err}</p>
+          : <div className="flex h-[90px] items-center justify-center text-[#94A3B8]"><Loader2 className="animate-spin" size={18} /></div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+          <div className="space-y-3.5">
+            <div className="-mx-2">
+              <Toggle icon={Gift} label={cfg.enabled ? 'Activé — chaque nouveau client le reçoit' : 'Désactivé — rien de plus à l\'inscription'}
+                      checked={!!cfg.enabled} onChange={(v) => set({ enabled: v })} />
+            </div>
+            <div className={cfg.enabled ? '' : 'pointer-events-none opacity-50'}>
+              <Label hint="{first_name} {name} {business_name}">Message de bienvenue</Label>
+              <textarea rows={3} maxLength={200} value={cfg.welcome_bonus_message || ''}
+                        onChange={(e) => set({ welcome_bonus_message: e.target.value })}
+                        placeholder="Bienvenue {first_name} ! 50 points offerts pour bien commencer chez {business_name}."
+                        className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
+            </div>
+          </div>
+          <div className={`space-y-3.5 ${cfg.enabled ? '' : 'pointer-events-none opacity-50'}`}>
+            <div>
+              <Label hint="0 = message seul">Points offerts</Label>
+              <Input type="number" min="0" value={cfg.welcome_bonus_points ?? 0}
+                     onChange={(e) => set({ welcome_bonus_points: e.target.value })} />
+              <p className="mt-1 text-[11.5px] text-[#94A3B8]">Crédités une seule fois par client.</p>
+            </div>
+            <div className="-mx-2">
+              <Toggle icon={Users} label="Seulement avant la première visite (recommandé)"
+                      checked={cfg.welcome_bonus_only_first_visit !== false}
+                      onChange={(v) => set({ welcome_bonus_only_first_visit: v })} />
+            </div>
+          </div>
+          {edit && (
+            <div className="flex items-center gap-3 lg:col-span-2">
+              <button type="button" onClick={save} disabled={saving}
+                      className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60"
+                      style={{ background: BLUE }}>
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer le bonus
+              </button>
+              {saved && <span className="flex items-center gap-1.5 text-[12px] text-[#15803D]"><Check size={13} /> Enregistré</span>}
+              {err && <span className="text-[12px] text-red-700">⚠ {err}</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 const TIER_TONE = ['#B08968', '#94A3B8', '#E0A128', '#7C3AED'];
 const WINDOWS = [{ d: 7, label: '7 derniers jours' }, { d: 30, label: '30 derniers jours' }, { d: 90, label: '90 derniers jours' }];
@@ -854,6 +925,8 @@ export default function LoyaltyCardPage() {
           </div>
         </Card>
       </div>
+
+      <WelcomeBonus edit={edit} />
 
       {/* ── Aperçu client — the card exactly as the customer opens it ── */}
       {customerPreview && (

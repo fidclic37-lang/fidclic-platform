@@ -61,7 +61,10 @@ class WelcomeBonusClaim(BaseModel):
 
 # ---------- Owner endpoints ----------
 @router.get("/api/owner/earn-rules")
-def get_earn_rules(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def get_earn_rules(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"],
+                                                                partial_ok=True))):
+    """Read on the Carte de fidélité page by everyone who sees it; changed by
+    the owner only (the card is the same at every establishment)."""
     doc = _db.earn_rules.find_one({"tenant_id": token_data.tenant_id})
     if not doc:
         return EarnRules(tenant_id=token_data.tenant_id).model_dump()
