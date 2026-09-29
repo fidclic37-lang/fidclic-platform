@@ -478,6 +478,17 @@ def send_email_to_customer(to_email: str, from_name: str, subject: str, body_htm
 # triggered it. Every attempt lands in `delivery_log` so a merchant asking
 # "did my message go out?" has an auditable answer.
 # ════════════════════════════════════════════════════════════════════
+def refresh_wallet_pass(customer_id: str) -> None:
+    """Ask Apple to wake every device holding this customer's pass so the
+    stamps, points and status they see match what just happened at the
+    counter. Fire-and-forget: a push must never fail a scan."""
+    try:
+        from features.wallet_passes import notify_customer   # noqa: WPS433
+        notify_customer(customer_id)
+    except Exception as exc:
+        print(f"refresh_wallet_pass: {exc}")
+
+
 def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
                          kind: str = "campaign") -> dict:
     """Deliver one message to one customer. Returns {sent, channel}."""
@@ -2261,6 +2272,11 @@ def _issue_session(response: Response, user: Dict[str, Any]) -> Dict[str, Any]:
         secure=True,
         path="/",
     )
+    # "Dernière connexion" on Paramètres › Équipe & accès.
+    try:
+        db.users.update_one({"email": user["email"]}, {"$set": {"last_login_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
     tenant = db.tenants.find_one({"id": user.get("tenant_id")}) if user.get("tenant_id") else None
     return {
         "access_token": access_token,
@@ -2277,7 +2293,8 @@ def _unique_slug(name: str) -> str:
     ascii_name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
     raw_slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "shop"
     slug, n = raw_slug, 2
-    while db.tenants.find_one({"slug": slug}):
+    # A name another shop had before a rename still points at that shop.
+    while db.tenants.find_one({"$or": [{"slug": slug}, {"previous_slugs": slug}]}):
         slug = f"{raw_slug}-{n}"
         n += 1
     return slug
@@ -2413,6 +2430,12 @@ def login(req: LoginRequest, response: Response, request: Request = None):
                   tenant_id=user.tenant_id, request=request,
                   meta={"reason": "bad_password"})
         raise HTTPException(status_code=400, detail="Incorrect credentials")
+    if user_dict.get("active") is False:
+        # Switched off by their responsable on Paramètres › Équipe & accès.
+        log_audit("auth.login_failed", actor=req.email, actor_type="user",
+                  tenant_id=user.tenant_id, request=request, meta={"reason": "inactive"})
+        raise HTTPException(status_code=403,
+                            detail="Ce compte a été désactivé. Contactez votre responsable.")
     log_audit("auth.login", actor=user.email, actor_type="user",
               tenant_id=user.tenant_id, request=request,
               meta={"role": user.role})
@@ -2437,7 +2460,18 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
         "tenant_name": (tenant or {}).get("name"),
         "tenant_slug": (tenant or {}).get("slug"),
+        # Team accounts: which establishments they cover, and whether that is
+        # all of them ("all") or some ("partial" — data pages not open yet).
+        **_team_identity(user),
     }
+
+
+def _team_identity(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from features import team_access
+        return team_access.identity(user)
+    except Exception:
+        return {}
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
@@ -3479,7 +3513,7 @@ def admin_ai_query(req: AIQueryRequest, token_data: TokenData = Depends(require_
 # ========================
 
 @app.get("/api/owner/tenant")
-def get_tenant(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def get_tenant(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """Return the tenant doc for whoever is authenticated. Available to all
     in-tenant roles so the sidebar can show "you are managing/working at X"
     — no more confusion when an owner has multiple tenants or a staff is
@@ -3995,6 +4029,26 @@ def preview_campaign_segment(
     count = db.customers.count_documents(query)
     return {"matching_customers": count}
 
+_BARCODE_RE = re.compile(r"(FT-[A-Z0-9]+)", re.I)
+
+
+def barcode_from(scanned: object) -> str:
+    """The card id inside whatever was scanned or typed.
+
+    The QR on a customer's card encodes the card's public URL, not the bare
+    id: a phone camera can open a URL, and that is what turns a customer's own
+    card into an invitation. The till reads the same QR, so it has to find the
+    id inside it. A hand-typed "ft-c7eaa131" still works.
+    """
+    raw = str(scanned or "").strip()
+    if not raw:
+        return ""
+    found = _BARCODE_RE.search(raw)
+    if found:
+        return found.group(1).upper()
+    return raw.rstrip("/").rsplit("/", 1)[-1].split("?")[0].strip().upper()
+
+
 class ScanRequest(BaseModel):
     barcode_id: str
     points: Optional[int] = None
@@ -4035,7 +4089,7 @@ class CatalogReq(BaseModel):
 
 
 @app.get("/api/owner/catalog")
-def get_owner_catalog(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def get_owner_catalog(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """Return the tenant's catalog. Staff need it to render the scan-page
     item picker; managers/owners use it for editing."""
     doc = db.tenant_catalog.find_one({"tenant_id": token_data.tenant_id})
@@ -4054,6 +4108,11 @@ def put_owner_catalog(
 ):
     """Owner-only: replace the catalog. Server assigns UUIDs to new
     rows so the IDs are stable across edits."""
+    # This older editor only knows name / price / category. What the
+    # Catalogue produits page adds to a row (photo, description, on/off,
+    # dates) is carried over by id, so saving here never erases it.
+    existing_doc = db.tenant_catalog.find_one({"tenant_id": token_data.tenant_id}) or {}
+    before = {it.get("id"): it for it in existing_doc.get("items") or []}
     cleaned: List[Dict[str, Any]] = []
     for raw in req.items:
         name = (raw.name or "").strip()
@@ -4061,12 +4120,16 @@ def put_owner_catalog(
             continue
         if raw.price is None or raw.price < 0:
             raise HTTPException(status_code=400, detail=f"Prix invalide pour « {name} »")
-        cleaned.append({
+        row = {k: v for k, v in (before.get(raw.id) or {}).items()
+               if k in ("subtitle", "active", "image_id", "created_at")}
+        row.update({
             "id": raw.id or str(uuid.uuid4()),
             "name": name,
             "price": round(float(raw.price), 2),
             "category": (raw.category or "").strip() or None,
         })
+        row.setdefault("created_at", datetime.now(timezone.utc))
+        cleaned.append(row)
     db.tenant_catalog.update_one(
         {"tenant_id": token_data.tenant_id},
         {"$set": {
@@ -4430,7 +4493,7 @@ def scan_visit(
     req: ScanRequest,
     # Staff accounts exist SPECIFICALLY to run this endpoint. The owner + manager
     # can of course scan too.
-    token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"])),
 ):
     """Scan visit — record timestamp and update customer.
 
@@ -4440,6 +4503,21 @@ def scan_visit(
     surfaces only as Vercel's generic 'A server error has occurred' which
     is impossible to debug remotely.
     """
+    # A team account scans in its own establishments: the visit is tagged with
+    # one of them — never with another shop's — so every establishment's
+    # figures stay its own (features/store_scope.py filters on this tag).
+    if token_data.role in ("administrateur", "manager", "staff"):
+        from features import store_scope as _S
+        _sc = _S.resolve(token_data, requested="")
+        # Accounts covering every establishment scan as before (a visit may
+        # stay untagged); only accounts limited to some are held to them.
+        partial = set(_sc.allowed) != set(_sc.all_ids)
+        if partial and req.branch_id not in _sc.allowed:
+            if len(_sc.allowed) == 1:
+                req.branch_id = _sc.allowed[0]
+            else:
+                raise HTTPException(status_code=400,
+                                    detail="Choisissez l'établissement où a lieu le passage.")
     try:
         return _scan_visit_impl(req, token_data)
     except HTTPException:
@@ -4462,9 +4540,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     """MINIMAL fast-path scan — does the essentials inline, defers every
     optional side effect to a best-effort try/except so a single bad
     customer record can't 500 the till."""
-    # Normalise the barcode the staff just typed: trim whitespace and uppercase
-    # the FT-XXXX prefix, so "ft-c7eaa131  " and "FT-C7EAA131" both match.
-    normalized_barcode = (req.barcode_id or "").strip().upper()
+    # Normalise the barcode the staff just typed or scanned: trim whitespace and
+    # uppercase the FT-XXXX prefix, so "ft-c7eaa131  " and "FT-C7EAA131" both
+    # match — and accept the card URL, because the QR on a customer's card now
+    # encodes https://…/card/FT-XXXX so that a stranger's camera can open it.
+    normalized_barcode = barcode_from(req.barcode_id)
 
     cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": normalized_barcode})
     if not cust:
@@ -4532,6 +4612,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                 {"$set": {
                     "visits": current_visits,
                     "visits_at_last_redemption": current_visits,
+                    "updated_at": datetime.now(timezone.utc),
                 }},
             )
         except Exception:
@@ -4560,8 +4641,15 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         mode = (card_template.get("points_mode") or "per_visit").lower()
         ppe = float(card_template.get("points_per_euro") or 10)
         ppv = int(card_template.get("points_per_visit", 10) or 10)
-        if mode == "per_euro" and float(req.amount_paid or 0) > 0:
-            points_to_add = int(round(ppe * float(req.amount_paid)))
+        programme = (card_template.get("programme") or "").lower()
+        amount = float(req.amount_paid or 0)
+        if programme == "cashback":
+            # The customer builds a euro balance, held in cents so the ledger
+            # stays in integers like every other points programme.
+            rate = float(card_template.get("cashback_rate") or 5)
+            points_to_add = int(round(amount * rate))            # % of euros → cents
+        elif mode == "per_euro" and amount > 0:
+            points_to_add = int(round(ppe * amount))
         else:
             points_to_add = ppv
 
@@ -4584,7 +4672,16 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "total_amount_paid": round(new_paid, 2),
         "last_visit_date": datetime.now(timezone.utc),
         "tier": new_tier,
+        # Read by the Apple PassKit web service (passesUpdatedSince) so a
+        # wallet pass refreshes after every scan.
+        "updated_at": datetime.now(timezone.utc),
     }
+    # When the palier actually changes, stamp it: the Push Wallet scenario
+    # "Atteinte d'un palier" fires on this, and without a timestamp there was
+    # no way to tell a client who just levelled up from one who always was gold.
+    if new_tier != previous_tier:
+        update_set["tier_changed_at"] = datetime.now(timezone.utc)
+        update_set["previous_tier"] = previous_tier
     # Stamp home branch on first scan only.
     if req.branch_id and not cust.get("branch_id"):
         update_set["branch_id"] = req.branch_id
@@ -4613,6 +4710,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
 
     # ---- ALL OPTIONAL SIDE EFFECTS BELOW — wrapped, never block response ----
+    # Parrainage — this may be the visit the referral was waiting for. Points
+    # are promised at signup and paid here, on a visit that really happened.
+    try:
+        from features.referrals import settle as _settle_referral
+        _settle_referral(token_data.tenant_id, cust["id"])
+    except Exception as _e:
+        print(f"scan_visit: referral settle failed (non-fatal): {_e}")
+
     # Campaign attribution (15-day window)
     try:
         now_utc = datetime.now(timezone.utc)
@@ -4659,6 +4764,37 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         int(scan_tpl.get("visits_per_stamp", 1) or 1),
         1,
     )
+
+    # ── the card restarts by itself ────────────────────────────────────────
+    # A paper loyalty card fills up, the customer claims the free coffee, and
+    # the NEXT purchase starts a fresh card. Ours used to stay at 10/10 for
+    # ever unless staff pressed "redeem" — so the wallet pass showed a full
+    # meter that never moved again. Now, when a visit lands on a card that was
+    # already complete, the finished card is banked as an earned reward and
+    # this visit becomes stamp 1 of the new one.
+    cycles_completed = 0
+    while (new_visits - last_red_visits) > reward_threshold:
+        try:
+            db.rewards_earned.insert_one({
+                "id": str(uuid.uuid4()),
+                "tenant_id": token_data.tenant_id,
+                "customer_id": cid,
+                "threshold": reward_threshold,
+                "reward_description": scan_tpl.get("reward_description") or "Récompense fidélité",
+                "earned_at": datetime.now(timezone.utc),
+                "status": "pending",          # claimed at the counter → "redeemed"
+                "visits_at_completion": last_red_visits + reward_threshold,
+            })
+        except Exception as _e:
+            print(f"scan_visit: could not bank the earned reward: {_e}")
+        last_red_visits += reward_threshold
+        cycles_completed += 1
+    if cycles_completed:
+        db.customers.update_one({"id": cid}, {"$set": {
+            "visits_at_last_redemption": last_red_visits,
+            "updated_at": datetime.now(timezone.utc),
+        }})
+
     stamps_in_cycle = max(0, new_visits - last_red_visits)
     stamps_capped = min(stamps_in_cycle, reward_threshold)
     reward_unlocked = stamps_in_cycle >= reward_threshold
@@ -4666,6 +4802,15 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # Notification subscription status — drives the staff scan-page prompt
     # ("This customer isn't receiving offers — show enable QR?"). We check
     # the push_subscriptions collection for any active row for this customer.
+    try:
+        pending_rewards = db.rewards_earned.count_documents({"customer_id": cid, "status": "pending"})
+    except Exception:
+        pending_rewards = 0
+
+    # The stamp just changed — wake every Wallet pass now, not on the
+    # customer's next pull-to-refresh.
+    refresh_wallet_pass(cid)
+
     notification_status = "subscribed"
     try:
         has_sub = db.push_subscriptions.count_documents({"customer_id": cid}) > 0
@@ -4690,6 +4835,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "reward_threshold": reward_threshold,
         "reward_unlocked":  reward_unlocked,
         "visits_at_last_redemption": last_red_visits,
+        # How many completed cards are waiting to be claimed at the counter.
+        "rewards_pending": pending_rewards,
+        "cycle_restarted": cycles_completed > 0,
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
     }
@@ -4816,7 +4964,9 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     return fired
 
 @app.get("/api/owner/card-template")
-def get_card_template(token_data: TokenData = Depends(require_role(["business_owner"]))):
+# Read by the Scan page for the points rule — so every account that scans may
+# read it; only the owner changes it (PUT below).
+def get_card_template(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     t = db.card_templates.find_one({"tenant_id": token_data.tenant_id})
     if t:
         t.pop("_id", None)
@@ -4863,6 +5013,13 @@ def save_card_template(req: CardTemplate, token_data: TokenData = Depends(requir
                 # Sweep must never block the save, even if one customer's
                 # email send fails or their record is malformed.
                 print(f"Reward eval failed for {cust.get('id')}: {e}")
+
+    # The design (colours, banner, reward rules) changed — refresh every pass.
+    try:
+        from features.wallet_passes import notify_tenant     # noqa: WPS433
+        notify_tenant(tid)
+    except Exception as e:
+        print(f"wallet notify failed: {e}")
 
     return payload
 
@@ -5545,9 +5702,15 @@ def per_card_manifest(barcode_id: str):
     )
 
 
+def _tenant_by_slug(slug: str):
+    """A signup link names a shop by its current slug — or by one it had
+    before a rename, so a QR code already printed on a counter keeps working."""
+    return db.tenants.find_one({"slug": slug}) or db.tenants.find_one({"previous_slugs": slug})
+
+
 @app.get("/api/join/{slug}")
 def get_join_info(slug: str):
-    t = db.tenants.find_one({"slug": slug})
+    t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     t.pop("_id", None)
@@ -5564,8 +5727,15 @@ class JoinRequest(BaseModel):
     email: Optional[str] = ""
     phone: str
     postal_code: str
+    # Kept for imports and older clients that still send one; the signup form
+    # no longer asks, because the postal code says it more precisely.
+    city: Optional[str] = ""
     birthday: str
     acquisition_source: Optional[str] = None
+    # Student status, declared by the customer at signup. French merchants run
+    # student offers constantly, so this is a first-class segment rather than a
+    # tag — the referral page's breakdown and any "étudiants" campaign read it.
+    is_student: Optional[bool] = False
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     # Multi-touch attribution: every URL ?src=... the visitor landed on
@@ -5578,6 +5748,12 @@ class JoinRequest(BaseModel):
     # refused without it.
     consent: Optional[bool] = False
     consent_policy_version: Optional[str] = None
+    # The loyalty card whose QR brought this person here. There is no referral
+    # link and no second QR: an existing customer's own card IS the invitation.
+    # Recorded as a PENDING referral — nobody is credited until this new
+    # customer actually comes in, because a signup is free to fake and a visit
+    # is not.
+    parrain_barcode: Optional[str] = None
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
@@ -5595,7 +5771,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         }
         src = alias.get(src, src)
         req.acquisition_source = src if src in ALLOWED_ACQUISITION_SOURCES else "qr_store"
-    t = db.tenants.find_one({"slug": slug})
+    t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     tid = t["id"]
@@ -5728,6 +5904,24 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         longitude=req.longitude
     )
     cust_doc = c.model_dump()
+    cust_doc["is_student"] = bool(req.is_student)
+    # Signed up through the page itself — what "Taux de conversion" on
+    # Paramètres › Lien d'inscription compares with the page's visits.
+    cust_doc["signup_channel"] = "join_page"
+    # The place comes from the postal code — finer than a town name, and one
+    # less field between a customer and their card. An import that supplies a
+    # city is still honoured.
+    typed_city = (req.city or "").strip()
+    if typed_city:
+        cust_doc["city"] = typed_city[:80]
+    else:
+        try:
+            from services import communes
+            resolved = communes.label_for(req.postal_code)
+            if resolved and resolved != str(req.postal_code).strip():
+                cust_doc["city"] = resolved
+        except Exception as exc:
+            print(f"commune lookup failed (non-fatal): {exc}")
     # Multi-touch attribution: store the full chain of touchpoints (every
     # ?src= the visitor passed through) plus first-touch + last-touch
     # convenience fields. This makes "joined via QR but originally found
@@ -5761,7 +5955,17 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     log_audit("gdpr.consent_given", actor=barcode_id, actor_type="customer",
               tenant_id=tid, target=cust_doc["id"], request=request,
               meta={"policy_version": cust_doc["consent"]["policy_version"]})
-    return {"barcode_id": barcode_id, "message": "Welcome!"}
+    # Parrainage. Wrapped: a referral that cannot be recorded must never cost
+    # someone their loyalty card.
+    parrainage = None
+    if req.parrain_barcode:
+        try:
+            from features.referrals import record as _record_referral
+            parrainage = _record_referral(tid, req.parrain_barcode, cust_doc)
+        except Exception as _e:
+            print(f"join: referral not recorded (non-fatal): {_e}")
+    return {"barcode_id": barcode_id, "message": "Welcome!",
+            "parrainage": bool(parrainage)}
 
 # ========================
 # WALLET CARD (public, barcode-keyed) — Captain Wallet style
@@ -5978,6 +6182,27 @@ def _serialize_card_payload(cust: dict) -> dict:
             # extra="allow", so these persist through the save endpoints
             # without model changes.
             "brand_color":          tpl.get("brand_color"),
+            # Optional lifecycle set by the merchant (seasonal / campaign card).
+            "pass_expiration_date":  tpl.get("pass_expiration_date"),
+            # Advanced wallet options edited on the Carte de fidélité page.
+            "show_card_number":      tpl.get("show_card_number"),
+            "use_full_name":         tpl.get("use_full_name"),
+            "back_fields":           tpl.get("back_fields"),
+            "location_reminder":     tpl.get("location_reminder"),
+            "location_radius_m":     tpl.get("location_radius_m"),
+            "location_text":         tpl.get("location_text"),
+            "header_field":          tpl.get("header_field"),
+            "code_content":          tpl.get("code_content"),
+            "points_change_message": tpl.get("points_change_message"),
+            "stamps_change_message": tpl.get("stamps_change_message"),
+            "google_links":          tpl.get("google_links"),
+            "allow_sharing":         tpl.get("allow_sharing"),
+            "strip_shine":           tpl.get("strip_shine"),
+            "offer_expires_at":      tpl.get("offer_expires_at"),
+            # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
+            # WalletCard / WalletPassPreview and the native pass builder.
+            "card_name":            tpl.get("card_name"),
+            "tagline":              tpl.get("tagline"),
             "surface":              tpl.get("surface"),
             "surface_color":        tpl.get("surface_color"),
             "code_type":            tpl.get("code_type"),
@@ -6057,12 +6282,68 @@ def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dic
     return items
 
 
+def _log_card_open(cust: dict) -> None:
+    """Record that this customer opened their card today.
+
+    One row per customer per day — the card is a PWA and gets reopened all day
+    long. It is what the Campagnes page counts as an "ouverture": a wallet push
+    returns no read receipt, so a card opened within 72 h of a send is the only
+    honest signal there is.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        db.card_opens.update_one(
+            {"customer_id": cust["id"], "day": now.strftime("%Y-%m-%d")},
+            {"$setOnInsert": {"tenant_id": cust.get("tenant_id"), "customer_id": cust["id"],
+                              "day": now.strftime("%Y-%m-%d"), "at": now},
+             "$inc": {"opens": 1}},
+            upsert=True)
+    except Exception as exc:
+        print(f"card open log failed (non-fatal): {exc}")
+
+
+def _log_card_message_view(cust: dict, payload: dict) -> None:
+    """The merchant writes a message on the card; this records that a customer
+    actually opened the card while it was showing. It is what the Historique's
+    "Messages affichés" counts — an impression, not a send.
+
+    Deduped to one row per customer per message per day: the card is a PWA and
+    gets reopened all day long, and fifty rows for one customer would tell the
+    merchant nothing.
+    """
+    message = (payload.get("offer_box_text") or payload.get("card_message") or "").strip()
+    if not message:
+        return
+    try:
+        now = datetime.now(timezone.utc)
+        day = now.strftime("%Y-%m-%d")
+        db.card_message_views.update_one(
+            {"customer_id": cust["id"], "day": day, "message": message[:200]},
+            {"$setOnInsert": {"tenant_id": cust.get("tenant_id"), "customer_id": cust["id"],
+                              "day": day, "message": message[:200], "at": now},
+             "$inc": {"opens": 1}},
+            upsert=True,
+        )
+    except Exception as exc:
+        print(f"card message view log failed (non-fatal): {exc}")
+
+
 @app.get("/api/card/{barcode_id}")
 def get_wallet_card(barcode_id: str):
     cust = db.customers.find_one({"barcode_id": barcode_id})
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
-    return _serialize_card_payload(cust)
+    payload = _serialize_card_payload(cust)
+    _log_card_message_view(cust, payload)
+    try:
+        # The only observable "open" a wallet push has: the customer came and
+        # looked at their card. Push Wallet's open rate is measured against it.
+        db.customers.update_one({"id": cust["id"]},
+                                {"$set": {"last_card_open_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
+    _log_card_open(cust)
+    return payload
 
 
 class CardPrefsRequest(BaseModel):
@@ -6385,11 +6666,23 @@ def push_card_override(
                 print(f"card override push failed for {cust.get('id')}: {_e}")
                 skipped += 1
 
+    # The overlay changed the banner and the OFFRE field of these customers'
+    # cards. Wallet only learns about it when we say so — and because the
+    # offer field carries a changeMessage, iOS raises a lock-screen alert.
+    wallet = {"devices": 0, "sent": 0}
+    try:
+        from features.wallet_passes import notify_tenant          # noqa: WPS433
+        wallet = notify_tenant(tenant_id, [c["id"] for c in targets])
+    except Exception as _e:
+        print(f"wallet notify (override) failed: {_e}")
+
     return {
         "status": "ok",
         "overlaid": overlaid,
         "pushed": pushed,
         "skipped": skipped,
+        "wallet_passes_updated": wallet.get("sent", 0),
+        "wallet_devices": wallet.get("devices", 0),
         "expires_at": expires_at.isoformat() if expires_at else None,
     }
 
@@ -6405,6 +6698,7 @@ def clear_card_override(
         {"customer_id": customer_id, "tenant_id": token_data.tenant_id},
         {"$set": {"is_active": False}},
     )
+    refresh_wallet_pass(customer_id)      # put the normal card back in Wallet
     return {"status": "ok", "cleared": res.modified_count}
 
 
@@ -6417,6 +6711,11 @@ def clear_all_card_overrides(
         {"tenant_id": token_data.tenant_id, "is_active": True},
         {"$set": {"is_active": False}},
     )
+    try:
+        from features.wallet_passes import notify_tenant          # noqa: WPS433
+        notify_tenant(token_data.tenant_id)
+    except Exception as _e:
+        print(f"wallet notify (clear) failed: {_e}")
     return {"status": "ok", "cleared": res.modified_count}
 
 
@@ -6509,7 +6808,8 @@ def get_customers_map(
 @app.post("/api/owner/campaigns/send-to-group")
 def send_campaign_to_group(
     req: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"]))
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))
 ):
     """Create and send campaign to specific group of customers.
     Accepts either explicit customer_ids or a segment descriptor (resolved server-side).
@@ -6605,6 +6905,16 @@ def send_campaign_to_group(
     image_url = req.get("image_url") or None
     sender_name = (tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic")
 
+    # Only the clients of the establishments the sender may see: an
+    # administrateur or a manager never writes to another shop's clients.
+    from features import store_scope as _S
+    _scope = _S.resolve(token_data, request)
+    _mine = _S.customer_ids(_scope)
+    if _mine is not None:
+        customer_ids = [c for c in customer_ids if c in _mine]
+        if not customer_ids:
+            raise HTTPException(status_code=400, detail="Aucun de ces clients n'appartient à vos établissements.")
+
     # Dispatch per-customer with template rendering.
     delivered = 0
     targeted_customers = list(db.customers.find({"id": {"$in": customer_ids}, "tenant_id": tid}))
@@ -6633,7 +6943,11 @@ def send_campaign_to_group(
         image_url=image_url,
         source=src,
     )
-    db.campaigns.insert_one(campaign.model_dump())
+    _doc = campaign.model_dump()
+    # Which establishments this campaign was sent for (None = the whole shop).
+    _doc["store_ids"] = _scope.ids
+    _doc["sent_by"] = token_data.email
+    db.campaigns.insert_one(_doc)
 
     # Also log per-customer push notification so wallet cards show the offer.
     for c in targeted_customers:
@@ -7847,7 +8161,7 @@ def create_branch(
     return branch
 
 @app.get("/api/owner/branches")
-def list_branches(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def list_branches(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """List branches for current tenant. Staff need this so the scan page can
     show the branch picker (which branch the scan is happening at)."""
     tenant = db.tenants.find_one({"id": token_data.tenant_id})
@@ -8731,10 +9045,15 @@ def get_ltv_breakdown(
 # ============================================================
 # Smart Alerts — unified severity-ranked feed
 # ============================================================
+ALERT_READERS = ["business_owner", "administrateur", "manager"]
+
+
 @app.get("/api/owner/insights/alerts")
 def get_proactive_alerts(
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(ALERT_READERS, partial_ok=True)),
     branch_id: Optional[str] = Query(None),
+    with_copilot: bool = True,
 ):
     """Auto-detected business situations the owner should know about.
 
@@ -8754,12 +9073,19 @@ def get_proactive_alerts(
       - info:     birthdays this month ≥5
                   OR cards filled today ≥3
     """
+    from features import store_scope as _S
     tid = token_data.tenant_id
     now = datetime.now(timezone.utc)
     p30 = now - timedelta(days=30)
     p60 = now - timedelta(days=60)
 
-    cust_q = _branch_customer_filter(tid, branch_id)
+    # The establishment asked for (or chosen in the menu), never one this
+    # account does not cover (features/store_scope.py).
+    scope = _S.resolve(token_data, request, requested=branch_id if isinstance(branch_id, str) else None)
+    cust_q = {"tenant_id": tid, "deleted_at": {"$exists": False}}
+    mine = _S.customer_ids(scope)
+    if mine is not None:
+        cust_q["id"] = {"$in": list(mine)}
     customers = list(db.customers.find(cust_q))
     total = len(customers)
     if total == 0:
@@ -8881,6 +9207,17 @@ def get_proactive_alerts(
              metric=str(len(reactivated)),
              action="/dashboard/insights")
 
+    # --- FidClic IA Autopilot: steps it prepared that are waiting for the OK.
+    # The plan sends to the whole shop: it is the owner's, on the whole shop.
+    try:
+        from features.copilot import pending_alerts as _copilot_alerts
+        _plan_alerts = (_copilot_alerts(tid, now)
+                        if with_copilot and token_data.role == "business_owner" and scope.is_all else [])
+        for _a in _plan_alerts:
+            push(_a["severity"], _a["id"], _a["title"], _a["body"], _a.get("metric"), _a.get("action"))
+    except Exception as _e:
+        print(f"alerts: copilot hook failed (non-fatal): {_e}")
+
     # --- Sort: critical → warning → win → info
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     alerts.sort(key=lambda a: severity_order.get(a["severity"], 99))
@@ -8894,7 +9231,8 @@ def get_proactive_alerts(
 
 @app.get("/api/owner/insights/alerts/multi-store")
 def get_proactive_alerts_multi_store(
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(ALERT_READERS, partial_ok=True)),
 ):
     """Per-shop alerts wrapper. For each branch under the tenant, calls the
     alert engine and tags each result with `branch_id` and `branch_name`.
@@ -8905,11 +9243,18 @@ def get_proactive_alerts_multi_store(
     that one branch (or a synthesised one) so single-shop owners aren't left
     with an empty bell.
     """
+    from features import store_scope as _S
     tid = token_data.tenant_id
     branches = list(db.branches.find({"tenant_id": tid})) if 'branches' in db.list_collection_names() else []
     if not branches:
         tenant = db.tenants.find_one({"id": tid}) or {}
         branches = tenant.get("branches") or []
+    # The bell follows the establishment menu: the chosen establishment, or
+    # every establishment this account covers.
+    scope = _S.resolve(token_data, request)
+    wanted = set(scope.ids if scope.ids is not None else scope.all_ids)
+    if branches:
+        branches = [b for b in branches if b.get("id") in wanted]
 
     alerts_combined: list = []
 
@@ -8921,7 +9266,7 @@ def get_proactive_alerts_multi_store(
             if not bid:
                 continue
             try:
-                br_alerts = get_proactive_alerts(token_data=token_data, branch_id=bid)
+                br_alerts = get_proactive_alerts(token_data=token_data, branch_id=bid, with_copilot=False)
                 for a in br_alerts.get("alerts") or []:
                     alerts_combined.append({
                         **a,
@@ -8937,7 +9282,7 @@ def get_proactive_alerts_multi_store(
         # with the tenant's display name so the bell still says something
         # meaningful, but treat the result as a single-shop bucket.
         try:
-            tenant_alerts = get_proactive_alerts(token_data=token_data, branch_id=None)
+            tenant_alerts = get_proactive_alerts(token_data=token_data, branch_id=None, with_copilot=False)
             tenant = db.tenants.find_one({"id": tid}) or {}
             label = tenant.get("name") or "Ma boutique"
             for a in tenant_alerts.get("alerts") or []:
@@ -8951,7 +9296,18 @@ def get_proactive_alerts_multi_store(
         except Exception:
             pass
 
-    # Sort by severity only — there is no tenant scope anymore.
+    # FidClic IA's prepared steps concern the whole shop: said once, not per
+    # branch, and only to the owner looking at the whole shop.
+    if token_data.role == "business_owner" and scope.is_all:
+        try:
+            from features.copilot import pending_alerts as _copilot_alerts
+            for _a in _copilot_alerts(tid, datetime.now(timezone.utc)):
+                alerts_combined.append({**_a, "metric": _a.get("metric"), "ts": datetime.now(timezone.utc).isoformat(),
+                                        "branch_id": None, "branch_name": None, "scope": "shop"})
+        except Exception as _e:
+            print(f"alerts: copilot hook failed (non-fatal): {_e}")
+
+    # Sort by severity only.
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     alerts_combined.sort(key=lambda a: severity_order.get(a.get("severity"), 99))
 
@@ -9316,6 +9672,21 @@ def _detect_language(text: str) -> Optional[str]:
     if fr == 0 and en == 0: return None
     return "fr" if fr >= en else "en"
 
+def _plain(value):
+    """A parameter's real value, whatever FastAPI left behind.
+
+    A handler declared with `x: Optional[int] = Query(None)` receives a Query
+    object, not None, when it is called outside a request. Every endpoint in
+    here is plain Python that other modules and the tests do call directly, so
+    the defaults have to be unwrapped before they are compared or cast.
+    """
+    from fastapi.params import Query as _Q, Path as _P, Body as _B
+    if isinstance(value, (_Q, _P, _B)):
+        default = getattr(value, "default", None)
+        return None if default is ... else default
+    return value
+
+
 def analyze_review_text(text: str, rating: int) -> Dict[str, Any]:
     """Run sentiment + topic extraction on a review. Deterministic and fast.
 
@@ -9442,7 +9813,16 @@ def submit_review(req: ReviewSubmit):
     ).model_dump()
     db.reviews.insert_one(review)
     review.pop("_id", None)
-    return {"status": "ok", "review": review}
+    # Collectez plus d'avis clients (Insights): a SATISFIED customer is invited
+    # to say so publicly, on the shop's Google profile. An unhappy one is not —
+    # the shop hears from them privately, here, and that is the point.
+    google_review_url = None
+    try:
+        from features.insights_page import google_invite_for
+        google_review_url = google_invite_for(review.get("tenant_id"), review.get("rating"))
+    except Exception as _e:
+        print(f"review: google invite lookup failed (non-fatal): {_e}")
+    return {"status": "ok", "review": review, "google_review_url": google_review_url}
 
 
 def _compute_review_kpis(query: Dict[str, Any]) -> Dict[str, Any]:
@@ -9571,6 +9951,14 @@ def list_owner_reviews(
     limit: int = Query(100),
 ):
     """List raw reviews with filters for a "manage reviews" view."""
+    # Unwrap the Query defaults. FastAPI substitutes real values when it calls
+    # this, but anything calling it directly — a test, another module — would
+    # otherwise receive Query objects, and `min_rating is not None` would be
+    # true for a filter nobody asked for.
+    branch_id, sentiment, topic = _plain(branch_id), _plain(sentiment), _plain(topic)
+    min_rating, max_rating = _plain(min_rating), _plain(max_rating)
+    limit = _plain(limit) or 100
+
     q = {"tenant_id": token_data.tenant_id}
     if branch_id: q["branch_id"] = branch_id
     if sentiment: q["sentiment"] = sentiment
@@ -9578,7 +9966,7 @@ def list_owner_reviews(
     if min_rating is not None: q.setdefault("rating", {})["$gte"] = int(min_rating)
     if max_rating is not None: q.setdefault("rating", {})["$lte"] = int(max_rating)
     rows = list(
-        db.reviews.find(q).sort("created_at", -1).limit(max(1, min(limit, 500)))
+        db.reviews.find(q).sort("created_at", -1).limit(max(1, min(int(limit), 500)))
     )
     for r in rows:
         r.pop("_id", None)
@@ -9641,7 +10029,7 @@ class RedeemRewardRequest(BaseModel):
 @app.post("/api/owner/rewards/redeem")
 def redeem_reward(
     req: RedeemRewardRequest,
-    token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"])),
 ):
     """Record that a customer cashed in their reward.
 
@@ -9699,18 +10087,32 @@ def redeem_reward(
     }
     db.rewards_redeemed.insert_one(reward)
 
-    # NO LONGER DECREMENT VISITS. Mark where in the lifetime visit count
-    # this redemption happened, so stamps can be derived as
-    # `visits - visits_at_last_redemption` going forward. Tier stays
-    # intact because it's computed from the (untouched) visits field.
+    # A banked reward is claimed first: the customer completed a card earlier
+    # and the counter already rolled over, so the fresh card's stamps must
+    # survive this redemption.
+    banked = db.rewards_earned.find_one({"customer_id": cust["id"], "status": "pending"},
+                                        sort=[("earned_at", 1)])
+    if banked:
+        db.rewards_earned.update_one({"id": banked["id"]}, {"$set": {
+            "status": "redeemed", "redeemed_at": reward["redeemed_at"],
+            "staff_email": getattr(token_data, "email", None),
+        }})
+
+    # NO LONGER DECREMENT VISITS. Move the cycle marker forward by exactly one
+    # full card (not to the current visit count) so a customer at 13 visits on
+    # a 10-visit card keeps the 3 stamps they have already earned.
+    last_red = int(cust.get("visits_at_last_redemption") or 0)
+    new_marker = last_red if banked else min(current_visits, last_red + threshold)
     db.customers.update_one(
         {"id": cust["id"]},
         {"$inc": {"rewards_redeemed_count": 1},
          "$set": {
              "last_reward_redeemed_at": reward["redeemed_at"],
-             "visits_at_last_redemption": current_visits,
+             "visits_at_last_redemption": new_marker,
+             "updated_at": datetime.now(timezone.utc),
          }},
     )
+    refresh_wallet_pass(cust["id"])          # the meter resets — show it now
     reward.pop("_id", None)
     return reward
 
@@ -9927,7 +10329,7 @@ class SavedSegmentRequest(BaseModel):
 
 
 @app.get("/api/owner/segments")
-def list_saved_segments(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def list_saved_segments(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))):
     rows = list(db.saved_segments.find({"tenant_id": token_data.tenant_id}).sort("created_at", -1))
     for r in rows:
         r.pop("_id", None)
@@ -9937,7 +10339,9 @@ def list_saved_segments(token_data: TokenData = Depends(require_role(["business_
 @app.post("/api/owner/segments")
 def create_saved_segment(
     req: SavedSegmentRequest,
-    token_data: TokenData = Depends(require_role(["business_owner"])),
+    # Saved filters (no data in them): every account of the Clients page may
+    # keep its own; the owner may remove any, others only their own.
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True)),
 ):
     doc = {
         "id": str(uuid.uuid4()),
@@ -9947,6 +10351,7 @@ def create_saved_segment(
         "filters": req.filters or {},
         "segment": req.segment or None,
         "created_at": datetime.now(timezone.utc),
+        "created_by": token_data.email,
     }
     db.saved_segments.insert_one(doc)
     doc.pop("_id", None)
@@ -9956,9 +10361,12 @@ def create_saved_segment(
 @app.delete("/api/owner/segments/{segment_id}")
 def delete_saved_segment(
     segment_id: str,
-    token_data: TokenData = Depends(require_role(["business_owner"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True)),
 ):
-    res = db.saved_segments.delete_one({"id": segment_id, "tenant_id": token_data.tenant_id})
+    q = {"id": segment_id, "tenant_id": token_data.tenant_id}
+    if token_data.role != "business_owner":
+        q["created_by"] = token_data.email
+    res = db.saved_segments.delete_one(q)
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Segment not found")
     return {"status": "ok"}
@@ -10556,6 +10964,34 @@ def run_daily_triggers(request: Request):
         else:
             db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
 
+    # Push Wallet scenarios — the eight automations fire from here, once a day.
+    # Wrapped: a scenario that blows up must not stop the rest of the cron.
+    push_wallet_summary = {"tenants": 0, "sent": 0}
+    try:
+        from features.push_wallet import run_all_due
+        push_wallet_summary = run_all_due()
+    except Exception as _e:
+        print(f"push wallet runner failed (non-fatal): {_e}")
+
+    # FidClic IA Autopilot — prepares (never sends) the week's campaign steps
+    # for the shops that switched it on. Sending waits for the merchant's OK.
+    copilot_summary = {"tenants": 0, "prepared": 0}
+    try:
+        from features.copilot import run_autopilot as _run_autopilot
+        copilot_summary = _run_autopilot(now)
+    except Exception as _e:
+        print(f"copilot autopilot runner failed (non-fatal): {_e}")
+
+    # Campagnes planifiées — the composer's "Planifier pour plus tard" lands
+    # here. Wrapped for the same reason: one tenant's send must not stop the
+    # cron for everybody else.
+    campagnes_summary = {"sent": 0, "recipients": 0}
+    try:
+        from features.campaigns_page import run_due as _run_due_campaigns
+        campagnes_summary = _run_due_campaigns(now)
+    except Exception as _e:
+        print(f"scheduled campaigns runner failed (non-fatal): {_e}")
+
     return {
         "status": "ok",
         "ran_at": now.isoformat(),
@@ -10564,6 +11000,9 @@ def run_daily_triggers(request: Request):
         "almost_there_prepared": almost_there_sent,
         "scheduled_sent": scheduled_sent,
         "tier_up_emitted": tier_up_emitted_count,
+        "push_wallet": push_wallet_summary,
+        "campagnes": campagnes_summary,
+        "copilot": copilot_summary,
         "tenants_processed": len(tenants),
     }
 

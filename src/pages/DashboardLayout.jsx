@@ -2,18 +2,19 @@ import React from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import NotificationBell from '../components/NotificationBell';
-import BranchPillsBanner from '../components/BranchPillsBanner';
+import EstablishmentSwitcher from '../components/EstablishmentSwitcher';
+import { markPageOpened } from '../lib/chartAnimation';
+import { useBranch } from '../contexts/BranchContext';
 import BillingBanner from '../components/BillingBanner';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
 import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
-  Database, BrainCircuit, Megaphone, MapPin, Sparkles, CreditCard, Shield, History, ChevronDown,
-  Building2, Menu, LifeBuoy
+  Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
+  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
-import SupportModal from '../components/SupportModal';
 
 /* =====================================================================
    DashboardLayout — the shell used by every authenticated page.
@@ -32,139 +33,15 @@ const isNavActive = (currentPath, target) => {
   return currentPath === target || currentPath.startsWith(target + '/');
 };
 
-/* ─── Expandable sidebar Settings entry ───────────────────────────────
- * Click "Settings" → expand a dropdown of section anchors. Picking any
- * item navigates straight to /dashboard/settings#settings-{anchor},
- * which the Settings page scroll-aligns automatically.
- *
- * Clicking the parent again collapses the submenu. Auto-opens when the
- * user is already on /dashboard/settings.
- * ─────────────────────────────────────────────────────────────────── */
-// Translation keys, resolved inside the component via useTranslation.
-const SETTINGS_SECTIONS = [
-  { anchor: 'settings-profile',      i18nKey: 'settings.section_profile' },
-  { anchor: 'settings-join',         i18nKey: 'settings.section_join_link' },
-  { anchor: 'settings-geo',          i18nKey: 'settings.section_geo' },
-  { anchor: 'settings-status',       i18nKey: 'settings.section_status' },
-  { anchor: 'settings-dayparts',     i18nKey: 'settings.section_dayparts' },
-  { anchor: 'settings-hours',        i18nKey: 'settings.section_hours' },
-  { anchor: 'settings-tiers',        i18nKey: 'settings.section_tiers' },
-  { anchor: 'settings-welcome',      i18nKey: 'settings.section_welcome' },
-  { anchor: 'settings-auto-pending', i18nKey: 'settings.section_auto_pending' },
-  { anchor: 'settings-auto',         i18nKey: 'settings.section_auto' },
-  { anchor: 'settings-language',     i18nKey: 'settings.section_language' },
-  { anchor: 'settings-catalog',      i18nKey: 'settings.section_catalog' },
-  { anchor: 'settings-points',       i18nKey: 'settings.section_points' },
-  { anchor: 'settings-team',         i18nKey: 'settings.section_team' },
-  { anchor: 'settings-cleanup',      i18nKey: 'settings.section_cleanup' },
-];
 
-const SettingsNavLink = ({ icon: Icon, currentPath, role, collapsed }) => {
-  const { t } = useTranslation();
-  const active = isNavActive(currentPath, '/dashboard/settings');
-  const theme = themeForRole(role);
-  // The user's manual override (null = follow route default). It resets to
-  // null every time the route changes, so:
-  //   • Navigate to Analytics / Insights / any non-settings page → override
-  //     clears, `open` falls back to `active === false` → dropdown collapses.
-  //   • Navigate to /dashboard/settings → override clears, `open` falls back
-  //     to `active === true` → dropdown auto-expands.
-  //   • While on settings, click the toggle → override drives `open`.
-  // This is intentionally a derived value (not synced state via useEffect)
-  // so it can never get out of sync with the route.
-  const [manualOverride, setManualOverride] = React.useState(null);
-  React.useEffect(() => { setManualOverride(null); }, [currentPath]);
-  const open = manualOverride !== null ? manualOverride : active;
-  const setOpen = (next) => {
-    const nextVal = typeof next === 'function' ? next(open) : next;
-    setManualOverride(nextVal);
-  };
-
-  // When the sidebar is collapsed, Settings becomes a simple icon link —
-  // the inline submenu has no room. Clicking jumps straight to the settings page.
-  if (collapsed) {
-    return (
-      <Link
-        to="/dashboard/settings"
-        title={t('nav.settings')}
-        className={`flc-nav ${active ? 'on' : ''} relative group flex items-center justify-center px-2 py-2 rounded-lg text-[13.5px] transition-all`}
-      >
-        <span
-          className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center"
-          style={{ color: 'inherit' }}
-        >
-          <Icon className="w-[18px] h-[18px]" />
-        </span>
-      </Link>
-    );
-  }
-
-  const toggle = (e) => {
-    // A bare click on the row toggles the dropdown only — does NOT navigate.
-    // The user can still hit the small "↗" pill to jump to the top of the page.
-    e.preventDefault();
-    setOpen((v) => !v);
-  };
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={toggle}
-        className={`flc-nav ${active ? 'on' : ''} w-full relative group flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13.5px] transition-all`}
-        style={{ fontWeight: active ? 600 : 450 }}
-      >
-        <span
-          className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center transition-colors"
-          style={{ background: 'transparent', color: 'inherit' }}
-        >
-          <Icon className="w-[18px] h-[18px]" />
-        </span>
-        <span className="truncate flex-1 text-left">{t('nav.settings')}</span>
-        <span
-          aria-hidden="true"
-          className="transition-transform shrink-0"
-          style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
-        >
-          <ChevronDown size={14} />
-        </span>
-      </button>
-
-      {open && (
-        <div className="ml-9 mt-1 mb-2 pl-2 space-y-0.5"
-             style={{ borderLeft: `1.5px solid ${theme.from}55` }}>
-          {/* Top-level link to the bare settings page */}
-          <Link
-            to="/dashboard/settings"
-            className="block px-2.5 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-widest transition-colors hover:bg-white/70"
-            style={{ color: theme.from }}
-          >
-            {t('nav.open_settings_page')}
-          </Link>
-          {SETTINGS_SECTIONS.map((s) => (
-            <Link
-              key={s.anchor}
-              to={`/dashboard/settings#${s.anchor}`}
-              className="block px-2.5 py-1.5 rounded-md text-[12px] font-medium transition-colors hover:bg-white/70"
-              style={{ color: C.inkSoft }}
-            >
-              {t(s.i18nKey)}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
-const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge }) => {
-  const active = isNavActive(currentPath, to);
+const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, alsoActive = [] }) => {
+  const active = isNavActive(currentPath, to) || alsoActive.some((p) => isNavActive(currentPath, p));
   const theme = themeForRole(role);
   return (
     <Link
       to={to}
       title={collapsed ? label : undefined}
-      className={`flc-nav ${active ? 'on' : ''} relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-2 rounded-xl text-[13.5px] transition-all`}
+      className={`flc-nav ${active ? 'on' : ''} relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-[7px] rounded-xl text-[13.5px] transition-all`}
       style={{ fontWeight: active ? 600 : 450 }}
     >
       <span
@@ -178,8 +55,7 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge })
           <span className="truncate flex-1">{label}</span>
           {badge && (
             <span
-              className="text-[9px] uppercase tracking-[0.12em] px-1.5 py-0.5 rounded font-bold shrink-0"
-              style={{ background: 'color-mix(in srgb, var(--flc-accent-2, #E8703A) 22%, var(--flc-card, #FFFFFF))', color: 'var(--flc-accent-deep, #9C4427)', letterSpacing: '0.08em' }}
+              className="text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 bg-[#2F6BFF] text-white"
             >
               {badge}
             </span>
@@ -200,7 +76,7 @@ const SignOutNavItem = ({ onClick, collapsed }) => {
       type="button"
       onClick={onClick}
       title={collapsed ? t('nav.sign_out') : undefined}
-      className={`relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-2 rounded-lg text-[13.5px] transition-all w-full text-left`}
+      className={`relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-[7px] rounded-lg text-[13.5px] transition-all w-full text-left`}
       style={{ color: 'var(--ink-mute)', background: 'transparent', fontWeight: 400 }}
       onMouseOver={(e) => {
         e.currentTarget.style.background = 'color-mix(in srgb, var(--flc-accent, #C73E2C) 10%, transparent)';
@@ -221,35 +97,6 @@ const SignOutNavItem = ({ onClick, collapsed }) => {
     </button>
   );
 };
-
-// Support nav button — same visual treatment as NavLink, but opens
-// the SupportModal instead of navigating. Lives next to Sign-out so
-// businesses can reach the support inbox from every page.
-const SupportNavItem = ({ onClick, collapsed }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    title={collapsed ? 'Support' : undefined}
-    className={`relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-2 rounded-lg text-[13.5px] transition-all w-full text-left`}
-    style={{ color: 'var(--ink-mute)', background: 'transparent', fontWeight: 400 }}
-    onMouseOver={(e) => {
-      e.currentTarget.style.background = 'color-mix(in srgb, var(--flc-accent, #C73E2C) 8%, transparent)';
-      e.currentTarget.style.color = 'var(--flc-accent, #C73E2C)';
-    }}
-    onMouseOut={(e) => {
-      e.currentTarget.style.background = 'transparent';
-      e.currentTarget.style.color = 'var(--ink-mute)';
-    }}
-  >
-    <span
-      className="w-8 h-8 shrink-0 rounded-lg flex items-center justify-center transition-colors"
-      style={{ color: 'inherit', border: '1px solid transparent' }}
-    >
-      <LifeBuoy className="w-[18px] h-[18px]" />
-    </span>
-    {!collapsed && <span className="truncate">Support</span>}
-  </button>
-);
 
 /* ────────────────────────────────────────────────────────────────────────
  * UserMenu — clickable avatar in the top toolbar.
@@ -284,6 +131,7 @@ function UserMenu({ user, theme, role, onLogout }) {
   const initial = (user?.email || '?').charAt(0).toUpperCase();
   const roleLabel =
     role === 'business_owner' ? t('nav.business_owner') :
+    role === 'administrateur' ? 'Administrateur' :
     role === 'manager' ? t('nav.manager') :
     role === 'staff' ? t('nav.staff') :
     role === 'super_admin' ? t('nav.admin') : t('nav.user');
@@ -341,7 +189,7 @@ function UserMenu({ user, theme, role, onLogout }) {
             </div>
           </div>
           <Link
-            to="/dashboard/settings"
+            to="/dashboard/parametres"
             onClick={() => setOpen(false)}
             className="flex items-center gap-2 px-4 py-2.5 text-[13px] hover:bg-[#FAFAF8] transition-colors"
             style={{ color: 'var(--ink)' }}
@@ -370,23 +218,17 @@ const DashboardLayout = () => {
   // inline styles flip too.
   // Dark mode shipped with P3/P4: every dashboard page passed the
   // dual-theme probe (no bright surfaces left under .flc-nuit).
-  const FLC_DARK_READY = true;
-  const [nuit, setNuit] = React.useState(() => {
-    if (!FLC_DARK_READY) return false;
-    try { return localStorage.getItem('flc-theme') === 'nuit'; } catch { return false; }
-  });
-  const flipTheme = () => setNuit((v) => {
-    try { localStorage.setItem('flc-theme', v ? 'jour' : 'nuit'); } catch { /* ignore */ }
-    return !v;
-  });
+  // The day/night switch lived in the top bar and went with it when the bar was
+  // rebuilt to the approved design. Rather than leave anyone who had chosen
+  // dark with no way back out, the stored preference is ignored and the light
+  // skin — the one the design is drawn in — is the only one served. The state
+  // stays so a switch can be put back wherever it belongs, in one line.
+  const nuit = false;
 
   const { user, logout } = useAuth();
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  // Support modal — opened from any role's sidebar; mounted once at
-  // the layout root so it overlays every dashboard page.
-  const [supportOpen, setSupportOpen] = React.useState(false);
   // Global search — smart routing.
   //
   // The owner expects: "card" → Card Designer, "settings" → Settings,
@@ -404,16 +246,17 @@ const DashboardLayout = () => {
   const ROUTE_SYNONYMS = React.useMemo(() => ([
     { route: '/dashboard',                              words: ['dashboard', 'tableau de bord', 'tableau', 'accueil', 'home', 'overview', 'vue d’ensemble', 'welcome'] },
     { route: '/dashboard/analytics',                    words: ['analytics', 'analyses', 'analyse', 'kpi', 'kpis', 'stats', 'statistiques', 'rapport', 'reports', 'metrics', 'metric', 'métriques'] },
-    { route: '/dashboard/settings#settings-status',     words: ['customer status', 'statut client', 'segment', 'segments', 'statuts'] },
+    { route: '/dashboard/parametres/regles-clients',     words: ['customer status', 'statut client', 'segment', 'segments', 'statuts'] },
+    { route: '/dashboard/catalogue',                    words: ['catalogue', 'catalog', 'produits', 'produit', 'products', 'menu', 'carte des produits', 'prix'] },
     { route: '/dashboard/insights',                     words: ['insights', 'insight', 'reco', 'recommendations', 'recommandations', 'suggestion', 'suggestions', 'ai', 'ia'] },
     { route: '/dashboard/map',                          words: ['map', 'carte (geo)', 'geographie', 'geography', 'géographie', 'localisation', 'lieux'] },
     { route: '/dashboard/card-designer',                words: ['card designer', 'card', 'carte', 'carte de fidélité', 'loyalty card', 'design', 'pass', 'wallet', 'walletpass'] },
     { route: '/dashboard/campaigns',                    words: ['campaigns', 'campaign', 'campagnes', 'campagne', 'sms', 'push', 'message', 'messages', 'notif', 'notifications'] },
-    { route: '/dashboard/ai-assistant',                 words: ['ai assistant', 'assistant', 'chatbot', 'chat', 'assistant ia', 'copilot'] },
+    { route: '/dashboard/ai-assistant',                 words: ['fidclic ia', 'fidclic ai', 'copilote', 'copilot', 'ai assistant', 'assistant', 'chatbot', 'chat', 'assistant ia'] },
     { route: '/dashboard/history',                      words: ['history', 'historique', 'logs', 'journal', 'activity log', 'audit'] },
     { route: '/dashboard/scan',                         words: ['scan', 'scanner', 'qr', 'qr code', 'visit', 'visite', 'check-in', 'checkin'] },
     { route: '/dashboard/customers',                    words: ['customers', 'clients', 'customer', 'client', 'liste clients'] },
-    { route: '/dashboard/settings',                     words: ['settings', 'parametres', 'paramètres', 'reglages', 'réglages', 'config', 'configuration', 'preferences', 'préférences', 'compte', 'account', 'profile', 'profil', 'billing', 'facturation', 'plan', 'equipe', 'équipe', 'team', 'staff', 'utilisateurs', 'users'] },
+    { route: '/dashboard/parametres',                   words: ['settings', 'parametres', 'paramètres', 'reglages', 'réglages', 'config', 'configuration', 'preferences', 'préférences', 'compte', 'account', 'profile', 'profil', 'billing', 'facturation', 'plan', 'equipe', 'équipe', 'team', 'staff', 'utilisateurs', 'users'] },
   ]), []);
 
   const submitSearch = (e) => {
@@ -449,7 +292,17 @@ const DashboardLayout = () => {
     navigate(`/dashboard/customers?q=${encodeURIComponent(raw)}`);
   };
   const currentPath = location.pathname;
+  // Charts on the page that is opening may play their entrance animation;
+  // after that a resize (or a full-page screenshot) draws them finished.
+  // Marked during render, before the page's charts render.
+  const markedPath = React.useRef(null);
+  if (markedPath.current !== currentPath) {
+    markedPath.current = currentPath;
+    markPageOpened();
+  }
   const role = user?.role || 'default';
+  const partialScope = ['administrateur', 'manager'].includes(role) && user?.scope === 'partial';
+  const { branchId } = useBranch();
   const theme = themeForRole(role);
 
   // Collapsed-sidebar toggle (persisted across reloads). When true the
@@ -471,7 +324,8 @@ const DashboardLayout = () => {
   // why isn't this scan working" tenant-mismatch confusion.
   const [tenantInfo, setTenantInfo] = React.useState(null);
   React.useEffect(() => {
-    if (!user) return;
+    // A platform admin has no shop of their own — the call would only 403.
+    if (!user || user.role === 'super_admin') return undefined;
     let alive = true;
     ownerAPI.getTenant?.()
       .then((r) => { if (alive) setTenantInfo(r.data || null); })
@@ -502,9 +356,10 @@ const DashboardLayout = () => {
           alignSelf: 'flex-start',
         }}
       >
-        {/* Collapse toggle — three-line hamburger pinned to the right edge.
-            One symbol for both states; the colour/background flips so the
-            user still gets feedback about open vs collapsed. */}
+        {/* Collapse toggle — pinned to the right edge, same button in both
+            states. The arrow points the way it will move the rail, so the
+            collapsed rail has a visible way back out; a single hamburger in
+            both states never said which. */}
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
@@ -513,114 +368,108 @@ const DashboardLayout = () => {
           title={collapsed ? t('nav.expand_sidebar') : t('nav.collapse_sidebar')}
           className="absolute -right-3 top-6 z-20 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:scale-110"
           style={{
-            background: collapsed ? 'var(--flc-card, #FFFFFF)' : 'var(--flc-ink, #171412)',
-            border: `1px solid ${collapsed ? C.hairline : 'var(--flc-ink, #171412)'}`,
-            boxShadow: '0 2px 6px rgba(28,25,23,0.10)',
-            color: collapsed ? C.inkSoft : 'var(--flc-paper, #FFFFFF)',
+            // White in both states — a black puck on a white rail read as a
+            // different control depending on which way the arrow pointed.
+            background: '#FFFFFF',
+            border: '1px solid #E6EEFB',
+            boxShadow: '0 2px 8px rgba(11,28,63,0.12)',
+            color: '#334155',
           }}
         >
-          <Menu size={14} strokeWidth={2.25} />
+          {collapsed ? <ChevronsRight size={15} strokeWidth={2.25} />
+                    : <ChevronsLeft size={15} strokeWidth={2.25} />}
         </button>
 
-        {/* Brand mark + role badge */}
-        <div className={collapsed ? 'p-3 pb-2' : 'p-5 pb-3'}>
+        {/* Brand mark, then the shop whose figures are on screen. The account
+            badge that used to sit here became the establishment switcher — one
+            place to say which shop you are looking at. */}
+        <div className={collapsed ? 'px-3 pt-3 pb-1' : 'px-4 pt-4 pb-1'}>
           <Link to="/" className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5'}`}>
             <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shadow-sm shrink-0"
-              style={{ background: `linear-gradient(135deg, ${theme.from} 0%, ${theme.to} 100%)`, fontWeight: 500 }}
-              title={collapsed ? `FidClic · ${theme.label}` : undefined}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[16px] font-bold text-white"
+              style={{ background: '#2F6BFF', boxShadow: '0 8px 18px -10px rgba(47,107,255,.9)' }}
+              title={collapsed ? 'FidClic' : undefined}
             >
               F
             </div>
             {!collapsed && (
-              <div className="min-w-0">
-                <p
-                  className="text-[15px] leading-none"
-                  style={{ color: 'var(--ink)', fontWeight: 500, letterSpacing: '-0.015em' }}
-                >
-                  FidClic
-                </p>
-                <p
-                  className="text-[9px] uppercase tracking-[0.16em] mt-1"
-                  style={{ color: 'var(--ink-mute)', fontWeight: 500 }}
-                >
-                  {theme.label}
-                </p>
-              </div>
+              <span className="text-[19px] font-bold leading-none tracking-[-0.02em]" style={{ color: '#0B1C3F' }}>
+                FidClic
+              </span>
             )}
           </Link>
-
-          {/* Tenant identity badge — only when expanded */}
-          {!collapsed && tenantInfo && (
-            <div
-              className="mt-3 px-2.5 py-2 rounded-lg"
-              style={{ background: 'color-mix(in srgb, var(--flc-card, #FFFFFF) 55%, transparent)', border: '1px solid var(--hairline)' }}
-              title={`${t('nav.account')} : ${tenantInfo.name || t('nav.account_no_name')} · slug: ${tenantInfo.slug || '—'}`}
-            >
-              <p
-                className="text-[9px] uppercase tracking-[0.16em]"
-                style={{ color: 'var(--ink-mute)', fontWeight: 500 }}
-              >
-                {t('nav.account')}
-              </p>
-              <p
-                className="text-[13px] truncate mt-0.5"
-                style={{ color: 'var(--ink)', fontWeight: 500, letterSpacing: '-0.01em' }}
-              >
-                {tenantInfo.name || t('nav.account_no_name')}
-              </p>
-              {tenantInfo.slug && (
-                <p
-                  className="text-[10px] font-mono truncate mt-0.5"
-                  style={{ color: 'var(--ink-mute)' }}
-                >
-                  /join/{tenantInfo.slug}
-                </p>
-              )}
-            </div>
-          )}
         </div>
+        {/* The owner picks any establishment, an administrateur one of its
+            own; a manager or an employé sees its establishment's name. */}
+        {role !== 'super_admin' && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
         </div>
 
-        <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} py-4 space-y-0.5 overflow-y-auto`}>
+        <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} py-2 space-y-[1px] overflow-y-auto`}>
           {role === 'business_owner' && (
             <>
+              {/* Order follows the approved sidebar mockup. Every row points at
+                  a page that exists. */}
               <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/settings#settings-status" icon={Shield} label={t('nav.customer_status')}  currentPath={currentPath} role={role} collapsed={collapsed} badge={t('nav.new_badge')} />
-              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.customer_map')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              {/* Scan Visit is intentionally NOT in the owner sidebar — that page
-                  is the staff workspace. Owners can reach it via direct URL. */}
-              <NavLink to="/dashboard/card-designer" icon={CreditCard}   label={t('nav.card_designer')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/ai-assistant"  icon={BrainCircuit} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/catalogue"     icon={ShoppingBag}  label={t('nav.catalogue')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} badge="Nouveau" />
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
-              {/* Settings is expandable — click → dropdown of section anchors */}
-              <SettingsNavLink icon={Settings2} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
+              {/* Paramètres is one page with tabs, like Analyses. The older
+                  all-in-one settings page stays reachable from its tabs. */}
+              <NavLink to="/dashboard/parametres" icon={Settings2} label={t('nav.settings')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/settings']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
-          {role === 'manager' && (
+          {role === 'manager' && !partialScope && (
             <>
               <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/ai-assistant" icon={Sparkle} label={t('nav.ai_assistant')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.customer_map')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/campaigns" icon={Megaphone} label={t('nav.campaigns')}    currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation" icon={PieChart} label={t('nav.segmentation')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
+              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
+              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+            </>
+          )}
+          {/* An administrateur — and a manager covering only some of the
+              establishments — works from the team page until the data pages
+              filter by establishment. */}
+          {(role === 'administrateur' || (role === 'manager' && partialScope)) && (
+            <>
+              <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle}      label={t('nav.ai_assistant')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/catalogue"     icon={ShoppingBag}  label={t('nav.catalogue')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}          currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
           {role === 'staff' && (
             <>
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -634,34 +483,39 @@ const DashboardLayout = () => {
               <NavLink to="/admin/card-designer" icon={Palette}      label="Card Designer"      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campaigns"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/ai"            icon={BrainCircuit} label="AI Intelligence"    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SupportNavItem onClick={() => setSupportOpen(true)} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
         </nav>
 
-        {/* User chip — sign-out moved into the nav, directly below Settings */}
-        <div className={`${collapsed ? 'p-3' : 'p-4'} mt-auto`} style={{ borderTop: `1px solid ${C.hairline}` }}>
-          <div className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5 px-1'}`}>
-            <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0"
-              style={{ background: `linear-gradient(135deg, ${theme.from}, ${theme.to})` }}
-              title={collapsed ? (user?.email || '') : undefined}
-            >
-              {(user?.email || '?').slice(0, 1).toUpperCase()}
-            </div>
+        {/* Help — one row at the foot of the rail, in both states. The help
+            icon that used to sit in the top bar went with the bar, so this is
+            the single way in and it has to survive the collapsed rail. */}
+        <div className={`mt-auto ${collapsed ? 'flex justify-center px-2 pb-3' : 'px-3 pb-3'}`}>
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard/aide')}
+            title={collapsed ? t('nav.help') : undefined}
+            aria-label={t('nav.help')}
+            className={collapsed
+              ? 'flex h-9 w-9 items-center justify-center rounded-xl transition-colors'
+              : 'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors'}
+            style={{ background: '#EAF1FF', color: '#2F6BFF' }}
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: collapsed ? 'transparent' : '#2F6BFF', color: collapsed ? '#2F6BFF' : '#fff' }}>
+              <LifeBuoy size={collapsed ? 17 : 13} />
+            </span>
             {!collapsed && (
-              <div className="min-w-0">
-                <p className="text-xs font-semibold truncate" style={{ color: C.inkDeep }}>
-                  {user?.email || '—'}
-                </p>
-                <p className="text-[10px] uppercase tracking-widest font-bold" style={{ color: theme.from }}>
-                  {theme.label}
-                </p>
-              </div>
+              <>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: '#1D4ED8' }}>
+                  {t('nav.help')}
+                </span>
+              </>
             )}
-          </div>
+          </button>
         </div>
+
       </aside>
 
       <main className="relative z-10 flex-1 overflow-auto">
@@ -677,7 +531,7 @@ const DashboardLayout = () => {
             slot hidden so staff don't see owner-only alerts. */}
         {role === 'business_owner' && (
           <div
-            className="sticky top-0 z-30 flex items-center gap-3 px-6 lg:px-8 py-2.5 backdrop-blur"
+            className="sticky top-0 z-30 relative flex items-center justify-center px-6 lg:px-8 py-2.5 backdrop-blur"
             style={{
               background: 'color-mix(in srgb, var(--flc-card, #FFFFFF) 82%, transparent)',
               borderBottom: '1px solid var(--hairline, #EFEDE9)',
@@ -689,7 +543,7 @@ const DashboardLayout = () => {
                 text search. */}
             <form
               onSubmit={submitSearch}
-              className="flex items-center gap-1.5 rounded-full px-3 py-1 shrink-0 w-[200px] lg:w-[280px]"
+              className="flex items-center gap-2 rounded-full px-3.5 py-2 shrink-0 w-[260px] lg:w-[420px] xl:w-[520px]"
               style={{ background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--hairline, #EFEDE9)' }}
             >
               <button type="submit" aria-label={t('common.search')} className="shrink-0" style={{ lineHeight: 0 }}>
@@ -704,7 +558,7 @@ const DashboardLayout = () => {
                 onChange={(e) => setSearchQ(e.target.value)}
                 placeholder={t('nav.search_placeholder')}
                 aria-label={t('common.search')}
-                className="flex-1 min-w-0 bg-transparent outline-none text-[12.5px]"
+                className="flex-1 min-w-0 bg-transparent outline-none text-[13px]"
                 style={{ color: 'var(--ink, #171412)', fontWeight: 400 }}
               />
               {searchQ && (
@@ -726,64 +580,38 @@ const DashboardLayout = () => {
                 }}
                 title={t('nav.search_enter_hint')}
               >
-                ↵
+                ⌘ K
               </kbd>
             </form>
 
-            {/* Branch banner inline — fills the middle */}
-            <div className="flex-1 min-w-0 px-2">
-              <BranchPillsBanner compact />
+            {/* The bar carries the search, the bell and the account — nothing
+                else. The branch pills moved into the sidebar's establishment
+                switcher, where picking a shop belongs; help has its own row at
+                the foot of the sidebar. */}
+            <div className="absolute right-6 lg:right-8 flex items-center gap-3">
+              <NotificationBell platformAdmin={role === 'super_admin'} />
+
+              {/* User menu avatar */}
+              <UserMenu user={user} theme={theme} role={role} onLogout={logout} />
             </div>
-
-            {/* Theme: Eclat / Minuit Dore */}
-            {FLC_DARK_READY && (
-            <button type="button" onClick={flipTheme} aria-label="Mode jour / nuit"
-              className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ border: '1px solid var(--flc-line,#ECE8E2)', color: 'var(--flc-ink3,#524A40)' }}>
-              {nuit ? '\u2600' : '\u263E'}
-            </button>
-            )}
-
-            {/* Bell */}
-            <div className="shrink-0">
-              <NotificationBell />
-            </div>
-
-            {/* Help icon */}
-            <button
-              type="button"
-              aria-label={t('nav.help')}
-              title={t('nav.help')}
-              className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-colors"
-              style={{ background: 'transparent', border: '1px solid var(--hairline, #EFEDE9)', color: 'var(--ink-mute, #8D857D)' }}
-              onMouseOver={(e) => { e.currentTarget.style.background = 'var(--flc-paper2, #F5F4F1)'; }}
-              onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-            </button>
-
-            {/* User menu avatar */}
-            <UserMenu user={user} theme={theme} role={role} onLogout={logout} />
           </div>
         )}
 
         <div className="px-6 py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto">
-          <Outlet />
+          {(partialScope || role === 'administrateur') && (
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
+              <span className="mt-0.5 font-bold">i</span>
+              <span>
+                Tableau de bord, analyses, clients, campagnes, segmentation et insights de vos établissements
+                sont disponibles. Les autres pages arrivent très bientôt — vous gérez aussi votre équipe et scannez les cartes.
+              </span>
+            </div>
+          )}
+          {/* A new establishment chosen under the logo: the page is rebuilt,
+              so it reads its data again for that establishment. */}
+          <Outlet key={branchId || 'all'} />
         </div>
       </main>
-
-      {/* Support modal — opened from any sidebar "Support" item, mounted
-          once here so it overlays every dashboard page consistently. */}
-      <SupportModal
-        open={supportOpen}
-        onClose={() => setSupportOpen(false)}
-        defaultEmail={user?.email || ''}
-        tenantSlug={user?.tenant_slug || ''}
-      />
     </div>
   );
 };

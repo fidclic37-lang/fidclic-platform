@@ -26,7 +26,7 @@
   },
   "nav": {
     "dashboard": "Tableau de bord",
-    "analytics": "Analytics",
+    "analytics": "Analyses",
     "customer_status": "Statut clients",
     "new_badge": "NOUVEAU",
     "insights": "Insights",
@@ -34,7 +34,7 @@
     "customer_map": "Carte des clients",
     "card_designer": "Card Designer",
     "campaigns": "Campagnes",
-    "ai_assistant": "Assistant IA",
+    "ai_assistant": "FidClic IA",
     "history": "Historique",
     "settings": "Paramètres",
     "scan_visit": "Enregistrer une visite",
@@ -51,9 +51,18 @@
     "search_enter_hint": "Entrée pour rechercher",
     "expand_sidebar": "Ouvrir la barre latérale",
     "collapse_sidebar": "Réduire la barre latérale",
-    "help": "Aide",
+    "help": "Besoin d'aide ?",
     "account_menu": "Menu du compte",
-    "account_no_name": "Sans nom"
+    "account_no_name": "Sans nom",
+    "loyalty_card": "Carte de fidélité",
+    "automations": "Automatisations",
+    "reviews": "Avis clients",
+    "geolocation": "Géolocalisation",
+    "catalogue": "Catalogue produits",
+    "team": "Équipe & accès",
+    "segmentation": "Segmentation",
+    "referral": "Parrainage",
+    "help_cta": "Contacter l'équipe"
   },
   "auth": {
     "login_title": "Connexion",
@@ -499,7 +508,12 @@
     "name_required": "Indiquez le nom à afficher sur la carte.",
     "slogan": "Slogan / Message (optionnel)",
     "slogan_placeholder": "Coupe • Barbe • Soin",
-    "finish": "Créer ma carte"
+    "finish": "Créer ma carte",
+    "banner": "Image de bannière",
+    "banner_hint": "Photo large (ratio 375 × 144)",
+    "banner_add": "Ajouter une bannière",
+    "banner_change": "Changer la bannière",
+    "banner_remove": "Retirer"
   },
   "done": {
     "title": "Votre carte {{name}} est créée !",

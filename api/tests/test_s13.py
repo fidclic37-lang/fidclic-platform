@@ -148,8 +148,18 @@ def test_s13(db, cab):
 
 
 if __name__ == "__main__":
-    db, cab = build()
-    test_s13(db, cab)
+    # The cron pass reaches modules that import server.py, which opens the
+    # MongoDB configured for the app. Like every other suite, keep that on the
+    # in-memory mongomock server so the test needs no database running.
+    os.environ.setdefault("DISABLE_SEED", "1")
+    with mongomock.patch(servers=(("localhost", 27017),)):
+        # Boot the app first: its feature loader initialises every module on
+        # its own database. build() then points the modules under test at this
+        # test's database — otherwise the cron's import would re-point them
+        # half-way through the run.
+        import server  # noqa: F401
+        db, cab = build()
+        test_s13(db, cab)
     print("\n" + "=" * 62)
     print(f"PASSED: {len(PASS)}   FAILED: {len(FAIL)}")
     if FAIL:

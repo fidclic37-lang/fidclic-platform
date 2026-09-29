@@ -106,6 +106,13 @@
             addManifest('/api/manifest/' + bc);
             note('manifest link injected → /api/manifest/' + bc);
             try {
+              // What this phone carried BEFORE we claim the card for it.
+              // Parrainage depends on this: a phone that has never carried
+              // this card is a stranger who just scanned somebody else's,
+              // and belongs on the signup form, not on their card. This
+              // script runs before React, so without the snapshot React
+              // would only ever see the card this very script just wrote.
+              window.__fidclicPrevCard = localStorage.getItem('fidelitour:last_card');
               localStorage.setItem('fidelitour:last_card', bc);
               note('wrote localStorage[fidelitour:last_card] = ' + bc);
             } catch (e) {

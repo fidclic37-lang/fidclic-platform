@@ -6,6 +6,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, AreaChart, Area, Legend,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { X, TrendingDown, Users, Euro, Store, MapPin, Award, Megaphone, Star, MessageSquare, ThumbsUp, ThumbsDown, TrendingUp, Activity } from 'lucide-react';
 import { PageHeader, C as C_PS } from '../components/PageShell';
 
@@ -200,7 +201,7 @@ const AdminAnalyticsPage = () => {
               <XAxis dataKey="date" stroke="#57534E" />
               <YAxis stroke="#57534E" />
               <Tooltip contentStyle={{ backgroundColor: '#F3EFE7', border: '1px solid #E7E5E4' }} />
-              <Line
+              <Line isAnimationActive={chartAnimation()}
                 type="monotone" dataKey="count" stroke="#B85C38" strokeWidth={2}
                 dot={{ fill: '#B85C38', r: 5, style: { cursor: 'pointer' } }}
                 activeDot={{
@@ -225,7 +226,7 @@ const AdminAnalyticsPage = () => {
         <ChartCard title="Businesses by Subscription Plan" hint="Click a slice to list businesses on that plan">
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
-              <Pie
+              <Pie isAnimationActive={chartAnimation()}
                 data={plans} cx="50%" cy="50%" outerRadius={110}
                 dataKey="value" labelLine={false}
                 label={({ name, value }) => `${name}: ${value}`}
@@ -252,7 +253,7 @@ const AdminAnalyticsPage = () => {
         <ChartCard title="Customer Tier Distribution" hint="Click a tier to rank businesses by customers in that tier">
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
-              <Pie
+              <Pie isAnimationActive={chartAnimation()}
                 data={tiers} cx="50%" cy="50%" outerRadius={110}
                 dataKey="value" labelLine={false}
                 label={({ name, value }) => `${name}: ${value}`}
@@ -280,7 +281,7 @@ const AdminAnalyticsPage = () => {
               <XAxis type="number" stroke="#57534E" />
               <YAxis type="category" dataKey="name" stroke="#57534E" width={110} />
               <Tooltip contentStyle={{ backgroundColor: '#F3EFE7', border: '1px solid #E7E5E4' }} />
-              <Bar
+              <Bar isAnimationActive={chartAnimation()}
                 dataKey="value"
                 radius={[0, 8, 8, 0]}
                 cursor="pointer"
@@ -308,7 +309,7 @@ const AdminAnalyticsPage = () => {
               <XAxis dataKey="name" stroke="#57534E" />
               <YAxis stroke="#57534E" />
               <Tooltip contentStyle={{ backgroundColor: '#F3EFE7', border: '1px solid #E7E5E4' }} formatter={(v) => `€${v.toLocaleString()}`} />
-              <Bar
+              <Bar isAnimationActive={chartAnimation()}
                 dataKey="revenue"
                 radius={[8, 8, 0, 0]}
                 cursor="pointer"
@@ -329,7 +330,7 @@ const AdminAnalyticsPage = () => {
         <ChartCard title="Geolocation Feature Adoption" hint="Click to see which businesses use GPS proximity">
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
-              <Pie
+              <Pie isAnimationActive={chartAnimation()}
                 data={gps} cx="50%" cy="50%" outerRadius={110}
                 dataKey="value" labelLine={false}
                 label={({ name, value }) => `${name}: ${value}`}

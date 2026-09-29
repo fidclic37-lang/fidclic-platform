@@ -199,13 +199,15 @@ export default function WalletCard({ customer, tenant, card = {}, compact = fals
         </div>
       )}
 
-      {/* code block — always on white, scanners come first */}
+      {/* code block — on the card's own colour, with its ink. The quiet zone
+          the white plate used to provide now comes from marginSize. */}
       {(showQr || showBarcode) && barcodeId && (
         <div style={S.codeBlock}>
           {showQr && (
             <QRCodeSVG
               value={barcodeId}
               size={compact ? 72 : 92}
+              marginSize={4}
               bgColor={t.codeBg}
               fgColor={t.codeInk}
               level="M"
@@ -299,7 +301,7 @@ function styles(t, compact) {
     offerText: { fontSize: 12.5, fontWeight: 600, color: t.ink },
     offerSub: { fontSize: 11, color: t.inkSoft },
     codeBlock: {
-      background: t.codeBg, borderRadius: 12, padding: 12,
+      background: 'transparent', borderRadius: 12, padding: 0,
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
     },
     barcodeWrap: { width: '100%', display: 'flex', justifyContent: 'center' },

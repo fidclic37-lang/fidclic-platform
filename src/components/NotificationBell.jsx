@@ -2,7 +2,8 @@
  * NotificationBell — header bell with unread count + dropdown.
  *
  * Pulls from the existing /api/owner/insights/alerts endpoint (smart alerts).
- * For multi-store franchises, alerts cover all stores by default.
+ * For multi-store franchises, alerts follow the establishment menu: the
+ * chosen establishment, or every establishment the account covers.
  *
  * "Unread" is tracked in localStorage by alert ID hash. When the user opens
  * the dropdown, all currently-shown alerts are marked read.
@@ -11,6 +12,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, AlertTriangle, TrendingDown, TrendingUp, Sparkles, X, Building2, Users, Send, Cake, ChevronRight } from 'lucide-react';
 import api, { ownerAPI } from '../lib/api';
+import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const STORAGE_KEY = 'ft_read_alerts_v1';
 
@@ -91,8 +94,10 @@ const resolveAlertActions = (alert) => {
   };
 };
 
-const NotificationBell = () => {
+const NotificationBell = ({ platformAdmin = false }) => {
   const navigate = useNavigate();
+  const { branchId } = useBranch();
+  const { user } = useAuth();
   const [alerts, setAlerts] = useState([]);
   const [readIds, setReadIds] = useState(loadReadIds);
   const [open, setOpen] = useState(false);
@@ -124,10 +129,12 @@ const NotificationBell = () => {
     load();
     const id = setInterval(load, 5 * 60 * 1000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [branchId]);
 
   // Account info — load once. Tenant name + branches for the dropdown header.
+  // A platform admin has no shop of their own: these would only answer 403.
   useEffect(() => {
+    if (platformAdmin) return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -136,11 +143,14 @@ const NotificationBell = () => {
       } catch (_e) { /* silent */ }
       try {
         const b = await ownerAPI.getBranches();
-        if (!cancelled) setStores(Array.isArray(b.data) ? b.data : []);
+        const all = Array.isArray(b.data) ? b.data : (b.data?.branches || []);
+        // An administrateur or a manager: its own establishments only.
+        const mine = Array.isArray(user?.branch_ids) && user?.role !== 'business_owner' ? user.branch_ids : null;
+        if (!cancelled) setStores(mine ? all.filter((x) => mine.includes(x.id)) : all);
       } catch (_e) { /* silent */ }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [platformAdmin, user?.role, user?.branch_ids]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Click-outside to close
   useEffect(() => {

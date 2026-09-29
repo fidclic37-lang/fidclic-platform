@@ -2093,3 +2093,155 @@ textarea::placeholder {
 .flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-orange .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-amber .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-yellow .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-coral .fd-kpi-value{background:linear-gradient(120deg,#FF7A59,#E0397A);-webkit-background-clip:text;background-clip:text;color:transparent!important}
 .flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-red .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-rose .fd-kpi-value{background:linear-gradient(120deg,#E23D5C,#B02468);-webkit-background-clip:text;background-clip:text;color:transparent!important}
 .flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-purple .fd-kpi-value,.flc:not(.flc-nuit) .av2-light-skin .fd-kpi.k-lilac .fd-kpi-value{background:linear-gradient(120deg,#E0397A,#8B3FC3);-webkit-background-clip:text;background-clip:text;color:transparent!important}
+
+/* ================================================================
+   Sidebar — FidClic blue/white (approved mockup)
+
+   The shell used to wear the Saint-Germain cream palette. This repaints
+   the rail only: white surface, blue active pill, grey rows. It is
+   deliberately scoped to the sidebar so every page keeps its own skin
+   until it is migrated in its turn.
+   ================================================================ */
+aside.fd-sidebar-host,
+.flc:not(.flc-nuit) aside.fd-sidebar-host {
+  background: #FFFFFF !important;
+  border-right: 1px solid #E6EEFB !important;
+  backdrop-filter: none !important;
+}
+aside.fd-sidebar-host .flc-nav {
+  color: #4A5A75;
+  font-weight: 500;
+}
+aside.fd-sidebar-host .flc-nav:hover {
+  color: #0B1C3F;
+  background: #F2F7FF;
+}
+/* The active row is a solid blue pill — the single strongest cue in the
+   rail, so the merchant always knows where they are. */
+aside.fd-sidebar-host .flc-nav.on,
+.flc:not(.flc-nuit) aside.fd-sidebar-host .flc-nav.on {
+  color: #FFFFFF !important;
+  background: #2F6BFF !important;
+  box-shadow: 0 10px 20px -12px rgba(47, 107, 255, .85) !important;
+}
+aside.fd-sidebar-host .flc-nav.on::before { display: none; }
+aside.fd-sidebar-host .flc-nav.on svg { color: #FFFFFF; }
+aside.fd-sidebar-host .flc-nav svg { color: #6B7A99; }
+aside.fd-sidebar-host .flc-nav:hover svg { color: #2F6BFF; }
+
+/* Everything else in the rail: brand block, tenant switcher, hairlines,
+   the support card and the sign-out row. */
+aside.fd-sidebar-host .fd-side-divider,
+aside.fd-sidebar-host .h-px { background: #E6EEFB !important; }
+aside.fd-sidebar-host [data-brand-name] { color: #0B1C3F; }
+
+/* The pages rebuilt to the blue/white mockups (Carte de fidélité, Besoin
+   d'aide) bring their own canvas: the blue-grey of the mockup rather than the
+   cream the older pages sit on. Scoped with :has so only those pages are
+   repainted — every other page keeps its skin. */
+main:has(.lc),
+main:has(.hlp),
+main:has(.hst),
+main:has(.geo),
+main:has(.pr),
+main:has(.aut),
+main:has(.an),
+main:has(.dh),
+main:has(.cl),
+main:has(.cg),
+main:has(.sg),
+main:has(.ig),
+main:has(.cp),
+main:has(.pm),
+main:has(.ct),
+main:has(.sc) { background: #F4F7FC !important; }
+/* The top bar belongs to the shell, so it is repainted only while one of these
+   pages is on screen — every other page keeps the bar it has today. */
+main:has(.lc) > div:first-child,
+main:has(.hlp) > div:first-child,
+main:has(.hst) > div:first-child,
+main:has(.geo) > div:first-child,
+main:has(.pr) > div:first-child,
+main:has(.aut) > div:first-child,
+main:has(.an) > div:first-child,
+main:has(.dh) > div:first-child,
+main:has(.cl) > div:first-child,
+main:has(.cg) > div:first-child,
+main:has(.sg) > div:first-child,
+main:has(.ig) > div:first-child,
+main:has(.cp) > div:first-child,
+main:has(.pm) > div:first-child,
+main:has(.ct) > div:first-child,
+main:has(.sc) > div:first-child {
+  background: #FFFFFF !important;
+  border-bottom: 1px solid #E6EEFB;
+  backdrop-filter: none !important;
+}
+main:has(.lc) > div:first-child *,
+main:has(.hlp) > div:first-child *,
+main:has(.hst) > div:first-child *,
+main:has(.geo) > div:first-child *,
+main:has(.pr) > div:first-child *,
+main:has(.aut) > div:first-child *,
+main:has(.an) > div:first-child *,
+main:has(.dh) > div:first-child *,
+main:has(.cl) > div:first-child *,
+main:has(.cg) > div:first-child *,
+main:has(.sg) > div:first-child *,
+main:has(.ig) > div:first-child *,
+main:has(.cp) > div:first-child *,
+main:has(.pm) > div:first-child *,
+main:has(.ct) > div:first-child *,
+main:has(.sc) > div:first-child * { color: #334155; }
+main:has(.lc) > div:first-child input,
+main:has(.hlp) > div:first-child input,
+main:has(.hst) > div:first-child input,
+main:has(.geo) > div:first-child input,
+main:has(.pr) > div:first-child input,
+main:has(.aut) > div:first-child input,
+main:has(.an) > div:first-child input,
+main:has(.dh) > div:first-child input,
+main:has(.cl) > div:first-child input,
+main:has(.cg) > div:first-child input,
+main:has(.sg) > div:first-child input,
+main:has(.ig) > div:first-child input,
+main:has(.cp) > div:first-child input,
+main:has(.pm) > div:first-child input,
+main:has(.ct) > div:first-child input,
+main:has(.sc) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
+.lc-wrap { padding: 18px 22px 0; max-width: 1600px; margin-inline: auto; }
+.lc { color: #0B1C3F; }
+.lc input[type="number"]::-webkit-outer-spin-button,
+.lc input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
+
+/* Historique — the table's own type scale. The shell's global input styling
+   would otherwise round and pad the native date pickers out of the filter row. */
+.hst input[type="date"] { font-variant-numeric: tabular-nums; }
+.hst table th:first-child, .hst table td:first-child { padding-left: 20px; }
+.hst table th:last-child,  .hst table td:last-child  { padding-right: 20px; }
+
+/* Géolocalisation — the labels drawn onto the Leaflet map. They are divIcons,
+   so they need real styling here rather than Tailwind classes. */
+.geo .leaflet-container { font: inherit; background: #EAF0F8; }
+.geo-pin {
+  display: inline-flex; align-items: center; gap: 5px;
+  transform: translate(-50%, -50%); white-space: nowrap;
+  background: #fff; color: #0B1C3F; border: 1px solid #E6EEFB;
+  border-radius: 8px; padding: 2px 7px; font-size: 11px; font-weight: 600;
+  box-shadow: 0 6px 16px -10px rgba(11,28,63,.7);
+}
+.geo-pin b { color: #2F6BFF; font-weight: 700; }
+.geo-shop {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  transform: translate(-50%, -50%); white-space: nowrap;
+}
+.geo-shop i {
+  width: 30px; height: 30px; border-radius: 999px; background: #2F6BFF;
+  border: 3px solid #fff; box-shadow: 0 8px 20px -8px rgba(47,107,255,.9);
+}
+.geo-shop b {
+  background: #fff; border-radius: 8px; padding: 2px 9px;
+  font-size: 12px; font-weight: 700; color: #0B1C3F;
+  box-shadow: 0 6px 16px -10px rgba(11,28,63,.7);
+}
+.geo-shop u { text-decoration: none; font-size: 13px; font-weight: 700; color: #1D4ED8; }

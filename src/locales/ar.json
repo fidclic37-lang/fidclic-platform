@@ -34,7 +34,7 @@
     "customer_map": "خريطة العملاء",
     "card_designer": "مصمم البطاقة",
     "campaigns": "الحملات",
-    "ai_assistant": "المساعد الذكي",
+    "ai_assistant": "FidClic IA",
     "history": "السجل",
     "settings": "الإعدادات",
     "scan_visit": "تسجيل زيارة",
@@ -51,9 +51,18 @@
     "search_enter_hint": "اضغط Enter للبحث",
     "expand_sidebar": "فتح الشريط الجانبي",
     "collapse_sidebar": "طي الشريط الجانبي",
-    "help": "مساعدة",
+    "help": "تحتاج مساعدة؟",
     "account_menu": "قائمة الحساب",
-    "account_no_name": "بدون اسم"
+    "account_no_name": "بدون اسم",
+    "loyalty_card": "بطاقة الولاء",
+    "automations": "الأتمتة",
+    "reviews": "آراء العملاء",
+    "geolocation": "تحديد الموقع",
+    "catalogue": "كتالوج المنتجات",
+    "team": "الفريق والصلاحيات",
+    "segmentation": "التقسيم",
+    "referral": "الإحالة",
+    "help_cta": "اتصل بالفريق"
   },
   "auth": {
     "login_title": "تسجيل الدخول",
@@ -499,7 +508,12 @@
     "name_required": "أدخل الاسم الذي سيظهر على البطاقة.",
     "slogan": "شعار / رسالة (اختياري)",
     "slogan_placeholder": "قص • لحية • عناية",
-    "finish": "إنشاء بطاقتي"
+    "finish": "إنشاء بطاقتي",
+    "banner": "صورة البانر",
+    "banner_hint": "صورة عريضة (نسبة 375 × 144)",
+    "banner_add": "إضافة بانر",
+    "banner_change": "تغيير البانر",
+    "banner_remove": "إزالة"
   },
   "done": {
     "title": "تم إنشاء بطاقة {{name}} !",

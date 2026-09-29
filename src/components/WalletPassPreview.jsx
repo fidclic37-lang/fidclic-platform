@@ -64,6 +64,9 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const showVisits = card.show_visits !== false;
   const showStamps = card.show_stamps !== false && threshold > 0;
   const showMeter = card.show_meter !== false;
+  // compose_strip lightens the scrim only on a pale card with no photo; over a
+  // banner it always darkens. Mirror that or the bar reads inverted.
+  const meterOnLight = !hasBannerImage(card) && isLight(card.surface_color);
   const offerText = card.offer_box_text || '';
   const showOffer = card.show_offer_box !== false && !!offerText;
 
@@ -71,6 +74,9 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const wantsBarcode = card.code_type === 'barcode'
     || (!card.code_type && card.show_qr === false && card.show_barcode !== false);
   const heroMode = card.hero_mode || (card.hero_image_url ? 'image' : 'brand');
+  // Banner = the merchant's own artwork across the strip. It changes the
+  // layout the same way it does in the real pass (see features/wallet_passes.py).
+  const hasBanner = (heroMode === 'image' || heroMode === 'composite') && !!card.hero_image_url;
 
   // Native PassKit typographic rhythm: labels are quiet, values shout.
   const label = {
@@ -119,7 +125,20 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
             ) : null}
           </div>
         </div>
-        {showTier && (
+        {/* With a banner image the header carries the points — Wallet draws
+            primary fields OVER the strip, so we keep the artwork clean and
+            move the number up here (statut drops to the row below). */}
+        {hasBanner ? (
+          showPoints && (
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={label}>{pointsLabel}</div>
+              <div style={{ fontSize: px(15), fontWeight: 700, color: t.ink, lineHeight: 1.15,
+                            fontVariantNumeric: 'tabular-nums' }}>
+                {earned}
+              </div>
+            </div>
+          )
+        ) : showTier && (
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
             <div style={label}>Statut</div>
             <div style={{ fontSize: px(15), fontWeight: 700, color: t.brand, lineHeight: 1.15 }}>
@@ -152,13 +171,47 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
               style={{ position: 'relative', maxHeight: '78%', maxWidth: '78%',
                        objectFit: 'contain' }} />
           )}
+
+          {/* ── the meter, INSIDE the strip ──────────────────────────────
+                PassKit has no progress element, so the server paints the bar
+                into strip.png itself (compose_strip in features/wallet_passes.py).
+                These percentages are that function's geometry converted from
+                its 1125×432 canvas — scrim over the bottom 150px, a 26px bar
+                inset 64px, 62px off the base, 10px between segments — so this
+                preview shows the customer's real Wallet card, banner and all,
+                instead of dropping the meter the moment a banner exists. */}
+          {showMeter && threshold > 0 && (
+            <>
+              <div style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, height: '34.7%',
+                background: `linear-gradient(to bottom, transparent, ${
+                  meterOnLight ? 'rgba(255,255,255,.59)' : 'rgba(0,0,0,.65)'})`,
+                pointerEvents: 'none',
+              }} />
+              <div style={{
+                position: 'absolute', left: '5.69%', right: '5.69%', bottom: '8.33%',
+                height: '6.02%', display: 'flex', gap: '0.89%', pointerEvents: 'none',
+              }}>
+                {Array.from({ length: threshold }).map((_, i) => (
+                  <span key={i} style={{
+                    flex: 1, borderRadius: 999,
+                    background: i < stamps ? t.brandRaw
+                      : (meterOnLight ? 'rgba(0,0,0,.15)' : 'rgba(255,255,255,.18)'),
+                    border: i < stamps ? 'none'
+                      : `1px solid ${meterOnLight ? 'rgba(0,0,0,.25)' : 'rgba(255,255,255,.31)'}`,
+                    boxSizing: 'border-box',
+                  }} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* ── stamps row: its OWN slim band flush under the strip — in flow, not
              an overlay, so the hero image is NEVER covered. Themed to the
              surface so it adapts to light and dark cards alike. ── */}
-      {showStamps && (
+      {showStamps && !hasBanner && !showMeter && (
         <div style={{
           padding: `${px(8)}px ${px(14)}px`, background: t.chipBg,
           borderBottom: `1px solid ${t.hairline}`,
@@ -181,9 +234,36 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
         </div>
       )}
 
+      {/* ── With a banner, the face reads like the real pass: a row of
+             secondary fields under the image, no number over the artwork. ── */}
+      {hasBanner && (
+        <div style={{ display: 'flex', gap: px(22), padding: `${px(11)}px ${px(14)}px 0` }}>
+          <div>
+            <div style={label}>{(card.greeting_label || 'Membre').toUpperCase()}</div>
+            <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.ink }}>{displayName}</div>
+          </div>
+          {showTier && (
+            <div>
+              <div style={label}>Statut</div>
+              <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.brand }}>
+                {tierLabels[tierKey] || 'Bronze'}
+              </div>
+            </div>
+          )}
+          {showStamps && (
+            <div>
+              <div style={label}>{(card.stamps_label || 'Tampons').toUpperCase()}</div>
+              <div style={{ fontSize: px(13.5), fontWeight: 600, color: t.ink,
+                            fontVariantNumeric: 'tabular-nums' }}>{stamps} / {threshold}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── PRIMARY field: the one number the customer glances for. Big.
              The stamps row above already carries the visual count, so the
              primary shows points — no duplicated 6/10. ── */}
+      {!hasBanner && (
       <div style={{ padding: `${px(12)}px ${px(14)}px 0` }}>
         <div style={label}>{showStamps || showPoints ? pointsLabel
                                                       : (card.stamps_label || 'Tampons').toUpperCase()}</div>
@@ -192,6 +272,7 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
           {showStamps || showPoints ? earned : `${stamps} / ${threshold}`}
         </div>
       </div>
+      )}
 
       {/* ── AUXILIARY field: next reward, in plain words. One line. ── */}
       <div style={{ padding: `${px(10)}px ${px(14)}px 0` }}>
@@ -244,4 +325,20 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
       </div>
     </div>
   );
+}
+
+/** The strip carries a photo — mirrors hero_mode handling in wallet_passes.py. */
+function hasBannerImage(card) {
+  const mode = card.hero_mode || (card.hero_image_url ? 'image' : 'brand');
+  return (mode === 'image' || mode === 'composite') && !!card.hero_image_url;
+}
+
+/** Relative luminance of a #rrggbb colour, on the same 0.45 threshold the
+ *  server uses to decide whether the meter's scrim goes light or dark. */
+function isLight(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.45;
 }

@@ -10,6 +10,7 @@ import {
   ResponsiveContainer, BarChart, Bar, ComposedChart, Line,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { ownerAPI } from '../lib/api';
 import { useTheme, heatColor } from '../lib/theme';
 import { useBranch } from '../contexts/BranchContext';
@@ -133,6 +134,19 @@ export default function OwnerDashboard() {
       .then((r) => r.ok ? r.json() : null)
       .then((s) => { if (alive && s) setNotifStats(s); })
       .catch(() => { /* silent — panel falls back to demo */ });
+    return () => { alive = false; };
+  }, []);
+
+  // ─── Apple Wallet adoption — right-rail panel ──────────────────────
+  // How many customers actually carry the native pass. Only shown once the
+  // certificates are configured, so it never advertises a dead feature.
+  const [walletStats, setWalletStats] = useState(null);
+  const [walletBusy, setWalletBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    ownerAPI.walletStats?.()
+      .then((r) => { if (alive && r?.data?.apple_configured) setWalletStats(r.data); })
+      .catch(() => { /* silent — the panel simply stays hidden */ });
     return () => { alive = false; };
   }, []);
 
@@ -562,7 +576,7 @@ export default function OwnerDashboard() {
                   {statusDonut.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={statusDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
+                        <Pie isAnimationActive={chartAnimation()} data={statusDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
                           {statusDonut.map((d) => <Cell key={d.key} fill={d.color} />)}
                         </Pie>
                       </PieChart>
@@ -693,8 +707,8 @@ export default function OwnerDashboard() {
                     <XAxis dataKey="idx" tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${T.line}`, background: T.card, color: T.ink }} />
-                    <Bar dataKey="visits" fill={T.serieBlue} radius={[3, 3, 0, 0]} maxBarSize={14} />
-                    <Line type="monotone" dataKey="uniques" stroke={T.serieAmber} strokeWidth={2} dot={{ r: 3, fill: T.serieAmber }} />
+                    <Bar isAnimationActive={chartAnimation()} dataKey="visits" fill={T.serieBlue} radius={[3, 3, 0, 0]} maxBarSize={14} />
+                    <Line isAnimationActive={chartAnimation()} type="monotone" dataKey="uniques" stroke={T.serieAmber} strokeWidth={2} dot={{ r: 3, fill: T.serieAmber }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -741,7 +755,7 @@ export default function OwnerDashboard() {
                     <XAxis dataKey="idx" tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} interval={3} />
                     <YAxis tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${T.line}`, background: T.card, color: T.ink }} />
-                    <Bar dataKey="value" fill={T.serieGreen} radius={[3, 3, 0, 0]} maxBarSize={12} />
+                    <Bar isAnimationActive={chartAnimation()} dataKey="value" fill={T.serieGreen} radius={[3, 3, 0, 0]} maxBarSize={12} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -857,7 +871,7 @@ export default function OwnerDashboard() {
                   {churnDonut.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={churnDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
+                        <Pie isAnimationActive={chartAnimation()} data={churnDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
                           {churnDonut.map((d) => <Cell key={d.key} fill={d.color} />)}
                         </Pie>
                       </PieChart>
@@ -937,7 +951,7 @@ export default function OwnerDashboard() {
                 <div className="fd-mini-donut fd-plan-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={planDonut} dataKey="value" innerRadius={50} outerRadius={70} stroke={T.card} strokeWidth={2} startAngle={90} endAngle={-270}>
+                      <Pie isAnimationActive={chartAnimation()} data={planDonut} dataKey="value" innerRadius={50} outerRadius={70} stroke={T.card} strokeWidth={2} startAngle={90} endAngle={-270}>
                         {planDonut.map((d) => <Cell key={d.key} fill={d.color} />)}
                       </Pie>
                     </PieChart>
@@ -1199,6 +1213,54 @@ export default function OwnerDashboard() {
               </div>
             );
           })()}
+
+          {/* ─── Apple Wallet ─── */}
+          {walletStats && (
+            <div className="fd-side-panel">
+              <div className="fd-sp-head">
+                <span className="fd-sp-title">Cartes Wallet</span>
+                <span style={{ fontSize: 10, color: 'var(--fd-text-3)', fontWeight: 700, letterSpacing: 0.6 }}>APPLE</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
+                <span style={{ fontFamily: "'Playfair Display', serif", fontSize: 30, fontWeight: 700,
+                               color: 'var(--fd-text)', lineHeight: 1 }}>
+                  {walletStats.passes_installed}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--fd-text-2)' }}>
+                  carte{walletStats.passes_installed > 1 ? 's' : ''} dans Wallet
+                  {walletStats.customers > 0 && ` · ${walletStats.install_rate}% des clients`}
+                </span>
+              </div>
+              <div style={{ height: 6, borderRadius: 3, background: T.grid, overflow: 'hidden', margin: '10px 0 8px' }}>
+                <div style={{ height: '100%', width: `${Math.min(100, walletStats.install_rate)}%`,
+                              background: nuit ? T.ok : 'hsl(150 70% 30%)', borderRadius: 3 }} />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--fd-text-2)', lineHeight: 1.4 }}>
+                {walletStats.push_ready ? (
+                  <>
+                    {walletStats.devices} appareil{walletStats.devices > 1 ? 's' : ''} synchronisé{walletStats.devices > 1 ? 's' : ''} —
+                    {' '}les tampons s'y mettent à jour à chaque passage en caisse.
+                  </>
+                ) : (
+                  <span style={{ color: nuit ? T.warn : 'hsl(42 78% 34%)' }}>
+                    Les cartes se mettent à jour à l'ouverture seulement — la mise à jour automatique n'est pas active.
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={walletBusy || walletStats.passes_installed === 0}
+                onClick={async () => {
+                  setWalletBusy(true);
+                  try { await ownerAPI.walletNotify(); } finally { setWalletBusy(false); }
+                }}
+                style={{ marginTop: 10, width: '100%', padding: '7px 10px', borderRadius: 8,
+                         border: `1px solid ${T.grid}`, background: 'transparent', cursor: 'pointer',
+                         color: 'var(--fd-text-2)', fontSize: 11, fontWeight: 600, font: 'inherit' }}>
+                {walletBusy ? 'Envoi…' : 'Actualiser les cartes maintenant'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

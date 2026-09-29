@@ -1,0 +1,586 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  BarChart3, Users, Activity, Send, Crown, AlertTriangle, ShoppingBag,
+  MousePointerClick, ShoppingCart, Star, MessageSquare, Repeat, Gift, UserPlus,
+  ChevronDown, Download, Loader2, Info,
+} from 'lucide-react';
+import { ownerAPI } from '../lib/api';
+
+/**
+ * Analyses — eight tabs over one window, built to the approved design.
+ *
+ * One tab is fetched at a time: they share a reader on the server but the page
+ * only pays for the one on screen.
+ *
+ * Nothing is painted in. A panel with no rows behind it says so rather than
+ * drawing a plausible chart, and the two figures that could be read as more
+ * than they are — attributed revenue and the retention rate — carry the
+ * server's own caveat underneath them.
+ */
+const ICONS = {
+  users: Users, activity: Activity, send: Send, crown: Crown, alert: AlertTriangle,
+  bag: ShoppingBag, chart: BarChart3, click: MousePointerClick, cart: ShoppingCart,
+  star: Star, message: MessageSquare, repeat: Repeat, gift: Gift, userplus: UserPlus,
+};
+const TONES = {
+  blue:   { bg: '#EAF1FF', fg: '#1D4ED8', dot: '#2F6BFF' },
+  green:  { bg: '#E7F7EE', fg: '#0F8B58', dot: '#10B981' },
+  amber:  { bg: '#FFF7E6', fg: '#B45309', dot: '#F59E0B' },
+  violet: { bg: '#F3EEFF', fg: '#6D28D9', dot: '#8B5CF6' },
+  slate:  { bg: '#EEF2F8', fg: '#475569', dot: '#94A3B8' },
+  rose:   { bg: '#FFF1F3', fg: '#E11D48', dot: '#F43F5E' },
+};
+const TONE_ORDER = ['blue', 'green', 'amber', 'violet', 'rose', 'slate'];
+
+const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
+const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
+const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+const fullDate = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
+
+const RANGES = [
+  { key: 7, label: '7 derniers jours' },
+  { key: 30, label: '30 derniers jours' },
+  { key: 90, label: '90 derniers jours' },
+  { key: 365, label: '12 derniers mois' },
+];
+
+/* ── pieces ───────────────────────────────────────────────────────────── */
+const Panel = ({ title, note, children, className = '' }) => (
+  <section className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
+    {title && <h2 className="mb-4 text-[15px] font-bold text-[#0B1C3F]">{title}</h2>}
+    {children}
+    {note && (
+      <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
+        <Info size={12} className="mt-px shrink-0" /> {note}
+      </p>
+    )}
+  </section>
+);
+
+const Empty = ({ message }) => (
+  <div className="rounded-2xl border border-dashed border-[#D9E4F7] bg-white px-6 py-16 text-center">
+    <p className="mx-auto max-w-md text-[13px] text-[#64748B]">{message}</p>
+  </div>
+);
+
+const Stat = ({ s, i = 0 }) => {
+  const Icon = ICONS[s.icon] || BarChart3;
+  const t = TONES[TONE_ORDER[i % TONE_ORDER.length]];
+  const good = s.lower_is_better ? (s.delta_pct ?? 0) <= 0 : (s.delta_pct ?? 0) >= 0;
+  const up = (s.delta_pct ?? 0) >= 0;
+  return (
+    <div className="h-full rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl"
+            style={{ background: t.bg, color: t.fg }}>
+        <Icon size={17} />
+      </span>
+      <p className="whitespace-nowrap text-[21px] font-bold leading-none text-[#0B1C3F] tabular-nums">
+        {s.unit === '€' ? money(s.value) : `${nf(s.value)}${s.unit || ''}`}
+      </p>
+      <p className="mt-1 text-[11.5px] leading-tight text-[#64748B]">{s.label}</p>
+      {s.delta_pct !== null && s.delta_pct !== undefined && (
+        <span className="mt-1.5 inline-flex rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+              style={good ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#FEECEC', color: '#C0392B' }}>
+          {up ? '↑ +' : '↓ '}{s.delta_pct}%
+        </span>
+      )}
+    </div>
+  );
+};
+
+const Total = ({ value, delta }) => (
+  <p className="mb-2 flex items-baseline gap-2">
+    <span className="text-[21px] font-bold text-[#0B1C3F] tabular-nums">{value}</span>
+    {delta !== null && delta !== undefined && (
+      <span className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+            style={delta >= 0 ? { background: '#E7F7EE', color: '#0F8B58' }
+                              : { background: '#FEECEC', color: '#C0392B' }}>
+        {delta >= 0 ? `↑ +${delta}%` : `↓ ${delta}%`}
+      </span>
+    )}
+  </p>
+);
+
+/* The strips run from two cards (Acquisition) to seven (Vue d'ensemble), so
+   the column count follows the card count — a fixed seven-column grid would
+   leave the tail of the shorter strips empty, and a plain flex row would
+   stretch a lone wrapped card across the full width. The classes are spelled
+   out so Tailwind keeps them. */
+const COLS = {
+  1: 'grid-cols-1',
+  2: 'grid-cols-1 sm:grid-cols-2',
+  3: 'grid-cols-1 sm:grid-cols-3',
+  4: 'grid-cols-2 lg:grid-cols-4',
+  5: 'grid-cols-2 lg:grid-cols-5',
+  6: 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-6',
+  7: 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-7',
+};
+
+const Strip = ({ items }) => (
+  <div className={`mb-4 grid gap-3 ${COLS[items.length] || COLS[4]}`}>
+    {items.map((s, i) => <Stat key={s.key} s={s} i={i} />)}
+  </div>
+);
+
+const Line = ({ series, money: isMoney }) => {
+  const W = 620, H = 190, L = 46, B = 22, T = 10, R = 8;
+  const p = series || [];
+  const max = Math.max(1, ...p.map((x) => x.value));
+  const top = Math.ceil(max / 5) * 5 || 1;
+  const iw = W - L - R, ih = H - T - B;
+  const x = (i) => L + (p.length <= 1 ? iw / 2 : (i / (p.length - 1)) * iw);
+  const y = (v) => T + ih - (v / top) * ih;
+  const line = p.map((q, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(q.value).toFixed(1)}`).join(' ');
+  const idx = p.length <= 1 ? [0] : [0, Math.round((p.length - 1) / 3), Math.round((p.length - 1) * 2 / 3), p.length - 1];
+  if (!p.length) return <p className="py-12 text-center text-[13px] text-[#94A3B8]">Aucune donnée.</p>;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 190 }}>
+      <defs>
+        <linearGradient id="anGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2F6BFF" stopOpacity="0.25" />
+          <stop offset="100%" stopColor="#2F6BFF" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      {[0, top / 2, top].map((v) => (
+        <g key={v}>
+          <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="#EEF3FB" />
+          <text x={L - 8} y={y(v) + 4} textAnchor="end" fontSize="10" fill="#94A3B8">
+            {isMoney ? `${nf(Math.round(v))} €` : nf(Math.round(v))}
+          </text>
+        </g>
+      ))}
+      <path d={`${line} L${x(p.length - 1)},${T + ih} L${x(0)},${T + ih} Z`} fill="url(#anGrad)" />
+      <path d={line} fill="none" stroke="#2F6BFF" strokeWidth="2.2" strokeLinejoin="round" />
+      {p.map((q, i) => (
+        <circle key={q.date} cx={x(i)} cy={y(q.value)} r="2.4" fill="#fff" stroke="#2F6BFF" strokeWidth="1.7">
+          <title>{`${dayLabel(q.date)} — ${isMoney ? money(q.value) : nf(q.value)}`}</title>
+        </circle>
+      ))}
+      {idx.map((i) => (
+        <text key={i} x={x(i)} y={H - 4} fontSize="10" fill="#94A3B8"
+              textAnchor={i === 0 ? 'start' : i === p.length - 1 ? 'end' : 'middle'}>
+          {dayLabel(p[i].date)}
+        </text>
+      ))}
+    </svg>
+  );
+};
+
+const Bars = ({ items, money: isMoney }) => {
+  const max = Math.max(1, ...items.map((i) => i.value ?? i.count ?? 0));
+  return (
+    <ul className="space-y-2.5">
+      {items.map((i, n) => {
+        const v = i.value ?? i.count ?? 0;
+        return (
+          <li key={i.label || i.name} className="flex items-center gap-3 text-[12.5px]">
+            <span className="w-24 shrink-0 truncate text-[#475569] sm:w-40" title={i.label || i.name}>{i.label || i.name}</span>
+            <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#EEF3FB]">
+              <span className="block h-full rounded-full"
+                    style={{ width: `${(v / max) * 100}%`, background: TONES[TONE_ORDER[n % 6]].dot }} />
+            </span>
+            <span className="w-16 shrink-0 text-right font-semibold text-[#0B1C3F] tabular-nums">
+              {isMoney ? money(v) : nf(v)}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
+const HoursGrid = ({ hours }) => (
+  <>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[360px] border-separate" style={{ borderSpacing: '3px' }}>
+        <thead>
+          <tr><th />{hours.slots.map((s) => (
+            <th key={s} className="pb-1 text-[9.5px] font-medium text-[#94A3B8]">{s}</th>))}
+          </tr>
+        </thead>
+        <tbody>
+          {hours.weekdays.map((wd, r) => (
+            <tr key={wd}>
+              <td className="pr-2 text-right text-[10.5px] font-medium text-[#94A3B8]">{wd}</td>
+              {hours.grid[r].map((n, c) => (
+                <td key={c} className="h-7 rounded"
+                    style={{ background: n ? `rgba(47,107,255,${0.15 + (n / (hours.peak || 1)) * 0.85})` : '#F4F7FC' }}
+                    title={`${wd} ${hours.slots[c]} — ${n} visite${n > 1 ? 's' : ''}`} />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[#94A3B8]">
+      <span>Faible affluence</span>
+      <span className="h-2 w-20 rounded-full" style={{ background: 'linear-gradient(to right,#F4F7FC,#2F6BFF)' }} />
+      <span>Forte affluence</span>
+    </div>
+    {hours.outside > 0 && (
+      <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
+        <Info size={12} className="mt-px shrink-0" />
+        La grille couvre {hours.covers}. {nf(hours.outside)} visite{hours.outside > 1 ? 's ont' : ' a'} eu
+        lieu en dehors de ces horaires.
+      </p>
+    )}
+  </>
+);
+
+const Donut = ({ mix, unit = 'Clients' }) => {
+  const R = 52, C = 2 * Math.PI * R;
+  let off = 0;
+  return (
+    <div className="flex flex-wrap items-center gap-6">
+      <div className="relative shrink-0">
+        <svg width="146" height="146" viewBox="0 0 146 146">
+          <circle cx="73" cy="73" r={R} fill="none" stroke="#EEF3FB" strokeWidth="20" />
+          {mix.slices.filter((s) => s.count > 0).map((s) => {
+            const len = mix.total ? (s.count / mix.total) * C : 0;
+            const el = <circle key={s.key} cx="73" cy="73" r={R} fill="none"
+                               stroke={TONES[s.tone]?.dot || '#2F6BFF'} strokeWidth="20"
+                               strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-off}
+                               transform="rotate(-90 73 73)" />;
+            off += len;
+            return el;
+          })}
+        </svg>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-[21px] font-bold leading-none text-[#0B1C3F] tabular-nums">{nf(mix.total)}</span>
+          <span className="text-[10.5px] text-[#64748B]">{unit}</span>
+        </div>
+      </div>
+      <ul className="min-w-[180px] flex-1 space-y-2.5">
+        {mix.slices.map((s) => (
+          <li key={s.key} className="flex items-center gap-2.5 text-[12.5px]">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
+            <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>
+            <span className="shrink-0 font-bold text-[#0B1C3F] tabular-nums">{s.pct}%</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
+/* ── tabs ─────────────────────────────────────────────────────────────── */
+const TabVue = ({ d }) => (
+  <>
+    <Strip items={d.strip} />
+    <div className="mb-4 grid gap-4 lg:grid-cols-2">
+      <Panel title="Évolution du chiffre d'affaires">
+        <Total value={money(d.revenue_total)} delta={d.revenue_delta} />
+        <Line series={d.revenue_series} money />
+      </Panel>
+      <Panel title="Évolution du nombre de clients">
+        <Total value={nf(d.new_total)} delta={d.new_delta} />
+        <Line series={d.new_series} />
+      </Panel>
+    </div>
+    <div className="mb-4 grid gap-4 lg:grid-cols-2">
+      <Panel title="Moments de visite"><HoursGrid hours={d.hours} /></Panel>
+      <Panel title="Statut des clients">
+        {d.status_mix.total ? <Donut mix={d.status_mix} />
+          : <p className="py-10 text-center text-[12.5px] text-[#94A3B8]">Aucun client pour l'instant.</p>}
+      </Panel>
+    </div>
+    <Panel title="Produits les plus populaires">
+      {d.products.length ? <Bars items={d.products.map((p) => ({ name: p.name, value: p.sales }))} />
+        : <p className="py-8 text-center text-[12.5px] text-[#94A3B8]">
+            Les produits apparaîtront quand vos scans enregistreront les articles.
+          </p>}
+    </Panel>
+  </>
+);
+
+const TabCampagnes = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <>
+    <Strip items={d.strip} />
+    <Panel title="Performance des campagnes" note={d.note}>
+      <div className="mb-4 flex flex-wrap items-baseline gap-2 rounded-xl bg-[#EAF1FF] px-4 py-3">
+        <span className="text-[12.5px] text-[#1D4ED8]">Chiffre d'affaires attribué aux campagnes</span>
+        <span className="ml-auto text-[19px] font-bold text-[#0B1C3F] tabular-nums">{money(d.revenue_attributed)}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] border-collapse">
+          <thead>
+            <tr className="border-b border-[#EEF3FB] text-left">
+              {['#', 'Campagne', 'Statut', 'Touchés', 'Ouvertures', 'Clics', 'Ventes', 'Conversion', 'CA généré'].map((h, i) => (
+                <th key={h} className={`px-3 py-2.5 text-[11.5px] font-semibold text-[#64748B] ${i > 2 ? 'text-right' : ''}`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {d.table.map((t, i) => (
+              <tr key={t.id} className="border-b border-[#F4F7FC] last:border-b-0">
+                <td className="px-3 py-3">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#EAF1FF] text-[10.5px] font-bold text-[#2F6BFF]">{i + 1}</span>
+                </td>
+                <td className="px-3 py-3 text-[12.5px] font-medium text-[#0B1C3F]">{t.name}</td>
+                <td className="px-3 py-3">
+                  <span className="rounded-md bg-[#E7F7EE] px-2 py-0.5 text-[11px] font-semibold text-[#0F8B58]">
+                    {t.status === 'sent' ? 'Envoyée' : t.status}
+                  </span>
+                </td>
+                <td className="px-3 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(t.reach)}</td>
+                <td className="px-3 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(t.opens)}</td>
+                <td className="px-3 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(t.clicks)}</td>
+                <td className="px-3 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(t.sales)}</td>
+                <td className="px-3 py-3 text-right text-[12.5px] font-semibold tabular-nums text-[#0B1C3F]">{t.conversion}%</td>
+                <td className="px-3 py-3 text-right text-[12.5px] font-semibold tabular-nums text-[#0B1C3F]">{money(t.revenue)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  </>
+);
+
+const TabFidelisation = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <>
+    <Strip items={d.strip} />
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Panel title="Répartition par palier" note={d.retention_note}>
+        <Bars items={d.tiers.map((t) => ({ label: t.label, value: t.count }))} />
+      </Panel>
+      <Panel title="Statut des clients"><Donut mix={d.status_mix} /></Panel>
+    </div>
+  </>
+);
+
+const TabAvis = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <>
+    <Strip items={d.strip} />
+    <div className="mb-4 grid gap-4 lg:grid-cols-2">
+      <Panel title="Répartition des notes">
+        <ul className="space-y-2.5">
+          {d.histogram.map((h) => (
+            <li key={h.stars} className="flex items-center gap-3 text-[12.5px]">
+              <span className="flex w-12 shrink-0 items-center gap-1 text-[#475569]">
+                {h.stars} <Star size={11} className="text-[#F59E0B]" />
+              </span>
+              <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#EEF3FB]">
+                <span className="block h-full rounded-full bg-[#F59E0B]" style={{ width: `${h.pct}%` }} />
+              </span>
+              <span className="w-12 shrink-0 text-right font-semibold text-[#0B1C3F] tabular-nums">{h.pct}%</span>
+            </li>
+          ))}
+        </ul>
+      </Panel>
+      <Panel title="Sujets évoqués">
+        {d.topics.length ? <Bars items={d.topics.map((t) => ({ label: t.name, value: t.count }))} />
+          : <p className="py-8 text-center text-[12.5px] text-[#94A3B8]">Aucun sujet identifié.</p>}
+      </Panel>
+    </div>
+    <Panel title="Derniers avis">
+      <ul className="space-y-3">
+        {d.recent.map((r, i) => (
+          <li key={i} className="rounded-xl border border-[#E6EEFB] p-3">
+            <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[#0B1C3F]">
+              <Star size={13} className="text-[#F59E0B]" /> {r.rating} / 5
+              <span className="ml-auto text-[11px] font-normal text-[#94A3B8]">{fullDate(r.at)}</span>
+            </p>
+            {r.text && <p className="mt-1 text-[12.5px] leading-snug text-[#475569]">« {r.text} »</p>}
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  </>
+);
+
+const TabMoments = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <div className="grid gap-4 lg:grid-cols-2">
+    <Panel title="Heures d'affluence"><HoursGrid hours={d.hours} /></Panel>
+    <Panel title="Visites par jour de la semaine">
+      <Bars items={d.weekday_bars} />
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-xl bg-[#EAF1FF] p-3">
+          <p className="text-[11px] text-[#1D4ED8]">Jour le plus fréquenté</p>
+          <p className="text-[15px] font-bold text-[#0B1C3F]">
+            {d.best_day.label} · {nf(d.best_day.visits)} visites
+          </p>
+        </div>
+        {d.best_slot && (
+          <div className="rounded-xl bg-[#E7F7EE] p-3">
+            <p className="text-[11px] text-[#0F8B58]">Créneau le plus chargé</p>
+            <p className="text-[15px] font-bold text-[#0B1C3F]">{d.best_slot.label}</p>
+          </div>
+        )}
+      </div>
+    </Panel>
+  </div>
+);
+
+const TabProduits = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <>
+    <Strip items={d.strip} />
+    <Panel title="Tous les produits">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[480px] border-collapse">
+          <thead>
+            <tr className="border-b border-[#EEF3FB] text-left">
+              {['#', 'Produit', 'Ventes', 'Part', 'CA généré'].map((h, i) => (
+                <th key={h} className={`px-3 py-2.5 text-[11.5px] font-semibold text-[#64748B] ${i > 1 ? 'text-right' : ''}`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {d.products.map((p, i) => (
+              <tr key={p.name} className="border-b border-[#F4F7FC] last:border-b-0">
+                <td className="px-3 py-2.5">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#EAF1FF] text-[10.5px] font-bold text-[#2F6BFF]">{i + 1}</span>
+                </td>
+                <td className="px-3 py-2.5 text-[12.5px] font-medium text-[#0B1C3F]">{p.name}</td>
+                <td className="px-3 py-2.5 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(p.sales)}</td>
+                <td className="px-3 py-2.5 text-right text-[12.5px] tabular-nums text-[#475569]">{p.share}%</td>
+                <td className="px-3 py-2.5 text-right text-[12.5px] font-semibold tabular-nums text-[#0B1C3F]">{money(p.revenue)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  </>
+);
+
+const TabAcquisition = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <>
+    <Strip items={d.strip} />
+    <div className="mb-4 grid gap-4 lg:grid-cols-2">
+      <Panel title="Origine des nouveaux clients" note={d.window_note}>
+        <Bars items={d.sources.map((s) => ({ label: s.name, value: s.count }))} />
+      </Panel>
+      <Panel title="Données géographiques">
+        <Bars items={d.places.map((p) => ({ label: p.name, value: p.count }))} />
+      </Panel>
+    </div>
+    <Panel title="Acquisition de nouveaux clients"><Line series={d.new_series} /></Panel>
+  </>
+);
+
+const TabComportement = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+  <>
+    <Strip items={d.strip} />
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Panel title="Segmentation comportementale">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {d.frequency.map((f) => {
+            const t = TONES[f.tone] || TONES.blue;
+            return (
+              <div key={f.key} className="rounded-xl p-3 text-center" style={{ background: t.bg }}>
+                <p className="text-[19px] font-bold leading-none text-[#0B1C3F] tabular-nums">{nf(f.count)}</p>
+                <p className="mt-1 text-[11px] font-semibold leading-tight" style={{ color: t.fg }}>{f.label}</p>
+                <p className="mt-0.5 text-[10px] leading-tight text-[#94A3B8]">{f.hint}</p>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-4 text-[12.5px] text-[#64748B]">
+          Moyenne de <strong className="text-[#0B1C3F]">{d.avg_visits}</strong> visites par client.
+        </p>
+      </Panel>
+      <Panel title="Panier moyen par client">
+        <Bars items={d.basket_bands.map((b) => ({ label: b.label, value: b.count }))} />
+      </Panel>
+    </div>
+  </>
+);
+
+const RENDERERS = {
+  vue: TabVue, campagnes: TabCampagnes, fidelisation: TabFidelisation, avis: TabAvis,
+  moments: TabMoments, produits: TabProduits, acquisition: TabAcquisition,
+  comportement: TabComportement,
+};
+
+/* ── page ─────────────────────────────────────────────────────────────── */
+export default function AnalysesPage() {
+  const [tab, setTab] = useState('vue');
+  const [days, setDays] = useState(30);
+  const [payload, setPayload] = useState(null);
+  const [tabs, setTabs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true); setError('');
+    ownerAPI.analyses({ tab, days })
+      .then(({ data }) => { setPayload(data); if (data.tabs) setTabs(data.tabs); })
+      .catch((e) => setError(e?.response?.data?.detail || 'Impossible de charger les analyses.'))
+      .finally(() => setLoading(false));
+  }, [tab, days]);
+  useEffect(() => { load(); }, [load]);
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const { data: blob } = await ownerAPI.analysesExport({ days });
+      const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = `fidclic-analyses-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch { setError("L'export n'a pas abouti."); }
+    finally { setExporting(false); }
+  };
+
+  const Renderer = RENDERERS[payload?.tab] || TabVue;
+
+  return (
+    <div className="an">
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#EAF1FF] text-[#2F6BFF]">
+            <BarChart3 size={22} />
+          </span>
+          <div>
+            <h1 className="text-[23px] font-bold leading-tight text-[#0B1C3F]">Analyses</h1>
+            <p className="text-[13px] text-[#64748B]">
+              Analysez vos performances et découvrez des opportunités pour développer votre activité.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="relative">
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))}
+                    className="appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2.5 pl-3 pr-8 text-[12.5px] font-medium text-[#334155] outline-none focus:border-[#2F6BFF]">
+              {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+            </select>
+            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          </div>
+          <button type="button" onClick={exportCsv} disabled={exporting}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-60">
+            {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Exporter le rapport
+          </button>
+        </div>
+      </header>
+
+      <nav className="mb-4 flex gap-1 overflow-x-auto border-b border-[#E6EEFB]">
+        {tabs.map((t) => {
+          const on = tab === t.key;
+          return (
+            <button key={t.key} type="button" onClick={() => setTab(t.key)}
+                    className={`shrink-0 border-b-2 px-3.5 py-2.5 text-[13px] font-semibold transition ${
+                      on ? 'border-[#2F6BFF] text-[#2F6BFF]'
+                         : 'border-transparent text-[#64748B] hover:text-[#334155]'}`}>
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
+
+      {loading && !payload ? (
+        <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-20 text-[13px] text-[#64748B]">
+          <Loader2 size={16} className="animate-spin" /> Chargement des analyses…
+        </div>
+      ) : payload ? (
+        <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
+          <Renderer d={payload.data} />
+        </div>
+      ) : null}
+    </div>
+  );
+}

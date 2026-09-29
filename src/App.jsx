@@ -75,21 +75,22 @@ import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
 import OnboardingCardPage from './pages/OnboardingCardPage';
 import OnboardingDonePage from './pages/OnboardingDonePage';
 import DashboardLayout from './pages/DashboardLayout';
-import OwnerDashboard from './pages/OwnerDashboard';
+// Analyses is the page on /dashboard/analytics. The two older takes
+// (AnalyticsPage, AnalyticsPageV2) are kept on disk for rollback only —
+// to revert, import one of them here instead.
 // Legacy AnalyticsPage kept for rollback during the dark-redesign rollout.
 // AnalyticsPageV2 is the new dark redesign that replaces it on the
 // /dashboard/analytics route. To revert: swap the imports here.
 // import AnalyticsPage from './pages/AnalyticsPage';
-import AnalyticsPage from './pages/AnalyticsPageV2';
-import CustomersPage from './pages/CustomersPage';
-import CustomerMapPage from './pages/CustomerMapPage';
+// import AnalyticsPage from './pages/AnalyticsPageV2';
+import AnalysesPage from './pages/AnalysesPage';
 import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
-import AIAssistantPage from './pages/AIAssistantPage';
 import SettingsPage from './pages/SettingsPage';
+import ParametresPage from './pages/ParametresPage';
+import CataloguePage from './pages/CataloguePage';
 import JoinPage from './pages/JoinPage';
 import MyWalletCardPage from './pages/MyWalletCardPage';
-import InsightsPage from './pages/InsightsPage';
 import HistoryPage from './pages/HistoryPage';
 
 import AdminDashboard from './pages/AdminDashboard';
@@ -97,7 +98,24 @@ import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminTenantsPage from './pages/AdminTenantsPage';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
-import CardDesignerPage from './pages/CardDesignerPage';
+import LoyaltyCardPage from './pages/LoyaltyCardPage';
+import ComingSoonPage from './pages/ComingSoonPage';
+import HelpPage from './pages/HelpPage';
+import GeolocationPage from './pages/GeolocationPage';
+import ReferralPage from './pages/ReferralPage';
+import AutomationsPage from './pages/AutomationsPage';
+import DashboardHomePage from './pages/DashboardHomePage';
+import ClientsPage from './pages/ClientsPage';
+import SegmentationPage from './pages/SegmentationPage';
+// Insights — rebuilt to the approved design. The previous InsightsPage stays
+// in the repo, unrouted, for rollback.
+import InsightsGrowthPage from './pages/InsightsGrowthPage';
+// FidClic IA Copilote — replaces the previous AI assistant, which stays in the
+// repo, unrouted, for rollback.
+import CopilotPage from './pages/CopilotPage';
+// Campagnes — rebuilt to the approved design. CampaignsPage stays in the
+// repo, unrouted, for rollback.
+import CampagnesPage from './pages/CampagnesPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 import AdminInsightsPage from './pages/AdminInsightsPage';
@@ -135,12 +153,20 @@ const ScrollToTop = () => {
 // dashboard, no modules, until step 2 is done and the trial has started.
 const needsOnboarding = (user) => user?.role === 'business_owner' && user?.onboarding_status === 'company';
 
-const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false }) => {
+const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, partialOk = false }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
+  // Administrateurs, and managers covering only some establishments, reach
+  // the data pages once those pages filter by establishment; until then they
+  // work from Paramètres › Équipe & accès (the server refuses the rest too).
+  const partial = ['administrateur', 'manager'].includes(user.role) && user.scope === 'partial';
+  if (partial && !partialOk && !(allowedRoles || []).includes('staff')) {
+    return <Navigate to="/dashboard" replace />;
+  }
   if (allowedRoles && !allowedRoles.includes(user.role)) {
+    if (user.role === 'administrateur') return <Navigate to="/dashboard" replace />;
     // Staff and managers land on the page they *are* allowed to use instead of
     // being kicked to the landing page. Staff → /dashboard/scan; everyone else
     // back to the landing.
@@ -167,6 +193,31 @@ const PublicRoute = ({ children }) => {
   return children;
 };
 
+// app.fidclic.com is the product; the public site lives at www.fidclic.com
+// (fidclic.fr redirects there too). A visitor who types the app address
+// lands on that site rather than the app's older built-in LandingPage,
+// which is kept (and still shown on localhost) but no longer served.
+const MARKETING_URL = 'https://www.fidclic.com/';
+
+const MarketingHome = () => {
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+  const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    || window.navigator.standalone === true;
+  let card = null;
+  try { card = localStorage.getItem('fidelitour:last_card'); } catch (e) { /* private mode */ }
+  const leave = !local && !standalone;
+  React.useEffect(() => { if (leave) window.location.replace(MARKETING_URL); }, [leave]);
+
+  if (local) return <LandingPage />;
+  // Installed icons can open "/" (iOS ignores start_url): send them back
+  // into the app instead of out to the website.
+  if (standalone) {
+    if (card && /^FT-?[A-Z0-9]+$/i.test(card)) return <Navigate to={`/card/${card}`} replace />;
+    return <Navigate to="/login" replace />;
+  }
+  return null;
+};
+
 function App() {
   return (
     <RootErrorBoundary>
@@ -185,7 +236,7 @@ function App() {
         <RouteAwareRetranslator />
         <ScrollToTop />
         <Routes>
-          <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
+          <Route path="/" element={<PublicRoute><MarketingHome /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
           {/* Onboarding step 2 — the only protected page a half-registered owner may see. */}
@@ -205,6 +256,8 @@ function App() {
             </ProtectedRoute>
           } />
           <Route path="/join/:slug" element={<JoinPage />} />
+          {/* The French address the Paramètres page hands out; /join stays for every QR already printed. */}
+          <Route path="/inscription/:slug" element={<JoinPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
 
           {/* Public product pages. Deliberately NOT wrapped in PublicRoute: a
@@ -257,33 +310,42 @@ function App() {
               - manager: analytics, insights, customers, map, scan (no campaigns/settings/AI)
               - staff: scan ONLY — every other route redirects them back to /dashboard/scan */}
           <Route path="/dashboard" element={
-            <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff']}>
+            <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager', 'staff']} partialOk>
               <DashboardLayout />
             </ProtectedRoute>
           }>
+            {/* Tableau de bord — rebuilt to the approved design. OwnerDashboard
+                stays in the repo, unrouted, until its smart search and time
+                filter have a home on the new page. */}
             <Route index element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <OwnerDashboard />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <DashboardHomePage />
               </ProtectedRoute>
             } />
             <Route path="analytics" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <AnalyticsPage />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <AnalysesPage />
               </ProtectedRoute>
             } />
             <Route path="insights" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <InsightsPage />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <InsightsGrowthPage />
               </ProtectedRoute>
             } />
+            {/* Clients — rebuilt to the approved design. The previous
+                CustomersPage stays in the repo, unrouted, until its saved
+                segments and campaign composer have a home on the new page. */}
             <Route path="customers" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <CustomersPage />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <ClientsPage />
               </ProtectedRoute>
             } />
+            {/* Géolocalisation clients — catchment rings + travel-time bands.
+                Replaces CustomerMapPage, whose France-wide dot map this page
+                supersedes; the old file stays in the repo, unrouted. */}
             <Route path="map" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
-                <CustomerMapPage />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <GeolocationPage />
               </ProtectedRoute>
             } />
             {/* Scan is the ONE page staff can reach. */}
@@ -292,19 +354,57 @@ function App() {
                 <ScanPage />
               </ProtectedRoute>
             } />
-            <Route path="card-designer" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
-                <CardDesignerPage />
+            {/* Carte de fidélité — the merchant's single card. The old
+                CardDesignerPage it replaces has been removed; its advanced
+                knobs live in the "Options avancées" panel on this page. */}
+            <Route path="segmentation" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <SegmentationPage />
+              </ProtectedRoute>
+            } />
+            <Route path="automations" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+                <AutomationsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="referral" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <ReferralPage />
+              </ProtectedRoute>
+            } />
+            <Route path="card" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <LoyaltyCardPage />
+              </ProtectedRoute>
+            } />
+            {/* Besoin d'aide ? — FAQ + assistant + the three contact channels.
+                Reachable by every role; the sidebar's help row points here. */}
+            <Route path="aide" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff', 'super_admin']}>
+                <HelpPage />
               </ProtectedRoute>
             } />
             <Route path="campaigns" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
-                <CampaignsPage />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <CampagnesPage />
               </ProtectedRoute>
             } />
             <Route path="ai-assistant" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
-                <AIAssistantPage />
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <CopilotPage />
+              </ProtectedRoute>
+            } />
+            <Route path="catalogue" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <CataloguePage />
+              </ProtectedRoute>
+            } />
+            {/* Paramètres — one page, one tab per sub-page (like Analyses). The
+                older all-in-one page stays at /settings for what has not moved yet. */}
+            <Route path="parametres" element={<Navigate to="/dashboard/parametres/regles-clients" replace />} />
+            <Route path="parametres/:section" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <ParametresPage />
               </ProtectedRoute>
             } />
             <Route path="settings" element={
@@ -313,10 +413,14 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="history" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <HistoryPage />
               </ProtectedRoute>
             } />
+            {/* Anything else under /dashboard goes home. Without this a removed
+                page — /dashboard/surveys, say — left a bookmark rendering the
+                shell around nothing at all. */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
 
           {/* Super Admin Routes */}

@@ -34,7 +34,7 @@
     "customer_map": "Customer Map",
     "card_designer": "Card Designer",
     "campaigns": "Campaigns",
-    "ai_assistant": "AI Assistant",
+    "ai_assistant": "FidClic AI",
     "history": "History",
     "settings": "Settings",
     "scan_visit": "Scan a Visit",
@@ -51,9 +51,18 @@
     "search_enter_hint": "Press Enter to search",
     "expand_sidebar": "Expand sidebar",
     "collapse_sidebar": "Collapse sidebar",
-    "help": "Help",
+    "help": "Need help?",
     "account_menu": "Account menu",
-    "account_no_name": "No name"
+    "account_no_name": "No name",
+    "loyalty_card": "Loyalty card",
+    "automations": "Automations",
+    "reviews": "Customer reviews",
+    "geolocation": "Geolocation",
+    "catalogue": "Product catalogue",
+    "team": "Team & access",
+    "segmentation": "Segmentation",
+    "referral": "Referral",
+    "help_cta": "Contact the team"
   },
   "auth": {
     "login_title": "Sign in",
@@ -499,7 +508,12 @@
     "name_required": "Enter the name to show on the card.",
     "slogan": "Slogan / Message (optional)",
     "slogan_placeholder": "Cut • Beard • Care",
-    "finish": "Create my card"
+    "finish": "Create my card",
+    "banner": "Banner image",
+    "banner_hint": "Wide photo (375 × 144 ratio)",
+    "banner_add": "Add a banner",
+    "banner_change": "Change banner",
+    "banner_remove": "Remove"
   },
   "done": {
     "title": "Your {{name}} card is ready!",

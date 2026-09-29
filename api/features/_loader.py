@@ -25,10 +25,45 @@ MODULES = [
     "features.registration_forms",
     # Owner workflow & visibility
     "features.history",                 # past campaigns + push notifications
+    # Historique — every activity (scans, rewards, signups, messages, card
+    # edits) merged into one filterable, paginated, exportable feed.
+    "features.activity_history",
+    # Géolocalisation clients — catchment rings + travel-time bands over the
+    # merchant's own clients, with the commune breakdown behind both.
+    "features.geolocation",
+    # Analyses — eight tabs over one window, one tab answered per request.
+    "features.analyses",
+    # Tableau de bord — the home page's eleven panels, read off one month of
+    # visits in a single pass, plus the merchant's monthly revenue goal.
+    "features.dashboard_home",
+    # Clients — the page's four figures, its eight quick segments and its
+    # paginated table. Sits beside /api/owner/customers, which is untouched.
+    "features.clients_page",
+    # FidClic IA Copilote — recommendations, growth potential, forecast
+    # (history + weather + local events), a 7-day plan with Autopilot, and a chat
+    # grounded on the shop's own figures.
+    "features.copilot",
+    # Insights — « Faites grandir votre commerce » : opportunités, actions,
+    # idées de campagnes et conseils, ranked on the shop's own data and sector.
+    "features.insights_page",
+    # Segmentation — the segments, what a campaign at each could bring in,
+    # and the builder behind them.
+    "features.segmentation",
+    "features.catalogue_page",          # Catalogue produits (products, categories, what sells)
+    # Campagnes — the composer, its audience, and what the last sends did.
+    # Delivers on two channels at once: web push and the wallet card's offer.
+    "features.campaigns_page",
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
+    "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
+    "features.team_access",             # Paramètres › Équipe & accès (roles, establishments, accounts)
+    "features.store_scope",             # which establishments a request is about (the logo dropdown)
+    "features.join_link",               # Paramètres › Lien d'inscription & QR (+ signup-page visits)
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages
+    # Automatisations · Push Wallet — scenarios that fire on their own and land
+    # on the customer's Apple/Google Wallet pass. Run daily by /cron/daily-triggers.
+    "features.push_wallet",
     "features.push_subscriptions",      # web push subscriptions + dispatch helper
     "features.business_hours",          # weekly schedule + French public holidays + annual closures
     # AI / predictive — fully implemented (math-based)
@@ -51,6 +86,14 @@ MODULES = [
     # Plan catalogue (public) + live usage counters — the marketing site
     # builds its pricing table from /api/public/plans.
     "features.plans_public",
+    # Native wallet passes — Apple .pkpass + Google Wallet. No-ops (503) until
+    # APPLE_PASS_* / GOOGLE_WALLET_* are set in Vercel.
+    "features.wallet_passes",
+    # Carte de fidélité — design, programme rules, tiers and the page's figures.
+    "features.loyalty_card",
+    # Besoin d'aide ? — FAQ knowledge base + the support assistant that answers
+    # from it. Answers from the KB even with no LLM key configured.
+    "features.support_assistant",
     # Facturation électronique (French e-invoicing) — second product module.
     # Gated: only tenants with facturation_enabled=True reach any route.
     # PA-agnostic via services.pdp_connector (Mock by default; B2Brouter via env).
@@ -116,6 +159,12 @@ def register_all(app, db) -> None:
     Failures are logged but never raised — a broken feature module must not
     take down the whole server.
     """
+    # Shared services that need the database before any feature uses them.
+    try:
+        from services import communes
+        communes.init(db)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("commune resolver unavailable: %s", exc)
     for dotted_path in MODULES:
         try:
             module = importlib.import_module(dotted_path)

@@ -131,7 +131,7 @@ def delete_rule(rule_id: str, token_data: TokenData = Depends(require_role(["bus
 
 
 @router.get("/api/owner/happy-hour/active-now")
-def active_now(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def active_now(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """Useful for the Scan page to show 'Happy Hour active!' indicator."""
     now = datetime.now(timezone.utc)
     rules = list(_db.happy_hour_rules.find({"tenant_id": token_data.tenant_id, "enabled": True}))
@@ -144,7 +144,7 @@ def active_now(token_data: TokenData = Depends(require_role(["business_owner", "
 @router.post("/api/owner/happy-hour/apply")
 def apply_to_scan(
     req: ApplyRequest,
-    token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"])),
 ):
     """Call this after a normal scan; credits extra points if any happy-hour
     rule is active right now. Logged in happy_hour_credits for audit."""

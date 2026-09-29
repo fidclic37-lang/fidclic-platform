@@ -25,6 +25,10 @@ api.interceptors.request.use((config) => {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${t}`;
     }
+    // The establishment chosen under the logo (BranchContext). The server
+    // decides what the caller may actually see — see features/store_scope.py.
+    config.headers = config.headers || {};
+    config.headers['X-FidClic-Store'] = localStorage.getItem('ft_selected_branch_v1') || 'all';
   } catch (_e) { /* ignore */ }
   return config;
 });
@@ -111,6 +115,117 @@ export const ownerAPI = {
   previewSegment: (data) => api.post('/owner/campaigns/preview-segment', data),
   // Per-customer card overrides — push a middle-band overlay to a filtered segment.
   pushCardOverride: (data) => api.post('/owner/card-overrides/push', data),
+  // Apple Wallet — adoption stats + a manual "refresh everyone's pass".
+  walletStats: () => api.get('/owner/wallet/stats'),
+  // Carte de fidélité page — design + programme + tiers + real figures.
+  cardSettings: () => api.get('/owner/card/settings'),
+  saveCardSettings: (data) => api.put('/owner/card/settings', data),
+  cardStats: (days) => api.get('/owner/card/stats', { params: { days } }),
+  saveCardRewards: (tiers) => api.put('/owner/card/rewards', tiers),
+  // Bonus de bienvenue — lives on the card page (features/welcome_bonus.py).
+  earnRules: () => api.get('/owner/earn-rules'),
+  saveEarnRules: (rules) => api.put('/owner/earn-rules', rules),
+  // Besoin d'aide ? — the FAQ knowledge base is public; the assistant and the
+  // conversation history are per-merchant.
+  supportKb: () => api.get('/support/kb'),
+  supportAsk: (message) => api.post('/owner/support/chat', { message }),
+  supportHistory: (limit = 12) => api.get('/owner/support/chat', { params: { limit } }),
+  // Historique — the merged activity feed, its four figures, its filter
+  // vocabulary and the CSV of exactly what is on screen.
+  historyFilters: () => api.get('/owner/history/filters'),
+  historyActivity: (params) => api.get('/owner/history/activity', { params }),
+  historyStats: (params) => api.get('/owner/history/stats', { params }),
+  historyExport: (params) => api.get('/owner/history/export', { params, responseType: 'blob' }),
+  // Géolocalisation — catchment rings, travel-time bands and the communes
+  // behind them, plus the same breakdown as CSV.
+  geoCatchment: (params) => api.get('/owner/geo/catchment', { params }),
+  geoExport: (params) => api.get('/owner/geo/export', { params, responseType: 'blob' }),
+  // Parrainage — the programme's dashboard, its settings and its share links.
+  referralOverview: (params) => api.get('/owner/referrals/overview', { params }),
+  referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
+  saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
+  // Automatisations · Push Wallet — the scenarios, their figures, and firing
+  // one by hand.
+  pushWalletScenarios: () => api.get('/owner/push-wallet/scenarios'),
+  pushWalletStats: (params) => api.get('/owner/push-wallet/stats', { params }),
+  createPushWalletScenario: (body) => api.post('/owner/push-wallet/scenarios', body),
+  updatePushWalletScenario: (id, patch) => api.put(`/owner/push-wallet/scenarios/${id}`, patch),
+  deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
+  runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
+  pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
+  // Analyses — one tab per request, and the overview as a CSV.
+  analyses: (params) => api.get('/owner/analyses', { params }),
+  analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
+  // Tableau de bord — the home page's eleven panels, and the monthly goal.
+  homeOverview: (params) => api.get('/owner/home/overview', { params }),
+  getHomeGoal: () => api.get('/owner/home/goal'),
+  setHomeGoal: (body) => api.put('/owner/home/goal', body),
+  // Clients — the page's four figures, its segments and its paginated table.
+  clientsOverview: () => api.get('/owner/clients/overview'),
+  clientsList: (params) => api.get('/owner/clients/list', { params }),
+  clientsExport: (params) => api.get('/owner/clients/export', { params, responseType: 'blob' }),
+  // Every client the current filter matches — ids only, so a message goes to
+  // the whole filter rather than to the page that happens to be on screen.
+  clientIds: (params) => api.get('/owner/clients/ids', { params }),
+  sendCampaignToGroup: (body) => api.post('/owner/campaigns/send-to-group', body),
+  // Campagnes — the page in one call, the composer in one call.
+  campaignsPage: () => api.get('/owner/campaigns/page'),
+  composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
+  campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
+  googleWalletStatus: () => api.get('/owner/wallet/google-status'),
+
+  // Segmentation — the page in one call, the builder counted live.
+  segmentationPage: () => api.get('/owner/segmentation/page'),
+  cataloguePage: (days) => api.get('/owner/catalogue/page', { params: { days } }),
+  createProduct: (body) => api.post('/owner/catalogue/products', body),
+  updateProduct: (id, body) => api.put(`/owner/catalogue/products/${id}`, body),
+  deleteProduct: (id) => api.delete(`/owner/catalogue/products/${id}`),
+  duplicateProduct: (id) => api.post(`/owner/catalogue/products/${id}/duplicate`),
+  bulkProducts: (body) => api.post('/owner/catalogue/products/bulk', body),
+  importProducts: (items) => api.post('/owner/catalogue/products/import', { items }),
+  setProductImage: (id, dataUrl) => api.put(`/owner/catalogue/products/${id}/image`, { data_url: dataUrl }),
+  deleteProductImage: (id) => api.delete(`/owner/catalogue/products/${id}/image`),
+  createCategory: (body) => api.post('/owner/catalogue/categories', body),
+  updateCategory: (body) => api.put('/owner/catalogue/categories', body),
+  deleteCategory: (name, moveTo) => api.delete(`/owner/catalogue/categories/${encodeURIComponent(name)}`, { params: { move_to: moveTo || '' } }),
+  customerRules: () => api.get('/owner/customer-rules'),
+  saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
+  restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),
+  teamAccess: () => api.get('/owner/team-access'),
+  teamCreate: (body) => api.post('/owner/team-access/users', body),
+  teamUpdate: (id, body) => api.put(`/owner/team-access/users/${encodeURIComponent(id)}`, body),
+  teamStatus: (id, active) => api.post(`/owner/team-access/users/${encodeURIComponent(id)}/status`, { active }),
+  teamPassword: (id) => api.post(`/owner/team-access/users/${encodeURIComponent(id)}/password`),
+  teamDelete: (id) => api.delete(`/owner/team-access/users/${encodeURIComponent(id)}`),
+  teamStoreAccess: (storeId, id, enabled) => api.put(`/owner/team-access/stores/${encodeURIComponent(storeId)}/users/${encodeURIComponent(id)}`, { enabled }),
+  joinLink: () => api.get('/owner/join-link'),
+  joinSlugCheck: (slug) => api.get('/owner/join-link/slug-check', { params: { slug } }),
+  saveJoinSlug: (slug) => api.put('/owner/join-link/slug', { slug }),
+  saveJoinPage: (body) => api.put('/owner/join-link/page', body),
+  segmentPreview: (body) => api.post('/owner/segmentation/preview', body),
+  createSegment: (body) => api.post('/owner/segmentation/segments', body),
+  updateSegment: (id, body) => api.put(`/owner/segmentation/segments/${id}`, body),
+  deleteSegment: (id) => api.delete(`/owner/segmentation/segments/${id}`),
+  segmentClients: (id) => api.get(`/owner/segmentation/segments/${id}/clients`),
+
+  // Insights — « Faites grandir votre commerce ».
+  insightsPage: () => api.get('/owner/insights/page'),
+  insightTemplate: (key, day) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`, { params: day != null && day !== '' ? { day } : {} }),
+  activateInsight: (action) => api.post(`/owner/insights/actions/${action}/activate`),
+  setGoogleReview: (body) => api.put('/owner/insights/google-review', body),
+  insightsExport: () => api.get('/owner/insights/export.pdf', { responseType: 'blob' }),
+
+  // FidClic IA Copilote.
+  copilotPage: (params) => api.get('/owner/copilot/page', { params }),
+  copilotFeedback: (key, kind) => api.post(`/owner/copilot/recommendations/${encodeURIComponent(key)}/feedback`, { kind }),
+  copilotAutopilot: (enabled) => api.put('/owner/copilot/autopilot', { enabled }),
+  copilotEditPlan: (steps) => api.put('/owner/copilot/plan', { steps }),
+  copilotRebuildPlan: () => api.post('/owner/copilot/plan/rebuild'),
+  copilotApprove: (stepId) => api.post(`/owner/copilot/plan/steps/${stepId}/approve`),
+  copilotChat: (message) => api.post('/owner/copilot/chat', { message }),
+  copilotChatHistory: () => api.get('/owner/copilot/chat'),
+
+  walletNotify: () => api.post('/owner/wallet/notify'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
   getActiveCardOverrideCount: () => api.get('/owner/card-overrides/active-count'),
@@ -375,6 +490,10 @@ export const publicAPI = {
   proximityPing: (data) => api.post('/public/proximity-ping', data),
   // -- Customer review submission (wallet card → rate-your-visit panel) --
   submitReview: (data) => api.post('/public/reviews', data),
+  googleReviewClick: (barcode) => api.post(`/card/${barcode}/google-review-click`),
+  // -- Signup page: its words (Paramètres › Lien d'inscription) and one visit --
+  joinPage: (slug) => api.get(`/join/${slug}/page`),
+  joinView: (slug, body) => api.post(`/join/${slug}/view`, body),
 };
 
 export default api;
