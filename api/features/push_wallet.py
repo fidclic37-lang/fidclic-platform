@@ -442,7 +442,8 @@ def _deliver(tid: str, row: Dict[str, Any], items, at: datetime, result: Dict[st
             # 2. and the same message down the web-push / SMS rail, so a
             #    customer with no wallet pass still hears about it.
             import server as core
-            core.dispatch_to_customer(tid, cust, title, body, kind="push_wallet")
+            core.dispatch_to_customer(tid, cust, title, body,
+                                      kind="birthday" if row.get("trigger") == "birthday" else "push_wallet")
             result["sent"] += 1
         except Exception:
             result["errors"] += 1

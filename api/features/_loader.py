@@ -21,6 +21,7 @@ MODULES = [
     "features.welcome_bonus",
     "features.auto_messages",
     "features.etablissement",
+    "features.send_rules",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",
@@ -85,6 +86,9 @@ MODULES = [
     # Billing — Stripe Checkout + Customer Portal + webhook handler.
     # Boots safely (no-ops) when STRIPE_SECRET_KEY isn't set.
     "features.billing",
+    # Plan catalogue (public) + live usage counters — the marketing site
+    # builds its pricing table from /api/public/plans.
+    "features.plans_public",
     # Native wallet passes — Apple .pkpass + Google Wallet. No-ops (503) until
     # APPLE_PASS_* / GOOGLE_WALLET_* are set in Vercel.
     "features.wallet_passes",
