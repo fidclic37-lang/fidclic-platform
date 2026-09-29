@@ -28,6 +28,7 @@ MODULES = [
     "features.preferences",
     "features.crm",
     "features.crm_calls",
+    "features.crm_email",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

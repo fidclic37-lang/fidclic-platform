@@ -10,6 +10,7 @@ import { crmAPI } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { Card, Head, Kpi, Donut, Bars, Avatar, Logo, Select, Loading, Breadcrumb, Pager, Modal, useToast, downloadBlob, nf, BLUE, inputCls } from './ui';
 import { TaskModal } from './CrmOverviewPage';
+import { ComposeEmail } from './emailUi';
 
 /* CRM › Appels — built to the approved mockup. Calls are made from the
    phone (tel: link) and their result is noted here. */
@@ -196,6 +197,7 @@ export default function CrmCallsPage() {
                     className="block w-full rounded-lg border border-[#DCE3EE] px-3 py-2.5 text-left text-[13.5px] hover:border-[#E11D48]">{r}</button>))}</div>
         </Modal>
       )}
+      {modal?.type === 'email' && <ComposeEmail prospect={modal.prospect} onClose={() => setModal(null)} onSent={(m) => { setModal(null); refresh(m); }} />}
       {modal?.type === 'import' && <ImportCallsModal onClose={() => setModal(null)} onDone={(m) => { setModal(null); refresh(m); }} />}
     </div>
   );
@@ -227,7 +229,7 @@ function CallDetail({ d, meta, navigate, act, say, refresh, setModal }) {
       <div className="grid grid-cols-[1fr_1.4fr_auto] gap-2">
         {d.phone ? <a href={`tel:${d.phone}`} onClick={() => setModal({ type: 'call', mode: 'dial', prospect: { id: d.prospect_id, name: d.prospect, phone: d.phone } })} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#DCE3EE] py-2 text-[12.5px] text-[#2F6BFF]"><Phone size={13} /> Rappeler</a>
           : <span className="rounded-lg border border-[#EDF1F7] py-2 text-center text-[12px] text-[#94A3B8]">Pas de n°</span>}
-        {d.email ? <a href={`mailto:${d.email}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#DCE3EE] py-2 text-[12.5px] text-[#2F6BFF]"><Mail size={13} /> Envoyer un email</a>
+        {d.email ? <button type="button" onClick={() => setModal({ type: 'email', prospect: { id: d.prospect_id, name: d.prospect, email: d.email } })} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#DCE3EE] py-2 text-[12.5px] text-[#2F6BFF]"><Mail size={13} /> Envoyer un email</button>
           : <span className="rounded-lg border border-[#EDF1F7] py-2 text-center text-[12px] text-[#94A3B8]">Pas d'email</span>}
         <button type="button" onClick={() => navigate(`/admin/crm/prospects?open=${d.prospect_id}`)} aria-label="Ouvrir le prospect" className="rounded-lg border border-[#DCE3EE] px-2.5 text-[#2F6BFF]"><ExternalLink size={14} /></button>
       </div>
