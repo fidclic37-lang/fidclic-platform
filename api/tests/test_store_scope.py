@@ -26,9 +26,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import clients_page as CP
     from features import campaigns_page as KP
     from features import analyses as AN
+    from features import insights_page as IP
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN):
+    for m in (S, T, DH, CP, KP, AN, IP):
         m.init(db)
     passed = failed = 0
 
@@ -242,6 +243,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
             print("   tab failed:", key, e)
             tabs_ok = False
     check("every tab builds for a manager", tabs_ok)
+
+    print("\nLa page Insights, limitée")
+    shop_sara = IP.Shop("t1", now, S.resolve(SARA, Req("orleans")))
+    check("its read of the shop is Blois' clients only", sorted(c["id"] for c in shop_sara.people) == ["c1", "c2", "c4"])
+    check("and Blois' tills only", all(v.get("amount_paid") in (20.0, 4.0) for v in shop_sara.visits))
+    check("the goal is Blois' own", IP.page(request=Req(), token_data=SARA)["goal"]["target"] == 200.0)
+    check("the owner's page still reads the whole shop",
+          len(IP.Shop("t1", now, S.resolve(OWNER, Req())).people) == 4 and IP.page(request=Req(), token_data=OWNER)["goal"]["target"] == 1000.0)
+    db.segments.insert_one({"id": "sg1", "tenant_id": "t1", "name": "Tous", "rules": [], "created_at": now})
+    try:
+        tpl = IP.template("seg:sg1", request=Req(), token_data=SARA)
+        seg_ok = set(tpl["audience"]["ids"]) <= {"c1", "c2", "c4"}
+    except HTTPException as e:
+        seg_ok = e.status_code in (403, 404)
+    check("a segment's members, messaged from a manager, never include another establishment's", seg_ok)
+    check("Insights opens to them", guard(SARA, IP.READERS, partial_ok=True) == 200)
+    check("a campaign sent for Tours does not mark a recommendation used for Blois",
+          (db.campaigns.insert_one({"id": "kt", "tenant_id": "t1", "template": "a_risque", "status": "sent",
+                                    "sent_at": now, "store_ids": ["tours"]}),
+           "a_risque" not in IP.used_templates("t1", now, scope=S.resolve(SARA, Req())))[1]
+          and "a_risque" in IP.used_templates("t1", now, scope=S.resolve(ALI, Req())))
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

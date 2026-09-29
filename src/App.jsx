@@ -328,7 +328,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="insights" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <InsightsGrowthPage />
               </ProtectedRoute>
             } />
