@@ -120,10 +120,13 @@ def snapshot(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     r = rules()
     since = now - timedelta(days=int(r["window_days"]))
     tenants = list(_db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0}))
-    clients = _count_by_tenant("customers", LIVE)
+    # One pass over the customers, not over every visit: each customer keeps
+    # its own visit count (never decremented) and its last visit date.
+    clients, visits, last = {}, {}, {}
+    for x in _db.customers.aggregate([{"$match": LIVE}, {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}, "v": {"$sum": "$visits"},
+                                                                    "at": {"$max": "$last_visit_date"}}}]):
+        clients[x["_id"]], visits[x["_id"]], last[x["_id"]] = x["n"], int(x.get("v") or 0), x.get("at")
     cards = _count_by_tenant("customers", {**LIVE, "created_at": {"$gte": since}})
-    visits = _count_by_tenant("visits", {})
-    last = {x["_id"]: x["at"] for x in _db.visits.aggregate([{"$group": {"_id": "$tenant_id", "at": {"$max": "$visit_time"}}}])}
     logos = {c["tenant_id"]: c.get("logo_url") or (c.get("brand_fields") or {}).get("logo_url")
              for c in _db.card_templates.find({}, {"_id": 0, "tenant_id": 1, "logo_url": 1, "brand_fields.logo_url": 1})}
     rows = []
