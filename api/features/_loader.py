@@ -20,6 +20,7 @@ MODULES = [
     # Loyalty rules / config
     "features.welcome_bonus",
     "features.auto_messages",
+    "features.etablissement",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

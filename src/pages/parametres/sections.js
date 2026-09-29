@@ -1,5 +1,5 @@
 import {
-  Users, QrCode, UserCog, ShieldCheck, Wallet, Languages, Bell, Lock,
+  Users, QrCode, UserCog, ShieldCheck, Wallet, Languages, Bell, Lock, Store,
 } from 'lucide-react';
 
 /* Paramètres — the eight sub-pages, in the sidebar's order. One list, read by
@@ -9,6 +9,9 @@ import {
    (/dashboard/settings) until each sub-page is built — nothing the owner can
    set today goes out of reach in the meantime. */
 export const PARAMETRES_SECTIONS = [
+  { slug: 'etablissement', label: 'Établissement', icon: Store,
+    title: 'Établissement',
+    subtitle: 'Gérez les informations de votre commerce.' },
   { slug: 'regles-clients', label: 'Règles clients', icon: Users,
     title: 'Règles clients',
     subtitle: 'Définissez comment FidClic classe automatiquement vos clients.' },
@@ -40,11 +43,12 @@ export const PARAMETRES_SECTIONS = [
 ];
 
 /* What each role sees of Paramètres. Administrateurs and managers manage
-   their team here; the shop-wide settings stay with the Propriétaire (store-
-   level settings for administrateurs come with the establishment filters). */
+   their team here, and see their establishments (an administrateur edits its
+   points de vente and the legal information; a manager reads). The shop-wide
+   settings stay with the Propriétaire. */
 export const sectionsFor = (role) => (role === 'business_owner'
   ? PARAMETRES_SECTIONS
-  : PARAMETRES_SECTIONS.filter((s) => s.slug === 'equipe'));
+  : PARAMETRES_SECTIONS.filter((s) => s.slug === 'equipe' || s.slug === 'etablissement'));
 
 export const PARAMETRES_BASE = '/dashboard/parametres';
 export const sectionPath = (slug) => `${PARAMETRES_BASE}/${slug}`;

@@ -133,7 +133,7 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
 
           {role === 'business_owner' && <span className="my-1 block h-px bg-[#EEF3FB]" />}
           {role === 'business_owner' && <button type="button"
-                  onClick={() => { setOpen(false); navigate('/dashboard/settings#settings-branches'); }}
+                  onClick={() => { setOpen(false); navigate('/dashboard/parametres/etablissement'); }}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] font-semibold text-[#2F6BFF] hover:bg-[#F4F7FC]">
             <Plus size={14} className="shrink-0" /> Ajouter un établissement
           </button>}

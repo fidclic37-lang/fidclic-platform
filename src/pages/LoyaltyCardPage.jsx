@@ -789,10 +789,12 @@ export default function LoyaltyCardPage() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <Label>Rayon du rappel</Label>
-                  <Select value={String(advanced.location_radius_m)}
-                          onChange={(e) => setAdvanced({ ...advanced, location_radius_m: Number(e.target.value) })}>
-                    {[50, 100, 150, 300, 500, 1000].map((m) => <option key={m} value={m}>{m} m</option>)}
-                  </Select>
+                  {/* One radius for the shop: the web card and the Wallet pass
+                      both use Paramètres › Établissement's. */}
+                  <a href="/dashboard/parametres/etablissement"
+                     className="flex h-[42px] items-center rounded-xl border border-[#E1E8F5] bg-[#F8FAFF] px-3 text-[12.5px] font-semibold text-[#2F6BFF] hover:underline">
+                    Réglé dans Établissement →
+                  </a>
                 </div>
                 <div>
                   <Label>Texte du rappel</Label>

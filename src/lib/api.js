@@ -160,6 +160,16 @@ export const ownerAPI = {
   // Messages automatiques — Google review after a scan, "récompense proche".
   autoMessages: () => api.get('/owner/auto-messages'),
   saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
+  // Paramètres › Établissement
+  etablissement: () => api.get('/owner/etablissement'),
+  saveEtablissement: (body) => api.put('/owner/etablissement', body),
+  geocodeEtablissement: (body) => api.post('/owner/etablissement/geocode', body),
+  addStore: (body) => api.post('/owner/etablissement/stores', body),
+  editStore: (id, body) => api.put(`/owner/etablissement/stores/${id}`, body),
+  businessHours: () => api.get('/owner/settings/hours'),
+  saveWeeklyHours: (weekly) => api.put('/owner/settings/hours/weekly', { weekly_schedule: weekly }),
+  saveHolidayClosures: (closures) => api.put('/owner/settings/hours/holidays', { holiday_closures: closures }),
+  saveAnnualClosures: (annual) => api.put('/owner/settings/hours/annual', { annual_closures: annual }),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
