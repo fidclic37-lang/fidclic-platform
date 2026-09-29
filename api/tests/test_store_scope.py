@@ -34,9 +34,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import referrals as RF
     from features import copilot as CO
     from features import catalogue_page as CAT
+    from features import loyalty_card as LC
+    from features import welcome_bonus as WB
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT, LC, WB):
         m.init(db)
     passed = failed = 0
 
@@ -418,6 +420,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("an edit answers with the page on the establishment shown", edited["products"][0]["sales"] == 2
           and edited["products"][0]["price"] == 4.5)
     check("the Catalogue opens to them", guard(SARA, CAT.READERS, partial_ok=True) == 200)
+
+    print("\nLa Carte de fidélité")
+    db.rewards_redeemed.insert_many([
+        {"id": "r1", "tenant_id": "t1", "customer_id": "c2", "branch_id": "blois", "redeemed_at": now - dt.timedelta(days=1)},
+        {"id": "r2", "tenant_id": "t1", "customer_id": "c1", "branch_id": "tours", "redeemed_at": now - dt.timedelta(days=1)},
+    ])
+    st_sara = LC.card_stats(30, token_data=SARA, request=Req())
+    st_owner = LC.card_stats(30, token_data=OWNER, request=Req())
+    check("a manager's scans are its establishment's till", st_sara["qr_scans"]["value"] == db.visits.count_documents(
+        {"tenant_id": "t1", "branch_id": "blois", "visit_time": {"$gte": now - dt.timedelta(days=30)}}))
+    check("its rewards, those given at its till", st_sara["rewards_used"]["value"] == 1 and st_owner["rewards_used"]["value"] == 2)
+    check("its active cards, its clients", st_sara["cards_active"]["value"] == 3 and st_owner["cards_active"]["value"] == 4)
+    check("everyone reads the same card", LC.get_card_settings(SARA)["design"] == LC.get_card_settings(OWNER)["design"])
+    check("the card opens to them", guard(SARA, LC.READERS, partial_ok=True) == 200 and guard(ALI, LC.READERS, partial_ok=True) == 200)
+    check("only the owner changes it", guard(ALI, ["business_owner"]) == 403)
+
+    print("\nLe bonus de bienvenue, sur la carte")
+    WB.update_earn_rules(WB.EarnRules(welcome_bonus_points=50, welcome_bonus_message="Bienvenue !"), token_data=OWNER)
+    check("the owner's bonus is read by everyone on the card page", WB.get_earn_rules(token_data=SARA)["welcome_bonus_points"] == 50)
+    check("it opens to them, read-only", guard(ALI, ["business_owner", "administrateur", "manager"], partial_ok=True) == 200
+          and guard(ALI, ["business_owner"]) == 403)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

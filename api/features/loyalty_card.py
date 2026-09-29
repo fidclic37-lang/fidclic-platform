@@ -32,13 +32,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import store_scope as S
 
 router = APIRouter(tags=["loyalty-card"])
 _db = None
+
+# One card for every establishment: the same design, and stamps that count at
+# every till. The owner edits it; administrateurs and managers read it, with
+# the figures of their own establishments (features/store_scope.py).
+READERS = ["business_owner", "administrateur", "manager"]
 
 # What a merchant can actually run today. Each one changes how a scan earns,
 # not just the wording on the page.
@@ -218,7 +224,7 @@ class CardSettings(BaseModel):
 
 
 @router.get("/api/owner/card/settings")
-def get_card_settings(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def get_card_settings(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
     tpl = _template(tid)
     tenant = _db.tenants.find_one({"id": tid}) or {}
@@ -444,8 +450,13 @@ def _delta(current: int, previous: int) -> Optional[float]:
 
 @router.get("/api/owner/card/stats")
 def card_stats(days: int = Query(30, ge=1, le=365),
-               token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+               token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
+               request: Request = None):
     tid = token_data.tenant_id
+    scope = S.resolve(token_data, request)
+    tills = S.visit_filter(scope)                  # visits and rewards carry the till's branch_id
+    mine = S.customer_ids(scope)
+    people = {"id": {"$in": list(mine)}} if mine is not None else {}
     now = _now()
     start = now - timedelta(days=days)
     prev_start = start - timedelta(days=days)
@@ -453,21 +464,21 @@ def card_stats(days: int = Query(30, ge=1, le=365),
     def customers_created(a: datetime, b: datetime) -> int:
         return _db.customers.count_documents({
             "tenant_id": tid, "created_at": {"$gte": a, "$lt": b},
-            "card_deleted_at": {"$exists": False}, "deleted_at": {"$exists": False},
+            "card_deleted_at": {"$exists": False}, "deleted_at": {"$exists": False}, **people,
         })
 
     def visits_between(a: datetime, b: datetime) -> int:
-        return _db.visits.count_documents({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}})
+        return _db.visits.count_documents({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}, **tills})
 
     def rewards_between(a: datetime, b: datetime) -> int:
-        return _db.rewards_redeemed.count_documents({"tenant_id": tid, "redeemed_at": {"$gte": a, "$lt": b}})
+        return _db.rewards_redeemed.count_documents({"tenant_id": tid, "redeemed_at": {"$gte": a, "$lt": b}, **tills})
 
     def loyal_between(a: datetime, b: datetime) -> int:
         """Customers who came back at least twice inside the window — the
         figure a merchant actually cares about behind "clients fidèles"."""
         try:
             rows = _db.visits.aggregate([
-                {"$match": {"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}}},
+                {"$match": {"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}, **tills}},
                 {"$group": {"_id": "$customer_id", "n": {"$sum": 1}}},
                 {"$match": {"n": {"$gte": 2}}},
                 {"$count": "total"},
@@ -476,13 +487,13 @@ def card_stats(days: int = Query(30, ge=1, le=365),
         except Exception:
             # mongomock cannot always run this pipeline — count in Python.
             seen: Dict[str, int] = {}
-            for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}},
+            for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}, **tills},
                                      {"customer_id": 1}):
                 seen[v.get("customer_id")] = seen.get(v.get("customer_id"), 0) + 1
             return sum(1 for n in seen.values() if n >= 2)
 
     active_cards = _db.customers.count_documents({
-        "tenant_id": tid, "card_deleted_at": {"$exists": False}, "deleted_at": {"$exists": False},
+        "tenant_id": tid, "card_deleted_at": {"$exists": False}, "deleted_at": {"$exists": False}, **people,
     })
     scans, scans_prev = visits_between(start, now), visits_between(prev_start, start)
     rewards, rewards_prev = rewards_between(start, now), rewards_between(prev_start, start)

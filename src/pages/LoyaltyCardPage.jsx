@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
-  MapPin, Share2, CalendarClock, Type, ChevronDown,
+  MapPin, Share2, CalendarClock, Type, ChevronDown, Sparkles,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 import WalletPassPreview from '../components/WalletPassPreview';
 import WalletCard from '../components/WalletCard';
 
@@ -30,7 +31,8 @@ const BLUE = '#2F6BFF';
 const INK = '#0B1C3F';
 
 /* ── small building blocks, all in the mockup's idiom ─────────────────── */
-const Card = ({ icon: Icon, title, subtitle, action, children, className = '' }) => (
+// `locked`: shown, not editable — the card is the owner's to change.
+const Card = ({ icon: Icon, title, subtitle, action, children, className = '', locked = false }) => (
   <section className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
     <header className="mb-4 flex items-start gap-3">
       {Icon && (
@@ -44,7 +46,7 @@ const Card = ({ icon: Icon, title, subtitle, action, children, className = '' })
       </div>
       {action}
     </header>
-    {children}
+    {locked ? <fieldset disabled className="m-0 min-w-0 border-0 p-0">{children}</fieldset> : children}
   </section>
 );
 
@@ -187,10 +189,85 @@ const PROGRAMME_HINT = {
   cashback: 'Un pourcentage du ticket est rendu au client sous forme de cagnotte.',
 };
 
+/* ── Bonus de bienvenue — moved here from Paramètres: it is a loyalty rule.
+   Same backend as before (/owner/earn-rules), so nothing already set is lost. */
+function WelcomeBonus({ edit }) {
+  const [cfg, setCfg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    ownerAPI.earnRules().then((r) => setCfg(r.data)).catch(() => setErr('Le bonus de bienvenue n\'a pas pu être chargé.'));
+  }, []);
+  const set = (patch) => { setCfg((c) => ({ ...c, ...patch })); setSaved(false); };
+  const save = async () => {
+    setSaving(true); setErr('');
+    try {
+      const r = await ownerAPI.saveEarnRules({ ...cfg, welcome_bonus_points: Math.max(0, parseInt(cfg.welcome_bonus_points || 0, 10) || 0) });
+      setCfg(r.data); setSaved(true);
+    } catch (e) { setErr(e?.response?.data?.detail || 'Enregistrement impossible.'); }
+    finally { setSaving(false); }
+  };
+  return (
+    <Card icon={Sparkles} title="Bonus de bienvenue"
+          subtitle="Le premier message qu'un nouveau client voit en rejoignant votre programme, avec des points offerts pour bien commencer."
+          locked={!edit}>
+      {!cfg ? (
+        err ? <p className="text-[12.5px] text-red-700">⚠ {err}</p>
+          : <div className="flex h-[90px] items-center justify-center text-[#94A3B8]"><Loader2 className="animate-spin" size={18} /></div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+          <div className="space-y-3.5">
+            <div className="-mx-2">
+              <Toggle icon={Gift} label={cfg.enabled ? 'Activé — chaque nouveau client le reçoit' : 'Désactivé — rien de plus à l\'inscription'}
+                      checked={!!cfg.enabled} onChange={(v) => set({ enabled: v })} />
+            </div>
+            <div className={cfg.enabled ? '' : 'pointer-events-none opacity-50'}>
+              <Label hint="{first_name} {name} {business_name}">Message de bienvenue</Label>
+              <textarea rows={3} maxLength={200} value={cfg.welcome_bonus_message || ''}
+                        onChange={(e) => set({ welcome_bonus_message: e.target.value })}
+                        placeholder="Bienvenue {first_name} ! 50 points offerts pour bien commencer chez {business_name}."
+                        className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
+            </div>
+          </div>
+          <div className={`space-y-3.5 ${cfg.enabled ? '' : 'pointer-events-none opacity-50'}`}>
+            <div>
+              <Label hint="0 = message seul">Points offerts</Label>
+              <Input type="number" min="0" value={cfg.welcome_bonus_points ?? 0}
+                     onChange={(e) => set({ welcome_bonus_points: e.target.value })} />
+              <p className="mt-1 text-[11.5px] text-[#94A3B8]">Crédités une seule fois par client.</p>
+            </div>
+            <div className="-mx-2">
+              <Toggle icon={Users} label="Seulement avant la première visite (recommandé)"
+                      checked={cfg.welcome_bonus_only_first_visit !== false}
+                      onChange={(v) => set({ welcome_bonus_only_first_visit: v })} />
+            </div>
+          </div>
+          {edit && (
+            <div className="flex items-center gap-3 lg:col-span-2">
+              <button type="button" onClick={save} disabled={saving}
+                      className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60"
+                      style={{ background: BLUE }}>
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer le bonus
+              </button>
+              {saved && <span className="flex items-center gap-1.5 text-[12px] text-[#15803D]"><Check size={13} /> Enregistré</span>}
+              {err && <span className="text-[12px] text-red-700">⚠ {err}</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 const TIER_TONE = ['#B08968', '#94A3B8', '#E0A128', '#7C3AED'];
 const WINDOWS = [{ d: 7, label: '7 derniers jours' }, { d: 30, label: '30 derniers jours' }, { d: 90, label: '90 derniers jours' }];
 
 export default function LoyaltyCardPage() {
+  // One card for every establishment: the owner changes it, everyone else
+  // sees it as it is — with the figures of their own establishments.
+  const { user } = useAuth();
+  const edit = user?.role === 'business_owner';
   const [data, setData] = useState(null);          // server truth
   const [design, setDesign] = useState(null);
   const [programme, setProgramme] = useState(null);
@@ -368,11 +445,18 @@ export default function LoyaltyCardPage() {
       </div>
 
       {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700">⚠ {error}</div>}
+      {!edit && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-[#E6EEFB] bg-white px-4 py-3 text-[12.5px] text-[#475569]">
+          <Eye size={15} className="mt-0.5 shrink-0 text-[#2F6BFF]" />
+          La carte est la même dans tous les établissements : seul le propriétaire peut la modifier.
+          Les statistiques ci-dessous sont celles de vos établissements.
+        </div>
+      )}
 
       {/* ── three columns ── */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         {/* 1. design */}
-        <Card icon={Plus} title="Personnalisation de la carte" subtitle="Personnalisez l'apparence de votre carte de fidélité.">
+        <Card icon={Plus} title="Personnalisation de la carte" subtitle="Personnalisez l'apparence de votre carte de fidélité." locked={!edit}>
           <div className="space-y-3.5">
             <div>
               <Label>Nom de la carte</Label>
@@ -411,11 +495,11 @@ export default function LoyaltyCardPage() {
                         className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
               <div className="mt-1 text-right text-[11px] text-[#94A3B8]">{(design.welcome_text || '').length}/100</div>
             </div>
-            <button type="button" onClick={save} disabled={saving}
+            {edit && <button type="button" onClick={save} disabled={saving}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-60"
                     style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
               {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer les modifications
-            </button>
+            </button>}
             {savedAt && (
               <p className="flex items-center justify-center gap-1.5 text-[12px] text-[#15803D]">
                 <Check size={13} /> Enregistré{savedAt.wallet > 0 && ` · ${savedAt.wallet} carte${savedAt.wallet > 1 ? 's' : ''} Wallet mise${savedAt.wallet > 1 ? 's' : ''} à jour`}
@@ -452,7 +536,7 @@ export default function LoyaltyCardPage() {
         </Card>
 
         {/* 3. programme */}
-        <Card icon={Settings2} title="Paramètres de la carte" subtitle="Configurez le fonctionnement de votre programme.">
+        <Card icon={Settings2} title="Paramètres de la carte" subtitle="Configurez le fonctionnement de votre programme." locked={!edit}>
           <div className="space-y-3.5">
             <div>
               <Label>Type de programme</Label>
@@ -543,7 +627,7 @@ export default function LoyaltyCardPage() {
 
       {/* ── options avancées — the knobs Apple and Google really expose ── */}
       {showAdvanced && advanced && (
-        <Card icon={Sliders} title="Options avancées"
+        <Card icon={Sliders} title="Options avancées" locked={!edit}
               subtitle="Réglages pris en charge par Apple Wallet et Google Wallet. Tout le reste (police, mise en page, animations) est imposé par Apple.">
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             {/* code + identity */}
@@ -746,7 +830,7 @@ export default function LoyaltyCardPage() {
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-3 border-t border-[#EEF2F9] pt-4">
+          {edit && <div className="mt-4 flex items-center gap-3 border-t border-[#EEF2F9] pt-4">
             <button type="button" onClick={save} disabled={saving}
                     className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60"
                     style={{ background: BLUE }}>
@@ -756,7 +840,7 @@ export default function LoyaltyCardPage() {
               <CalendarClock size={12} className="mr-1 inline" />
               Les cartes déjà dans Wallet sont mises à jour automatiquement.
             </p>
-          </div>
+          </div>}
         </Card>
       )}
 
@@ -794,7 +878,7 @@ export default function LoyaltyCardPage() {
           icon={Gift}
           title="Récompenses et paliers"
           subtitle="Configurez les récompenses et visualisez les paliers de fidélité."
-          action={(
+          action={edit && (
             <button type="button" onClick={() => (editTiers ? saveTiers() : setEditTiers(true))} disabled={saving}
                     className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
               {editTiers ? <><Check size={14} /> Enregistrer</> : <><Settings2 size={14} /> Gérer les récompenses</>}
@@ -841,6 +925,8 @@ export default function LoyaltyCardPage() {
           </div>
         </Card>
       </div>
+
+      <WelcomeBonus edit={edit} />
 
       {/* ── Aperçu client — the card exactly as the customer opens it ── */}
       {customerPreview && (
