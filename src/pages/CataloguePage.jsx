@@ -556,6 +556,7 @@ function StatsTab({ d, onDays }) {
 }
 
 function CategoriesTab({ d, onEdit, onDelete, onAdd, onOpen }) {
+  const edit = d.can_edit !== false;
   const uncategorised = d.products.filter((p) => !p.category).length;
   return (
     <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
@@ -564,7 +565,7 @@ function CategoriesTab({ d, onEdit, onDelete, onAdd, onOpen }) {
           <h3 className="text-[16px] font-bold text-[#0B1C3F]">Catégories</h3>
           <p className="text-[13px] text-[#64748B]">Regroupez vos produits — la couleur suit le produit partout.</p>
         </div>
-        <button type="button" onClick={onAdd} className={btnPrimary}><Plus size={16} /> Nouvelle catégorie</button>
+        {edit && <button type="button" onClick={onAdd} className={btnPrimary}><Plus size={16} /> Nouvelle catégorie</button>}
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {d.categories.map((c) => {
@@ -579,10 +580,10 @@ function CategoriesTab({ d, onEdit, onDelete, onAdd, onOpen }) {
                     <p className="text-[12.5px] text-[#64748B]">{c.count} produit{c.count > 1 ? 's' : ''} · {c.active_count} actif{c.active_count > 1 ? 's' : ''}</p>
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-1">
+                {edit && <div className="flex shrink-0 gap-1">
                   <button type="button" onClick={() => onEdit(c)} aria-label={`Modifier ${c.name}`} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#0B1C3F] hover:border-[#2F6BFF] hover:text-[#2F6BFF]"><Pencil size={14} /></button>
                   <button type="button" onClick={() => onDelete(c)} aria-label={`Supprimer ${c.name}`} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#FECACA] bg-[#FEF2F2] text-[#EF4444]"><Trash2 size={14} /></button>
-                </div>
+                </div>}
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-[#F4F7FC] pt-3 text-[12.5px]">
                 <span className="text-[#475569]"><b className="text-[#0B1C3F]">{nf(c.sales)}</b> ventes · <b className="text-[#0B1C3F]">{eur(c.revenue)}</b></span>
@@ -707,6 +708,9 @@ export default function CataloguePage() {
     );
   }
 
+  // The catalogue is the whole shop's: the owner edits it; administrateurs
+  // and managers read it, with the sales of their establishments.
+  const edit = d.can_edit !== false;
   const TABS = [
     { key: 'all', label: 'Tous les produits', icon: Box },
     { key: 'categories', label: 'Catégories', icon: Boxes },
@@ -746,10 +750,10 @@ export default function CataloguePage() {
             <p className="mt-1 text-[15.5px] text-[#475569]">Gérez vos produits et services. Ces informations seront utilisées pour vos campagnes et vos insights.</p>
           </div>
         </div>
-        <button type="button" onClick={() => setEditing({})}
+        {edit && <button type="button" onClick={() => setEditing({})}
                 className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#2F6BFF] px-6 text-[15.5px] font-medium text-white shadow-[0_10px_24px_-14px_rgba(47,107,255,.9)] hover:bg-[#2559DB]">
           <Plus size={18} /> Ajouter un produit
-        </button>
+        </button>}
       </header>
 
       <div className="mb-5 grid grid-cols-2 overflow-hidden rounded-2xl border border-[#E6EEFB] bg-white md:grid-cols-4" role="tablist">
@@ -802,7 +806,7 @@ export default function CataloguePage() {
               </label>
             </div>
 
-            {picked.size > 0 && (
+            {edit && picked.size > 0 && (
               <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#EFF5FF] px-4 py-2.5 text-[13px]">
                 <b className="mr-2 text-[#0B1C3F]">{picked.size} sélectionné{picked.size > 1 ? 's' : ''}</b>
                 <button type="button" onClick={() => bulk('activate')} className="rounded-lg bg-white px-3 py-1.5 font-semibold text-[#0B1C3F] hover:text-[#2F6BFF]">Activer</button>
@@ -823,9 +827,9 @@ export default function CataloguePage() {
                 <thead>
                   <tr className="border-b border-[#EEF3FB] text-left text-[13.5px] text-[#0B1C3F]">
                     <th className="w-12 py-3 pl-4">
-                      <input type="checkbox" aria-label="Tout sélectionner" checked={allShown}
+                      {edit && <input type="checkbox" aria-label="Tout sélectionner" checked={allShown}
                              onChange={() => setPicked((prev) => { const n = new Set(prev); shown.forEach((p) => (allShown ? n.delete(p.id) : n.add(p.id))); return n; })}
-                             className="h-[18px] w-[18px] cursor-pointer rounded accent-[#2F6BFF]" />
+                             className="h-[18px] w-[18px] cursor-pointer rounded accent-[#2F6BFF]" />}
                     </th>
                     <th className="py-3 pl-2 font-medium">{headSort('name', 'Produit')}</th>
                     <th className="py-3 font-medium">Catégorie</th>
@@ -839,8 +843,8 @@ export default function CataloguePage() {
                   {shown.map((p) => (
                     <tr key={p.id} className="border-b border-[#F1F5F9] last:border-0 hover:bg-[#FAFCFF]">
                       <td className="py-2 pl-4">
-                        <input type="checkbox" aria-label={`Sélectionner ${p.name}`} checked={picked.has(p.id)} onChange={() => togglePick(p.id)}
-                               className="h-[18px] w-[18px] cursor-pointer rounded accent-[#2F6BFF]" />
+                        {edit && <input type="checkbox" aria-label={`Sélectionner ${p.name}`} checked={picked.has(p.id)} onChange={() => togglePick(p.id)}
+                               className="h-[18px] w-[18px] cursor-pointer rounded accent-[#2F6BFF]" />}
                       </td>
                       <td className="py-2 pl-2">
                         <div className="flex items-center gap-3.5">
@@ -854,21 +858,22 @@ export default function CataloguePage() {
                       <td className="py-2"><Pill name={p.category} color={colourOf[p.category] || p.color} /></td>
                       <td className="py-2 text-[#0B1C3F]">{eur(p.price)}</td>
                       <td className="py-2 pl-2 text-[#0B1C3F]">{nf(p.sales)}</td>
-                      <td className="py-2"><Toggle on={p.active} onChange={(v) => setActive(p, v)} label={`Activer ${p.name}`} /></td>
+                      <td className="py-2">{edit ? <Toggle on={p.active} onChange={(v) => setActive(p, v)} label={`Activer ${p.name}`} />
+                        : <span className={`rounded-md px-2 py-0.5 text-[12.5px] font-semibold ${p.active ? 'bg-[#ECFDF5] text-[#047857]' : 'bg-[#F1F5F9] text-[#64748B]'}`}>{p.active ? 'Actif' : 'Inactif'}</span>}</td>
                       <td className="py-2 pr-4">
-                        <div className="flex items-center justify-center gap-4">
+                        {edit ? <div className="flex items-center justify-center gap-4">
                           <button type="button" onClick={() => setEditing(p)} aria-label={`Modifier ${p.name}`}
                                   className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#E2E8F0] bg-white text-[#0B1C3F] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
                             <Pencil size={17} />
                           </button>
                           <RowMenu p={p} onAction={onRowAction} />
-                        </div>
+                        </div> : <p className="text-center text-[#94A3B8]">—</p>}
                       </td>
                     </tr>
                   ))}
                   {!shown.length && (
                     <tr><td colSpan={7} className="px-6 py-14 text-center text-[14px] text-[#64748B]">
-                      {d.products.length ? 'Aucun produit ne correspond à ces filtres.' : (
+                      {d.products.length ? 'Aucun produit ne correspond à ces filtres.' : !edit ? 'Le catalogue est encore vide.' : (
                         <span>Votre catalogue est vide. <button type="button" onClick={() => setEditing({})} className="font-semibold text-[#2F6BFF] hover:underline">Ajoutez un produit</button> ou{' '}
                           <button type="button" onClick={() => setImporting(true)} className="font-semibold text-[#2F6BFF] hover:underline">importez votre menu en photo</button>.</span>
                       )}

@@ -33,9 +33,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import geolocation as GEO
     from features import referrals as RF
     from features import copilot as CO
+    from features import catalogue_page as CAT
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT):
         m.init(db)
     passed = failed = 0
 
@@ -394,6 +395,29 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("asking for another establishment's alerts never widens",
           S.resolve(SARA, None, requested="tours").ids == ["blois"])
     check("the bell opens to them", guard(SARA, server.ALERT_READERS, partial_ok=True) == 200)
+
+    print("\nLe Catalogue, limité")
+    db.tenant_catalog.update_one({"tenant_id": "t1"}, {"$set": {"items": [
+        {"id": "p1", "name": "Latte", "price": 4.0, "category": "Boissons"}]}}, upsert=True)
+    db.visits.insert_many([
+        {"id": "vc1", "tenant_id": "t1", "customer_id": "c2", "branch_id": "blois", "amount_paid": 8.0,
+         "visit_time": now - dt.timedelta(hours=2), "items": [{"item_id": "p1", "name": "Latte", "qty": 2, "price": 4.0}]},
+        {"id": "vc2", "tenant_id": "t1", "customer_id": "c1", "branch_id": "tours", "amount_paid": 12.0,
+         "visit_time": now - dt.timedelta(hours=2), "items": [{"item_id": "p1", "name": "Latte", "qty": 3, "price": 4.0}]},
+    ])
+    cat_sara = CAT.page(days=30, request=Req(), token_data=SARA)
+    check("a manager sees the sales of its establishment's till", cat_sara["products"][0]["sales"] == 2)
+    check("the owner, every till", CAT.page(days=30, request=Req(), token_data=OWNER)["products"][0]["sales"] == 5)
+    check("an administrateur, its own", CAT.page(days=30, request=Req(), token_data=ALI)["products"][0]["sales"] == 5
+          and CAT.page(days=30, request=Req("tours"), token_data=ALI)["products"][0]["sales"] == 3)
+    check("the catalogue itself is the owner's to edit",
+          cat_sara["can_edit"] is False and CAT.page(days=30, request=Req(), token_data=OWNER)["can_edit"] is True
+          and guard(SARA, ["business_owner"]) == 403)
+    edited = CAT.update_product("p1", CAT.ProductIn(name="Latte", price=4.5, category="Boissons"),
+                                request=Req("blois"), token_data=OWNER)
+    check("an edit answers with the page on the establishment shown", edited["products"][0]["sales"] == 2
+          and edited["products"][0]["price"] == 4.5)
+    check("the Catalogue opens to them", guard(SARA, CAT.READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
