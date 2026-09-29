@@ -500,12 +500,18 @@ export default function LienInscriptionPage() {
             </ul>
           </div>
 
-          {/* the phone, cut by the card's edge as in the design */}
-          <div className="relative -mb-5 flex min-h-[230px] justify-center">
-            <img src="/parametres/join-preview.webp" alt="" aria-hidden="true"
-                 onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                 className="pointer-events-none absolute bottom-0 right-0 h-[210px] w-[70%] rounded-tl-3xl object-cover opacity-90 [mask-image:linear-gradient(to_right,transparent,black_35%)]" />
-            <div className="relative mt-1 w-[200px] self-start rounded-t-[30px] border-[7px] border-b-0 border-[#111827] bg-white px-4 pb-4 pt-3 shadow-[0_24px_50px_-26px_rgba(11,28,63,.7)]">
+          {/* The phone on the left, the cup beside it on the right — side by
+              side as in the design, never on top of each other. The photo
+              melts into the card on its left and top edges. */}
+          <div className="relative -mb-5 flex min-h-[250px] justify-start pl-[6%]">
+            <div aria-hidden="true" className="pointer-events-none absolute bottom-0 right-0 top-2 w-[54%] overflow-hidden">
+              <img src="/parametres/join-preview.webp" alt=""
+                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                   className="h-full w-full object-cover object-[62%_55%]" />
+              <span className="absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-white via-white/70 to-transparent" />
+              <span className="absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-white to-transparent" />
+            </div>
+            <div className="relative z-10 mt-1 w-[200px] self-start rounded-t-[30px] border-[7px] border-b-0 border-[#111827] bg-white px-4 pb-4 pt-3 shadow-[0_24px_50px_-26px_rgba(11,28,63,.7)]">
               <span className="absolute left-1/2 top-1.5 h-3.5 w-16 -translate-x-1/2 rounded-full bg-[#111827]" />
               <p className="text-[8px] font-semibold text-[#0B1C3F]">9:41</p>
               <p className="mt-2 text-center text-[8.5px] font-semibold text-[#0B1C3F]">{shopName}</p>
