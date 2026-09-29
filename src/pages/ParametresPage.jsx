@@ -7,6 +7,7 @@ import ReglesClientsPage from './ReglesClientsPage';
 import LienInscriptionPage from './LienInscriptionPage';
 import EquipeAccesPage from './EquipeAccesPage';
 import EtablissementPage from './EtablissementPage';
+import NotificationsSettingsPage from './NotificationsSettingsPage';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -16,7 +17,8 @@ import EtablissementPage from './EtablissementPage';
    same settings exist on the older all-in-one page, it links straight to
    them so nothing goes out of reach in the meantime. */
 const PAGES = { etablissement: EtablissementPage, 'regles-clients': ReglesClientsPage,
-                'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage };
+                'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage,
+                notifications: NotificationsSettingsPage };
 
 function EmptySection({ section }) {
   const Icon = section.icon;

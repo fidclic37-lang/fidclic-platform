@@ -510,6 +510,18 @@ def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
         except Exception as exc:  # never let the counter break a send
             print(f"dispatch_to_customer: quota check skipped ({exc})")
 
+    # Limites d'envoi — the business's own per-client and per-shop limits
+    # (Paramètres › Notifications). Over a limit, the message waits for
+    # tomorrow instead of being sent; what follows a client's own action is
+    # never held (features/send_rules.py).
+    try:
+        from features import send_rules as _SR                         # noqa: WPS433
+        held = _SR.gate(tenant_id, customer, title, body, kind, url)
+        if held:
+            return held
+    except Exception as exc:
+        print(f"dispatch_to_customer: send rules skipped ({exc})")
+
     # 1. Web Push
     try:
         from features.push_subscriptions import fan_out_to_customer   # noqa: WPS433
@@ -10980,6 +10992,15 @@ def run_daily_triggers(request: Request):
         else:
             db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
 
+    # Messages held back yesterday by a business's sending limits go first,
+    # most important first (features/send_rules.py).
+    deferred_summary = {"sent": 0}
+    try:
+        from features.send_rules import drain as _drain_deferred
+        deferred_summary = _drain_deferred(now)
+    except Exception as _e:
+        print(f"deferred messages runner failed (non-fatal): {_e}")
+
     # Push Wallet scenarios — the eight automations fire from here, once a day.
     # Wrapped: a scenario that blows up must not stop the rest of the cron.
     push_wallet_summary = {"tenants": 0, "sent": 0}
@@ -11017,6 +11038,7 @@ def run_daily_triggers(request: Request):
         "scheduled_sent": scheduled_sent,
         "tier_up_emitted": tier_up_emitted_count,
         "push_wallet": push_wallet_summary,
+        "deferred": deferred_summary,
         "campagnes": campagnes_summary,
         "copilot": copilot_summary,
         "tenants_processed": len(tenants),

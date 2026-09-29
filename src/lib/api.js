@@ -170,6 +170,9 @@ export const ownerAPI = {
   saveWeeklyHours: (weekly) => api.put('/owner/settings/hours/weekly', { weekly_schedule: weekly }),
   saveHolidayClosures: (closures) => api.put('/owner/settings/hours/holidays', { holiday_closures: closures }),
   saveAnnualClosures: (annual) => api.put('/owner/settings/hours/annual', { annual_closures: annual }),
+  // Paramètres › Notifications — usage, plan limits, the business's sending rules.
+  notificationsOverview: (period) => api.get('/owner/notifications/overview', { params: { period } }),
+  saveSendRules: (rules) => api.put('/owner/notifications/rules', rules),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
