@@ -64,6 +64,9 @@ PUBLIC_URL = os.environ.get("VITE_PUBLIC_URL", "").rstrip("/") or os.environ.get
 # Plan → price-id mapping. The actual euros are managed in Stripe Dashboard.
 # We keep these in env so the reseller can change pricing without a redeploy.
 PLAN_PRICE_IDS = {
+    # "silver" is the Starter plan's key in the catalogue (models.PLAN_FEATURES);
+    # "basic" is kept for tenants created before it.
+    "silver": os.environ.get("STRIPE_PRICE_STARTER", "").strip(),
     "basic":  os.environ.get("STRIPE_PRICE_STARTER", "").strip(),
     "gold":   os.environ.get("STRIPE_PRICE_GROWTH", "").strip(),
     "vip":    os.environ.get("STRIPE_PRICE_PRO", "").strip(),
@@ -309,5 +312,13 @@ async def stripe_webhook(request: Request):
                 {"id": tenant["id"]},
                 {"$set": {"last_payment_succeeded_at": datetime.now(timezone.utc)}},
             )
+            # Every payment becomes a FidClic invoice (features/invoices.py),
+            # issued as soon as the issuer's legal details are complete.
+            if (obj.get("amount_paid") or 0) > 0:
+                try:
+                    from features.invoices import record_payment
+                    record_payment(tenant["id"], obj)
+                except Exception as _e:
+                    print(f"billing: invoice not recorded (non-fatal): {_e}")
 
     return {"received": True, "type": etype}

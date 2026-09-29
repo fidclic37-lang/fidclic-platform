@@ -12,7 +12,8 @@ import { ownerAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
-  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag
+  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
+  Receipt,
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 
@@ -481,6 +482,7 @@ const DashboardLayout = () => {
               <NavLink to="/admin/insights"      icon={Sparkles}     label="Insights"           currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/tenants"       icon={Database}     label="Manage Businesses"  currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/plans"         icon={Shield}       label="Plan Limits"        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/admin/facturation"   icon={Receipt}      label="Facturation"        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/card-designer" icon={Palette}      label="Card Designer"      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campaigns"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/ai"            icon={BrainCircuit} label="AI Intelligence"    currentPath={currentPath} role={role} collapsed={collapsed} />
