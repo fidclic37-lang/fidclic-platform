@@ -73,7 +73,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                              "visits": 50, "total_amount_paid": 999.0, "tier": "vip",
                              "last_visit_date": now, "created_at": now})
 
-    ov = CP.overview(TD())
+    ov = CP.overview(token_data=TD())
     cards = {c["key"]: c for c in ov["cards"]}
     segs = {s["key"]: s for s in ov["segments"]}
 
@@ -86,7 +86,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           == ["Clients total", "Clients fidèles", "Clients inactifs", "Nouveaux clients"])
     check("clients total counts this shop only", cards["total"]["value"] == 10)
     check("the rival's client is not in it",
-          CP.overview(Rival())["cards"][0]["value"] == 1)
+          CP.overview(token_data=Rival())["cards"][0]["value"] == 1)
     # "Client fidèle" is a Règle client: 4 visits a month by default, averaged
     # since the client joined (the first month counts as a whole one).
     rate = lambda v, joined: v / max(joined / 30.0, 1.0)
@@ -241,7 +241,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nA shop with no clients yet")
     class Fresh:
         email, role, tenant_id = "new@shop.fr", "business_owner", "t3"
-    empty = CP.overview(Fresh())
+    empty = CP.overview(token_data=Fresh())
     check("every figure reads zero", all(c["value"] == 0 for c in empty["cards"]))
     check("no figure invents a percentage", all(c["delta_pct"] is None for c in empty["cards"]))
     check("the chips are all zero", all(s["count"] == 0 for s in empty["segments"]))

@@ -336,7 +336,7 @@ function App() {
                 CustomersPage stays in the repo, unrouted, until its saved
                 segments and campaign composer have a home on the new page. */}
             <Route path="customers" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <ClientsPage />
               </ProtectedRoute>
             } />

@@ -38,11 +38,12 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
 from auth import require_role, TokenData
 from features import customer_rules as R
+from features import store_scope as S
 
 router = APIRouter(tags=["clients"])
 _db = None
@@ -212,8 +213,17 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           "latitude": 1, "longitude": 1, "is_student": 1}
 
 
-def _load(tid: str) -> List[Dict[str, Any]]:
-    return list(_db.customers.find({"tenant_id": tid}, FIELDS))
+# Owner, administrateur and manager read the Clients page; each sees the
+# clients of the establishments it may see (features/store_scope.py).
+READERS = ["business_owner", "administrateur", "manager"]
+
+
+def _load(tid: str, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
+    return list(_db.customers.find(S.customer_filter(scope) if scope else {"tenant_id": tid}, FIELDS))
+
+
+def _scope(token_data: TokenData, request: Optional[Request]) -> "S.Scope":
+    return S.resolve(token_data, request)
 
 
 def _initials(name: str) -> str:
@@ -310,10 +320,10 @@ def _delta(now_value: float, was_value: float) -> Optional[int]:
 # endpoints
 # ---------------------------------------------------------------------------
 @router.get("/api/owner/clients/overview")
-def overview(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def overview(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
     at = _now()
-    rows = _load(tid)
+    rows = _load(tid, _scope(token_data, request))
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
@@ -367,7 +377,8 @@ def list_ids(
     spend: str = "",
     joined: str = "",
     search: str = "",
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """Every client the current filter matches — ids only, no page.
 
@@ -378,7 +389,7 @@ def list_ids(
     """
     tid = token_data.tenant_id
     at = _now()
-    rows = _load(tid)
+    rows = _load(tid, _scope(token_data, request))
     rows = _filtered(rows, at, _shop_average_ticket(rows), _local_ids(tid, rows),
                      segment, status, spend, joined, search, R.load(tid))
     return {"ids": [c["id"] for c in rows], "total": len(rows)}
@@ -394,14 +405,15 @@ def list_page(
     sort: str = "recent",
     page: int = 1,
     per_page: int = 10,
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     tid = token_data.tenant_id
     at = _now()
     per_page = max(1, min(MAX_PER_PAGE, int(per_page or 10)))
     page = max(1, int(page or 1))
 
-    rows = _load(tid)
+    rows = _load(tid, _scope(token_data, request))
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
@@ -423,12 +435,13 @@ def list_page(
 def export_clients(
     segment: str = "all", status: str = "", spend: str = "", joined: str = "",
     search: str = "", sort: str = "recent",
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """Every client the filters select — the table without its page limit."""
     tid = token_data.tenant_id
     at = _now()
-    rows = _load(tid)
+    rows = _load(tid, _scope(token_data, request))
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)

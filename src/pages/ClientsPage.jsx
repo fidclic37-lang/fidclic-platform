@@ -7,6 +7,7 @@ import {
   Bookmark, BookmarkPlus, Check, Send as SendIcon,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 /**
  * Clients — built to the approved mockup.
@@ -190,6 +191,7 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
 };
 
 export default function ClientsPage() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
   const [feed, setFeed] = useState({ rows: [], total: 0, pages: 1, page: 1, per_page: 10 });
@@ -338,10 +340,13 @@ export default function ClientsPage() {
                   className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
             <Plus size={16} /> Ajouter un client
           </button>
-          <button type="button" onClick={() => navigate('/dashboard/settings#settings-import')}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-            <Upload size={15} /> Importer
-          </button>
+          {/* Importing a file is a shop-wide setting: the owner's. */}
+          {user?.role === 'business_owner' && (
+            <button type="button" onClick={() => navigate('/dashboard/settings#settings-import')}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+              <Upload size={15} /> Importer
+            </button>
+          )}
         </div>
       </header>
 

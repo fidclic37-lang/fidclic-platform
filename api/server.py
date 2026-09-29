@@ -6735,7 +6735,8 @@ def get_customers_map(
 @app.post("/api/owner/campaigns/send-to-group")
 def send_campaign_to_group(
     req: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"]))
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))
 ):
     """Create and send campaign to specific group of customers.
     Accepts either explicit customer_ids or a segment descriptor (resolved server-side).
@@ -6831,6 +6832,16 @@ def send_campaign_to_group(
     image_url = req.get("image_url") or None
     sender_name = (tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic")
 
+    # Only the clients of the establishments the sender may see: an
+    # administrateur or a manager never writes to another shop's clients.
+    from features import store_scope as _S
+    _scope = _S.resolve(token_data, request)
+    _mine = _S.customer_ids(_scope)
+    if _mine is not None:
+        customer_ids = [c for c in customer_ids if c in _mine]
+        if not customer_ids:
+            raise HTTPException(status_code=400, detail="Aucun de ces clients n'appartient à vos établissements.")
+
     # Dispatch per-customer with template rendering.
     delivered = 0
     targeted_customers = list(db.customers.find({"id": {"$in": customer_ids}, "tenant_id": tid}))
@@ -6859,7 +6870,11 @@ def send_campaign_to_group(
         image_url=image_url,
         source=src,
     )
-    db.campaigns.insert_one(campaign.model_dump())
+    _doc = campaign.model_dump()
+    # Which establishments this campaign was sent for (None = the whole shop).
+    _doc["store_ids"] = _scope.ids
+    _doc["sent_by"] = token_data.email
+    db.campaigns.insert_one(_doc)
 
     # Also log per-customer push notification so wallet cards show the offer.
     for c in targeted_customers:
@@ -10207,7 +10222,7 @@ class SavedSegmentRequest(BaseModel):
 
 
 @app.get("/api/owner/segments")
-def list_saved_segments(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def list_saved_segments(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))):
     rows = list(db.saved_segments.find({"tenant_id": token_data.tenant_id}).sort("created_at", -1))
     for r in rows:
         r.pop("_id", None)
@@ -10217,7 +10232,9 @@ def list_saved_segments(token_data: TokenData = Depends(require_role(["business_
 @app.post("/api/owner/segments")
 def create_saved_segment(
     req: SavedSegmentRequest,
-    token_data: TokenData = Depends(require_role(["business_owner"])),
+    # Saved filters (no data in them): every account of the Clients page may
+    # keep its own; the owner may remove any, others only their own.
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True)),
 ):
     doc = {
         "id": str(uuid.uuid4()),
@@ -10227,6 +10244,7 @@ def create_saved_segment(
         "filters": req.filters or {},
         "segment": req.segment or None,
         "created_at": datetime.now(timezone.utc),
+        "created_by": token_data.email,
     }
     db.saved_segments.insert_one(doc)
     doc.pop("_id", None)
@@ -10236,9 +10254,12 @@ def create_saved_segment(
 @app.delete("/api/owner/segments/{segment_id}")
 def delete_saved_segment(
     segment_id: str,
-    token_data: TokenData = Depends(require_role(["business_owner"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True)),
 ):
-    res = db.saved_segments.delete_one({"id": segment_id, "tenant_id": token_data.tenant_id})
+    q = {"id": segment_id, "tenant_id": token_data.tenant_id}
+    if token_data.role != "business_owner":
+        q["created_by"] = token_data.email
+    res = db.saved_segments.delete_one(q)
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Segment not found")
     return {"status": "ok"}
