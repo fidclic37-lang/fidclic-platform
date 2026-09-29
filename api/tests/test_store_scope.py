@@ -36,9 +36,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import catalogue_page as CAT
     from features import loyalty_card as LC
     from features import welcome_bonus as WB
+    from features import push_wallet as PW
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT, LC, WB):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT, LC, WB, PW):
         m.init(db)
     passed = failed = 0
 
@@ -441,6 +442,55 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the owner's bonus is read by everyone on the card page", WB.get_earn_rules(token_data=SARA)["welcome_bonus_points"] == 50)
     check("it opens to them, read-only", guard(ALI, ["business_owner", "administrateur", "manager"], partial_ok=True) == 200
           and guard(ALI, ["business_owner"]) == 403)
+
+    print("\nLes Automatisations, par établissement")
+    sent = []
+    server.dispatch_to_customer = lambda tid, cust, title, body, kind="campaign": (
+        sent.append((cust["id"], title, body)) or {"sent": True})
+    page = PW.list_scenarios(token_data=OWNER, request=Req())
+    inactive = next(x for x in page["scenarios"] if x["builtin"] == "inactive")
+    check("the owner may create, an administrateur may only reword",
+          page["can"]["create"] is True and PW.list_scenarios(token_data=ALI, request=Req())["can"]["message_only"] is True)
+    ver = PW.update_scenario(inactive["id"], PW.ScenarioPatch(body="Blois vous attend !"), token_data=ALI, request=Req("blois"))
+    check("an administrateur's message is kept for its establishment", ver["applied_to"] == ["Blois"]
+          and db.push_scenario_overrides.count_documents({"scenario_id": inactive["id"]}) == 1)
+    check("the shop's scenario is untouched", db.push_scenarios.find_one({"id": inactive["id"]})["body"] != "Blois vous attend !")
+    try:
+        PW.update_scenario(inactive["id"], PW.ScenarioPatch(config={"days": 3}), token_data=ALI, request=Req())
+        trig = True
+    except HTTPException as e:
+        trig = e.status_code != 403
+    check("it cannot change the trigger", trig is False)
+    check("Blois' page shows Blois' message", next(x for x in PW.list_scenarios(token_data=SARA, request=Req())["scenarios"]
+                                                  if x["id"] == inactive["id"])["body"] == "Blois vous attend !")
+    owner_row = next(x for x in PW.list_scenarios(token_data=OWNER, request=Req())["scenarios"] if x["id"] == inactive["id"])
+    check("the owner sees the version, and for which establishment",
+          owner_row["versions"] == [{"store_id": "blois", "store": "Blois", "body": "Blois vous attend !", "by": "ali@c.fr"}])
+    try:
+        PW.update_scenario(inactive["id"], PW.ScenarioPatch(enabled=False), token_data=SARA, request=Req())
+        mgr = True
+    except HTTPException:
+        mgr = False
+    check("a manager changes nothing", mgr is False and guard(SARA, PW.EDITORS, partial_ok=True) == 403)
+    # c2 last came to Blois, c1 to Tours; both inactive for this run
+    for cid in ("c1", "c2"):
+        db.customers.update_one({"id": cid}, {"$set": {"last_visit_date": now - dt.timedelta(days=60)}})
+    row = db.push_scenarios.find_one({"id": inactive["id"]}); row.pop("_id", None)
+    PW.run_scenario("t1", row, now + dt.timedelta(days=1))
+    by = {c: b for c, _, b in sent}
+    check("a Blois client hears Blois' message", by.get("c2") == "Blois vous attend !")
+    check("a Tours client hears the shop's", by.get("c1") == row["body"])
+    PW.update_scenario(inactive["id"], PW.ScenarioPatch(enabled=False), token_data=ALI, request=Req("tours"))
+    db.push_wallet_log.delete_many({"scenario_id": inactive["id"]}); sent.clear()
+    PW.run_due_for_tenant("t1", now + dt.timedelta(days=2))
+    check("switched off for Tours, its clients hear nothing — Blois still does",
+          "c1" not in {c for c, t, _ in sent if t == row["title"]} and "c2" in {c for c, t, _ in sent if t == row["title"]})
+    PW.update_scenario(inactive["id"], PW.ScenarioPatch(body="Pour tous"), token_data=OWNER, request=Req())
+    check("the owner's change applies everywhere: Blois' message gives way",
+          next(x for x in PW.list_scenarios(token_data=SARA, request=Req())["scenarios"] if x["id"] == inactive["id"])["body"] == "Pour tous")
+    check("… while Tours' switch, not touched, stays", db.push_scenario_overrides.count_documents(
+          {"scenario_id": inactive["id"], "store_id": "tours", "enabled": False}) == 1)
+    check("Automatisations open to them", guard(SARA, PW.READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

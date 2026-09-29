@@ -39,6 +39,16 @@ WHAT THE FOUR FIGURES ACTUALLY MEASURE
                         be read as an email open rate.
       Scénarios actifs  switched on, counted.
 
+ESTABLISHMENTS
+    A scenario is the whole shop's. An administrateur may give it its own
+    message, or switch it on or off, for ITS establishments: that is kept
+    apart, per establishment (push_scenario_overrides), and a client hears the
+    version of the establishment it last visited. The owner sees those
+    versions on the page, and the owner's own change applies to every
+    establishment — it replaces any version of the fields it touched. A
+    manager reads the page and changes nothing. Figures follow the
+    establishment menu (features/store_scope.py).
+
 SAFETY
     The runner never raises into the cron: one tenant's broken scenario must not
     stop everybody else's. Every scenario has a cooldown so a customer cannot be
@@ -51,17 +61,22 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import store_scope as S
 
 router = APIRouter(tags=["push-wallet"])
 _db = None
 
 OPEN_WINDOW_H = 72          # a card opened this long after a send counts as an open
 DEFAULT_COOLDOWN_DAYS = 30  # the same scenario will not reach one customer twice inside this
+
+READERS = ["business_owner", "administrateur", "manager"]
+EDITORS = ["business_owner", "administrateur"]
+STORE_FIELDS = ("title", "body", "enabled")   # what an administrateur may set for its establishments
 
 # ---------------------------------------------------------------------------
 # The trigger vocabulary. Each entry says what the merchant picks and what the
@@ -137,6 +152,7 @@ def init(db):
         ("push_scenarios", [("tenant_id", 1), ("created_at", 1)]),
         ("push_wallet_log", [("tenant_id", 1), ("sent_at", -1)]),
         ("push_wallet_log", [("scenario_id", 1), ("customer_id", 1), ("sent_at", -1)]),
+        ("push_scenario_overrides", [("tenant_id", 1), ("scenario_id", 1), ("store_id", 1)]),
     ):
         try:
             db[coll].create_index(index)
@@ -224,6 +240,43 @@ def _trigger_detail(row: Dict[str, Any]) -> str:
     if trigger == "specific_date" and cfg.get("date"):
         return f"Le {cfg['date']}"
     return TRIGGERS.get(trigger, {}).get("label", "—")
+
+
+# ---------------------------------------------------------------------------
+# an establishment's own version
+# ---------------------------------------------------------------------------
+def _overrides(tid: str, scenario_id: Optional[str] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """{scenario id: {store id: {title?, body?, enabled?, by, at}}}"""
+    q: Dict[str, Any] = {"tenant_id": tid}
+    if scenario_id:
+        q["scenario_id"] = scenario_id
+    out: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for o in _db.push_scenario_overrides.find(q, {"_id": 0}):
+        fields = {k: o[k] for k in STORE_FIELDS if k in o}
+        if fields:
+            out.setdefault(o["scenario_id"], {})[o["store_id"]] = {**fields, "by": o.get("updated_by"),
+                                                                   "at": o.get("updated_at")}
+    return out
+
+
+def _effective(row: Dict[str, Any], version: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The scenario as one establishment runs it."""
+    if not version:
+        return row
+    return {**row, **{k: version[k] for k in STORE_FIELDS if k in version}}
+
+
+def _home_stores(tid: str, ids: List[str]) -> Dict[str, Optional[str]]:
+    """Each client's establishment for a message: where it last came, or where
+    it signed up."""
+    out: Dict[str, Optional[str]] = {}
+    for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$in": ids}, "branch_id": {"$nin": [None, ""]}},
+                             {"_id": 0, "customer_id": 1, "branch_id": 1, "visit_time": 1}).sort("visit_time", -1):
+        out.setdefault(v["customer_id"], v["branch_id"])
+    for c in _db.customers.find({"tenant_id": tid, "id": {"$in": [i for i in ids if i not in out]}},
+                                {"_id": 0, "id": 1, "branch_id": 1}):
+        out.setdefault(c["id"], c.get("branch_id"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -324,17 +377,29 @@ def _render(text: str, cust: Dict[str, Any], tenant: Dict[str, Any]) -> str:
 
 
 def run_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = None,
-                 limit: int = 2000) -> Dict[str, Any]:
-    """Fire one scenario. Returns what it did; never raises."""
+                 limit: int = 2000, scheduled: bool = False) -> Dict[str, Any]:
+    """Fire one scenario. Returns what it did; never raises.
+
+    `scheduled`: the daily run, which follows each establishment's switch. Fired
+    by hand ("Envoyer maintenant"), only an establishment that switched it off
+    is left out."""
     at = at or _now()
     result = {"scenario_id": row["id"], "name": row.get("name"), "targeted": 0, "sent": 0, "errors": 0}
     try:
         tenant = _db.tenants.find_one({"id": tid}) or {}
-        people = _audience(tid, row, at)[:limit]
+        people = _audience(tid, row, at)
+        versions = _overrides(tid, row["id"]).get(row["id"], {})
+        home = _home_stores(tid, [c["id"] for c in people]) if versions else {}
+        # An establishment may have switched the scenario on or off for itself.
+        def on(c: Dict[str, Any]) -> bool:
+            v = versions.get(home.get(c["id"])) or {}
+            return bool(v["enabled"]) if "enabled" in v else (bool(row.get("enabled")) or not scheduled)
+        people = [c for c in people if on(c)][:limit]
         result["targeted"] = len(people)
         for cust in people:
-            title = _render(row.get("title") or "", cust, tenant)
-            body = _render(row.get("body") or "", cust, tenant)
+            mine = _effective(row, versions.get(home.get(cust["id"])))
+            title = _render(mine.get("title") or "", cust, tenant)
+            body = _render(mine.get("body") or "", cust, tenant)
             log_id = str(uuid4())
             try:
                 _db.push_wallet_log.insert_one({
@@ -367,9 +432,13 @@ def run_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = None,
 def run_due_for_tenant(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
     at = at or _now()
     out = {"tenant_id": tid, "ran": [], "sent": 0}
-    for row in _db.push_scenarios.find({"tenant_id": tid, "enabled": True}):
+    # Switched on for the shop, or by an establishment for itself.
+    on_somewhere = set(_db.push_scenario_overrides.distinct("scenario_id", {"tenant_id": tid, "enabled": True}))
+    for row in _db.push_scenarios.find({"tenant_id": tid}):
         row.pop("_id", None)
-        res = run_scenario(tid, row, at)
+        if not row.get("enabled") and row["id"] not in on_somewhere:
+            continue
+        res = run_scenario(tid, row, at, scheduled=True)
         if res["targeted"]:
             out["ran"].append(res)
             out["sent"] += res["sent"]
@@ -381,7 +450,8 @@ def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
     at = at or _now()
     summary = {"tenants": 0, "sent": 0, "at": at.isoformat()}
     try:
-        tenants = _db.push_scenarios.distinct("tenant_id", {"enabled": True})
+        tenants = set(_db.push_scenarios.distinct("tenant_id", {"enabled": True}))
+        tenants |= set(_db.push_scenario_overrides.distinct("tenant_id", {"enabled": True}))
     except Exception:
         return summary
     for tid in tenants:
@@ -397,8 +467,11 @@ def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # the four figures
 # ---------------------------------------------------------------------------
-def _counts_by_scenario(tid: str, since: Optional[datetime] = None) -> Dict[str, int]:
+def _counts_by_scenario(tid: str, since: Optional[datetime] = None,
+                        mine: Optional[set] = None) -> Dict[str, int]:
     match: Dict[str, Any] = {"tenant_id": tid}
+    if mine is not None:
+        match["customer_id"] = {"$in": list(mine)}
     if since:
         match["sent_at"] = {"$gte": since}
     out: Dict[str, int] = {}
@@ -413,11 +486,12 @@ def _counts_by_scenario(tid: str, since: Optional[datetime] = None) -> Dict[str,
     return out
 
 
-def _rates(tid: str, start: datetime, end: datetime) -> Dict[str, Any]:
+def _rates(tid: str, start: datetime, end: datetime, mine: Optional[set] = None) -> Dict[str, Any]:
     """Sent, clicked, and opened — the last one measured against card opens,
     because a wallet push has no read receipt."""
     logs = list(_db.push_wallet_log.find(
-        {"tenant_id": tid, "sent_at": {"$gte": start, "$lte": end}},
+        {"tenant_id": tid, "sent_at": {"$gte": start, "$lte": end},
+         **({"customer_id": {"$in": list(mine)}} if mine is not None else {})},
         {"_id": 0, "customer_id": 1, "sent_at": 1, "clicked_at": 1}))
     sent = len(logs)
     clicked = sum(1 for l in logs if l.get("clicked_at"))
@@ -484,15 +558,33 @@ class ScenarioPatch(BaseModel):
 def list_scenarios(
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
+    request: Request = None,
 ):
     tid = token_data.tenant_id
     _seed(tid)
+    scope = S.resolve(token_data, request)
     start, end = _window(date_from, date_to)
-    counts = _counts_by_scenario(tid, start)
+    counts = _counts_by_scenario(tid, start, S.customer_ids(scope))
     rows = list(_db.push_scenarios.find({"tenant_id": tid}).sort("order", 1))
+    versions = _overrides(tid)
+    shown = set(scope.ids if scope.ids is not None else scope.all_ids)
+
+    def view(r: Dict[str, Any]) -> Dict[str, Any]:
+        mine = versions.get(r["id"], {})
+        # One establishment chosen: the scenario as it runs there.
+        out = _public(dict(_effective(r, mine.get(scope.single)) if scope.single else r), counts)
+        out["versions"] = [{"store_id": sid, "store": scope.names.get(sid, sid),
+                            **{k: v[k] for k in STORE_FIELDS if k in v}, "by": v.get("by")}
+                           for sid, v in mine.items() if sid in shown]
+        return out
+
+    role = getattr(token_data, "role", None)
     return {
-        "scenarios": [_public(r, counts) for r in rows],
+        "scope": scope.describe(),
+        "can": {"create": role == "business_owner", "edit": role in EDITORS,
+                "message_only": role != "business_owner"},
+        "scenarios": [view(r) for r in rows],
         "triggers": [{"key": k, "label": v["label"], "config": v["config"]}
                      for k, v in TRIGGERS.items()],
         "examples": EXAMPLES,
@@ -504,16 +596,18 @@ def list_scenarios(
 def stats(
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
+    request: Request = None,
 ):
     tid = token_data.tenant_id
     _seed(tid)
+    mine = S.customer_ids(S.resolve(token_data, request))
     start, end = _window(date_from, date_to)
     span = end - start
     prev_end = start - timedelta(microseconds=1)
     prev_start = prev_end - span
 
-    now, was = _rates(tid, start, end), _rates(tid, prev_start, prev_end)
+    now, was = _rates(tid, start, end, mine), _rates(tid, prev_start, prev_end, mine)
     active = _db.push_scenarios.count_documents({"tenant_id": tid, "enabled": True})
     return {
         "from": start.isoformat(), "to": end.isoformat(),
@@ -558,20 +652,64 @@ def create_scenario(body: ScenarioIn,
 
 @router.put("/api/owner/push-wallet/scenarios/{scenario_id}")
 def update_scenario(scenario_id: str, body: ScenarioPatch,
-                    token_data: TokenData = Depends(require_role(["business_owner"]))):
+                    token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True)),
+                    request: Request = None):
     tid = token_data.tenant_id
     row = _db.push_scenarios.find_one({"id": scenario_id, "tenant_id": tid})
     if not row:
         raise HTTPException(status_code=404, detail="Scénario introuvable")
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if getattr(token_data, "role", None) != "business_owner":
+        return _store_version(tid, row, patch, token_data, request)
     if "trigger" in patch and patch["trigger"] not in TRIGGERS:
         raise HTTPException(status_code=400, detail="Déclencheur inconnu")
     if "cooldown_days" in patch:
         patch["cooldown_days"] = max(0, int(patch["cooldown_days"]))
     patch["updated_at"] = _now()
     _db.push_scenarios.update_one({"id": scenario_id}, {"$set": patch})
+    # The owner's change applies to every establishment: it replaces their
+    # own version of the fields it touched.
+    touched = [k for k in STORE_FIELDS if k in patch]
+    if touched:
+        _db.push_scenario_overrides.update_many({"tenant_id": tid, "scenario_id": scenario_id},
+                                                {"$unset": {k: "" for k in touched}})
+        _db.push_scenario_overrides.delete_many({"tenant_id": tid, "scenario_id": scenario_id,
+                                                 **{k: {"$exists": False} for k in STORE_FIELDS}})
     fresh = _db.push_scenarios.find_one({"id": scenario_id})
     return _public(fresh, _counts_by_scenario(tid))
+
+
+def _store_version(tid: str, row: Dict[str, Any], patch: Dict[str, Any],
+                   token_data: TokenData, request: Optional[Request]) -> Dict[str, Any]:
+    """An administrateur's change: the message and the switch, for its
+    establishments only (the one chosen in the menu, or all of its own)."""
+    if getattr(token_data, "role", None) not in EDITORS:
+        raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
+    other = [k for k in patch if k not in STORE_FIELDS]
+    # The editor sends the whole form back; only a real change is refused.
+    other = [k for k in other if patch[k] != row.get(k) and not (k == "config" and patch[k] == (row.get("config") or {}))]
+    if other:
+        raise HTTPException(status_code=403, detail="Seul le propriétaire peut changer le déclencheur, "
+                                                    "le nom ou le délai d'un scénario.")
+    scope = S.resolve(token_data, request)
+    stores = scope.ids if scope.ids is not None else scope.allowed
+    fields = {k: patch[k] for k in STORE_FIELDS if k in patch}
+    for k in ("title", "body"):
+        if k in fields and not str(fields[k]).strip():
+            raise HTTPException(status_code=400, detail="Le titre et le message ne peuvent pas être vides.")
+    if fields:
+        now = _now()
+        for sid in stores:
+            _db.push_scenario_overrides.update_one(
+                {"tenant_id": tid, "scenario_id": row["id"], "store_id": sid},
+                {"$set": {**fields, "updated_by": getattr(token_data, "email", None), "updated_at": now}},
+                upsert=True)
+    row.pop("_id", None)
+    one = stores[0] if len(stores) == 1 else None
+    out = _public(dict(_effective(row, _overrides(tid, row["id"]).get(row["id"], {}).get(one)) if one else row),
+                  _counts_by_scenario(tid, mine=S.customer_ids(scope)))
+    out["applied_to"] = [scope.names.get(s, s) for s in stores]
+    return out
 
 
 @router.delete("/api/owner/push-wallet/scenarios/{scenario_id}")
@@ -598,14 +736,17 @@ def run_now(scenario_id: str,
 
 @router.get("/api/owner/push-wallet/scenarios/{scenario_id}/preview")
 def preview_audience(scenario_id: str,
-                     token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    """How many clients this would reach right now, without sending anything."""
+                     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
+                     request: Request = None):
+    """How many clients this would reach right now, without sending anything —
+    among the chosen establishments' clients."""
     tid = token_data.tenant_id
     row = _db.push_scenarios.find_one({"id": scenario_id, "tenant_id": tid})
     if not row:
         raise HTTPException(status_code=404, detail="Scénario introuvable")
     row.pop("_id", None)
-    people = _audience(tid, row, _now())
+    mine = S.customer_ids(S.resolve(token_data, request))
+    people = [c for c in _audience(tid, row, _now()) if mine is None or c["id"] in mine]
     return {"count": len(people),
             "sample": [{"name": c.get("name") or "Client"} for c in people[:5]]}
 
