@@ -230,6 +230,15 @@ def run_trial_reminders(now: Optional[datetime] = None) -> Dict[str, Any]:
         if not owner:
             out["skipped_no_email"] += 1
             continue
+        # Paramètres › Préférences › Emails de facturation switched off.
+        try:
+            from features.preferences import wants_email
+            if not wants_email(owner["email"], "billing"):
+                out.setdefault("skipped_by_preference", 0)
+                out["skipped_by_preference"] += 1
+                continue
+        except Exception:
+            pass
         ends_at = datetime.fromisoformat(state["trial_ends_at"])
         try:
             res = mailer.send(

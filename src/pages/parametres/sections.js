@@ -48,7 +48,7 @@ export const PARAMETRES_SECTIONS = [
    settings stay with the Propriétaire. */
 export const sectionsFor = (role) => (role === 'business_owner'
   ? PARAMETRES_SECTIONS
-  : PARAMETRES_SECTIONS.filter((s) => ['equipe', 'etablissement', 'securite'].includes(s.slug)));
+  : PARAMETRES_SECTIONS.filter((s) => ['equipe', 'etablissement', 'securite', 'preferences'].includes(s.slug)));
 
 export const PARAMETRES_BASE = '/dashboard/parametres';
 export const sectionPath = (slug) => `${PARAMETRES_BASE}/${slug}`;

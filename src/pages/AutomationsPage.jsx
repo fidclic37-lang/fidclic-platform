@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
+import { confirmImportant } from '../lib/prefs';
 import AutoMessagesPanel from '../components/AutoMessagesPanel';
 import PendingLotsPanel from '../components/PendingLotsPanel';
 
@@ -365,7 +366,9 @@ export default function AutomationsPage() {
   };
 
   const runNow = async (s) => {
-    setMenuFor(null); setBusyId(s.id);
+    setMenuFor(null);
+    if (!confirmImportant(`Envoyer « ${s.name} » maintenant à tous les clients concernés ?`)) return;
+    setBusyId(s.id);
     try {
       const { data: res } = await ownerAPI.runPushWalletScenario(s.id);
       setToast(res.sent

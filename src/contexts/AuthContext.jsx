@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { ShieldCheck, Loader2 } from 'lucide-react';
+import i18n from 'i18next';
 import { authAPI, setAuthToken } from '../lib/api';
+import { applyPrefs } from '../lib/prefs';
+import { applyGoogleTranslate } from '../components/GoogleTranslateBridge';
 
 /* 2FA at login (Paramètres › Sécurité): an account with the phone app switched
    on gets a challenge instead of a session. The code is asked here, once for
@@ -58,6 +61,14 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await authAPI.me();
       setUser(res.data);
+      // Paramètres › Préférences — currency, time zone, dates, links…
+      applyPrefs(res.data?.preferences || {}, res.data?.currency || 'EUR');
+      const lang = res.data?.preferences?.language;
+      if (lang && (i18n.resolvedLanguage || i18n.language || 'fr').slice(0, 2) !== lang) {
+        i18n.changeLanguage(lang);
+        try { applyGoogleTranslate(lang); } catch { /* the bridge may not be loaded yet */ }
+      }
+      return res.data;
     } catch {
       setUser(null);
     } finally {
@@ -76,8 +87,8 @@ export const AuthProvider = ({ children }) => {
     // Bearer header on every subsequent request — covers the case where
     // the cookie path / SameSite drops the cookie on cross-page POSTs.
     if (session?.access_token) setAuthToken(session.access_token);
-    await checkAuth();
-    return session;
+    const me = await checkAuth();
+    return { ...session, default_page: me?.preferences?.default_page };
   };
 
   // Register now auto-logs-in server-side (cookie + token in the response)

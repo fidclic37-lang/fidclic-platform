@@ -205,6 +205,10 @@ export const ownerAPI = {
   deleteAccount: (password, confirm) => api.post('/security/account/delete', { password, confirm }),
   restoreAccount: () => api.post('/security/account/restore'),
   resetTeamPassword: (uid) => api.post(`/owner/team-access/users/${uid}/password`),
+  // Paramètres › Préférences
+  preferences: () => api.get('/me/preferences'),
+  savePreferences: (body) => api.put('/me/preferences', body),
+  resetPreferences: () => api.post('/me/preferences/reset'),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Check, X, Loader2, Store, Users, Inbox } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { confirmImportant } from '../lib/prefs';
 
 /**
  * « À valider » — what the scenarios prepared this morning, per
@@ -29,6 +30,7 @@ export default function PendingLotsPanel({ onChanged }) {
   useEffect(() => { load(); }, [load]);
 
   const act = async (lot, approve) => {
+    if (approve && !confirmImportant(`Envoyer « ${lot.scenario} » à ${nf(lot.count)} client(s) ?`)) return;
     setBusy(lot.id); setErr(''); setMsg('');
     try {
       if (approve) {

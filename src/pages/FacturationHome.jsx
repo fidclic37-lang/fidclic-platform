@@ -453,7 +453,7 @@ function Shell({ children, onBack }) {
 
 function Kpi({ label, value, tone = '#1C1917', sub }) {
   return (
-    <div className="rounded-2xl bg-white border p-4" style={{ borderColor: '#ECE3D2' }}>
+    <div data-currency="eur" className="rounded-2xl bg-white border p-4" style={{ borderColor: '#ECE3D2' }}>
       <LiveText as="div" className="text-xl font-bold" style={{ color: tone }}>{value}</LiveText>
       <div className="text-xs text-[#8B8680] mt-0.5">{label}</div>
       {sub && <div className="text-[10px] text-[#B4ADA2] mt-0.5">{sub}</div>}
