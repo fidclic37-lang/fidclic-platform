@@ -373,7 +373,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="card" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <LoyaltyCardPage />
               </ProtectedRoute>
             } />
