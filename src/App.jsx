@@ -363,7 +363,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="automations" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <AutomationsPage />
               </ProtectedRoute>
             } />

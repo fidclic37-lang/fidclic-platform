@@ -122,7 +122,7 @@ const TRIGGER_DEFAULTS = {
 /* ── the editor ───────────────────────────────────────────────────────── */
 const WEEKDAYS = [['L', 0], ['M', 1], ['M', 2], ['J', 3], ['V', 4], ['S', 5], ['D', 6]];
 
-const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved }) => {
+const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved, messageOnly = false, scopeLabel = '' }) => {
   const creating = !scenario?.id;
   const [form, setForm] = useState(() => ({
     name: scenario?.name || '', subtitle: scenario?.subtitle || '',
@@ -147,6 +147,8 @@ const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved }) => {
     setSaving(true); setError('');
     try {
       if (creating) await ownerAPI.createPushWalletScenario(form);
+      // An administrateur words the message for its establishments only.
+      else if (messageOnly) await ownerAPI.updatePushWalletScenario(scenario.id, { title: form.title, body: form.body });
       else await ownerAPI.updatePushWalletScenario(scenario.id, form);
       onSaved();
     } catch (e) {
@@ -168,6 +170,14 @@ const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved }) => {
         </header>
 
         <div className="space-y-4 px-5 py-4">
+          {messageOnly && (
+            <p className="flex items-start gap-1.5 rounded-xl border border-[#D7E6FF] bg-[#EEF5FF] px-3 py-2.5 text-[12px] leading-snug text-[#1D4ED8]">
+              <Info size={13} className="mt-px shrink-0" />
+              Votre message s'appliquera à : <strong className="ml-1">{scopeLabel}</strong>. Le propriétaire le verra.
+              Le déclencheur et le délai restent ceux du commerce.
+            </p>
+          )}
+          <fieldset disabled={messageOnly} className={`m-0 min-w-0 space-y-4 border-0 p-0 ${messageOnly ? 'opacity-60' : ''}`}>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nom du scénario">
               <input className={inputCls} value={form.name} maxLength={80}
@@ -244,6 +254,7 @@ const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved }) => {
               </div>
             </>
           )}
+          </fieldset>
 
           <Field label="Titre du push Wallet">
             <input className={inputCls} value={form.title} maxLength={120}
@@ -267,7 +278,7 @@ const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved }) => {
 
           <Field label="Ne pas recontacter avant (jours)"
                  hint="Un même client ne recevra pas deux fois ce scénario dans cet intervalle.">
-            <input type="number" min={0} max={365} className={inputCls} value={form.cooldown_days}
+            <input type="number" min={0} max={365} className={inputCls} value={form.cooldown_days} disabled={messageOnly}
                    onChange={(e) => setForm({ ...form, cooldown_days: Math.max(0, Number(e.target.value) || 0) })} />
           </Field>
 
@@ -317,6 +328,10 @@ export default function AutomationsPage() {
 
   const scenarios = data?.scenarios || [];
   const triggers = data?.triggers || [];
+  // Owner: everything. Administrateur: the message and the switch, for its
+  // establishments. Manager: reads.
+  const can = data?.can || { create: false, edit: false, message_only: true };
+  const scopeLabel = data?.scope?.label || '';
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -416,11 +431,22 @@ export default function AutomationsPage() {
             );
           })}
         </nav>
+        {can.create && (
         <button type="button" onClick={() => setEditing({})}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
           <Plus size={16} /> Créer un scénario Push Wallet
         </button>
+        )}
       </div>
+
+      {data && can.message_only && (
+        <p className="mb-4 flex items-start gap-1.5 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[12.5px] text-[#475569]">
+          <Info size={14} className="mt-px shrink-0 text-[#2F6BFF]" />
+          {can.edit
+            ? <>Vos changements (message, activation) s'appliquent à : <strong className="mx-1">{scopeLabel}</strong>. Le propriétaire les voit ; ses propres changements valent pour tous les établissements.</>
+            : <>Les automatisations sont gérées par le propriétaire et les administrateurs. Chiffres de : <strong className="ml-1">{scopeLabel}</strong>.</>}
+        </p>
+      )}
 
       {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
       {toast && <p className="mb-4 rounded-xl bg-[#E7F7EE] px-4 py-2.5 text-[12.5px] text-[#0F8B58]">{toast}</p>}
@@ -543,14 +569,31 @@ export default function AutomationsPage() {
                           <td className="max-w-[280px] px-4 py-3">
                             <span className="block truncate text-[12.5px] font-semibold text-[#0B1C3F]">{s.title}</span>
                             <span className="block text-[12px] leading-snug text-[#64748B]">{s.body}</span>
+                            {(s.versions || []).length > 0 && (
+                              <span className="mt-1.5 block space-y-1">
+                                {s.versions.map((v) => (
+                                  <span key={v.store_id} title={v.by ? `Modifié par ${v.by}` : ''}
+                                        className="block rounded-lg bg-[#F4F7FC] px-2 py-1 text-[11.5px] leading-snug text-[#475569]">
+                                    <strong className="text-[#2F6BFF]">{v.store}</strong>
+                                    {v.enabled === false && ' · désactivé'}
+                                    {v.enabled === true && ' · activé'}
+                                    {(v.title || v.body) && <> · {[v.title, v.body].filter(Boolean).join(' — ')}</>}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
-                            <Switch on={s.enabled} busy={busyId === s.id} onChange={(v) => flip(s, v)} />
+                            {can.edit ? <Switch on={s.enabled} busy={busyId === s.id} onChange={(v) => flip(s, v)} />
+                              : <span className="inline-flex rounded-md px-2.5 py-1 text-[11.5px] font-semibold"
+                                      style={s.enabled ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#EEF2F8', color: '#64748B' }}>
+                                  {s.enabled ? 'Actif' : 'Brouillon'}
+                                </span>}
                           </td>
                           <td className="px-4 py-3 text-center text-[13px] tabular-nums text-[#0B1C3F]">{nf(s.clients)}</td>
                           <td className="whitespace-pre-line px-4 py-3 text-[12px] text-[#64748B]">{stamp(s.last_run_at)}</td>
                           <td className="px-4 py-3">
-                            <span className="relative">
+                            {can.edit && <span className="relative">
                               <button type="button" aria-label="Actions"
                                       onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === s.id ? null : s.id); }}
                                       className="rounded-lg px-1.5 py-1.5 text-[#94A3B8] transition hover:bg-[#F4F7FC] hover:text-[#0B1C3F]">
@@ -563,11 +606,11 @@ export default function AutomationsPage() {
                                           className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                     Modifier
                                   </button>
-                                  <button type="button" onClick={() => runNow(s)}
+                                  {can.create && <button type="button" onClick={() => runNow(s)}
                                           className="flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                     <Zap size={13} /> Envoyer maintenant
-                                  </button>
-                                  {!s.builtin && (
+                                  </button>}
+                                  {can.create && !s.builtin && (
                                     <button type="button" onClick={() => remove(s)}
                                             className="flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#C0392B] hover:bg-[#FEF2F2]">
                                       <Trash2 size={13} /> Supprimer
@@ -575,7 +618,7 @@ export default function AutomationsPage() {
                                   )}
                                 </span>
                               )}
-                            </span>
+                            </span>}
                           </td>
                         </tr>
                       );
@@ -622,7 +665,7 @@ export default function AutomationsPage() {
             <div className="space-y-2">
               {(data?.examples || []).map((ex) => (
                 <button key={ex.title} type="button"
-                        onClick={() => setEditing({ title: ex.title, body: ex.body, trigger: 'inactivity', config: { days: 30 } })}
+                        onClick={() => can.create && setEditing({ title: ex.title, body: ex.body, trigger: 'inactivity', config: { days: 30 } })}
                         className="flex w-full items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white p-3 text-left transition hover:border-[#2F6BFF]">
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12.5px] font-semibold text-[#0B1C3F]">{ex.title}</span>
@@ -638,6 +681,7 @@ export default function AutomationsPage() {
 
       {editing && (
         <ScenarioModal scenario={editing} triggers={triggers} examples={data?.examples || []}
+                       messageOnly={!!editing.id && can.message_only} scopeLabel={scopeLabel}
                        onClose={() => setEditing(null)}
                        onSaved={() => { setEditing(null); load(); }} />
       )}
