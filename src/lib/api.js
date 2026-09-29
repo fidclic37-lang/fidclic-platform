@@ -81,6 +81,18 @@ export const crmAPI = {
   addTaskTemplate: (body) => api.post('/crm/tasks/templates', body),
   deleteTaskTemplate: (id) => api.delete(`/crm/tasks/templates/${id}`),
   calendar: (params) => api.get('/crm/calendar', { params }),
+  calls: (params) => api.get('/crm/calls', { params }),
+  callsSummary: () => api.get('/crm/calls/summary'),
+  call: (id) => api.get(`/crm/calls/${id}`),
+  addCall: (body) => api.post('/crm/calls', body),
+  editCall: (id, body) => api.put(`/crm/calls/${id}`, body),
+  deleteCall: (id) => api.delete(`/crm/calls/${id}`),
+  uploadRecording: (id, file) => { const f = new FormData(); f.append('file', file); return api.post(`/crm/calls/${id}/recording`, f, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  recording: (id) => api.get(`/crm/calls/${id}/recording`, { responseType: 'blob' }),
+  deleteRecording: (id) => api.delete(`/crm/calls/${id}/recording`),
+  callsImportPreview: (file) => { const f = new FormData(); f.append('file', file); return api.post('/crm/calls/import/preview', f, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  callsImportCommit: (rows) => api.post('/crm/calls/import/commit', { rows }),
+  exportCalls: (params) => api.get('/crm/calls/export/csv', { params, responseType: 'blob' }),
 };
 
 export const adminAPI = {
