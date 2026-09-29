@@ -2273,9 +2273,23 @@ def reset_and_reseed():
 TERMS_VERSION = os.environ.get("TERMS_VERSION", "2026-09")
 
 
-def _issue_session(response: Response, user: Dict[str, Any]) -> Dict[str, Any]:
+def _issue_session(response: Response, user: Dict[str, Any], request: Request = None) -> Dict[str, Any]:
+    # One session per login — listed, and closable, on Paramètres › Sécurité.
+    sid = None
+    try:
+        from features import security_page as _SEC
+        sid = _SEC.open_session(user, request)
+        s = db.user_sessions.find_one({"sid": sid}, {"_id": 0}) or {}
+        where = ", ".join(x for x in (s.get("city"), s.get("country")) if x)
+        db.audit_logs.update_one(
+            {"actor": user["email"], "action": {"$in": ["auth.login", "auth.oauth_login", "auth.register"]},
+             "meta.sid": {"$exists": False}, "ts": {"$gte": datetime.now(timezone.utc) - timedelta(minutes=2)}},
+            {"$set": {"meta.sid": sid, "meta.browser": s.get("browser"), "meta.os": s.get("os"), "meta.place": where}})
+    except Exception as _e:
+        print(f"session not recorded (non-fatal): {_e}")
     access_token = create_access_token(
-        data={"sub": user["email"], "role": user["role"], "tenant_id": user.get("tenant_id")}
+        data={"sub": user["email"], "role": user["role"], "tenant_id": user.get("tenant_id"),
+              **({"sid": sid} if sid else {})}
     )
     response.set_cookie(
         key="access_token",
@@ -2418,7 +2432,7 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
     db.users.insert_one(user_doc)
     log_audit("auth.register", actor=email, actor_type="user", tenant_id=tenant_id,
               request=request, meta={"role": role, "legacy_form": legacy})
-    session = _issue_session(response, user_doc)
+    session = _issue_session(response, user_doc, request)
     return {"message": "Success", **session}
 
 
@@ -2451,10 +2465,49 @@ def login(req: LoginRequest, response: Response, request: Request = None):
                   tenant_id=user.tenant_id, request=request, meta={"reason": "inactive"})
         raise HTTPException(status_code=403,
                             detail="Ce compte a été désactivé. Contactez votre responsable.")
-    log_audit("auth.login", actor=user.email, actor_type="user",
-              tenant_id=user.tenant_id, request=request,
-              meta={"role": user.role})
-    return _issue_session(response, user_dict)
+    return finish_login(response, user_dict, request, "auth.login")
+
+
+def finish_login(response: Response, user: Dict[str, Any], request: Request = None,
+                 action: str = "auth.login", meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The last steps of every login (password, Google, Apple).
+
+    - a business being deleted keeps everyone but its owner out;
+    - an account with 2FA gets a 5-minute challenge instead of a session,
+      answered at /api/auth/login/2fa (features/security_page.py)."""
+    tenant = db.tenants.find_one({"id": user.get("tenant_id")}, {"deletion_scheduled_at": 1}) if user.get("tenant_id") else None
+    if tenant and tenant.get("deletion_scheduled_at") and user.get("role") != "business_owner":
+        raise HTTPException(status_code=403, detail="Ce compte est en cours de suppression. Contactez le propriétaire.")
+    if user.get("totp_enabled") and user.get("totp_secret"):
+        from features import security_page as _SEC
+        log_audit("auth.2fa_challenge", actor=user["email"], actor_type="user",
+                  tenant_id=user.get("tenant_id"), request=request)
+        return {"requires_2fa": True, "challenge": _SEC.make_challenge(user["email"])}
+    log_audit(action, actor=user["email"], actor_type="user", tenant_id=user.get("tenant_id"),
+              request=request, meta={"role": user.get("role"), **(meta or {})})
+    return _issue_session(response, user, request)
+
+
+class TwoFactorLogin(BaseModel):
+    challenge: str
+    code: str
+
+
+@app.post("/api/auth/login/2fa")
+def login_2fa(req: TwoFactorLogin, response: Response, request: Request = None):
+    """Second step of a login with 2FA: the 6-digit code, or a backup code."""
+    from features import security_page as _SEC
+    email = _SEC.read_challenge(req.challenge)
+    user = db.users.find_one({"email": email})
+    if not user or user.get("active") is False:
+        raise HTTPException(status_code=401, detail="Compte indisponible.")
+    if not _SEC.check_second_factor(user, req.code):
+        log_audit("auth.login_failed", actor=email, actor_type="user", tenant_id=user.get("tenant_id"),
+                  request=request, meta={"reason": "bad_2fa_code"})
+        raise HTTPException(status_code=400, detail="Code incorrect.")
+    log_audit("auth.login", actor=email, actor_type="user", tenant_id=user.get("tenant_id"),
+              request=request, meta={"role": user.get("role"), "2fa": True})
+    return _issue_session(response, user, request)
 
 
 @app.get("/api/auth/me")
@@ -11005,6 +11058,14 @@ def run_daily_triggers(request: Request):
         else:
             db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
 
+    # Suppression du compte — businesses whose 30 days have passed.
+    purge_summary = {"tenants": 0}
+    try:
+        from features.security_page import purge_due as _purge_due
+        purge_summary = _purge_due(now)
+    except Exception as _e:
+        print(f"account purge runner failed (non-fatal): {_e}")
+
     # Conservation des données — each business's own durations, once saved.
     retention_summary = {"tenants": 0}
     try:
@@ -11061,6 +11122,7 @@ def run_daily_triggers(request: Request):
         "push_wallet": push_wallet_summary,
         "deferred": deferred_summary,
         "retention": retention_summary,
+        "account_purge": purge_summary,
         "campagnes": campagnes_summary,
         "copilot": copilot_summary,
         "tenants_processed": len(tenants),

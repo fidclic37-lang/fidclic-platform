@@ -24,6 +24,7 @@ MODULES = [
     "features.send_rules",
     "features.invoices",
     "features.privacy_page",
+    "features.security_page",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

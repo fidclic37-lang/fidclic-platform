@@ -35,6 +35,7 @@ api.interceptors.request.use((config) => {
 
 export const authAPI = {
   login: (data) => api.post('/auth/login', data),
+  login2fa: (challenge, code) => api.post('/auth/login/2fa', { challenge, code }),
   register: (data) => api.post('/auth/register', data),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
@@ -192,6 +193,18 @@ export const ownerAPI = {
   exportPrivacy: (body) => api.post('/owner/privacy/export', body, { responseType: 'blob' }),
   searchPrivacy: (q) => api.get('/owner/privacy/search', { params: { q } }),
   eraseCustomer: (id) => api.delete(`/owner/privacy/customers/${id}`, { params: { confirm: true } }),
+  // Paramètres › Sécurité
+  security: () => api.get('/security/overview'),
+  securityActivity: () => api.get('/security/activity'),
+  changePassword: (current, next) => api.post('/security/password', { current, new: next }),
+  totpSetup: () => api.post('/security/2fa/setup'),
+  totpEnable: (code) => api.post('/security/2fa/enable', { code }),
+  totpDisable: (password, code) => api.post('/security/2fa/disable', { password, code }),
+  endSession: (sid) => api.delete(`/security/sessions/${sid}`),
+  endOtherSessions: () => api.post('/security/sessions/revoke-others'),
+  deleteAccount: (password, confirm) => api.post('/security/account/delete', { password, confirm }),
+  restoreAccount: () => api.post('/security/account/restore'),
+  resetTeamPassword: (uid) => api.post(`/owner/team-access/users/${uid}/password`),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),

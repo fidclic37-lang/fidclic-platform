@@ -154,10 +154,8 @@ def _upsert_user(provider: str, sub: str, email: str, first_name: Optional[str],
         user["oauth"] = {provider: sub}
         _db.users.insert_one(user)
 
-    core.log_audit("auth.oauth_login", actor=email, actor_type="user",
-                   tenant_id=user.get("tenant_id"), request=request,
-                   meta={"provider": provider, "new_account": is_new, "role": user["role"]})
-    session = core._issue_session(response, user)
+    session = core.finish_login(response, user, request, "auth.oauth_login",
+                                {"provider": provider, "new_account": is_new})
     return {**session, "is_new": is_new, "terms_accepted": bool(user.get("terms_accepted_at"))}
 
 

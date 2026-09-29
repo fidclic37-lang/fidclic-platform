@@ -526,6 +526,19 @@ const DashboardLayout = () => {
             warn about (past-due, canceled, trial ending soon). Otherwise
             invisible and out of the way. */}
         {role === 'business_owner' && <BillingBanner />}
+        {/* Paramètres › Sécurité › Suppression du compte: the owner can still
+            change its mind during the 30 days. */}
+        {role === 'business_owner' && tenantInfo?.deletion_scheduled_at && (
+          <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-[#FCD9D9] bg-[#FEF4F4] px-4 py-3 text-[13.5px] text-[#B42318]">
+            <span className="flex-1">
+              Suppression du compte programmée : vos données seront supprimées le{' '}
+              {new Date(new Date(tenantInfo.deletion_scheduled_at).getTime() + 30 * 86400000).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}.
+              Votre équipe ne peut plus se connecter.
+            </span>
+            <button type="button" onClick={() => ownerAPI.restoreAccount().then(() => window.location.reload())}
+                    className="rounded-lg bg-[#E11D48] px-4 py-2 font-medium text-white">Annuler la suppression</button>
+          </div>
+        )}
 
         {/* Premium top toolbar — search + bell + avatar.
             Sits as a sticky bar across every dashboard page (matches the

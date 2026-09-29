@@ -286,6 +286,15 @@ def _payload(token: TokenData) -> Dict[str, Any]:
 READERS = ["business_owner", "administrateur", "manager"]
 
 
+def _audit(action: str, token: TokenData, target: str) -> None:
+    """Shown on Paramètres › Sécurité › Activités récentes."""
+    try:
+        from server import log_audit
+        log_audit(action, actor=token.email, actor_type="user", tenant_id=token.tenant_id, target=target)
+    except Exception:
+        pass
+
+
 @router.get("/api/owner/team-access")
 def get_team(token: TokenData = Depends(require_role(READERS, partial_ok=True))):
     return _payload(token)
@@ -327,6 +336,7 @@ def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, p
            "hashed_password": hash_password(password), "created_at": _now(),
            "created_by": me.get("email")}
     _db.users.insert_one(doc)
+    _audit("team.user_created", token, email)
     return {"credentials": {"email": email, "password": password}, **_payload(token)}
 
 
@@ -380,7 +390,14 @@ def new_password(uid: str, token: TokenData = Depends(require_role(READERS, part
     from services import password_policy
     password = password_policy.generate()
     _db.users.update_one({"email": u["email"]}, {"$set": {"hashed_password": hash_password(password),
-                                                         "updated_at": _now()}})
+                                                         "updated_at": _now(), "password_changed_at": _now()}})
+    # The old password stops working everywhere, at once.
+    try:
+        from features.security_page import revoke
+        revoke({"email": u["email"]})
+    except Exception:
+        pass
+    _audit("team.password_reset", token, u["email"])
     return {"credentials": {"email": u["email"], "password": password}, **_payload(token)}
 
 
