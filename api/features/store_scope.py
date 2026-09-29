@@ -103,12 +103,12 @@ def resolve(token: TokenData, request: Optional[Request] = None, requested: Opti
 
 
 def _branch_values(scope: Scope) -> List[Any]:
-    # "main" is the virtual establishment of a shop without branches: its
-    # visits carry no branch_id. (Only reachable when ids is not None, which
-    # a single-establishment shop never is — kept for safety.)
+    # "main" is the shop's own establishment: its visits from before it had
+    # branches carry no branch_id, later ones carry "main" (the id it keeps
+    # when its first point de vente is added — features/etablissement.py).
     vals: List[Any] = []
     for i in scope.ids or []:
-        vals.extend([None] if i == "main" else [i])
+        vals.extend([None, "main"] if i == "main" else [i])
     return vals
 
 

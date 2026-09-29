@@ -10193,7 +10193,7 @@ def proximity_ping(req: ProximityPingRequest):
         if (cust.get("tier") or "").lower() != "vip":
             return {"status": "ignored", "reason": "vip_only: customer not VIP"}
 
-    radius_m = float(tenant.get("geo_radius_meters") or 500)
+    radius_m = float(tenant.get("geo_radius_meters") or 200)   # one radius: Paramètres › Établissement
     cooldown_days = int(tenant.get("geo_cooldown_days") or 1)
     cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
 

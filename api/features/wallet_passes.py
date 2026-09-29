@@ -762,14 +762,23 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         back.insert(0, {"key": "voided", "label": "Carte inactive",
                         "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
 
-    lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
-    if lat and lng and card.get("location_reminder") is not False:
-        pass_json["locations"] = [{
-            "latitude": float(lat), "longitude": float(lng),
-            "maxDistance": int(card.get("location_radius_m") or 150),
-            "relevantText": (card.get("location_text")
-                             or f"Vous êtes près de {org} — pensez à scanner votre carte."),
-        }]
+    # One radius for the shop (Paramètres › Établissement), and every open
+    # establishment with a pin — Apple takes up to ten.
+    if card.get("location_reminder") is not False:
+        radius = int(tenant_doc.get("geo_radius_meters") or card.get("location_radius_m") or 200)
+        text = card.get("location_text") or f"Vous êtes près de {org} — pensez à scanner votre carte."
+        spots = []
+        lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
+        if lat and lng:
+            spots.append((float(lat), float(lng)))
+        for b in tenant_doc.get("branches") or []:
+            if b.get("status") != "closed" and b.get("latitude") is not None and b.get("longitude") is not None:
+                p = (float(b["latitude"]), float(b["longitude"]))
+                if p not in spots:
+                    spots.append(p)
+        if spots:
+            pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": radius,
+                                       "relevantText": text} for la, lo in spots[:10]]
     return pass_json
 
 

@@ -2245,3 +2245,7 @@ main:has(.sc) > div:first-child input { background: #F4F7FC; border-color: #E6EE
   box-shadow: 0 6px 16px -10px rgba(11,28,63,.7);
 }
 .geo-shop u { text-decoration: none; font-size: 13px; font-weight: 700; color: #1D4ED8; }
+
+/* Paramètres › Établissement — the pin's label on the small map. */
+.etab-pin-label { background: transparent; border: 0; box-shadow: none; color: #0B1C3F; font: 600 15px/1 Inter, system-ui, sans-serif; }
+.etab-pin-label::before { display: none; }

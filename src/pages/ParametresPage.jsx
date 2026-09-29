@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import ReglesClientsPage from './ReglesClientsPage';
 import LienInscriptionPage from './LienInscriptionPage';
 import EquipeAccesPage from './EquipeAccesPage';
+import EtablissementPage from './EtablissementPage';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -14,7 +15,8 @@ import EquipeAccesPage from './EquipeAccesPage';
    Sub-pages whose design has not arrived yet show an empty state; where the
    same settings exist on the older all-in-one page, it links straight to
    them so nothing goes out of reach in the meantime. */
-const PAGES = { 'regles-clients': ReglesClientsPage, 'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage };
+const PAGES = { etablissement: EtablissementPage, 'regles-clients': ReglesClientsPage,
+                'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage };
 
 function EmptySection({ section }) {
   const Icon = section.icon;

@@ -147,7 +147,7 @@ class WeeklyDay(BaseModel):
 
 
 @router.get("/api/owner/settings/hours")
-def get_hours(token_data=Depends(require_role(["business_owner", "manager"]))):
+def get_hours(token_data=Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))):
     """Returns:
       - weekly_schedule:    7-day rhythm
       - holiday_closures:   { "YYYY-MM-DD": true } for ticked closures

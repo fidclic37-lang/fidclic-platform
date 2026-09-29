@@ -401,7 +401,7 @@ function App() {
             } />
             {/* Paramètres — one page, one tab per sub-page (like Analyses). The
                 older all-in-one page stays at /settings for what has not moved yet. */}
-            <Route path="parametres" element={<Navigate to="/dashboard/parametres/regles-clients" replace />} />
+            <Route path="parametres" element={<Navigate to="/dashboard/parametres/etablissement" replace />} />
             <Route path="parametres/:section" element={
               <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <ParametresPage />
