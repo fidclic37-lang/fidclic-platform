@@ -10,6 +10,7 @@ import EtablissementPage from './EtablissementPage';
 import NotificationsSettingsPage from './NotificationsSettingsPage';
 import AbonnementPage from './AbonnementPage';
 import DonneesPage from './DonneesPage';
+import SecuritePage from './SecuritePage';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -21,7 +22,7 @@ import DonneesPage from './DonneesPage';
 const PAGES = { etablissement: EtablissementPage, 'regles-clients': ReglesClientsPage,
                 'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage,
                 notifications: NotificationsSettingsPage, abonnement: AbonnementPage,
-                donnees: DonneesPage };
+                donnees: DonneesPage, securite: SecuritePage };
 
 function EmptySection({ section }) {
   const Icon = section.icon;

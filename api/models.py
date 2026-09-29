@@ -101,6 +101,7 @@ class TokenData(BaseModel):
     email: Optional[str] = None
     role: Optional[str] = None
     tenant_id: Optional[str] = None
+    sid: Optional[str] = None          # the login session (features/security_page.py)
 
 class UserBase(BaseModel):
     email: str

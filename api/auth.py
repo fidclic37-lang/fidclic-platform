@@ -50,6 +50,14 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+_session_check = None
+
+
+def set_session_check(fn):
+    global _session_check
+    _session_check = fn
+
+
 async def get_current_user_data(request: Request) -> TokenData:
     # Try cookie first (browser-based auth), then Authorization: Bearer header
     # (mobile / API clients). This makes the auth path more forgiving when
@@ -79,9 +87,16 @@ async def get_current_user_data(request: Request) -> TokenData:
         email: str = payload.get("sub")
         role: str = payload.get("role")
         tenant_id: str = payload.get("tenant_id")
+        sid = payload.get("sid")
         if email is None:
             raise HTTPException(status_code=401, detail="Invalid auth credentials (no sub claim)")
-        return TokenData(email=email, role=role, tenant_id=tenant_id)
+        if payload.get("purpose"):
+            # A 2FA challenge is not a login.
+            raise HTTPException(status_code=401, detail="Invalid auth credentials")
+        # « Déconnecter » on Paramètres › Sécurité ends a device at once.
+        if _session_check is not None and not _session_check(email, sid):
+            raise HTTPException(status_code=401, detail="Session terminée. Reconnectez-vous.")
+        return TokenData(email=email, role=role, tenant_id=tenant_id, sid=sid)
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)[:80]}")
 
