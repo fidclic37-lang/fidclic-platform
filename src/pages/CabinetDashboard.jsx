@@ -272,7 +272,7 @@ export default function CabinetDashboard() {
   };
 
   return (
-    <div className="mc-dark min-h-screen relative" style={{ color: MC.ink }}>
+    <div data-currency="eur" className="mc-dark min-h-screen relative" style={{ color: MC.ink }}>
       <AmbientCanvas />
       <div className="relative">
       <div className="flex">

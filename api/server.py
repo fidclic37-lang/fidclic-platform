@@ -2528,10 +2528,22 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
         "tenant_name": (tenant or {}).get("name"),
         "tenant_slug": (tenant or {}).get("slug"),
+        # Paramètres › Préférences: applied by the app as soon as it knows who
+        # is signed in — the business's currency, this account's choices.
+        "currency": ((tenant or {}).get("currency") or "EUR").upper(),
+        "preferences": _prefs_for(token_data.email),
         # Team accounts: which establishments they cover, and whether that is
         # all of them ("all") or some ("partial" — data pages not open yet).
         **_team_identity(user),
     }
+
+
+def _prefs_for(email: str) -> Dict[str, Any]:
+    try:
+        from features.preferences import prefs_for
+        return prefs_for(email)
+    except Exception:
+        return {}
 
 
 def _team_identity(user: Dict[str, Any]) -> Dict[str, Any]:

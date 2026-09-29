@@ -11,6 +11,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { applyGoogleTranslate } from './GoogleTranslateBridge';
+import { ownerAPI } from '../lib/api';
 
 const LANGS = [
   { code: 'fr', flag: '🇫🇷', label: 'Français' },
@@ -39,6 +40,9 @@ export default function LanguageSwitcher({ variant = 'full' }) {
     //    content, error toasts. This is what makes the language picker
     //    behave like google.com/translate rather than just a header swap.
     applyGoogleTranslate(code);
+    // Remembered with the account (Paramètres › Préférences), so it follows
+    // the person to another device. Signed out: nothing to save.
+    ownerAPI.savePreferences?.({ language: code }).catch(() => {});
   };
 
   if (variant === 'compact') {

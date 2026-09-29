@@ -38,7 +38,8 @@ export function routeAfterAuth(navigate, session) {
   if (session?.role === 'staff') return navigate('/dashboard/scan');
   if (session?.role === 'business_owner') return navigate('/modules');
   if (session?.role === 'comptable') return navigate('/cabinet');
-  return navigate('/dashboard');
+  // Paramètres › Préférences › Page par défaut.
+  return navigate(session?.default_page || '/dashboard');
 }
 
 const GoogleGlyph = () => (

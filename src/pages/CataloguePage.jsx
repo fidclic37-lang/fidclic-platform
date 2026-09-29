@@ -8,6 +8,7 @@ import {
   Copy, ImagePlus, ImageOff, Power, Trash2, Package, Camera, Tag,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { perPage } from '../lib/prefs';
 
 /* Catalogue produits — the shop's products, their categories, and what sells.
 
@@ -27,7 +28,7 @@ const TONES = {
   slate:  { bg: '#F1F5F9', fg: '#64748B' },
 };
 const NONE = 'Sans catégorie';
-const PER_PAGE = 20;
+
 const SORTS = [
   { key: 'sales', label: 'Plus vendus' },
   { key: 'price', label: 'Prix' },
@@ -662,6 +663,8 @@ export default function CataloguePage() {
     return out;
   }, [d, q, cat, status, sort, dir]);
   useEffect(() => { setPage(1); }, [q, cat, status, sort, dir]);
+  // Paramètres › Préférences › Nombre d'éléments par page.
+  const PER_PAGE = perPage();
   const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
   const shown = rows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const allShown = shown.length > 0 && shown.every((p) => picked.has(p.id));

@@ -172,7 +172,7 @@ export default function AbonnementPage() {
   );
 
   return (
-    <div className="abo">
+    <div className="abo" data-currency="eur">
       <header className="mb-4 flex items-start gap-3">
         <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EAF1FF] text-[#2F6BFF]"><CreditCard size={22} /></span>
         <div>

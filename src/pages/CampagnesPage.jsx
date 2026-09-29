@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
+import { confirmImportant } from '../lib/prefs';
 
 /**
  * Campagnes — the composer, built to the approved design.
@@ -202,6 +203,8 @@ export default function CampagnesPage() {
   };
 
   const submit = async (mode) => {
+    // Paramètres › Préférences › Confirmation des actions importantes.
+    if (mode !== 'draft' && !scheduleAt() && !confirmImportant('Envoyer cette campagne maintenant ?')) return;
     setBusy(mode); setError('');
     try {
       const { data: res } = await ownerAPI.composeCampaign({

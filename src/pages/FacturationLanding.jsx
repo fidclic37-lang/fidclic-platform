@@ -80,7 +80,7 @@ const FAQ_ITEMS = [
 
 export default function FacturationLanding() {
   return (
-    <div className="min-h-screen font-['Inter'] antialiased" style={{ background: C.cream, color: C.inkDeep }}>
+    <div data-currency="eur" className="min-h-screen font-['Inter'] antialiased" style={{ background: C.cream, color: C.inkDeep }}>
       <MarketingNav active="/facturation-electronique" />
 
       {/* ───────────── HERO ───────────── */}

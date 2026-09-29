@@ -53,7 +53,7 @@ export default function AdminInvoicingPage() {
 
   if (!s) return <div className="p-6 text-[13px] text-[#64748B]">{err || 'Chargement…'}</div>;
   return (
-    <div className="mx-auto max-w-5xl p-4 sm:p-6">
+    <div className="mx-auto max-w-5xl p-4 sm:p-6" data-currency="eur">
       <header className="mb-5 flex items-start gap-3">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#EAF1FF] text-[#2F6BFF]"><Receipt size={22} /></span>
         <div>

@@ -7,6 +7,7 @@ import {
   Bookmark, BookmarkPlus, Check, Send as SendIcon,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { perPage as prefPerPage } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
@@ -206,7 +207,7 @@ export default function ClientsPage() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('recent');
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
+  const [perPage, setPerPage] = useState(() => prefPerPage());
   const [more, setMore] = useState(false);
   const [picked, setPicked] = useState([]);
   const [menuFor, setMenuFor] = useState(null);
@@ -680,7 +681,7 @@ export default function ClientsPage() {
             <span className="relative">
               <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}
                       className="appearance-none rounded-lg border border-[#E6EEFB] bg-white py-1.5 pl-3 pr-8 text-[12.5px] text-[#334155] outline-none focus:border-[#2F6BFF]">
-                {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                {[10, 20, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
               <ChevronDown size={13} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
             </span>

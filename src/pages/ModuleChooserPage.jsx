@@ -79,7 +79,7 @@ export default function ModuleChooserPage() {
         <div className="grid gap-6 w-full max-w-3xl md:grid-cols-2">
           {/* Card 1 — CRM + Fidélité */}
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate(user?.preferences?.default_page || '/dashboard')}
             className="group text-left rounded-3xl bg-white border transition-all hover:-translate-y-1"
             style={{
               borderColor: '#ECE3D2',

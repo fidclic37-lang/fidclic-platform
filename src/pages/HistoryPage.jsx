@@ -6,6 +6,7 @@ import {
   Search, Calendar, RotateCcw, Loader2, MoreHorizontal, X, ArrowUpRight,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { perPage as prefPerPage } from '../lib/prefs';
 
 /**
  * Historique — every activity on the loyalty programme, in one table.
@@ -218,7 +219,7 @@ export default function HistoryPage() {
   const [customer, setCustomer] = useState('');
   const [typed, setTyped] = useState('');          // debounced into `customer`
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
+  const [perPage, setPerPage] = useState(() => prefPerPage());
   const [feed, setFeed] = useState({ rows: [], total: 0, pages: 1 });
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -529,7 +530,7 @@ export default function HistoryPage() {
                 value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }}
                 className="appearance-none rounded-lg border border-[#E6EEFB] bg-white py-1.5 pl-3 pr-8 text-[12.5px] text-[#334155] outline-none focus:border-[#2F6BFF]"
               >
-                {(meta.per_page_options || [10, 25, 50, 100]).map((n) => (
+                {([...new Set([...(meta.per_page_options || [10, 25, 50, 100]), prefPerPage()])].sort((a, b) => a - b)).map((n) => (
                   <option key={n} value={n}>{n} par page</option>
                 ))}
               </select>
