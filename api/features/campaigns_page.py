@@ -369,7 +369,7 @@ def compose(req: Compose, request: Request = None,
         "template": (req.template or "").strip()[:40] or None,
         # For which establishments it was sent (None = the whole shop), and by whom.
         "store_ids": scope.ids,
-        "sent_by": token_data.email,
+        "sent_by": getattr(token_data, "email", None),
     }
 
     if status != "sent":
