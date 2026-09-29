@@ -37,10 +37,16 @@ import re
 import secrets
 import string
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from auth import require_role
+from features import store_scope as S
+
+# The Parrainage page is read by the owner, administrateurs and managers — a
+# parrainage belongs to the establishments of the client it brought in. The
+# programme's settings are the shop's: the owner's.
+READERS = ["business_owner", "administrateur", "manager"]
 from models import TokenData
 
 router = APIRouter(tags=["referrals"])
@@ -71,7 +77,7 @@ class ReferralConfig(BaseModel):
 
 # ---------- Owner endpoints ----------
 @router.get("/api/owner/referrals/config")
-def get_config(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def get_config(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     doc = _db.referral_config.find_one({"tenant_id": token_data.tenant_id})
     if not doc:
         return ReferralConfig(tenant_id=token_data.tenant_id).model_dump()
@@ -346,26 +352,29 @@ def _delta(now_value: float, was_value: float) -> Optional[int]:
     return round((now_value - was_value) / was_value * 100)
 
 
-def _rows_between(tid: str, start: datetime, end: datetime) -> List[Dict[str, Any]]:
-    return list(_db.referral_redemptions.find(
-        {"tenant_id": tid, "created_at": {"$gte": start, "$lte": end}}
-    ).sort("created_at", -1))
+def _rows_between(tid: str, start: datetime, end: datetime, mine: Optional[set] = None) -> List[Dict[str, Any]]:
+    q: Dict[str, Any] = {"tenant_id": tid, "created_at": {"$gte": start, "$lte": end}}
+    if mine is not None:
+        q["referee_customer_id"] = {"$in": list(mine)}
+    return list(_db.referral_redemptions.find(q).sort("created_at", -1))
 
 
 @router.get("/api/owner/referrals/overview")
 def overview(
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     tid = token_data.tenant_id
+    mine = S.customer_ids(S.resolve(token_data, request))
     start, end = _window(date_from, date_to)
     span = end - start
     prev_end = start - timedelta(microseconds=1)
     prev_start = prev_end - span
 
-    rows = _rows_between(tid, start, end)
-    prev_rows = _rows_between(tid, prev_start, prev_end)
+    rows = _rows_between(tid, start, end, mine)
+    prev_rows = _rows_between(tid, prev_start, prev_end, mine)
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
 
     people = _people([r.get("referrer_customer_id") for r in rows + prev_rows]
@@ -378,6 +387,8 @@ def overview(
     # Revenue is programme-wide and all-time by design: it answers "what has
     # parrainage brought me", not "what did it bring me in September".
     all_referees = _db.referral_redemptions.distinct("referee_customer_id", {"tenant_id": tid})
+    if mine is not None:
+        all_referees = [i for i in all_referees if i in mine]
     revenue = 0.0
     for cust in _db.customers.find({"id": {"$in": list(all_referees)}},
                                    {"_id": 0, "total_amount_paid": 1}):
@@ -496,12 +507,13 @@ def _public_url() -> str:
 def export_referrals(
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """Every parrainage of the period — the table without its ten-row limit."""
     tid = token_data.tenant_id
     start, end = _window(date_from, date_to)
-    rows = _rows_between(tid, start, end)
+    rows = _rows_between(tid, start, end, S.customer_ids(S.resolve(token_data, request)))
     people = _people([r.get("referrer_customer_id") for r in rows]
                      + [r.get("referee_customer_id") for r in rows])
     buf = io.StringIO()

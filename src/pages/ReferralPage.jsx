@@ -4,6 +4,7 @@ import {
   ChevronRight, ArrowRight, Loader2, X, Check, Download, Info,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 /**
  * Parrainage — the referral programme's dashboard, built to the approved
@@ -406,6 +407,8 @@ const RANGES = [
 ];
 
 export default function ReferralPage() {
+  const { user } = useAuth();
+  const owner = user?.role === 'business_owner';
   const [days, setDays] = useState(30);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -475,10 +478,13 @@ export default function ReferralPage() {
                          : 'border-[#E6EEFB] bg-white text-[#0B1C3F] hover:border-[#2F6BFF] hover:text-[#2F6BFF]'}`}>
             <Eye size={15} /> {demo ? "Revenir à mes données" : "Voir un exemple"}
           </button>
-          <button type="button" onClick={() => setSettingsOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-            <Settings2 size={15} /> Paramètres du programme
-          </button>
+          {/* The programme's settings are the whole shop's: the owner's. */}
+          {owner && (
+            <button type="button" onClick={() => setSettingsOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+              <Settings2 size={15} /> Paramètres du programme
+            </button>
+          )}
           <button type="button" onClick={() => setShareOpen(true)}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
             <Share2 size={15} /> Comment ça marche
@@ -507,10 +513,12 @@ export default function ReferralPage() {
             Le programme de parrainage est <strong>inactif</strong> — les chiffres ci-dessous portent sur
             les parrainages déjà enregistrés, mais aucun nouveau ne sera compté.
           </p>
-          <button type="button" onClick={() => setSettingsOpen(true)}
-                  className="shrink-0 rounded-lg bg-[#B45309] px-3 py-1.5 text-[12px] font-semibold text-white">
-            Activer
-          </button>
+          {owner && (
+            <button type="button" onClick={() => setSettingsOpen(true)}
+                    className="shrink-0 rounded-lg bg-[#B45309] px-3 py-1.5 text-[12px] font-semibold text-white">
+              Activer
+            </button>
+          )}
         </div>
       )}
 
@@ -685,7 +693,7 @@ export default function ReferralPage() {
         </>
       )}
 
-      {settingsOpen && data && (
+      {settingsOpen && data && owner && (
         <SettingsModal config={view.config} enabled={view.enabled}
                        onClose={() => setSettingsOpen(false)}
                        onSaved={() => { setSettingsOpen(false); load(); }} />

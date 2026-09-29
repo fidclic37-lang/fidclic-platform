@@ -368,7 +368,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="referral" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <ReferralPage />
               </ProtectedRoute>
             } />

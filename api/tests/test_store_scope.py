@@ -30,9 +30,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import segmentation as SG
     from features import activity_history as AH
     from features import geolocation as GEO
+    from features import referrals as RF
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF):
         m.init(db)
     passed = failed = 0
 
@@ -321,6 +322,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the owner's map is the shop's", round(GEO.catchment(date_from=None, date_to=None, mode="car", scope="regional",
                                                                request=Req(), token_data=OWNER)["shop"]["lat"], 2) == 47.39)
     check("Géolocalisation opens to them", guard(SARA, GEO.READERS, partial_ok=True) == 200)
+
+    print("\nLe Parrainage, limité")
+    db.referral_redemptions.insert_many([
+        {"tenant_id": "t1", "referrer_customer_id": "c1", "referee_customer_id": "c2", "created_at": now, "referrer_points": 10},
+        {"tenant_id": "t1", "referrer_customer_id": "c1", "referee_customer_id": "c3", "created_at": now, "referrer_points": 10},
+    ])
+    rf = lambda tok: {c["key"]: c["value"] for c in RF.overview(date_from=None, date_to=None, request=Req(), token_data=tok)["cards"]}
+    check("a manager counts the parrainages that brought clients to its establishment", rf(SARA)["referrals"] == 1)
+    check("the owner counts all of them", rf(OWNER)["referrals"] == 2)
+    check("Parrainage opens to them", guard(SARA, RF.READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
