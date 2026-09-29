@@ -186,6 +186,12 @@ export const ownerAPI = {
   billingPortal: () => api.post('/billing/portal', { return_path: '/dashboard/parametres/abonnement' }),
   cancelSubscription: (reason) => api.post('/owner/billing/cancel', { reason }),
   resumeSubscription: () => api.post('/owner/billing/resume'),
+  // Paramètres › Données & confidentialité
+  privacy: () => api.get('/owner/privacy'),
+  savePrivacy: (body) => api.put('/owner/privacy', body),
+  exportPrivacy: (body) => api.post('/owner/privacy/export', body, { responseType: 'blob' }),
+  searchPrivacy: (q) => api.get('/owner/privacy/search', { params: { q } }),
+  eraseCustomer: (id) => api.delete(`/owner/privacy/customers/${id}`, { params: { confirm: true } }),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),

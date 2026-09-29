@@ -122,6 +122,14 @@ def gate(tid: str, customer: Dict[str, Any], title: str, body: str, kind: str,
     (and the send is counted); otherwise the message waits for tomorrow."""
     if not counted(kind) or not customer.get("id") or _released.get():
         return None
+    # Données & confidentialité › « Communications marketing » switched off:
+    # no campaign, automation or IA message leaves at all.
+    try:
+        from features.privacy_page import marketing_allowed
+        if not marketing_allowed(tid):
+            return {"sent": False, "channel": None, "reason": "marketing_off"}
+    except Exception:
+        pass
     try:
         reason = over_limit(tid, customer["id"])
         if reason:
