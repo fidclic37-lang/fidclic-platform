@@ -76,6 +76,11 @@ export const crmAPI = {
   team: () => api.get('/crm/team'),
   addMember: (body) => api.post('/crm/team', body),
   memberStatus: (email, active) => api.post(`/crm/team/${encodeURIComponent(email)}/status`, { active }),
+  pipeline: (params) => api.get('/crm/pipeline', { params }),
+  tasksSummary: () => api.get('/crm/tasks/summary'),
+  addTaskTemplate: (body) => api.post('/crm/tasks/templates', body),
+  deleteTaskTemplate: (id) => api.delete(`/crm/tasks/templates/${id}`),
+  calendar: (params) => api.get('/crm/calendar', { params }),
 };
 
 export const adminAPI = {

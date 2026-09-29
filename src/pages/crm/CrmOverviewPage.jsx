@@ -245,12 +245,14 @@ export default function CrmOverviewPage() {
   );
 }
 
-export function TaskModal({ meta, prospectId, task, onClose, onSaved }) {
+export function TaskModal({ meta, prospectId, task, preset, onClose, onSaved }) {
   const soon = new Date(Date.now() + 3600000); soon.setMinutes(0, 0, 0);
   const local = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  const [f, setF] = useState({ title: task?.title || '', type: task?.type || 'appel', priority: task?.priority || 'moyenne',
-                               due: task?.due_at ? local(new Date(task.due_at)) : local(soon), prospect_id: task?.prospect_id || prospectId || '',
-                               assigned_to: task?.assigned_to || '', description: task?.description || '' });
+  const base = task || preset || {};
+  const [f, setF] = useState({ title: base.title || '', type: base.type || 'appel', priority: base.priority || 'moyenne',
+                               due: base.due_at ? local(new Date(base.due_at)) : local(soon), prospect_id: base.prospect_id || prospectId || '',
+                               prospectName: base.prospect || '', assigned_to: base.assigned_to || '', description: base.description || '',
+                               duration_min: base.duration_min || 30, confirm_status: base.confirm_status || 'a_confirmer' });
   const [q, setQ] = useState('');
   const [found, setFound] = useState([]);
   const [err, setErr] = useState('');
@@ -261,7 +263,8 @@ export function TaskModal({ meta, prospectId, task, onClose, onSaved }) {
   const save = async () => {
     setErr('');
     const body = { title: f.title, type: f.type, priority: f.priority, due_at: new Date(f.due).toISOString(),
-                   prospect_id: f.prospect_id || null, description: f.description, ...(f.assigned_to ? { assigned_to: f.assigned_to } : {}) };
+                   prospect_id: f.prospect_id || null, description: f.description, duration_min: Number(f.duration_min) || 30,
+                   confirm_status: f.confirm_status, ...(f.assigned_to ? { assigned_to: f.assigned_to } : {}) };
     try { if (task?.id) await crmAPI.editTask(task.id, body); else await crmAPI.addTask(body); onSaved(); }
     catch (e) { setErr(e?.response?.data?.detail || 'Enregistrement impossible.'); }
   };
@@ -272,6 +275,12 @@ export function TaskModal({ meta, prospectId, task, onClose, onSaved }) {
         <Select label="Type" value={f.type} onChange={(v) => setF({ ...f, type: v })}>{(meta?.task_types || []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</Select>
         <Select label="Priorité" value={f.priority} onChange={(v) => setF({ ...f, priority: v })}><option value="haute">Haute</option><option value="moyenne">Moyenne</option><option value="basse">Basse</option></Select>
         <label className="block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Échéance</span><input type="datetime-local" className={inputCls} value={f.due} onChange={(e) => setF({ ...f, due: e.target.value })} /></label>
+        <Select label="Durée" value={f.duration_min} onChange={(v) => setF({ ...f, duration_min: v })}>
+          {[15, 30, 45, 60, 90, 120].map((m) => <option key={m} value={m}>{m < 60 ? `${m} min` : `${m / 60} h${m % 60 ? ' 30' : ''}`}</option>)}
+        </Select>
+        <Select label="Statut du rendez-vous" value={f.confirm_status} onChange={(v) => setF({ ...f, confirm_status: v })}>
+          <option value="a_confirmer">À confirmer</option><option value="confirme">Confirmé</option><option value="annule">Annulé</option>
+        </Select>
         <Select label="Assigné à" value={f.assigned_to} onChange={(v) => setF({ ...f, assigned_to: v })}><option value="">Moi</option>{(meta?.users || []).filter((u) => u.active).map((u) => <option key={u.email} value={u.email}>{u.name}</option>)}</Select>
         {!prospectId && (
           <div className="sm:col-span-2">

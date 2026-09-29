@@ -94,7 +94,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the trial becomes a subscription → Signé, on its own", stage("Café Lumière") == "signe")
     lum = db.crm_prospects.find_one({"name": "Café Lumière"})
     check("a FidClic business's stage cannot be set by hand",
-          refused(lambda: C.set_stage(lum["id"], C.StageIn(stage="essai"), token_data=ADMIN), 409))
+          refused(lambda: C.set_stage(lum["id"], C.StageIn(stage="essai"), token_data=ADMIN), 409)
+          and refused(lambda: C.set_stage(lum["id"], C.StageIn(stage="nouveau"), token_data=ADMIN), 409))
     check("the old signing date is kept, not « today »",
           C._entered("signe", now - dt.timedelta(days=30), now + dt.timedelta(seconds=5)) == 1)   # only Café Lumière now
 
@@ -161,6 +162,43 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     C.member_status("sofia@fidclic.com", C.ActiveIn(active=False), token_data=ADMIN)
     check("switched off: cannot sign in", refused(lambda: server.login(server.LoginRequest(email="sofia@fidclic.com", password=cred["password"]),
                                                                        server.Response(), None), 403))
+
+    print("\nPipeline")
+    pl = C.pipeline(token_data=ADMIN)
+    cols = {c["key"]: c for c in pl["columns"]}
+    check("every stage a column, counts right", len(pl["columns"]) == 8 and cols["signe"]["count"] == 2 and cols["rdv"]["count"] == 1)
+    check("conversion = signed / all", pl["conversion"] == round(2 / pl["total"] * 100))
+    check("filters apply to the board", C.pipeline(q="zen", token_data=ADMIN)["total"] == 1)
+
+    print("\nTâches — filters, summary, templates")
+    C.add_task(C.TaskIn(title="Envoyer documentation", type="email", priority="basse",
+                        due_at=(now + dt.timedelta(days=2)).isoformat(), assigned_to="sofia@fidclic.com"), token_data=ADMIN)
+    check("filter by type and priority", C.list_tasks(type="email", token_data=ADMIN)["total"] == 1
+          and C.list_tasks(priority="haute", token_data=ADMIN)["total"] == 1)
+    check("search by title or business", C.list_tasks(q="zen", token_data=ADMIN)["total"] >= 1)
+    lst = C.list_tasks(token_data=ADMIN)
+    check("counts for the tabs", lst["counts"]["all"] == 3 and lst["counts"]["en_retard"] == 1 and lst["counts"]["terminee"] == 1)
+    sm = C.tasks_summary(token_data=ADMIN)
+    cards = {c["key"]: c["value"] for c in sm["cards"]}
+    check("four figures, matching the tabs", cards["terminee"] == 1 and cards["en_retard"] == 1 and cards["en_cours"] == lst["counts"]["en_cours"] == 0)
+    check("workload per person", {w["label"]: w["count"] for w in sm["workload"]}.get("Sofia R.") == 1)
+    tpl = C.add_template(C.TemplateIn(title="Déposer une plaquette", type="suivi"), token_data=ADMIN)
+    check("a saved template joins the presets", any(p.get("title") == "Déposer une plaquette" for p in C.tasks_summary(token_data=ADMIN)["presets"]))
+    C.delete_template(tpl["id"], token_data=ADMIN)
+
+    print("\nCalendrier")
+    C.add_task(C.TaskIn(title="RDV Zen & You", type="rdv", prospect_id=p["id"], duration_min=60, confirm_status="confirme",
+                        due_at=(now + dt.timedelta(days=1)).replace(hour=11, minute=0).isoformat()), token_data=ADMIN)
+    cal = C.calendar(date_from=(now - dt.timedelta(days=3)).isoformat(), date_to=(now + dt.timedelta(days=4)).isoformat(), token_data=ADMIN)
+    ev = next(e for e in cal["events"] if e["title"] == "RDV Zen & You")
+    check("tasks are the calendar's events, with their end and the business's details",
+          ev["duration_min"] == 60 and ev["end_at"] and ev["prospect"] == "Zen & You" and ev["phone"] == "06 66 77 88 99")
+    check("upcoming rendez-vous listed", any(u["title"] == "RDV Zen & You" for u in cal["upcoming"]))
+    check("filter by type", all(e["type"] == "rdv" for e in C.calendar(date_from=(now - dt.timedelta(days=3)).isoformat(),
+          date_to=(now + dt.timedelta(days=4)).isoformat(), type="rdv", token_data=ADMIN)["events"]))
+    check("a period longer than two months is refused", refused(lambda: C.calendar(date_from=now.isoformat(),
+          date_to=(now + dt.timedelta(days=90)).isoformat(), token_data=ADMIN), 400))
+    check("seven days of activity by kind", len(cal["activity"]) == 7 and {k["key"] for k in cal["activity_kinds"]} >= {"appel", "rdv"})
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
