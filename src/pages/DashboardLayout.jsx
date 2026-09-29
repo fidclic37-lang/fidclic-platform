@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import NotificationBell from '../components/NotificationBell';
 import EstablishmentSwitcher from '../components/EstablishmentSwitcher';
+import { markPageOpened } from '../lib/chartAnimation';
 import BillingBanner from '../components/BillingBanner';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
@@ -289,6 +290,14 @@ const DashboardLayout = () => {
     navigate(`/dashboard/customers?q=${encodeURIComponent(raw)}`);
   };
   const currentPath = location.pathname;
+  // Charts on the page that is opening may play their entrance animation;
+  // after that a resize (or a full-page screenshot) draws them finished.
+  // Marked during render, before the page's charts render.
+  const markedPath = React.useRef(null);
+  if (markedPath.current !== currentPath) {
+    markedPath.current = currentPath;
+    markPageOpened();
+  }
   const role = user?.role || 'default';
   const theme = themeForRole(role);
 
@@ -311,7 +320,8 @@ const DashboardLayout = () => {
   // why isn't this scan working" tenant-mismatch confusion.
   const [tenantInfo, setTenantInfo] = React.useState(null);
   React.useEffect(() => {
-    if (!user) return;
+    // A platform admin has no shop of their own — the call would only 403.
+    if (!user || user.role === 'super_admin') return undefined;
     let alive = true;
     ownerAPI.getTenant?.()
       .then((r) => { if (alive) setTenantInfo(r.data || null); })
@@ -385,7 +395,7 @@ const DashboardLayout = () => {
             )}
           </Link>
         </div>
-        <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />
+        {role !== 'super_admin' && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
@@ -547,7 +557,7 @@ const DashboardLayout = () => {
                 switcher, where picking a shop belongs; help has its own row at
                 the foot of the sidebar. */}
             <div className="absolute right-6 lg:right-8 flex items-center gap-3">
-              <NotificationBell />
+              <NotificationBell platformAdmin={role === 'super_admin'} />
 
               {/* User menu avatar */}
               <UserMenu user={user} theme={theme} role={role} onLogout={logout} />

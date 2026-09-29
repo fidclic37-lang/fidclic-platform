@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { useBranch } from '../contexts/BranchContext';
 import { ownerAPI } from '../lib/api';
 
@@ -154,8 +155,8 @@ export default function VisitsTwinChart({ controlledDays = null } = {}) {
                   <stop offset="100%" stopColor="var(--flc-accent-deep, #A82843)" />
                 </linearGradient>
               </defs>
-              <Bar dataKey="visits" fill="url(#vtc-bar)" radius={[3, 3, 0, 0]} maxBarSize={18} />
-              <Line
+              <Bar isAnimationActive={chartAnimation()} dataKey="visits" fill="url(#vtc-bar)" radius={[3, 3, 0, 0]} maxBarSize={18} />
+              <Line isAnimationActive={chartAnimation()}
                 type="monotone" dataKey="uniques"
                 stroke="#5B7AB7" strokeWidth={1.8}
                 dot={{ r: 2.5, fill: '#5B7AB7', stroke: 'var(--flc-card, #FFFFFF)', strokeWidth: 1 }}

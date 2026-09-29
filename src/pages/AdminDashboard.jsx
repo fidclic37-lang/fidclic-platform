@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { AlertCircle, TrendingUp, TrendingDown, Users, DollarSign, Eye, Activity, ChevronRight, X, CheckCircle2 } from 'lucide-react';
 import api, { adminAPI } from '../lib/api';
 import { PageHeader, StatCard, Section, C } from '../components/PageShell';
@@ -287,7 +288,7 @@ export default function AdminDashboard() {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie
+                <Pie isAnimationActive={chartAnimation()}
                   data={planDistribution}
                   cx="50%"
                   cy="50%"
@@ -322,7 +323,7 @@ export default function AdminDashboard() {
                 <XAxis dataKey="date" stroke={C.inkMute} />
                 <YAxis stroke={C.inkMute} />
                 <Tooltip contentStyle={{ backgroundColor: C.cream, border: `1px solid ${C.hairline}`, borderRadius: 12 }} />
-                <Line
+                <Line isAnimationActive={chartAnimation()}
                   type="monotone"
                   dataKey="count"
                   stroke="url(#adminGrowth)"
@@ -351,7 +352,7 @@ export default function AdminDashboard() {
               <XAxis dataKey="name" stroke={C.inkMute} angle={-30} textAnchor="end" height={80} />
               <YAxis stroke={C.inkMute} />
               <Tooltip contentStyle={{ backgroundColor: C.cream, border: `1px solid ${C.hairline}`, borderRadius: 12 }} />
-              <Bar dataKey="total_visits" fill="url(#adminBar)" radius={[10, 10, 0, 0]} />
+              <Bar isAnimationActive={chartAnimation()} dataKey="total_visits" fill="url(#adminBar)" radius={[10, 10, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

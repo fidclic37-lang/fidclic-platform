@@ -5,6 +5,7 @@ import {
   ComposedChart, Bar, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { C as C_PS } from './PageShell';
 import TimeRangeSelector from './TimeRangeSelector';
 import { useBranch } from '../contexts/BranchContext';
@@ -221,14 +222,14 @@ const VisitsWithCampaignsChart = () => {
                   { value: 'Campaign sent (click for recipients)', type: 'circle', color: CAMPAIGN_COLOR },
                 ]}
               />
-              <Bar
+              <Bar isAnimationActive={chartAnimation()}
                 dataKey="visits"
                 fill={C_PS.terracotta}
                 radius={[4, 4, 0, 0]}
                 cursor="pointer"
                 onClick={onBarClick}
               />
-              <Scatter
+              <Scatter isAnimationActive={chartAnimation()}
                 name="Campaign sent"
                 dataKey="campaign_y"
                 fill={CAMPAIGN_COLOR}

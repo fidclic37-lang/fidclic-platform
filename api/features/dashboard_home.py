@@ -256,7 +256,8 @@ def overview(days: int = Query(30, ge=1, le=365),
             if not name:
                 continue
             acc = tally.setdefault(name, {"sales": 0, "revenue": 0.0})
-            qty = int(item.get("quantity") or 1)
+            # The Scan page writes `qty`; older imports wrote `quantity`.
+            qty = int(item.get("qty") or item.get("quantity") or 1)
             acc["sales"] += qty
             acc["revenue"] += float(item.get("price") or 0) * qty
     products = [{"name": n, "sales": int(a["sales"]), "revenue": _money(a["revenue"])}

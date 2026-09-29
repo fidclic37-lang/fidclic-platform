@@ -91,7 +91,7 @@ const resolveAlertActions = (alert) => {
   };
 };
 
-const NotificationBell = () => {
+const NotificationBell = ({ platformAdmin = false }) => {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState([]);
   const [readIds, setReadIds] = useState(loadReadIds);
@@ -127,7 +127,9 @@ const NotificationBell = () => {
   }, []);
 
   // Account info — load once. Tenant name + branches for the dropdown header.
+  // A platform admin has no shop of their own: these would only answer 403.
   useEffect(() => {
+    if (platformAdmin) return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -140,7 +142,7 @@ const NotificationBell = () => {
       } catch (_e) { /* silent */ }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [platformAdmin]);
 
   // Click-outside to close
   useEffect(() => {

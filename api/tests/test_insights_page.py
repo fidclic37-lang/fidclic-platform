@@ -87,7 +87,7 @@ def main():
 
     for d in range(1, 25):                                    # September
         visit(d, 12, 20.0, [{"name": "Croissant", "quantity": 1}, {"name": "Café", "quantity": 1}])
-        visit(d, 13, 15.0, [{"name": "Café", "quantity": 1}])
+        visit(d, 13, 15.0, [{"name": "Café", "qty": 2}])     # the Scan page's key
     for d in range(1, 8):
         visit(d, 15, 5.0, [{"name": "Café", "quantity": 1}])
     for d in range(32, 57):                                   # August, same days
@@ -170,7 +170,7 @@ def main():
 
     # 24 lunches of 2 items + 24 of 1 + 7 afternoon coffees, over 55 visits.
     with_items = [v for v in shop.recent(90) if v.get("items")]
-    per_visit = sum(sum(i.get("quantity", 1) for i in v["items"]) for v in with_items) / len(with_items)
+    per_visit = sum(sum(i.get("qty") or i.get("quantity", 1) for i in v["items"]) for v in with_items) / len(with_items)
     check("panier moyen reads the items per visit from the scans",
           f"en moyenne {per_visit:.1f}".replace(".", ",") in opp["panier_moyen"]["body"])
     check("a benchmark says it is one",

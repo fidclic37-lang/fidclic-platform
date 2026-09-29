@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { Activity, Users, Repeat } from 'lucide-react';
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { C as C_PS } from './PageShell';
 import { useBranch } from '../contexts/BranchContext';
 
@@ -186,8 +187,8 @@ const VisitsOverTimeChart = () => {
               <YAxis stroke="#57504A" fontSize={11} allowDecimals={false} width={36} />
               <Tooltip labelFormatter={formatTooltipLabel} />
               <Legend wrapperStyle={{ paddingTop: 10 }} />
-              <Bar  name="Visites totales"  dataKey="count"            fill={C_PS.terracotta} radius={[6, 6, 0, 0]} />
-              <Line name="Clients uniques"  dataKey="unique_visitors"  stroke={C_PS.sage}     strokeWidth={2.5} dot={{ r: 3 }} />
+              <Bar isAnimationActive={chartAnimation()}  name="Visites totales"  dataKey="count"            fill={C_PS.terracotta} radius={[6, 6, 0, 0]} />
+              <Line isAnimationActive={chartAnimation()} name="Clients uniques"  dataKey="unique_visitors"  stroke={C_PS.sage}     strokeWidth={2.5} dot={{ r: 3 }} />
             </ComposedChart>
           </ResponsiveContainer>
         )}

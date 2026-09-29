@@ -70,7 +70,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.visits.insert_many([
         {"id": "v1", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 40.0,
          "visit_time": (now - dt.timedelta(days=1)).replace(hour=12),
-         "items": [{"name": "Café latte", "price": 5.0, "quantity": 2}]},
+         # the Scan page's own key — `qty` — must count as much as `quantity`
+         "items": [{"name": "Café latte", "price": 5.0, "qty": 2}]},
         {"id": "v2", "tenant_id": "t1", "customer_id": "c2", "amount_paid": 30.0,
          "visit_time": (now - dt.timedelta(days=2)).replace(hour=13),
          "items": [{"name": "Café latte", "price": 5.0, "quantity": 1},

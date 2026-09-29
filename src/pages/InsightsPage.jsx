@@ -12,6 +12,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 
 // Small reusable card shell
 const Card = ({ children, className = '' }) => (
@@ -685,7 +686,7 @@ export default function InsightsPage() {
                     <XAxis dataKey="name" stroke="#57504A" fontSize={11} />
                     <YAxis stroke="#57504A" fontSize={11} />
                     <Tooltip />
-                    <Bar dataKey="visits" fill="#B85C38" radius={[6, 6, 0, 0]} />
+                    <Bar isAnimationActive={chartAnimation()} dataKey="visits" fill="#B85C38" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -699,7 +700,7 @@ export default function InsightsPage() {
                     <XAxis dataKey="day" stroke="#57504A" fontSize={11} />
                     <YAxis stroke="#57504A" fontSize={11} />
                     <Tooltip />
-                    <Bar dataKey="visits" fill="#4A5D23" radius={[6, 6, 0, 0]} />
+                    <Bar isAnimationActive={chartAnimation()} dataKey="visits" fill="#4A5D23" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
