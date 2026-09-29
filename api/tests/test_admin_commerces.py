@@ -129,7 +129,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     cl = A.commerce_clients("busy", token_data=ADMIN)
     check("clients tab: no contact details, names shortened", cl["total"] == 94 and "email" not in cl["rows"][0]
           and "phone" not in cl["rows"][0] and cl["rows"][0]["name"].endswith("."))
+    db.delivery_log.insert_many([{"tenant_id": "busy", "kind": "campaign", "channel": "web_push", "result": {"sent": 2}, "timestamp": now},
+                                 {"tenant_id": "busy", "kind": "campaign", "channel": "web_push", "result": {"sent": 0}, "timestamp": now},
+                                 {"tenant_id": "busy", "kind": "birthday", "channel": "sms_fallback", "result": {"sent": True}, "timestamp": now},
+                                 {"tenant_id": "busy", "kind": "campaign", "result": {"sent": 1}, "timestamp": now - dt.timedelta(days=40)}])
     det = A.commerce_details("busy", token_data=ADMIN)
+    bk = {k["kind"]: k for k in det["notifications"]["by_kind"]}
+    check("notifications: sends and failures of the last 30 days", bk["campaign"]["sent"] == 1 and bk["campaign"]["failed"] == 1
+          and bk["birthday"]["sent"] == 1)
     check("other tabs", len(det["campagnes"]) == 1 and det["parametres"]["team"][0]["email"] and "invoices" in det["abonnement"])
     check("zone", "bands" in A.commerce_zone("busy", token_data=ADMIN))
 

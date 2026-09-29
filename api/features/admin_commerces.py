@@ -608,11 +608,12 @@ def commerce_details(tid: str, token_data: TokenData = Depends(require_role(ADMI
     camps = [_camp(c) for c in _db.campaigns.find({"tenant_id": tid}, {"_id": 0}).sort("sent_at", -1).limit(100)]
     m30 = now - timedelta(days=30)
     kinds = {}
-    for d in _db.delivery_log.find({"tenant_id": tid, "at": {"$gte": m30}}, {"_id": 0, "kind": 1, "ok": 1, "status": 1}):
+    # delivery_log: one row per message dispatched (server.dispatch_to_customer),
+    # {kind, channel, result: {sent: <devices reached | bool>}, timestamp}.
+    for d in _db.delivery_log.find({"tenant_id": tid, "timestamp": {"$gte": m30}}, {"_id": 0, "kind": 1, "result": 1}):
         k = d.get("kind") or "autre"
         e = kinds.setdefault(k, {"kind": k, "sent": 0, "failed": 0})
-        ok = d.get("ok") if d.get("ok") is not None else (d.get("status") in ("sent", "delivered", "ok"))
-        e["sent" if ok else "failed"] += 1
+        e["sent" if (d.get("result") or {}).get("sent") else "failed"] += 1
     subs = len(_db.push_subscriptions.distinct("customer_id", {"tenant_id": tid}))
     total = _db.customers.count_documents({"tenant_id": tid, **LIVE})
     invoices = [{"number": i.get("number"), "paid_at": _iso(i.get("paid_at")), "amount": i.get("amount_paid") or i.get("total"),
