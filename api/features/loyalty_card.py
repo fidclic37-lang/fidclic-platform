@@ -256,8 +256,10 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "show_qr": tpl.get("show_qr") is not False,
             "show_message": tpl.get("show_message") is not False,
             "wallet_enabled": tpl.get("wallet_enabled") is not False,
-            "birthday_notification": bool((_db.auto_campaigns.find_one({"tenant_id": tid}) or {})
-                                          .get("birthday", {}).get("enabled", True)),
+            # The birthday message is the Automatisations page's "Anniversaire"
+            # scenario — the one the daily run actually sends.
+            "birthday_notification": bool((_db.push_scenarios.find_one({"tenant_id": tid, "builtin": "birthday"})
+                                           or {"enabled": True}).get("enabled")),
         },
         "advanced": {
             "code_type": tpl.get("code_type") or "qr",
@@ -360,12 +362,19 @@ def put_card_settings(body: CardSettings,
     if "welcome_text" in payload:
         payload["greeting_label"] = payload.get("greeting_label") or "Membre"
 
-    # Birthday automation lives in its own collection, not on the card.
+    # The toggle switches the Automatisations page's "Anniversaire" scenario
+    # (it used to write a collection nothing read).
     birthday = payload.pop("birthday_notification", None)
     if birthday is not None:
-        _db.auto_campaigns.update_one({"tenant_id": tid},
-                                      {"$set": {"tenant_id": tid, "birthday.enabled": bool(birthday)}},
-                                      upsert=True)
+        try:
+            from features import push_wallet as _PW
+            if _PW._db is None:
+                _PW.init(_db)
+            _PW._seed(tid)
+        except Exception:
+            pass
+        _db.push_scenarios.update_one({"tenant_id": tid, "builtin": "birthday"},
+                                      {"$set": {"enabled": bool(birthday), "updated_at": _now()}})
 
     if payload:
         payload["tenant_id"] = tid

@@ -3,9 +3,12 @@ import {
   Settings2, Wallet, Send, Users, Eye, BarChart3, List, Play, FileText,
   Plus, Search, ChevronDown, ChevronRight, MoreHorizontal, Loader2, X, Check,
   Cake, Star, Tag, ShoppingCart, Clock, Sparkles, Heart, CalendarDays, Bell,
-  Trash2, Zap, Info,
+  Trash2, Zap, Info, Inbox,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
+import AutoMessagesPanel from '../components/AutoMessagesPanel';
+import PendingLotsPanel from '../components/PendingLotsPanel';
 
 /**
  * Automatisations · Push Wallet — built to the approved mockup.
@@ -39,6 +42,7 @@ const TABS = [
   { key: 'all', label: 'Tous les scénarios', icon: List },
   { key: 'active', label: 'Scénarios actifs', icon: Play },
   { key: 'draft', label: 'Brouillons', icon: FileText },
+  { key: 'pending', label: 'À valider', icon: Inbox },
   { key: 'stats', label: 'Statistiques', icon: BarChart3 },
 ];
 
@@ -304,7 +308,9 @@ const ScenarioModal = ({ scenario, triggers, examples, onClose, onSaved, message
 
 /* ── page ─────────────────────────────────────────────────────────────── */
 export default function AutomationsPage() {
-  const [tab, setTab] = useState('all');
+  // ?tab=pending — where the bell's « envois à valider » leads.
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(params.get('tab') === 'pending' ? 'pending' : 'all');
   const [data, setData] = useState(null);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -416,6 +422,11 @@ export default function AutomationsPage() {
         ))}
       </div>
 
+      {data && (
+        <AutoMessagesPanel canEdit={can.create}
+                           onEditScenario={(id) => { const s = scenarios.find((x) => x.id === id); if (s) setEditing(s); }} />
+      )}
+
       {/* tabs + create */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <nav className="flex gap-1.5 overflow-x-auto rounded-2xl border border-[#E6EEFB] bg-white p-1.5">
@@ -427,6 +438,11 @@ export default function AutomationsPage() {
                       className={`inline-flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-semibold transition ${
                         on ? 'bg-[#2F6BFF] text-white' : 'text-[#475569] hover:bg-[#F4F7FC]'}`}>
                 <Icon size={15} /> {t.label}
+                {t.key === 'pending' && data?.pending_count > 0 && (
+                  <span className={`rounded-full px-1.5 text-[11px] font-bold ${on ? 'bg-white text-[#2F6BFF]' : 'bg-[#F59E0B] text-white'}`}>
+                    {data.pending_count}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -454,7 +470,7 @@ export default function AutomationsPage() {
       <div className="grid items-start gap-4 xl:grid-cols-[1fr_320px]">
         {/* table */}
         <section className="rounded-2xl border border-[#E6EEFB] bg-white shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
-          {tab !== 'stats' && (
+          {tab !== 'stats' && tab !== 'pending' && (
             <div className="grid gap-3 border-b border-[#EEF3FB] p-4 md:grid-cols-[1.4fr_1fr_1fr_auto]">
               <div className="relative">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
@@ -485,7 +501,9 @@ export default function AutomationsPage() {
             </div>
           )}
 
-          {tab === 'stats' ? (
+          {tab === 'pending' ? (
+            <PendingLotsPanel onChanged={load} />
+          ) : tab === 'stats' ? (
             <div className="p-5">
               <h2 className="mb-3 text-[14px] font-bold text-[#0B1C3F]">Statistiques par scénario</h2>
               <div className="overflow-x-auto">
@@ -565,7 +583,15 @@ export default function AutomationsPage() {
                               </span>
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-[12.5px] text-[#475569]">{s.trigger_detail}</td>
+                          <td className="px-4 py-3 text-[12.5px] text-[#475569]">
+                            {s.trigger_detail}
+                            <span className="mt-1 block">
+                              <span className="inline-flex rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold"
+                                    style={s.automatic ? { background: '#EAF1FF', color: '#2F6BFF' } : { background: '#FFF4D6', color: '#B45309' }}>
+                                {s.automatic ? 'Automatique' : 'À valider'}
+                              </span>
+                            </span>
+                          </td>
                           <td className="max-w-[280px] px-4 py-3">
                             <span className="block truncate text-[12.5px] font-semibold text-[#0B1C3F]">{s.title}</span>
                             <span className="block text-[12px] leading-snug text-[#64748B]">{s.body}</span>
