@@ -27,9 +27,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import campaigns_page as KP
     from features import analyses as AN
     from features import insights_page as IP
+    from features import segmentation as SG
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP):
+    for m in (S, T, DH, CP, KP, AN, IP, SG):
         m.init(db)
     passed = failed = 0
 
@@ -264,6 +265,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                                     "sent_at": now, "store_ids": ["tours"]}),
            "a_risque" not in IP.used_templates("t1", now, scope=S.resolve(SARA, Req())))[1]
           and "a_risque" in IP.used_templates("t1", now, scope=S.resolve(ALI, Req())))
+
+    print("\nLa page Segmentation, limitée")
+    pg = SG.page(request=Req(), token_data=SARA)
+    check("'Clients total' is the manager's establishment", pg["total_clients"] == 3)
+    check("every segment counts its clients only", all(x["count"] <= 3 for x in pg["segments"]))
+    check("the goal is Blois' own", pg["goal"]["target"] == 200.0)
+    check("the preview counts its clients only", SG.preview(SG.Preview(rules=[]), request=Req(), token_data=SARA)["total"] == 3)
+    mine_seg = SG.create(SG.SegmentIn(name="Blois fidèles", rules=[]), request=Req(), token_data=SARA)
+    check("a manager creates a segment, counted on its establishment", mine_seg["count"] == 3 and mine_seg["created_by"] == "sara@c.fr")
+    check("its members are its establishment's clients",
+          sorted(SG.members(mine_seg["id"], request=Req(), token_data=SARA)["ids"]) == ["c1", "c2", "c4"])
+    check("the owner, on 'all', sees everyone in the same segment",
+          len(SG.members(mine_seg["id"], request=Req(), token_data=OWNER)["ids"]) == 4)
+    try:
+        SG.remove(mine_seg["id"], token_data=ALI)
+        other = True
+    except HTTPException:
+        other = False
+    check("another account cannot delete it", other is False)
+    check("the owner can", SG.remove(mine_seg["id"], token_data=OWNER)["deleted"] is True)
+    check("Segmentation opens to them", guard(SARA, SG.READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

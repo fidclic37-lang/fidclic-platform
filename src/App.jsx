@@ -358,7 +358,7 @@ function App() {
                 CardDesignerPage it replaces has been removed; its advanced
                 knobs live in the "Options avancées" panel on this page. */}
             <Route path="segmentation" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <SegmentationPage />
               </ProtectedRoute>
             } />
