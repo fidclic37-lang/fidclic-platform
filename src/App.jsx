@@ -413,7 +413,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="history" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <HistoryPage />
               </ProtectedRoute>
             } />

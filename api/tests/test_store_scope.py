@@ -28,9 +28,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import analyses as AN
     from features import insights_page as IP
     from features import segmentation as SG
+    from features import activity_history as AH
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH):
         m.init(db)
     passed = failed = 0
 
@@ -286,6 +287,25 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("another account cannot delete it", other is False)
     check("the owner can", SG.remove(mine_seg["id"], token_data=OWNER)["deleted"] is True)
     check("Segmentation opens to them", guard(SARA, SG.READERS, partial_ok=True) == 200)
+
+    print("\nL'Historique, limité")
+    db.audit_log.insert_one({"tenant_id": "t1", "action": "card.settings.updated", "at": now.isoformat(), "after": {"logo_url": 1}})
+    feed = AH.activity(request=Req(), date_from=None, date_to=None, tab="all", action=None, customer=None,
+                       page=1, per_page=100, token_data=SARA)
+    check("a manager's feed holds only its establishment's clients",
+          all(r["customer_id"] in (None, "c1", "c2", "c4") for r in feed["rows"]))
+    check("no scan from another establishment's till",
+          feed["counts"].get("scan", 0) == db.visits.count_documents({"tenant_id": "t1", "branch_id": "blois"}))
+    check("changes to the card (the whole shop's) are not in it", feed["counts"].get("card_update", 0) == 0)
+    owner_feed = AH.activity(request=Req(), date_from=None, date_to=None, tab="all", action=None, customer=None,
+                             page=1, per_page=100, token_data=OWNER)
+    check("the owner's feed has every scan and the card change",
+          owner_feed["counts"].get("scan", 0) == db.visits.count_documents({"tenant_id": "t1"})
+          and owner_feed["counts"].get("card_update", 0) >= 1)
+    check("the figures follow too", {c["key"]: c["value"] for c in AH.stats(request=Req(), date_from=None, date_to=None,
+                                                                             token_data=SARA)["cards"]}["scan"]
+          == feed["counts"].get("scan", 0))
+    check("Historique opens to them", guard(SARA, AH.READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

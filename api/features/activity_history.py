@@ -36,10 +36,15 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
 from auth import require_role, TokenData
+from features import store_scope as S
+
+# The Historique is read by the owner, administrateurs and managers — each
+# the activity of the establishments it may see.
+READERS = ["business_owner", "administrateur", "manager"]
 
 router = APIRouter(tags=["history"])
 _db = None
@@ -144,13 +149,19 @@ def _name_map(ids: List[str]) -> Dict[str, Dict[str, Any]]:
     return {r["id"]: r for r in rows}
 
 
-def _sources(tid: str, start: datetime, end: datetime) -> Dict[str, Dict[str, Any]]:
+def _sources(tid: str, start: datetime, end: datetime,
+             scope: Optional["S.Scope"] = None) -> Dict[str, Dict[str, Any]]:
     """action key → how to count it, how to read it, how to render it."""
     span = {"$gte": start, "$lte": end}
+    # Limited to the chosen establishments: scans and rewards by their tills,
+    # everything about a client by the clients of those establishments.
+    tills = S.visit_filter(scope) if scope else {}
+    mine = S.customer_ids(scope) if scope else None
+    clients = {} if mine is None else {"customer_id": {"$in": list(mine)}}
     return {
         "scan": {
             "coll": "visits", "time": "visit_time",
-            "query": {"tenant_id": tid, "visit_time": span},
+            "query": {"tenant_id": tid, "visit_time": span, **tills},
             "row": lambda d: {
                 "customer_id": d.get("customer_id"),
                 "detail": "Scan de la carte en magasin",
@@ -160,7 +171,7 @@ def _sources(tid: str, start: datetime, end: datetime) -> Dict[str, Dict[str, An
         },
         "reward": {
             "coll": "rewards_redeemed", "time": "redeemed_at",
-            "query": {"tenant_id": tid, "redeemed_at": span},
+            "query": {"tenant_id": tid, "redeemed_at": span, **tills},
             "row": lambda d: {
                 "customer_id": d.get("customer_id"),
                 "customer_name": d.get("customer_name"),
@@ -172,7 +183,7 @@ def _sources(tid: str, start: datetime, end: datetime) -> Dict[str, Dict[str, An
         },
         "message_view": {
             "coll": "card_message_views", "time": "at",
-            "query": {"tenant_id": tid, "at": span},
+            "query": {"tenant_id": tid, "at": span, **clients},
             "row": lambda d: {
                 "customer_id": d.get("customer_id"),
                 "detail": "Le message sur la carte a été affiché",
@@ -181,7 +192,8 @@ def _sources(tid: str, start: datetime, end: datetime) -> Dict[str, Dict[str, An
         },
         "signup": {
             "coll": "customers", "time": "created_at",
-            "query": {"tenant_id": tid, "created_at": span},
+            "query": {"tenant_id": tid, "created_at": span,
+                      **({} if mine is None else {"id": {"$in": list(mine)}})},
             "row": lambda d: {
                 "customer_id": d.get("id"),
                 "customer_name": d.get("name"),
@@ -191,7 +203,7 @@ def _sources(tid: str, start: datetime, end: datetime) -> Dict[str, Dict[str, An
         },
         "campaign": {
             "coll": "push_notifications", "time": "sent_at",
-            "query": {"tenant_id": tid, "sent_at": span, "type": "campaign"},
+            "query": {"tenant_id": tid, "sent_at": span, "type": "campaign", **clients},
             "row": lambda d: {
                 "customer_id": d.get("customer_id"),
                 "detail": d.get("title") or "Message envoyé",
@@ -202,8 +214,10 @@ def _sources(tid: str, start: datetime, end: datetime) -> Dict[str, Dict[str, An
             "coll": "audit_log", "time": "at",
             # audit_log stores `at` as an ISO string, so the window is applied
             # lexically — ISO-8601 in UTC sorts and compares as text.
+            # A change to the card is the whole shop's: shown on "all" only.
             "query": {"tenant_id": tid, "action": {"$in": list(CARD_AUDIT_ACTIONS)},
-                      "at": {"$gte": start.isoformat(), "$lte": end.isoformat()}},
+                      "at": {"$gte": start.isoformat(), "$lte": end.isoformat()},
+                      **({} if mine is None else {"_never": True})},
             "row": lambda d: {
                 "customer_id": None,
                 "customer_name": d.get("actor_email"),
@@ -256,12 +270,12 @@ def _sentence(text: str) -> str:
 # reading
 # ---------------------------------------------------------------------------
 def _collect(tid: str, start: datetime, end: datetime, actions: List[str],
-             per_source: int) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+             per_source: int, scope: Optional["S.Scope"] = None) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """Pull at most `per_source` newest rows for each action, plus the exact
     count of each. Returns (rows sorted newest first, {action: total})."""
     rows: List[Dict[str, Any]] = []
     totals: Dict[str, int] = {}
-    sources = _sources(tid, start, end)
+    sources = _sources(tid, start, end, scope)
 
     for action in actions:
         spec = sources.get(action)
@@ -326,7 +340,7 @@ def _matches_customer(row: Dict[str, Any], needle: str) -> bool:
 # endpoints
 # ---------------------------------------------------------------------------
 @router.get("/api/owner/history/filters")
-def filters(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def filters(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """The tabs and the two selects, defined once on the server so the page and
     the CSV can never offer a filter the feed does not implement."""
     return {
@@ -346,7 +360,8 @@ def activity(
     customer: Optional[str] = None,
     page: int = 1,
     per_page: int = 10,
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     tid = token_data.tenant_id
     start, end = _window(date_from, date_to)
@@ -362,7 +377,7 @@ def activity(
     # A name search filters after the merge (names live on `customers`, not on
     # every row), so it needs a wider read than the page itself.
     per_source = (page * per_page) if not needle else min(MAX_EXPORT_ROWS, 2000)
-    rows, totals = _collect(tid, start, end, wanted_list, per_source)
+    rows, totals = _collect(tid, start, end, wanted_list, per_source, S.resolve(token_data, request))
     _attach_names(rows)
 
     if needle:
@@ -399,7 +414,8 @@ def _public(r: Dict[str, Any]) -> Dict[str, Any]:
 def stats(
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """The four figures, each against the previous window of the same length —
     so "+32%" always means "compared with the 21 days before these 21 days"."""
@@ -410,8 +426,9 @@ def stats(
     prev_start = prev_end - span
 
     keys = ["scan", "reward", "signup", "message_view"]
-    _, now_totals = _collect(tid, start, end, keys, per_source=0)
-    _, was_totals = _collect(tid, prev_start, prev_end, keys, per_source=0)
+    scope = S.resolve(token_data, request)
+    _, now_totals = _collect(tid, start, end, keys, per_source=0, scope=scope)
+    _, was_totals = _collect(tid, prev_start, prev_end, keys, per_source=0, scope=scope)
 
     titles = {"scan": "Scans QR code", "reward": "Récompenses utilisées",
               "signup": "Nouveaux clients", "message_view": "Messages affichés"}
@@ -442,7 +459,8 @@ def export_csv(
     tab: str = "all",
     action: Optional[str] = None,
     customer: Optional[str] = None,
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """The rows currently on screen — same filters, no pagination — as CSV."""
     tid = token_data.tenant_id
@@ -450,7 +468,8 @@ def export_csv(
     wanted = TAB_ACTIONS.get(tab, TAB_ACTIONS["all"])
     if action and action in ACTIONS:
         wanted = wanted & {action}
-    rows, _ = _collect(tid, start, end, [a for a in ACTIONS if a in wanted], MAX_EXPORT_ROWS)
+    rows, _ = _collect(tid, start, end, [a for a in ACTIONS if a in wanted], MAX_EXPORT_ROWS,
+                       S.resolve(token_data, request))
     _attach_names(rows)
     needle = (customer or "").strip().lower()
     if needle:
