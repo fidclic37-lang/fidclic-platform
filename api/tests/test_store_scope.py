@@ -372,5 +372,28 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("Autopilot and the plan stay the owner's",
           guard(SARA, ["business_owner"]) == 403 and guard(ALI, ["business_owner"]) == 403)
 
+    print("\nLa cloche")
+    today = now.date().isoformat()
+    db.copilot_plans.update_one({"tenant_id": "t1"}, {"$set": {"start": today, "autopilot": True,
+                                 "steps": [{"id": "st1", "key": "relance_inactifs", "kind": "campaign", "offset": 0,
+                                            "campaign_id": "kd"}]}}, upsert=True)
+    db.campaigns.insert_one({"id": "kd", "tenant_id": "t1", "status": "draft", "targeted_count": 3})
+    bell = lambda tok, store=None: server.get_proactive_alerts_multi_store(request=Req(store), token_data=tok)
+    b_sara, b_ali, b_owner = bell(SARA), bell(ALI), bell(OWNER)
+    check("a manager's bell covers its establishment only", b_sara["branches_covered"] == 1
+          and all(a["branch_id"] == "blois" for a in b_sara["alerts"]))
+    check("an administrateur's, its own", b_ali["branches_covered"] == 2
+          and all(a["branch_id"] in ("tours", "blois") for a in b_ali["alerts"]))
+    check("the owner's, every establishment", b_owner["branches_covered"] == 3)
+    check("with one chosen in the menu, that one", bell(OWNER, "orleans")["branches_covered"] == 1)
+    cop = lambda b: sum(1 for a in b["alerts"] if a["id"].startswith("copilot:"))
+    check("FidClic IA's prepared step is said once, to the owner on the whole shop",
+          cop(b_owner) == 1 and cop(b_sara) == 0 and cop(b_ali) == 0 and cop(bell(OWNER, "tours")) == 0)
+    one = server.get_proactive_alerts(request=Req(), token_data=SARA)
+    check("the single-shop alerts read its clients only", all(a["id"] != "copilot:st1" for a in one["alerts"]))
+    check("asking for another establishment's alerts never widens",
+          S.resolve(SARA, None, requested="tours").ids == ["blois"])
+    check("the bell opens to them", guard(SARA, server.ALERT_READERS, partial_ok=True) == 200)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
