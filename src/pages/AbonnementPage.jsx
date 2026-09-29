@@ -60,6 +60,7 @@ export default function AbonnementPage() {
   const [busy, setBusy] = useState('');
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [reason, setReason] = useState('');
+  const [quote, setQuote] = useState(null);      // « Nous contacter » for the Franchise offer
 
   const load = useCallback(() => {
     ownerAPI.billingOverview().then(({ data }) => setD(data)).catch((e) => setErr(e?.response?.data?.detail || "Impossible de charger l'abonnement."));
@@ -90,7 +91,7 @@ export default function AbonnementPage() {
         <p className="mb-3 flex items-center gap-2 text-[17px] font-bold text-[#0B1C3F]">
           <Crown size={20} /> {d.plan.label}
           <span className="rounded-md bg-[#EAF1FF] px-2 py-0.5 text-[12px] font-medium text-[#2F6BFF]">Offre actuelle</span>
-          {d.plan.price ? <span className="ml-auto text-[13px] font-medium text-[#64748B]">{d.plan.price} € HT / mois</span> : null}
+          {d.plan.price ? <span className="ml-auto text-[13px] font-medium text-[#64748B]">{d.plan.price} € HT / mois</span> : d.plan.on_quote ? <span className="ml-auto text-[13px] font-medium text-[#64748B]">Sur devis</span> : null}
         </p>
         <ul className="space-y-2">
           {d.plan.features.map((f) => (
@@ -257,28 +258,55 @@ export default function AbonnementPage() {
       )}
 
       {tab === 'offre' && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
           {d.catalogue.map((p) => (
             <Card key={p.key} className={p.current ? 'ring-2 ring-[#2F6BFF]' : ''}>
               <p className="flex items-center gap-2 text-[17px] font-bold text-[#0B1C3F]"><Crown size={18} /> {p.label}
                 {p.current && <span className="rounded-md bg-[#EAF1FF] px-2 py-0.5 text-[11.5px] font-medium text-[#2F6BFF]">Offre actuelle</span>}</p>
-              <p className="mt-1 text-[26px] font-bold text-[#0B1C3F]">{p.price} € <span className="text-[13px] font-medium text-[#64748B]">HT / mois</span></p>
+              {p.on_quote && p.price == null
+                ? <p className="mt-1 text-[26px] font-bold text-[#0B1C3F]">Sur devis <span className="text-[13px] font-medium text-[#64748B]">selon votre réseau</span></p>
+                : <p className="mt-1 text-[26px] font-bold text-[#0B1C3F]">{p.price} € <span className="text-[13px] font-medium text-[#64748B]">HT / mois</span></p>}
+              {p.on_quote ? (
+                <p className="my-3 text-[12.5px] leading-snug text-[#475569]">Pour les réseaux de plusieurs établissements. Le prix et les limites dépendent du nombre de points de vente : parlons-en.</p>
+              ) : (
               <ul className="my-3 space-y-1.5 text-[12.5px] text-[#475569]">
                 <li>{p.limits.max_customers ? `${nf(p.limits.max_customers)} clients actifs` : 'Clients illimités'}</li>
                 <li>{p.limits.push_per_month ? `${nf(p.limits.push_per_month)} notifications / mois` : 'Notifications illimitées'}</li>
                 <li>{p.limits.campaigns_per_month ? `${nf(p.limits.campaigns_per_month)} campagnes / mois` : 'Campagnes illimitées'}</li>
                 <li>{p.limits.establishments} établissement{p.limits.establishments > 1 ? 's' : ''} · {p.limits.staff_accounts} comptes</li>
               </ul>
+              )}
               <ul className="mb-4 space-y-1.5">
                 {p.features.map((f) => <li key={f} className="flex items-start gap-2 text-[12.5px] text-[#475569]"><Check size={15} className="mt-px shrink-0 text-[#10B981]" /> {f}</li>)}
               </ul>
+              {p.on_quote ? (
+                <button type="button" disabled={p.current} onClick={() => setQuote({ message: '', stores: '' })}
+                        className="w-full rounded-xl py-2.5 text-[13.5px] font-medium text-white disabled:opacity-50" style={{ background: p.requested ? '#10B981' : BLUE }}>
+                  {p.current ? 'Votre offre' : p.requested ? 'Demande envoyée ✓ — compléter' : 'Nous contacter'}
+                </button>
+              ) : (
               <button type="button" disabled={p.current || notConfigured || busy === p.key} onClick={() => act(p.key, () => ownerAPI.billingCheckout(p.key))}
                       className="w-full rounded-xl py-2.5 text-[13.5px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
                 {p.current ? 'Votre offre' : busy === p.key ? 'Redirection…' : 'Choisir cette offre'}
               </button>
+              )}
             </Card>
           ))}
-          {notConfigured && <p className="lg:col-span-3 flex items-center gap-2 text-[12.5px] text-[#64748B]"><Info size={14} /> Le paiement en ligne sera activé prochainement. En attendant, contactez le support FidClic pour changer d'offre.</p>}
+          {quote && (
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#0B1C3F]/30 sm:items-center sm:p-6" onClick={() => setQuote(null)}>
+              <div className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="mb-1 text-[16px] font-bold text-[#0B1C3F]">Offre Franchise — nous contacter</h3>
+                <p className="mb-3 text-[13px] text-[#475569]">L'équipe FidClic vous recontacte pour établir un devis adapté à votre réseau.</p>
+                <label className="mb-2 block"><span className="mb-1 block text-[12px] text-[#64748B]">Nombre d'établissements</span>
+                  <input type="number" min={1} value={quote.stores} onChange={(e) => setQuote({ ...quote, stores: e.target.value })} className="h-10 w-full rounded-lg border border-[#DCE3EE] px-3 text-[13.5px]" /></label>
+                <label className="block"><span className="mb-1 block text-[12px] text-[#64748B]">Votre besoin (facultatif)</span>
+                  <textarea value={quote.message} onChange={(e) => setQuote({ ...quote, message: e.target.value })} className="h-24 w-full rounded-lg border border-[#DCE3EE] px-3 py-2 text-[13.5px]" placeholder="Ex. 4 restaurants à Tours et Blois, bientôt un 5e." /></label>
+                <button type="button" disabled={busy === 'quote'} onClick={() => { const m = [quote.stores && `${quote.stores} établissement(s)`, quote.message].filter(Boolean).join(' — '); setQuote(null); act('quote', () => ownerAPI.requestUpgrade({ requested_plan: 'franchise', message: m }), 'Demande envoyée : l\'équipe FidClic vous recontacte très vite.'); }}
+                        className="mt-3 w-full rounded-xl py-2.5 text-[13.5px] font-medium text-white" style={{ background: BLUE }}>Envoyer la demande</button>
+              </div>
+            </div>
+          )}
+          {notConfigured && <p className="col-span-full flex items-center gap-2 text-[12.5px] text-[#64748B]"><Info size={14} /> Le paiement en ligne sera activé prochainement. En attendant, contactez le support FidClic pour changer d'offre.</p>}
         </div>
       )}
 

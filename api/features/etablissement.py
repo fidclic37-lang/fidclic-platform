@@ -126,8 +126,8 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
                                   "postal_code": t.get("postal_code"), "city": t.get("city"),
                                   "phone": t.get("phone"), "lat": lat, "lng": lng}, owner)]
     try:
-        from server import get_plan_features
-        multi = bool(get_plan_features(t.get("plan", "basic")).get("multi_branch"))
+        from server import features_for
+        multi = bool(features_for(t).get("multi_branch"))
     except Exception:
         multi = False
     return {

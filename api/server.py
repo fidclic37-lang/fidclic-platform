@@ -18,11 +18,11 @@ from models import (
 
 # Canonical plan list. Anything else in the DB (legacy "basic", "chain")
 # gets remapped to "silver" via _canonical_plan() below.
-CANONICAL_PLANS = ("silver", "gold", "vip")
+CANONICAL_PLANS = ("silver", "gold", "vip", "franchise")
 _LEGACY_PLAN_MAP = {"basic": "silver", "chain": "vip"}
 
 def _canonical_plan(plan: str) -> str:
-    """Map any legacy plan name to one of the 3 canonical plans."""
+    """Map any legacy plan name to one of the canonical plans."""
     if not plan:
         return "silver"
     return _LEGACY_PLAN_MAP.get(plan, plan if plan in CANONICAL_PLANS else "silver")
@@ -2834,6 +2834,33 @@ class PlanOverrideReq(BaseModel):
     price: Optional[int] = None
 
 
+NEXT_PLAN = {"basic": "gold", "silver": "gold", "gold": "vip", "vip": "franchise", "chain": "franchise", "franchise": None}
+
+FRANCHISE_TERM_FIELDS = ("price", "max_customers", "new_cards_per_month", "push_per_month", "campaigns_per_month",
+                         "staff_accounts", "establishments", "ai_queries_per_day")
+
+
+def features_for(tenant: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The limits that apply to THIS business: its plan's, and for a
+    franchise (sold on quote) the price and limits agreed with it, which the
+    super admin keeps in tenant.franchise_terms."""
+    tenant = tenant or {}
+    plan = _canonical_plan(tenant.get("plan"))
+    f = get_plan_features(plan)
+    if plan == "franchise":
+        terms = tenant.get("franchise_terms") or {}
+        for k in FRANCHISE_TERM_FIELDS:
+            if terms.get(k) is not None:
+                f[k] = terms[k]
+        f["on_quote"] = True
+    return f
+
+
+def tenant_price(tenant: Optional[Dict[str, Any]]) -> float:
+    """Monthly price (€ HT) this business pays — a franchise's agreed price."""
+    return float(features_for(tenant).get("price") or 0)
+
+
 def _plan_row(plan: str) -> Dict[str, Any]:
     """Build the row the admin UI renders for one plan: baseline vs effective."""
     plan = _canonical_plan(plan)
@@ -2965,7 +2992,7 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
       reminder_days_before → cutoff from PLAN_FEATURES
     """
     plan = _canonical_plan(tenant.get("plan"))
-    features = get_plan_features(plan)
+    features = features_for(tenant)
     status = (tenant.get("subscription_status") or "").lower()
     trial_ends_at = tenant.get("trial_ends_at")
     # Legacy tenants (no trial_ends_at field): derive it from created_at +
@@ -3094,7 +3121,7 @@ def get_tenant_details(
         "total_customers": customer_count,
         "total_visits": visit_count,
         "tier_distribution": tier_dist,
-        "monthly_revenue": PLAN_PRICES.get(tenant["plan"], 0)
+        "monthly_revenue": tenant_price(tenant)
     }
 
     return tenant
@@ -3313,7 +3340,7 @@ def get_admin_analytics(token_data: TokenData = Depends(require_role(["super_adm
 
     # Calculate monthly revenue
     tenants = list(db.tenants.find({"is_active": {"$ne": False}}))
-    monthly_revenue = sum(PLAN_PRICES.get(t.get("plan"), 0) for t in tenants)
+    monthly_revenue = sum(tenant_price(t) for t in tenants)
 
     # Active tenants in last 30 days. Intersect with the active-tenants set
     # so we never count a visit whose tenant_id refers to a deactivated or
@@ -3435,7 +3462,7 @@ def get_admin_detailed_analytics(token_data: TokenData = Depends(require_role(["
     perf_sorted = sorted(perf, key=lambda x: x["visits"], reverse=True)
 
     # --- Platform totals ---
-    total_revenue_month = sum(PLAN_PRICES.get(t.get("plan"), 0) for t in tenants)
+    total_revenue_month = sum(tenant_price(t) for t in tenants)
     total_customer_spend = round(sum(c.get("total_amount_paid", 0) for c in all_customers), 2)
 
     return {
@@ -3610,7 +3637,7 @@ def get_tenant(token_data: TokenData = Depends(require_role(["business_owner", "
         # the same get_plan_features() the enforcement uses, admin overrides
         # included, so the number on screen is the number that applies.
         try:
-            t["plan_features"] = get_plan_features(t.get("plan"))
+            t["plan_features"] = features_for(t)
         except Exception as _e:
             print(f"get_tenant: plan_features failed: {_e}")
     return t
@@ -5654,7 +5681,7 @@ def ai_query(
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
 
-    daily_limit = get_plan_features(plan).get("ai_queries_per_day", 0)
+    daily_limit = features_for(tenant).get("ai_queries_per_day", 0)
     today_queries = db.ai_queries.count_documents({
         "tenant_id": t_id,
         "created_at": {"$gte": today_start, "$lt": today_end}
@@ -5893,7 +5920,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     # block someone who's already in the programme from updating their
     # record.
     plan = t.get("plan", "basic")
-    features = get_plan_features(plan)
+    features = features_for(t)
     plan_cap = features.get("max_customers", 500)
 
     # The plan counts ACTIVE customers: someone who has come at least once in
@@ -5923,9 +5950,9 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
             )
 
     if current_count >= plan_cap:
-        next_plan = {"basic": "gold", "gold": "vip", "vip": "chain", "chain": None}.get(plan)
+        next_plan = NEXT_PLAN.get(plan)
         next_plan_cap = get_plan_features(next_plan).get("max_customers") if next_plan else None
-        next_plan_price = PLAN_PRICES.get(next_plan) if next_plan else None
+        next_plan_price = (PLAN_PRICES.get(next_plan) or None) if next_plan else None     # None = sur devis
         raise HTTPException(
             status_code=403,
             detail={
@@ -8217,7 +8244,7 @@ def create_branch(
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     plan = tenant.get("plan", "basic")
-    plan_features = get_plan_features(plan)
+    plan_features = features_for(tenant)
     if not plan_features.get("multi_branch", False):
         raise HTTPException(status_code=403, detail="Plan does not support multi-branch")
 
@@ -10482,15 +10509,15 @@ def get_active_cards(token_data: TokenData = Depends(require_role(["business_own
     active = db.customers.count_documents({"tenant_id": tid, "pass_issued": True})
     total = db.customers.count_documents({"tenant_id": tid})
     plan = tenant.get("plan", "basic")
-    plan_cap = get_plan_features(plan).get("max_customers", 500)
+    plan_cap = features_for(tenant).get("max_customers", 500)
 
     usage_pct = round(active / plan_cap * 100, 1) if plan_cap else 0
     near_limit = usage_pct >= 80
 
     # Suggest next plan up
-    next_plan = {"basic": "gold", "gold": "vip", "vip": "chain", "chain": None}.get(plan)
+    next_plan = NEXT_PLAN.get(plan)
     next_plan_cap = get_plan_features(next_plan).get("max_customers") if next_plan else None
-    next_plan_price = PLAN_PRICES.get(next_plan) if next_plan else None
+    next_plan_price = (PLAN_PRICES.get(next_plan) or None) if next_plan else None     # None = sur devis
 
     return {
         "active_cards": active,
@@ -11377,8 +11404,16 @@ def request_upgrade(
     tid = token_data.tenant_id
     tenant = db.tenants.find_one({"id": tid}) or {}
     current_plan = tenant.get("plan", "basic")
-    next_plan = {"basic": "gold", "gold": "vip", "vip": "chain", "chain": None}.get(current_plan)
-    requested = req.requested_plan or next_plan
+    next_plan = NEXT_PLAN.get(current_plan)
+    requested = _canonical_plan(req.requested_plan) if req.requested_plan else next_plan
+    if not requested:
+        raise HTTPException(status_code=400, detail="Vous avez déjà l'offre la plus complète.")
+    pending = db.upgrade_requests.find_one({"tenant_id": tid, "requested_plan": requested, "status": "pending"}, {"_id": 0})
+    if pending:                        # one open request is enough — no duplicates in the admin list
+        if req.message:
+            db.upgrade_requests.update_one({"id": pending["id"]}, {"$set": {"message": req.message}})
+            pending["message"] = req.message
+        return pending
     doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": tid,

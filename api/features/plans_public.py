@@ -122,7 +122,12 @@ def public_plans():
             },
             "trial_days": f.get("trial_duration_days", 28),
         })
+    fr = core.get_plan_features("franchise")
     return {
+        # Sold on quote: kept out of `plans` (which all carry a price) so the
+        # site's price cards stay as they are; show it as « Sur devis ».
+        "quote_plans": [{"key": "franchise", "label": fr.get("label"), "price_monthly": None, "on_quote": True,
+                         "limits": {"establishments": None, "max_customers": None}}],
         "currency": "EUR",
         "taxes": "HT",
         "annual_discount": ANNUAL_DISCOUNT,
@@ -140,7 +145,7 @@ def owner_usage(token_data: TokenData = Depends(require_role(["business_owner", 
 
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     plan = tenant.get("plan") or "silver"
-    f = core.get_plan_features(plan)
+    f = core.features_for(tenant)
     # The plan counts ACTIVE customers (a visit within the year); dormant
     # records stay in the base and cost the merchant nothing.
     customers = core.count_active_customers(token_data.tenant_id)
