@@ -202,7 +202,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "b", "tenant_id": "t1", "name": "Ben", "visits": 12, "total_amount_paid": 60,
          "created_at": joined(60), "last_visit_date": ago(2)},
     ])
-    ov = CP.overview(TD())
+    ov = CP.overview(token_data=TD())
     cards = {c["key"]: c for c in ov["cards"]}
     check("inactifs uses the 21-day window: Ana (25 days) counts", cards["inactive"]["value"] == 1)
     check("fidèles falls back to the visit count while the rule is off", cards["loyal"]["value"] == 1)
@@ -220,7 +220,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         if r["key"] == "fidele":
             r["enabled"] = True
     put(switched)
-    ov = CP.overview(TD())
+    ov = CP.overview(token_data=TD())
     check("switch 'Client fidèle' back on and Ben (6 a month) counts under it",
           {c["key"]: c for c in ov["cards"]}["loyal"]["value"] == 1
           and CP.list_page(status="fidele", token_data=TD())["total"] == 1)

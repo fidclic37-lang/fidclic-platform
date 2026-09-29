@@ -23,9 +23,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import store_scope as S
     from features import team_access as T
     from features import dashboard_home as DH
+    from features import clients_page as CP
 
     db = server.db
-    for m in (S, T, DH):
+    for m in (S, T, DH, CP):
         m.init(db)
     passed = failed = 0
 
@@ -149,6 +150,45 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # (an untagged scan falls back to the client's home establishment, as before)
     check("an older employé covering the whole shop scans as before, nothing forced",
           scanned_branch(as_("old.staff@c.fr", "staff"), None) == db.customers.find_one({"id": "c1"}).get("branch_id"))
+
+    print("\nLa page Clients, limitée")
+    total = lambda tok, store=None: CP.overview(request=Req(store), token_data=tok)["cards"][0]["value"]
+    names = lambda tok, store=None: sorted(r["name"] for r in CP.list_page(request=Req(store), token_data=tok)["rows"])
+    check("owner / all: every client", total(OWNER) == 4)
+    check("owner / Orléans: Orléans' client", names(OWNER, "orleans") == ["Cleo"])
+    check("administrateur: its establishments' clients only", names(ALI) == ["Ana", "Ben", "Dan"])
+    # (Ana has a Blois visit by now — the manager's scan above)
+    check("manager: Blois' clients only, whatever it asks", names(SARA, "orleans") == ["Ana", "Ben", "Dan"])
+    check("the id list follows the same scope (what 'Contacter' writes to)",
+          sorted(CP.list_ids(request=Req(), token_data=SARA)["ids"]) == ["c1", "c2", "c4"])
+    check("so does the CSV export", "Cleo" not in CP.export_clients(request=Req(), token_data=ALI).body.decode("utf-8"))
+    check("the Clients page opens to them", guard(SARA, CP.READERS, partial_ok=True) == 200)
+
+    print("\nContacter un groupe")
+    out = server.send_campaign_to_group({"customer_ids": ["c2", "c3"], "name": "Hello", "content": "Bonjour"},
+                                        request=Req(), token_data=SARA)
+    check("a manager's campaign reaches only its establishment's clients", out["recipient_ids"] == ["c2"])
+    check("and records for which establishments it was sent",
+          db.campaigns.find_one({"id": out["id"]})["store_ids"] == ["blois"])
+    try:
+        server.send_campaign_to_group({"customer_ids": ["c3"], "content": "x"}, request=Req(), token_data=SARA)
+        refused = False
+    except HTTPException:
+        refused = True
+    check("nobody from another establishment → refused, nothing sent", refused)
+    out = server.send_campaign_to_group({"customer_ids": ["c1", "c3"], "content": "x"}, request=Req(), token_data=OWNER)
+    check("the owner, on 'all', reaches anyone", sorted(out["recipient_ids"]) == ["c1", "c3"])
+
+    print("\nFiltres enregistrés")
+    seg = server.create_saved_segment(server.SavedSegmentRequest(name="Mes fidèles", filters={}), token_data=SARA)
+    check("a manager may save its own filter", seg["created_by"] == "sara@c.fr")
+    try:
+        server.delete_saved_segment(seg["id"], token_data=ALI)
+        other_deleted = True
+    except HTTPException:
+        other_deleted = False
+    check("another account cannot delete it", other_deleted is False)
+    check("its author can", server.delete_saved_segment(seg["id"], token_data=SARA)["status"] == "ok")
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
