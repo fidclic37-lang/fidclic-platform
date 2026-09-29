@@ -1,6 +1,7 @@
 import os
 import bcrypt
 import jwt
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import Request, HTTPException, Depends
 from models import TokenData
@@ -51,6 +52,9 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     return encoded_jwt
 
 _session_check = None
+_tenant_check = None
+SUSPENDABLE = {"business_owner", "administrateur", "manager", "staff"}
+READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def set_session_check(fn):
@@ -58,11 +62,31 @@ def set_session_check(fn):
     _session_check = fn
 
 
+def set_tenant_check(fn):
+    """features/admin_commerces.py: is this business suspended?"""
+    global _tenant_check
+    _tenant_check = fn
+
+
+def _view_token(request: Request) -> Optional[str]:
+    """« Accéder au compte » runs in its own tab with a read-only token in the
+    Authorization header, while the super admin's own cookie still rides
+    along: that header must win, or the tab would act as the super admin."""
+    h = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+    if not h.startswith("Bearer "):
+        return None
+    try:
+        p = jwt.decode(h[7:], SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+    return h[7:] if p.get("view_only") else None
+
+
 async def get_current_user_data(request: Request) -> TokenData:
     # Try cookie first (browser-based auth), then Authorization: Bearer header
     # (mobile / API clients). This makes the auth path more forgiving when
     # the browser refuses to send the cookie on a JSON POST.
-    token = request.cookies.get("access_token")
+    token = _view_token(request) or request.cookies.get("access_token")
     if not token:
         auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
@@ -96,7 +120,13 @@ async def get_current_user_data(request: Request) -> TokenData:
         # « Déconnecter » on Paramètres › Sécurité ends a device at once.
         if _session_check is not None and not _session_check(email, sid):
             raise HTTPException(status_code=401, detail="Session terminée. Reconnectez-vous.")
-        return TokenData(email=email, role=role, tenant_id=tenant_id, sid=sid)
+        view_by = payload.get("view_by") if payload.get("view_only") else None
+        if payload.get("view_only") and request.method not in READ_METHODS:
+            raise HTTPException(status_code=403, detail="Mode lecture seule : aucune modification possible depuis cette vue.")
+        if (not view_by and role in SUSPENDABLE and tenant_id and _tenant_check is not None
+                and _tenant_check(tenant_id)):
+            raise HTTPException(status_code=403, detail="Ce compte est suspendu. Contactez FidClic.")
+        return TokenData(email=email, role=role, tenant_id=tenant_id, sid=sid, view_by=view_by)
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)[:80]}")
 

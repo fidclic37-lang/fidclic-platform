@@ -30,6 +30,7 @@ MODULES = [
     "features.crm_calls",
     "features.crm_email",
     "features.franchise",
+    "features.admin_commerces",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

@@ -344,8 +344,8 @@ export default function AdminPlansPage() {
         <div>
           <p className="font-semibold" style={{ color: C_PS.inkDeep }}>Need to change one business's plan?</p>
           <p className="text-xs mt-1">
-            Open <a href="/admin/tenants" className="underline" style={{ color: '#B85C38' }}>Manage Businesses</a>,
-            click the ⋯ menu on the tenant row, and pick a new plan.
+            Open <a href="/admin/commerces" className="underline" style={{ color: '#B85C38' }}>Commerces</a>,
+            open the business, then ⋯ › Changer de plan.
             That changes the cap that business sees, without affecting every other tenant on the same plan.
           </p>
         </div>

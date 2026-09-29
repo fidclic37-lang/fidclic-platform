@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 import i18n from 'i18next';
-import { authAPI, setAuthToken } from '../lib/api';
+import { authAPI, setAuthToken, viewToken, VIEW_KEY } from '../lib/api';
 import { applyPrefs } from '../lib/prefs';
 import { applyGoogleTranslate } from '../components/GoogleTranslateBridge';
 
@@ -112,6 +112,14 @@ export const AuthProvider = ({ children }) => {
   };
 
   const logout = async () => {
+    // Leaving a read-only view: forget this tab's token only — never sign the
+    // super admin out of their own session.
+    if (viewToken()) {
+      try { sessionStorage.removeItem(VIEW_KEY); } catch (_e) { /* ignore */ }
+      window.close();
+      window.location.replace('/admin/commerces');
+      return;
+    }
     try { await authAPI.logout(); } finally {
       setAuthToken(null);
       setUser(null);

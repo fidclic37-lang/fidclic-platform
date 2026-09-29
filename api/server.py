@@ -2475,9 +2475,13 @@ def finish_login(response: Response, user: Dict[str, Any], request: Request = No
     - a business being deleted keeps everyone but its owner out;
     - an account with 2FA gets a 5-minute challenge instead of a session,
       answered at /api/auth/login/2fa (features/security_page.py)."""
-    tenant = db.tenants.find_one({"id": user.get("tenant_id")}, {"deletion_scheduled_at": 1}) if user.get("tenant_id") else None
+    tenant = db.tenants.find_one({"id": user.get("tenant_id")}, {"deletion_scheduled_at": 1, "suspended_at": 1}) if user.get("tenant_id") else None
     if tenant and tenant.get("deletion_scheduled_at") and user.get("role") != "business_owner":
         raise HTTPException(status_code=403, detail="Ce compte est en cours de suppression. Contactez le propriétaire.")
+    if tenant and tenant.get("suspended_at"):
+        # Suspended by FidClic: nobody of the business signs in; its customers'
+        # cards keep working (features/admin_commerces.py).
+        raise HTTPException(status_code=403, detail="Ce compte est suspendu. Contactez FidClic.")
     if user.get("totp_enabled") and user.get("totp_secret"):
         from features import security_page as _SEC
         log_audit("auth.2fa_challenge", actor=user["email"], actor_type="user",
@@ -2528,6 +2532,8 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
         "tenant_name": (tenant or {}).get("name"),
         "tenant_slug": (tenant or {}).get("slug"),
+        # « Accéder au compte » from the super admin: a read-only view.
+        "view_as": {"by": token_data.view_by} if getattr(token_data, "view_by", None) else None,
         # Paramètres › Préférences: applied by the app as soon as it knows who
         # is signed in — the business's currency, this account's choices.
         "currency": ((tenant or {}).get("currency") or "EUR").upper(),

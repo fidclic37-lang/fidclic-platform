@@ -14,7 +14,7 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
-  Receipt,
+  Receipt, Store, ShieldAlert, Eye,
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 
@@ -94,6 +94,36 @@ const CrmNav = ({ currentPath, role, collapsed }) => {
             const on = to === '/admin/crm' ? currentPath === '/admin/crm' : currentPath.startsWith(to);
             return (
               <Link key={to} to={to} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
+                <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Super admin › Commerces: the list, then two of its tabs as shortcuts.
+const COMMERCE_ITEMS = [['', 'Tous les commerces', Store], ['nouveaux', 'Nouveaux commerces', UserRound], ['a_risque', 'Commerces à risque', ShieldAlert]];
+const CommercesNav = ({ currentPath, role, collapsed }) => {
+  const { search } = useLocation();
+  const inside = currentPath.startsWith('/admin/commerces');
+  const tab = new URLSearchParams(search).get('tab') || '';
+  if (collapsed) return <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={collapsed} />;
+  return (
+    <div>
+      <Link to="/admin/commerces" className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-[7px] text-[13.5px] transition-all ${inside ? 'bg-[#2F6BFF] font-semibold text-white' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"><Database className="h-[18px] w-[18px]" /></span>
+        <span className="flex-1 truncate text-left">Commerces</span>
+        <ChevronDown size={15} className={`transition ${inside ? 'rotate-180' : ''}`} />
+      </Link>
+      {inside && (
+        <div className="mt-1 space-y-[1px] rounded-xl bg-[#F4F8FF] py-1">
+          {COMMERCE_ITEMS.map(([t, label, Icon]) => {
+            const on = currentPath === '/admin/commerces' && tab === t;
+            return (
+              <Link key={label} to={t ? `/admin/commerces?tab=${t}` : '/admin/commerces'} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
                 <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
               </Link>
             );
@@ -523,7 +553,7 @@ const DashboardLayout = () => {
           {role === 'super_admin' && (
             <>
               <NavLink to="/admin"               icon={Home}         label="Dashboard"          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/tenants"       icon={Database}     label="Commerces"          currentPath={currentPath} role={role} collapsed={collapsed} />
+              <CommercesNav currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/analytics"     icon={BarChart3}    label="Analytics"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/insights"      icon={Sparkles}     label="Insights"           currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campagnes"          currentPath={currentPath} role={role} collapsed={collapsed} />
@@ -573,11 +603,21 @@ const DashboardLayout = () => {
 
       </aside>
 
+      {/* « Accéder au compte » from the super admin: read-only, and said so.
+          Floating, outside <main>: the pages style main's first child. */}
+      {user?.view_as && (
+        <div role="status" className="fixed bottom-4 left-1/2 z-[70] flex w-[min(760px,calc(100%-32px))] -translate-x-1/2 flex-wrap items-center gap-3 rounded-2xl px-4 py-3 text-[13px] shadow-[0_18px_50px_-18px_rgba(11,28,63,.7)]"
+             style={{ background: '#0B1C3F', color: '#fff' }}>
+          <Eye size={16} className="shrink-0" />
+          <span className="min-w-0 flex-1">Vue en <strong>lecture seule</strong> du compte de <strong>{user.tenant_name}</strong>, ouverte par {user.view_as.by}. Aucune modification n'est possible.</span>
+          <button type="button" onClick={logout} className="rounded-lg px-3 py-1.5 font-medium" style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }}>Quitter la vue</button>
+        </div>
+      )}
       <main className="relative z-10 flex-1 overflow-auto">
         {/* Global billing health banner — only renders if there's something to
             warn about (past-due, canceled, trial ending soon). Otherwise
             invisible and out of the way. */}
-        {role === 'business_owner' && <BillingBanner />}
+        {role === 'business_owner' && !user?.view_as && <BillingBanner />}
         {/* Paramètres › Sécurité › Suppression du compte: the owner can still
             change its mind during the 30 days. */}
         {role === 'business_owner' && tenantInfo?.deletion_scheduled_at && (
