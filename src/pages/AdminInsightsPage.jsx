@@ -4,6 +4,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import {
   AlertCircle, Sparkles, Users, Euro, TrendingDown, Award, Store,
   CreditCard, Building2, Activity,
@@ -160,7 +161,7 @@ const AdminInsightsPage = () => {
                 <XAxis dataKey="tier" stroke="#57534E" />
                 <YAxis stroke="#57534E" />
                 <Tooltip formatter={(v) => `€${Number(v).toLocaleString()}`} />
-                <Bar dataKey="average_ltv" name="Avg LTV" radius={[8, 8, 0, 0]}>
+                <Bar isAnimationActive={chartAnimation()} dataKey="average_ltv" name="Avg LTV" radius={[8, 8, 0, 0]}>
                   {(ltv.by_tier || []).map((t, i) => (
                     <Cell key={i} fill={TIER_COLORS[t.tier] || ACCENT} />
                   ))}
@@ -232,7 +233,7 @@ const AdminInsightsPage = () => {
             <XAxis type="number" stroke="#57534E" />
             <YAxis type="category" dataKey="sector" stroke="#57534E" width={120} />
             <Tooltip />
-            <Bar dataKey="count" fill="#4A5D23" radius={[0, 8, 8, 0]} />
+            <Bar isAnimationActive={chartAnimation()} dataKey="count" fill="#4A5D23" radius={[0, 8, 8, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </Card>

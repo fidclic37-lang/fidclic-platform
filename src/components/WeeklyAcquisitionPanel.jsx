@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { ownerAPI } from '../lib/api';
 import { useBranch } from '../contexts/BranchContext';
 import { TrendingUp } from 'lucide-react';
@@ -142,7 +143,7 @@ export default function WeeklyAcquisitionPanel({ controlledDays = null } = {}) {
                   formatter={(v) => [`${v} nouveaux`, 'Semaine']}
                   labelFormatter={(l) => `Semaine ${l}`}
                 />
-                <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={14}>
+                <Bar isAnimationActive={chartAnimation()} dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={14}>
                   {data.map((d, i) => (
                     <Cell key={i} fill={d.isBest ? '#5B8A38' : '#7FA269'} />
                   ))}

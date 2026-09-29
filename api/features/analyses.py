@@ -265,7 +265,8 @@ def _top_products(rows, limit: int = 5) -> List[Dict[str, Any]]:
             if not name:
                 continue
             acc = tally.setdefault(name, {"sales": 0, "revenue": 0.0})
-            qty = int(item.get("quantity") or 1)
+            # The Scan page writes `qty`; older imports wrote `quantity`.
+            qty = int(item.get("qty") or item.get("quantity") or 1)
             acc["sales"] += qty
             acc["revenue"] += float(item.get("price") or 0) * qty
     return [{"name": n, "sales": int(a["sales"]), "revenue": _money(a["revenue"])}

@@ -10,6 +10,7 @@ import {
   ResponsiveContainer, BarChart, Bar, ComposedChart, Line,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { ownerAPI } from '../lib/api';
 import { useTheme, heatColor } from '../lib/theme';
 import { useBranch } from '../contexts/BranchContext';
@@ -575,7 +576,7 @@ export default function OwnerDashboard() {
                   {statusDonut.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={statusDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
+                        <Pie isAnimationActive={chartAnimation()} data={statusDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
                           {statusDonut.map((d) => <Cell key={d.key} fill={d.color} />)}
                         </Pie>
                       </PieChart>
@@ -706,8 +707,8 @@ export default function OwnerDashboard() {
                     <XAxis dataKey="idx" tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${T.line}`, background: T.card, color: T.ink }} />
-                    <Bar dataKey="visits" fill={T.serieBlue} radius={[3, 3, 0, 0]} maxBarSize={14} />
-                    <Line type="monotone" dataKey="uniques" stroke={T.serieAmber} strokeWidth={2} dot={{ r: 3, fill: T.serieAmber }} />
+                    <Bar isAnimationActive={chartAnimation()} dataKey="visits" fill={T.serieBlue} radius={[3, 3, 0, 0]} maxBarSize={14} />
+                    <Line isAnimationActive={chartAnimation()} type="monotone" dataKey="uniques" stroke={T.serieAmber} strokeWidth={2} dot={{ r: 3, fill: T.serieAmber }} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -754,7 +755,7 @@ export default function OwnerDashboard() {
                     <XAxis dataKey="idx" tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} interval={3} />
                     <YAxis tick={{ fontSize: 10, fill: T.tick }} tickLine={false} axisLine={false} width={28} />
                     <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${T.line}`, background: T.card, color: T.ink }} />
-                    <Bar dataKey="value" fill={T.serieGreen} radius={[3, 3, 0, 0]} maxBarSize={12} />
+                    <Bar isAnimationActive={chartAnimation()} dataKey="value" fill={T.serieGreen} radius={[3, 3, 0, 0]} maxBarSize={12} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -870,7 +871,7 @@ export default function OwnerDashboard() {
                   {churnDonut.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={churnDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
+                        <Pie isAnimationActive={chartAnimation()} data={churnDonut} dataKey="value" innerRadius={38} outerRadius={56} stroke={T.card} strokeWidth={3} startAngle={90} endAngle={-270}>
                           {churnDonut.map((d) => <Cell key={d.key} fill={d.color} />)}
                         </Pie>
                       </PieChart>
@@ -950,7 +951,7 @@ export default function OwnerDashboard() {
                 <div className="fd-mini-donut fd-plan-donut">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={planDonut} dataKey="value" innerRadius={50} outerRadius={70} stroke={T.card} strokeWidth={2} startAngle={90} endAngle={-270}>
+                      <Pie isAnimationActive={chartAnimation()} data={planDonut} dataKey="value" innerRadius={50} outerRadius={70} stroke={T.card} strokeWidth={2} startAngle={90} endAngle={-270}>
                         {planDonut.map((d) => <Cell key={d.key} fill={d.color} />)}
                       </Pie>
                     </PieChart>

@@ -67,7 +67,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.visits.insert_many([
         {"id": f"v{i}", "tenant_id": "t1", "customer_id": cid, "amount_paid": amt,
          "visit_time": (now - dt.timedelta(days=ago)).replace(hour=12),
-         "items": [{"name": "Café latte", "price": 5.0, "quantity": 2}] if i < 3 else
+         "items": [{"name": "Café latte", "price": 5.0, "qty": 2}] if i < 3 else
                   [{"name": "Croissant", "price": 2.0, "quantity": 1}]}
         for i, (cid, amt, ago) in enumerate(THIS + PREV)
     ])

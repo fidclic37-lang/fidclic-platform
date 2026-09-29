@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { TrendingUp, Users } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import { C as C_PS } from './PageShell';
 import { useBranch } from '../contexts/BranchContext';
 
@@ -210,7 +211,7 @@ const HistoricalAcquisitionChart = () => {
               />
               <YAxis stroke="var(--flc-ink3, #57504A)" fontSize={11} allowDecimals={false} width={36} />
               <Tooltip labelFormatter={formatTooltipLabel} />
-              <Bar dataKey="count" fill={C_PS.sage} radius={[6, 6, 0, 0]} />
+              <Bar isAnimationActive={chartAnimation()} dataKey="count" fill={C_PS.sage} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         )}

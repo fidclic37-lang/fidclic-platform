@@ -6,6 +6,7 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import {
   Users, TrendingUp, Award, Smartphone, Gift, Calendar,
   Activity, X, Trophy, ArrowDown, ArrowUp, CreditCard,
@@ -1180,7 +1181,7 @@ const AnalyticsPage = () => {
           </div>
           <ResponsiveContainer width="100%" height={240}>
             <PieChart>
-              <Pie
+              <Pie isAnimationActive={chartAnimation()}
                 data={tierData}
                 cx="50%"
                 cy="50%"
@@ -1255,7 +1256,7 @@ const AnalyticsPage = () => {
               <Tooltip
                 formatter={(value, _name, p) => [`${value} customers (${p?.payload?.pct || 0}%)`, 'Acquired']}
               />
-              <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+              <Bar isAnimationActive={chartAnimation()} dataKey="value" radius={[0, 8, 8, 0]}>
                 {acquisitionChart.map((row, i) => (
                   <Cell key={i} fill={(SOURCE_STYLE[row.raw] || {}).color || ACQ_COLORS[i % ACQ_COLORS.length]} />
                 ))}

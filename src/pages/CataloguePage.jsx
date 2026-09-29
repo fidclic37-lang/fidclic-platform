@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { chartAnimation } from '../lib/chartAnimation';
 import {
   ArrowLeft, ChevronRight, Store, Plus, Box, Boxes, Star, BarChart3, ShoppingCart, Eye, Coins,
   Search, ChevronDown, ArrowUpDown, ArrowDown, ArrowUp, Pencil, MoreHorizontal, X, Check, Loader2,
@@ -507,7 +508,7 @@ function StatsTab({ d, onDays }) {
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} minTickGap={24} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
                 <Tooltip cursor={{ fill: '#F4F7FC' }} formatter={(v, k) => (k === 'sales' ? [nf(v), 'Ventes'] : [eur(v), 'CA'])} />
-                <Bar dataKey="sales" fill="#2F6BFF" radius={[4, 4, 0, 0]} maxBarSize={18} />
+                <Bar isAnimationActive={chartAnimation()} dataKey="sales" fill="#2F6BFF" radius={[4, 4, 0, 0]} maxBarSize={18} />
               </BarChart>
             </ResponsiveContainer>
           </div>

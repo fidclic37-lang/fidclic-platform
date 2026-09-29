@@ -445,11 +445,18 @@ def _locals(shop: Shop) -> Optional[List[Dict[str, Any]]]:
     return [c for c in shop.people if (d := dist.get(c["id"])) is not None and d <= LOCAL_KM]
 
 
+def _qty(line: Dict[str, Any]) -> int:
+    """How many of a product one till line holds. The Scan page writes `qty`;
+    older imports wrote `quantity`. Reading only the latter counted three
+    lattes as one."""
+    return int(_num(line.get("qty")) or _num(line.get("quantity")) or 1)
+
+
 def _items_per_visit(shop: Shop) -> Optional[float]:
     rows = [v for v in shop.recent(90) if v.get("items")]
     if len(rows) < 5:
         return None
-    n = sum(sum(int(_num(i.get("quantity")) or 1) for i in v["items"]) for v in rows)
+    n = sum(sum(_qty(i) for i in v["items"]) for v in rows)
     return n / len(rows)
 
 
@@ -459,7 +466,7 @@ def _top_product(shop: Shop) -> Optional[str]:
         for i in (v.get("items") or []):
             name = str(i.get("name") or "").strip()
             if name:
-                tally[name] += int(_num(i.get("quantity")) or 1)
+                tally[name] += _qty(i)
     return tally.most_common(1)[0][0] if tally else None
 
 
