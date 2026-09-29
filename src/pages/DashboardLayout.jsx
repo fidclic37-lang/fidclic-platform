@@ -130,6 +130,7 @@ function UserMenu({ user, theme, role, onLogout }) {
   const initial = (user?.email || '?').charAt(0).toUpperCase();
   const roleLabel =
     role === 'business_owner' ? t('nav.business_owner') :
+    role === 'administrateur' ? 'Administrateur' :
     role === 'manager' ? t('nav.manager') :
     role === 'staff' ? t('nav.staff') :
     role === 'super_admin' ? t('nav.admin') : t('nav.user');
@@ -299,6 +300,7 @@ const DashboardLayout = () => {
     markPageOpened();
   }
   const role = user?.role || 'default';
+  const partialScope = ['administrateur', 'manager'].includes(role) && user?.scope === 'partial';
   const theme = themeForRole(role);
 
   // Collapsed-sidebar toggle (persisted across reloads). When true the
@@ -395,7 +397,11 @@ const DashboardLayout = () => {
             )}
           </Link>
         </div>
-        {role !== 'super_admin' && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
+        {/* "Toutes les branches" means nothing to an account limited to some
+            establishments — it only sees its own. */}
+        {role !== 'super_admin' && role !== 'administrateur' && !partialScope && (
+          <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />
+        )}
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
@@ -425,13 +431,24 @@ const DashboardLayout = () => {
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
-          {role === 'manager' && (
+          {role === 'manager' && !partialScope && (
             <>
               <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
+              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+            </>
+          )}
+          {/* An administrateur — and a manager covering only some of the
+              establishments — works from the team page until the data pages
+              filter by establishment. */}
+          {(role === 'administrateur' || (role === 'manager' && partialScope)) && (
+            <>
+              <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -566,6 +583,15 @@ const DashboardLayout = () => {
         )}
 
         <div className="px-6 py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto">
+          {(partialScope || role === 'administrateur') && (
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
+              <span className="mt-0.5 font-bold">i</span>
+              <span>
+                L&apos;accès aux clients, campagnes et analyses de vos établissements arrive très bientôt.
+                En attendant, vous gérez votre équipe et scannez les cartes.
+              </span>
+            </div>
+          )}
           <Outlet />
         </div>
       </main>

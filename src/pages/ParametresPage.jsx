@@ -1,9 +1,11 @@
 import React from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Settings2, ArrowRight } from 'lucide-react';
-import { PARAMETRES_SECTIONS, sectionPath } from './parametres/sections';
+import { sectionsFor, sectionPath } from './parametres/sections';
+import { useAuth } from '../contexts/AuthContext';
 import ReglesClientsPage from './ReglesClientsPage';
 import LienInscriptionPage from './LienInscriptionPage';
+import EquipeAccesPage from './EquipeAccesPage';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -12,7 +14,7 @@ import LienInscriptionPage from './LienInscriptionPage';
    Sub-pages whose design has not arrived yet show an empty state; where the
    same settings exist on the older all-in-one page, it links straight to
    them so nothing goes out of reach in the meantime. */
-const PAGES = { 'regles-clients': ReglesClientsPage, 'lien-inscription': LienInscriptionPage };
+const PAGES = { 'regles-clients': ReglesClientsPage, 'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage };
 
 function EmptySection({ section }) {
   const Icon = section.icon;
@@ -39,8 +41,10 @@ function EmptySection({ section }) {
 export default function ParametresPage() {
   const { section: slug } = useParams();
   const navigate = useNavigate();
-  const section = PARAMETRES_SECTIONS.find((s) => s.slug === slug);
-  if (!section) return <Navigate to={sectionPath(PARAMETRES_SECTIONS[0].slug)} replace />;
+  const { user } = useAuth();
+  const sections = sectionsFor(user?.role);
+  const section = sections.find((s) => s.slug === slug);
+  if (!section) return <Navigate to={sectionPath(sections[0].slug)} replace />;
   const Page = PAGES[section.slug];
 
   return (
@@ -57,14 +61,16 @@ export default function ParametresPage() {
             </p>
           </div>
         </div>
-        <Link to="/dashboard/settings"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[#E6EEFB] bg-white px-3.5 py-2.5 text-[12.5px] font-medium text-[#334155] hover:border-[#C9DBFB] hover:text-[#2F6BFF]">
-          Tous les anciens réglages <ArrowRight size={14} />
-        </Link>
+        {user?.role === 'business_owner' && (
+          <Link to="/dashboard/settings"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#E6EEFB] bg-white px-3.5 py-2.5 text-[12.5px] font-medium text-[#334155] hover:border-[#C9DBFB] hover:text-[#2F6BFF]">
+            Tous les anciens réglages <ArrowRight size={14} />
+          </Link>
+        )}
       </header>
 
       <nav className="mb-5 flex gap-1 overflow-x-auto border-b border-[#E6EEFB]" role="tablist">
-        {PARAMETRES_SECTIONS.map((s) => {
+        {sections.map((s) => {
           const on = s.slug === section.slug;
           return (
             <button key={s.slug} type="button" role="tab" aria-selected={on}
