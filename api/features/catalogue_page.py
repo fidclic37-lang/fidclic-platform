@@ -38,10 +38,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
+from features import store_scope as S
 
 router = APIRouter(tags=["catalogue"])
 _db = None
@@ -55,6 +56,9 @@ MAX_PRODUCTS = 500
 MAX_IMAGE_BYTES = 400_000
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 NAME_MAX, SUBTITLE_MAX, CATEGORY_MAX = 60, 60, 40
+# The catalogue is the whole shop's: the owner edits it. Its sales follow the
+# establishment menu (features/store_scope.py) — what was sold at those tills.
+READERS = ["business_owner", "administrateur", "manager"]
 
 
 def init(db):
@@ -132,11 +136,13 @@ def _image_url(image_id: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # sales
 # ---------------------------------------------------------------------------
-def sales(tid: str, items: List[Dict[str, Any]], since: datetime, until: Optional[datetime] = None) -> Dict[str, Dict[str, float]]:
+def sales(tid: str, items: List[Dict[str, Any]], since: datetime, until: Optional[datetime] = None,
+          scope: Optional["S.Scope"] = None) -> Dict[str, Dict[str, float]]:
     """{product id: {sales, revenue}} from the visits' item lines."""
     by_name = {(i.get("name") or "").strip().lower(): i["id"] for i in items}
     ids = {i["id"] for i in items}
-    q: Dict[str, Any] = {"tenant_id": tid, "items.0": {"$exists": True}, "visit_time": {"$gte": since}}
+    q: Dict[str, Any] = {"tenant_id": tid, "items.0": {"$exists": True}, "visit_time": {"$gte": since},
+                         **(S.visit_filter(scope) if scope else {})}
     if until:
         q["visit_time"]["$lt"] = until
     out: Dict[str, Dict[str, float]] = {}
@@ -155,11 +161,13 @@ def sales(tid: str, items: List[Dict[str, Any]], since: datetime, until: Optiona
     return out
 
 
-def daily(tid: str, items: List[Dict[str, Any]], since: datetime, days: int) -> List[Dict[str, Any]]:
+def daily(tid: str, items: List[Dict[str, Any]], since: datetime, days: int,
+          scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     ids = {i["id"] for i in items}
     by_name = {(i.get("name") or "").strip().lower(): i["id"] for i in items}
     buckets: Dict[str, Dict[str, float]] = {}
-    for v in _db.visits.find({"tenant_id": tid, "items.0": {"$exists": True}, "visit_time": {"$gte": since}},
+    for v in _db.visits.find({"tenant_id": tid, "items.0": {"$exists": True}, "visit_time": {"$gte": since},
+                              **(S.visit_filter(scope) if scope else {})},
                              {"_id": 0, "items": 1, "visit_time": 1}):
         at = _aware(v.get("visit_time"))
         if not at:
@@ -199,14 +207,15 @@ def top_count(counts: List[int], share: float = TOP_SHARE) -> int:
 # ---------------------------------------------------------------------------
 # the page
 # ---------------------------------------------------------------------------
-def _payload(tid: str, days: int = DEFAULT_DAYS) -> Dict[str, Any]:
+def _payload(tid: str, days: int = DEFAULT_DAYS, scope: Optional["S.Scope"] = None,
+             can_edit: bool = True) -> Dict[str, Any]:
     days = days if days in PERIODS else DEFAULT_DAYS
     at = _now()
     since, prev_since = at - timedelta(days=days), at - timedelta(days=2 * days)
     doc = _doc(tid)
     items = _items(doc)
-    sold = sales(tid, items, since)
-    sold_prev = sales(tid, items, prev_since, since)
+    sold = sales(tid, items, since, scope=scope)
+    sold_prev = sales(tid, items, prev_since, since, scope=scope)
     cats = _category_list(doc, items)
     colour = {c["name"]: c["color"] for c in cats}
 
@@ -232,6 +241,8 @@ def _payload(tid: str, days: int = DEFAULT_DAYS) -> Dict[str, Any]:
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1}) or {}
     return {
         "shop": tenant.get("name") or "",
+        "scope": scope.describe() if scope else None,
+        "can_edit": can_edit,
         "days": days, "periods": list(PERIODS),
         "kpis": {
             "total": len(products),
@@ -246,7 +257,7 @@ def _payload(tid: str, days: int = DEFAULT_DAYS) -> Dict[str, Any]:
             "sold_products": sum(1 for p in products if p["sales"] > 0),
             "avg_sold_price": _money(total_revenue / total_sales) if total_sales else 0.0,
             "prev_sales": sum(p["sales_prev"] for p in products),
-            "daily": daily(tid, items, since, days),
+            "daily": daily(tid, items, since, days, scope),
         },
         "palette": PALETTE,
         "limits": {"name": NAME_MAX, "subtitle": SUBTITLE_MAX, "category": CATEGORY_MAX,
@@ -255,9 +266,15 @@ def _payload(tid: str, days: int = DEFAULT_DAYS) -> Dict[str, Any]:
 
 
 @router.get("/api/owner/catalogue/page")
-def page(days: int = Query(DEFAULT_DAYS),
-         token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    return _payload(token_data.tenant_id, days)
+def page(days: int = Query(DEFAULT_DAYS), request: Request = None,
+         token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    return _payload(token_data.tenant_id, days, S.resolve(token_data, request),
+                    can_edit=token_data.role == "business_owner")
+
+
+def _view(tid: str, token_data: TokenData, request: Optional[Request]) -> Dict[str, Any]:
+    """What an edit answers with: the page, on the establishments shown."""
+    return _payload(tid, scope=S.resolve(token_data, request))
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +320,8 @@ def _declare(doc: Dict[str, Any], items: List[Dict[str, Any]], category: Optiona
 
 
 @router.post("/api/owner/catalogue/products")
-def create_product(body: ProductIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def create_product(body: ProductIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -314,11 +332,12 @@ def create_product(body: ProductIn, token_data: TokenData = Depends(require_role
     product = {"id": str(uuid.uuid4()), **fields, "image_id": None, "created_at": now, "updated_at": now}
     items.append(product)
     _save(tid, items, _declare(doc, items, fields["category"]))
-    return {"id": product["id"], **_payload(tid)}
+    return {"id": product["id"], **_view(tid, token_data, request)}
 
 
 @router.put("/api/owner/catalogue/products/{pid}")
-def update_product(pid: str, body: ProductIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def update_product(pid: str, body: ProductIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -326,7 +345,7 @@ def update_product(pid: str, body: ProductIn, token_data: TokenData = Depends(re
     it.update(_clean(body))
     it["updated_at"] = _now()
     _save(tid, items, _declare(doc, items, it.get("category")))
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 def _drop_images(tid: str, image_ids: List[Optional[str]]) -> None:
@@ -336,18 +355,20 @@ def _drop_images(tid: str, image_ids: List[Optional[str]]) -> None:
 
 
 @router.delete("/api/owner/catalogue/products/{pid}")
-def delete_product(pid: str, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def delete_product(pid: str, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
     it = _find(items, pid)
     _save(tid, [i for i in items if i.get("id") != pid])
     _drop_images(tid, [it.get("image_id")])
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 @router.post("/api/owner/catalogue/products/{pid}/duplicate")
-def duplicate_product(pid: str, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def duplicate_product(pid: str, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -364,7 +385,7 @@ def duplicate_product(pid: str, token_data: TokenData = Depends(require_role(["b
                                          "mime": img["mime"], "data": img["data"], "created_at": now})
     items.insert(items.index(src) + 1, copy)
     _save(tid, items)
-    return {"id": copy["id"], **_payload(tid)}
+    return {"id": copy["id"], **_view(tid, token_data, request)}
 
 
 class ImportIn(BaseModel):
@@ -372,7 +393,8 @@ class ImportIn(BaseModel):
 
 
 @router.post("/api/owner/catalogue/products/import")
-def import_products(body: ImportIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def import_products(body: ImportIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     """Several products at once — the lines read from a photo of the menu,
     after the owner has checked them. A name already in the catalogue is
     skipped rather than doubled."""
@@ -393,7 +415,7 @@ def import_products(body: ImportIn, token_data: TokenData = Depends(require_role
         added += 1
     cats = _category_list(doc, items)
     _save(tid, items, [{"name": c["name"], "color": c["color"]} for c in cats])
-    return {"added": added, **_payload(tid)}
+    return {"added": added, **_view(tid, token_data, request)}
 
 
 class BulkIn(BaseModel):
@@ -403,7 +425,8 @@ class BulkIn(BaseModel):
 
 
 @router.post("/api/owner/catalogue/products/bulk")
-def bulk(body: BulkIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def bulk(body: BulkIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -414,7 +437,7 @@ def bulk(body: BulkIn, token_data: TokenData = Depends(require_role(["business_o
     if body.action == "delete":
         _drop_images(tid, [i.get("image_id") for i in items if i.get("id") in chosen])
         _save(tid, [i for i in items if i.get("id") not in chosen])
-        return _payload(tid)
+        return _view(tid, token_data, request)
     if body.action not in ("activate", "deactivate", "category"):
         raise HTTPException(status_code=400, detail="Action inconnue.")
     category = (body.category or "").strip() or None
@@ -429,7 +452,7 @@ def bulk(body: BulkIn, token_data: TokenData = Depends(require_role(["business_o
             it["active"] = body.action == "activate"
         it["updated_at"] = now
     _save(tid, items, _declare(doc, items, category) if body.action == "category" else None)
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +463,8 @@ class ImageIn(BaseModel):
 
 
 @router.put("/api/owner/catalogue/products/{pid}/image")
-def put_image(pid: str, body: ImageIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def put_image(pid: str, body: ImageIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     m = re.match(r"^data:(image/[a-z]+);base64,(.+)$", body.data_url or "", re.S)
     if not m or m.group(1) not in IMAGE_MIMES:
@@ -461,11 +485,12 @@ def put_image(pid: str, body: ImageIn, token_data: TokenData = Depends(require_r
                                      "data": raw, "created_at": _now()})
     _save(tid, items)
     _drop_images(tid, [old])
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 @router.delete("/api/owner/catalogue/products/{pid}/image")
-def delete_image(pid: str, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def delete_image(pid: str, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -473,7 +498,7 @@ def delete_image(pid: str, token_data: TokenData = Depends(require_role(["busine
     old, it["image_id"] = it.get("image_id"), None
     _save(tid, items)
     _drop_images(tid, [old])
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 @router.get("/api/catalogue-image/{image_id}")
@@ -506,7 +531,8 @@ def _cat_name(raw: str) -> str:
 
 
 @router.post("/api/owner/catalogue/categories")
-def create_category(body: CategoryIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def create_category(body: CategoryIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -517,11 +543,12 @@ def create_category(body: CategoryIn, token_data: TokenData = Depends(require_ro
     cats.append({"name": name, "color": body.color if body.color in PALETTE else None})
     cats = _category_list({"categories": cats}, items)
     _save(tid, items, [{"name": c["name"], "color": c["color"]} for c in cats])
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 @router.put("/api/owner/catalogue/categories")
-def update_category(body: CategoryIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def update_category(body: CategoryIn, request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -540,12 +567,13 @@ def update_category(body: CategoryIn, token_data: TokenData = Depends(require_ro
         if (it.get("category") or "") == old:
             it["category"] = name
     _save(tid, items, [{"name": c["name"], "color": c["color"]} for c in cats])
-    return _payload(tid)
+    return _view(tid, token_data, request)
 
 
 @router.delete("/api/owner/catalogue/categories/{name}")
 def delete_category(name: str, move_to: str = Query(""),
-                    token_data: TokenData = Depends(require_role(["business_owner"]))):
+                    request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
@@ -563,4 +591,4 @@ def delete_category(name: str, move_to: str = Query(""),
         keep.append({"name": dest})
         keep = [{"name": c["name"], "color": c["color"]} for c in _category_list({"categories": keep}, items)]
     _save(tid, items, keep)
-    return _payload(tid)
+    return _view(tid, token_data, request)

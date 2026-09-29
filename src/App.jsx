@@ -395,7 +395,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="catalogue" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <CataloguePage />
               </ProtectedRoute>
             } />
