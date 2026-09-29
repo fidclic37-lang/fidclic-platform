@@ -54,6 +54,11 @@ export const onboardingAPI = {
 };
 
 export const adminAPI = {
+  // Facturation — the issuer of FidClic's invoices, and every invoice issued.
+  invoicingIssuer: () => api.get('/admin/invoicing/issuer'),
+  saveInvoicingIssuer: (body) => api.put('/admin/invoicing/issuer', body),
+  invoices: () => api.get('/admin/invoicing/invoices'),
+  invoicePdf: (id) => api.get(`/admin/invoicing/invoices/${id}/pdf`, { responseType: 'blob' }),
   getTenants: () => api.get('/admin/tenants'),
   createTenant: (data) => api.post('/admin/tenants', data),
   updateTenant: (id, data) => api.put('/admin/tenants/' + id, data),
@@ -173,6 +178,14 @@ export const ownerAPI = {
   // Paramètres › Notifications — usage, plan limits, the business's sending rules.
   notificationsOverview: (period) => api.get('/owner/notifications/overview', { params: { period } }),
   saveSendRules: (rules) => api.put('/owner/notifications/rules', rules),
+  // Paramètres › Abonnement & facturation
+  billingOverview: () => api.get('/owner/billing/overview'),
+  invoices: () => api.get('/owner/invoices'),
+  invoicePdf: (id) => api.get(`/owner/invoices/${id}/pdf`, { responseType: 'blob' }),
+  billingCheckout: (plan) => api.post('/billing/checkout', { plan, success_path: '/dashboard/parametres/abonnement?billing=success', cancel_path: '/dashboard/parametres/abonnement?billing=cancelled' }),
+  billingPortal: () => api.post('/billing/portal', { return_path: '/dashboard/parametres/abonnement' }),
+  cancelSubscription: (reason) => api.post('/owner/billing/cancel', { reason }),
+  resumeSubscription: () => api.post('/owner/billing/resume'),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
