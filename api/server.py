@@ -5711,6 +5711,13 @@ def get_join_info(slug: str):
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     t.pop("_id", None)
+    # The shop's own consent sentence, privacy policy and cookie notice
+    # (Paramètres › Données & confidentialité).
+    try:
+        from features.privacy_page import public_view
+        t["privacy_public"] = public_view(t)
+    except Exception:
+        pass
     return t
 
 ALLOWED_ACQUISITION_SOURCES = {"instagram", "facebook", "tiktok", "qr_store", "website"}
@@ -10270,6 +10277,12 @@ def proximity_ping(req: ProximityPingRequest):
     tenant = db.tenants.find_one({"id": tid})
     if not tenant or not tenant.get("geo_enabled"):
         return {"status": "ignored", "reason": "geo disabled for tenant"}
+    try:
+        from features.privacy_page import geo_allowed          # Données & confidentialité
+        if not geo_allowed(tenant["id"]):
+            return {"status": "ignored", "reason": "geolocation switched off by the business"}
+    except Exception:
+        pass
 
     # VIP-only gate: when the super-admin has flipped `vip_geo_only` on for this
     # tenant, proximity pushes fire exclusively for VIP-tier customers. Anyone
@@ -10992,6 +11005,14 @@ def run_daily_triggers(request: Request):
         else:
             db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
 
+    # Conservation des données — each business's own durations, once saved.
+    retention_summary = {"tenants": 0}
+    try:
+        from features.privacy_page import apply_retention as _apply_retention
+        retention_summary = _apply_retention(now)
+    except Exception as _e:
+        print(f"retention runner failed (non-fatal): {_e}")
+
     # Messages held back yesterday by a business's sending limits go first,
     # most important first (features/send_rules.py).
     deferred_summary = {"sent": 0}
@@ -11039,6 +11060,7 @@ def run_daily_triggers(request: Request):
         "tier_up_emitted": tier_up_emitted_count,
         "push_wallet": push_wallet_summary,
         "deferred": deferred_summary,
+        "retention": retention_summary,
         "campagnes": campagnes_summary,
         "copilot": copilot_summary,
         "tenants_processed": len(tenants),

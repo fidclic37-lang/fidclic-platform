@@ -518,13 +518,27 @@ const JoinPage = () => {
                 className="mt-0.5 w-5 h-5 shrink-0 accent-[#B85C38] cursor-pointer"
               />
               <span className="text-xs text-[#57534E] leading-relaxed">
-                J'accepte que <strong>{tenant.name}</strong> utilise mes données
-                (nom, contact, visites) pour gérer ma carte de fidélité et
-                m'envoyer des offres. Je peux à tout moment télécharger ou
-                supprimer mes données depuis ma carte, conformément au RGPD.
+                {/* The shop's own sentence (Paramètres › Données &
+                    confidentialité), or the standard one. */}
+                {tenant.privacy_public?.consent_text || (
+                  <>J'accepte que <strong>{tenant.name}</strong> utilise mes données
+                  (nom, contact, visites) pour gérer ma carte de fidélité et
+                  m'envoyer des offres. Je peux à tout moment télécharger ou
+                  supprimer mes données depuis ma carte, conformément au RGPD.</>
+                )}
+                {tenant.privacy_public?.policy_url && (
+                  <> <a href={tenant.privacy_public.policy_url} target="_blank" rel="noopener noreferrer"
+                        className="underline text-[#B85C38]" onClick={(e) => e.stopPropagation()}>Politique de confidentialité</a></>
+                )}
                 <span className="text-[#B85C38]"> *</span>
               </span>
             </label>
+
+            {tenant.privacy_public?.cookie_notice && (
+              <p className="text-[11px] leading-snug text-[#78716C]">
+                Cette page n'utilise que le stockage nécessaire à votre carte (aucun cookie publicitaire ni de mesure d'audience).
+              </p>
+            )}
 
             {joinError && (
               <div
