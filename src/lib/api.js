@@ -184,6 +184,10 @@ export const ownerAPI = {
   customerRules: () => api.get('/owner/customer-rules'),
   saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
   restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),
+  joinLink: () => api.get('/owner/join-link'),
+  joinSlugCheck: (slug) => api.get('/owner/join-link/slug-check', { params: { slug } }),
+  saveJoinSlug: (slug) => api.put('/owner/join-link/slug', { slug }),
+  saveJoinPage: (body) => api.put('/owner/join-link/page', body),
   segmentPreview: (body) => api.post('/owner/segmentation/preview', body),
   createSegment: (body) => api.post('/owner/segmentation/segments', body),
   updateSegment: (id, body) => api.put(`/owner/segmentation/segments/${id}`, body),
@@ -473,6 +477,9 @@ export const publicAPI = {
   // -- Customer review submission (wallet card → rate-your-visit panel) --
   submitReview: (data) => api.post('/public/reviews', data),
   googleReviewClick: (barcode) => api.post(`/card/${barcode}/google-review-click`),
+  // -- Signup page: its words (Paramètres › Lien d'inscription) and one visit --
+  joinPage: (slug) => api.get(`/join/${slug}/page`),
+  joinView: (slug, body) => api.post(`/join/${slug}/view`, body),
 };
 
 export default api;

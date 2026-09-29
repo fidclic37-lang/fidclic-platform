@@ -2239,7 +2239,8 @@ def _unique_slug(name: str) -> str:
     ascii_name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
     raw_slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "shop"
     slug, n = raw_slug, 2
-    while db.tenants.find_one({"slug": slug}):
+    # A name another shop had before a rename still points at that shop.
+    while db.tenants.find_one({"$or": [{"slug": slug}, {"previous_slugs": slug}]}):
         slug = f"{raw_slug}-{n}"
         n += 1
     return slug
@@ -5613,9 +5614,15 @@ def per_card_manifest(barcode_id: str):
     )
 
 
+def _tenant_by_slug(slug: str):
+    """A signup link names a shop by its current slug — or by one it had
+    before a rename, so a QR code already printed on a counter keeps working."""
+    return db.tenants.find_one({"slug": slug}) or db.tenants.find_one({"previous_slugs": slug})
+
+
 @app.get("/api/join/{slug}")
 def get_join_info(slug: str):
-    t = db.tenants.find_one({"slug": slug})
+    t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     t.pop("_id", None)
@@ -5676,7 +5683,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         }
         src = alias.get(src, src)
         req.acquisition_source = src if src in ALLOWED_ACQUISITION_SOURCES else "qr_store"
-    t = db.tenants.find_one({"slug": slug})
+    t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     tid = t["id"]
@@ -5786,6 +5793,9 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    # Signed up through the page itself — what "Taux de conversion" on
+    # Paramètres › Lien d'inscription compares with the page's visits.
+    cust_doc["signup_channel"] = "join_page"
     # The place comes from the postal code — finer than a town name, and one
     # less field between a customer and their card. An import that supplies a
     # city is still honoured.

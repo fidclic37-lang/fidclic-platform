@@ -248,6 +248,8 @@ function App() {
             </ProtectedRoute>
           } />
           <Route path="/join/:slug" element={<JoinPage />} />
+          {/* The French address the Paramètres page hands out; /join stays for every QR already printed. */}
+          <Route path="/inscription/:slug" element={<JoinPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
 
           {/* Public product pages. Deliberately NOT wrapped in PublicRoute: a

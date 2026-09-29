@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import api, { publicAPI } from '../lib/api';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from '../components/Code128Barcode';
@@ -106,9 +106,40 @@ const JoinPage = () => {
   // alert. All other failures fall back to a single-line error message.
   const [joinError, setJoinError] = useState(null);
 
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [page, setPage] = useState(null);
+  const [logoBroken, setLogoBroken] = useState(false);
   useEffect(() => {
-    publicAPI.getJoinInfo(slug).then(res => setTenant(res.data)).catch(console.error);
-  }, [slug]);
+    publicAPI.getJoinInfo(slug).then(res => {
+      // Opened through a name the shop had before a rename (a QR code printed
+      // earlier): move to the live name so every later call uses it.
+      const live = res.data?.slug;
+      if (live && live !== slug) {
+        const base = location.pathname.startsWith('/inscription/') ? '/inscription/' : '/join/';
+        navigate(`${base}${live}${location.search}`, { replace: true });
+        return;
+      }
+      setTenant(res.data);
+    }).catch(console.error);
+    publicAPI.joinPage(slug).then(({ data }) => setPage(data)).catch(() => {});
+  }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // One visit per browser per day, for the figures on Paramètres › Lien
+  // d'inscription. The id is random and stays in this browser — no personal
+  // data. The owner's own "Aperçu" (?preview=1) is not counted.
+  useEffect(() => {
+    if (searchParams.get('preview')) return;
+    let visitor = '';
+    try {
+      visitor = localStorage.getItem('fidclic:visitor') || '';
+      if (!visitor) {
+        visitor = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+        localStorage.setItem('fidclic:visitor', visitor);
+      }
+    } catch (_e) { /* private mode: the visit simply is not counted */ }
+    if (visitor) publicAPI.joinView(slug, { visitor, src: lockedSource }).catch(() => {});
+  }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Multi-touch attribution: record this URL's source the moment the page loads,
   // even if the visitor never submits. So when they finally fill the form a week
@@ -282,10 +313,45 @@ const JoinPage = () => {
   if (!tenant) return <div className="p-8 text-center">{t('common.loading')}</div>;
 
   return (
-    <div className="min-h-screen bg-[#FDFBF7] font-['Manrope'] flex flex-col items-center py-20 px-4">
+    <div className="min-h-screen bg-[#FDFBF7] font-['Inter'] flex flex-col items-center py-20 px-4">
       <div className="bg-white p-8 rounded-2xl shadow-sm w-full max-w-md border border-[#E7E5E4]">
-        <h1 className="font-['Cormorant_Garamond'] text-3xl font-bold text-center mb-2 ft-gradient-text-slow">{tenant.name}</h1>
-        <p className="text-center text-[#57534E] mb-8">{t('join.title')}</p>
+        {page ? (
+          // The shop's own words (Paramètres › Lien d'inscription › Personnaliser la page).
+          <div className="mb-8 text-center">
+            {page.logo_url && !logoBroken ? (
+              <img src={page.logo_url} alt="" onError={() => setLogoBroken(true)}
+                   className="mx-auto mb-3 h-16 w-16 rounded-full border border-[#E6EEFB] object-cover" />
+            ) : (
+              <span className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-[#0B1C3F] text-[22px] font-bold text-white">
+                {(tenant.name || '?').slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <p className="text-[14px] font-semibold text-[#0B1C3F]">{tenant.name}</p>
+            <h1 className="mt-3 text-[24px] font-bold leading-tight text-[#0B1C3F]">{page.page.title}</h1>
+            {page.page.subtitle && <p className="mt-2 text-[14px] leading-snug text-[#64748B]">{page.page.subtitle}</p>}
+            {page.page.benefits?.length > 0 && (
+              <ul className="mx-auto mt-4 inline-flex flex-col gap-1.5 text-left text-[13.5px] text-[#334155]">
+                {page.page.benefits.map((b) => (
+                  <li key={b} className="flex items-center gap-2">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#2F6BFF] text-[10px] text-white">✓</span>{b}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!success && (
+              <button type="button"
+                onClick={() => document.getElementById('join-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="mt-5 w-full rounded-xl bg-[#2F6BFF] py-3 text-[15px] font-semibold text-white hover:bg-[#2559DB]">
+                {page.page.button}
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <h1 className="font-['Cormorant_Garamond'] text-3xl font-bold text-center mb-2 ft-gradient-text-slow">{tenant.name}</h1>
+            <p className="text-center text-[#57534E] mb-8">{t('join.title')}</p>
+          </>
+        )}
 
         {success ? (
           <div className="text-center space-y-6">
@@ -310,7 +376,7 @@ const JoinPage = () => {
             </div>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form id="join-form" onSubmit={handleSubmit} className="space-y-4 scroll-mt-6">
             {inviter && (
               <div className="flex items-start gap-3 rounded-xl border border-[#E6EEFB] bg-[#F6F9FF] p-3">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#2F6BFF] text-[13px] font-bold text-white">
