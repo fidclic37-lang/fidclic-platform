@@ -380,7 +380,7 @@ class ChatMessage(BaseModel):
 
 @router.post("/api/owner/support/chat")
 def chat(body: ChatMessage,
-         token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff", "super_admin"]))):
+         token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff", "super_admin"]))):
     try:
         tenant = (_db.tenants.find_one({"id": token_data.tenant_id}) or {}) if _db is not None else {}
     except Exception:
@@ -401,7 +401,7 @@ def chat(body: ChatMessage,
 
 @router.get("/api/owner/support/chat")
 def chat_history(limit: int = 20,
-                 token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff", "super_admin"]))):
+                 token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff", "super_admin"]))):
     rows = list(_db.support_chats.find(
         {"tenant_id": token_data.tenant_id}, {"_id": 0, "question": 1, "answer": 1, "created_at": 1},
     ).sort("created_at", -1).limit(max(1, min(50, limit))))

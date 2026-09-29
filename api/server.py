@@ -3464,7 +3464,7 @@ def admin_ai_query(req: AIQueryRequest, token_data: TokenData = Depends(require_
 # ========================
 
 @app.get("/api/owner/tenant")
-def get_tenant(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def get_tenant(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """Return the tenant doc for whoever is authenticated. Available to all
     in-tenant roles so the sidebar can show "you are managing/working at X"
     — no more confusion when an owner has multiple tenants or a staff is
@@ -4040,7 +4040,7 @@ class CatalogReq(BaseModel):
 
 
 @app.get("/api/owner/catalog")
-def get_owner_catalog(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def get_owner_catalog(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """Return the tenant's catalog. Staff need it to render the scan-page
     item picker; managers/owners use it for editing."""
     doc = db.tenant_catalog.find_one({"tenant_id": token_data.tenant_id})
@@ -4444,7 +4444,7 @@ def scan_visit(
     req: ScanRequest,
     # Staff accounts exist SPECIFICALLY to run this endpoint. The owner + manager
     # can of course scan too.
-    token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"])),
 ):
     """Scan visit — record timestamp and update customer.
 
@@ -4454,6 +4454,21 @@ def scan_visit(
     surfaces only as Vercel's generic 'A server error has occurred' which
     is impossible to debug remotely.
     """
+    # A team account scans in its own establishments: the visit is tagged with
+    # one of them — never with another shop's — so every establishment's
+    # figures stay its own (features/store_scope.py filters on this tag).
+    if token_data.role in ("administrateur", "manager", "staff"):
+        from features import store_scope as _S
+        _sc = _S.resolve(token_data, requested="")
+        # Accounts covering every establishment scan as before (a visit may
+        # stay untagged); only accounts limited to some are held to them.
+        partial = set(_sc.allowed) != set(_sc.all_ids)
+        if partial and req.branch_id not in _sc.allowed:
+            if len(_sc.allowed) == 1:
+                req.branch_id = _sc.allowed[0]
+            else:
+                raise HTTPException(status_code=400,
+                                    detail="Choisissez l'établissement où a lieu le passage.")
     try:
         return _scan_visit_impl(req, token_data)
     except HTTPException:
@@ -4900,7 +4915,9 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     return fired
 
 @app.get("/api/owner/card-template")
-def get_card_template(token_data: TokenData = Depends(require_role(["business_owner"]))):
+# Read by the Scan page for the points rule — so every account that scans may
+# read it; only the owner changes it (PUT below).
+def get_card_template(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     t = db.card_templates.find_one({"tenant_id": token_data.tenant_id})
     if t:
         t.pop("_id", None)
@@ -8056,7 +8073,7 @@ def create_branch(
     return branch
 
 @app.get("/api/owner/branches")
-def list_branches(token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"]))):
+def list_branches(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """List branches for current tenant. Staff need this so the scan page can
     show the branch picker (which branch the scan is happening at)."""
     tenant = db.tenants.find_one({"id": token_data.tenant_id})
@@ -9890,7 +9907,7 @@ class RedeemRewardRequest(BaseModel):
 @app.post("/api/owner/rewards/redeem")
 def redeem_reward(
     req: RedeemRewardRequest,
-    token_data: TokenData = Depends(require_role(["business_owner", "manager", "staff"])),
+    token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"])),
 ):
     """Record that a customer cashed in their reward.
 

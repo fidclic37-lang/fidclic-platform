@@ -99,18 +99,18 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("unset, the card says so rather than inventing a target",
           d["goal"]["is_set"] is False and d["goal"]["target"] == 0)
     check("and shows no percentage against nothing", d["goal"]["pct"] is None)
-    DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), TD())
+    DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), token_data=TD())
     g = DH.overview(days=30, token_data=TD())["goal"]
     check("once set, it is the merchant's own figure", g["target"] == 250.0)
     check("progress is measured on the calendar month", g["reached"] > 0)
     check("what is left is what is left", g["remaining"] == round(250.0 - g["reached"], 2))
     check("the percentage follows", g["pct"] == round(g["reached"] / 250.0 * 100))
-    DH.set_goal(DH.Goal(monthly_revenue_goal=1.0), TD())
+    DH.set_goal(DH.Goal(monthly_revenue_goal=1.0), token_data=TD())
     over = DH.overview(days=30, token_data=TD())["goal"]
     check("beating the goal caps the bar at 100, not 4000", over["pct"] == 100)
     check("and nothing is left to do", over["remaining"] == 0)
-    check("the goal survives a reload", DH.get_goal(TD())["monthly_revenue_goal"] == 1.0)
-    DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), TD())
+    check("the goal survives a reload", DH.get_goal(token_data=TD())["monthly_revenue_goal"] == 1.0)
+    DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), token_data=TD())
 
     # ---- impact -------------------------------------------------------------------
     print("\nImpact FidClic claims only what it can tie to a send")

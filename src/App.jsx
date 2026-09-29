@@ -163,10 +163,10 @@ const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, pa
   // work from Paramètres › Équipe & accès (the server refuses the rest too).
   const partial = ['administrateur', 'manager'].includes(user.role) && user.scope === 'partial';
   if (partial && !partialOk && !(allowedRoles || []).includes('staff')) {
-    return <Navigate to="/dashboard/parametres/equipe" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    if (user.role === 'administrateur') return <Navigate to="/dashboard/parametres/equipe" replace />;
+    if (user.role === 'administrateur') return <Navigate to="/dashboard" replace />;
     // Staff and managers land on the page they *are* allowed to use instead of
     // being kicked to the landing page. Staff → /dashboard/scan; everyone else
     // back to the landing.
@@ -188,7 +188,6 @@ const PublicRoute = ({ children }) => {
     // Handles already-logged-in sessions too (not just fresh logins).
     if (user.role === 'business_owner') return <Navigate to="/modules" replace />;
     if (user.role === 'comptable') return <Navigate to="/cabinet" replace />;
-    if (user.role === 'administrateur') return <Navigate to="/dashboard/parametres/equipe" replace />;
     return <Navigate to="/dashboard" replace />;
   }
   return children;
@@ -319,7 +318,7 @@ function App() {
                 stays in the repo, unrouted, until its smart search and time
                 filter have a home on the new page. */}
             <Route index element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <DashboardHomePage />
               </ProtectedRoute>
             } />

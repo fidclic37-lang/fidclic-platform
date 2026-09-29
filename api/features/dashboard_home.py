@@ -34,10 +34,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import store_scope as S
 
 router = APIRouter(tags=["dashboard"])
 _db = None
@@ -95,25 +96,54 @@ class Goal(BaseModel):
     monthly_revenue_goal: float = Field(0, ge=0, le=10_000_000)
 
 
+# The Tableau de bord is open to every role that reads data; what it shows is
+# limited to the establishments the caller may see (features/store_scope.py).
+READERS = ["business_owner", "administrateur", "manager"]
+
+
+def goal_target(tenant: Dict[str, Any], scope: "S.Scope") -> float:
+    """The shop's goal on "all"; one establishment's own goal when one is
+    chosen; the sum of theirs for an administrateur's set."""
+    if scope.is_all:
+        return float(tenant.get("monthly_revenue_goal") or 0)
+    per_store = tenant.get("store_goals") or {}
+    return float(sum(float(per_store.get(i) or 0) for i in scope.ids))
+
+
+def goal_editable(token: TokenData, scope: "S.Scope") -> bool:
+    if token.role == "business_owner":
+        return scope.is_all or scope.single is not None
+    if token.role == "administrateur":
+        return scope.single is not None and scope.single in scope.allowed
+    return False
+
+
 @router.get("/api/owner/home/goal")
-def get_goal(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def get_goal(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    scope = S.resolve(token_data, request)
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
-    return {"monthly_revenue_goal": float(tenant.get("monthly_revenue_goal") or 0)}
+    return {"monthly_revenue_goal": goal_target(tenant, scope), "can_edit": goal_editable(token_data, scope)}
 
 
 @router.put("/api/owner/home/goal")
-def set_goal(body: Goal, token_data: TokenData = Depends(require_role(["business_owner"]))):
-    _db.tenants.update_one({"id": token_data.tenant_id},
-                           {"$set": {"monthly_revenue_goal": float(body.monthly_revenue_goal)}})
-    return {"monthly_revenue_goal": float(body.monthly_revenue_goal)}
+def set_goal(body: Goal, request: Request = None,
+             token_data: TokenData = Depends(require_role(["business_owner", "administrateur"], partial_ok=True))):
+    scope = S.resolve(token_data, request)
+    if not goal_editable(token_data, scope):
+        raise HTTPException(status_code=403, detail="Choisissez un de vos établissements pour fixer son objectif.")
+    amount = float(body.monthly_revenue_goal)
+    field = "monthly_revenue_goal" if scope.is_all else f"store_goals.{scope.single}"
+    _db.tenants.update_one({"id": token_data.tenant_id}, {"$set": {field: amount}})
+    return {"monthly_revenue_goal": amount, "can_edit": True}
 
 
 # ---------------------------------------------------------------------------
 # the page
 # ---------------------------------------------------------------------------
-def _visits(tid: str, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+def _visits(tid: str, start: datetime, end: datetime, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     return list(_db.visits.find(
-        {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end}},
+        {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end},
+         **(S.visit_filter(scope) if scope else {})},
         {"_id": 0, "customer_id": 1, "amount_paid": 1, "visit_time": 1, "items": 1}))
 
 
@@ -142,9 +172,10 @@ def _attributed_ids(tid: str, start: datetime, end: datetime) -> set:
 
 
 @router.get("/api/owner/home/overview")
-def overview(days: int = Query(30, ge=1, le=365),
-             token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
+             token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
+    scope = S.resolve(token_data, request)
     at = _now()
     start, end = _window(days)
     span = end - start
@@ -152,10 +183,10 @@ def overview(days: int = Query(30, ge=1, le=365),
     prev_start = prev_end - span
 
     tenant = _db.tenants.find_one({"id": tid}) or {}
-    rows = _visits(tid, start, end)
-    prev_rows = _visits(tid, prev_start, prev_end)
+    rows = _visits(tid, start, end, scope)
+    prev_rows = _visits(tid, prev_start, prev_end, scope)
     customers = list(_db.customers.find(
-        {"tenant_id": tid},
+        S.customer_filter(scope),
         {"_id": 0, "id": 1, "name": 1, "visits": 1, "created_at": 1, "last_visit_date": 1}))
 
     revenue, prev_revenue = _revenue(rows), _revenue(prev_rows)
@@ -183,14 +214,15 @@ def overview(days: int = Query(30, ge=1, le=365),
 
     # ---- the month's goal ---------------------------------------------------
     month_start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month_revenue = _revenue(_visits(tid, month_start, at))
-    goal_amount = float(tenant.get("monthly_revenue_goal") or 0)
+    month_revenue = _revenue(_visits(tid, month_start, at, scope))
+    goal_amount = goal_target(tenant, scope)
     goal = {
         "target": _money(goal_amount),
         "reached": _money(month_revenue),
         "remaining": _money(max(0.0, goal_amount - month_revenue)),
         "pct": round(min(100, month_revenue / goal_amount * 100)) if goal_amount else None,
         "is_set": goal_amount > 0,
+        "can_edit": goal_editable(token_data, scope),
     }
 
     # ---- impact --------------------------------------------------------------
@@ -229,6 +261,17 @@ def overview(days: int = Query(30, ge=1, le=365),
         {"tenant_id": tid, "sent_at": {"$gte": start, "$lte": end}},
         {"_id": 0, "id": 1, "name": 1, "content": 1, "image_url": 1, "status": 1,
          "recipient_ids": 1, "clicks": 1, "opens": 1, "attributed_visit_customer_ids": 1}))
+    if not scope.is_all:
+        # A campaign counts here for the clients of these establishments only.
+        mine = {c["id"] for c in customers}
+        kept = []
+        for c in sent:
+            r = [i for i in c.get("recipient_ids") or [] if i in mine]
+            if r:
+                c["recipient_ids"] = r
+                c["attributed_visit_customer_ids"] = [i for i in c.get("attributed_visit_customer_ids") or [] if i in mine]
+                kept.append(c)
+        sent = kept
     touched = sum(len(c.get("recipient_ids") or []) for c in sent)
     clicks = sum(int(c.get("clicks") or 0) for c in sent)
     attributed = sum(len(c.get("attributed_visit_customer_ids") or []) for c in sent)
@@ -316,6 +359,7 @@ def overview(days: int = Query(30, ge=1, le=365),
 
     return {
         "from": start.isoformat(), "to": end.isoformat(), "days": days,
+        "scope": scope.describe(),
         "shop": {"name": tenant.get("name") or "votre commerce", "city": tenant.get("city") or ""},
         "cards": cards, "goal": goal, "impact": impact,
         "revenue_series": revenue_series,

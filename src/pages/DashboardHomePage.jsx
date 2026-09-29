@@ -413,22 +413,34 @@ export default function DashboardHomePage() {
                   </div>
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[12px] font-semibold text-[#0F8B58]">{d.goal.pct}%</span>
-                    <button type="button" onClick={() => setGoalOpen(true)}
-                            className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF] hover:underline">
-                      Modifier mon objectif <ChevronRight size={12} />
-                    </button>
+                    {d.goal.can_edit !== false && (
+                      <button type="button" onClick={() => setGoalOpen(true)}
+                              className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF] hover:underline">
+                        Modifier mon objectif <ChevronRight size={12} />
+                      </button>
+                    )}
                   </div>
                 </>
               ) : (
                 <>
-                  <p className="mt-1.5 text-[12px] leading-snug text-[#64748B]">
-                    Fixez votre objectif de chiffre d'affaires : le tableau de bord suivra
-                    votre progression tout au long du mois.
-                  </p>
-                  <button type="button" onClick={() => setGoalOpen(true)}
-                          className="mt-2.5 rounded-lg bg-[#2F6BFF] px-3.5 py-2 text-[12.5px] font-semibold text-white">
-                    Définir un objectif
-                  </button>
+                  {d?.goal?.can_edit === false ? (
+                    <p className="mt-1.5 text-[12px] leading-snug text-[#64748B]">
+                      {(d?.scope?.ids?.length || 0) > 1
+                        ? "Choisissez un établissement dans le menu sous le logo pour voir ou fixer son objectif."
+                        : "Aucun objectif fixé pour cet établissement."}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mt-1.5 text-[12px] leading-snug text-[#64748B]">
+                        Fixez votre objectif de chiffre d'affaires : le tableau de bord suivra
+                        votre progression tout au long du mois.
+                      </p>
+                      <button type="button" onClick={() => setGoalOpen(true)}
+                              className="mt-2.5 rounded-lg bg-[#2F6BFF] px-3.5 py-2 text-[12.5px] font-semibold text-white">
+                        Définir un objectif
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </div>
