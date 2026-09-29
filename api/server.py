@@ -11070,6 +11070,14 @@ def run_daily_triggers(request: Request):
         else:
             db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
 
+    # CRM — every business on FidClic has its prospect, at its real stage.
+    crm_summary = {"created": 0}
+    try:
+        from features.crm import sync_tenants as _crm_sync
+        crm_summary = _crm_sync()
+    except Exception as _e:
+        print(f"crm sync failed (non-fatal): {_e}")
+
     # Suppression du compte — businesses whose 30 days have passed.
     purge_summary = {"tenants": 0}
     try:
@@ -11135,6 +11143,7 @@ def run_daily_triggers(request: Request):
         "deferred": deferred_summary,
         "retention": retention_summary,
         "account_purge": purge_summary,
+        "crm_sync": crm_summary,
         "campagnes": campagnes_summary,
         "copilot": copilot_summary,
         "tenants_processed": len(tenants),

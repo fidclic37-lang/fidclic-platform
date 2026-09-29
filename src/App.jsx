@@ -98,6 +98,9 @@ import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminTenantsPage from './pages/AdminTenantsPage';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminInvoicingPage from './pages/AdminInvoicingPage';
+import CrmOverviewPage from './pages/crm/CrmOverviewPage';
+import CrmProspectsPage from './pages/crm/CrmProspectsPage';
+import CrmSoonPage from './pages/crm/CrmSoonPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
@@ -153,6 +156,13 @@ const ScrollToTop = () => {
 // (onboarding_status="company") is parked on /onboarding/entreprise: no
 // dashboard, no modules, until step 2 is done and the trial has started.
 const needsOnboarding = (user) => user?.role === 'business_owner' && user?.onboarding_status === 'company';
+
+/* Inside /admin: the sales team (« commercial ») sees the CRM only. */
+function SuperAdminOnly({ children }) {
+  const { user } = useAuth();
+  if (user?.role === 'commercial') return <Navigate to="/admin/crm" replace />;
+  return children;
+}
 
 const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, partialOk = false }) => {
   const { user, loading } = useAuth();
@@ -425,20 +435,34 @@ function App() {
           </Route>
 
           {/* Super Admin Routes */}
+          {/* The shell opens to the super admin and to the sales team
+              (« commercial »), who only ever sees the CRM. */}
           <Route path="/admin" element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'commercial']}>
               <DashboardLayout />
             </ProtectedRoute>
           }>
-            <Route index element={<AdminDashboard />} />
-            <Route path="analytics" element={<AdminAnalyticsPage />} />
-            <Route path="insights" element={<AdminInsightsPage />} />
-            <Route path="tenants" element={<AdminTenantsPage />} />
-            <Route path="plans" element={<AdminPlansPage />} />
-            <Route path="facturation" element={<AdminInvoicingPage />} />
-            <Route path="campaigns" element={<AdminCampaignsPage />} />
-            <Route path="card-designer" element={<AdminCardDesignerPage />} />
-            <Route path="ai" element={<AdminAIAssistantPage />} />
+            <Route index element={<SuperAdminOnly><AdminDashboard /></SuperAdminOnly>} />
+            <Route path="analytics" element={<SuperAdminOnly><AdminAnalyticsPage /></SuperAdminOnly>} />
+            <Route path="insights" element={<SuperAdminOnly><AdminInsightsPage /></SuperAdminOnly>} />
+            <Route path="tenants" element={<SuperAdminOnly><AdminTenantsPage /></SuperAdminOnly>} />
+            <Route path="plans" element={<SuperAdminOnly><AdminPlansPage /></SuperAdminOnly>} />
+            <Route path="facturation" element={<SuperAdminOnly><AdminInvoicingPage /></SuperAdminOnly>} />
+            <Route path="campaigns" element={<SuperAdminOnly><AdminCampaignsPage /></SuperAdminOnly>} />
+            <Route path="card-designer" element={<SuperAdminOnly><AdminCardDesignerPage /></SuperAdminOnly>} />
+            <Route path="ai" element={<SuperAdminOnly><AdminAIAssistantPage /></SuperAdminOnly>} />
+            {/* CRM de prospection */}
+            <Route path="crm" element={<CrmOverviewPage />} />
+            <Route path="crm/prospects" element={<CrmProspectsPage />} />
+            <Route path="crm/pipeline" element={<CrmSoonPage title="Pipeline" text="Vos prospects par étape, à faire glisser d'une colonne à l'autre." />} />
+            <Route path="crm/taches" element={<CrmSoonPage title="Tâches" text="Toutes les actions de prospection à faire, par personne, priorité et échéance." />} />
+            <Route path="crm/calendrier" element={<CrmSoonPage title="Calendrier" text="Vos rendez-vous, appels et relances de la semaine." />} />
+            <Route path="crm/sequences" element={<CrmSoonPage title="Séquences d'emails" text="Des séries d'emails envoyés depuis votre Gmail, avec ouvertures et réponses suivies." />} />
+            <Route path="crm/modeles" element={<CrmSoonPage title="Modèles d'emails" text="Vos emails types, réutilisables dans les séquences." />} />
+            <Route path="crm/appels" element={<CrmSoonPage title="Appels" text="Appelez depuis votre téléphone et notez le résultat de chaque appel." />} />
+            <Route path="crm/import" element={<CrmSoonPage title="Import / Export" text="L'historique de vos imports et exports. En attendant, importez depuis la page Prospects." />} />
+            <Route path="crm/conversations" element={<CrmSoonPage title="Suivi des conversations" text="Chaque échange avec un commerce — emails, réponses, appels, notes — au même endroit." />} />
+            <Route path="crm/statistiques" element={<CrmSoonPage title="Statistiques" text="Taux de conversion, performance par commercial, par source et par secteur." />} />
           </Route>
         </Routes>
        </Router>

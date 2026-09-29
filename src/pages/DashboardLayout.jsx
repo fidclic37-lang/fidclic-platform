@@ -13,6 +13,7 @@ import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
+  UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
   Receipt,
 } from 'lucide-react';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -64,6 +65,42 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, a
         </>
       )}
     </Link>
+  );
+};
+
+/* CRM de prospection — a group that opens on its own on any /admin/crm page. */
+const CRM_ITEMS = [
+  ['/admin/crm', 'Vue d\'ensemble', UserRound], ['/admin/crm/prospects', 'Prospects', Users], ['/admin/crm/pipeline', 'Pipeline', Kanban],
+  ['/admin/crm/taches', 'Tâches', ListChecks], ['/admin/crm/calendrier', 'Calendrier', CalendarDays], ['/admin/crm/sequences', 'Séquences d\'emails', Mail],
+  ['/admin/crm/modeles', 'Modèles d\'emails', MailOpen], ['/admin/crm/appels', 'Appels', Phone], ['/admin/crm/import', 'Import / Export', ArrowDownUp],
+  ['/admin/crm/conversations', 'Suivi des conversations', MessagesSquare], ['/admin/crm/statistiques', 'Statistiques', PieChart],
+];
+const CrmNav = ({ currentPath, role, collapsed }) => {
+  const inCrm = currentPath.startsWith('/admin/crm');
+  const [open, setOpen] = React.useState(inCrm);
+  React.useEffect(() => { if (inCrm) setOpen(true); }, [inCrm]);
+  if (collapsed) return <NavLink to="/admin/crm" icon={UsersRound} label="CRM de prospection" currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={CRM_ITEMS.map(([to]) => to)} />;
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+              className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-[7px] text-[13.5px] transition-all ${inCrm ? 'bg-[#2F6BFF] font-semibold text-white' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"><UsersRound className="h-[18px] w-[18px]" /></span>
+        <span className="flex-1 truncate text-left">CRM de prospection</span>
+        <ChevronDown size={15} className={`transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-1 space-y-[1px] rounded-xl bg-[#F4F8FF] py-1">
+          {CRM_ITEMS.map(([to, label, Icon]) => {
+            const on = to === '/admin/crm' ? currentPath === '/admin/crm' : currentPath.startsWith(to);
+            return (
+              <Link key={to} to={to} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
+                <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -343,10 +380,11 @@ const DashboardLayout = () => {
 
   return (
     <div
-      className={`relative flex min-h-screen fdt-dash flc ${nuit ? "flc-nuit" : ""}`}
+      className={`relative flex min-h-screen fdt-dash flc ${nuit ? "flc-nuit" : ""} ${['super_admin', 'commercial'].includes(role) ? 'fd-admin' : ''}`}
       style={{ transition: 'background 200ms ease' }}
     >
-      <AmbientBackdrop role={role} />
+      {/* The super admin and the sales team use the blue design's plain canvas. */}
+      {!['super_admin', 'commercial'].includes(role) && <AmbientBackdrop role={role} />}
 
       <aside
         className={`sticky top-0 z-10 ${collapsed ? 'w-[72px]' : 'w-64'} h-screen flex flex-col shrink-0 transition-[width,background-color] duration-200 ease-out fd-aside fd-sidebar-host`}
@@ -396,6 +434,11 @@ const DashboardLayout = () => {
             {!collapsed && (
               <span className="text-[19px] font-bold leading-none tracking-[-0.02em]" style={{ color: '#0B1C3F' }}>
                 FidClic
+              </span>
+            )}
+            {!collapsed && ['super_admin', 'commercial'].includes(role) && (
+              <span className="rounded-md bg-[#EAF1FF] px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-[#2F6BFF]">
+                {role === 'super_admin' ? 'SUPER ADMIN' : 'COMMERCIAL'}
               </span>
             )}
           </Link>
@@ -475,17 +518,26 @@ const DashboardLayout = () => {
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
+          {/* Super admin — the approved mockup's order and French names. The
+              sales team (« commercial ») gets the CRM only. */}
           {role === 'super_admin' && (
             <>
               <NavLink to="/admin"               icon={Home}         label="Dashboard"          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/analytics"     icon={BarChart3}    label="Global Analytics"   currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/admin/tenants"       icon={Database}     label="Commerces"          currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/admin/analytics"     icon={BarChart3}    label="Analytics"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/insights"      icon={Sparkles}     label="Insights"           currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/tenants"       icon={Database}     label="Manage Businesses"  currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campagnes"          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/plans"         icon={Shield}       label="Plan Limits"        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/facturation"   icon={Receipt}      label="Facturation"        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/admin/card-designer" icon={Palette}      label="Card Designer"      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campaigns"          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/ai"            icon={BrainCircuit} label="AI Intelligence"    currentPath={currentPath} role={role} collapsed={collapsed} />
+              <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/admin/ai"            icon={BrainCircuit} label="FIDCLIC AI"         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+            </>
+          )}
+          {role === 'commercial' && (
+            <>
+              <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}

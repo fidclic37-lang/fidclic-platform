@@ -2249,3 +2249,7 @@ main:has(.sc) > div:first-child input { background: #F4F7FC; border-color: #E6EE
 /* Paramètres › Établissement — the pin's label on the small map. */
 .etab-pin-label { background: transparent; border: 0; box-shadow: none; color: #0B1C3F; font: 600 15px/1 Inter, system-ui, sans-serif; }
 .etab-pin-label::before { display: none; }
+
+/* Super admin + sales team — the blue design everywhere (CRM mockups). */
+.fd-admin main { background: #F4F7FC !important; }
+.fd-admin main > div:first-child { background: #FFFFFF !important; border-bottom: 1px solid #E6EEFB; backdrop-filter: none !important; }

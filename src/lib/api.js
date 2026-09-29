@@ -54,6 +54,30 @@ export const onboardingAPI = {
   company: (data) => api.post('/onboarding/company', data),
 };
 
+// CRM de prospection — FidClic's own sales (super admin + commercials).
+export const crmAPI = {
+  meta: () => api.get('/crm/meta'),
+  overview: (params) => api.get('/crm/overview', { params }),
+  prospects: (params) => api.get('/crm/prospects', { params }),
+  prospect: (id) => api.get(`/crm/prospects/${id}`),
+  addProspect: (body) => api.post('/crm/prospects', body),
+  editProspect: (id, body) => api.put(`/crm/prospects/${id}`, body),
+  setStage: (id, stage, lost_reason) => api.post(`/crm/prospects/${id}/stage`, { stage, lost_reason }),
+  addNote: (id, text) => api.post(`/crm/prospects/${id}/notes`, { text }),
+  deleteProspect: (id) => api.delete(`/crm/prospects/${id}`),
+  tasks: (params) => api.get('/crm/tasks', { params }),
+  addTask: (body) => api.post('/crm/tasks', body),
+  editTask: (id, body) => api.put(`/crm/tasks/${id}`, body),
+  deleteTask: (id) => api.delete(`/crm/tasks/${id}`),
+  importPreview: (file) => { const f = new FormData(); f.append('file', file); return api.post('/crm/import/preview', f, { headers: { 'Content-Type': 'multipart/form-data' } }); },
+  importCommit: (body) => api.post('/crm/import/commit', body),
+  exportCsv: (params) => api.get('/crm/export', { params, responseType: 'blob' }),
+  setGoal: (target) => api.put('/crm/goal', { target }),
+  team: () => api.get('/crm/team'),
+  addMember: (body) => api.post('/crm/team', body),
+  memberStatus: (email, active) => api.post(`/crm/team/${encodeURIComponent(email)}/status`, { active }),
+};
+
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
   invoicingIssuer: () => api.get('/admin/invoicing/issuer'),
