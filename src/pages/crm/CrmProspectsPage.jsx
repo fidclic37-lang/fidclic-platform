@@ -94,8 +94,8 @@ function Detail({ id, ver, meta, onChanged, onEdit, admin, say }) {
           <div>
             <p className="mb-2 font-semibold text-[#0B1C3F]">Statut & suivi</p>
             <div className="grid grid-cols-2 gap-2">
-              <Select label="Statut" value={p.stage} onChange={setStage}>
-                {(meta?.stages || []).map((s) => <option key={s.key} value={s.key} disabled={p.on_fidclic && ['essai', 'signe'].includes(s.key) && s.key !== p.stage}>{s.label}</option>)}
+              <Select label={p.on_fidclic ? 'Statut (suit son abonnement)' : 'Statut'} value={p.stage} onChange={setStage}>
+                {(meta?.stages || []).map((s) => <option key={s.key} value={s.key} disabled={p.on_fidclic && s.key !== p.stage}>{s.label}</option>)}
               </Select>
               <Select label="Assigné à" value={p.assigned_to || ''} onChange={(v) => change(() => crmAPI.editProspect(p.id, { assigned_to: v || null }), 'Assignation enregistrée.')}>
                 <option value="">Personne</option>{(meta?.users || []).map((u) => <option key={u.email} value={u.email}>{u.name}</option>)}

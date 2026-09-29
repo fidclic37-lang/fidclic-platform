@@ -56,8 +56,18 @@ SOURCES = [("google", "Recherche Google"), ("import", "Fichiers / Import"), ("so
            ("recommandation", "Recommandations"), ("evenement", "Événements"), ("inscription", "Inscription FidClic"),
            ("autre", "Autres")]
 LOST_REASONS = ["Pas intéressé", "Trop cher", "Déjà une solution", "Pas de réponse", "Abonnement résilié", "Autre"]
-TASK_TYPES = [("appel", "Appel"), ("email", "Email"), ("relance", "Relance"), ("rdv", "RDV"),
-              ("preparation", "Préparation"), ("suivi", "Suivi")]
+TASK_TYPES = [("appel", "Appel"), ("email", "Email"), ("relance", "Relance"), ("rdv", "Rendez-vous"),
+              ("proposition", "Proposition"), ("preparation", "Préparation"), ("suivi", "Suivi")]
+CONFIRM = ("confirme", "a_confirmer", "annule")
+TASK_PRESETS = [
+    {"title": "Appeler le commerce", "type": "appel", "priority": "haute"},
+    {"title": "Envoyer proposition", "type": "email", "priority": "moyenne"},
+    {"title": "Relancer après devis", "type": "relance", "priority": "haute"},
+    {"title": "Préparer RDV", "type": "preparation", "priority": "moyenne"},
+    {"title": "Envoyer documentation", "type": "email", "priority": "basse"},
+    {"title": "Confirmer rendez-vous", "type": "rdv", "priority": "basse"},
+    {"title": "Suivi après salon", "type": "suivi", "priority": "moyenne"},
+]
 PRIORITIES = ("haute", "moyenne", "basse")
 STAGE_WORDS = {
     "nouveau": ["nouveau", "new", "lead"], "a_contacter": ["a contacter", "to contact", "a appeler"],
@@ -481,7 +491,7 @@ def set_stage(pid: str, body: StageIn, token_data: TokenData = Depends(require_r
         raise HTTPException(status_code=404, detail="Prospect introuvable")
     if body.stage not in STAGE_KEYS:
         raise HTTPException(status_code=400, detail="Étape inconnue.")
-    if p.get("tenant_id") and body.stage in ("essai", "signe"):
+    if p.get("tenant_id") and body.stage != p.get("stage"):     # the next sync would undo a hand move
         raise HTTPException(status_code=409, detail="Ce commerce est sur FidClic : son étape suit son abonnement.")
     if body.stage == "perdu" and not body.lost_reason:
         raise HTTPException(status_code=400, detail="Indiquez le motif de perte.")
@@ -533,10 +543,26 @@ def _task_view(t: Dict[str, Any], users: Dict[str, Dict[str, Any]], names: Optio
         status = "en_retard"
     u = users.get(t.get("assigned_to") or "")
     pr = (names or {}).get(t.get("prospect_id")) or {}
-    return {"id": t["id"], "title": t.get("title"), "type": t.get("type") or "suivi", "priority": t.get("priority") or "moyenne",
-            "status": status, "due_at": _iso(due), "description": t.get("description") or "",
+    dur = int(t.get("duration_min") or 30)
+    return {"id": t["id"], "title": t.get("title"), "type": t.get("type") or "suivi",
+            "type_label": dict(TASK_TYPES).get(t.get("type") or "suivi", "Suivi"), "priority": t.get("priority") or "moyenne",
+            "status": status, "due_at": _iso(due), "end_at": _iso(due + timedelta(minutes=dur)) if due else None,
+            "duration_min": dur, "confirm_status": t.get("confirm_status") or "a_confirmer",
+            "description": t.get("description") or "",
             "prospect_id": t.get("prospect_id"), "prospect": pr.get("name"), "contact": pr.get("contact_name"),
+            "contact_role": pr.get("contact_role"), "phone": pr.get("phone"), "email": pr.get("email"),
+            "sector": pr.get("sector"), "city": pr.get("city"),
+            "address": ", ".join(x for x in (pr.get("address"), " ".join(y for y in (pr.get("postal_code"), pr.get("city")) if y)) if x),
             "assigned_to": t.get("assigned_to"), "assigned_name": _name(u) if u else None, "done_at": _iso(t.get("done_at"))}
+
+
+PROSPECT_CARD = {"_id": 0, "id": 1, "name": 1, "contact_name": 1, "contact_role": 1, "phone": 1, "email": 1, "sector": 1,
+                 "city": 1, "address": 1, "postal_code": 1}
+
+
+def _names(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {p["id"]: p for p in _db.crm_prospects.find({"id": {"$in": list({r.get("prospect_id") for r in rows if r.get("prospect_id")})}},
+                                                       PROSPECT_CARD)}
 
 
 class TaskIn(BaseModel):
@@ -548,6 +574,8 @@ class TaskIn(BaseModel):
     assigned_to: Optional[str] = None
     description: Optional[str] = Field(None, max_length=2000)
     status: Optional[str] = None
+    duration_min: Optional[int] = Field(None, ge=5, le=600)
+    confirm_status: Optional[str] = None
 
 
 def _task_data(body: TaskIn) -> Dict[str, Any]:
@@ -558,6 +586,10 @@ def _task_data(body: TaskIn) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Priorité inconnue.")
     if "status" in d and d["status"] not in ("a_faire", "en_cours", "terminee"):
         raise HTTPException(status_code=400, detail="Statut inconnu.")
+    if "confirm_status" in d and d["confirm_status"] not in CONFIRM:
+        raise HTTPException(status_code=400, detail="Statut de rendez-vous inconnu.")
+    if d.get("assigned_to") and d["assigned_to"] not in _users():
+        raise HTTPException(status_code=400, detail="Utilisateur inconnu.")
     if "due_at" in d:
         due = _aware(d["due_at"])
         if not due:
@@ -568,30 +600,109 @@ def _task_data(body: TaskIn) -> Dict[str, Any]:
     return d
 
 
-@router.get("/api/crm/tasks")
-def list_tasks(status: str = "", assigned: str = "", day: str = "", prospect_id: str = "",
-               page: int = 1, per_page: int = 50,
-               token_data: TokenData = Depends(require_role(CRM))):
-    page, per_page = max(1, int(page)), max(1, min(200, int(per_page)))
+def _task_query(q: str = "", assigned: str = "", priority: str = "", type: str = "", prospect_id: str = "",
+                date_from: Optional[str] = None, date_to: Optional[str] = None, day: str = "") -> Dict[str, Any]:
     f: Dict[str, Any] = {}
     if prospect_id:
         f["prospect_id"] = prospect_id
     if assigned:
         f["assigned_to"] = assigned
+    if priority:
+        f["priority"] = priority
+    if type:
+        f["type"] = type
     if day == "today":
         start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
         f["due_at"] = {"$gte": start, "$lt": start + timedelta(days=1)}
+    elif date_from or date_to:
+        f["due_at"] = {**({"$gte": _aware(date_from)} if _aware(date_from) else {}),
+                       **({"$lt": _aware(date_to)} if _aware(date_to) else {})}
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        ids = [p["id"] for p in _db.crm_prospects.find({"$or": [{"name": rx}, {"contact_name": rx}]}, {"id": 1})]
+        f["$or"] = [{"title": rx}, {"prospect_id": {"$in": ids}}]
+    return f
+
+
+@router.get("/api/crm/tasks")
+def list_tasks(status: str = "", assigned: str = "", day: str = "", prospect_id: str = "", q: str = "",
+               priority: str = "", type: str = "", date_from: Optional[str] = Query(None, alias="from"),
+               date_to: Optional[str] = Query(None, alias="to"), page: int = 1, per_page: int = 50,
+               token_data: TokenData = Depends(require_role(CRM))):
+    page, per_page = max(1, int(page)), max(1, min(500, int(per_page)))
+    f = _task_query(q, assigned, priority, type, prospect_id,
+                    date_from if isinstance(date_from, str) else None, date_to if isinstance(date_to, str) else None, day)
     rows = list(_db.crm_tasks.find(f, {"_id": 0}).sort("due_at", 1))
     users = _users()
-    names = {p["id"]: p for p in _db.crm_prospects.find({"id": {"$in": list({r.get("prospect_id") for r in rows})}},
-                                                         {"_id": 0, "id": 1, "name": 1, "contact_name": 1})}
-    views = [_task_view(r, users, names) for r in rows]
+    views = [_task_view(r, users, _names(rows)) for r in rows]
+    counts = {s: sum(1 for v in views if v["status"] == s) for s in ("a_faire", "en_cours", "terminee", "en_retard")}
+    counts["all"] = len(views)
     if status:
         views = [v for v in views if v["status"] == status]
     total = len(views)
-    return {"rows": views[(page - 1) * per_page: page * per_page], "total": total,
-            "counts": {s: sum(1 for v in [_task_view(r, users) for r in rows] if v["status"] == s)
-                       for s in ("a_faire", "en_cours", "terminee", "en_retard")}}
+    return {"rows": views[(page - 1) * per_page: page * per_page], "total": total, "counts": counts,
+            "pages": max(1, -(-total // per_page))}
+
+
+@router.get("/api/crm/tasks/summary")
+def tasks_summary(token_data: TokenData = Depends(require_role(CRM))):
+    now = _now()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    users = _users()
+    allv = [_task_view(t, users) for t in _db.crm_tasks.find({}, {"_id": 0})]
+
+    def span_counts(a: datetime, b: datetime) -> Dict[str, int]:
+        inside = [v for v in allv if v["due_at"] and a <= _aware(v["due_at"]) < b]
+        return {"today": len(inside), "en_cours": sum(1 for v in inside if v["status"] == "en_cours"),
+                "terminee": sum(1 for v in allv if v["done_at"] and a <= _aware(v["done_at"]) < b),
+                "en_retard": sum(1 for v in inside if v["status"] == "en_retard")}
+
+    week, prev = span_counts(today - timedelta(days=6), today + timedelta(days=1)), span_counts(today - timedelta(days=13), today - timedelta(days=6))
+    series = {k: [span_counts(today - timedelta(days=d), today - timedelta(days=d - 1))[k] for d in range(6, -1, -1)]
+              for k in ("today", "en_cours", "terminee", "en_retard")}
+    value = {"today": sum(1 for v in allv if v["due_at"] and today <= _aware(v["due_at"]) < today + timedelta(days=1)),
+             "en_cours": sum(1 for v in allv if v["status"] == "en_cours"),
+             "terminee": sum(1 for v in allv if v["status"] == "terminee"),
+             "en_retard": sum(1 for v in allv if v["status"] == "en_retard")}
+    cards = [{"key": k, "value": value[k], "delta": _delta(week[k], prev[k]), "series": series[k]} for k in value]
+    total = len(allv) or 1
+    by_status = [{"key": k, "label": l, "count": sum(1 for v in allv if v["status"] == k),
+                  "pct": round(sum(1 for v in allv if v["status"] == k) / total * 100)}
+                 for k, l in (("a_faire", "À faire"), ("en_cours", "En cours"), ("terminee", "Terminées"), ("en_retard", "En retard"))]
+    by_type = [{"key": k, "label": l, "count": sum(1 for v in allv if v["type"] == k),
+                "pct": round(sum(1 for v in allv if v["type"] == k) / total * 100)} for k, l in TASK_TYPES]
+    load = {}
+    for v in allv:
+        if v["status"] != "terminee" and v["assigned_name"]:
+            load[v["assigned_name"]] = load.get(v["assigned_name"], 0) + 1
+    workload = [{"label": k, "count": c, "pct": round(c / total * 100)} for k, c in sorted(load.items(), key=lambda x: -x[1])]
+    return {"cards": cards, "by_status": by_status, "by_type": [t for t in by_type if t["count"]], "workload": workload,
+            "presets": TASK_PRESETS + [{k: t.get(k) for k in ("id", "title", "type", "priority", "description")}
+                                       for t in _db.crm_task_templates.find({}, {"_id": 0})]}
+
+
+class TemplateIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=160)
+    type: str = "suivi"
+    priority: str = "moyenne"
+    description: str = Field("", max_length=2000)
+
+
+@router.post("/api/crm/tasks/templates")
+def add_template(body: TemplateIn, token_data: TokenData = Depends(require_role(CRM))):
+    if body.type not in dict(TASK_TYPES) or body.priority not in PRIORITIES:
+        raise HTTPException(status_code=400, detail="Type ou priorité inconnu.")
+    t = {"id": uuid.uuid4().hex, **body.model_dump(), "created_by": token_data.email, "created_at": _now()}
+    _db.crm_task_templates.insert_one(t)
+    t.pop("_id", None)
+    return t
+
+
+@router.delete("/api/crm/tasks/templates/{tid}")
+def delete_template(tid: str, token_data: TokenData = Depends(require_role(CRM))):
+    if not _db.crm_task_templates.delete_one({"id": tid}).deleted_count:
+        raise HTTPException(status_code=404, detail="Modèle introuvable")
+    return {"deleted": True}
 
 
 @router.post("/api/crm/tasks")
@@ -733,6 +844,71 @@ def export(q: str = "", sector: str = "", city: str = "", stage: str = "", assig
                     (r["last_activity_at"] or "")[:10]])
     return Response(content=("﻿" + buf.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="prospects-{_now():%Y-%m-%d}.csv"'})
+
+
+# ---------------------------------------------------------------------------
+# Calendrier — the tasks, as events in time
+# ---------------------------------------------------------------------------
+@router.get("/api/crm/calendar")
+def calendar(date_from: str = Query(..., alias="from"), date_to: str = Query(..., alias="to"), type: str = "",
+             assigned: str = "", sector: str = "", status: str = "", q: str = "",
+             token_data: TokenData = Depends(require_role(CRM))):
+    start, end = _aware(date_from), _aware(date_to)
+    if not start or not end or end <= start or end - start > timedelta(days=62):
+        raise HTTPException(status_code=400, detail="Période invalide.")
+    f = _task_query(q, assigned, "", type, "", start.isoformat(), end.isoformat())
+    if sector:
+        f["prospect_id"] = {"$in": [p["id"] for p in _db.crm_prospects.find({"sector": sector}, {"id": 1})]}
+    rows = list(_db.crm_tasks.find(f, {"_id": 0}).sort("due_at", 1))
+    users = _users()
+    events = [_task_view(r, users, _names(rows)) for r in rows]
+    if status:
+        events = [e for e in events if e["confirm_status"] == status or e["status"] == status]
+    now = _now()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week0 = today - timedelta(days=today.weekday())
+    allt = list(_db.crm_tasks.find({}, {"_id": 0, "due_at": 1, "type": 1, "status": 1, "done_at": 1, "created_at": 1}))
+
+    def n(pred, a, b):
+        return sum(1 for t in allt if pred(t) and _aware(t.get("due_at")) and a <= _aware(t["due_at"]) < b)
+
+    def pair(pred, a, b, width):
+        return {"value": n(pred, a, b), "delta": _delta(n(pred, a, b), n(pred, a - width, b - width)),
+                "series": [n(pred, a - width + width * i / 7, a - width + width * (i + 1) / 7) for i in range(7)] + [n(pred, a, b)]}
+
+    anyt = lambda t: True                                  # noqa: E731
+    cards = {"today": pair(anyt, today, today + timedelta(days=1), timedelta(days=1)),
+             "week": pair(anyt, week0, week0 + timedelta(days=7), timedelta(days=7)),
+             "rdv": pair(lambda t: t.get("type") == "rdv", week0, week0 + timedelta(days=7), timedelta(days=7)),
+             "relances": pair(lambda t: t.get("type") == "relance" and t.get("status") != "terminee", week0, week0 + timedelta(days=7), timedelta(days=7))}
+    upcoming_rows = list(_db.crm_tasks.find({"type": "rdv", "due_at": {"$gte": now}, "status": {"$ne": "terminee"}}, {"_id": 0}).sort("due_at", 1).limit(6))
+    days = [today - timedelta(days=d) for d in range(6, -1, -1)]
+    kinds = [("appel", "Appels"), ("email", "Emails"), ("rdv", "Rendez-vous"), ("relance", "Relances"), ("proposition", "Propositions")]
+    activity = [{"day": d.date().isoformat(), **{k: sum(1 for t in allt if t.get("type") == k and _aware(t.get("done_at"))
+                                                         and d <= _aware(t["done_at"]) < d + timedelta(days=1)) for k, _ in kinds}} for d in days]
+    return {"events": events, "cards": cards,
+            "upcoming": [_task_view(r, users, _names(upcoming_rows)) for r in upcoming_rows],
+            "today": list_tasks(day="today", per_page=6, token_data=token_data)["rows"],
+            "activity": activity, "activity_kinds": [{"key": k, "label": l,
+                                                      "total": sum(a[k] for a in activity)} for k, l in kinds]}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline — the board
+# ---------------------------------------------------------------------------
+@router.get("/api/crm/pipeline")
+def pipeline(q: str = "", sector: str = "", city: str = "", assigned: str = "", source: str = "",
+             token_data: TokenData = Depends(require_role(CRM))):
+    users = _users()
+    cols = []
+    for key, label in STAGES:
+        f = {**_filter(q, sector, city, key, assigned, source)}
+        count = _db.crm_prospects.count_documents(f)
+        rows = list(_db.crm_prospects.find(f, {"_id": 0}).sort("last_activity_at", -1).limit(60))
+        cols.append({"key": key, "label": label, "count": count, "rows": [_row(r, users) for r in rows]})
+    total = sum(c["count"] for c in cols)
+    signed = next(c["count"] for c in cols if c["key"] == "signe")
+    return {"columns": cols, "total": total, "conversion": round(signed / total * 100) if total else None}
 
 
 # ---------------------------------------------------------------------------

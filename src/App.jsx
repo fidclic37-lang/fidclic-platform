@@ -101,6 +101,9 @@ import AdminInvoicingPage from './pages/AdminInvoicingPage';
 import CrmOverviewPage from './pages/crm/CrmOverviewPage';
 import CrmProspectsPage from './pages/crm/CrmProspectsPage';
 import CrmSoonPage from './pages/crm/CrmSoonPage';
+import CrmPipelinePage from './pages/crm/CrmPipelinePage';
+import CrmTasksPage from './pages/crm/CrmTasksPage';
+import CrmCalendarPage from './pages/crm/CrmCalendarPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
@@ -454,9 +457,9 @@ function App() {
             {/* CRM de prospection */}
             <Route path="crm" element={<CrmOverviewPage />} />
             <Route path="crm/prospects" element={<CrmProspectsPage />} />
-            <Route path="crm/pipeline" element={<CrmSoonPage title="Pipeline" text="Vos prospects par étape, à faire glisser d'une colonne à l'autre." />} />
-            <Route path="crm/taches" element={<CrmSoonPage title="Tâches" text="Toutes les actions de prospection à faire, par personne, priorité et échéance." />} />
-            <Route path="crm/calendrier" element={<CrmSoonPage title="Calendrier" text="Vos rendez-vous, appels et relances de la semaine." />} />
+            <Route path="crm/pipeline" element={<CrmPipelinePage />} />
+            <Route path="crm/taches" element={<CrmTasksPage />} />
+            <Route path="crm/calendrier" element={<CrmCalendarPage />} />
             <Route path="crm/sequences" element={<CrmSoonPage title="Séquences d'emails" text="Des séries d'emails envoyés depuis votre Gmail, avec ouvertures et réponses suivies." />} />
             <Route path="crm/modeles" element={<CrmSoonPage title="Modèles d'emails" text="Vos emails types, réutilisables dans les séquences." />} />
             <Route path="crm/appels" element={<CrmSoonPage title="Appels" text="Appelez depuis votre téléphone et notez le résultat de chaque appel." />} />
