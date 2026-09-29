@@ -103,7 +103,8 @@ BUILTINS: List[Dict[str, Any]] = [
      "title": "🎯 Bravo !",
      "body": "Vous avez atteint un nouveau palier ! Découvrez votre récompense 🎁"},
     {"key": "special_offer", "name": "Offre spéciale", "subtitle": "Promotions automatiques",
-     "icon": "tag", "trigger": "date_event", "config": {"day_of_month": 1}, "enabled": True,
+     # Off until the merchant decides on an offer: it goes to every client.
+     "icon": "tag", "trigger": "date_event", "config": {"day_of_month": 1}, "enabled": False,
      "title": "🔥 Offre spéciale !",
      "body": "Profitez de -20% aujourd'hui uniquement !"},
     {"key": "cart_recovery", "name": "Relance panier", "subtitle": "Relancez les clients inactifs",
@@ -141,6 +142,20 @@ EXAMPLES = [
 def init(db):
     global _db
     _db = db
+    # "Offre spéciale -20 %" used to be seeded switched on: every shop sent it
+    # to all its clients on the 1st of each month without having chosen that
+    # offer. Switched off once, everywhere (and any establishment's own switch
+    # with it); a merchant may turn it back on — the marker keeps this from
+    # running again.
+    try:
+        ids = [r["id"] for r in db.push_scenarios.find(
+            {"builtin": "special_offer", "offer_default_off": {"$exists": False}}, {"_id": 0, "id": 1})]
+        if ids:
+            db.push_scenarios.update_many({"id": {"$in": ids}},
+                                          {"$set": {"enabled": False, "offer_default_off": True}})
+            db.push_scenario_overrides.update_many({"scenario_id": {"$in": ids}}, {"$unset": {"enabled": ""}})
+    except Exception:
+        pass
     try:
         # One built-in per tenant, enforced by the database rather than by a
         # check that two concurrent requests can both pass.

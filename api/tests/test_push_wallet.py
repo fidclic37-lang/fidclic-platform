@@ -66,8 +66,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("and the relance is a different number, from the same trigger",
           [s["trigger_detail"] for s in page["scenarios"] if s["builtin"] == "cart_recovery"]
           == ["Inactivité (14 jours)"])
-    check("six start switched on, two as drafts",
-          sum(1 for s in page["scenarios"] if s["enabled"]) == 6)
+    check("five start switched on, three as drafts (the -20 % offer waits for the merchant)",
+          sum(1 for s in page["scenarios"] if s["enabled"]) == 5)
     check("a draft reads as a draft",
           [s["status"] for s in page["scenarios"] if s["builtin"] == "new_products"] == ["draft"])
     check("seeding happens once, not on every read",
@@ -138,6 +138,19 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.customers.update_one({"id": "c3"}, {"$set": {"tier_changed_at": now - dt.timedelta(days=9)}})
     check("one who levelled up before the last run is not reached again",
           fire("tier_up")["targeted"] == 0)
+
+    # ---- the -20 % offer is off unless the merchant chooses it -----------------
+    print("\nOffre spéciale -20 % starts switched off")
+    check("seeded off", db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "special_offer"})["enabled"] is False)
+    db.push_scenarios.update_one({"tenant_id": "t1", "builtin": "special_offer"},
+                                 {"$set": {"enabled": True}, "$unset": {"offer_default_off": ""}})
+    PW.init(db)
+    check("a shop that had it on (the old default) is switched off once",
+          db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "special_offer"})["enabled"] is False)
+    db.push_scenarios.update_one({"tenant_id": "t1", "builtin": "special_offer"}, {"$set": {"enabled": True}})
+    PW.init(db)
+    check("… and a merchant who turns it back on keeps it on",
+          db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "special_offer"})["enabled"] is True)
 
     # ---- date triggers ---------------------------------------------------------
     print("\nDate triggers fire on their date and stay quiet otherwise")
