@@ -153,12 +153,20 @@ const ScrollToTop = () => {
 // dashboard, no modules, until step 2 is done and the trial has started.
 const needsOnboarding = (user) => user?.role === 'business_owner' && user?.onboarding_status === 'company';
 
-const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false }) => {
+const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, partialOk = false }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
+  // Administrateurs, and managers covering only some establishments, reach
+  // the data pages once those pages filter by establishment; until then they
+  // work from Paramètres › Équipe & accès (the server refuses the rest too).
+  const partial = ['administrateur', 'manager'].includes(user.role) && user.scope === 'partial';
+  if (partial && !partialOk && !(allowedRoles || []).includes('staff')) {
+    return <Navigate to="/dashboard/parametres/equipe" replace />;
+  }
   if (allowedRoles && !allowedRoles.includes(user.role)) {
+    if (user.role === 'administrateur') return <Navigate to="/dashboard/parametres/equipe" replace />;
     // Staff and managers land on the page they *are* allowed to use instead of
     // being kicked to the landing page. Staff → /dashboard/scan; everyone else
     // back to the landing.
@@ -180,6 +188,7 @@ const PublicRoute = ({ children }) => {
     // Handles already-logged-in sessions too (not just fresh logins).
     if (user.role === 'business_owner') return <Navigate to="/modules" replace />;
     if (user.role === 'comptable') return <Navigate to="/cabinet" replace />;
+    if (user.role === 'administrateur') return <Navigate to="/dashboard/parametres/equipe" replace />;
     return <Navigate to="/dashboard" replace />;
   }
   return children;
@@ -302,7 +311,7 @@ function App() {
               - manager: analytics, insights, customers, map, scan (no campaigns/settings/AI)
               - staff: scan ONLY — every other route redirects them back to /dashboard/scan */}
           <Route path="/dashboard" element={
-            <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff']}>
+            <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager', 'staff']} partialOk>
               <DashboardLayout />
             </ProtectedRoute>
           }>
@@ -395,7 +404,7 @@ function App() {
                 older all-in-one page stays at /settings for what has not moved yet. */}
             <Route path="parametres" element={<Navigate to="/dashboard/parametres/regles-clients" replace />} />
             <Route path="parametres/:section" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <ParametresPage />
               </ProtectedRoute>
             } />

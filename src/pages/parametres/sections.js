@@ -18,8 +18,7 @@ export const PARAMETRES_SECTIONS = [
     legacy: 'settings-join' },
   { slug: 'equipe', label: 'Équipe & accès', icon: UserCog,
     title: 'Équipe & accès',
-    subtitle: 'Donnez un accès à vos collaborateurs, chacun selon son rôle.',
-    legacy: 'settings-team' },
+    subtitle: 'Donnez un accès à vos collaborateurs, chacun selon son rôle.' },
   { slug: 'donnees', label: 'Données & confidentialité', icon: ShieldCheck,
     title: 'Données & confidentialité',
     subtitle: 'Vos obligations RGPD et le nettoyage de votre fichier clients.',
@@ -39,6 +38,13 @@ export const PARAMETRES_SECTIONS = [
     title: 'Sécurité',
     subtitle: 'Protégez l’accès à votre compte.' },
 ];
+
+/* What each role sees of Paramètres. Administrateurs and managers manage
+   their team here; the shop-wide settings stay with the Propriétaire (store-
+   level settings for administrateurs come with the establishment filters). */
+export const sectionsFor = (role) => (role === 'business_owner'
+  ? PARAMETRES_SECTIONS
+  : PARAMETRES_SECTIONS.filter((s) => s.slug === 'equipe'));
 
 export const PARAMETRES_BASE = '/dashboard/parametres';
 export const sectionPath = (slug) => `${PARAMETRES_BASE}/${slug}`;

@@ -56,6 +56,7 @@ MODULES = [
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
+    "features.team_access",             # Paramètres › Équipe & accès (roles, establishments, accounts)
     "features.join_link",               # Paramètres › Lien d'inscription & QR (+ signup-page visits)
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages

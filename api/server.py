@@ -2223,6 +2223,11 @@ def _issue_session(response: Response, user: Dict[str, Any]) -> Dict[str, Any]:
         secure=True,
         path="/",
     )
+    # "Dernière connexion" on Paramètres › Équipe & accès.
+    try:
+        db.users.update_one({"email": user["email"]}, {"$set": {"last_login_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
     tenant = db.tenants.find_one({"id": user.get("tenant_id")}) if user.get("tenant_id") else None
     return {
         "access_token": access_token,
@@ -2376,6 +2381,12 @@ def login(req: LoginRequest, response: Response, request: Request = None):
                   tenant_id=user.tenant_id, request=request,
                   meta={"reason": "bad_password"})
         raise HTTPException(status_code=400, detail="Incorrect credentials")
+    if user_dict.get("active") is False:
+        # Switched off by their responsable on Paramètres › Équipe & accès.
+        log_audit("auth.login_failed", actor=req.email, actor_type="user",
+                  tenant_id=user.tenant_id, request=request, meta={"reason": "inactive"})
+        raise HTTPException(status_code=403,
+                            detail="Ce compte a été désactivé. Contactez votre responsable.")
     log_audit("auth.login", actor=user.email, actor_type="user",
               tenant_id=user.tenant_id, request=request,
               meta={"role": user.role})
@@ -2400,7 +2411,18 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "onboarding_status": (tenant or {}).get("onboarding_status", "done"),
         "tenant_name": (tenant or {}).get("name"),
         "tenant_slug": (tenant or {}).get("slug"),
+        # Team accounts: which establishments they cover, and whether that is
+        # all of them ("all") or some ("partial" — data pages not open yet).
+        **_team_identity(user),
     }
+
+
+def _team_identity(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from features import team_access
+        return team_access.identity(user)
+    except Exception:
+        return {}
 
 @app.post("/api/auth/logout")
 def logout(response: Response):

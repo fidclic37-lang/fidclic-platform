@@ -85,10 +85,43 @@ async def get_current_user_data(request: Request) -> TokenData:
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)[:80]}")
 
-def require_role(roles: list[str]):
+# ─────────────────────────────────────────────────────────────────────
+# Team accounts — administrateur, manager, staff — belong to a responsable
+# who can switch them off, and each one only sees the establishments it was
+# given. Both are read live on every call (features/team_access.py registers
+# the lookup), so switching an account off or moving it to another shop takes
+# effect at once, not when its 24-hour token runs out.
+#
+# "partial" scope = an account that covers only some of the shop's
+# establishments. Until every data page filters by establishment, such an
+# account is kept out of the data endpoints (SCOPE_PENDING) rather than
+# shown the whole franchise. Endpoints that are safe for it opt in with
+# partial_ok=True (the team page); endpoints open to staff (scan, the
+# catalogue picker) act on one shop by nature and stay open.
+# ─────────────────────────────────────────────────────────────────────
+TEAM_ROLES = {"administrateur", "manager", "staff"}
+_team_status = None
+
+
+def set_team_status_lookup(fn):
+    global _team_status
+    _team_status = fn
+
+
+def require_role(roles: list[str], partial_ok: bool = False):
     async def role_checker(token_data: TokenData = Depends(get_current_user_data)):
         if token_data.role not in roles:
             raise HTTPException(status_code=403, detail="Not enough permissions")
+        if token_data.role in TEAM_ROLES and _team_status is not None:
+            status = _team_status(token_data.email) or {}
+            if not status or status.get("active") is False:
+                raise HTTPException(status_code=401, detail="Ce compte a été désactivé.")
+            if (not partial_ok and "staff" not in roles
+                    and status.get("scope") == "partial"):
+                raise HTTPException(status_code=403, detail={
+                    "code": "SCOPE_PENDING",
+                    "message": "L'accès aux données de vos établissements arrive bientôt.",
+                })
         return token_data
     return role_checker
 
