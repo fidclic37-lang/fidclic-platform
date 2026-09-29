@@ -455,6 +455,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}     currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />

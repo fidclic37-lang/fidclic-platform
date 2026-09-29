@@ -29,9 +29,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import insights_page as IP
     from features import segmentation as SG
     from features import activity_history as AH
+    from features import geolocation as GEO
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO):
         m.init(db)
     passed = failed = 0
 
@@ -306,6 +307,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                                                                              token_data=SARA)["cards"]}["scan"]
           == feed["counts"].get("scan", 0))
     check("Historique opens to them", guard(SARA, AH.READERS, partial_ok=True) == 200)
+
+    print("\nLa Géolocalisation, limitée")
+    db.tenants.update_one({"id": "t1"}, {"$set": {"lat": 47.39, "lng": 0.69,
+                                                  "branches": [{"id": "tours", "name": "Tours", "latitude": 47.39, "longitude": 0.69},
+                                                               {"id": "blois", "name": "Blois", "latitude": 47.59, "longitude": 1.33},
+                                                               {"id": "orleans", "name": "Orléans"}]}})
+    for cid, lat in (("c1", 47.40), ("c2", 47.60), ("c3", 47.90), ("c4", 47.58)):
+        db.customers.update_one({"id": cid}, {"$set": {"latitude": lat, "longitude": 1.0}})
+    g = GEO.catchment(date_from=None, date_to=None, mode="car", scope="regional", request=Req(), token_data=SARA)
+    check("the manager's map is centred on its establishment", round(g["shop"]["lat"], 2) == 47.59)
+    check("and counts its clients only", g["clients_total"] <= 3)
+    check("the owner's map is the shop's", round(GEO.catchment(date_from=None, date_to=None, mode="car", scope="regional",
+                                                               request=Req(), token_data=OWNER)["shop"]["lat"], 2) == 47.39)
+    check("Géolocalisation opens to them", guard(SARA, GEO.READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

@@ -5,6 +5,7 @@ import {
   Calendar, ChevronDown, Users, Loader2, Percent, Target, BarChart3, Info,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 import GeoCatchmentMap from '../components/GeoCatchmentMap';
 
 /**
@@ -270,6 +271,7 @@ const todayISO = ymd(new Date());
 const startISO = (() => { const d = new Date(); d.setDate(d.getDate() - 20); return ymd(d); })();
 
 export default function GeolocationPage() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [catchOn, setCatchOn] = useState(true);
   const [isoOn, setIsoOn] = useState(false);
@@ -599,10 +601,15 @@ export default function GeolocationPage() {
           <p className="mx-auto mt-1 max-w-md text-[12.5px] text-[#64748B]">
             Renseignez l'adresse de votre établissement pour calculer vos zones de chalandise et vos temps de trajet.
           </p>
-          <button type="button" onClick={() => navigate('/dashboard/settings')}
-                  className="mt-3 rounded-lg bg-[#2F6BFF] px-4 py-2 text-[12.5px] font-semibold text-white">
-            Ouvrir les paramètres
-          </button>
+          {/* The shop's address is a shop-wide setting: the owner's. */}
+          {user?.role === 'business_owner' ? (
+            <button type="button" onClick={() => navigate('/dashboard/settings')}
+                    className="mt-3 rounded-lg bg-[#2F6BFF] px-4 py-2 text-[12.5px] font-semibold text-white">
+              Ouvrir les paramètres
+            </button>
+          ) : (
+            <p className="mt-3 text-[12.5px] text-[#64748B]">Demandez au propriétaire de renseigner l&apos;adresse.</p>
+          )}
         </div>
       )}
     </div>

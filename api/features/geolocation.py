@@ -43,10 +43,15 @@ import math
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response
 
 from auth import require_role, TokenData
+from features import store_scope as S
+
+# Read by the owner, administrateurs and managers — each on the establishments
+# it may see. (Not to be confused with `scope` below: local / régional.)
+READERS = ["business_owner", "administrateur", "manager"]
 
 router = APIRouter(tags=["geolocation"])
 _db = None
@@ -231,14 +236,17 @@ def _window(date_from: Optional[str], date_to: Optional[str]) -> Tuple[datetime,
     return start, end
 
 
-def _clients_in_period(tid: str, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+def _clients_in_period(tid: str, start: datetime, end: datetime,
+                       store_scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     """The clients who actually came during the period — that is what makes the
     date range mean something on a catchment map. A shop with no visits logged
     in the window falls back to everyone on the books, so a new merchant sees
     their base rather than an empty map.
     """
-    ids = _db.visits.distinct("customer_id", {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end}})
-    query = {"tenant_id": tid, "id": {"$in": list(ids)}} if ids else {"tenant_id": tid}
+    tills = S.visit_filter(store_scope) if store_scope else {}
+    ids = _db.visits.distinct("customer_id", {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end}, **tills})
+    base = S.customer_filter(store_scope) if store_scope else {"tenant_id": tid}
+    query = {"tenant_id": tid, "id": {"$in": list(ids)}} if ids else base
     fields = {"_id": 0, "id": 1, "name": 1, "city": 1, "postal_code": 1,
               "latitude": 1, "longitude": 1, "tier": 1, "visits": 1}
     return list(_db.customers.find(query, fields))
@@ -272,9 +280,17 @@ def _pct(part: int, whole: int) -> int:
     return round(part / whole * 100) if whole else 0
 
 
-def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str) -> Dict[str, Any]:
+def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
+            store_scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
     tenant = (_db.tenants.find_one({"id": tid}) or {}) if _db is not None else {}
     shop_lat, shop_lng, shop_src = _shop_position(tenant)
+    # One establishment chosen: the map is centred on it, when its address is known.
+    one = store_scope.single if store_scope is not None else None
+    branch = next((b for b in tenant.get("branches") or [] if b.get("id") == one), None) if one else None
+    if branch:
+        blat, blng, bsrc = _shop_position({k: v for k, v in branch.items() if k != "branches"})
+        if blat is not None:
+            shop_lat, shop_lng, shop_src = blat, blng, bsrc
     speed = MODES.get(mode, MODES["car"])["speed_kmh"]
     max_km = SCOPES.get(scope, SCOPES["local"])["max_km"]
 
@@ -301,7 +317,7 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str) -> 
         })
         return result
 
-    clients = _clients_in_period(tid, start, end)
+    clients = _clients_in_period(tid, start, end, store_scope)
     zone_counts = dict(empty_counts)
     band_counts = {m: 0 for m in BANDS_MIN}
     zone_communes: Dict[str, Dict[str, int]] = {z["key"]: {} for z in ZONES}
@@ -410,10 +426,11 @@ def catchment(
     date_to: Optional[str] = Query(None, alias="to"),
     mode: str = "car",
     scope: str = "local",
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     start, end = _window(date_from, date_to)
-    data = compute(token_data.tenant_id, start, end, mode, scope)
+    data = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request))
     data["modes"] = [{"key": k, "label": v["label"], "speed_kmh": v["speed_kmh"]} for k, v in MODES.items()]
     data["scopes"] = [{"key": k, "label": v["label"], "max_km": v["max_km"]} for k, v in SCOPES.items()]
     return data
@@ -425,11 +442,12 @@ def export_csv(
     date_to: Optional[str] = Query(None, alias="to"),
     mode: str = "car",
     scope: str = "local",
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """The breakdown behind the map — zones, bands and communes — as one CSV."""
     start, end = _window(date_from, date_to)
-    d = compute(token_data.tenant_id, start, end, mode, scope)
+    d = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request))
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["Section", "Libellé", "Détail", "Clients", "Part (%)"])

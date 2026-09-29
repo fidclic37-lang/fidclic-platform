@@ -344,7 +344,7 @@ function App() {
                 Replaces CustomerMapPage, whose France-wide dot map this page
                 supersedes; the old file stays in the repo, unrouted. */}
             <Route path="map" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <GeolocationPage />
               </ProtectedRoute>
             } />
