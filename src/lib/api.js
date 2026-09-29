@@ -169,6 +169,18 @@ export const ownerAPI = {
 
   // Segmentation — the page in one call, the builder counted live.
   segmentationPage: () => api.get('/owner/segmentation/page'),
+  cataloguePage: (days) => api.get('/owner/catalogue/page', { params: { days } }),
+  createProduct: (body) => api.post('/owner/catalogue/products', body),
+  updateProduct: (id, body) => api.put(`/owner/catalogue/products/${id}`, body),
+  deleteProduct: (id) => api.delete(`/owner/catalogue/products/${id}`),
+  duplicateProduct: (id) => api.post(`/owner/catalogue/products/${id}/duplicate`),
+  bulkProducts: (body) => api.post('/owner/catalogue/products/bulk', body),
+  importProducts: (items) => api.post('/owner/catalogue/products/import', { items }),
+  setProductImage: (id, dataUrl) => api.put(`/owner/catalogue/products/${id}/image`, { data_url: dataUrl }),
+  deleteProductImage: (id) => api.delete(`/owner/catalogue/products/${id}/image`),
+  createCategory: (body) => api.post('/owner/catalogue/categories', body),
+  updateCategory: (body) => api.put('/owner/catalogue/categories', body),
+  deleteCategory: (name, moveTo) => api.delete(`/owner/catalogue/categories/${encodeURIComponent(name)}`, { params: { move_to: moveTo || '' } }),
   customerRules: () => api.get('/owner/customer-rules'),
   saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
   restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),

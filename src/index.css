@@ -2152,7 +2152,8 @@ main:has(.cg),
 main:has(.sg),
 main:has(.ig),
 main:has(.cp),
-main:has(.pm) { background: #F4F7FC !important; }
+main:has(.pm),
+main:has(.ct) { background: #F4F7FC !important; }
 /* The top bar belongs to the shell, so it is repainted only while one of these
    pages is on screen — every other page keeps the bar it has today. */
 main:has(.lc) > div:first-child,
@@ -2168,7 +2169,8 @@ main:has(.cg) > div:first-child,
 main:has(.sg) > div:first-child,
 main:has(.ig) > div:first-child,
 main:has(.cp) > div:first-child,
-main:has(.pm) > div:first-child {
+main:has(.pm) > div:first-child,
+main:has(.ct) > div:first-child {
   background: #FFFFFF !important;
   border-bottom: 1px solid #E6EEFB;
   backdrop-filter: none !important;
@@ -2186,7 +2188,8 @@ main:has(.cg) > div:first-child *,
 main:has(.sg) > div:first-child *,
 main:has(.ig) > div:first-child *,
 main:has(.cp) > div:first-child *,
-main:has(.pm) > div:first-child * { color: #334155; }
+main:has(.pm) > div:first-child *,
+main:has(.ct) > div:first-child * { color: #334155; }
 main:has(.lc) > div:first-child input,
 main:has(.hlp) > div:first-child input,
 main:has(.hst) > div:first-child input,
@@ -2200,7 +2203,8 @@ main:has(.cg) > div:first-child input,
 main:has(.sg) > div:first-child input,
 main:has(.ig) > div:first-child input,
 main:has(.cp) > div:first-child input,
-main:has(.pm) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
+main:has(.pm) > div:first-child input,
+main:has(.ct) > div:first-child input { background: #F4F7FC; border-color: #E6EEFB; }
 .lc-wrap { padding: 18px 22px 0; max-width: 1600px; margin-inline: auto; }
 .lc { color: #0B1C3F; }
 .lc input[type="number"]::-webkit-outer-spin-button,

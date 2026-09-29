@@ -88,6 +88,7 @@ import ScanPage from './pages/ScanPage';
 import CampaignsPage from './pages/CampaignsPage';
 import SettingsPage from './pages/SettingsPage';
 import ParametresPage from './pages/ParametresPage';
+import CataloguePage from './pages/CataloguePage';
 import JoinPage from './pages/JoinPage';
 import MyWalletCardPage from './pages/MyWalletCardPage';
 import HistoryPage from './pages/HistoryPage';
@@ -381,6 +382,11 @@ function App() {
             <Route path="ai-assistant" element={
               <ProtectedRoute allowedRoles={['business_owner']}>
                 <CopilotPage />
+              </ProtectedRoute>
+            } />
+            <Route path="catalogue" element={
+              <ProtectedRoute allowedRoles={['business_owner']}>
+                <CataloguePage />
               </ProtectedRoute>
             } />
             {/* Paramètres — one page, one tab per sub-page (like Analyses). The

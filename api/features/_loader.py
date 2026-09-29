@@ -49,6 +49,7 @@ MODULES = [
     # Segmentation — the segments, what a campaign at each could bring in,
     # and the builder behind them.
     "features.segmentation",
+    "features.catalogue_page",          # Catalogue produits (products, categories, what sells)
     # Campagnes — the composer, its audience, and what the last sends did.
     # Delivers on two channels at once: web push and the wallet card's offer.
     "features.campaigns_page",
