@@ -53,11 +53,16 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from auth import require_role
+from features import store_scope as S
+
+# Insights are read by the owner, administrateurs and managers — each on the
+# establishments it may see (features/store_scope.py).
+READERS = ["business_owner", "administrateur", "manager"]
 from models import TokenData
 
 router = APIRouter(tags=["insights"])
@@ -229,7 +234,8 @@ MONTHS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août",
              "nov.", "déc."]
 
 
-def used_templates(tid: str, at: datetime, days: int = USED_DAYS) -> Dict[str, Dict[str, Any]]:
+def used_templates(tid: str, at: datetime, days: int = USED_DAYS,
+                   scope: Optional["S.Scope"] = None) -> Dict[str, Dict[str, Any]]:
     """Recommendations turned into a campaign in the last `days` days.
 
     Every campaign created from a recommendation carries its `template` key.
@@ -243,9 +249,14 @@ def used_templates(tid: str, at: datetime, days: int = USED_DAYS) -> Dict[str, D
     for c in _db.campaigns.find({"tenant_id": tid, "template": {"$ne": None},
                                  "status": {"$in": ["sent", "scheduled", "sending"]}},
                                 {"_id": 0, "template": 1, "status": 1, "sent_at": 1,
-                                 "scheduled_for": 1, "created_at": 1}):
+                                 "scheduled_for": 1, "created_at": 1, "store_ids": 1}):
         when = _aware(c.get("sent_at")) or _aware(c.get("scheduled_for")) or _aware(c.get("created_at"))
         if not when or when < cut or not c.get("template"):
+            continue
+        # For an establishment's view, a campaign sent for other
+        # establishments has not used this recommendation here.
+        if scope is not None and not scope.is_all and c.get("store_ids") \
+                and not set(c["store_ids"]) & set(scope.ids):
             continue
         prev = out.get(c["template"])
         if not prev or when > prev["at"]:
@@ -275,28 +286,34 @@ def _mark_used(items: List[Dict[str, Any]], used: Dict[str, Dict[str, Any]]) -> 
 class Shop:
     """Everything the page reasons over, read once."""
 
-    def __init__(self, tid: str, at: datetime):
+    def __init__(self, tid: str, at: datetime, scope: Optional["S.Scope"] = None):
         self.tid, self.at = tid, at
+        # Limited to the chosen establishments when a scope is given
+        # (features/store_scope.py); the whole shop otherwise.
+        self.scope = scope
+        self.mine = S.customer_ids(scope) if scope else None
         self.tenant = _db.tenants.find_one({"id": tid}) or {}
         sector = str(self.tenant.get("sector") or "").lower().strip()
         self.sector = sector or None
         # No sector on file reads as the platform's core audience rather than
         # as "other": FidClic is built for cafés and restaurants first.
         self.food = (sector in FOOD_SECTORS) or not sector
-        self.people = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
+        self.people = list(_db.customers.find(S.customer_filter(scope) if scope else {"tenant_id": tid}, {"_id": 0}))
         since = at - timedelta(days=90)
         self.visits = list(_db.visits.find(
-            {"tenant_id": tid, "visit_time": {"$gte": since - timedelta(days=62)}},
+            {"tenant_id": tid, "visit_time": {"$gte": since - timedelta(days=62)},
+             **(S.visit_filter(scope) if scope else {})},
             {"_id": 0, "amount_paid": 1, "visit_time": 1, "items": 1, "customer_id": 1}))
         baskets = [b for b in (_avg_basket(c) for c in self.people) if b is not None]
         self.shop_avg = sum(baskets) / len(baskets) if baskets else 0.0
         self.monthly = sum(_num(v.get("amount_paid")) for v in self.visits
                            if (t := _aware(v.get("visit_time"))) and t >= at - timedelta(days=30))
-        self.reviews = list(_db.reviews.find({"tenant_id": tid}, {"_id": 0, "rating": 1,
-                                                                   "customer_id": 1}))
+        self.reviews = [r for r in _db.reviews.find({"tenant_id": tid}, {"_id": 0, "rating": 1,
+                                                                          "customer_id": 1})
+                        if self.mine is None or r.get("customer_id") in self.mine]
         self.signups_30 = len([c for c in self.people
                                if (d := _aware(c.get("created_at"))) and (at - d).days <= 30])
-        self.used = used_templates(tid, at)
+        self.used = used_templates(tid, at, scope=scope)
 
     # -- recent visits only, for the things that describe "now" -----------
     def recent(self, days: int = 90) -> List[Dict[str, Any]]:
@@ -345,8 +362,13 @@ def _hero(shop: Shop) -> Dict[str, Any]:
 
 
 def _goal(shop: Shop) -> Dict[str, Any]:
-    """The same monthly goal the Tableau de bord and Segmentation track."""
-    target = _num(shop.tenant.get("monthly_revenue_goal"))
+    """The same monthly goal the Tableau de bord and Segmentation track — the
+    shop's, or the chosen establishments' own (dashboard_home.goal_target)."""
+    if shop.scope is not None and not shop.scope.is_all:
+        from features import dashboard_home as DH
+        target = DH.goal_target(shop.tenant, shop.scope)
+    else:
+        target = _num(shop.tenant.get("monthly_revenue_goal"))
     start = shop.at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     made = sum(_num(v.get("amount_paid")) for v in shop.visits
                if (t := _aware(v.get("visit_time"))) and t >= start)
@@ -926,9 +948,10 @@ def _shelf(items: List[Dict[str, Any]], show: int, by_category: bool = False) ->
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-def _payload(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
-    shop = Shop(tid, at or _now())
+def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
+    shop = Shop(tid, at or _now(), scope)
     return {
+        "scope": scope.describe() if scope else None,
         "sector": shop.sector, "food": shop.food,
         "hero": _hero(shop),
         "goal": _goal(shop),
@@ -949,13 +972,13 @@ def _payload(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
 
 
 @router.get("/api/owner/insights/page")
-def page(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    return _payload(token_data.tenant_id)
+def page(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    return _payload(token_data.tenant_id, scope=S.resolve(token_data, request))
 
 
 @router.get("/api/owner/insights/templates/{key}")
-def template(key: str, day: Optional[int] = None,
-             token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def template(key: str, day: Optional[int] = None, request: Request = None,
+             token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """What a campaign CTA pre-fills the composer with.
 
     When the template names an audience narrower than the composer's four
@@ -964,12 +987,16 @@ def template(key: str, day: Optional[int] = None,
     was about.
     """
     tid = token_data.tenant_id
-    shop = Shop(tid, _now())
+    scope = S.resolve(token_data, request)
+    shop = Shop(tid, _now(), scope)
     # Any segment — a model or one the merchant built — can be messaged: its
     # members are resolved now, by the same evaluator the Segmentation page uses.
     if key.startswith("seg:"):
         from features import segmentation as SEG
         seg = SEG.members(key[4:], token_data=token_data)
+        if shop.mine is not None:
+            # Never another establishment's clients, whatever the segment holds.
+            seg = {**seg, "ids": [i for i in seg["ids"] if i in shop.mine]}
         return {"key": key, "title": "✨ Une attention pour vous",
                 "message": "Une offre spéciale vous attend cette semaine sur présentation de votre carte.",
                 "segment": "all",
@@ -1087,7 +1114,7 @@ def google_review_click(barcode_id: str):
 # Export
 # ---------------------------------------------------------------------------
 @router.get("/api/owner/insights/export.pdf")
-def export_pdf(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def export_pdf(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """The page as a document the merchant can print or forward.
 
     Every figure keeps its basis in the PDF too — an estimate that travels
@@ -1100,7 +1127,7 @@ def export_pdf(token_data: TokenData = Depends(require_role(["business_owner", "
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     tid = token_data.tenant_id
-    data = _payload(tid)
+    data = _payload(tid, scope=S.resolve(token_data, request))
     tenant = _db.tenants.find_one({"id": tid}) or {}
     ink, muted, blue = colors.HexColor("#0B1C3F"), colors.HexColor("#64748B"), colors.HexColor("#2F6BFF")
 

@@ -435,8 +435,10 @@ const DashboardLayout = () => {
             <>
               <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/ai-assistant" icon={Sparkle} label={t('nav.ai_assistant')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns" icon={Megaphone} label={t('nav.campaigns')}    currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation" icon={PieChart} label={t('nav.segmentation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
@@ -452,6 +454,12 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle}      label={t('nav.ai_assistant')}     currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}         currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}          currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
@@ -592,8 +600,8 @@ const DashboardLayout = () => {
             <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
               <span className="mt-0.5 font-bold">i</span>
               <span>
-                Tableau de bord, analyses, clients et campagnes de vos établissements sont disponibles. Les
-                autres pages arrivent très bientôt — vous gérez aussi votre équipe et scannez les cartes.
+                Tableau de bord, analyses, clients, campagnes, segmentation et insights de vos établissements
+                sont disponibles. Les autres pages arrivent très bientôt — vous gérez aussi votre équipe et scannez les cartes.
               </span>
             </div>
           )}

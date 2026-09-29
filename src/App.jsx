@@ -328,7 +328,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="insights" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <InsightsGrowthPage />
               </ProtectedRoute>
             } />
@@ -344,7 +344,7 @@ function App() {
                 Replaces CustomerMapPage, whose France-wide dot map this page
                 supersedes; the old file stays in the repo, unrouted. */}
             <Route path="map" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <GeolocationPage />
               </ProtectedRoute>
             } />
@@ -358,7 +358,7 @@ function App() {
                 CardDesignerPage it replaces has been removed; its advanced
                 knobs live in the "Options avancées" panel on this page. */}
             <Route path="segmentation" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <SegmentationPage />
               </ProtectedRoute>
             } />
@@ -368,7 +368,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="referral" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <ReferralPage />
               </ProtectedRoute>
             } />
@@ -390,7 +390,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="ai-assistant" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <CopilotPage />
               </ProtectedRoute>
             } />
@@ -413,7 +413,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="history" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <HistoryPage />
               </ProtectedRoute>
             } />

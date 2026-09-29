@@ -52,11 +52,17 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_role
 from models import TokenData
+from features import store_scope as S
+
+# Segmentation is read and used by the owner, administrateurs and managers —
+# each counting the clients of the establishments it may see. Segments are
+# shared definitions; each account edits or removes its own (the owner any).
+READERS = ["business_owner", "administrateur", "manager"]
 
 router = APIRouter(tags=["segmentation"])
 _db = None
@@ -385,14 +391,15 @@ def _p_conversion(cust: Dict[str, Any], at: datetime) -> float:
     return P_BANDS[-1][1]
 
 
-def _weekly_revenue(tid: str, at: datetime) -> float:
+def _weekly_revenue(tid: str, at: datetime, scope: Optional["S.Scope"] = None) -> float:
     """One average week of takings, over the last twelve.
 
     Twelve weeks rather than one, because a single quiet week would make every
     segment look extraordinary.
     """
     since = at - timedelta(weeks=12)
-    rows = _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": since}},
+    rows = _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": since},
+                            **(S.visit_filter(scope) if scope else {})},
                            {"_id": 0, "amount_paid": 1})
     return sum(_num(r.get("amount_paid")) for r in rows) / 12.0
 
@@ -492,7 +499,7 @@ def _segment_rows(tid: str, at: datetime) -> List[Dict[str, Any]]:
             "description": doc.get("description") or (
                 f"{len(rules)} critère{'s' if len(rules) > 1 else ''}" if rules else "Tous vos clients"),
             "icon": doc.get("icon") or "target", "tone": doc.get("tone") or "blue",
-            "rules": rules, "builtin": False,
+            "rules": rules, "builtin": False, "created_by": doc.get("created_by"),
             "created_at": doc.get("created_at"), "last_used_at": doc.get("last_used_at"),
         })
     return rows
@@ -502,14 +509,16 @@ def _segment_rows(tid: str, at: datetime) -> List[Dict[str, Any]]:
 # The page
 # ---------------------------------------------------------------------------
 @router.get("/api/owner/segmentation/page")
-def page(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def page(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
     at = _now()
-    people = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
+    people = list(_db.customers.find(S.customer_filter(scope), {"_id": 0}))
     total = len(people)
     baskets = [b for b in (_avg_basket(c) for c in people) if b is not None]
     shop_avg = sum(baskets) / len(baskets) if baskets else 0.0
-    weekly = _weekly_revenue(tid, at)
+    weekly = _weekly_revenue(tid, at, scope)
     distances = _distances(tid, people)
 
     rows = _segment_rows(tid, at)
@@ -532,6 +541,11 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
         for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}):
             sent = _aware(c.get("sent_at"))
             if sent and start <= sent <= end and (c.get("segment") or "all") != "all":
+                if mine is not None:
+                    ids = [i for i in c.get("recipient_ids") or [] if i in mine]
+                    if not ids:
+                        continue
+                    c = {**c, "recipient_ids": ids}
                 out.append(c)
         return out
     now_camp, prev_camp = _targeted(month, at), _targeted(prev, month)
@@ -545,7 +559,8 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
                 continue
             for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$in": ids},
                                       "visit_time": {"$gte": sent,
-                                                     "$lte": sent + timedelta(days=15)}},
+                                                     "$lte": sent + timedelta(days=15)},
+                                      **S.visit_filter(scope)},
                                      {"_id": 0, "amount_paid": 1}):
                 gained += _num(v.get("amount_paid"))
         return gained
@@ -576,8 +591,9 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
         "models": _recommended_models(tid, people, at, distances),
         "segments": sized,
         "fields": FIELDS,
-        "tips": _tips(sized, total, tid, at),
-        "goal": _goal(tid, at),
+        "tips": _tips(sized, total, tid, at, scope),
+        "goal": _goal(tid, at, scope),
+        "scope": scope.describe(),
         "total_clients": total,
         "potential_note": (
             "Le potentiel de CA est une estimation : pour chaque client, son panier moyen "
@@ -609,7 +625,7 @@ def _recommended_models(tid, people, at, distances) -> List[Dict[str, Any]]:
     return out
 
 
-def _goal(tid: str, at: datetime) -> Dict[str, Any]:
+def _goal(tid: str, at: datetime, scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
     """The month's goal — the SAME one the Tableau de bord tracks.
 
     It lives on the tenant (`monthly_revenue_goal`), set in Paramètres. Two
@@ -617,10 +633,15 @@ def _goal(tid: str, at: datetime) -> Dict[str, Any]:
     one page must not find the old one still standing on the other.
     """
     tenant = _db.tenants.find_one({"id": tid}) or {}
-    target = _num(tenant.get("monthly_revenue_goal"))
+    if scope is not None and not scope.is_all:
+        from features import dashboard_home as DH
+        target = DH.goal_target(tenant, scope)
+    else:
+        target = _num(tenant.get("monthly_revenue_goal"))
     start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     made = sum(_num(v.get("amount_paid")) for v in
-               _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": start}},
+               _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": start},
+                                **(S.visit_filter(scope) if scope else {})},
                                {"_id": 0, "amount_paid": 1}))
     return {"target": _money(target), "reached": _money(made),
             "remaining": _money(max(0.0, target - made)),
@@ -633,7 +654,7 @@ TIP_TEMPLATES = {"Clients inactifs": "relance_inactifs", "Clients fidèles": "fi
 
 
 def _tips(sized: List[Dict[str, Any]], total: int, tid: Optional[str] = None,
-          at: Optional[datetime] = None) -> List[Dict[str, Any]]:
+          at: Optional[datetime] = None, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     """Three suggestions, each pointing at a segment that really exists and a
     campaign ready to send to it.
 
@@ -641,7 +662,7 @@ def _tips(sized: List[Dict[str, Any]], total: int, tid: Optional[str] = None,
     next one — the page never keeps asking for what was just done.
     """
     from features import insights_page as E
-    used = E.used_templates(tid, at or _now()) if tid else {}
+    used = E.used_templates(tid, at or _now(), scope=scope) if tid else {}
     by_key = {s["name"]: s for s in sized}
     candidates = []
     dormant = by_key.get("Clients inactifs")
@@ -680,8 +701,8 @@ class Preview(BaseModel):
 
 
 @router.post("/api/owner/segmentation/preview")
-def preview(req: Preview,
-            token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def preview(req: Preview, request: Request = None,
+            token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """The count under the builder, while the merchant is still typing.
 
     Same evaluator as everything else on the page, so the number they approve
@@ -690,7 +711,7 @@ def preview(req: Preview,
     tid = token_data.tenant_id
     at = _now()
     rules = _clean_rules(req.rules)
-    people = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
+    people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
     matched = evaluate(tid, rules, people, at)
     return {"count": len(matched), "total": len(people),
             "share": _pct(len(matched), len(people)),
@@ -708,8 +729,8 @@ class SegmentIn(BaseModel):
 
 
 @router.post("/api/owner/segmentation/segments")
-def create(req: SegmentIn,
-           token_data: TokenData = Depends(require_role(["business_owner"]))):
+def create(req: SegmentIn, request: Request = None,
+           token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
     rules, name = _clean_rules(req.rules), (req.name or "").strip()[:NAME_MAX]
     icon, tone, description = req.icon, req.tone, req.description
@@ -733,20 +754,28 @@ def create(req: SegmentIn,
            "icon": icon or "target", "tone": tone or "blue",
            "rules": rules, "filters": {}, "segment": None,
            "model": req.model or None,
-           "created_at": _now(), "last_used_at": None}
+           "created_at": _now(), "last_used_at": None,
+           "created_by": getattr(token_data, "email", None)}
     _db.saved_segments.insert_one(dict(doc))
     at = _now()
-    matched = evaluate(tid, rules, at=at)
+    people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
+    matched = evaluate(tid, rules, people, at=at)
     return {**doc, "count": len(matched), "summary": describe(rules)}
 
 
+def _owned(doc: Dict[str, Any], token_data: TokenData) -> bool:
+    return token_data.role == "business_owner" or doc.get("created_by") == getattr(token_data, "email", None)
+
+
 @router.put("/api/owner/segmentation/segments/{segment_id}")
-def update(segment_id: str, req: SegmentIn,
-           token_data: TokenData = Depends(require_role(["business_owner"]))):
+def update(segment_id: str, req: SegmentIn, request: Request = None,
+           token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
     doc = _db.saved_segments.find_one({"id": segment_id, "tenant_id": tid})
     if not doc:
         raise HTTPException(status_code=404, detail="Segment introuvable")
+    if not _owned(doc, token_data):
+        raise HTTPException(status_code=403, detail="Seul son auteur (ou le propriétaire) peut le modifier.")
     patch: Dict[str, Any] = {}
     if (req.name or "").strip():
         patch["name"] = req.name.strip()[:NAME_MAX]
@@ -756,12 +785,16 @@ def update(segment_id: str, req: SegmentIn,
         patch["description"] = req.description.strip()[:200]
     _db.saved_segments.update_one({"id": segment_id}, {"$set": patch})
     fresh = _db.saved_segments.find_one({"id": segment_id}, {"_id": 0})
-    return {**fresh, "count": len(evaluate(tid, _rules_of(fresh)))}
+    people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
+    return {**fresh, "count": len(evaluate(tid, _rules_of(fresh), people))}
 
 
 @router.delete("/api/owner/segmentation/segments/{segment_id}")
 def remove(segment_id: str,
-           token_data: TokenData = Depends(require_role(["business_owner"]))):
+           token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    doc = _db.saved_segments.find_one({"id": segment_id, "tenant_id": token_data.tenant_id})
+    if doc and not _owned(doc, token_data):
+        raise HTTPException(status_code=403, detail="Seul son auteur (ou le propriétaire) peut le supprimer.")
     res = _db.saved_segments.delete_one({"id": segment_id, "tenant_id": token_data.tenant_id})
     if not getattr(res, "deleted_count", 0):
         raise HTTPException(status_code=404, detail="Segment introuvable")
@@ -769,8 +802,8 @@ def remove(segment_id: str,
 
 
 @router.get("/api/owner/segmentation/segments/{segment_id}/clients")
-def members(segment_id: str,
-            token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def members(segment_id: str, request: Request = None,
+            token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """Who is in it, right now — for "Voir" and for handing to a campaign."""
     tid = token_data.tenant_id
     at = _now()
@@ -786,7 +819,9 @@ def members(segment_id: str,
         name, rules = doc.get("name") or "Segment", _rules_of(doc)
         _db.saved_segments.update_one({"id": segment_id}, {"$set": {"last_used_at": at}})
 
-    matched = evaluate(tid, rules, at=at)
+    # Only the clients of the establishments the caller may see.
+    people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
+    matched = evaluate(tid, rules, people, at=at)
     return {
         "id": segment_id, "name": name, "summary": describe(rules),
         "count": len(matched),

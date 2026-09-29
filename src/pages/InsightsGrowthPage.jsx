@@ -7,6 +7,7 @@ import {
   Utensils, Sparkles, CalendarDays, Info, Leaf, PartyPopper,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 /**
  * Insights — « Faites grandir votre commerce », built to the approved mockup.
@@ -255,6 +256,10 @@ const GoogleModal = ({ current, onClose, onSaved }) => {
 /* ── page ─────────────────────────────────────────────────────────────── */
 export default function InsightsGrowthPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // Switching an automation on or setting the Google review link changes the
+  // whole shop: the owner's to do.
+  const owner = user?.role === 'business_owner';
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -279,6 +284,10 @@ export default function InsightsGrowthPage() {
     if (cta.kind === 'template') { navigate(`/dashboard/campaigns?template=${encodeURIComponent(cta.template)}`); return; }
     if (cta.kind === 'navigate') { navigate(cta.to); return; }
     if (cta.kind === 'scroll') { scrollTo(cta.target); return; }
+    if ((cta.kind === 'google_review' || cta.kind === 'activate') && !owner) {
+      setFlash('Cette action concerne tout le commerce : demandez au propriétaire de l\u2019activer.');
+      return;
+    }
     if (cta.kind === 'google_review') { setModal('google'); return; }
     if (cta.kind === 'activate') {
       setBusyKey(item.key);
@@ -384,10 +393,12 @@ export default function InsightsGrowthPage() {
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">
                 <p className="text-[14px] font-bold text-[#0B1C3F]">Objectif du mois</p>
-                <button type="button" onClick={() => setModal('goal')}
+{user?.role !== 'manager' && (
+                                <button type="button" onClick={() => setModal('goal')}
                         className="rounded-lg border border-[#E6EEFB] px-2.5 py-1 text-[11.5px] font-semibold text-[#2F6BFF] transition hover:border-[#2F6BFF]">
                   {goal.is_set ? "Modifier l'objectif" : 'Fixer un objectif'}
                 </button>
+                )}
               </div>
               {goal.is_set ? (
                 <>

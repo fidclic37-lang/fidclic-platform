@@ -55,10 +55,11 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_role
+from features import store_scope as S
 from models import TokenData
 
 router = APIRouter(tags=["copilot"])
@@ -72,6 +73,10 @@ RAINY_MM = 2.0             # a day with at least this much rain is a rainy day
 AFFLUENCE_LIFT = 0.20      # a forecast day this far above the mean is worth saying
 SEND_HOUR_UTC = 7          # scheduled steps go just before the 08:00 UTC daily cron
 FEEDBACK_DAYS = {"not_relevant": 90, "later": 7}
+# Who opens the page. Every figure, the chat and the "pas pertinent" follow
+# the establishment menu (features/store_scope.py); the 7-day plan and
+# Autopilot send to the whole shop and stay with the owner.
+READERS = ["business_owner", "administrateur", "manager"]
 
 
 def init(db):
@@ -138,8 +143,10 @@ def _worth(people: List[Dict[str, Any]], shop) -> Tuple[float, float]:
     return visits, euros
 
 
-def _visits_between(tid: str, a: datetime, b: datetime) -> List[Dict[str, Any]]:
-    return list(_db.visits.find({"tenant_id": tid, "visit_time": {"$gte": a, "$lte": b}},
+def _visits_between(tid: str, a: datetime, b: datetime,
+                    scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
+    return list(_db.visits.find({"tenant_id": tid, "visit_time": {"$gte": a, "$lte": b},
+                                 **(S.visit_filter(scope) if scope else {})},
                                 {"_id": 0, "amount_paid": 1, "visit_time": 1, "customer_id": 1}))
 
 
@@ -177,10 +184,17 @@ def _cached(key: str, max_age: timedelta, fetch) -> Any:
     return row.get("data") if row else None       # stale beats nothing when the network is down
 
 
-def _shop_position(tenant: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+def _shop_position(tenant: Dict[str, Any], scope: Optional["S.Scope"] = None) -> Optional[Tuple[float, float]]:
     try:
         from features import geolocation as geo
         lat, lng, _ = geo._shop_position(tenant)
+        # One establishment chosen: its weather, when its address is known.
+        one = scope.single if scope is not None else None
+        branch = next((b for b in tenant.get("branches") or [] if b.get("id") == one), None) if one else None
+        if branch:
+            blat, blng, _ = geo._shop_position({k: v for k, v in branch.items() if k != "branches"})
+            if blat is not None:
+                lat, lng = blat, blng
         if lat is not None and lng is not None:
             return float(lat), float(lng)
     except Exception:
@@ -259,16 +273,17 @@ def events_nearby(pos: Tuple[float, float], start: date, end: date) -> Dict[str,
 # ---------------------------------------------------------------------------
 # The forecast
 # ---------------------------------------------------------------------------
-def _daily_counts(tid: str, days: int, at: datetime) -> Dict[date, int]:
+def _daily_counts(tid: str, days: int, at: datetime, scope: Optional["S.Scope"] = None) -> Dict[date, int]:
     counts: Dict[date, int] = defaultdict(int)
-    for v in _visits_between(tid, at - timedelta(days=days), at):
+    for v in _visits_between(tid, at - timedelta(days=days), at, scope):
         t = v.get("visit_time")
         if isinstance(t, datetime):
             counts[(t if t.tzinfo else t.replace(tzinfo=timezone.utc)).date()] += 1
     return counts
 
 
-def rain_sensitivity(tid: str, pos: Optional[Tuple[float, float]], at: datetime) -> Optional[float]:
+def rain_sensitivity(tid: str, pos: Optional[Tuple[float, float]], at: datetime,
+                     scope: Optional["S.Scope"] = None) -> Optional[float]:
     """How much THIS shop's traffic moves on a rainy day — learned, not assumed.
 
     Each past day's visits are divided by that weekday's average, so a rainy
@@ -279,7 +294,7 @@ def rain_sensitivity(tid: str, pos: Optional[Tuple[float, float]], at: datetime)
     """
     if not pos:
         return None
-    counts = _daily_counts(tid, 90, at)
+    counts = _daily_counts(tid, 90, at, scope)
     if len(counts) < 30:
         return None
     start, end = (at - timedelta(days=90)).date(), (at - timedelta(days=1)).date()
@@ -306,7 +321,8 @@ def rain_sensitivity(tid: str, pos: Optional[Tuple[float, float]], at: datetime)
 def forecast_week(shop) -> Dict[str, Any]:
     """The next seven days: expected visits, and what the expectation rests on."""
     at = shop.at
-    counts = _daily_counts(shop.tid, 56, at)
+    scope = getattr(shop, "scope", None)
+    counts = _daily_counts(shop.tid, 56, at, scope)
     by_wd: Dict[int, List[int]] = defaultdict(list)
     # Fill silent days with zero so an occasional busy Monday is not a pattern.
     for i in range(1, 57):
@@ -316,9 +332,9 @@ def forecast_week(shop) -> Dict[str, Any]:
     if len(base) < 3:
         return {"days": [], "mean": None, "sources": []}
 
-    pos = _shop_position(shop.tenant)
+    pos = _shop_position(shop.tenant, scope)
     wx = weather_forecast(pos) if pos else None
-    factor = rain_sensitivity(shop.tid, pos, at) if wx else None
+    factor = rain_sensitivity(shop.tid, pos, at, scope) if wx else None
     today = at.date()
     ev = events_nearby(pos, today, today + timedelta(days=6)) if pos else {}
 
@@ -508,10 +524,17 @@ def _library(shop) -> List[Dict[str, Any]]:
     return out
 
 
-def _feedback(tid: str, at: datetime) -> Tuple[set, Dict[str, int]]:
-    """(hidden keys, how often each key's CTA was followed) — what the page learns."""
+def _feedback(tid: str, at: datetime, store_key: str = S.ALL) -> Tuple[set, Dict[str, int]]:
+    """(hidden keys, how often each key's CTA was followed) — what the page learns.
+
+    The owner's answers (given on the whole shop) hold everywhere; an answer
+    given on some establishments holds for that same choice only, so an
+    administrateur's "pas pertinent" never hides an idea from the owner.
+    """
     hidden, accepted = set(), defaultdict(int)
     for row in _db.copilot_feedback.find({"tenant_id": tid}, {"_id": 0}):
+        if row.get("store_key", S.ALL) not in (S.ALL, store_key):
+            continue
         until = row.get("until")
         if isinstance(until, datetime) and until.tzinfo is None:
             until = until.replace(tzinfo=timezone.utc)
@@ -528,8 +551,9 @@ def recommendations(shop) -> List[Dict[str, Any]]:
     A recommendation whose campaign went out in the last two weeks makes way
     for the next one — the same rule as Insights, read from the same campaigns.
     """
-    hidden, accepted = _feedback(shop.tid, shop.at)
-    used = getattr(shop, "used", None) or _engine().used_templates(shop.tid, shop.at)
+    scope = getattr(shop, "scope", None)
+    hidden, accepted = _feedback(shop.tid, shop.at, scope.key if scope is not None else S.ALL)
+    used = getattr(shop, "used", None) or _engine().used_templates(shop.tid, shop.at, scope=scope)
     items = [i for i in _library(shop) if i["key"] not in hidden
              and (i.get("cta") or {}).get("template") not in used]
     for i in items:
@@ -596,10 +620,10 @@ def growth(shop, recs: List[Dict[str, Any]], horizon: int) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Activity
 # ---------------------------------------------------------------------------
-def activity(tid: str, days: int, at: datetime) -> Dict[str, Any]:
+def activity(tid: str, days: int, at: datetime, scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
     """Four figures, their change, and the bars under them."""
-    now_rows = _visits_between(tid, at - timedelta(days=days), at)
-    prev_rows = _visits_between(tid, at - timedelta(days=2 * days), at - timedelta(days=days))
+    now_rows = _visits_between(tid, at - timedelta(days=days), at, scope)
+    prev_rows = _visits_between(tid, at - timedelta(days=2 * days), at - timedelta(days=days), scope)
 
     def figs(rows):
         rev = sum(_num(v.get("amount_paid")) for v in rows)
@@ -889,28 +913,53 @@ def _llm_ready() -> bool:
         return False
 
 
+def _is_owner(token_data: TokenData) -> bool:
+    return getattr(token_data, "role", None) == "business_owner"
+
+
+def _for(token_data: TokenData, recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Activating an automation or the Google review link changes the shop's
+    settings: those ideas are the owner's to act on."""
+    return recs if _is_owner(token_data) else [r for r in recs if r["kind"] != "setup"]
+
+
+def _plan_view(shop, token_data: TokenData, recs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The 7-day plan sends to the whole shop: it is shown on the whole shop,
+    to the owner. Anywhere else the page says where it lives."""
+    if not _is_owner(token_data) or not shop.scope.is_all:
+        return {"available": False, "autopilot": False, "steps": [],
+                "note": ("Le plan d'action sur 7 jours concerne tout le commerce : "
+                         "choisissez « Toutes les branches » pour le voir."
+                         if _is_owner(token_data) else
+                         "Le plan d'action sur 7 jours et l'Autopilot sont gérés par le propriétaire "
+                         "pour tout le commerce.")}
+    doc = _plan(shop, recs)
+    by_key = {r["key"]: r for r in recs}
+    return {"available": True, "autopilot": bool(doc.get("autopilot")), "start": doc["start"],
+            "steps": [_step_view(shop, doc, s, by_key) for s in doc["steps"]]}
+
+
 @router.get("/api/owner/copilot/page")
-def page(horizon: int = 30, days: int = 7,
-         token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def page(horizon: int = 30, days: int = 7, request: Request = None,
+         token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     E = _engine()
     horizon = horizon if horizon in HORIZONS else 30
     days = days if days in ACTIVITY_WINDOWS else 7
-    shop = E.Shop(token_data.tenant_id, _now())
-    recs = recommendations(shop)
+    scope = S.resolve(token_data, request)
+    shop = E.Shop(token_data.tenant_id, _now(), scope)
+    recs = _for(token_data, recommendations(shop))
     fc = forecast_week(shop)
-    doc = _plan(shop, recs)
-    by_key = {r["key"]: r for r in recs}
     opps = opportunities(shop, fc)
     return {
         "shop": {"name": shop.tenant.get("name") or "votre commerce", "sector": shop.sector},
+        "scope": scope.describe(),
         "growth": growth(shop, recs, horizon),
         "recommendations": {"top": [_public(r) for r in recs[:3]],
                             "all": [_public(r) for r in recs], "total": len(recs)},
-        "activity": activity(shop.tid, days, shop.at),
+        "activity": activity(shop.tid, days, shop.at, scope),
         "opportunities": {"top": opps[:4], "all": opps, "total": len(opps)},
         "forecast": fc,
-        "plan": {"autopilot": bool(doc.get("autopilot")), "start": doc["start"],
-                 "steps": [_step_view(shop, doc, s, by_key) for s in doc["steps"]]},
+        "plan": _plan_view(shop, token_data, recs),
         "learning": LEARNING,
         "assistant": {"online": _llm_ready(),
                       "prompts": ["Augmenter mes ventes ce week-end", "Relancer mes clients inactifs",
@@ -926,13 +975,16 @@ class Feedback(BaseModel):
 
 
 @router.post("/api/owner/copilot/recommendations/{key}/feedback")
-def feedback(key: str, body: Feedback,
-             token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    """"Pas pertinent", "Plus tard" or "accepted" — what the ranking learns from."""
+def feedback(key: str, body: Feedback, request: Request = None,
+             token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    """"Pas pertinent", "Plus tard" or "accepted" — what the ranking learns from.
+    Kept for the establishments it was given on (see _feedback)."""
     if body.kind not in (*FEEDBACK_DAYS, "accepted"):
         raise HTTPException(status_code=400, detail="Retour inconnu")
     at = _now()
-    row = {"tenant_id": token_data.tenant_id, "key": key, "kind": body.kind, "at": at}
+    row = {"tenant_id": token_data.tenant_id, "key": key, "kind": body.kind, "at": at,
+           # The owner's answer holds for every establishment.
+           "store_key": S.ALL if _is_owner(token_data) else S.resolve(token_data, request).key}
     if body.kind in FEEDBACK_DAYS:
         row["until"] = at + timedelta(days=FEEDBACK_DAYS[body.kind])
     _db.copilot_feedback.insert_one(row)
@@ -1064,7 +1116,7 @@ def _intents(message: str) -> List[str]:
 
 def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any]) -> Dict[str, Any]:
     E = _engine()
-    act = activity(shop.tid, 30, shop.at)
+    act = activity(shop.tid, 30, shop.at, getattr(shop, "scope", None))
     cards = {c["key"]: c for c in act["cards"]}
     best = E._best_weekday(shop)
     return {
@@ -1135,30 +1187,46 @@ class ChatIn(BaseModel):
     message: str
 
 
+def _mine(token_data: TokenData) -> Dict[str, Any]:
+    """Each account keeps its own conversation. Messages from before accounts
+    were told apart belong to the owner."""
+    q: Dict[str, Any] = {"tenant_id": token_data.tenant_id}
+    email = getattr(token_data, "email", None)
+    if _is_owner(token_data):
+        q["$or"] = [{"by": email}, {"by": {"$exists": False}}]
+    else:
+        q["by"] = email
+    return q
+
+
 @router.get("/api/owner/copilot/chat")
-def chat_history(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    rows = list(_db.copilot_chats.find({"tenant_id": token_data.tenant_id}, {"_id": 0})
+def chat_history(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    rows = list(_db.copilot_chats.find(_mine(token_data), {"_id": 0})
                 .sort("at", -1).limit(20))
     return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or []}
                          for r in reversed(rows)]}
 
 
 @router.post("/api/owner/copilot/chat")
-def chat(body: ChatIn, token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def chat(body: ChatIn, request: Request = None,
+         token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     E = _engine()
     message = re.sub(r"\s+", " ", (body.message or "").strip())[:500]
     if not message:
         raise HTTPException(status_code=400, detail="Posez votre question.")
     tid = token_data.tenant_id
-    shop = E.Shop(tid, _now())
-    recs = recommendations(shop)
+    scope = S.resolve(token_data, request)
+    shop = E.Shop(tid, _now(), scope)
+    recs = _for(token_data, recommendations(shop))
     # What the merchant asks for directly is always available — even a
     # recommendation resting after recent use or one they dismissed. The
     # shelves step aside; the chat does not refuse.
-    by_key = {r["key"]: r for r in _library(shop)}
+    by_key = {r["key"]: r for r in _for(token_data, _library(shop))}
     fc = forecast_week(shop)
     facts = _facts(shop, recs, fc)
-    used = _engine().used_templates(tid, shop.at)
+    used = shop.used
+    if scope.ids is not None:
+        facts["etablissements"] = scope.describe()["label"]
     facts["campagnes_recentes"] = [{"modele": k, "le": v["at"].date().isoformat(), "statut": v["status"]}
                                    for k, v in used.items()]
     intents = _intents(message)
@@ -1179,8 +1247,8 @@ def chat(body: ChatIn, token_data: TokenData = Depends(require_role(["business_o
 
     at = _now()
     _db.copilot_chats.insert_many([
-        {"tenant_id": tid, "role": "user", "text": message, "at": at},
-        {"tenant_id": tid, "role": "assistant", "text": reply.strip(), "actions": actions,
-         "source": source, "at": at + timedelta(milliseconds=1)},
+        {"tenant_id": tid, "by": getattr(token_data, "email", None), "role": "user", "text": message, "at": at},
+        {"tenant_id": tid, "by": getattr(token_data, "email", None), "role": "assistant", "text": reply.strip(),
+         "actions": actions, "source": source, "at": at + timedelta(milliseconds=1)},
     ])
     return {"reply": reply.strip(), "actions": actions, "source": source}

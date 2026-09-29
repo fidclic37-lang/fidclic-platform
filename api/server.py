@@ -8972,10 +8972,15 @@ def get_ltv_breakdown(
 # ============================================================
 # Smart Alerts — unified severity-ranked feed
 # ============================================================
+ALERT_READERS = ["business_owner", "administrateur", "manager"]
+
+
 @app.get("/api/owner/insights/alerts")
 def get_proactive_alerts(
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(ALERT_READERS, partial_ok=True)),
     branch_id: Optional[str] = Query(None),
+    with_copilot: bool = True,
 ):
     """Auto-detected business situations the owner should know about.
 
@@ -8995,12 +9000,19 @@ def get_proactive_alerts(
       - info:     birthdays this month ≥5
                   OR cards filled today ≥3
     """
+    from features import store_scope as _S
     tid = token_data.tenant_id
     now = datetime.now(timezone.utc)
     p30 = now - timedelta(days=30)
     p60 = now - timedelta(days=60)
 
-    cust_q = _branch_customer_filter(tid, branch_id)
+    # The establishment asked for (or chosen in the menu), never one this
+    # account does not cover (features/store_scope.py).
+    scope = _S.resolve(token_data, request, requested=branch_id if isinstance(branch_id, str) else None)
+    cust_q = {"tenant_id": tid, "deleted_at": {"$exists": False}}
+    mine = _S.customer_ids(scope)
+    if mine is not None:
+        cust_q["id"] = {"$in": list(mine)}
     customers = list(db.customers.find(cust_q))
     total = len(customers)
     if total == 0:
@@ -9122,10 +9134,13 @@ def get_proactive_alerts(
              metric=str(len(reactivated)),
              action="/dashboard/insights")
 
-    # --- FidClic IA Autopilot: steps it prepared that are waiting for the OK
+    # --- FidClic IA Autopilot: steps it prepared that are waiting for the OK.
+    # The plan sends to the whole shop: it is the owner's, on the whole shop.
     try:
         from features.copilot import pending_alerts as _copilot_alerts
-        for _a in _copilot_alerts(tid, now):
+        _plan_alerts = (_copilot_alerts(tid, now)
+                        if with_copilot and token_data.role == "business_owner" and scope.is_all else [])
+        for _a in _plan_alerts:
             push(_a["severity"], _a["id"], _a["title"], _a["body"], _a.get("metric"), _a.get("action"))
     except Exception as _e:
         print(f"alerts: copilot hook failed (non-fatal): {_e}")
@@ -9143,7 +9158,8 @@ def get_proactive_alerts(
 
 @app.get("/api/owner/insights/alerts/multi-store")
 def get_proactive_alerts_multi_store(
-    token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(ALERT_READERS, partial_ok=True)),
 ):
     """Per-shop alerts wrapper. For each branch under the tenant, calls the
     alert engine and tags each result with `branch_id` and `branch_name`.
@@ -9154,11 +9170,18 @@ def get_proactive_alerts_multi_store(
     that one branch (or a synthesised one) so single-shop owners aren't left
     with an empty bell.
     """
+    from features import store_scope as _S
     tid = token_data.tenant_id
     branches = list(db.branches.find({"tenant_id": tid})) if 'branches' in db.list_collection_names() else []
     if not branches:
         tenant = db.tenants.find_one({"id": tid}) or {}
         branches = tenant.get("branches") or []
+    # The bell follows the establishment menu: the chosen establishment, or
+    # every establishment this account covers.
+    scope = _S.resolve(token_data, request)
+    wanted = set(scope.ids if scope.ids is not None else scope.all_ids)
+    if branches:
+        branches = [b for b in branches if b.get("id") in wanted]
 
     alerts_combined: list = []
 
@@ -9170,7 +9193,7 @@ def get_proactive_alerts_multi_store(
             if not bid:
                 continue
             try:
-                br_alerts = get_proactive_alerts(token_data=token_data, branch_id=bid)
+                br_alerts = get_proactive_alerts(token_data=token_data, branch_id=bid, with_copilot=False)
                 for a in br_alerts.get("alerts") or []:
                     alerts_combined.append({
                         **a,
@@ -9186,7 +9209,7 @@ def get_proactive_alerts_multi_store(
         # with the tenant's display name so the bell still says something
         # meaningful, but treat the result as a single-shop bucket.
         try:
-            tenant_alerts = get_proactive_alerts(token_data=token_data, branch_id=None)
+            tenant_alerts = get_proactive_alerts(token_data=token_data, branch_id=None, with_copilot=False)
             tenant = db.tenants.find_one({"id": tid}) or {}
             label = tenant.get("name") or "Ma boutique"
             for a in tenant_alerts.get("alerts") or []:
@@ -9200,7 +9223,18 @@ def get_proactive_alerts_multi_store(
         except Exception:
             pass
 
-    # Sort by severity only — there is no tenant scope anymore.
+    # FidClic IA's prepared steps concern the whole shop: said once, not per
+    # branch, and only to the owner looking at the whole shop.
+    if token_data.role == "business_owner" and scope.is_all:
+        try:
+            from features.copilot import pending_alerts as _copilot_alerts
+            for _a in _copilot_alerts(tid, datetime.now(timezone.utc)):
+                alerts_combined.append({**_a, "metric": _a.get("metric"), "ts": datetime.now(timezone.utc).isoformat(),
+                                        "branch_id": None, "branch_name": None, "scope": "shop"})
+        except Exception as _e:
+            print(f"alerts: copilot hook failed (non-fatal): {_e}")
+
+    # Sort by severity only.
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     alerts_combined.sort(key=lambda a: severity_order.get(a.get("severity"), 99))
 

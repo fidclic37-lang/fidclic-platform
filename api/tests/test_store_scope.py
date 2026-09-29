@@ -6,6 +6,7 @@ Run:
     cd api && python3 tests/test_store_scope.py
 """
 import asyncio
+import json
 import datetime as dt
 import os
 import sys
@@ -26,9 +27,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import clients_page as CP
     from features import campaigns_page as KP
     from features import analyses as AN
+    from features import insights_page as IP
+    from features import segmentation as SG
+    from features import activity_history as AH
+    from features import geolocation as GEO
+    from features import referrals as RF
+    from features import copilot as CO
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO):
         m.init(db)
     passed = failed = 0
 
@@ -242,6 +249,151 @@ with mongomock.patch(servers=(("localhost", 27017),)):
             print("   tab failed:", key, e)
             tabs_ok = False
     check("every tab builds for a manager", tabs_ok)
+
+    print("\nLa page Insights, limitée")
+    shop_sara = IP.Shop("t1", now, S.resolve(SARA, Req("orleans")))
+    check("its read of the shop is Blois' clients only", sorted(c["id"] for c in shop_sara.people) == ["c1", "c2", "c4"])
+    check("and Blois' tills only", all(v.get("amount_paid") in (20.0, 4.0) for v in shop_sara.visits))
+    check("the goal is Blois' own", IP.page(request=Req(), token_data=SARA)["goal"]["target"] == 200.0)
+    check("the owner's page still reads the whole shop",
+          len(IP.Shop("t1", now, S.resolve(OWNER, Req())).people) == 4 and IP.page(request=Req(), token_data=OWNER)["goal"]["target"] == 1000.0)
+    db.segments.insert_one({"id": "sg1", "tenant_id": "t1", "name": "Tous", "rules": [], "created_at": now})
+    try:
+        tpl = IP.template("seg:sg1", request=Req(), token_data=SARA)
+        seg_ok = set(tpl["audience"]["ids"]) <= {"c1", "c2", "c4"}
+    except HTTPException as e:
+        seg_ok = e.status_code in (403, 404)
+    check("a segment's members, messaged from a manager, never include another establishment's", seg_ok)
+    check("Insights opens to them", guard(SARA, IP.READERS, partial_ok=True) == 200)
+    check("a campaign sent for Tours does not mark a recommendation used for Blois",
+          (db.campaigns.insert_one({"id": "kt", "tenant_id": "t1", "template": "a_risque", "status": "sent",
+                                    "sent_at": now, "store_ids": ["tours"]}),
+           "a_risque" not in IP.used_templates("t1", now, scope=S.resolve(SARA, Req())))[1]
+          and "a_risque" in IP.used_templates("t1", now, scope=S.resolve(ALI, Req())))
+
+    print("\nLa page Segmentation, limitée")
+    pg = SG.page(request=Req(), token_data=SARA)
+    check("'Clients total' is the manager's establishment", pg["total_clients"] == 3)
+    check("every segment counts its clients only", all(x["count"] <= 3 for x in pg["segments"]))
+    check("the goal is Blois' own", pg["goal"]["target"] == 200.0)
+    check("the preview counts its clients only", SG.preview(SG.Preview(rules=[]), request=Req(), token_data=SARA)["total"] == 3)
+    mine_seg = SG.create(SG.SegmentIn(name="Blois fidèles", rules=[]), request=Req(), token_data=SARA)
+    check("a manager creates a segment, counted on its establishment", mine_seg["count"] == 3 and mine_seg["created_by"] == "sara@c.fr")
+    check("its members are its establishment's clients",
+          sorted(SG.members(mine_seg["id"], request=Req(), token_data=SARA)["ids"]) == ["c1", "c2", "c4"])
+    check("the owner, on 'all', sees everyone in the same segment",
+          len(SG.members(mine_seg["id"], request=Req(), token_data=OWNER)["ids"]) == 4)
+    try:
+        SG.remove(mine_seg["id"], token_data=ALI)
+        other = True
+    except HTTPException:
+        other = False
+    check("another account cannot delete it", other is False)
+    check("the owner can", SG.remove(mine_seg["id"], token_data=OWNER)["deleted"] is True)
+    check("Segmentation opens to them", guard(SARA, SG.READERS, partial_ok=True) == 200)
+
+    print("\nL'Historique, limité")
+    db.audit_log.insert_one({"tenant_id": "t1", "action": "card.settings.updated", "at": now.isoformat(), "after": {"logo_url": 1}})
+    feed = AH.activity(request=Req(), date_from=None, date_to=None, tab="all", action=None, customer=None,
+                       page=1, per_page=100, token_data=SARA)
+    check("a manager's feed holds only its establishment's clients",
+          all(r["customer_id"] in (None, "c1", "c2", "c4") for r in feed["rows"]))
+    check("no scan from another establishment's till",
+          feed["counts"].get("scan", 0) == db.visits.count_documents({"tenant_id": "t1", "branch_id": "blois"}))
+    check("changes to the card (the whole shop's) are not in it", feed["counts"].get("card_update", 0) == 0)
+    owner_feed = AH.activity(request=Req(), date_from=None, date_to=None, tab="all", action=None, customer=None,
+                             page=1, per_page=100, token_data=OWNER)
+    check("the owner's feed has every scan and the card change",
+          owner_feed["counts"].get("scan", 0) == db.visits.count_documents({"tenant_id": "t1"})
+          and owner_feed["counts"].get("card_update", 0) >= 1)
+    check("the figures follow too", {c["key"]: c["value"] for c in AH.stats(request=Req(), date_from=None, date_to=None,
+                                                                             token_data=SARA)["cards"]}["scan"]
+          == feed["counts"].get("scan", 0))
+    check("Historique opens to them", guard(SARA, AH.READERS, partial_ok=True) == 200)
+
+    print("\nLa Géolocalisation, limitée")
+    db.tenants.update_one({"id": "t1"}, {"$set": {"lat": 47.39, "lng": 0.69,
+                                                  "branches": [{"id": "tours", "name": "Tours", "latitude": 47.39, "longitude": 0.69},
+                                                               {"id": "blois", "name": "Blois", "latitude": 47.59, "longitude": 1.33},
+                                                               {"id": "orleans", "name": "Orléans"}]}})
+    for cid, lat in (("c1", 47.40), ("c2", 47.60), ("c3", 47.90), ("c4", 47.58)):
+        db.customers.update_one({"id": cid}, {"$set": {"latitude": lat, "longitude": 1.0}})
+    g = GEO.catchment(date_from=None, date_to=None, mode="car", scope="regional", request=Req(), token_data=SARA)
+    check("the manager's map is centred on its establishment", round(g["shop"]["lat"], 2) == 47.59)
+    check("and counts its clients only", g["clients_total"] <= 3)
+    check("the owner's map is the shop's", round(GEO.catchment(date_from=None, date_to=None, mode="car", scope="regional",
+                                                               request=Req(), token_data=OWNER)["shop"]["lat"], 2) == 47.39)
+    check("Géolocalisation opens to them", guard(SARA, GEO.READERS, partial_ok=True) == 200)
+
+    print("\nLe Parrainage, limité")
+    db.referral_redemptions.insert_many([
+        {"tenant_id": "t1", "referrer_customer_id": "c1", "referee_customer_id": "c2", "created_at": now, "referrer_points": 10},
+        {"tenant_id": "t1", "referrer_customer_id": "c1", "referee_customer_id": "c3", "created_at": now, "referrer_points": 10},
+    ])
+    rf = lambda tok: {c["key"]: c["value"] for c in RF.overview(date_from=None, date_to=None, request=Req(), token_data=tok)["cards"]}
+    check("a manager counts the parrainages that brought clients to its establishment", rf(SARA)["referrals"] == 1)
+    check("the owner counts all of them", rf(OWNER)["referrals"] == 2)
+    check("Parrainage opens to them", guard(SARA, RF.READERS, partial_ok=True) == 200)
+
+    print("\nFidClic IA, limité")
+    from services import llm
+    seen = {}
+    llm._force_complete = lambda sys_, user: (seen.__setitem__("prompt", user), "ok")[1]
+    co = CO.page(horizon=30, days=30, request=Req(), token_data=SARA)
+    acts = {c["key"]: c["value"] for c in co["activity"]["cards"]}
+    check("a manager's activity is its establishment's tills", acts["visits"] == db.visits.count_documents(
+        {"tenant_id": "t1", "branch_id": "blois", "visit_time": {"$gte": now - dt.timedelta(days=30)}}))
+    owner_co = CO.page(horizon=30, days=30, request=Req(), token_data=OWNER)
+    check("the owner's is the whole shop's", {c["key"]: c["value"] for c in owner_co["activity"]["cards"]}["visits"]
+          == db.visits.count_documents({"tenant_id": "t1", "visit_time": {"$gte": now - dt.timedelta(days=30)}}))
+    check("the 7-day plan is not offered to a manager", co["plan"]["available"] is False and co["plan"]["steps"] == [])
+    check("the owner has it on the whole shop", owner_co["plan"]["available"] is True)
+    check("… and not on a single establishment",
+          CO.page(request=Req("tours"), token_data=OWNER)["plan"]["available"] is False)
+    check("ideas that change the shop's settings are the owner's",
+          all(r["kind"] != "setup" for r in co["recommendations"]["all"]))
+    check("the page says which establishments it reads", co["scope"]["label"] == "Blois")
+    CO.chat(CO.ChatIn(message="Analyser mes derniers résultats"), request=Req(), token_data=SARA)
+    facts = json.loads(seen["prompt"].split("(JSON) :\n", 1)[1].split("\n\nQuestion", 1)[0])
+    check("the chat is grounded on its establishment's clients only", facts["clients_total"] == 3
+          and facts["etablissements"] == "Blois")
+    check("each account keeps its own conversation",
+          len(CO.chat_history(token_data=SARA)["messages"]) == 2 and CO.chat_history(token_data=OWNER)["messages"] == [])
+    shown = [r["key"] for r in co["recommendations"]["all"]]
+    if shown:
+        CO.feedback(shown[0], CO.Feedback(kind="not_relevant"), request=Req(), token_data=SARA)
+        check("a manager's 'pas pertinent' hides it for Blois only",
+              shown[0] not in [r["key"] for r in CO.page(request=Req(), token_data=SARA)["recommendations"]["all"]]
+              and CO._feedback("t1", now, S.ALL)[0] == set())
+    CO.feedback("relance_inactifs", CO.Feedback(kind="later"), request=Req("tours"), token_data=OWNER)
+    check("the owner's holds everywhere, even given on one establishment",
+          "relance_inactifs" in CO._feedback("t1", now, "blois")[0])
+    check("FidClic IA opens to them", guard(SARA, CO.READERS, partial_ok=True) == 200)
+    check("Autopilot and the plan stay the owner's",
+          guard(SARA, ["business_owner"]) == 403 and guard(ALI, ["business_owner"]) == 403)
+
+    print("\nLa cloche")
+    today = now.date().isoformat()
+    db.copilot_plans.update_one({"tenant_id": "t1"}, {"$set": {"start": today, "autopilot": True,
+                                 "steps": [{"id": "st1", "key": "relance_inactifs", "kind": "campaign", "offset": 0,
+                                            "campaign_id": "kd"}]}}, upsert=True)
+    db.campaigns.insert_one({"id": "kd", "tenant_id": "t1", "status": "draft", "targeted_count": 3})
+    bell = lambda tok, store=None: server.get_proactive_alerts_multi_store(request=Req(store), token_data=tok)
+    b_sara, b_ali, b_owner = bell(SARA), bell(ALI), bell(OWNER)
+    check("a manager's bell covers its establishment only", b_sara["branches_covered"] == 1
+          and all(a["branch_id"] == "blois" for a in b_sara["alerts"]))
+    check("an administrateur's, its own", b_ali["branches_covered"] == 2
+          and all(a["branch_id"] in ("tours", "blois") for a in b_ali["alerts"]))
+    check("the owner's, every establishment", b_owner["branches_covered"] == 3)
+    check("with one chosen in the menu, that one", bell(OWNER, "orleans")["branches_covered"] == 1)
+    cop = lambda b: sum(1 for a in b["alerts"] if a["id"].startswith("copilot:"))
+    check("FidClic IA's prepared step is said once, to the owner on the whole shop",
+          cop(b_owner) == 1 and cop(b_sara) == 0 and cop(b_ali) == 0 and cop(bell(OWNER, "tours")) == 0)
+    one = server.get_proactive_alerts(request=Req(), token_data=SARA)
+    check("the single-shop alerts read its clients only", all(a["id"] != "copilot:st1" for a in one["alerts"]))
+    check("asking for another establishment's alerts never widens",
+          S.resolve(SARA, None, requested="tours").ids == ["blois"])
+    check("the bell opens to them", guard(SARA, server.ALERT_READERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
