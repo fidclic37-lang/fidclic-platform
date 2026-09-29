@@ -24,9 +24,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import team_access as T
     from features import dashboard_home as DH
     from features import clients_page as CP
+    from features import campaigns_page as KP
 
     db = server.db
-    for m in (S, T, DH, CP):
+    for m in (S, T, DH, CP, KP):
         m.init(db)
     passed = failed = 0
 
@@ -189,6 +190,34 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         other_deleted = False
     check("another account cannot delete it", other_deleted is False)
     check("its author can", server.delete_saved_segment(seg["id"], token_data=SARA)["status"] == "ok")
+
+    print("\nLa page Campagnes, limitée")
+    pg = KP.page(request=Req(), token_data=SARA)
+    seg = {x["key"]: x["count"] for x in pg["segments"]}
+    check("'Tous mes clients' counts the manager's establishment only", seg["all"] == 3)
+    mine_recent = [r for r in pg["recent"] if r["name"] == "Promo"]
+    check("an owner's campaign shows only the recipients from its establishment",
+          mine_recent and mine_recent[0]["audience_count"] == 2)
+    check("the owner still sees the whole campaign",
+          [r for r in KP.page(request=Req(), token_data=OWNER)["recent"] if r["name"] == "Promo"][0]["audience_count"] == 3)
+    out = KP.compose(KP.Compose(title="Café offert", message="Venez !", segment="all", draft=True),
+                     request=Req(), token_data=SARA)
+    doc = db.campaigns.find_one({"id": out["id"]})
+    check("a manager's campaign goes to its establishment's clients", sorted(doc["recipient_ids"]) == ["c1", "c2", "c4"])
+    check("and records its establishment and sender", doc["store_ids"] == ["blois"] and doc["sent_by"] == "sara@c.fr")
+    out = KP.compose(KP.Compose(title="x", message="y", customer_ids=["c2", "c3"], draft=True), request=Req(), token_data=SARA)
+    check("hand-picked clients from another establishment are dropped",
+          db.campaigns.find_one({"id": out["id"]})["recipient_ids"] == ["c2"])
+    try:
+        KP.compose(KP.Compose(title="x", message="y", customer_ids=["c3"]), request=Req(), token_data=SARA)
+        refused = False
+    except HTTPException:
+        refused = True
+    check("none of its own → refused, nothing sent", refused)
+    check("the administrateur reaches Tours + Blois",
+          sorted(db.campaigns.find_one({"id": KP.compose(KP.Compose(title="a", message="b", draft=True),
+                                                         request=Req(), token_data=ALI)["id"]})["recipient_ids"]) == ["c1", "c2", "c4"])
+    check("Campagnes opens to them", guard(SARA, KP.SENDERS, partial_ok=True) == 200)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

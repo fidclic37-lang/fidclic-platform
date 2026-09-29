@@ -74,9 +74,13 @@ def resolve(token: TokenData, request: Optional[Request] = None, requested: Opti
     stores = T.stores(token.tenant_id)
     all_ids = [s["id"] for s in stores]
     names = {s["id"]: s["name"] for s in stores}
-    me = _db.users.find_one({"email": token.email}, {"_id": 0, "role": 1, "tenant_id": 1, "branch_ids": 1}) or {}
+    email = getattr(token, "email", None)
+    me = (_db.users.find_one({"email": email}, {"_id": 0, "role": 1, "tenant_id": 1, "branch_ids": 1}) or {}) if email else {}
     allowed = T._covered(me, all_ids) if me else []
-    if token.role == "business_owner":
+    # The owner — and the server calling a feature on its own behalf (the
+    # Copilote preparing a step: a token with no account behind it) — covers
+    # every establishment.
+    if getattr(token, "role", None) == "business_owner" or not email:
         allowed = list(all_ids)
     if not allowed:
         raise HTTPException(status_code=403, detail="Aucun établissement ne vous est attribué.")

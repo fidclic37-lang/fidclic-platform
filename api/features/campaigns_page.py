@@ -38,11 +38,16 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_role
 from models import TokenData
+from features import store_scope as S
+
+# Campaigns are the owner's, an administrateur's (its establishments) and a
+# manager's (its establishment) — each reaches only its own clients.
+SENDERS = ["business_owner", "administrateur", "manager"]
 
 router = APIRouter(tags=["campagnes"])
 _db = None
@@ -115,7 +120,8 @@ def _birthday_window(at: datetime) -> List[str]:
     return [(at + timedelta(days=i)).strftime("%m-%d") for i in range(BIRTHDAY_DAYS)]
 
 
-def audience(tid: str, segment: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
+def audience(tid: str, segment: str, at: Optional[datetime] = None,
+             mine: Optional[set] = None) -> List[Dict[str, Any]]:
     """The customers a segment names. Anything unknown is refused rather than
     quietly falling through to the whole client base — a mistyped segment must
     never message everybody."""
@@ -129,6 +135,8 @@ def audience(tid: str, segment: str, at: Optional[datetime] = None) -> List[Dict
     elif segment == "birthday":
         q["birthday"] = {"$in": _birthday_window(at)}
 
+    if mine is not None:
+        q["id"] = {"$in": list(mine)}
     people = list(_db.customers.find(q, {"_id": 0}))
     if segment == "inactive":
         cut = at - timedelta(days=INACTIVE_DAYS)
@@ -156,12 +164,14 @@ def _opened_ids(tid: str, recipients: List[str], sent_at: datetime) -> set:
     return {r["customer_id"] for r in rows}
 
 
-def _attributed_revenue(tid: str, recipients: List[str], sent_at: datetime) -> float:
+def _attributed_revenue(tid: str, recipients: List[str], sent_at: datetime,
+                        scope: Optional["S.Scope"] = None) -> float:
     if not recipients or not sent_at:
         return 0.0
     rows = _db.visits.find(
         {"tenant_id": tid, "customer_id": {"$in": recipients},
-         "visit_time": {"$gte": sent_at, "$lte": sent_at + timedelta(days=ATTRIBUTION_DAYS)}},
+         "visit_time": {"$gte": sent_at, "$lte": sent_at + timedelta(days=ATTRIBUTION_DAYS)},
+         **(S.visit_filter(scope) if scope else {})},
         {"_id": 0, "amount_paid": 1})
     return round(sum(float(r.get("amount_paid") or 0) for r in rows), 2)
 
@@ -170,13 +180,27 @@ def _pct(part: float, whole: float) -> int:
     return round(part / whole * 100) if whole else 0
 
 
-def _sent_between(tid: str, start: datetime, end: datetime) -> List[Dict[str, Any]]:
+def _limit(rows: List[Dict[str, Any]], mine: Optional[set]) -> List[Dict[str, Any]]:
+    """For an administrateur or a manager, a campaign counts for the clients of
+    its establishments only; one that reached none of them is not shown."""
+    if mine is None:
+        return rows
+    out = []
+    for c in rows:
+        ids = [i for i in c.get("recipient_ids") or [] if i in mine]
+        if ids:
+            out.append({**c, "recipient_ids": ids, "delivered_count": min(int(c.get("delivered_count") or 0), len(ids)),
+                        "targeted_count": len(ids)})
+    return out
+
+
+def _sent_between(tid: str, start: datetime, end: datetime, mine: Optional[set] = None) -> List[Dict[str, Any]]:
     rows = list(_db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}))
-    return [c for c in rows
-            if (d := _aware(c.get("sent_at"))) and start <= d <= end]
+    return _limit([c for c in rows
+                   if (d := _aware(c.get("sent_at"))) and start <= d <= end], mine)
 
 
-def _totals(tid: str, rows: List[Dict[str, Any]]) -> Dict[str, float]:
+def _totals(tid: str, rows: List[Dict[str, Any]], scope: Optional["S.Scope"] = None) -> Dict[str, float]:
     reach = opened = clicks = 0
     revenue = 0.0
     for c in rows:
@@ -185,7 +209,7 @@ def _totals(tid: str, rows: List[Dict[str, Any]]) -> Dict[str, float]:
         reach += len(ids)
         opened += len(_opened_ids(tid, ids, at))
         clicks += int(c.get("offer_clicks") or 0)
-        revenue += _attributed_revenue(tid, ids, at)
+        revenue += _attributed_revenue(tid, ids, at, scope)
     return {"campaigns": len(rows), "reach": reach, "opened": opened,
             "clicks": clicks, "revenue": round(revenue, 2)}
 
@@ -194,14 +218,17 @@ def _totals(tid: str, rows: List[Dict[str, Any]]) -> Dict[str, float]:
 # The page
 # ---------------------------------------------------------------------------
 @router.get("/api/owner/campaigns/page")
-def page(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+def page(request: Request = None,
+         token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
     tid = token_data.tenant_id
     at = _now()
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
     start, prev_start = at - timedelta(days=30), at - timedelta(days=60)
 
-    now_rows = _sent_between(tid, start, at)
-    prev_rows = _sent_between(tid, prev_start, start)
-    cur, was = _totals(tid, now_rows), _totals(tid, prev_rows)
+    now_rows = _sent_between(tid, start, at, mine)
+    prev_rows = _sent_between(tid, prev_start, start, mine)
+    cur, was = _totals(tid, now_rows, scope), _totals(tid, prev_rows, scope)
 
     strip = [
         {"key": "sent", "label": "Campagnes envoyées", "icon": "send",
@@ -219,10 +246,10 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
 
     segments = []
     for s in SEGMENTS:
-        segments.append({**s, "count": len(audience(tid, s["key"], at))})
+        segments.append({**s, "count": len(audience(tid, s["key"], at, mine))})
 
     recent = []
-    for c in sorted(_db.campaigns.find({"tenant_id": tid}, {"_id": 0}),
+    for c in sorted(_limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine),
                     key=lambda c: _aware(c.get("sent_at")) or _aware(c.get("created_at")) or at,
                     reverse=True)[:8]:
         ids = list(c.get("recipient_ids") or [])
@@ -255,6 +282,7 @@ def page(token_data: TokenData = Depends(require_role(["business_owner", "manage
         "revenue_note": f"Le CA généré est la dépense des destinataires dans les "
                         f"{ATTRIBUTION_DAYS} jours suivant l'envoi.",
         "empty": not recent,
+        "scope": scope.describe(),
     }
 
 
@@ -283,8 +311,8 @@ def _clean(text: str, limit: int) -> str:
 
 
 @router.post("/api/owner/campaigns/compose")
-def compose(req: Compose,
-            token_data: TokenData = Depends(require_role(["business_owner"]))):
+def compose(req: Compose, request: Request = None,
+            token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
     """Create the campaign, then save it, schedule it or send it.
 
     One endpoint rather than three so the audience is resolved once: the count
@@ -299,12 +327,17 @@ def compose(req: Compose,
         raise HTTPException(status_code=400, detail="Choisissez au moins un canal.")
 
     at = _now()
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
     if req.customer_ids:
-        people = list(_db.customers.find({"tenant_id": tid, "id": {"$in": req.customer_ids}}, {"_id": 0}))
+        ids = [i for i in req.customer_ids if mine is None or i in mine]
+        people = list(_db.customers.find({"tenant_id": tid, "id": {"$in": ids}}, {"_id": 0}))
         label = f"{len(people)} client{'s' if len(people) > 1 else ''}"
     else:
-        people = audience(tid, req.segment, at)
+        people = audience(tid, req.segment, at, mine)
         label = SEGMENT_LABELS.get(req.segment, "Sélection")
+    if mine is not None and not people and not req.draft:
+        raise HTTPException(status_code=400, detail="Aucun client à contacter dans vos établissements.")
 
     when = _aware(req.schedule_at)
     status = "draft" if req.draft else ("scheduled" if when and when > at else "sent")
@@ -334,6 +367,9 @@ def compose(req: Compose,
         # wallet pass builder, so the pass and the web card agree.
         "wallet_offer": bool(req.wallet),
         "template": (req.template or "").strip()[:40] or None,
+        # For which establishments it was sent (None = the whole shop), and by whom.
+        "store_ids": scope.ids,
+        "sent_by": getattr(token_data, "email", None),
     }
 
     if status != "sent":
@@ -489,7 +525,7 @@ def _parse(raw: str) -> Tuple[str, str]:
 
 @router.post("/api/owner/campaigns/ai-draft")
 def ai_draft(req: Draft,
-             token_data: TokenData = Depends(require_role(["business_owner"]))):
+             token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
     """Turn the merchant's objective into a title and a message.
 
     The model only ever writes the two strings; it never picks the audience
