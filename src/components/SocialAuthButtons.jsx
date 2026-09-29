@@ -35,6 +35,7 @@ function loadScript(src) {
 export function routeAfterAuth(navigate, session) {
   if (session?.onboarding_status === 'company') return navigate('/onboarding/entreprise');
   if (session?.role === 'super_admin') return navigate('/admin');
+  if (session?.role === 'commercial') return navigate('/admin/crm');
   if (session?.role === 'staff') return navigate('/dashboard/scan');
   if (session?.role === 'business_owner') return navigate('/modules');
   if (session?.role === 'comptable') return navigate('/cabinet');
