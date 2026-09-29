@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import NotificationBell from '../components/NotificationBell';
 import EstablishmentSwitcher from '../components/EstablishmentSwitcher';
 import { markPageOpened } from '../lib/chartAnimation';
+import { useBranch } from '../contexts/BranchContext';
 import BillingBanner from '../components/BillingBanner';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
@@ -301,6 +302,7 @@ const DashboardLayout = () => {
   }
   const role = user?.role || 'default';
   const partialScope = ['administrateur', 'manager'].includes(role) && user?.scope === 'partial';
+  const { branchId } = useBranch();
   const theme = themeForRole(role);
 
   // Collapsed-sidebar toggle (persisted across reloads). When true the
@@ -397,11 +399,9 @@ const DashboardLayout = () => {
             )}
           </Link>
         </div>
-        {/* "Toutes les branches" means nothing to an account limited to some
-            establishments — it only sees its own. */}
-        {role !== 'super_admin' && role !== 'administrateur' && !partialScope && (
-          <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />
-        )}
+        {/* The owner picks any establishment, an administrateur one of its
+            own; a manager or an employé sees its establishment's name. */}
+        {role !== 'super_admin' && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
@@ -447,6 +447,7 @@ const DashboardLayout = () => {
               filter by establishment. */}
           {(role === 'administrateur' || (role === 'manager' && partialScope)) && (
             <>
+              <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
@@ -587,12 +588,14 @@ const DashboardLayout = () => {
             <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
               <span className="mt-0.5 font-bold">i</span>
               <span>
-                L&apos;accès aux clients, campagnes et analyses de vos établissements arrive très bientôt.
-                En attendant, vous gérez votre équipe et scannez les cartes.
+                Le tableau de bord de vos établissements est disponible. Les clients, campagnes et analyses
+                arrivent très bientôt — en attendant, vous gérez aussi votre équipe et scannez les cartes.
               </span>
             </div>
           )}
-          <Outlet />
+          {/* A new establishment chosen under the logo: the page is rebuilt,
+              so it reads its data again for that establishment. */}
+          <Outlet key={branchId || 'all'} />
         </div>
       </main>
     </div>

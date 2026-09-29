@@ -25,6 +25,10 @@ api.interceptors.request.use((config) => {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${t}`;
     }
+    // The establishment chosen under the logo (BranchContext). The server
+    // decides what the caller may actually see — see features/store_scope.py.
+    config.headers = config.headers || {};
+    config.headers['X-FidClic-Store'] = localStorage.getItem('ft_selected_branch_v1') || 'all';
   } catch (_e) { /* ignore */ }
   return config;
 });
