@@ -19,6 +19,7 @@ logger = logging.getLogger("fidelitour.features")
 MODULES = [
     # Loyalty rules / config
     "features.welcome_bonus",
+    "features.auto_messages",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

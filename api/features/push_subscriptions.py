@@ -225,7 +225,8 @@ def customer_self_test_push(barcode_id: str):
     }
 
 
-def fan_out_to_customer(tenant_id: str, customer_id: str, title: str, body: str) -> Dict[str, Any]:
+def fan_out_to_customer(tenant_id: str, customer_id: str, title: str, body: str,
+                        url: Optional[str] = None) -> Dict[str, Any]:
     """Helper: send a push to all of one customer's subscribed devices.
     Called by auto_campaigns._dispatch_message."""
     if _db is None:
@@ -243,7 +244,7 @@ def fan_out_to_customer(tenant_id: str, customer_id: str, title: str, body: str)
     sent = 0
     expired = []
     for s in subs:
-        r = send_push(s["subscription"], title, body)
+        r = send_push(s["subscription"], title, body, url=url) if url else send_push(s["subscription"], title, body)
         if r.get("sent"):
             sent += 1
         elif r.get("expired"):

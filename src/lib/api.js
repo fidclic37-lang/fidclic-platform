@@ -153,6 +153,13 @@ export const ownerAPI = {
   deletePushWalletScenario: (id) => api.delete(`/owner/push-wallet/scenarios/${id}`),
   runPushWalletScenario: (id) => api.post(`/owner/push-wallet/scenarios/${id}/run`),
   pushWalletPreview: (id) => api.get(`/owner/push-wallet/scenarios/${id}/preview`),
+  // À valider — the scenarios' daily batches, waiting for an OK.
+  pushWalletPending: () => api.get('/owner/push-wallet/pending'),
+  approvePushWalletLot: (id) => api.post(`/owner/push-wallet/pending/${id}/approve`),
+  skipPushWalletLot: (id) => api.post(`/owner/push-wallet/pending/${id}/skip`),
+  // Messages automatiques — Google review after a scan, "récompense proche".
+  autoMessages: () => api.get('/owner/auto-messages'),
+  saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),

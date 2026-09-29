@@ -455,15 +455,17 @@ def refresh_wallet_pass(customer_id: str) -> None:
 
 
 def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
-                         kind: str = "campaign") -> dict:
-    """Deliver one message to one customer. Returns {sent, channel}."""
+                         kind: str = "campaign", url: Optional[str] = None) -> dict:
+    """Deliver one message to one customer. Returns {sent, channel}.
+    `url`: where tapping the notification leads (the SMS carries it too)."""
     now = datetime.now(timezone.utc)
     result = {"sent": False, "channel": None}
 
     # 1. Web Push
     try:
         from features.push_subscriptions import fan_out_to_customer   # noqa: WPS433
-        push_result = fan_out_to_customer(tenant_id, customer.get("id"), title, body)
+        push_result = (fan_out_to_customer(tenant_id, customer.get("id"), title, body, url=url) if url
+                       else fan_out_to_customer(tenant_id, customer.get("id"), title, body))
         if push_result.get("sent", 0) > 0:
             result = {"sent": True, "channel": "web_push"}
         try:
@@ -483,7 +485,8 @@ def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
             from services.sms import send_sms, is_configured           # noqa: WPS433
             phone = customer.get("phone")
             if phone and is_configured():
-                sms_result = send_sms(phone, f"{title}\n{body}" if title else body)
+                text = f"{title}\n{body}" if title else body
+                sms_result = send_sms(phone, f"{text}\n{url}" if url else text)
                 if sms_result.get("sent"):
                     result = {"sent": True, "channel": "sms"}
                 try:
@@ -4694,6 +4697,12 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         _evaluate_reward_state_and_notify({"id": cid}, token_data.tenant_id)
     except Exception as _e:
         print(f"scan_visit: reward evaluator failed (non-fatal): {_e}")
+    # Automatic after a scan: the Google review request, at the shop's pace.
+    try:
+        from features import auto_messages as _AM
+        _AM.after_scan(token_data.tenant_id, cid)
+    except Exception as _e:
+        print(f"scan_visit: automatic messages failed (non-fatal): {_e}")
 
     # Build success response — tier-up flag for UI celebration.
     tier_rank = {"bronze": 0, "silver": 1, "gold": 2, "vip": 3}
@@ -4855,39 +4864,15 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     cycle_start = _cycle_start_for_customer(cid, tenant_id)
     now = datetime.now(timezone.utc)
 
-    # ---- "Almost there" push ----
-    # Fires when the customer is currently in the approach window AND hasn't
-    # received a near_reward push for this card cycle yet.
-    if (notify_before > 0
-        and approach_threshold <= stamps_earned < threshold_stamps
-        and not _has_recent_notification(cid, tenant_id, "near_reward", cycle_start)):
-        stamps_remaining = threshold_stamps - stamps_earned
-        visits_remaining = stamps_remaining * visits_per_stamp
-        if stamps_remaining == 1:
-            title = f"Plus qu'une visite, {first_name} ! 🎁" if first_name else "Plus qu'une visite ! 🎁"
-            body = (
-                f"Encore {visits_remaining} visite{'s' if visits_remaining > 1 else ''} chez {biz} "
-                f"et vous débloquez : {reward_description}. À très vite !"
-            )
-        else:
-            title = f"Vous y êtes presque, {first_name} ! ✨" if first_name else "Vous y êtes presque ! ✨"
-            body = (
-                f"Plus que {stamps_remaining} tampons "
-                f"({visits_remaining} visite{'s' if visits_remaining > 1 else ''}) "
-                f"pour débloquer : {reward_description} chez {biz}."
-            )
-        db.push_notifications.insert_one({
-            "customer_id": cid, "tenant_id": tenant_id,
-            "title": title, "body": body, "type": "near_reward",
-            "stamps_earned": stamps_earned, "stamps_for_reward": threshold_stamps,
-            "stamps_remaining": stamps_remaining, "visits_remaining": visits_remaining,
-            "sent_at": now,
-        })
-        fired["near_reward"] = True
-        try:
-            dispatch_to_customer(tenant_id, cust, title, body, kind="near_reward")
-        except Exception:
-            pass
+    # ---- "Récompense proche" ----
+    # Automatic, worded and timed by the shop on the Automatisations page
+    # (features/auto_messages.py): N visits (2 by default) from the reward,
+    # once per card cycle — on a points card too.
+    try:
+        from features import auto_messages as _AM
+        fired["near_reward"] = _AM.near_reward(tenant_id, cust, card_template, cycle_start)
+    except Exception as _e:
+        print(f"near_reward: not sent (non-fatal): {_e}")
 
     # ---- "Reward unlocked" push ----
     # Fires when the customer's current state is at-or-over the threshold AND
@@ -5891,8 +5876,15 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
             parrainage = _record_referral(tid, req.parrain_barcode, cust_doc)
         except Exception as _e:
             print(f"join: referral not recorded (non-fatal): {_e}")
+    # Bienvenue — automatic: the shop's message and points (Carte de fidélité).
+    welcome = None
+    try:
+        from features import auto_messages as _AM
+        welcome = _AM.welcome(tid, cust_doc)
+    except Exception as _e:
+        print(f"join: welcome not sent (non-fatal): {_e}")
     return {"barcode_id": barcode_id, "message": "Welcome!",
-            "parrainage": bool(parrainage)}
+            "parrainage": bool(parrainage), "welcome": welcome}
 
 # ========================
 # WALLET CARD (public, barcode-keyed) — Captain Wallet style
@@ -9234,6 +9226,22 @@ def get_proactive_alerts_multi_store(
         except Exception as _e:
             print(f"alerts: copilot hook failed (non-fatal): {_e}")
 
+    # Automatisations waiting for an OK — for whoever may give it.
+    try:
+        from features import push_wallet as _PW
+        _lots = _PW.pending_lots(token_data, scope)
+        if _lots:
+            _n = sum(int(l.get("count") or 0) for l in _lots)
+            alerts_combined.append({
+                "id": "pushwallet:pending:" + ",".join(sorted(l["id"] for l in _lots))[:120],
+                "severity": "warning",
+                "title": f"{len(_lots)} envoi{'s' if len(_lots) > 1 else ''} automatique{'s' if len(_lots) > 1 else ''} à valider",
+                "body": f"{_n} client{'s' if _n > 1 else ''} au total. Rien ne part sans votre validation.",
+                "metric": str(len(_lots)), "action": "/dashboard/automations?tab=pending",
+                "ts": datetime.now(timezone.utc).isoformat(), "branch_id": None, "branch_name": None, "scope": "shop"})
+    except Exception as _e:
+        print(f"alerts: automations hook failed (non-fatal): {_e}")
+
     # Sort by severity only.
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     alerts_combined.sort(key=lambda a: severity_order.get(a.get("severity"), 99))
@@ -10691,6 +10699,9 @@ def _supersede_pending(tenant_id: str, kind: str) -> int:
         return 0
 
 
+LEGACY_AUTO_ENGINE = False
+
+
 @app.get("/api/cron/daily-triggers")
 @app.post("/api/cron/daily-triggers")
 def run_daily_triggers(request: Request):
@@ -10727,7 +10738,12 @@ def run_daily_triggers(request: Request):
     scheduled_sent = 0
     tier_up_emitted_count = 0
 
-    for tenant in tenants:
+    # A, B and C were the first automations engine. Decided with the user:
+    # one engine only — birthday now goes out from the Automatisations page's
+    # scenario (automatic), inactivity from its scenarios (with approval), and
+    # "presque une récompense" right after the scan (features/auto_messages).
+    # Left in place, switched off, so nobody gets the same message twice.
+    for tenant in (tenants if LEGACY_AUTO_ENGINE else []):
         tid = tenant["id"]
         # Owner-editable templates — fall back to defaults if unset
         cfg = db.auto_campaign_config.find_one({"tenant_id": tid}) or {}

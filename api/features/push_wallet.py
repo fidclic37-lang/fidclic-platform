@@ -49,6 +49,16 @@ ESTABLISHMENTS
     manager reads the page and changes nothing. Figures follow the
     establishment menu (features/store_scope.py).
 
+AUTOMATIC OR "À VALIDER"
+    Decided with the user: the birthday goes out on its own. Every other
+    scenario's daily run PREPARES a batch per establishment ("lot") and waits:
+    the owner, an administrateur or a manager covering that establishment
+    validates it (then it is sent) or ignores it. The next day's batch for
+    the same scenario and establishment replaces one nobody acted on.
+    "Envoyer maintenant" is the owner's own decision and sends at once.
+    (Welcome, Google review and "récompense proche" are automatic too — they
+    follow a client's own action: features/auto_messages.py.)
+
 SAFETY
     The runner never raises into the cron: one tenant's broken scenario must not
     stop everybody else's. Every scenario has a cooldown so a customer cannot be
@@ -77,6 +87,8 @@ DEFAULT_COOLDOWN_DAYS = 30  # the same scenario will not reach one customer twic
 READERS = ["business_owner", "administrateur", "manager"]
 EDITORS = ["business_owner", "administrateur"]
 STORE_FIELDS = ("title", "body", "enabled")   # what an administrateur may set for its establishments
+AUTOMATIC = {"birthday"}                      # sent without approval (decided with the user)
+APPROVERS = ["business_owner", "administrateur", "manager"]
 
 # ---------------------------------------------------------------------------
 # The trigger vocabulary. Each entry says what the merchant picks and what the
@@ -168,6 +180,7 @@ def init(db):
         ("push_wallet_log", [("tenant_id", 1), ("sent_at", -1)]),
         ("push_wallet_log", [("scenario_id", 1), ("customer_id", 1), ("sent_at", -1)]),
         ("push_scenario_overrides", [("tenant_id", 1), ("scenario_id", 1), ("store_id", 1)]),
+        ("push_wallet_pending", [("tenant_id", 1), ("status", 1), ("prepared_at", -1)]),
     ):
         try:
             db[coll].create_index(index)
@@ -235,6 +248,7 @@ def _public(row: Dict[str, Any], counts: Dict[str, int]) -> Dict[str, Any]:
         "config": row.get("config") or {},
         "title": row.get("title") or "", "body": row.get("body") or "",
         "enabled": bool(row.get("enabled")),
+        "automatic": row.get("trigger") in AUTOMATIC,
         "status": "active" if row.get("enabled") else "draft",
         "clients": counts.get(row["id"], 0),
         "cooldown_days": int(row.get("cooldown_days") or DEFAULT_COOLDOWN_DAYS),
@@ -391,9 +405,52 @@ def _render(text: str, cust: Dict[str, Any], tenant: Dict[str, Any]) -> str:
     return out
 
 
+def _targets(tid: str, row: Dict[str, Any], at: datetime, scheduled: bool,
+             limit: int = 2000) -> List[Tuple[Dict[str, Any], Optional[str], Dict[str, Any]]]:
+    """(client, its establishment, the scenario as that establishment runs it)."""
+    people = _audience(tid, row, at)
+    versions = _overrides(tid, row["id"]).get(row["id"], {})
+    home = _home_stores(tid, [c["id"] for c in people]) if people else {}
+
+    # An establishment may have switched the scenario on or off for itself.
+    def on(c: Dict[str, Any]) -> bool:
+        v = versions.get(home.get(c["id"])) or {}
+        return bool(v["enabled"]) if "enabled" in v else (bool(row.get("enabled")) or not scheduled)
+    return [(c, home.get(c["id"]), _effective(row, versions.get(home.get(c["id"]))))
+            for c in people if on(c)][:limit]
+
+
+def _deliver(tid: str, row: Dict[str, Any], items, at: datetime, result: Dict[str, Any]) -> None:
+    tenant = _db.tenants.find_one({"id": tid}) or {}
+    for cust, _store, mine in items:
+        title = _render(mine.get("title") or "", cust, tenant)
+        body = _render(mine.get("body") or "", cust, tenant)
+        log_id = str(uuid4())
+        try:
+            _db.push_wallet_log.insert_one({
+                "id": log_id, "tenant_id": tid, "scenario_id": row["id"],
+                "customer_id": cust["id"], "sent_at": at,
+                "title": title, "body": body, "clicked_at": None,
+            })
+            # 1. the wallet card itself — the offer is written onto the pass
+            #    and the device is asked to come and fetch it.
+            try:
+                from features.wallet_passes import notify_customer
+                notify_customer(cust["id"], message=body)
+            except Exception:
+                pass
+            # 2. and the same message down the web-push / SMS rail, so a
+            #    customer with no wallet pass still hears about it.
+            import server as core
+            core.dispatch_to_customer(tid, cust, title, body, kind="push_wallet")
+            result["sent"] += 1
+        except Exception:
+            result["errors"] += 1
+
+
 def run_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = None,
                  limit: int = 2000, scheduled: bool = False) -> Dict[str, Any]:
-    """Fire one scenario. Returns what it did; never raises.
+    """Send one scenario now. Returns what it did; never raises.
 
     `scheduled`: the daily run, which follows each establishment's switch. Fired
     by hand ("Envoyer maintenant"), only an establishment that switched it off
@@ -401,41 +458,9 @@ def run_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = None,
     at = at or _now()
     result = {"scenario_id": row["id"], "name": row.get("name"), "targeted": 0, "sent": 0, "errors": 0}
     try:
-        tenant = _db.tenants.find_one({"id": tid}) or {}
-        people = _audience(tid, row, at)
-        versions = _overrides(tid, row["id"]).get(row["id"], {})
-        home = _home_stores(tid, [c["id"] for c in people]) if versions else {}
-        # An establishment may have switched the scenario on or off for itself.
-        def on(c: Dict[str, Any]) -> bool:
-            v = versions.get(home.get(c["id"])) or {}
-            return bool(v["enabled"]) if "enabled" in v else (bool(row.get("enabled")) or not scheduled)
-        people = [c for c in people if on(c)][:limit]
-        result["targeted"] = len(people)
-        for cust in people:
-            mine = _effective(row, versions.get(home.get(cust["id"])))
-            title = _render(mine.get("title") or "", cust, tenant)
-            body = _render(mine.get("body") or "", cust, tenant)
-            log_id = str(uuid4())
-            try:
-                _db.push_wallet_log.insert_one({
-                    "id": log_id, "tenant_id": tid, "scenario_id": row["id"],
-                    "customer_id": cust["id"], "sent_at": at,
-                    "title": title, "body": body, "clicked_at": None,
-                })
-                # 1. the wallet card itself — the offer is written onto the pass
-                #    and the device is asked to come and fetch it.
-                try:
-                    from features.wallet_passes import notify_customer
-                    notify_customer(cust["id"], message=body)
-                except Exception:
-                    pass
-                # 2. and the same message down the web-push / SMS rail, so a
-                #    customer with no wallet pass still hears about it.
-                import server as core
-                core.dispatch_to_customer(tid, cust, title, body, kind="push_wallet")
-                result["sent"] += 1
-            except Exception:
-                result["errors"] += 1
+        items = _targets(tid, row, at, scheduled, limit)
+        result["targeted"] = len(items)
+        _deliver(tid, row, items, at, result)
         _db.push_scenarios.update_one({"id": row["id"]},
                                       {"$set": {"last_run_at": at, "updated_at": at}})
     except Exception as exc:  # noqa: BLE001 — one scenario must not stop the rest
@@ -444,26 +469,70 @@ def run_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = None,
     return result
 
 
+def prepare_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = None) -> Dict[str, Any]:
+    """The daily run of a scenario that needs approval: one batch per
+    establishment, waiting for an OK. Never raises."""
+    at = at or _now()
+    result = {"scenario_id": row["id"], "name": row.get("name"), "targeted": 0, "prepared": 0, "errors": 0}
+    try:
+        items = _targets(tid, row, at, scheduled=True)
+        result["targeted"] = len(items)
+        by_store: Dict[Optional[str], List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+        for cust, store, mine in items:
+            by_store.setdefault(store, []).append((cust, mine))
+        names = {}
+        try:
+            from features import team_access as T
+            names = {st["id"]: st["name"] for st in T.stores(tid)}
+        except Exception:
+            pass
+        for store, group in by_store.items():
+            # Yesterday's batch nobody acted on gives way to today's.
+            _db.push_wallet_pending.update_many(
+                {"tenant_id": tid, "scenario_id": row["id"], "store_id": store, "status": "pending"},
+                {"$set": {"status": "expired", "expired_at": at}})
+            sample = group[0][1]
+            _db.push_wallet_pending.insert_one({
+                "id": str(uuid4()), "tenant_id": tid, "scenario_id": row["id"],
+                "scenario_name": row.get("name") or "Scénario", "icon": row.get("icon") or "bell",
+                "store_id": store, "store_name": names.get(store) if store else None,
+                "customer_ids": [c["id"] for c, _ in group], "count": len(group),
+                "title": sample.get("title") or "", "body": sample.get("body") or "",
+                "status": "pending", "prepared_at": at,
+            })
+            result["prepared"] += len(group)
+        # The "since the last run" triggers (tier_up, new_product) move on.
+        _db.push_scenarios.update_one({"id": row["id"]}, {"$set": {"last_run_at": at, "updated_at": at}})
+    except Exception as exc:  # noqa: BLE001
+        result["errors"] += 1
+        result["error"] = str(exc)[:200]
+    return result
+
+
 def run_due_for_tenant(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
     at = at or _now()
-    out = {"tenant_id": tid, "ran": [], "sent": 0}
+    out = {"tenant_id": tid, "ran": [], "sent": 0, "prepared": 0}
     # Switched on for the shop, or by an establishment for itself.
     on_somewhere = set(_db.push_scenario_overrides.distinct("scenario_id", {"tenant_id": tid, "enabled": True}))
     for row in _db.push_scenarios.find({"tenant_id": tid}):
         row.pop("_id", None)
         if not row.get("enabled") and row["id"] not in on_somewhere:
             continue
-        res = run_scenario(tid, row, at, scheduled=True)
+        if row.get("trigger") in AUTOMATIC:
+            res = run_scenario(tid, row, at, scheduled=True)
+            out["sent"] += res["sent"]
+        else:
+            res = prepare_scenario(tid, row, at)
+            out["prepared"] += res["prepared"]
         if res["targeted"]:
             out["ran"].append(res)
-            out["sent"] += res["sent"]
     return out
 
 
 def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
     """Called by the daily cron. One tenant's failure never stops the others."""
     at = at or _now()
-    summary = {"tenants": 0, "sent": 0, "at": at.isoformat()}
+    summary = {"tenants": 0, "sent": 0, "prepared": 0, "at": at.isoformat()}
     try:
         tenants = set(_db.push_scenarios.distinct("tenant_id", {"enabled": True}))
         tenants |= set(_db.push_scenario_overrides.distinct("tenant_id", {"enabled": True}))
@@ -474,6 +543,7 @@ def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
             res = run_due_for_tenant(tid, at)
             summary["tenants"] += 1
             summary["sent"] += res["sent"]
+            summary["prepared"] += res["prepared"]
         except Exception:
             continue
     return summary
@@ -597,6 +667,7 @@ def list_scenarios(
     role = getattr(token_data, "role", None)
     return {
         "scope": scope.describe(),
+        "pending_count": len(pending_lots(token_data, scope)),
         "can": {"create": role == "business_owner", "edit": role in EDITORS,
                 "message_only": role != "business_owner"},
         "scenarios": [view(r) for r in rows],
@@ -764,6 +835,106 @@ def preview_audience(scenario_id: str,
     people = [c for c in _audience(tid, row, _now()) if mine is None or c["id"] in mine]
     return {"count": len(people),
             "sample": [{"name": c.get("name") or "Client"} for c in people[:5]]}
+
+
+# ---------------------------------------------------------------------------
+# À valider
+# ---------------------------------------------------------------------------
+def _can_act(token_data: TokenData, scope: "S.Scope", lot: Dict[str, Any]) -> bool:
+    """The owner acts on every batch; an administrateur or a manager on the
+    batches of the establishments it covers (a batch of clients with no
+    establishment belongs to whoever covers the whole shop)."""
+    if getattr(token_data, "role", None) == "business_owner":
+        return True
+    if getattr(token_data, "role", None) not in APPROVERS:
+        return False
+    store = lot.get("store_id")
+    if store is None:
+        return set(scope.all_ids) <= set(scope.allowed)
+    return store in scope.allowed
+
+
+def pending_lots(token_data: TokenData, scope: "S.Scope") -> List[Dict[str, Any]]:
+    shown = set(scope.ids if scope.ids is not None else scope.all_ids)
+    out = []
+    for lot in _db.push_wallet_pending.find({"tenant_id": token_data.tenant_id, "status": "pending"},
+                                            {"_id": 0}).sort("prepared_at", -1):
+        if not _can_act(token_data, scope, lot):
+            continue
+        # The establishment menu narrows the list; a batch with no
+        # establishment shows on the whole-shop view only.
+        if lot.get("store_id") is not None and lot["store_id"] not in shown:
+            continue
+        if lot.get("store_id") is None and scope.ids is not None:
+            continue
+        out.append(lot)
+    return out
+
+
+def _lot_view(lot: Dict[str, Any]) -> Dict[str, Any]:
+    at = _aware(lot.get("prepared_at"))
+    return {"id": lot["id"], "scenario_id": lot["scenario_id"], "scenario": lot.get("scenario_name"),
+            "icon": lot.get("icon") or "bell", "store": lot.get("store_name") or "Tout le commerce",
+            "store_id": lot.get("store_id"), "count": int(lot.get("count") or 0),
+            "title": lot.get("title") or "", "body": lot.get("body") or "",
+            "prepared_at": at.isoformat() if at else None}
+
+
+@router.get("/api/owner/push-wallet/pending")
+def list_pending(token_data: TokenData = Depends(require_role(APPROVERS, partial_ok=True)),
+                 request: Request = None):
+    scope = S.resolve(token_data, request)
+    return {"lots": [_lot_view(l) for l in pending_lots(token_data, scope)]}
+
+
+def _lot_for(lot_id: str, token_data: TokenData, request: Optional[Request]) -> Dict[str, Any]:
+    lot = _db.push_wallet_pending.find_one({"id": lot_id, "tenant_id": token_data.tenant_id}, {"_id": 0})
+    if not lot:
+        raise HTTPException(status_code=404, detail="Envoi introuvable")
+    if not _can_act(token_data, S.resolve(token_data, request), lot):
+        raise HTTPException(status_code=403, detail="Cet envoi concerne un établissement que vous ne gérez pas.")
+    if lot.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Cet envoi a déjà été traité.")
+    return lot
+
+
+@router.post("/api/owner/push-wallet/pending/{lot_id}/approve")
+def approve_pending(lot_id: str, token_data: TokenData = Depends(require_role(APPROVERS, partial_ok=True)),
+                    request: Request = None):
+    """Validated: sent now, to the clients of the batch who still have not heard
+    this scenario inside its delay."""
+    tid = token_data.tenant_id
+    lot = _lot_for(lot_id, token_data, request)
+    row = _db.push_scenarios.find_one({"id": lot["scenario_id"], "tenant_id": tid}, {"_id": 0})
+    if not row:
+        _db.push_wallet_pending.update_one({"id": lot_id}, {"$set": {"status": "expired"}})
+        raise HTTPException(status_code=409, detail="Ce scénario a été supprimé.")
+    # Claimed first, so a double click cannot send twice.
+    claimed = _db.push_wallet_pending.update_one({"id": lot_id, "status": "pending"},
+                                                 {"$set": {"status": "sending"}})
+    if not claimed.modified_count:
+        raise HTTPException(status_code=409, detail="Cet envoi a déjà été traité.")
+    at = _now()
+    skip = _recently_messaged(row["id"], _cooldown_cutoff(row))
+    people = [c for c in _db.customers.find({"tenant_id": tid, "id": {"$in": lot.get("customer_ids") or []}},
+                                            {"_id": 0}) if c["id"] not in skip]
+    versions = _overrides(tid, row["id"]).get(row["id"], {})
+    items = [(c, lot.get("store_id"), _effective(row, versions.get(lot.get("store_id")))) for c in people]
+    result = {"sent": 0, "errors": 0}
+    _deliver(tid, row, items, at, result)
+    _db.push_wallet_pending.update_one({"id": lot_id}, {"$set": {
+        "status": "sent", "approved_by": getattr(token_data, "email", None), "approved_at": at,
+        "sent": result["sent"]}})
+    return {"status": "sent", "sent": result["sent"], "skipped": len(lot.get("customer_ids") or []) - len(people)}
+
+
+@router.post("/api/owner/push-wallet/pending/{lot_id}/skip")
+def skip_pending(lot_id: str, token_data: TokenData = Depends(require_role(APPROVERS, partial_ok=True)),
+                 request: Request = None):
+    _lot_for(lot_id, token_data, request)
+    _db.push_wallet_pending.update_one({"id": lot_id}, {"$set": {
+        "status": "skipped", "skipped_by": getattr(token_data, "email", None), "skipped_at": _now()}})
+    return {"status": "skipped"}
 
 
 @router.get("/api/push-wallet/c/{log_id}")

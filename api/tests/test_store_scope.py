@@ -472,19 +472,44 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     except HTTPException:
         mgr = False
     check("a manager changes nothing", mgr is False and guard(SARA, PW.EDITORS, partial_ok=True) == 403)
-    # c2 last came to Blois, c1 to Tours; both inactive for this run
-    for cid in ("c1", "c2"):
+    # c2 last came to Blois, c3 to Orléans; inactive for this run
+    for cid in ("c1", "c2", "c3"):
         db.customers.update_one({"id": cid}, {"$set": {"last_visit_date": now - dt.timedelta(days=60)}})
     row = db.push_scenarios.find_one({"id": inactive["id"]}); row.pop("_id", None)
     PW.run_scenario("t1", row, now + dt.timedelta(days=1))
     by = {c: b for c, _, b in sent}
     check("a Blois client hears Blois' message", by.get("c2") == "Blois vous attend !")
-    check("a Tours client hears the shop's", by.get("c1") == row["body"])
+    check("an Orléans client (no version there) hears the shop's", by.get("c3") == row["body"])
     PW.update_scenario(inactive["id"], PW.ScenarioPatch(enabled=False), token_data=ALI, request=Req("tours"))
     db.push_wallet_log.delete_many({"scenario_id": inactive["id"]}); sent.clear()
     PW.run_due_for_tenant("t1", now + dt.timedelta(days=2))
-    check("switched off for Tours, its clients hear nothing — Blois still does",
-          "c1" not in {c for c, t, _ in sent if t == row["title"]} and "c2" in {c for c, t, _ in sent if t == row["title"]})
+    lots = {l["store_id"]: l for l in db.push_wallet_pending.find({"scenario_id": inactive["id"], "status": "pending"})}
+    check("the daily run prepares, per establishment, and sends nothing on its own",
+          not [1 for c, t, _ in sent if t == row["title"]] and "blois" in lots)
+    check("switched off for Tours, its clients are in no batch — Blois' are",
+          "tours" not in lots and "c2" in lots["blois"]["customer_ids"])
+    check("the batch carries Blois' message", lots["blois"]["body"] == "Blois vous attend !")
+    check("a manager sees its establishment's batch, not the others'",
+          {l["store_id"] for l in PW.list_pending(token_data=SARA, request=Req())["lots"]} <= {"blois"}
+          and len(PW.list_pending(token_data=SARA, request=Req())["lots"]) >= 1)
+    other = next((l for sid, l in lots.items() if sid not in ("blois", "tours")), None)
+    if other:
+        try:
+            PW.approve_pending(other["id"], token_data=SARA, request=Req()); stray = True
+        except HTTPException as e:
+            stray = e.status_code != 403
+        check("it cannot validate another establishment's batch", stray is False)
+    res = PW.approve_pending(lots["blois"]["id"], token_data=SARA, request=Req())
+    check("a manager validates its batch: sent, with Blois' message",
+          res["sent"] >= 1 and ("c2", row["title"], "Blois vous attend !") in sent)
+    try:
+        PW.approve_pending(lots["blois"]["id"], token_data=OWNER, request=Req()); twice = True
+    except HTTPException as e:
+        twice = e.status_code != 409
+    check("a batch is never sent twice", twice is False)
+    PW.run_due_for_tenant("t1", now + dt.timedelta(days=3))
+    bell = server.get_proactive_alerts_multi_store(request=Req(), token_data=OWNER)
+    check("the bell tells the owner what waits", any(a["id"].startswith("pushwallet:pending") for a in bell["alerts"]))
     PW.update_scenario(inactive["id"], PW.ScenarioPatch(body="Pour tous"), token_data=OWNER, request=Req())
     check("the owner's change applies everywhere: Blois' message gives way",
           next(x for x in PW.list_scenarios(token_data=SARA, request=Req())["scenarios"] if x["id"] == inactive["id"])["body"] == "Pour tous")
