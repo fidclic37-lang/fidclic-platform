@@ -323,7 +323,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="analytics" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <AnalysesPage />
               </ProtectedRoute>
             } />

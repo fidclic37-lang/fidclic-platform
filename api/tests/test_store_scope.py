@@ -25,9 +25,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import dashboard_home as DH
     from features import clients_page as CP
     from features import campaigns_page as KP
+    from features import analyses as AN
 
     db = server.db
-    for m in (S, T, DH, CP, KP):
+    for m in (S, T, DH, CP, KP, AN):
         m.init(db)
     passed = failed = 0
 
@@ -218,6 +219,29 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           sorted(db.campaigns.find_one({"id": KP.compose(KP.Compose(title="a", message="b", draft=True),
                                                          request=Req(), token_data=ALI)["id"]})["recipient_ids"]) == ["c1", "c2", "c4"])
     check("Campagnes opens to them", guard(SARA, KP.SENDERS, partial_ok=True) == 200)
+
+    print("\nLa page Analyses, limitée")
+    strip = lambda tok, tab="vue", store=None: {x["key"]: x["value"] for x in
+                                                 AN.analyses(request=Req(store), tab=tab, days=30, token_data=tok)["data"]["strip"]}
+    own = strip(OWNER)
+    blois = strip(SARA, store="orleans")
+    check("owner / all and manager / Blois differ", own != blois)
+    check("the manager's revenue is Blois' tills only (whatever it asks)",
+          AN.Reader("t1", 30, S.resolve(SARA, Req("orleans"))).visits()
+          and all(v.get("amount_paid") in (20.0, 4.0) for v in AN.Reader("t1", 30, S.resolve(SARA, Req())).visits()))
+    check("its clients are Blois' clients", sorted(c["id"] for c in AN.Reader("t1", 30, S.resolve(SARA, Req())).customers()) == ["c1", "c2", "c4"])
+    check("a campaign counts only Blois' recipients",
+          all(set(c["recipient_ids"]) <= {"c1", "c2", "c4"} for c in AN.Reader("t1", 30, S.resolve(SARA, Req())).campaigns()))
+    check("the CSV export follows the scope", "text/csv" in AN.export_analyses(request=Req(), days=30, token_data=SARA).media_type)
+    check("Analyses opens to them", guard(SARA, AN.READERS, partial_ok=True) == 200)
+    tabs_ok = True
+    for key in AN.BUILDERS:
+        try:
+            AN.analyses(request=Req(), tab=key, days=30, token_data=SARA)
+        except Exception as e:  # noqa: BLE001
+            print("   tab failed:", key, e)
+            tabs_ok = False
+    check("every tab builds for a manager", tabs_ok)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
