@@ -6,6 +6,7 @@ Run:
     cd api && python3 tests/test_store_scope.py
 """
 import asyncio
+import json
 import datetime as dt
 import os
 import sys
@@ -31,9 +32,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import activity_history as AH
     from features import geolocation as GEO
     from features import referrals as RF
+    from features import copilot as CO
 
     db = server.db
-    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF):
+    for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO):
         m.init(db)
     passed = failed = 0
 
@@ -332,6 +334,43 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a manager counts the parrainages that brought clients to its establishment", rf(SARA)["referrals"] == 1)
     check("the owner counts all of them", rf(OWNER)["referrals"] == 2)
     check("Parrainage opens to them", guard(SARA, RF.READERS, partial_ok=True) == 200)
+
+    print("\nFidClic IA, limité")
+    from services import llm
+    seen = {}
+    llm._force_complete = lambda sys_, user: (seen.__setitem__("prompt", user), "ok")[1]
+    co = CO.page(horizon=30, days=30, request=Req(), token_data=SARA)
+    acts = {c["key"]: c["value"] for c in co["activity"]["cards"]}
+    check("a manager's activity is its establishment's tills", acts["visits"] == db.visits.count_documents(
+        {"tenant_id": "t1", "branch_id": "blois", "visit_time": {"$gte": now - dt.timedelta(days=30)}}))
+    owner_co = CO.page(horizon=30, days=30, request=Req(), token_data=OWNER)
+    check("the owner's is the whole shop's", {c["key"]: c["value"] for c in owner_co["activity"]["cards"]}["visits"]
+          == db.visits.count_documents({"tenant_id": "t1", "visit_time": {"$gte": now - dt.timedelta(days=30)}}))
+    check("the 7-day plan is not offered to a manager", co["plan"]["available"] is False and co["plan"]["steps"] == [])
+    check("the owner has it on the whole shop", owner_co["plan"]["available"] is True)
+    check("… and not on a single establishment",
+          CO.page(request=Req("tours"), token_data=OWNER)["plan"]["available"] is False)
+    check("ideas that change the shop's settings are the owner's",
+          all(r["kind"] != "setup" for r in co["recommendations"]["all"]))
+    check("the page says which establishments it reads", co["scope"]["label"] == "Blois")
+    CO.chat(CO.ChatIn(message="Analyser mes derniers résultats"), request=Req(), token_data=SARA)
+    facts = json.loads(seen["prompt"].split("(JSON) :\n", 1)[1].split("\n\nQuestion", 1)[0])
+    check("the chat is grounded on its establishment's clients only", facts["clients_total"] == 3
+          and facts["etablissements"] == "Blois")
+    check("each account keeps its own conversation",
+          len(CO.chat_history(token_data=SARA)["messages"]) == 2 and CO.chat_history(token_data=OWNER)["messages"] == [])
+    shown = [r["key"] for r in co["recommendations"]["all"]]
+    if shown:
+        CO.feedback(shown[0], CO.Feedback(kind="not_relevant"), request=Req(), token_data=SARA)
+        check("a manager's 'pas pertinent' hides it for Blois only",
+              shown[0] not in [r["key"] for r in CO.page(request=Req(), token_data=SARA)["recommendations"]["all"]]
+              and CO._feedback("t1", now, S.ALL)[0] == set())
+    CO.feedback("relance_inactifs", CO.Feedback(kind="later"), request=Req("tours"), token_data=OWNER)
+    check("the owner's holds everywhere, even given on one establishment",
+          "relance_inactifs" in CO._feedback("t1", now, "blois")[0])
+    check("FidClic IA opens to them", guard(SARA, CO.READERS, partial_ok=True) == 200)
+    check("Autopilot and the plan stay the owner's",
+          guard(SARA, ["business_owner"]) == 403 and guard(ALI, ["business_owner"]) == 403)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

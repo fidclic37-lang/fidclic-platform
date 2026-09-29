@@ -528,7 +528,18 @@ export default function CopilotPage() {
             </Panel>
           </div>
 
-          {/* plan */}
+          {/* plan — the whole shop's, the owner's; elsewhere a note says where it lives */}
+          {d.plan.available === false ? (
+          <Panel id="plan" className="p-4">
+            <header className="mb-2 flex items-center gap-2">
+              <CalendarDays size={18} className="text-[#2F6BFF]" />
+              <h2 className="text-[15px] font-bold text-[#0B1C3F]">Plan d'action automatique sur 7 jours</h2>
+            </header>
+            <p className="flex items-start gap-1.5 text-[12.5px] leading-snug text-[#64748B]">
+              <Info size={14} className="mt-px shrink-0" /> {d.plan.note}
+            </p>
+          </Panel>
+          ) : (
           <Panel id="plan" className="p-4">
             <header className="mb-3 flex flex-wrap items-center gap-2">
               <CalendarDays size={18} className="text-[#2F6BFF]" />
@@ -581,6 +592,7 @@ export default function CopilotPage() {
               </p>
             )}
           </Panel>
+          )}
         </div>
 
         {/* ── right column ── */}

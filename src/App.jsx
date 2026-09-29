@@ -390,7 +390,7 @@ function App() {
               </ProtectedRoute>
             } />
             <Route path="ai-assistant" element={
-              <ProtectedRoute allowedRoles={['business_owner']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <CopilotPage />
               </ProtectedRoute>
             } />
