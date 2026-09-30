@@ -9,10 +9,14 @@ import {
 import { adminAPI } from '../../lib/api';
 import { Kpi, Donut, Bars, Loading, Breadcrumb, Modal, nf } from '../crm/ui';
 import { RangePicker, useRange } from './securite/shared';
+import UsagePanel, { UsageFigures } from './analytics/UsagePanel';
 
 /* Super admin › Analytics global — built to the approved mockup
    (features/admin_analytics.py). « Répartition du chiffre d'affaires » shows
-   amounts only: the percentages are on « Répartition des abonnements ». */
+   amounts only: the percentages are on « Répartition des abonnements ».
+   Section 6 (cartes actives, notifications, géolocalisation and the three
+   usage tabs) comes from the « Gestion des abonnements » mockup
+   (analytics/UsagePanel.jsx, features/analytics_usage.py). */
 
 const eur = (v, dec = 0) => `€${Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
 const eurAuto = (v) => eur(v, Number(v) % 1 ? 2 : 0);
@@ -206,7 +210,11 @@ export default function AnalyticsGlobalPage() {
         </Card>
       </div>
 
-      {/* 6 — recent activity */}
+      {/* 6 — plan usage (from the « Gestion des abonnements » mockup) */}
+      <div className="mt-4"><UsageFigures range={range} /></div>
+      <UsagePanel />
+
+      {/* 7 — recent activity */}
       <Card className="mt-4">
         <Head icon={Clock} title="Activité récente" sub="Dernières actions importantes sur la plateforme."
               right={<button type="button" onClick={showAll} className="rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[12.5px] font-medium text-[#0B1C3F] hover:border-[#2F6BFF]">Voir tout</button>} />
