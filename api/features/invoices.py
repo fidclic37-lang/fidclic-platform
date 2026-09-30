@@ -55,6 +55,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData
 
 router = APIRouter(tags=["invoices"])
+from features.platform_access import require_admin
 _db = None
 
 ISSUER_KEY = "invoice_issuer"
@@ -503,14 +504,14 @@ class IssuerIn(BaseModel):
 
 
 @router.get("/api/admin/invoicing/issuer")
-def get_issuer(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def get_issuer(token_data: TokenData = Depends(require_admin("facturation"))):
     i = issuer()
     return {"issuer": i, "complete": issuer_complete(i), "required": list(ISSUER_REQUIRED),
             "waiting": _db.fidclic_invoices.count_documents({"number": {"$exists": False}})}
 
 
 @router.put("/api/admin/invoicing/issuer")
-def put_issuer(body: IssuerIn, token_data: TokenData = Depends(require_role(["super_admin"]))):
+def put_issuer(body: IssuerIn, token_data: TokenData = Depends(require_admin("facturation"))):
     data = body.model_dump()
     data["siren"] = re.sub(r"\D", "", data["siren"])
     if data["siren"] and len(data["siren"]) != 9:
@@ -528,14 +529,14 @@ def put_issuer(body: IssuerIn, token_data: TokenData = Depends(require_role(["su
 
 
 @router.get("/api/admin/invoicing/invoices")
-def admin_invoices(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def admin_invoices(token_data: TokenData = Depends(require_admin("facturation"))):
     rows = list(_db.fidclic_invoices.find({}, {"_id": 0}).sort("paid_at", -1).limit(500))
     names = {t["id"]: t.get("name") for t in _db.tenants.find({}, {"_id": 0, "id": 1, "name": 1})}
     return {"invoices": [{**_public(r), "tenant": names.get(r["tenant_id"], r["tenant_id"])} for r in rows]}
 
 
 @router.get("/api/admin/invoicing/invoices/{inv_id}/pdf")
-def admin_invoice_pdf(inv_id: str, token_data: TokenData = Depends(require_role(["super_admin"]))):
+def admin_invoice_pdf(inv_id: str, token_data: TokenData = Depends(require_admin("facturation"))):
     inv = _db.fidclic_invoices.find_one({"id": inv_id}, {"_id": 0})
     if not inv or not inv.get("number"):
         raise HTTPException(status_code=404, detail="Facture introuvable")

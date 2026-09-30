@@ -36,6 +36,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features.platform_access import require_admin
 from features import crm as C
 
 router = APIRouter(tags=["crm"])
@@ -127,7 +128,7 @@ def _names(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
 @router.get("/api/crm/calls")
 def list_calls(tab: str = "", q: str = "", sector: str = "", city: str = "", status: str = "", result: str = "",
                assigned: str = "", prospect_id: str = "", page: int = 1, per_page: int = 10,
-               token_data: TokenData = Depends(require_role(C.CRM))):
+               token_data: TokenData = Depends(require_admin("crm"))):
     page, per_page = max(1, int(page)), max(1, min(200, int(per_page)))
     base = _query(q, sector, city, status, result, assigned, prospect_id)
     counts = {"all": _db.crm_calls.count_documents(base),
@@ -142,7 +143,7 @@ def list_calls(tab: str = "", q: str = "", sector: str = "", city: str = "", sta
 
 
 @router.get("/api/crm/calls/summary")
-def calls_summary(token_data: TokenData = Depends(require_role(C.CRM))):
+def calls_summary(token_data: TokenData = Depends(require_admin("crm"))):
     now = C._now()
     allc = list(_db.crm_calls.find({}, {"_id": 0, "at": 1, "status": 1, "result": 1, "by": 1}))
     preds = {"total": lambda c: True, "effectues": lambda c: c.get("status") == "termine",
@@ -178,7 +179,7 @@ def calls_summary(token_data: TokenData = Depends(require_role(C.CRM))):
 
 
 @router.get("/api/crm/calls/{cid}")
-def get_call(cid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def get_call(cid: str, token_data: TokenData = Depends(require_admin("crm"))):
     c = _db.crm_calls.find_one({"id": cid}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Appel introuvable")
@@ -226,7 +227,7 @@ def _log_call(c: Dict[str, Any], by: str) -> None:
 
 
 @router.post("/api/crm/calls")
-def add_call(body: CallIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def add_call(body: CallIn, token_data: TokenData = Depends(require_admin("crm"))):
     p = _db.crm_prospects.find_one({"id": body.prospect_id}, {"_id": 0}) if body.prospect_id else None
     if not p:
         raise HTTPException(status_code=400, detail="Choisissez le commerce appelé.")
@@ -263,7 +264,7 @@ def add_call(body: CallIn, token_data: TokenData = Depends(require_role(C.CRM)))
 
 
 @router.put("/api/crm/calls/{cid}")
-def edit_call(cid: str, body: CallIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def edit_call(cid: str, body: CallIn, token_data: TokenData = Depends(require_admin("crm"))):
     c = _db.crm_calls.find_one({"id": cid}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Appel introuvable")
@@ -296,7 +297,7 @@ def edit_call(cid: str, body: CallIn, token_data: TokenData = Depends(require_ro
 
 
 @router.delete("/api/crm/calls/{cid}")
-def delete_call(cid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def delete_call(cid: str, token_data: TokenData = Depends(require_admin("crm"))):
     c = _db.crm_calls.find_one({"id": cid}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Appel introuvable")
@@ -314,7 +315,7 @@ def delete_call(cid: str, token_data: TokenData = Depends(require_role(C.CRM))):
 # Recording
 # ---------------------------------------------------------------------------
 @router.post("/api/crm/calls/{cid}/recording")
-async def upload_recording(cid: str, file: UploadFile = File(...), token_data: TokenData = Depends(require_role(C.CRM))):
+async def upload_recording(cid: str, file: UploadFile = File(...), token_data: TokenData = Depends(require_admin("crm"))):
     if not _db.crm_calls.find_one({"id": cid}):
         raise HTTPException(status_code=404, detail="Appel introuvable")
     name = (file.filename or "").lower()
@@ -334,7 +335,7 @@ async def upload_recording(cid: str, file: UploadFile = File(...), token_data: T
 
 
 @router.get("/api/crm/calls/{cid}/recording")
-def get_recording(cid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def get_recording(cid: str, token_data: TokenData = Depends(require_admin("crm"))):
     r = _db.crm_call_recordings.find_one({"call_id": cid})
     if not r:
         raise HTTPException(status_code=404, detail="Pas d'enregistrement")
@@ -344,7 +345,7 @@ def get_recording(cid: str, token_data: TokenData = Depends(require_role(C.CRM))
 
 
 @router.delete("/api/crm/calls/{cid}/recording")
-def delete_recording(cid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def delete_recording(cid: str, token_data: TokenData = Depends(require_admin("crm"))):
     _db.crm_call_recordings.delete_one({"call_id": cid})
     _db.crm_calls.update_one({"id": cid}, {"$set": {"has_recording": False}})
     return {"ok": True}
@@ -444,7 +445,7 @@ def _prospects_by_number() -> Dict[str, Dict[str, Any]]:
 
 
 @router.post("/api/crm/calls/import/preview")
-async def import_calls_preview(file: UploadFile = File(...), token_data: TokenData = Depends(require_role(C.CRM))):
+async def import_calls_preview(file: UploadFile = File(...), token_data: TokenData = Depends(require_admin("crm"))):
     data = await file.read()
     if len(data) > MAX_LOG:
         raise HTTPException(status_code=413, detail="Fichier trop lourd (5 Mo maximum).")
@@ -478,7 +479,7 @@ class CallImportIn(BaseModel):
 
 
 @router.post("/api/crm/calls/import/commit")
-def import_calls_commit(body: CallImportIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def import_calls_commit(body: CallImportIn, token_data: TokenData = Depends(require_admin("crm"))):
     ids = {p["id"]: p for p in _db.crm_prospects.find({"id": {"$in": [r.get("prospect_id") for r in body.rows]}}, {"_id": 0})}
     created = skipped = 0
     for r in body.rows[:2000]:
@@ -501,7 +502,7 @@ def import_calls_commit(body: CallImportIn, token_data: TokenData = Depends(requ
 
 @router.get("/api/crm/calls/export/csv")
 def export_calls(tab: str = "", q: str = "", sector: str = "", city: str = "", status: str = "", result: str = "",
-                 assigned: str = "", token_data: TokenData = Depends(require_role(C.CRM))):
+                 assigned: str = "", token_data: TokenData = Depends(require_admin("crm"))):
     f = {**_query(q, sector, city, status, result, assigned), **_tab_filter(tab if tab in TABS else "")}
     rows = list(_db.crm_calls.find(f, {"_id": 0}).sort("at", -1).limit(20000))
     users, names = C._users(), _names(rows)

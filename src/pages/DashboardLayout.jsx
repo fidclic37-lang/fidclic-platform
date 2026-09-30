@@ -14,8 +14,9 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
-  Receipt, Store, ShieldAlert, Eye,
+  Receipt, Store, ShieldAlert, Eye, ShieldCheck, KeyRound,
 } from 'lucide-react';
+import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 
 /* =====================================================================
@@ -124,6 +125,36 @@ const CommercesNav = ({ currentPath, role, collapsed }) => {
             const on = currentPath === '/admin/commerces' && tab === t;
             return (
               <Link key={label} to={t ? `/admin/commerces?tab=${t}` : '/admin/commerces'} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
+                <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Super admin › Sécurité: the overview, then its four pages.
+const SECURITE_ITEMS = [['/admin/securite', 'Utilisateurs', UsersRound], ['/admin/securite/roles', 'Rôles & Permissions', ShieldCheck],
+  ['/admin/securite/connexions', 'Connexions', KeyRound], ['/admin/securite/journal', "Journal d'activité", History],
+  ['/admin/securite/parametres', 'Paramètres sécurité', Settings2]];
+const SecuriteNav = ({ currentPath, role, collapsed }) => {
+  const inside = currentPath.startsWith('/admin/securite');
+  if (collapsed) return <NavLink to="/admin/securite" icon={ShieldCheck} label="Sécurité" currentPath={currentPath} role={role} collapsed={collapsed} />;
+  return (
+    <div>
+      <Link to="/admin/securite" className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-[7px] text-[13.5px] transition-all ${inside ? 'bg-[#2F6BFF] font-semibold text-white' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"><ShieldCheck className="h-[18px] w-[18px]" /></span>
+        <span className="flex-1 truncate text-left">Sécurité</span>
+        <ChevronDown size={15} className={`transition ${inside ? 'rotate-180' : ''}`} />
+      </Link>
+      {inside && (
+        <div className="mt-1 space-y-[1px] rounded-xl bg-[#F4F8FF] py-1">
+          {SECURITE_ITEMS.map(([to, label, Icon]) => {
+            const on = currentPath === to;
+            return (
+              <Link key={to} to={to} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
                 <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
               </Link>
             );
@@ -393,7 +424,7 @@ const DashboardLayout = () => {
   const [tenantInfo, setTenantInfo] = React.useState(null);
   React.useEffect(() => {
     // A platform admin has no shop of their own — the call would only 403.
-    if (!user || user.role === 'super_admin') return undefined;
+    if (!user || isTeam(user)) return undefined;
     let alive = true;
     ownerAPI.getTenant?.()
       .then((r) => { if (alive) setTenantInfo(r.data || null); })
@@ -410,11 +441,11 @@ const DashboardLayout = () => {
 
   return (
     <div
-      className={`relative flex min-h-screen fdt-dash flc ${nuit ? "flc-nuit" : ""} ${['super_admin', 'commercial'].includes(role) ? 'fd-admin' : ''}`}
+      className={`relative flex min-h-screen fdt-dash flc ${nuit ? "flc-nuit" : ""} ${isTeam(user) ? 'fd-admin' : ''}`}
       style={{ transition: 'background 200ms ease' }}
     >
       {/* The super admin and the sales team use the blue design's plain canvas. */}
-      {!['super_admin', 'commercial'].includes(role) && <AmbientBackdrop role={role} />}
+      {!isTeam(user) && <AmbientBackdrop role={role} />}
 
       <aside
         className={`sticky top-0 z-10 ${collapsed ? 'w-[72px]' : 'w-64'} h-screen flex flex-col shrink-0 transition-[width,background-color] duration-200 ease-out fd-aside fd-sidebar-host`}
@@ -466,16 +497,16 @@ const DashboardLayout = () => {
                 FidClic
               </span>
             )}
-            {!collapsed && ['super_admin', 'commercial'].includes(role) && (
-              <span className="rounded-md bg-[#EAF1FF] px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-[#2F6BFF]">
-                {role === 'super_admin' ? 'SUPER ADMIN' : 'COMMERCIAL'}
+            {!collapsed && isTeam(user) && (
+              <span className="max-w-[92px] truncate rounded-md bg-[#EAF1FF] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#2F6BFF]">
+                {role === 'super_admin' ? 'SUPER ADMIN' : (user?.platform_role_name || 'COMMERCIAL')}
               </span>
             )}
           </Link>
         </div>
         {/* The owner picks any establishment, an administrateur one of its
             own; a manager or an employé sees its establishment's name. */}
-        {role !== 'super_admin' && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
+        {!isTeam(user) && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
@@ -548,26 +579,21 @@ const DashboardLayout = () => {
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
-          {/* Super admin — the approved mockup's order and French names. The
-              sales team (« commercial ») gets the CRM only. */}
-          {role === 'super_admin' && (
+          {/* FidClic's team — the approved mockup's order and French names.
+              Each role sees the sections it may open (Sécurité › Rôles). */}
+          {isTeam(user) && (
             <>
-              <NavLink to="/admin"               icon={Home}         label="Dashboard"          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <CommercesNav currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/analytics"     icon={BarChart3}    label="Analytics"          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/insights"      icon={Sparkles}     label="Insights"           currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/campaigns"     icon={Megaphone}    label="Campagnes"          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/plans"         icon={Shield}       label="Plan Limits"        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/facturation"   icon={Receipt}      label="Facturation"        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/card-designer" icon={Palette}      label="Card Designer"      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/admin/ai"            icon={BrainCircuit} label="FIDCLIC AI"         currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SignOutNavItem onClick={logout} collapsed={collapsed} />
-            </>
-          )}
-          {role === 'commercial' && (
-            <>
-              <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />
+              {can(user, 'dashboard') && <NavLink to="/admin" icon={Home} label="Dashboard" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'commerces') && <CommercesNav currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'analytics') && <NavLink to="/admin/analytics" icon={BarChart3} label="Analytics" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'insights') && <NavLink to="/admin/insights" icon={Sparkles} label="Insights" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'campagnes') && <NavLink to="/admin/campaigns" icon={Megaphone} label="Campagnes" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'card_designer') && <NavLink to="/admin/card-designer" icon={Palette} label="Card Designer" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'securite') && <SecuriteNav currentPath={currentPath} role={role} collapsed={collapsed} />}
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -614,6 +640,13 @@ const DashboardLayout = () => {
         </div>
       )}
       <main className="relative z-10 flex-1 overflow-auto">
+        {/* A team member whose role may look at this section but not change it. */}
+        {isTeam(user) && role !== 'super_admin' && moduleOfPath(currentPath) && can(user, moduleOfPath(currentPath))
+          && !can(user, moduleOfPath(currentPath), 'edit') && (
+          <p className="mx-4 mt-3 flex items-center gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-4 py-2 text-[12.5px] text-[#92400E]">
+            <Eye size={14} /> Lecture seule : votre rôle permet de consulter cette section, pas de la modifier.
+          </p>
+        )}
         {/* Global billing health banner — only renders if there's something to
             warn about (past-due, canceled, trial ending soon). Otherwise
             invisible and out of the way. */}

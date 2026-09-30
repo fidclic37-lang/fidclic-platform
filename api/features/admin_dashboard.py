@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query
 
 from auth import require_role, TokenData
+from features.platform_access import require_admin
 from features import admin_commerces as AC
 
 router = APIRouter(tags=["admin"])
@@ -234,7 +235,7 @@ def _activity(names: Dict[str, str], limit: int = 30) -> List[Dict[str, Any]]:
 
 @router.get("/api/admin/dashboard")
 def dashboard(date_from: Optional[str] = Query(None, alias="from"), date_to: Optional[str] = Query(None, alias="to"),
-              months: int = 6, token_data: TokenData = Depends(require_role(ADMIN))):
+              months: int = 6, token_data: TokenData = Depends(require_admin("dashboard"))):
     import server as core
     import models
     if not isinstance(date_from, (str, type(None))):

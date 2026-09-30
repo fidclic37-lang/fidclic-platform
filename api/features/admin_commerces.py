@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData, create_access_token, hash_password
 
 router = APIRouter(tags=["admin"])
+from features.platform_access import require_admin
 _db = None
 ADMIN = ["super_admin"]
 RULES_KEY = "commerce_status_rules"
@@ -154,12 +155,12 @@ class RulesIn(BaseModel):
 
 
 @router.get("/api/admin/commerces/rules")
-def get_rules(token_data: TokenData = Depends(require_role(ADMIN))):
+def get_rules(token_data: TokenData = Depends(require_admin("commerces"))):
     return rules()
 
 
 @router.put("/api/admin/commerces/rules")
-def put_rules(body: RulesIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def put_rules(body: RulesIn, token_data: TokenData = Depends(require_admin("commerces"))):
     if body.inactif_min >= body.actif_min:
         raise HTTPException(status_code=400, detail="Le seuil « Inactif » doit être plus petit que le seuil « Actif ».")
     _db.platform_settings.update_one({"key": RULES_KEY}, {"$set": {"key": RULES_KEY, "value": body.dict(), "updated_at": _now(),
@@ -220,7 +221,7 @@ def _cards(rows: List[Dict[str, Any]], now: datetime) -> List[Dict[str, Any]]:
 @router.get("/api/admin/commerces")
 def list_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "", plan: str = "", status: str = "",
                    sort: str = "-clients", page: int = 1, per_page: int = 15,
-                   token_data: TokenData = Depends(require_role(ADMIN))):
+                   token_data: TokenData = Depends(require_admin("commerces"))):
     now = _now()
     rows = snapshot(now)
     page, per_page = max(1, int(page)), max(1, min(100, int(per_page)))
@@ -240,7 +241,7 @@ def list_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "",
 
 @router.get("/api/admin/commerces/export")
 def export_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "", plan: str = "", status: str = "",
-                     token_data: TokenData = Depends(require_role(ADMIN))):
+                     token_data: TokenData = Depends(require_admin("commerces"))):
     rows = _filtered(snapshot(), tab, q, sector, city, plan, status)
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
@@ -281,7 +282,7 @@ def _slug(name: str) -> str:
 
 
 @router.post("/api/admin/commerces")
-def add_commerce(body: CommerceIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def add_commerce(body: CommerceIn, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
     name, email = (body.name or "").strip(), (body.owner_email or "").strip().lower()
     if not name or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
@@ -305,7 +306,7 @@ def add_commerce(body: CommerceIn, token_data: TokenData = Depends(require_role(
 
 
 @router.put("/api/admin/commerces/{tid}")
-def edit_commerce(tid: str, body: CommerceIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def edit_commerce(tid: str, body: CommerceIn, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
     t = _db.tenants.find_one({"id": tid})
     if not t:
@@ -326,7 +327,7 @@ class PlanIn(BaseModel):
 
 
 @router.post("/api/admin/commerces/{tid}/plan")
-def change_plan(tid: str, body: PlanIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def change_plan(tid: str, body: PlanIn, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
     t = _db.tenants.find_one({"id": tid})
     if not t:
@@ -347,7 +348,7 @@ class SuspendIn(BaseModel):
 
 
 @router.post("/api/admin/commerces/{tid}/suspend")
-def suspend(tid: str, body: SuspendIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def suspend(tid: str, body: SuspendIn, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
     t = _db.tenants.find_one({"id": tid})
     if not t:
@@ -363,7 +364,7 @@ def suspend(tid: str, body: SuspendIn, token_data: TokenData = Depends(require_r
 
 
 @router.post("/api/admin/commerces/{tid}/reactivate")
-def reactivate(tid: str, token_data: TokenData = Depends(require_role(ADMIN))):
+def reactivate(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
     if not _db.tenants.find_one({"id": tid}):
         raise HTTPException(status_code=404, detail="Commerce introuvable")
@@ -390,7 +391,7 @@ def is_suspended(tenant_id: Optional[str]) -> bool:
 
 
 @router.post("/api/admin/commerces/{tid}/view-as")
-def view_as(tid: str, request: Request = None, token_data: TokenData = Depends(require_role(ADMIN))):
+def view_as(tid: str, request: Request = None, token_data: TokenData = Depends(require_admin("commerces", write=False))):
     import server as core
     t = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1})
     if not t:
@@ -427,7 +428,7 @@ def _owner(tid: str) -> Dict[str, Any]:
 
 
 @router.get("/api/admin/commerces/{tid}")
-def get_commerce(tid: str, token_data: TokenData = Depends(require_role(ADMIN))):
+def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
     from features import customer_status as CS
     t = _tenant(tid)
@@ -577,7 +578,7 @@ def _usage(t: Dict[str, Any], f: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 @router.get("/api/admin/commerces/{tid}/clients")
-def commerce_clients(tid: str, q: str = "", page: int = 1, per_page: int = 20, token_data: TokenData = Depends(require_role(ADMIN))):
+def commerce_clients(tid: str, q: str = "", page: int = 1, per_page: int = 20, token_data: TokenData = Depends(require_admin("commerces"))):
     """No contact details here: the super admin sees how the programme works,
     not who the business's customers are."""
     _tenant(tid)
@@ -597,7 +598,7 @@ def commerce_clients(tid: str, q: str = "", page: int = 1, per_page: int = 20, t
 
 
 @router.get("/api/admin/commerces/{tid}/details")
-def commerce_details(tid: str, token_data: TokenData = Depends(require_role(ADMIN))):
+def commerce_details(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
     """The other tabs: Fidélité, Campagnes, Notifications, Abonnement, Paramètres."""
     import server as core
     t = _tenant(tid)
@@ -648,7 +649,7 @@ def commerce_details(tid: str, token_data: TokenData = Depends(require_role(ADMI
 
 
 @router.get("/api/admin/commerces/{tid}/zone")
-def commerce_zone(tid: str, token_data: TokenData = Depends(require_role(ADMIN))):
+def commerce_zone(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
     from features import geolocation as G
     _tenant(tid)
     now = _now()

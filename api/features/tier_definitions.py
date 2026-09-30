@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from auth import require_role
 
 router = APIRouter(tags=["tier-definitions"])
+from features.platform_access import require_admin
 _db = None
 
 
@@ -145,7 +146,7 @@ def list_big_spenders(
 @router.get("/api/admin/tier-definitions/{tenant_id}")
 def get_admin_def(
     tenant_id: str,
-    token_data=Depends(require_role(["super_admin"])),
+    token_data=Depends(require_admin("commerces")),
 ):
     return _resolve(tenant_id).model_dump()
 
@@ -154,7 +155,7 @@ def get_admin_def(
 def update_admin_def(
     tenant_id: str,
     defn: TierDefinition,
-    token_data=Depends(require_role(["super_admin"])),
+    token_data=Depends(require_admin("commerces")),
 ):
     if not (defn.silver_min_visits < defn.gold_min_visits < defn.vip_min_visits):
         raise HTTPException(status_code=400, detail="Thresholds must be silver < gold < vip.")
@@ -174,6 +175,6 @@ def update_admin_def(
 @router.post("/api/admin/tier-definitions/{tenant_id}/recompute")
 def recompute_admin(
     tenant_id: str,
-    token_data=Depends(require_role(["super_admin"])),
+    token_data=Depends(require_admin("commerces")),
 ):
     return _recompute_for_tenant(tenant_id)

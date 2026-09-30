@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import uuid
+import contextvars
 import random
 import re
 import json
@@ -30,6 +31,7 @@ from auth import (
     hash_password, verify_password, create_access_token, get_current_user_data,
     require_role, check_plan_feature, TokenData, ACCESS_TOKEN_EXPIRE_MINUTES
 )
+from features.platform_access import require_admin   # Sécurité › Rôles & Permissions
 
 import os
 import pymongo
@@ -88,6 +90,13 @@ def _client_ip(request) -> str:
     except Exception:
         return ""
 
+# Super admin › Sécurité › Journal d'activité: every change made by FidClic's
+# team is journaled. Endpoints that write their own audit row say so through
+# this per-request box; the others get an automatic row (method, path,
+# status) from the middleware below.
+_REQ_AUDIT: "contextvars.ContextVar[Optional[dict]]" = contextvars.ContextVar("req_audit", default=None)
+
+
 def log_audit(action: str, actor: str = "", actor_type: str = "system",
               tenant_id: str = None, target: str = None,
               request=None, meta: dict = None):
@@ -100,6 +109,9 @@ def log_audit(action: str, actor: str = "", actor_type: str = "system",
     actor_type — 'user' | 'customer' | 'system'
     target     — the object acted on (customer id, plan name, …)
     """
+    box = _REQ_AUDIT.get()
+    if box is not None and actor_type == "user":
+        box["done"] = True            # the automatic journal entry is not needed for this request
     try:
         db.audit_logs.insert_one({
             "id": str(uuid.uuid4()),
@@ -1773,6 +1785,24 @@ _seeded = False
 _seed_error = None
 
 @app.middleware("http")
+async def platform_journal(request: Request, call_next):
+    """Journal d'activité: a change made by FidClic's team (the guards set
+    request.state.platform_actor) that wrote no audit row of its own gets an
+    automatic one — method, path, and whether it went through."""
+    box = {"done": False}
+    token = _REQ_AUDIT.set(box)
+    try:
+        response = await call_next(request)
+    finally:
+        _REQ_AUDIT.reset(token)
+    actor = getattr(request.state, "platform_actor", None)
+    if actor and request.method not in ("GET", "HEAD", "OPTIONS") and not box["done"]:
+        log_audit("platform.request", actor=actor, actor_type="user", request=request,
+                  meta={"method": request.method, "path": request.url.path, "status": response.status_code})
+    return response
+
+
+@app.middleware("http")
 async def ensure_seed_data(request: Request, call_next):
     global _seeded, _seed_error
     if SEED_DISABLED:
@@ -2098,7 +2128,7 @@ def submit_support_ticket(payload: SupportTicketIn):
 @app.get("/api/admin/support/tickets")
 def list_support_tickets(
     limit: int = 50,
-    token_data=Depends(require_role(["super_admin"])),
+    token_data=Depends(require_admin("support")),
 ):
     """Admin-only view of recent support tickets so the platform team
     can triage even if email delivery is broken."""
@@ -2454,10 +2484,12 @@ def login(req: LoginRequest, response: Response, request: Request = None):
             status_code=400,
             detail=f"Ce compte utilise la connexion {str(user.auth_provider or '').title()} — utilisez le bouton correspondant.",
         )
+    _platform_security().before_password(user_dict, request)       # FidClic team: blocked after N failures
     if not verify_password(req.password, user.hashed_password):
         log_audit("auth.login_failed", actor=req.email, actor_type="user",
                   tenant_id=user.tenant_id, request=request,
                   meta={"reason": "bad_password"})
+        _platform_security().on_bad_password(user_dict, request)
         raise HTTPException(status_code=400, detail="Incorrect credentials")
     if user_dict.get("active") is False:
         # Switched off by their responsable on Paramètres › Équipe & accès.
@@ -2466,6 +2498,19 @@ def login(req: LoginRequest, response: Response, request: Request = None):
         raise HTTPException(status_code=403,
                             detail="Ce compte a été désactivé. Contactez votre responsable.")
     return finish_login(response, user_dict, request, "auth.login")
+
+
+def _platform_security():
+    from features import platform_security
+    return platform_security
+
+
+def _platform_identity(user: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from features.platform_access import identity
+        return identity(user) if user.get("email") else {}
+    except Exception:
+        return {}
 
 
 def finish_login(response: Response, user: Dict[str, Any], request: Request = None,
@@ -2482,6 +2527,8 @@ def finish_login(response: Response, user: Dict[str, Any], request: Request = No
         # Suspended by FidClic: nobody of the business signs in; its customers'
         # cards keep working (features/admin_commerces.py).
         raise HTTPException(status_code=403, detail="Ce compte est suspendu. Contactez FidClic.")
+    # FidClic's own team: allowed countries (features/platform_security.py).
+    _platform_security().check_country(user, request)
     if user.get("totp_enabled") and user.get("totp_secret"):
         from features import security_page as _SEC
         log_audit("auth.2fa_challenge", actor=user["email"], actor_type="user",
@@ -2489,6 +2536,7 @@ def finish_login(response: Response, user: Dict[str, Any], request: Request = No
         return {"requires_2fa": True, "challenge": _SEC.make_challenge(user["email"])}
     log_audit(action, actor=user["email"], actor_type="user", tenant_id=user.get("tenant_id"),
               request=request, meta={"role": user.get("role"), **(meta or {})})
+    _platform_security().record_success(user, request, "oauth" if "oauth" in action else "password")
     return _issue_session(response, user, request)
 
 
@@ -2505,12 +2553,15 @@ def login_2fa(req: TwoFactorLogin, response: Response, request: Request = None):
     user = db.users.find_one({"email": email})
     if not user or user.get("active") is False:
         raise HTTPException(status_code=401, detail="Compte indisponible.")
+    _platform_security().before_password(user, request)
     if not _SEC.check_second_factor(user, req.code):
         log_audit("auth.login_failed", actor=email, actor_type="user", tenant_id=user.get("tenant_id"),
                   request=request, meta={"reason": "bad_2fa_code"})
+        _platform_security().on_bad_password(user, request)      # a wrong code counts like a wrong password
         raise HTTPException(status_code=400, detail="Code incorrect.")
     log_audit("auth.login", actor=email, actor_type="user", tenant_id=user.get("tenant_id"),
               request=request, meta={"role": user.get("role"), "2fa": True})
+    _platform_security().record_success(user, request, "2fa")
     return _issue_session(response, user, request)
 
 
@@ -2534,6 +2585,8 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "tenant_slug": (tenant or {}).get("slug"),
         # « Accéder au compte » from the super admin: a read-only view.
         "view_as": {"by": token_data.view_by} if getattr(token_data, "view_by", None) else None,
+        # FidClic's own team: the role and what it may see / change.
+        **_platform_identity(user),
         # Paramètres › Préférences: applied by the app as soon as it knows who
         # is signed in — the business's currency, this account's choices.
         "currency": ((tenant or {}).get("currency") or "EUR").upper(),
@@ -2569,7 +2622,7 @@ def logout(response: Response):
 # ========================
 
 @app.get("/api/admin/env-status")
-def admin_env_status(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def admin_env_status(token_data: TokenData = Depends(require_admin("parametres"))):
     """Reports which environment variables are configured and which features
     will silently no-op without them. Used by the super-admin dashboard to
     show a "Setup checklist" — way more useful than discovering 6 weeks
@@ -2676,7 +2729,7 @@ def admin_env_status(token_data: TokenData = Depends(require_role(["super_admin"
 
 
 @app.get("/api/admin/tenants")
-def get_all_tenants(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def get_all_tenants(token_data: TokenData = Depends(require_admin("commerces"))):
     tenants = list(db.tenants.find({"is_active": {"$ne": False}}))
 
     # Bulk per-tenant rollups via aggregation — keeps this endpoint at ~3 round
@@ -2731,7 +2784,7 @@ def get_all_tenants(token_data: TokenData = Depends(require_role(["super_admin"]
 @app.post("/api/admin/tenants")
 def create_tenant(
     req: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Create new tenant with generated business owner account"""
     tenant_id = str(uuid.uuid4())
@@ -2773,7 +2826,7 @@ def create_tenant(
 def update_tenant(
     tenant_id: str,
     req: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Update tenant details"""
     update_data = {}
@@ -2799,7 +2852,7 @@ def update_tenant(
 @app.delete("/api/admin/tenants/{tenant_id}")
 def delete_tenant(
     tenant_id: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Soft delete tenant"""
     result = db.tenants.update_one({"id": tenant_id}, {"$set": {"is_active": False}})
@@ -2901,7 +2954,7 @@ def _plan_row(plan: str) -> Dict[str, Any]:
 
 
 @app.get("/api/admin/plans")
-def admin_list_plans(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def admin_list_plans(token_data: TokenData = Depends(require_admin("plan_limits"))):
     """Return the 3 canonical plans (silver/gold/vip) with their baseline,
     effective (post-override) values, a diff of what's overridden, and how
     many tenants are on each plan."""
@@ -2912,7 +2965,7 @@ def admin_list_plans(token_data: TokenData = Depends(require_role(["super_admin"
 def admin_update_plan(
     plan: str,
     req: PlanOverrideReq,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("plan_limits"))
 ):
     """Upsert per-plan limit overrides. Pass null on any field to clear that
     field's override and fall back to the hardcoded baseline."""
@@ -2954,7 +3007,7 @@ def admin_list_audit_logs(
     limit: int = 100,
     action: Optional[str] = None,
     tenant_id: Optional[str] = None,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("securite"))
 ):
     """RGPD accountability trail. Filterable by action prefix (e.g. 'gdpr.')
     and tenant. Newest first, capped at 500 rows per call."""
@@ -3104,7 +3157,7 @@ def owner_upgrade_plan(
 @app.get("/api/admin/tenants/{tenant_id}/details")
 def get_tenant_details(
     tenant_id: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Get detailed tenant info with customer stats"""
     tenant = db.tenants.find_one({"id": tenant_id})
@@ -3135,7 +3188,7 @@ def get_tenant_details(
 @app.get("/api/admin/tenants/{tenant_id}/customers")
 def admin_get_tenant_customers(
     tenant_id: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Admin: list all customers of a specific tenant."""
     tenant = db.tenants.find_one({"id": tenant_id})
@@ -3150,7 +3203,7 @@ def admin_get_tenant_customers(
 def admin_get_tenant_analytics(
     tenant_id: str,
     days: int = 30,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Admin: full analytics snapshot for a specific tenant (mirrors owner analytics)."""
     tenant = db.tenants.find_one({"id": tenant_id})
@@ -3227,7 +3280,7 @@ def admin_get_tenant_analytics(
 @app.get("/api/admin/card-template/{tenant_id}")
 def get_card_template_admin(
     tenant_id: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("card_designer"))
 ):
     """Get card template for a tenant (admin only)"""
     t = db.card_templates.find_one({"tenant_id": tenant_id})
@@ -3240,7 +3293,7 @@ def get_card_template_admin(
 def save_card_template_admin(
     tenant_id: str,
     req: CardTemplate,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("card_designer"))
 ):
     """Save card template for a tenant (admin only). Mirrors the owner-side
     save: snapshots old rules, writes new ones, and runs a retroactive
@@ -3308,7 +3361,7 @@ def update_owner_geo_settings(
 def update_geo_settings(
     tenant_id: str,
     req: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Update geo settings for a tenant. SUPER ADMIN ONLY.
 
@@ -3338,7 +3391,7 @@ def update_geo_settings(
     return tenant
 
 @app.get("/api/admin/analytics")
-def get_admin_analytics(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def get_admin_analytics(token_data: TokenData = Depends(require_admin("analytics"))):
     """Admin analytics dashboard"""
     tenant_count = db.tenants.count_documents({"is_active": {"$ne": False}})
     customer_count = db.customers.count_documents({})
@@ -3369,7 +3422,7 @@ def get_admin_analytics(token_data: TokenData = Depends(require_role(["super_adm
     }
 
 @app.get("/api/admin/detailed-analytics")
-def get_admin_detailed_analytics(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def get_admin_detailed_analytics(token_data: TokenData = Depends(require_admin("analytics"))):
     """Enhanced admin analytics — platform-wide aggregates across ALL tenants.
     Uses MongoDB aggregation to stay at ~3 round-trips total (instead of 1 per tenant)."""
     tenants = list(db.tenants.find({"is_active": {"$ne": False}}))
@@ -3490,7 +3543,7 @@ def get_admin_detailed_analytics(token_data: TokenData = Depends(require_role(["
 @app.get("/api/admin/tenants-by-plan/{plan}")
 def get_tenants_by_plan(
     plan: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Get list of tenants for a specific plan tier"""
     if plan not in ["basic", "gold", "vip", "chain"]:
@@ -3516,7 +3569,7 @@ def get_tenants_by_plan(
 @app.get("/api/admin/tenants-by-tier/{tier}")
 def get_tenants_by_tier(
     tier: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Rank tenants by how many customers they have at a given loyalty tier."""
     tier = tier.lower()
@@ -3542,7 +3595,7 @@ def get_tenants_by_tier(
 @app.get("/api/admin/tenants-by-acquisition/{source}")
 def get_tenants_by_acquisition(
     source: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Rank tenants by how many customers they've acquired via a specific channel."""
     tenants = list(db.tenants.find({"is_active": {"$ne": False}}))
@@ -3564,7 +3617,7 @@ def get_tenants_by_acquisition(
 @app.get("/api/admin/tenants-by-geo/{enabled}")
 def get_tenants_by_geo(
     enabled: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """List tenants with geolocation enabled/disabled."""
     want_enabled = enabled.lower() in ("1", "true", "yes", "enabled", "on")
@@ -3585,7 +3638,7 @@ def get_tenants_by_geo(
 @app.get("/api/admin/tenants-by-month/{iso_month}")
 def get_tenants_by_month(
     iso_month: str,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """List tenants created in a given month (format YYYY-MM)."""
     try:
@@ -3614,7 +3667,7 @@ def get_tenants_by_month(
     return out
 
 @app.post("/api/admin/ai-query")
-def admin_ai_query(req: AIQueryRequest, token_data: TokenData = Depends(require_role(["super_admin"]))):
+def admin_ai_query(req: AIQueryRequest, token_data: TokenData = Depends(require_admin("ai", write=False))):
     """Mock admin AI assistant"""
     return {
         "reply": "Intel Suggestion: Based on analytics, consider upgrading underperforming tenants to Gold tier. Most growth is coming from the café sector. Would you like me to draft upgrade recommendations?",
@@ -8433,7 +8486,7 @@ def get_branch_performance(
 # ========================
 
 @app.get("/api/admin/enhanced-analytics")
-def get_admin_enhanced_analytics(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def get_admin_enhanced_analytics(token_data: TokenData = Depends(require_admin("analytics"))):
     """Enhanced admin analytics with business health.
     Uses aggregation pipelines — 5 round-trips total, not 6 per tenant."""
     tenants = list(db.tenants.find({"is_active": {"$ne": False}}))
@@ -8529,7 +8582,7 @@ def get_admin_enhanced_analytics(token_data: TokenData = Depends(require_role(["
 @app.post("/api/admin/send-business-campaign")
 def send_business_campaign(
     req: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("campagnes"))
 ):
     """Send campaign email to a business owner"""
     campaign = {
@@ -10105,7 +10158,7 @@ def list_owner_reviews(
 
 @app.get("/api/admin/analytics/reviews")
 def get_admin_review_analytics(
-    token_data: TokenData = Depends(require_role(["super_admin"])),
+    token_data: TokenData = Depends(require_admin("analytics")),
     tenant_id: Optional[str] = Query(None),
 ):
     """Global review KPIs across all tenants + per-tenant leaderboard.
@@ -10547,7 +10600,7 @@ def get_active_cards(token_data: TokenData = Depends(require_role(["business_own
 # ============================================================
 
 @app.get("/api/admin/insights")
-def get_admin_insights(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def get_admin_insights(token_data: TokenData = Depends(require_admin("insights"))):
     """Platform-wide Insights: churn, LTV, alerts, active cards, top performers.
     Single response so the admin Insights page renders with one round-trip on the
     frontend. All numbers come from the same aggregations Dashboard uses, so they
@@ -11290,7 +11343,7 @@ class AdminBroadcastRequest(BaseModel):
 @app.post("/api/admin/broadcast")
 def admin_broadcast(
     req: AdminBroadcastRequest,
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("notifications"))
 ):
     """Admin-authored broadcast to end-customers across tenants.
     Sends under the admin-chosen sender name.
@@ -11365,7 +11418,7 @@ class AdminBroadcastPreviewRequest(BaseModel):
 @app.post("/api/admin/broadcast/preview")
 def admin_broadcast_preview(
     req: AdminBroadcastPreviewRequest,
-    token_data: TokenData = Depends(require_role(["super_admin"])),
+    token_data: TokenData = Depends(require_admin("notifications", write=False)),
 ):
     """Returns the number of end-customers that would match the given broadcast filters,
     without sending anything. Mirrors the filter logic of /api/admin/broadcast."""
@@ -11388,7 +11441,7 @@ def admin_broadcast_preview(
 
 
 @app.get("/api/admin/broadcasts")
-def list_admin_broadcasts(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def list_admin_broadcasts(token_data: TokenData = Depends(require_admin("notifications"))):
     rows = list(db.admin_broadcasts.find().sort("sent_at", -1).limit(100))
     for r in rows:
         r.pop("_id", None)
@@ -11436,7 +11489,7 @@ def request_upgrade(
 
 
 @app.get("/api/admin/upgrade-requests")
-def list_upgrade_requests(token_data: TokenData = Depends(require_role(["super_admin"]))):
+def list_upgrade_requests(token_data: TokenData = Depends(require_admin("abonnements"))):
     rows = list(db.upgrade_requests.find().sort("created_at", -1).limit(200))
     for r in rows:
         r.pop("_id", None)
@@ -11447,7 +11500,7 @@ def list_upgrade_requests(token_data: TokenData = Depends(require_role(["super_a
 def resolve_upgrade_request(
     req_id: str,
     body: Dict[str, Any],
-    token_data: TokenData = Depends(require_role(["super_admin"]))
+    token_data: TokenData = Depends(require_admin("abonnements"))
 ):
     """Mark as approved / declined / completed."""
     new_status = body.get("status") or "completed"

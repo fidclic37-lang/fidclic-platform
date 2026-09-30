@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData
 
 router = APIRouter(tags=["admin"])
+from features.platform_access import require_admin
 _db = None
 ADMIN = ["super_admin"]
 
@@ -56,7 +57,7 @@ def _view(t: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/api/admin/franchise")
-def franchise_overview(token_data: TokenData = Depends(require_role(ADMIN))):
+def franchise_overview(token_data: TokenData = Depends(require_admin("abonnements"))):
     reqs = list(_db.upgrade_requests.find({"requested_plan": "franchise", "status": "pending"}, {"_id": 0})
                 .sort("created_at", -1).limit(100))
     for r in reqs:
@@ -66,7 +67,7 @@ def franchise_overview(token_data: TokenData = Depends(require_role(ADMIN))):
 
 
 @router.put("/api/admin/tenants/{tid}/franchise")
-def set_franchise(tid: str, body: TermsIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def set_franchise(tid: str, body: TermsIn, token_data: TokenData = Depends(require_admin("abonnements"))):
     import server as core
     t = _db.tenants.find_one({"id": tid}, {"_id": 0})
     if not t:
