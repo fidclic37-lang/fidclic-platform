@@ -594,7 +594,6 @@ const DashboardLayout = () => {
               {can(user, 'commerces') && <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'analytics') && <NavLink to="/admin/analytics" icon={BarChart3} label="Analytics" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'insights') && <NavLink to="/admin/insights" icon={Sparkles} label="Insights" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'campagnes') && <NavLink to="/admin/campaigns" icon={Megaphone} label="Campagnes" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}

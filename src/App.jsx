@@ -143,7 +143,7 @@ import CampagnesPage from './pages/CampagnesPage';
 import AiIntelligencePage from './pages/admin/ai/AiIntelligencePage';
 import AiSavedPage from './pages/admin/ai/AiSavedPage';
 import AiReportsPage from './pages/admin/ai/AiReportsPage';
-import AdminCampaignsPage from './pages/AdminCampaignsPage';
+// Removed from the super admin (2026-09-30): import AdminCampaignsPage from './pages/AdminCampaignsPage';
 // Rollback: the previous Insights page — import AdminInsightsPage from './pages/AdminInsightsPage';
 import AdminInsightsBoard from './pages/admin/InsightsPage';
 import GoogleTranslateBridge, { RouteAwareRetranslator } from './components/GoogleTranslateBridge';
@@ -490,7 +490,6 @@ function App() {
             <Route path="commerces/:id" element={<AdminGate><CommerceDetailPage /></AdminGate>} />
             <Route path="plans" element={<AdminGate><PlanLimitsPage /></AdminGate>} />
             <Route path="facturation" element={<AdminGate><AdminInvoicingPage /></AdminGate>} />
-            <Route path="campaigns" element={<AdminGate><AdminCampaignsPage /></AdminGate>} />
             <Route path="card-designer" element={<Navigate to="/admin" replace />} />
             <Route path="ai" element={<AdminGate><AiIntelligencePage /></AdminGate>} />
             <Route path="ai/sauvegardes" element={<AdminGate><AiSavedPage /></AdminGate>} />

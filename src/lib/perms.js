@@ -14,7 +14,7 @@ export function can(user, module, level = 'view') {
 // Each /admin page and the section it belongs to, in menu order.
 export const ADMIN_ROUTES = [
   ['/admin', 'dashboard'], ['/admin/commerces', 'commerces'], ['/admin/analytics', 'analytics'], ['/admin/insights', 'insights'],
-  ['/admin/campaigns', 'campagnes'], ['/admin/plans', 'plan_limits'], ['/admin/facturation', 'facturation'],
+  ['/admin/plans', 'plan_limits'], ['/admin/facturation', 'facturation'],
   ['/admin/crm', 'crm'], ['/admin/ai', 'ai'], ['/admin/securite', 'securite'],
 ];
 
