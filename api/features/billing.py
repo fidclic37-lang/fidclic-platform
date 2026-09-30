@@ -282,6 +282,13 @@ async def stripe_webhook(request: Request):
                     "plan": plan,
                 }},
             )
+            if obj.get("status") == "active" and (plan != tenant.get("plan") or tenant.get("subscription_status") != "active"):
+                try:                              # Analytics › Activité récente: « Abonnement Pro activé »
+                    import server as core
+                    core.log_audit("billing.plan_activated", actor="stripe", actor_type="system", tenant_id=tenant["id"],
+                                   target=tenant["id"], meta={"to": plan})
+                except Exception:
+                    pass
 
     elif etype == "customer.subscription.deleted":
         cust_id = obj.get("customer")

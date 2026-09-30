@@ -95,7 +95,8 @@ import HistoryPage from './pages/HistoryPage';
 
 import AdminDashboard from './pages/AdminDashboard'; // eslint-disable-line no-unused-vars -- superseded by admin/AdminDashboardPage, kept for rollback
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
+// Rollback: the previous Analytics page — import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
+import AnalyticsGlobalPage from './pages/admin/AnalyticsGlobalPage';
 import AdminTenantsPage from './pages/AdminTenantsPage'; // eslint-disable-line no-unused-vars -- superseded by admin/CommercesPage, kept for rollback
 import CommercesPage from './pages/admin/CommercesPage';
 import CommerceDetailPage from './pages/admin/CommerceDetailPage';
@@ -479,7 +480,7 @@ function App() {
             </ProtectedRoute>
           }>
             <Route index element={<AdminGate><AdminDashboardPage /></AdminGate>} />
-            <Route path="analytics" element={<AdminGate><AdminAnalyticsPage /></AdminGate>} />
+            <Route path="analytics" element={<AdminGate><AnalyticsGlobalPage /></AdminGate>} />
             <Route path="insights" element={<AdminGate><AdminInsightsBoard /></AdminGate>} />
             <Route path="tenants" element={<Navigate to="/admin/commerces" replace />} />
             <Route path="commerces" element={<AdminGate><CommercesPage /></AdminGate>} />

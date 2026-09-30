@@ -3242,6 +3242,8 @@ def owner_upgrade_plan(
             # Keep the original trial dates for record-keeping; just flip status.
         }},
     )
+    log_audit("billing.plan_activated", actor=token_data.email, actor_type="user", tenant_id=token_data.tenant_id,
+              target=token_data.tenant_id, meta={"to": target})       # Analytics › Activité récente
     tenant = db.tenants.find_one({"id": token_data.tenant_id})
     return _compute_trial_state(tenant)
 
