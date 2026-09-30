@@ -203,10 +203,10 @@ export function EnrollModal({ seq, meta, onClose, onDone }) {
 }
 
 /* One e-mail to one business, from its call or its card. */
-export function ComposeEmail({ prospect, onClose, onSent }) {
+export function ComposeEmail({ prospect, onClose, onSent, initial }) {
   const [status, setStatus] = useState(null);
   const [tpls, setTpls] = useState({ rows: [], variables: [] });
-  const [v, setV] = useState({ subject: '', body: '', template_id: null });
+  const [v, setV] = useState({ subject: initial?.subject || '', body: initial?.body || '', template_id: null });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {

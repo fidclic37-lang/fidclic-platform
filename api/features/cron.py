@@ -149,6 +149,12 @@ def agent_daily(authorization: str = Header(default="")):
         summary["limit_alerts"] = run_limit_alerts()
     except Exception as e:                                       # noqa: BLE001
         summary["failures"].append({"step": "limit_alerts", "error": str(e)[:120]})
+    # FIDCLIC AI › Rapports automatiques whose day has come.
+    try:
+        from features.admin_ai import run_due_reports
+        summary["ai_reports"] = run_due_reports()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "ai_reports", "error": str(e)[:120]})
     # API & Intégrations: failed webhook deliveries get another try.
     try:
         from features.merchant_api import retry_failed

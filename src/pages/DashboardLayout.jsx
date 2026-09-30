@@ -15,7 +15,7 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
-  Receipt, Eye, ShieldCheck, KeyRound, Lock,
+  Receipt, Eye, ShieldCheck, KeyRound, Lock, Bookmark, FileBarChart,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -127,6 +127,35 @@ const SecuriteNav = ({ currentPath, role, collapsed }) => {
       {inside && (
         <div className="mt-1 space-y-[1px] rounded-xl bg-[#F4F8FF] py-1">
           {SECURITE_ITEMS.map(([to, label, Icon]) => {
+            const on = currentPath === to;
+            return (
+              <Link key={to} to={to} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
+                <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* FIDCLIC AI — a group that opens on any /admin/ai page. */
+const AI_ITEMS = [['/admin/ai', 'AI Intelligence', Sparkles], ['/admin/ai/sauvegardes', 'Analyses sauvegardées', Bookmark],
+  ['/admin/ai/rapports', 'Rapports automatiques', FileBarChart]];
+const AiNav = ({ currentPath, role, collapsed }) => {
+  const inside = currentPath.startsWith('/admin/ai');
+  if (collapsed) return <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />;
+  return (
+    <div>
+      <Link to="/admin/ai" className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-[7px] text-[13.5px] transition-all ${inside ? 'bg-[#2F6BFF] font-semibold text-white' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"><BrainCircuit className="h-[18px] w-[18px]" /></span>
+        <span className="flex-1 truncate text-left">FIDCLIC AI</span>
+        <ChevronDown size={15} className={`transition ${inside ? 'rotate-180' : ''}`} />
+      </Link>
+      {inside && (
+        <div className="mt-1 space-y-[1px] rounded-xl bg-[#F4F8FF] py-1">
+          {AI_ITEMS.map(([to, label, Icon]) => {
             const on = currentPath === to;
             return (
               <Link key={to} to={to} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
@@ -569,7 +598,7 @@ const DashboardLayout = () => {
               {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'ai') && <AiNav currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'securite') && <SecuriteNav currentPath={currentPath} role={role} collapsed={collapsed} />}
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>

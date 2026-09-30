@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import {
   Users, UserCheck, UserX, Store, Target, Gift, RefreshCcw, ExternalLink, Mail, Pencil, MoreHorizontal, LayoutDashboard,
@@ -44,12 +44,21 @@ export default function CommerceDetailPage() {
     adminAPI.commerceDetails(id).then(({ data }) => setX(data)).catch(() => {});
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  // FIDCLIC AI › « Contacter » / « Relancer » open this page with ?contact=…
+  const [params, setParams] = useSearchParams();
+  const ask = params.get('contact');
+  useEffect(() => {
+    if (!ask || !d) return;
+    params.delete('contact'); setParams(params, { replace: true });
+    contact(ask === 'relance' ? { subject: 'Relancez vos clients avec une campagne FidClic',
+      body: `Bonjour {prenom},\n\nVos clients n'ont pas reçu de campagne depuis un moment. Une offre simple (un café offert, -10 % le week-end…) envoyée depuis FidClic les fait revenir.\n\nVoulez-vous que nous en préparions une ensemble ?\n\nL'équipe FIDCLIC` } : null);
+  }, [ask, d]); // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (fn, m) => { try { await fn(); say(m); load(); } catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); } };
 
   if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
-  const contact = () => {
-    if (d.crm_prospect_id) setModal({ type: 'email' });
-    else if (d.owner.email) window.location.href = `mailto:${d.owner.email}`;
+  const contact = (preset) => {
+    if (d.crm_prospect_id) setModal({ type: 'email', preset });
+    else if (d.owner.email) window.location.href = `mailto:${d.owner.email}${preset ? `?subject=${encodeURIComponent(preset.subject)}&body=${encodeURIComponent(preset.body)}` : ''}`;
   };
   return (
     <div className="crm" onClick={() => setMenu(false)}>
@@ -69,7 +78,7 @@ export default function CommerceDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => openViewAs(d.id, say)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#2F6BFF] bg-white px-4 text-[13.5px] font-medium text-[#2F6BFF]"><ExternalLink size={15} /> Accéder au compte</button>
-          <button type="button" onClick={contact} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#DCE3EE] bg-white px-4 text-[13.5px] font-medium text-[#0B1C3F]"><Mail size={15} /> Contacter</button>
+          <button type="button" onClick={() => contact()} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#DCE3EE] bg-white px-4 text-[13.5px] font-medium text-[#0B1C3F]"><Mail size={15} /> Contacter</button>
           <button type="button" onClick={() => setModal({ type: 'edit' })} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#DCE3EE] bg-white px-4 text-[13.5px] font-medium text-[#0B1C3F]"><Pencil size={15} /> Modifier</button>
           <span className="relative" onClick={(e) => e.stopPropagation()}>
             <button type="button" aria-label="Plus d'actions" onClick={() => setMenu((v) => !v)} className="h-10 rounded-xl border border-[#DCE3EE] bg-white px-3 text-[#0B1C3F]"><MoreHorizontal size={16} /></button>
@@ -103,7 +112,7 @@ export default function CommerceDetailPage() {
       {tab === 'parametres' && x && <ParametresTab p={x.parametres} />}
 
       {toast}
-      {modal?.type === 'email' && <ComposeEmail prospect={{ id: d.crm_prospect_id, name: d.name, email: d.owner.email }} onClose={() => setModal(null)} onSent={(m) => { setModal(null); say(m); }} />}
+      {modal?.type === 'email' && <ComposeEmail prospect={{ id: d.crm_prospect_id, name: d.name, email: d.owner.email }} initial={modal.preset} onClose={() => setModal(null)} onSent={(m) => { setModal(null); say(m); }} />}
       {modal?.type === 'edit' && <EditModal d={d} onClose={() => setModal(null)} onDone={() => { setModal(null); say('Commerce modifié.'); load(); }} />}
       {modal?.type === 'suspend' && <SuspendModal c={d} onClose={() => setModal(null)} onDone={(m) => { setModal(null); say(m); load(); }} />}
       {modal?.type === 'franchise' && <FranchiseTermsModal tenant={{ id: d.id, name: d.name, stores: d.stores, terms: d.franchise_terms }} onClose={() => setModal(null)} onSaved={() => { setModal(null); say('Conditions Franchise enregistrées.'); load(); }} />}
