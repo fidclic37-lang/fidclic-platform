@@ -100,6 +100,8 @@ export const crmAPI = {
   importPreview: (file) => { const f = new FormData(); f.append('file', file); return api.post('/crm/import/preview', f, { headers: { 'Content-Type': 'multipart/form-data' } }); },
   importCommit: (body) => api.post('/crm/import/commit', body),
   exportCsv: (params) => api.get('/crm/export', { params, responseType: 'blob' }),
+  pilotage: (params) => api.get('/crm/pilotage', { params }),
+  pilotageList: (key) => api.get(`/crm/pilotage/attention/${key}`),
   setGoal: (target) => api.put('/crm/goal', { target }),
   team: () => api.get('/crm/team'),
   addMember: (body) => api.post('/crm/team', body),

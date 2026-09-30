@@ -29,6 +29,7 @@ MODULES = [
     "features.platform_access",
     "features.platform_security",
     "features.crm",
+    "features.crm_pilotage",
     "features.crm_calls",
     "features.crm_email",
     "features.franchise",

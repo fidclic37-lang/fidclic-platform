@@ -10,9 +10,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Card, Head, Kpi, Donut, Bars, StageBadge, Avatar, Logo, Select, Loading, Breadcrumb, Pager, useToast, downloadBlob, Modal, nf, dayTime, ago, BLUE, STAGE_TONE, inputCls, StageSteps } from './ui';
 import { ImportModal, ProspectModal, TeamModal } from './modals';
 import { toneOf, SEQ_TONE } from './emailUi';
+import Pilotage from './Pilotage';
 
-/* CRM › Vue d'ensemble — laid out to the approved mockup (2026-09-30: list full width,
-   today's tasks as a table beside the quick actions). Every figure is counted
+/* CRM › Vue d'ensemble — laid out to the approved image (2026-09-30): pipeline first,
+   the four breakdowns, « Pilotage commercial » (Pilotage.jsx), today's tasks beside the
+   quick actions, then campaigns / activity / assistant. The previous layout is kept
+   unrouted in CrmOverviewPageV2.jsx. Every figure is counted
    from the CRM (features/crm.py); businesses on FidClic come in on their own
    with their real stage. */
 
@@ -44,13 +47,8 @@ export default function CrmOverviewPage() {
   const [days, setDays] = useState(30);
   const [o, setO] = useState(null);
   const [meta, setMeta] = useState(null);
-  const [list, setList] = useState(null);
   const [seqs, setSeqs] = useState(null);
-  const [filters, setFilters] = useState({ q: '', sector: '', city: '', stage: '', assigned: '' });
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(10);
-  const [picked, setPicked] = useState([]);
-  const [menu, setMenu] = useState(null);
+  const [pil, setPil] = useState(null);
   const [modal, setModal] = useState(null);
   const [goal, setGoal] = useState('');
   const [ask, setAsk] = useState('');
@@ -62,23 +60,14 @@ export default function CrmOverviewPage() {
     crmAPI.overview({ from }).then(({ data }) => setO(data)).catch((e) => setErr(e?.response?.data?.detail || 'Impossible de charger le CRM.'));
     crmAPI.meta().then(({ data }) => setMeta(data)).catch(() => {});
     crmAPI.sequences({ per_page: 3, quiet: true }).then(({ data }) => setSeqs(data.rows)).catch(() => setSeqs([]));
+    crmAPI.pilotage({ from }).then(({ data }) => setPil(data)).catch(() => setPil(null));
   }, [days]);
-  const loadList = useCallback(() => {
-    crmAPI.prospects({ ...filters, page, per_page: perPage }).then(({ data }) => setList(data)).catch(() => setList({ rows: [], total: 0, pages: 1 }));
-  }, [filters, page, perPage]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { loadList(); }, [loadList]);
-  const refresh = (m) => { if (m) say(m); load(); loadList(); };
+  const refresh = (m) => { if (m) say(m); load(); };
 
   if (!o) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
   const total = o.cards.find((c) => c.key === 'total')?.value || 0;
   const done = async (t) => { await crmAPI.editTask(t.id, { status: 'terminee' }); refresh('Tâche terminée.'); };
-  const setFilter = (k) => (v) => { setPage(1); setFilters({ ...filters, [k]: v }); };
-  const rows = list?.rows || [];
-  const allPicked = rows.length > 0 && rows.every((p) => picked.includes(p.id));
-  const pick = (id) => setPicked((x) => (x.includes(id) ? x.filter((i) => i !== id) : [...x, id]));
-  const pickAll = () => setPicked((x) => (allPicked ? x.filter((i) => !rows.some((p) => p.id === i)) : [...new Set([...x, ...rows.map((p) => p.id)])]));
-  const exportList = () => downloadBlob(crmAPI.exportCsv(picked.length ? { ids: picked.join(',') } : filters), 'prospects.csv');
   const outline = 'rounded-lg border border-[#2F6BFF] px-2.5 py-1 text-[12px] text-[#2F6BFF]';
 
   return (
@@ -98,10 +87,12 @@ export default function CrmOverviewPage() {
         </div>
       </header>
 
-      {/* 1 — KPI cards */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {o.cards.map((c) => { const [I, t, b] = KPI[c.key]; return <Kpi key={c.key} icon={I} tone={t} bg={b} value={c.value} label={c.label} delta={c.delta} series={c.series} />; })}
-      </div>
+      {/* 1 — pipeline (full width: each step opens the list on that stage) */}
+      <Card>
+        <Head icon={Target} title="Pipeline de prospection" right={<button type="button" onClick={() => navigate('/admin/crm/pipeline')} className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-medium text-[#2F6BFF]">Ouvrir le pipeline</button>} />
+        <StageSteps showPct steps={o.funnel.map((s, i) => ({ ...s, value: i ? s.key : '' }))}
+                    onPick={(s) => navigate(s.value ? `/admin/crm/prospects?stage=${s.value}` : '/admin/crm/prospects')} />
+      </Card>
 
       {/* 2 — sources, sectors, cities, monthly goal */}
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.25fr_1fr_1fr_1fr]">
@@ -123,70 +114,10 @@ export default function CrmOverviewPage() {
         </Card>
       </div>
 
-      {/* 3 — pipeline (full width: each step opens the list on that stage) */}
-      <Card className="mt-4">
-        <Head icon={Target} title="Pipeline de prospection" right={<button type="button" onClick={() => navigate('/admin/crm/pipeline')} className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-medium text-[#2F6BFF]">Ouvrir le pipeline</button>} />
-        <StageSteps showPct steps={o.funnel.map((s, i) => ({ ...s, value: i ? s.key : '' }))}
-                    onPick={(s) => navigate(s.value ? `/admin/crm/prospects?stage=${s.value}` : '/admin/crm/prospects')} />
-      </Card>
+      {/* 3 — pilotage commercial: what needs attention, the team, the pipeline's health */}
+      <Pilotage data={pil} meta={meta} onTask={(t) => setModal({ type: 'task', task: t })} onNewTask={(pid) => setModal({ type: 'task', prospectId: pid })} onDone={refresh} />
 
-      {/* 4 — prospect list (full width) */}
-      <Card className="mt-4">
-        <Head icon={Users} title="Liste des prospects" right={(
-          <button type="button" onClick={exportList} className="inline-flex items-center gap-1.5 rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-medium text-[#2F6BFF]"><Download size={14} /> Exporter{picked.length ? ` (${picked.length})` : ''}</button>
-        )} />
-        <div className="mb-3 grid gap-2 md:grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] md:items-end">
-          <label className="relative"><Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-            <input className={`${inputCls} pl-9`} placeholder="Rechercher un commerce, un contact, une ville…" value={filters.q} onChange={(e) => setFilter('q')(e.target.value)} /></label>
-          <Select label="Secteur" value={filters.sector} onChange={setFilter('sector')}><option value="">Tous</option>{(meta?.sectors || []).map((s) => <option key={s}>{s}</option>)}</Select>
-          <Select label="Ville" value={filters.city} onChange={setFilter('city')}><option value="">Toutes</option>{(meta?.cities || []).map((s) => <option key={s}>{s}</option>)}</Select>
-          <Select label="Statut" value={filters.stage} onChange={setFilter('stage')}><option value="">Tous</option>{(meta?.stages || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</Select>
-          <Select label="Assigné à" value={filters.assigned} onChange={setFilter('assigned')}><option value="">Tous</option><option value="none">Personne</option>{(meta?.users || []).map((u) => <option key={u.email} value={u.email}>{u.name}</option>)}</Select>
-          <button type="button" onClick={() => navigate('/admin/crm/prospects')} className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[#2F6BFF] px-3 text-[12.5px] font-medium text-[#2F6BFF]"><Filter size={14} /> Filtres</button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] text-[12.5px]">
-            <thead><tr className="border-b border-[#EDF1F7] text-left text-[#64748B]">
-              <th className="w-8 px-2 py-2"><input type="checkbox" aria-label="Tout sélectionner" checked={allPicked} onChange={pickAll} className="h-4 w-4 accent-[#2F6BFF]" /></th>
-              {['Nom du commerce', 'Secteur', 'Ville', 'Contact', 'Téléphone', 'Statut', 'Dernière action', 'Prochaine action', 'Assigné à'].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}
-              <th className="w-8 px-2 py-2 text-center"><MoreHorizontal size={15} className="inline text-[#94A3B8]" /></th>
-            </tr></thead>
-            <tbody>
-              {!list && <tr><td colSpan={11} className="py-8 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
-              {rows.map((p) => (
-                <tr key={p.id} onClick={() => navigate(`/admin/crm/prospects?open=${p.id}`)} className="cursor-pointer border-b border-[#F4F7FC] hover:bg-[#FAFCFF]">
-                  <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Sélectionner ${p.name}`} checked={picked.includes(p.id)} onChange={() => pick(p.id)} className="h-4 w-4 accent-[#2F6BFF]" /></td>
-                  <td className="px-2 py-2"><span className="flex items-center gap-2.5"><Logo name={p.name} size={30} /><span className="font-semibold text-[#0B1C3F]">{p.name}</span></span></td>
-                  <td className="px-2 py-2 text-[#475569]">{p.sector || '—'}</td>
-                  <td className="px-2 py-2 text-[#475569]">{p.city || '—'}</td>
-                  <td className="px-2 py-2 text-[#475569]">{p.contact_name || '—'}</td>
-                  <td className="whitespace-nowrap px-2 py-2 text-[#475569]">{p.phone || '—'}</td>
-                  <td className="px-2 py-2"><StageBadge stage={p.stage} label={p.stage_label} /></td>
-                  <td className="px-2 py-2 text-[#475569]">{p.last_action ? <>{p.last_action.label}<br /><span className="text-[11px] text-[#94A3B8]">{new Date(p.last_action.at).toLocaleDateString('fr-FR')}</span></> : '—'}</td>
-                  <td className="px-2 py-2 text-[#475569]">{p.next_action ? <>{p.next_action.label}<br /><span className="text-[11px] text-[#94A3B8]">{new Date(p.next_action.due_at).toLocaleDateString('fr-FR')}</span></> : '—'}</td>
-                  <td className="px-2 py-2"><Avatar name={p.assigned_name} /></td>
-                  <td className="relative px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
-                    <button type="button" aria-label={`Actions pour ${p.name}`} onClick={() => setMenu(menu === p.id ? null : p.id)} className="rounded-md p-1 text-[#2F6BFF] hover:bg-[#EAF1FF]"><MoreHorizontal size={16} /></button>
-                    {menu === p.id && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />
-                        <div className="absolute right-2 top-9 z-20 w-48 overflow-hidden rounded-xl border border-[#DCE3EE] bg-white py-1 text-left text-[12.5px] shadow-lg">
-                          <button type="button" onClick={() => { setMenu(null); navigate(`/admin/crm/prospects?open=${p.id}`); }} className="block w-full px-3 py-2 text-left hover:bg-[#F4F7FC]">Ouvrir la fiche</button>
-                          <button type="button" onClick={() => { setMenu(null); setModal({ type: 'task', prospectId: p.id }); }} className="block w-full px-3 py-2 text-left hover:bg-[#F4F7FC]">Créer une tâche</button>
-                        </div>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {list && !rows.length && <tr><td colSpan={11} className="py-10 text-center text-[#64748B]">Aucun prospect. Importez une liste ou ajoutez-en un.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        {list && <Pager page={page} pages={list.pages} total={list.total} perPage={perPage} onPage={setPage} onPerPage={(n) => { setPerPage(n); setPage(1); }} />}
-      </Card>
-
-      {/* 5 — today's tasks + quick actions */}
+      {/* 4 — today's tasks + quick actions */}
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.9fr_1fr]">
         <Card>
           <Head icon={CheckSquare} title="Tâches du jour" right={<button type="button" onClick={() => navigate('/admin/crm/taches')} className={outline}>Voir tout</button>} />
@@ -239,7 +170,7 @@ export default function CrmOverviewPage() {
         </Card>
       </div>
 
-      {/* 6 — campaigns, recent activity, assistant */}
+      {/* 5 — campaigns, recent activity, assistant */}
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card>
           <Head icon={Megaphone} title="Campagnes de prospection" sub="Les séquences d'emails personnalisées." right={<button type="button" onClick={() => navigate('/admin/crm/sequences')} className={outline}>Voir toutes</button>} />
