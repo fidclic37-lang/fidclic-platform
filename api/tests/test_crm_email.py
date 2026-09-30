@@ -232,6 +232,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("by sector", {x["label"]: x["count"] for x in sm["by_sector"]}.get("Restaurant", 0) >= 3)
     check("popular templates", sm["templates"][0]["id"] == "tpl-intro" and sm["templates"][0]["uses"] >= 3)
     lst = E.list_sequences(token_data=ADMIN)
+    ticks = []
+    real_tick, E._tick = E._tick, lambda: ticks.append(1)
+    E.list_sequences(per_page=3, quiet=True, token_data=ADMIN)
+    E._tick = real_tick
+    check("the overview reads the list without sending (quiet)", ticks == [])
     check("tab counts", lst["counts"]["all"] == 2 and lst["counts"]["active"] == 2)
     det = E.get_sequence(seq["id"], token_data=ADMIN)
     check("per-step figures", det["steps"][0]["sent"] >= 3 and det["steps"][0]["open_rate"] > 0)

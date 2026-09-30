@@ -851,8 +851,10 @@ def import_commit(body: ImportIn, token_data: TokenData = Depends(require_admin(
 
 @router.get("/api/crm/export")
 def export(q: str = "", sector: str = "", city: str = "", stage: str = "", assigned: str = "", source: str = "",
-           token_data: TokenData = Depends(require_admin("crm"))):
-    rows = list(_db.crm_prospects.find(_filter(q, sector, city, stage, assigned, source), {"_id": 0}).sort("name", 1))
+           ids: str = "", token_data: TokenData = Depends(require_admin("crm"))):
+    # « ids » = the rows ticked in a list: export just those (comma-separated).
+    f = {"id": {"$in": [i for i in ids.split(",") if i]}} if ids.strip() else _filter(q, sector, city, stage, assigned, source)
+    rows = list(_db.crm_prospects.find(f, {"_id": 0}).sort("name", 1))
     users = _users()
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
