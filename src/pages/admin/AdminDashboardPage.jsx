@@ -87,8 +87,8 @@ export default function AdminDashboardPage() {
         </span>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
-        {kpis.map(([k, l, I, c, bg]) => <Kpi key={k} icon={I} tone={c} bg={bg} value={k === 'mrr' ? `€${nf(K[k].value)}` : nf(K[k].value)} label={l} delta={K[k].delta} series={K[k].series} />)}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        {kpis.map(([k, l, I, c, bg]) => <Kpi compact key={k} icon={I} tone={c} bg={bg} value={k === 'mrr' ? `€${nf(K[k].value)}` : nf(K[k].value)} label={l} delta={K[k].delta} series={K[k].series} />)}
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_1fr_1fr]">

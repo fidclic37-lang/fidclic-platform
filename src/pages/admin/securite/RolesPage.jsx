@@ -6,7 +6,7 @@ import {
 import { securityAPI } from '../../../lib/api';
 import { useAuth } from '../../../contexts/AuthContext';
 import { Card, Loading, Breadcrumb, Modal, Select, useToast, BLUE, inputCls } from '../../crm/ui';
-import { TONES, RoleIcon, ROLE_ICONS, UserModal, PasswordOnce } from './shared';
+import { TONES, RoleIcon, ROLE_ICONS, UserModal, PasswordOnce, SecuTabs } from './shared';
 
 /* Super admin › Sécurité › Rôles & Permissions — built to the approved
    mockup, with two switches per section (decided with the user): Voir and
@@ -75,6 +75,7 @@ export default function RolesPage() {
         </div>
         {boss && <button type="button" onClick={() => setModal({ type: 'role' })} className="inline-flex h-11 items-center gap-2 rounded-xl px-5 text-[14px] font-medium text-white" style={{ background: BLUE }}><Plus size={17} /> Ajouter un rôle</button>}
       </header>
+      <Card className="mb-4 p-0" onClick={(e) => e.stopPropagation()}><SecuTabs /></Card>
 
       <div className="flex gap-3 overflow-x-auto pb-1">
         {d.roles.map((r) => { const [b, f] = TONES[r.tone] || TONES.blue; const on = r.id === role.id; return (

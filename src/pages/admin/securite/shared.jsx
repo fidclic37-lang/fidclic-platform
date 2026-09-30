@@ -62,7 +62,7 @@ export function RangePicker({ value, onChange }) {
 export function SecuTabs({ right }) {
   const { pathname } = useLocation();
   const tabs = [['/admin/securite', 'Utilisateurs'], ['/admin/securite/roles', 'Rôles & Permissions'], ['/admin/securite/connexions', 'Connexions'],
-    ['/admin/securite/journal', "Journal d'activité"]];
+    ['/admin/securite/journal', "Journal d'activité"], ['/admin/securite/parametres', 'Paramètres sécurité']];
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#EDF1F7] px-3">
       <nav className="flex flex-wrap gap-1">
