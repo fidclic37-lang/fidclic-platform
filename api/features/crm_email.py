@@ -17,9 +17,10 @@ SETUP (Vercel env, nothing is stored in the database)
 
 WHEN MAILS LEAVE
     Steps are due at their day and hour, Paris time. Due mails are sent by
-    run_due(): every day with the platform cron, whenever someone opens the
-    Séquences page, and on « Envoyer maintenant ». At most CRM_DAILY_LIMIT
-    a day; the rest waits for the next day.
+    run_due(): every 15 minutes by the Vercel cron /api/cron/crm-mail (Pro
+    plan, vercel.json), whenever someone opens the Séquences page, and on
+    « Envoyer maintenant ». So a « Jour 3 — 10:00 » step leaves between 10:00
+    and 10:15. At most CRM_DAILY_LIMIT a day; the rest waits for the next day.
 
 WHAT STOPS A PROSPECT'S SEQUENCE
     a reply (read over IMAP with the same App password — only the headers of
@@ -531,6 +532,24 @@ def _decode(v: str) -> str:
         return str(make_header(decode_header(v)))
     except Exception:
         return v
+
+
+@router.get("/api/cron/crm-mail")
+@router.post("/api/cron/crm-mail")
+def cron_crm_mail(request: Request):
+    """Vercel Cron, every 15 minutes. Vercel sends Authorization: Bearer
+    $CRON_SECRET; anything else is refused, so nobody outside can decide
+    when prospecting mails leave."""
+    secret = os.getenv("CRON_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="CRON_SECRET non configuré.")
+    if request.headers.get("authorization", "") != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="Non autorisé.")
+    if not _cfg():
+        return {"sent": 0, "reason": "not_configured"}
+    replies = check_replies()                         # at most every 10 minutes
+    sent = run_due(max_send=40, budget_s=20)          # within the function's 30 s
+    return {"replies": replies.get("replies", 0), **sent}
 
 
 def daily() -> Dict[str, Any]:

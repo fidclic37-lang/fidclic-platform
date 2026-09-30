@@ -248,5 +248,23 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     E.delete_sequence(dup["id"], token_data=SOFIA)
     check("a draft that never sent can be deleted", not db.crm_sequences.find_one({"id": dup["id"]}))
 
+    print("\nCron every 15 minutes")
+    from starlette.requests import Request as _Rq
+    def _req(auth=None):
+        return _Rq({"type": "http", "method": "GET", "path": "/api/cron/crm-mail", "query_string": b"",
+                    "headers": [(b"authorization", auth.encode())] if auth else []})
+    os.environ.pop("CRON_SECRET", None)
+    check("no CRON_SECRET: refused", refused(lambda: E.cron_crm_mail(_req()), 503))
+    os.environ["CRON_SECRET"] = "s3cret"
+    check("wrong secret: refused", refused(lambda: E.cron_crm_mail(_req("Bearer nope")), 401))
+    mk5 = mk(name="Cron Resto", email="cron@ex.fr", city="Tours", sector="Restaurant")
+    seq3 = E.add_sequence(E.SequenceIn(name="Cron", steps=[E.StepIn(day=1, subject="Bonjour", body="Hello {commerce}")]), token_data=ADMIN)
+    E.sequence_status(seq3["id"], E.StatusIn(status="active"), token_data=ADMIN)
+    E.enroll(seq3["id"], E.EnrollIn(prospect_ids=[mk5["id"]]), token_data=ADMIN)
+    db.crm_enrollments.update_one({"prospect_id": mk5["id"]}, {"$set": {"next_at": now - dt.timedelta(minutes=1)}})
+    before = len(OUTBOX)
+    res = E.cron_crm_mail(_req("Bearer s3cret"))
+    check("Vercel's call sends what is due", res["sent"] == 1 and OUTBOX[-1]["To"] == "cron@ex.fr" and len(OUTBOX) == before + 1)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
