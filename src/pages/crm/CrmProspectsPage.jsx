@@ -6,10 +6,7 @@ import {
 } from 'lucide-react';
 import { crmAPI } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
-import {
-  Card, Head, Kpi, Donut, Bars, StageBadge, Avatar, Logo, Select, Loading, Breadcrumb, Pager, useToast, downloadBlob,
-  Modal, nf, dayTime, ago, BLUE, inputCls,
-} from './ui';
+import { Card, Head, Kpi, Donut, Bars, StageBadge, Avatar, Logo, Select, Loading, Breadcrumb, Pager, useToast, downloadBlob, Modal, nf, dayTime, ago, BLUE, inputCls, StageSteps } from './ui';
 import { ImportModal, ProspectModal } from './modals';
 import { TaskModal } from './CrmOverviewPage';
 
@@ -185,7 +182,13 @@ export default function CrmProspectsPage() {
   useEffect(() => { loadTop(); }, [loadTop]);
   useEffect(() => { loadList(); }, [loadList]);
   const refresh = (m, detail = false) => { if (m) say(m); loadTop(); loadList(); if (detail) setVer((v) => v + 1); };
-  const setFilter = (k) => (v) => { setPage(1); setF({ ...f, [k]: v }); };
+  const setFilter = (k) => (v) => { setPage(1); setF({ ...f, [k]: v }); if (k === 'stage') syncStage(v); };
+  // The stage lives in the address too (?stage=), so the bar, the status
+  // select, a link from the overview and the browser's back button agree.
+  const syncStage = (v) => { const next = new URLSearchParams(params); if (v) next.set('stage', v); else next.delete('stage'); next.delete('open'); setParams(next); };
+  const pickStage = (v) => { setTab('liste'); setPage(1); setF((x) => ({ ...x, stage: v })); syncStage(v); };
+  const urlStage = params.get('stage') || '';
+  useEffect(() => { setF((x) => (x.stage === urlStage ? x : { ...x, stage: urlStage })); setPage(1); }, [urlStage]);
   const counts = useMemo(() => Object.fromEntries((o?.funnel || []).map((s) => [s.key, s.count])), [o]);
   const cards = useMemo(() => Object.fromEntries((o?.cards || []).map((c) => [c.key, c])), [o]);
 
@@ -211,6 +214,14 @@ export default function CrmProspectsPage() {
                series={{ total: cards.total?.series, rdv: cards.rdv?.series, proposition: cards.proposition?.series, signe: cards.signe?.series, contacte: cards.contact?.series }[k]} />
         ))}
       </div>
+
+      {/* Every stage one click away — no going back to the overview. */}
+      <Card className="mt-4">
+        <StageSteps active={f.stage} onPick={(s) => pickStage(s.value)}
+                    steps={[{ key: 'nouveau', value: '', label: 'Prospects', count: list?.stage_counts?.all ?? 0 },
+                            ...(meta?.stages || []).filter((s) => !['nouveau', 'perdu'].includes(s.key))
+                              .map((s) => ({ key: s.key, value: s.key, label: s.label, count: list?.stage_counts?.[s.key] ?? 0 }))]} />
+      </Card>
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0">

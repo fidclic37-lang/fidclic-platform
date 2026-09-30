@@ -353,8 +353,13 @@ def list_prospects(q: str = "", sector: str = "", city: str = "", stage: str = "
     lasts = {}
     for a in _db.crm_activities.find({"prospect_id": {"$in": [r["id"] for r in rows]}}, {"_id": 0}).sort("at", -1):
         lasts.setdefault(a["prospect_id"], a)
+    # The stage bar above the list: how many prospects each stage holds with
+    # the other filters as they are, so one click moves from stage to stage.
+    base = _filter(q, sector, city, "", assigned, source)
+    stage_counts = {"all": _db.crm_prospects.count_documents(base),
+                    **{k: _db.crm_prospects.count_documents({**base, "stage": k}) for k in STAGE_KEYS}}
     return {"rows": [_row(r, users, lasts.get(r["id"])) for r in rows], "total": total, "page": page,
-            "pages": max(1, -(-total // per_page)), "per_page": per_page}
+            "pages": max(1, -(-total // per_page)), "per_page": per_page, "stage_counts": stage_counts}
 
 
 @router.get("/api/crm/meta")
@@ -994,7 +999,8 @@ def overview(date_from: Optional[str] = Query(None, alias="from"), date_to: Opti
     goal_doc = _db.crm_goals.find_one({"month": month.strftime("%Y-%m")}) or {}
     target = int(goal_doc.get("target") or 0)
     signed_month = _entered("signe", month, _now() + timedelta(seconds=1))
-    funnel = [{"key": k, "label": v, "count": stage_count[k] if k != "nouveau" else total,
+    # The first step counts every prospect (it opens the whole list): « Prospects », not « Nouveau ».
+    funnel = [{"key": k, "label": v if k != "nouveau" else "Prospects", "count": stage_count[k] if k != "nouveau" else total,
                "pct": round((stage_count[k] if k != "nouveau" else total) / total * 100) if total else 0}
               for k, v in STAGES if k != "perdu"]
     users = _users()

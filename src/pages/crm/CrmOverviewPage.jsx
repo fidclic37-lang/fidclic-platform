@@ -7,10 +7,7 @@ import {
 } from 'lucide-react';
 import { crmAPI } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
-import {
-  Card, Head, Kpi, Donut, Bars, StageBadge, Avatar, Logo, Select, Loading, Breadcrumb, Pager, useToast, downloadBlob,
-  Modal, nf, dayTime, ago, BLUE, STAGE_TONE, inputCls,
-} from './ui';
+import { Card, Head, Kpi, Donut, Bars, StageBadge, Avatar, Logo, Select, Loading, Breadcrumb, Pager, useToast, downloadBlob, Modal, nf, dayTime, ago, BLUE, STAGE_TONE, inputCls, StageSteps } from './ui';
 import { ImportModal, ProspectModal, TeamModal } from './modals';
 
 /* CRM › Vue d'ensemble — built to the approved mockup. Every figure is counted
@@ -23,7 +20,6 @@ const KPI = {
   proposition: [FileText, '#2F6BFF', '#EAF1FF'], signe: [Handshake, '#10B981', '#E7F7EE'],
 };
 const TASK_ICON = { appel: Phone, email: Mail, relance: Send, rdv: CalendarDays, preparation: ListChecks, suivi: CheckSquare };
-const FUNNEL_BG = ['#EEF2F8', '#E6F0FF', '#FFF4DB', '#F3E8FF', '#E7F7EE', '#E0F7FA', '#DCFCE7'];
 
 function Ring({ pct }) {
   const p = Math.max(0, Math.min(100, pct || 0));
@@ -112,16 +108,8 @@ export default function CrmOverviewPage() {
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_300px]">
         <Card>
           <Head icon={Target} title="Pipeline de prospection" right={<button type="button" onClick={() => navigate('/admin/crm/pipeline')} className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-medium text-[#2F6BFF]">Ouvrir le pipeline</button>} />
-          <div className="flex overflow-x-auto">
-            {o.funnel.map((s, i) => (
-              <button key={s.key} type="button" onClick={() => navigate(`/admin/crm/prospects?stage=${i ? s.key : ''}`)}
-                      className="relative min-w-[118px] flex-1 py-3 pl-6 pr-3 text-left"
-                      style={{ background: FUNNEL_BG[i], clipPath: i === o.funnel.length - 1 ? 'polygon(0 0,100% 0,100% 100%,0 100%,12px 50%)' : 'polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,12px 50%)', marginLeft: i ? -8 : 0 }}>
-                <p className="text-[12.5px]" style={{ color: (STAGE_TONE[s.key] || [])[1] || '#0B1C3F' }}>{i + 1}. {s.label}</p>
-                <p className="mt-1 flex items-baseline gap-2"><span className="text-[18px] font-bold text-[#0B1C3F]">{nf(s.count)}</span><span className="text-[11.5px] text-[#64748B]">{s.pct}%</span></p>
-              </button>
-            ))}
-          </div>
+          <StageSteps showPct steps={o.funnel.map((s, i) => ({ ...s, value: i ? s.key : '' }))}
+                      onPick={(s) => navigate(s.value ? `/admin/crm/prospects?stage=${s.value}` : '/admin/crm/prospects')} />
         </Card>
         <Card>
           <Head icon={Zap} title="Actions rapides" />

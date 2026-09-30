@@ -164,6 +164,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("switched off: cannot sign in", refused(lambda: server.login(server.LoginRequest(email="sofia@fidclic.com", password=cred["password"]),
                                                                        server.Response(), None), 403))
 
+    sc = C.list_prospects(stage="signe", token_data=ADMIN)["stage_counts"]
+    check("stage bar: every stage counted, whatever stage is shown", sc["all"] == C.list_prospects(token_data=ADMIN)["total"]
+          and sc["signe"] == C.list_prospects(stage="signe", token_data=ADMIN)["total"] and sum(sc[k] for k in C.STAGE_KEYS) == sc["all"])
+    check("the funnel's first step is « Prospects » (all of them)", C.overview(token_data=ADMIN)["funnel"][0]["label"] == "Prospects")
+
     print("\nPipeline")
     pl = C.pipeline(token_data=ADMIN)
     cols = {c["key"]: c for c in pl["columns"]}

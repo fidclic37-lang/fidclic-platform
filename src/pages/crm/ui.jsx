@@ -238,3 +238,28 @@ export async function downloadBlob(promise, fallback) {
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
+
+
+/* The pipeline as a row of steps — on the overview (counts) and above the
+   prospect list (one click moves from one stage to another). */
+export const FUNNEL_BG = ['#EEF2F8', '#E6F0FF', '#FFF4DB', '#F3E8FF', '#E7F7EE', '#E0F7FA', '#DCFCE7'];
+export function StageSteps({ steps, active, onPick, showPct }) {
+  return (
+    <div className="flex overflow-x-auto pb-1" role="tablist" aria-label="Étapes du pipeline">
+      {steps.map((s, i) => {
+        const on = active !== undefined && active === s.value;
+        const last = i === steps.length - 1;
+        return (
+          <button key={s.key} type="button" role="tab" aria-selected={on} onClick={() => onPick(s)}
+                  className={`relative min-w-[118px] flex-1 py-3 pl-6 pr-3 text-left transition ${on ? 'z-10' : 'hover:brightness-[0.97]'}`}
+                  style={{ background: on ? '#2F6BFF' : FUNNEL_BG[i % FUNNEL_BG.length], marginLeft: i ? -8 : 0,
+                           clipPath: last ? 'polygon(0 0,100% 0,100% 100%,0 100%,12px 50%)' : 'polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%,12px 50%)' }}>
+            <p className="truncate text-[12.5px]" style={{ color: on ? '#fff' : (STAGE_TONE[s.key] || [])[1] || '#0B1C3F', fontWeight: on ? 600 : 400 }}>{i + 1}. {s.label}</p>
+            <p className="mt-1 flex items-baseline gap-2"><span className={`text-[18px] font-bold ${on ? 'text-white' : 'text-[#0B1C3F]'}`}>{nf(s.count)}</span>
+              {showPct && <span className={`text-[11.5px] ${on ? 'text-white/80' : 'text-[#64748B]'}`}>{s.pct}%</span>}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
