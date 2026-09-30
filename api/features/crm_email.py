@@ -864,8 +864,9 @@ def _tick() -> None:
 
 @router.get("/api/crm/sequences")
 def list_sequences(tab: str = "", q: str = "", sector: str = "", status: str = "", created_by: str = "", page: int = 1,
-                   per_page: int = 10, token_data: TokenData = Depends(require_admin("crm"))):
-    _tick()
+                   per_page: int = 10, quiet: bool = False, token_data: TokenData = Depends(require_admin("crm"))):
+    if not quiet:          # the CRM overview only reads the list: no sending from there
+        _tick()
     page, per_page = max(1, int(page)), max(1, min(100, int(per_page)))
     base = _seq_filter(q, sector, status, created_by)
     counts = {"all": _db.crm_sequences.count_documents(base),

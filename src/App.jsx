@@ -109,6 +109,7 @@ import { can, moduleOfPath, firstAllowed } from './lib/perms';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminInvoicingPage from './pages/AdminInvoicingPage';
 import CrmOverviewPage from './pages/crm/CrmOverviewPage';
+// Rollback: the overview's previous layout — import CrmOverviewPageV1 from './pages/crm/CrmOverviewPageV1';
 import CrmProspectsPage from './pages/crm/CrmProspectsPage';
 import CrmSoonPage from './pages/crm/CrmSoonPage';
 import CrmPipelinePage from './pages/crm/CrmPipelinePage';

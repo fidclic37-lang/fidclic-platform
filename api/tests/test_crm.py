@@ -150,6 +150,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nExport")
     body = C.export(token_data=ADMIN).body.decode("utf-8")
     check("CSV for Excel with every prospect", body.startswith("﻿") and body.count("\n") == 6 and "Zen & You" in body)
+    two = [r["id"] for r in C.list_prospects(per_page=2, token_data=ADMIN)["rows"]]
+    picked = C.export(ids=",".join(two), token_data=ADMIN).body.decode("utf-8")
+    check("ticked rows only: export just those", picked.count("\n") == 3)
 
     print("\nThe sales team")
     cred = C.add_member(C.MemberIn(email="sofia@fidclic.com", first_name="Sofia", last_name="R."), token_data=ADMIN)["credentials"]
