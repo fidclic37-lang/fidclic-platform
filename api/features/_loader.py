@@ -36,6 +36,7 @@ MODULES = [
     "features.admin_dashboard",
     "features.admin_insights",
     "features.plan_limits",
+    "features.merchant_api",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

@@ -1,5 +1,5 @@
 import {
-  Users, QrCode, UserCog, ShieldCheck, Wallet, Languages, Bell, Lock, Store,
+  Users, QrCode, UserCog, ShieldCheck, Wallet, Languages, Bell, Lock, Store, Plug,
 } from 'lucide-react';
 
 /* Paramètres — the eight sub-pages, in the sidebar's order. One list, read by
@@ -37,6 +37,9 @@ export const PARAMETRES_SECTIONS = [
   { slug: 'notifications', label: 'Notifications', icon: Bell,
     title: 'Notifications',
     subtitle: 'Qui envoie, par quels canaux, et combien de messages au maximum.' },
+  { slug: 'api', label: 'API & Intégrations', icon: Plug,
+    title: 'API & Intégrations',
+    subtitle: 'Reliez votre caisse, votre site et vos outils à FidClic.' },
   { slug: 'securite', label: 'Sécurité', icon: Lock,
     title: 'Sécurité',
     subtitle: 'Protégez l’accès à votre compte.' },
