@@ -35,7 +35,7 @@ TEAM_ROLES = ("super_admin", "fidclic_team", "commercial")
 READ = {"GET", "HEAD", "OPTIONS"}
 MODULES = [
     ("dashboard", "Dashboard"), ("commerces", "Commerces"), ("clients", "Clients finaux"), ("analytics", "Analytics"),
-    ("insights", "Insights"), ("campagnes", "Campagnes"), ("notifications", "Notifications"), ("abonnements", "Abonnements"),
+    ("insights", "Insights"), ("notifications", "Notifications"), ("abonnements", "Abonnements"),
     ("plan_limits", "Plan Limits"), ("ai", "FIDCLIC AI"), ("crm", "CRM de prospection"),
     ("facturation", "Facturation"), ("support", "Support"), ("securite", "Sécurité"), ("parametres", "Paramètres"),
 ]
@@ -60,7 +60,7 @@ PRESETS = [
      "description": "Accès aux données, analytics et rapports.", "perms": _p(["analytics", "insights"], [])},
     {"id": "support", "name": "Support", "icon": "headset", "tone": "orange",
      "description": "Gestion du support et consultation limitée.",
-     "perms": _p(["commerces", "campagnes", "notifications", "support"], ["support"])},
+     "perms": _p(["commerces", "notifications", "support"], ["support"])},
     {"id": "finance", "name": "Finance", "icon": "users", "tone": "rose",
      "description": "Accès aux abonnements, facturation et paiements.",
      "perms": _p(["abonnements", "ai", "securite", "facturation"], ["abonnements", "facturation"])},
