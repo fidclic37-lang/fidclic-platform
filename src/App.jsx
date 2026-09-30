@@ -93,7 +93,8 @@ import JoinPage from './pages/JoinPage';
 import MyWalletCardPage from './pages/MyWalletCardPage';
 import HistoryPage from './pages/HistoryPage';
 
-import AdminDashboard from './pages/AdminDashboard';
+import AdminDashboard from './pages/AdminDashboard'; // eslint-disable-line no-unused-vars -- superseded by admin/AdminDashboardPage, kept for rollback
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
 import AdminTenantsPage from './pages/AdminTenantsPage'; // eslint-disable-line no-unused-vars -- superseded by admin/CommercesPage, kept for rollback
 import CommercesPage from './pages/admin/CommercesPage';
@@ -452,7 +453,7 @@ function App() {
               <DashboardLayout />
             </ProtectedRoute>
           }>
-            <Route index element={<SuperAdminOnly><AdminDashboard /></SuperAdminOnly>} />
+            <Route index element={<SuperAdminOnly><AdminDashboardPage /></SuperAdminOnly>} />
             <Route path="analytics" element={<SuperAdminOnly><AdminAnalyticsPage /></SuperAdminOnly>} />
             <Route path="insights" element={<SuperAdminOnly><AdminInsightsPage /></SuperAdminOnly>} />
             <Route path="tenants" element={<Navigate to="/admin/commerces" replace />} />
