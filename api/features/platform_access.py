@@ -36,7 +36,7 @@ READ = {"GET", "HEAD", "OPTIONS"}
 MODULES = [
     ("dashboard", "Dashboard"), ("commerces", "Commerces"), ("clients", "Clients finaux"), ("analytics", "Analytics"),
     ("insights", "Insights"), ("campagnes", "Campagnes"), ("notifications", "Notifications"), ("abonnements", "Abonnements"),
-    ("plan_limits", "Plan Limits"), ("card_designer", "Card Designer"), ("ai", "FIDCLIC AI"), ("crm", "CRM de prospection"),
+    ("plan_limits", "Plan Limits"), ("ai", "FIDCLIC AI"), ("crm", "CRM de prospection"),
     ("facturation", "Facturation"), ("support", "Support"), ("securite", "Sécurité"), ("parametres", "Paramètres"),
 ]
 MODULE_KEYS = [k for k, _ in MODULES]
@@ -63,7 +63,7 @@ PRESETS = [
      "perms": _p(["commerces", "campagnes", "notifications", "support"], ["support"])},
     {"id": "finance", "name": "Finance", "icon": "users", "tone": "rose",
      "description": "Accès aux abonnements, facturation et paiements.",
-     "perms": _p(["abonnements", "card_designer", "ai", "securite", "facturation"], ["abonnements", "facturation"])},
+     "perms": _p(["abonnements", "ai", "securite", "facturation"], ["abonnements", "facturation"])},
     {"id": "commercial", "name": "Commercial", "icon": "briefcase", "tone": "cyan",
      "description": "Prospection : CRM, tâches, appels et séquences.", "perms": _p(["crm"], ["crm"])},
 ]

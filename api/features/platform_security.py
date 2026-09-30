@@ -247,7 +247,7 @@ LABELS = {
 METHOD_VERB = {"POST": "Création", "PUT": "Modification", "PATCH": "Modification", "DELETE": "Suppression"}
 PATH_MODULE = [("/api/crm", "CRM de prospection"), ("/api/admin/commerces", "Commerces"), ("/api/admin/tenants", "Commerces"),
                ("/api/admin/plans", "Plans & abonnements"), ("/api/admin/invoicing", "Plans & abonnements"),
-               ("/api/admin/broadcast", "Notifications"), ("/api/admin/card-template", "Card Designer"),
+               ("/api/admin/broadcast", "Notifications"), ("/api/admin/card-template", "Commerces"),
                ("/api/admin/send-business-campaign", "Campagnes"), ("/api/admin/ai", "FIDCLIC AI"), ("/api/admin/security", "Sécurité")]
 
 
