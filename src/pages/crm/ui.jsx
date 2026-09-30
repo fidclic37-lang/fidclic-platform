@@ -83,15 +83,17 @@ export function Kpi({ icon: Icon, tone, bg, value, label, delta, series }) {
   );
 }
 
-export function Donut({ rows = [], center, sub }) {
+export function Donut({ rows = [], center, sub, colors, counts }) {
   const data = rows.filter((r) => r.count > 0);
+  // Fixed colours per row (colors[i] for rows[i]) or the chart palette in order.
+  const colorOf = (r) => (colors ? colors[rows.indexOf(r) % colors.length] : CHART[data.indexOf(r) % CHART.length]);
   return (
     <div className="flex flex-wrap items-center gap-4">
       <div className="relative h-[160px] w-[160px] shrink-0">
         <ResponsiveContainer>
           <PieChart>
             <Pie data={data.length ? data : [{ label: '—', count: 1 }]} dataKey="count" innerRadius={52} outerRadius={78} paddingAngle={data.length > 1 ? 2 : 0} isAnimationActive={chartAnimation()} stroke="none">
-              {(data.length ? data : [{}]).map((_, i) => <Cell key={i} fill={data.length ? CHART[i % CHART.length] : '#EEF2F8'} />)}
+              {(data.length ? data : [{}]).map((r, i) => <Cell key={i} fill={data.length ? colorOf(r) : '#EEF2F8'} />)}
             </Pie>
           </PieChart>
         </ResponsiveContainer>
@@ -102,9 +104,9 @@ export function Donut({ rows = [], center, sub }) {
       <ul className="min-w-[160px] flex-1 space-y-2">
         {rows.map((r, i) => (
           <li key={r.key || r.label} className="flex items-center gap-2 text-[12.5px]">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.count ? CHART[data.indexOf(r) % CHART.length] : '#CBD5E1' }} />
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.count ? colorOf(r) : '#CBD5E1' }} />
             <span className="flex-1 truncate text-[#334155]">{r.label}</span>
-            <span className="font-medium text-[#0B1C3F]">{r.pct}%</span>
+            <span className="font-medium text-[#0B1C3F]">{counts ? `${nf(r.count)} (${r.pct}%)` : `${r.pct}%`}</span>
           </li>
         ))}
         {!rows.length && <li className="text-[12.5px] text-[#94A3B8]">Aucune donnée pour le moment.</li>}

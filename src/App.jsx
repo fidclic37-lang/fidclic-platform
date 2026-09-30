@@ -139,7 +139,8 @@ import CopilotPage from './pages/CopilotPage';
 import CampagnesPage from './pages/CampagnesPage';
 import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
-import AdminInsightsPage from './pages/AdminInsightsPage';
+// Rollback: the previous Insights page — import AdminInsightsPage from './pages/AdminInsightsPage';
+import AdminInsightsBoard from './pages/admin/InsightsPage';
 import GoogleTranslateBridge, { RouteAwareRetranslator } from './components/GoogleTranslateBridge';
 // Facturation module (French e-invoicing) — post-login module chooser + home.
 import ModuleChooserPage from './pages/ModuleChooserPage';
@@ -478,7 +479,7 @@ function App() {
           }>
             <Route index element={<AdminGate><AdminDashboardPage /></AdminGate>} />
             <Route path="analytics" element={<AdminGate><AdminAnalyticsPage /></AdminGate>} />
-            <Route path="insights" element={<AdminGate><AdminInsightsPage /></AdminGate>} />
+            <Route path="insights" element={<AdminGate><AdminInsightsBoard /></AdminGate>} />
             <Route path="tenants" element={<Navigate to="/admin/commerces" replace />} />
             <Route path="commerces" element={<AdminGate><CommercesPage /></AdminGate>} />
             <Route path="commerces/:id" element={<AdminGate><CommerceDetailPage /></AdminGate>} />

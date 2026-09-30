@@ -34,6 +34,7 @@ MODULES = [
     "features.franchise",
     "features.admin_commerces",
     "features.admin_dashboard",
+    "features.admin_insights",
     "features.referrals",
     "features.happy_hour",
     "features.reviews",

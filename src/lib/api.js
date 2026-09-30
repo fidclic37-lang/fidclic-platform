@@ -184,6 +184,10 @@ export const adminAPI = {
   getTenantsByGeo: (enabled) => api.get('/admin/tenants-by-geo/' + (enabled ? 'enabled' : 'disabled')),
   getTenantsByMonth: (iso) => api.get('/admin/tenants-by-month/' + iso),
   getInsights: () => api.get('/admin/insights'),
+  insightsBoard: (params) => api.get('/admin/insights/board', { params }),
+  insightsExport: (params) => api.get('/admin/insights/export', { params, responseType: 'blob' }),
+  insightRules: () => api.get('/admin/insights/rules'),
+  saveInsightRules: (body) => api.put('/admin/insights/rules', body),
   // -- Broadcast (admin → end-customers) --
   broadcast: (data) => api.post('/admin/broadcast', data),
   broadcastPreview: (filters) => api.post('/admin/broadcast/preview', { filters }),
