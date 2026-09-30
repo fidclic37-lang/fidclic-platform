@@ -33,6 +33,11 @@ export default function CommerceDetailPage() {
   const [tab, setTab] = useState('apercu');
   const [menu, setMenu] = useState(false);
   const [modal, setModal] = useState(null);
+  // Offers created on Plan Limits are offered too (active ones).
+  useEffect(() => {
+    if (modal?.type !== 'plan' || modal.custom) return;
+    adminAPI.planLimits().then(({ data }) => setModal((m) => (m?.type === 'plan' ? { ...m, custom: data.plans.filter((p) => p.custom && p.active) } : m))).catch(() => {});
+  }, [modal]);
   const [say, toast] = useToast();
   const load = useCallback(() => {
     adminAPI.commerce(id).then(({ data }) => setD(data)).catch((e) => setErr(e?.response?.data?.detail || 'Commerce introuvable.'));
@@ -105,7 +110,7 @@ export default function CommerceDetailPage() {
       {modal?.type === 'plan' && (
         <Modal title={`Changer le plan — ${d.name}`} onClose={() => setModal(null)}>
           <div className="space-y-2">
-            {[['silver', 'Starter'], ['gold', 'Pro'], ['vip', 'Pro AI']].map(([k, l]) => (
+            {[['silver', 'Starter'], ['gold', 'Pro'], ['vip', 'Pro AI'], ...(modal.custom || []).map((p) => [p.key, `${p.label} — ${p.price}€`])].map(([k, l]) => (
               <button key={k} type="button" disabled={d.plan_key === k} onClick={() => { setModal(null); act(() => adminAPI.commercePlan(d.id, k), `Plan ${l} appliqué.`); }}
                       className="flex w-full items-center justify-between rounded-xl border border-[#DCE3EE] px-3 py-2.5 text-left text-[13.5px] hover:border-[#2F6BFF] disabled:opacity-50">{l}{d.plan_key === k && <span className="text-[12px] text-[#2F6BFF]">Plan actuel</span>}</button>
             ))}

@@ -135,9 +135,19 @@ def _auth_token(serial: str) -> str:
     return hmac.new(secret, serial.encode(), hashlib.sha256).hexdigest()[:40]
 
 
+def _wallet_in_plan(barcode_id: str) -> bool:
+    """Super admin › Plan Limits › « Wallet (Apple/Google) » for this card's business."""
+    c = _db.customers.find_one({"barcode_id": barcode_id}, {"_id": 0, "tenant_id": 1}) if barcode_id else None
+    if not c:
+        return True
+    from features import plan_limits
+    return plan_limits.allows_tenant(c.get("tenant_id"), "wallet")
+
+
 @router.get("/api/wallet/config")
-def wallet_config():
-    return {"apple": apple_configured(), "google": google_configured()}
+def wallet_config(barcode: str = ""):
+    on = _wallet_in_plan(barcode) if barcode else True
+    return {"apple": on and apple_configured(), "google": on and google_configured(), "in_plan": on}
 
 
 @router.get("/api/owner/wallet/google-status")
@@ -944,6 +954,8 @@ def owner_notify(token_data: TokenData = Depends(require_role(["business_owner",
 
 @router.get("/api/card/{barcode_id}/apple-wallet.pkpass")
 def download_apple_pass(barcode_id: str):
+    if not _wallet_in_plan(barcode_id):
+        raise HTTPException(status_code=403, detail="Apple Wallet n'est pas inclus dans l'offre de ce commerce.")
     return _pkpass_response(barcode_id)
 
 
@@ -1190,6 +1202,8 @@ def google_save_url(payload: Dict[str, Any]) -> str:
 
 @router.get("/api/card/{barcode_id}/google-wallet")
 def google_wallet_link(barcode_id: str):
+    if not _wallet_in_plan(barcode_id):
+        raise HTTPException(status_code=403, detail="Google Wallet n'est pas inclus dans l'offre de ce commerce.")
     if not google_configured():
         raise HTTPException(status_code=503, detail="Google Wallet n'est pas encore configuré")
     try:

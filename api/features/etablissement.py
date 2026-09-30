@@ -384,6 +384,13 @@ def add_store(body: StoreIn, token_data: TokenData = Depends(require_role(["busi
     if not (body.name or "").strip():
         raise HTTPException(status_code=400, detail="Donnez un nom au point de vente.")
     branches = [b for b in t.get("branches") or []]
+    from features import plan_limits
+    f = plan_limits.tenant_features(tid)
+    cap = int(f.get("establishments") or 0)
+    if cap and max(1, len(branches)) >= cap:
+        raise HTTPException(status_code=403, detail={**plan_limits.locked(f, "establishments"),
+                            "message": f"Votre offre {f.get('label')} inclut {cap} établissement{'s' if cap > 1 else ''}.",
+                            "upgrade": plan_limits._next_bigger(f, "establishments")})
     if not branches:
         # The shop itself becomes the main establishment, under the id its
         # untagged visits already belong to.

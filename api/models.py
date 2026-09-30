@@ -26,13 +26,26 @@ PLAN_FEATURES = {
         "max_customers": 1500,
         "new_cards_per_month": 500,
         "push_per_month": 2000,         # 0 = unlimited; counted from delivery_log
-        "campaigns_per_month": 20,      # Starter can run targeted campaigns
+        "campaigns_per_month": 20,      # counted only where « campaigns » is on
         "staff_accounts": 2,            # owner + 1 collaborator
         "establishments": 1,
         "ai_queries_per_day": 0,        # AI disabled on Starter
         "csv_export": True,             # importing/exporting your own customers
         "geo_proximity": False,
         "multi_branch": False,
+        # What the plan unlocks (pricing grid, 2026-09-30). A locked section
+        # stays visible to the merchant; opening it shows the upgrade prompt.
+        # ai_level: "none" | "basic" | "advanced" — see AI_LEVEL_LIMITS.
+        "ai_level": "none",
+        "priority_support": False,
+        "advanced_analytics": False,
+        "crm_advanced": False,
+        "segmentation": False,
+        "campaigns": False,
+        "automations": False,
+        "referral": False,
+        "wallet": True,
+        "api_access": False,
     },
     "gold": {                           # Pro — 79 €
         "max_customers": 4500,
@@ -45,6 +58,16 @@ PLAN_FEATURES = {
         "csv_export": True,
         "geo_proximity": True,
         "multi_branch": False,
+        "ai_level": "basic",
+        "priority_support": True,
+        "advanced_analytics": True,
+        "crm_advanced": True,
+        "segmentation": True,
+        "campaigns": True,
+        "automations": True,
+        "referral": True,
+        "wallet": True,
+        "api_access": False,
     },
     "vip": {                            # Pro AI — 129 €
         "max_customers": 15000,
@@ -57,6 +80,16 @@ PLAN_FEATURES = {
         "csv_export": True,
         "geo_proximity": True,
         "multi_branch": True,
+        "ai_level": "advanced",
+        "priority_support": True,
+        "advanced_analytics": True,
+        "crm_advanced": True,
+        "segmentation": True,
+        "campaigns": True,
+        "automations": True,
+        "referral": True,
+        "wallet": True,
+        "api_access": True,
     },
     # Franchise — sur devis (decided with the user): every network has its own
     # number of stores, so there is no public price. These are the defaults;
@@ -73,7 +106,38 @@ PLAN_FEATURES = {
         "csv_export": True,
         "geo_proximity": True,
         "multi_branch": True,
+        "ai_level": "advanced",
+        "priority_support": True,
+        "advanced_analytics": True,
+        "crm_advanced": True,
+        "segmentation": True,
+        "campaigns": True,
+        "automations": True,
+        "referral": True,
+        "wallet": True,
+        "api_access": True,
     },
+}
+
+# The switches of the plan grid, shown on Super admin › Plan Limits and
+# enforced by features/plan_limits.py (owner API guard + engines).
+PLAN_SWITCHES = ("priority_support", "advanced_analytics", "crm_advanced", "segmentation", "campaigns", "automations",
+                 "referral", "wallet", "api_access", "csv_export", "geo_proximity", "multi_branch")
+AI_LEVELS = ("none", "basic", "advanced")
+# Per-feature AI allowances by level (None = no limit). Placeholder numbers
+# decided 2026-09-30 until the user sets the exact ones after testing. On top
+# of these, ai_queries_per_day caps every AI call of the day.
+AI_LEVEL_LIMITS = {
+    "none": {"copilot_questions_per_day": 0, "recommendations": 0, "ai_campaigns_per_month": 0},
+    "basic": {"copilot_questions_per_day": 5, "recommendations": 3, "ai_campaigns_per_month": 5},
+    "advanced": {"copilot_questions_per_day": None, "recommendations": None, "ai_campaigns_per_month": None},
+}
+# One line under each plan's name (Plan Limits cards).
+PLAN_TAGLINES = {
+    "silver": "L'essentiel pour commencer",
+    "gold": "Plus de possibilités pour développer",
+    "vip": "L'IA au service de votre fidélisation",
+    "franchise": "Réseaux et franchises, sur devis",
 }
 
 # Commercial names + order, shared with the marketing site through

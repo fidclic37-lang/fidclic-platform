@@ -87,7 +87,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         except HTTPException as e:
             return e.status_code, None
 
-    check("config: apple on, google off", WP.wallet_config() == {"apple": True, "google": False})
+    check("config: apple on, google off", {k: v for k, v in WP.wallet_config().items() if k != "in_plan"} == {"apple": True, "google": False})
 
     resp = WP.download_apple_pass("FT-TEST0001")
     check("pkpass response mime", resp.media_type == "application/vnd.apple.pkpass" and "attachment" in resp.headers["content-disposition"])

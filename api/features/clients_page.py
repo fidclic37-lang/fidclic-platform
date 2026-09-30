@@ -408,6 +408,10 @@ def list_page(
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
+    # « CRM avancé » not in the plan: the simple list — search, statut, sort.
+    from features import plan_limits
+    if not plan_limits.allows_tenant(token_data.tenant_id, "crm_advanced"):
+        segment, spend, joined = "all", "", ""
     tid = token_data.tenant_id
     at = _now()
     per_page = max(1, min(MAX_PER_PAGE, int(per_page or 10)))

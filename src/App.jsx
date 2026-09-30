@@ -106,7 +106,8 @@ import ConnexionsPage from './pages/admin/securite/ConnexionsPage';
 import JournalPage from './pages/admin/securite/JournalPage';
 import SecuritySettingsPage from './pages/admin/securite/SecuritySettingsPage';
 import { can, moduleOfPath, firstAllowed } from './lib/perms';
-import AdminPlansPage from './pages/AdminPlansPage';
+// Rollback: the previous plan editor — import AdminPlansPage from './pages/AdminPlansPage';
+import PlanLimitsPage from './pages/admin/PlanLimitsPage';
 import AdminInvoicingPage from './pages/AdminInvoicingPage';
 import CrmOverviewPage from './pages/crm/CrmOverviewPage';
 // Rollback: the overview's previous layout — import CrmOverviewPageV1 from './pages/crm/CrmOverviewPageV1';
@@ -483,7 +484,7 @@ function App() {
             <Route path="tenants" element={<Navigate to="/admin/commerces" replace />} />
             <Route path="commerces" element={<AdminGate><CommercesPage /></AdminGate>} />
             <Route path="commerces/:id" element={<AdminGate><CommerceDetailPage /></AdminGate>} />
-            <Route path="plans" element={<AdminGate><AdminPlansPage /></AdminGate>} />
+            <Route path="plans" element={<AdminGate><PlanLimitsPage /></AdminGate>} />
             <Route path="facturation" element={<AdminGate><AdminInvoicingPage /></AdminGate>} />
             <Route path="campaigns" element={<AdminGate><AdminCampaignsPage /></AdminGate>} />
             <Route path="card-designer" element={<Navigate to="/admin" replace />} />

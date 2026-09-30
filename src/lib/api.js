@@ -39,6 +39,28 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Super admin › Plan Limits: a call the business's plan does not include
+// (403 PLAN_FEATURE_DISABLED) or a quota reached (429 PLAN_QUOTA_REACHED)
+// opens the upgrade prompt (components/PlanAccess.jsx). The caller still gets
+// the error, so its own « chargement impossible » stays quiet or short.
+api.interceptors.response.use((r) => r, async (error) => {
+  try {
+    const res = error?.response;
+    if (res && (res.status === 403 || res.status === 429)) {
+      let detail = res.data?.detail;
+      if (res.data instanceof Blob) {
+        try { detail = JSON.parse(await res.data.text())?.detail; } catch (_e) { detail = null; }
+      }
+      if (detail && typeof detail === 'object' && ['PLAN_FEATURE_DISABLED', 'PLAN_QUOTA_REACHED'].includes(detail.code)) {
+        window.dispatchEvent(new CustomEvent('fidclic:plan-locked', { detail }));
+        // Pages show `detail` as text: hand them the sentence, keep the rest aside.
+        error.response.data = { detail: detail.message || 'Fonctionnalité non incluse dans votre offre.', plan: detail };
+      }
+    }
+  } catch (_e) { /* never break the caller */ }
+  return Promise.reject(error);
+});
+
 export const authAPI = {
   login: (data) => api.post('/auth/login', data),
   login2fa: (challenge, code) => api.post('/auth/login/2fa', { challenge, code }),
@@ -204,6 +226,14 @@ export const adminAPI = {
   //    plus a handful of other limit fields, without redeploying) --
   listPlans: () => api.get('/admin/plans'),
   updatePlan: (plan, data) => api.put('/admin/plans/' + plan, data),
+  planLimits: () => api.get('/admin/plan-limits'),
+  planLimitsHistory: (limit = 50) => api.get('/admin/plan-limits/history', { params: { limit } }),
+  savePlanLimits: (plan, features) => api.put(`/admin/plan-limits/${plan}`, { features }),
+  savePlanMeta: (plan, body) => api.put(`/admin/plan-limits/${plan}/meta`, body),
+  createPlan: (body) => api.post('/admin/plan-limits', body),
+  deletePlan: (plan) => api.delete(`/admin/plan-limits/${plan}`),
+  resetPlanLimits: () => api.post('/admin/plan-limits/reset'),
+  savePlanLimitSettings: (body) => api.put('/admin/plan-limits/settings', body),
 };
 
 export const ownerAPI = {
@@ -321,6 +351,8 @@ export const ownerAPI = {
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
   // Tableau de bord — the home page's eleven panels, and the monthly goal.
   homeOverview: (params) => api.get('/owner/home/overview', { params }),
+  planAccess: () => api.get('/owner/plan-access'),
+  limitAlerts: () => api.get('/owner/limit-alerts'),
   getHomeGoal: () => api.get('/owner/home/goal'),
   setHomeGoal: (body) => api.put('/owner/home/goal', body),
   // Clients — the page's four figures, its segments and its paginated table.

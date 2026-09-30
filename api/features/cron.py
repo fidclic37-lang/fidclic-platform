@@ -143,4 +143,10 @@ def agent_daily(authorization: str = Header(default="")):
         summary["trial_reminders"] = run_trial_reminders()
     except Exception as e:                                       # noqa: BLE001
         summary["failures"].append({"step": "trial_reminders", "error": str(e)[:120]})
+    # Plan Limits: one email per business, limit and month near the limit.
+    try:
+        from features.plan_limits import run_limit_alerts
+        summary["limit_alerts"] = run_limit_alerts()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "limit_alerts", "error": str(e)[:120]})
     return summary

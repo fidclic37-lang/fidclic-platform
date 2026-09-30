@@ -23,10 +23,42 @@ CANONICAL_PLANS = ("silver", "gold", "vip", "franchise")
 _LEGACY_PLAN_MAP = {"basic": "silver", "chain": "vip"}
 
 def _canonical_plan(plan: str) -> str:
-    """Map any legacy plan name to one of the canonical plans."""
+    """Map any legacy plan name to one of the canonical plans. A plan the super
+    admin created (Plan Limits › « Ajouter un plan ») is kept as it is."""
     if not plan:
         return "silver"
-    return _LEGACY_PLAN_MAP.get(plan, plan if plan in CANONICAL_PLANS else "silver")
+    if plan in CANONICAL_PLANS:
+        return plan
+    if plan in _LEGACY_PLAN_MAP:
+        return _LEGACY_PLAN_MAP[plan]
+    return plan if plan in custom_plans() else "silver"
+
+
+# Plans created by the super admin live in db.plan_catalog. Every serverless
+# instance re-reads them every 30 s, so a new plan reaches all of them quickly.
+_CUSTOM_PLANS: Dict[str, Any] = {"at": 0.0, "rows": {}}
+
+
+def custom_plans(refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+    import time as _t
+    if refresh or _t.time() - _CUSTOM_PLANS["at"] > 30:
+        rows = {}
+        try:
+            _db_ = globals().get("db")
+            if _db_ is not None:
+                rows = {d["key"]: d for d in _db_.plan_catalog.find({}, {"_id": 0})}
+        except Exception:
+            rows = _CUSTOM_PLANS["rows"]
+        _CUSTOM_PLANS.update(at=_t.time(), rows=rows)
+    return _CUSTOM_PLANS["rows"]
+
+
+def plan_label(plan: str) -> str:
+    plan = _canonical_plan(plan)
+    c = custom_plans().get(plan)
+    if c:
+        return c.get("label") or plan
+    return PLAN_LABELS.get(plan, plan.title())
 from auth import (
     hash_password, verify_password, create_access_token, get_current_user_data,
     require_role, check_plan_feature, TokenData, ACCESS_TOKEN_EXPIRE_MINUTES
@@ -283,6 +315,9 @@ _PLAN_LIMIT_FIELDS = (
     "trial_reminder_days_before",
     # Monthly price in euros — admins can re-price plans without a deploy.
     "price",
+    # What the plan unlocks (Super admin › Plan Limits).
+    "ai_level", "priority_support", "advanced_analytics", "crm_advanced", "segmentation", "campaigns",
+    "automations", "referral", "wallet", "api_access",
 )
 
 
@@ -324,6 +359,15 @@ def get_plan_features(plan: str) -> Dict[str, Any]:
     joining with a KeyError when the tenant doc has a stale plan name.
     """
     plan = _canonical_plan(plan)
+    custom = custom_plans().get(plan)
+    if custom:
+        # A plan made by the super admin carries its whole feature set.
+        baseline = {**PLAN_FEATURES["silver"], **(custom.get("features") or {})}
+        baseline.setdefault("trial_duration_days", PLAN_TRIAL_DAYS["silver"])
+        baseline.setdefault("trial_reminder_days_before", TRIAL_REMINDER_DAYS_BEFORE)
+        baseline["price"] = (custom.get("features") or {}).get("price", custom.get("price", 0))
+        baseline["label"] = custom.get("label") or plan
+        return baseline
     baseline = dict(PLAN_FEATURES.get(plan) or PLAN_FEATURES["silver"])
     # Fold trial + price baselines in too, so the admin editor and any
     # consumer that calls get_plan_features() sees a uniform shape.
@@ -1803,6 +1847,20 @@ async def platform_journal(request: Request, call_next):
 
 
 @app.middleware("http")
+async def plan_guard(request: Request, call_next):
+    """Super admin › Plan Limits: an owner call into a section the business's
+    plan does not include answers 403 PLAN_FEATURE_DISABLED; AI calls count
+    against the plan (features/plan_limits.py)."""
+    if not request.url.path.startswith("/api/owner/"):
+        return await call_next(request)
+    try:
+        from features.plan_limits import guard
+    except Exception:
+        return await call_next(request)
+    return await guard(request, call_next)
+
+
+@app.middleware("http")
 async def ensure_seed_data(request: Request, call_next):
     global _seeded, _seed_error
     if SEED_DISABLED:
@@ -2068,6 +2126,28 @@ def submit_support_ticket(payload: SupportTicketIn):
         "email_sent":   False,
         "email_error":  None,
     }
+    # Super admin › Plan Limits › « Support prioritaire »: a business whose
+    # plan includes it jumps the queue and the super admin's bell rings.
+    try:
+        t = (db.tenants.find_one({"slug": ticket["tenant_slug"]}, {"_id": 0}) if ticket["tenant_slug"] else None)
+        if not t and ticket["from_email"]:
+            u = db.users.find_one({"email": ticket["from_email"].lower()}, {"_id": 0, "tenant_id": 1})
+            t = db.tenants.find_one({"id": u.get("tenant_id")}, {"_id": 0}) if u and u.get("tenant_id") else None
+        if t:
+            ticket["tenant_id"] = t["id"]
+            ticket["tenant_name"] = t.get("name")
+            ticket["priority"] = "prioritaire" if features_for(t).get("priority_support") else "normale"
+    except Exception as e:
+        print(f"[support] priority lookup failed: {e}")
+    ticket.setdefault("priority", "normale")
+    if ticket["priority"] == "prioritaire":
+        subject = f"[PRIORITAIRE] {subject}"
+        try:
+            db.platform_alerts.insert_one({"id": str(_uuid.uuid4()), "kind": "support_priority", "email": ticket["from_email"],
+                                           "text": f"Demande de support prioritaire — {ticket.get('tenant_name') or ticket['from_email'] or ''} : {ticket['subject']}",
+                                           "at": datetime.now(timezone.utc), "ip": None, "read_by": []})
+        except Exception:
+            pass
 
     # 1) Persist first — never lose a ticket because of network flakiness.
     try:
@@ -2141,6 +2221,9 @@ def list_support_tickets(
     for t in tickets:
         if isinstance(t.get("created_at"), datetime):
             t["created_at"] = t["created_at"].isoformat()
+        t.setdefault("priority", "normale")
+    # Open priority tickets first (Plan Limits › « Support prioritaire »).
+    tickets.sort(key=lambda t: not (t.get("priority") == "prioritaire" and t.get("status") == "open"))
     return {"tickets": tickets}
 
 
@@ -2906,6 +2989,15 @@ def features_for(tenant: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     tenant = tenant or {}
     plan = _canonical_plan(tenant.get("plan"))
     f = get_plan_features(plan)
+    # « Appliquer automatiquement » off: a business that was already on this
+    # plan keeps the limits it had until its next billing cycle.
+    pin = tenant.get("limits_pin") or {}
+    if pin.get("plan") == plan and isinstance(pin.get("features"), dict):
+        until = pin.get("until")
+        if isinstance(until, datetime) and until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        if isinstance(until, datetime) and until > datetime.now(timezone.utc):
+            f.update({k: v for k, v in pin["features"].items() if k in _PLAN_LIMIT_FIELDS and k != "price"})
     if plan == "franchise":
         terms = tenant.get("franchise_terms") or {}
         for k in FRANCHISE_TERM_FIELDS:
@@ -6115,6 +6207,9 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     parrainage = None
     if req.parrain_barcode:
         try:
+            from features import plan_limits as _pl
+            if not _pl.allows_tenant(tid, "referral"):     # Parrainage not in the business's plan
+                raise RuntimeError("referral not in plan")
             from features.referrals import record as _record_referral
             parrainage = _record_referral(tid, req.parrain_barcode, cust_doc)
         except Exception as _e:
@@ -10428,6 +10523,8 @@ def proximity_ping(req: ProximityPingRequest):
     tenant = db.tenants.find_one({"id": tid})
     if not tenant or not tenant.get("geo_enabled"):
         return {"status": "ignored", "reason": "geo disabled for tenant"}
+    if not features_for(tenant).get("geo_proximity"):
+        return {"status": "ignored", "reason": "geolocation not in the business's plan"}
     try:
         from features.privacy_page import geo_allowed          # Données & confidentialité
         if not geo_allowed(tenant["id"]):

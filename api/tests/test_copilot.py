@@ -54,7 +54,7 @@ def main():
         return type("TD", (), {"email": "o@x", "role": "business_owner", "tenant_id": tid})()
 
     db.tenants.insert_many([
-        {"id": "cafe", "slug": "cafe", "name": "Le Petit Café", "sector": "cafe",
+        {"id": "cafe", "slug": "cafe", "name": "Le Petit Café", "sector": "cafe", "plan": "vip",   # full AI: Pro AI
          "latitude": 47.3941, "longitude": 0.6848},
         {"id": "empty", "slug": "empty", "name": "Tout neuf", "sector": "cafe"},
     ])

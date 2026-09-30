@@ -440,10 +440,13 @@ def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
     cron; safe to call twice — a campaign leaves `scheduled` before it sends."""
     at = now or _now()
     out = {"sent": 0, "recipients": 0}
+    from features import plan_limits
     for doc in list(_db.campaigns.find({"status": "scheduled"}, {"_id": 0})):
         when = _aware(doc.get("scheduled_for"))
         if not when or when > at:
             continue
+        if not plan_limits.allows_tenant(doc.get("tenant_id"), "campaigns"):
+            continue                    # Campagnes no longer in the plan: it will show as « non envoyée »
         claimed = _db.campaigns.update_one(
             {"id": doc["id"], "status": "scheduled"}, {"$set": {"status": "sending"}})
         if not getattr(claimed, "modified_count", 1):

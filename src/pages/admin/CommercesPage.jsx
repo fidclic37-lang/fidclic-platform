@@ -14,7 +14,7 @@ import { toneOf } from '../crm/emailUi';
 export const STATUS_TONE = { actif: ['#E7F7EE', '#0F8B58'], inactif: ['#FDECEF', '#E11D48'], a_risque: ['#FFF4DB', '#D97706'], suspendu: ['#F1F5F9', '#475569'] };
 export const StatusPill = ({ s, label }) => { const [bg, fg] = STATUS_TONE[s] || STATUS_TONE.suspendu; return <span className="whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] font-medium" style={{ background: bg, color: fg }}>{label}</span>; };
 export const PLAN_TONE = { essai: ['#F1F5F9', '#475569'], silver: ['#FFF4DB', '#B45309'], gold: ['#EAF1FF', '#2F6BFF'], vip: ['#FDECEF', '#E11D48'], franchise: ['#F3EEFF', '#7C3AED'] };
-export const PlanPill = ({ p }) => { const [bg, fg] = PLAN_TONE[p?.key] || PLAN_TONE.essai; return <span className="inline-block min-w-[64px] whitespace-nowrap rounded-md px-2.5 py-1 text-center text-[12px] font-medium" style={{ background: bg, color: fg }}>{p?.label}</span>; };
+export const PlanPill = ({ p }) => { const [bg, fg] = PLAN_TONE[p?.key] || (p?.color ? [`${p.color}1F`, p.color] : PLAN_TONE.essai); return <span className="inline-block min-w-[64px] whitespace-nowrap rounded-md px-2.5 py-1 text-center text-[12px] font-medium" style={{ background: bg, color: fg }}>{p?.label}</span>; };
 export function CommerceLogo({ c, size = 30 }) {
   const [broken, setBroken] = useState(false);
   return c.logo && !broken
