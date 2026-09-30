@@ -68,7 +68,6 @@ class RootErrorBoundary extends React.Component {
   }
 }
 
-import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
@@ -244,21 +243,18 @@ const PublicRoute = ({ children }) => {
 };
 
 // app.fidclic.com is the product; the public site lives at www.fidclic.com
-// (fidclic.fr redirects there too). A visitor who types the app address
-// lands on that site rather than the app's older built-in LandingPage,
-// which is kept (and still shown on localhost) but no longer served.
+// (fidclic.fr redirects there too). A visitor who opens "/" — on the app or
+// on localhost — lands on that site. The app's older built-in LandingPage
+// (pages/LandingPage.jsx) is kept for rollback but no longer routed.
 const MARKETING_URL = 'https://www.fidclic.com/';
 
 const MarketingHome = () => {
-  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
   const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
     || window.navigator.standalone === true;
   let card = null;
   try { card = localStorage.getItem('fidelitour:last_card'); } catch (e) { /* private mode */ }
-  const leave = !local && !standalone;
-  React.useEffect(() => { if (leave) window.location.replace(MARKETING_URL); }, [leave]);
+  React.useEffect(() => { if (!standalone) window.location.replace(MARKETING_URL); }, [standalone]);
 
-  if (local) return <LandingPage />;
   // Installed icons can open "/" (iOS ignores start_url): send them back
   // into the app instead of out to the website.
   if (standalone) {
