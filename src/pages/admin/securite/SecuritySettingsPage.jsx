@@ -3,7 +3,7 @@ import { ShieldAlert, Globe2, BellRing, Lock, Unlock, Loader2, Search, X, Info }
 import { securityAPI } from '../../../lib/api';
 import { useAuth } from '../../../contexts/AuthContext';
 import { Card, Head, Loading, Breadcrumb, useToast, BLUE, inputCls } from '../../crm/ui';
-import { flag } from './shared';
+import { flag, SecuTabs } from './shared';
 
 /* Super admin › Sécurité › Paramètres sécurité — decided with the user:
    blocked after N wrong passwords, an alert on a new country, and the
@@ -54,6 +54,7 @@ export default function SecuritySettingsPage() {
         <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Paramètres sécurité</h1>
         <p className="text-[15px] text-[#475569]">Protégez les comptes de l'équipe FidClic. {!boss && 'Seul le Super Admin peut modifier ces réglages.'}</p>
       </header>
+      <Card className="mb-4 p-0"><SecuTabs /></Card>
       <fieldset disabled={!boss} className="grid items-start gap-4 xl:grid-cols-[1fr_1fr]">
         <Card>
           <Head icon={Lock} title="Blocage après plusieurs erreurs" />

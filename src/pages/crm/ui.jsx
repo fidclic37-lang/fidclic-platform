@@ -51,14 +51,14 @@ export const Head = ({ icon: Icon, title, sub, right, tone = BLUE }) => (
   </header>
 );
 
-export function Spark({ series = [], color = BLUE, w = 96, h = 32 }) {
+export function Spark({ series = [], color = BLUE, w = 96, h = 32, fluid = false }) {
   if (!series.length) return null;
   const max = Math.max(1, ...series); const min = Math.min(...series);
   const pts = series.map((v, i) => [(i / Math.max(1, series.length - 1)) * w, h - 3 - ((v - min) / Math.max(1, max - min)) * (h - 6)]);
   const d = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
   const id = `sp${color.replace('#', '')}`;
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
+    <svg width={fluid ? '100%' : w} height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio={fluid ? 'none' : undefined} aria-hidden="true">
       <defs><linearGradient id={id} x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor={color} stopOpacity=".25" /><stop offset="1" stopColor={color} stopOpacity="0" /></linearGradient></defs>
       <path d={`${d} L${w},${h} L0,${h} Z`} fill={`url(#${id})`} />
       <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" />
@@ -66,8 +66,29 @@ export function Spark({ series = [], color = BLUE, w = 96, h = 32 }) {
   );
 }
 
-export function Kpi({ icon: Icon, tone, bg, value, label, delta, series }) {
+export function Kpi({ icon: Icon, tone, bg, value, label, delta, series, compact }) {
   const up = (delta ?? 0) >= 0;
+  // `compact`: seven cards on one row down to 1280 px wide (13-inch laptops,
+  // sidebar open) — the curve goes under the figures until there is room
+  // beside them (1920 px and up), where the card is the same as the regular one.
+  if (compact) {
+    return (
+      <div className="rounded-2xl border border-[#EDF1F7] bg-white p-3.5 shadow-[0_1px_2px_rgba(11,28,63,.03)] min-[1920px]:p-4">
+        <div className="flex items-center gap-2.5 min-[1920px]:gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl min-[1920px]:h-12 min-[1920px]:w-12" style={{ background: bg, color: tone }}><Icon size={21} /></span>
+          <div className="min-w-0 flex-1">
+            <p className="whitespace-nowrap text-[19px] font-bold leading-none text-[#0B1C3F] min-[1920px]:text-[22px]">{typeof value === 'number' ? nf(value) : value}</p>
+            <p className="mt-1 text-[12px] leading-tight text-[#64748B] min-[1920px]:text-[12.5px]">{label}</p>
+            {delta !== undefined && delta !== null
+              ? <p className={`mt-1 flex items-center gap-0.5 text-[12px] font-medium ${up ? 'text-[#10B981]' : 'text-[#E11D48]'}`}>{up ? <ArrowUp size={12} /> : <ArrowDown size={12} />}{up ? '+' : ''}{delta}%</p>
+              : <p className="mt-1 text-[11px] text-[#94A3B8]">—</p>}
+          </div>
+          <div className="hidden shrink-0 self-end min-[1920px]:block"><Spark series={series} color={tone} w={80} /></div>
+        </div>
+        <div className="mt-2 min-[1920px]:hidden"><Spark series={series} color={tone} w={120} h={26} fluid /></div>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-[#EDF1F7] bg-white p-4 shadow-[0_1px_2px_rgba(11,28,63,.03)]">
       <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: tone }}><Icon size={24} /></span>
