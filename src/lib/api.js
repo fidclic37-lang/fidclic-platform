@@ -116,6 +116,8 @@ export const crmAPI = {
 
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
+  franchise: () => api.get('/admin/franchise'),
+  setFranchise: (id, body) => api.put(`/admin/tenants/${id}/franchise`, body),
   invoicingIssuer: () => api.get('/admin/invoicing/issuer'),
   saveInvoicingIssuer: (body) => api.put('/admin/invoicing/issuer', body),
   invoices: () => api.get('/admin/invoicing/invoices'),

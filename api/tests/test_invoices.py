@@ -132,7 +132,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nOverview")
     v = INV.billing_overview(token_data=OWNER())
     check("plan, usage, catalogue, latest invoice",
-          v["plan"]["key"] == "vip" and len(v["usage"]) == 4 and len(v["catalogue"]) == 3 and v["latest_invoice"]["number"])
+          v["plan"]["key"] == "vip" and len(v["usage"]) == 4 and len(v["catalogue"]) == 4 and v["catalogue"][-1]["on_quote"] and v["latest_invoice"]["number"])
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

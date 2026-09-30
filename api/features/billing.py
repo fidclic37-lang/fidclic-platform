@@ -169,6 +169,8 @@ def billing_status(token_data: TokenData = Depends(require_role(["business_owner
 @router.post("/api/billing/checkout")
 def create_checkout(req: CheckoutRequest, token_data: TokenData = Depends(require_role(["business_owner"]))):
     """Returns a Stripe Checkout URL the owner should redirect to."""
+    if req.plan == "franchise":
+        raise HTTPException(status_code=400, detail="L'offre Franchise est sur devis : contactez-nous depuis la page Abonnement.")
     if not is_configured():
         raise HTTPException(status_code=503, detail="Billing not configured. Ask the platform admin to set STRIPE_SECRET_KEY.")
     price_id = PLAN_PRICE_IDS.get(req.plan)

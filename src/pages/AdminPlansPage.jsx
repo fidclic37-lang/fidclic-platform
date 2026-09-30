@@ -25,6 +25,7 @@ import React, { useEffect, useState } from 'react';
 import { adminAPI } from '../lib/api';
 import { Crown, Users, Mail, Brain, Download, MapPin, GitBranch, RotateCcw, Save, AlertCircle, CheckCircle2, Loader2, Clock, Bell, Euro, Send, UserCog, Store } from 'lucide-react';
 import { PageHeader, C as C_PS } from '../components/PageShell';
+import FranchisePanel from '../components/admin/FranchisePanel';
 
 // Visual label, helper text, and icon for each editable field — colocated
 // so we can render the rows uniformly without sprinkling copy through JSX.
@@ -50,6 +51,8 @@ const PLAN_META = {
   silver: { label: 'Starter', tone: '#6FA89C', gradient: 'linear-gradient(135deg, #6FA89C 0%, #98C9BB 100%)' },
   gold:   { label: 'Pro',     tone: '#D4A574', gradient: 'linear-gradient(135deg, #D4A574 0%, #E8C49A 100%)' },
   vip:    { label: 'Pro AI',  tone: '#B85C38', gradient: 'linear-gradient(135deg, #B85C38 0%, #E8917C 100%)' },
+  // Sold on quote: its « price » is set per franchise, below the plans.
+  franchise: { label: 'Franchise', tone: '#2F6BFF', gradient: 'linear-gradient(135deg, #2F6BFF 0%, #7AA2FF 100%)' },
 };
 
 export default function AdminPlansPage() {
@@ -177,7 +180,7 @@ export default function AdminPlansPage() {
       <PageHeader
         eyebrow="Platform"
         title="Plans &amp; limits"
-        description="Three plans: Silver / Gold / VIP. Edit the price, quota caps, feature flags and free-trial length per plan. Changes apply instantly to every tenant on that plan — no redeploy needed. To switch a single business's plan, use the Tenants page."
+        description="Starter / Pro / Pro AI, and Franchise (on quote). Edit the price, quota caps, feature flags and free-trial length per plan. Changes apply instantly to every tenant on that plan — no redeploy needed. To switch a single business's plan, use the Tenants page."
         role="super_admin"
       />
 
@@ -215,7 +218,8 @@ export default function AdminPlansPage() {
                     <p className="text-[10px] uppercase tracking-[0.18em] font-bold opacity-80">Plan</p>
                     <h2 className="font-['Cormorant_Garamond'] text-2xl font-bold leading-tight">
                       {meta.label}
-                      {row.price != null && <span className="ml-2 text-sm font-normal opacity-90">€{row.price}/mo</span>}
+                      {row.plan === 'franchise' ? <span className="ml-2 text-sm font-normal opacity-90">sur devis — défauts ci-dessous</span>
+                        : row.price != null && <span className="ml-2 text-sm font-normal opacity-90">€{row.price}/mo</span>}
                     </h2>
                   </div>
                 </div>
@@ -227,7 +231,7 @@ export default function AdminPlansPage() {
 
               {/* Editable rows */}
               <div className="divide-y" style={{ borderColor: C_PS.hairline }}>
-                {FIELDS.map((f) => {
+                {FIELDS.filter((f) => !(row.plan === 'franchise' && f.key === 'price')).map((f) => {
                   const Icon = f.icon;
                   const isOverridden = Object.prototype.hasOwnProperty.call(overridden, f.key);
                   const baselineVal = row.baseline?.[f.key];
@@ -330,6 +334,8 @@ export default function AdminPlansPage() {
           );
         })}
       </div>
+
+      <FranchisePanel />
 
       {/* Cross-link to per-tenant plan editing */}
       <div className="rounded-xl border-2 border-dashed p-4 text-sm flex items-start gap-3"

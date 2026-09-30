@@ -197,8 +197,8 @@ def overview(period: str = "current", token_data: TokenData = Depends(require_ro
     t = _db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
     plan = t.get("plan") or "silver"
     try:
-        from server import get_plan_features
-        f = get_plan_features(plan)
+        from server import features_for
+        f = features_for(t)
     except Exception:
         f = {}
     start, end = _month_bounds("previous" if period == "previous" else "current", at)

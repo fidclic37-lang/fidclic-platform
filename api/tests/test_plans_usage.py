@@ -18,7 +18,7 @@ os.environ["DISABLE_SEED"] = "1"
 with mongomock.patch(servers=(("localhost", 27017),)):
     import server
     from features import plans_public as PP
-    from models import PLAN_FEATURES, PLAN_LABELS, PLAN_PRICES
+    from models import PLAN_FEATURES, PLAN_LABELS, PLAN_PRICES, PLAN_ORDER
 
     db = server.db
     passed = failed = 0
@@ -49,7 +49,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           all(by_key[k]["price_monthly"] == PLAN_PRICES[k]
               and by_key[k]["label"] == PLAN_LABELS[k]
               and by_key[k]["limits"]["max_customers"] == PLAN_FEATURES[k]["max_customers"]
-              for k in PLAN_FEATURES))
+              for k in PLAN_ORDER))       # Franchise is on quote: listed apart, under quote_plans
+    check("Franchise listed apart, on quote", cat["quote_plans"][0]["key"] == "franchise"
+          and cat["quote_plans"][0]["price_monthly"] is None)
 
     # ---- admin override flows through to the public catalogue -------------
     db.plan_settings.update_one({"plan": "silver"}, {"$set": {"overrides": {"price": 45, "max_customers": 1600}}}, upsert=True)

@@ -58,6 +58,22 @@ PLAN_FEATURES = {
         "geo_proximity": True,
         "multi_branch": True,
     },
+    # Franchise — sur devis (decided with the user): every network has its own
+    # number of stores, so there is no public price. These are the defaults;
+    # the super admin sets each franchise's own price and limits on its tenant
+    # (tenant.franchise_terms, see server.features_for()).
+    "franchise": {
+        "max_customers": 50000,
+        "new_cards_per_month": 20000,
+        "push_per_month": 0,
+        "campaigns_per_month": 0,
+        "staff_accounts": 50,
+        "establishments": 10,
+        "ai_queries_per_day": 100,
+        "csv_export": True,
+        "geo_proximity": True,
+        "multi_branch": True,
+    },
 }
 
 # Commercial names + order, shared with the marketing site through
@@ -66,13 +82,17 @@ PLAN_LABELS = {
     "silver": "Starter",
     "gold": "Pro",
     "vip": "Pro AI",
+    "franchise": "Franchise",
 }
+# Self-serve plans, in order. Franchise is not in it: it is sold on quote.
 PLAN_ORDER = ("silver", "gold", "vip")
+QUOTE_PLANS = ("franchise",)
 
 PLAN_PRICES = {
     "silver": 39,
     "gold": 79,
     "vip": 129,
+    "franchise": 0,      # sur devis — the real price is tenant.franchise_terms.price
 }
 
 # A customer counts against max_customers while they have visited within this
@@ -86,6 +106,7 @@ PLAN_TRIAL_DAYS = {
     "silver": 28,
     "gold": 28,
     "vip": 28,
+    "franchise": 28,
 }
 
 # Number of days BEFORE trial_end that we surface the "your trial is ending

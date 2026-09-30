@@ -69,6 +69,9 @@ PLAN_FEATURE_LIST = {
     "vip": ["Gestion complète de votre programme de fidélité", "Campagnes et automatisations",
             "Push classique et Wallet", "Segmentation avancée", "Insights et recommandations IA",
             "Géolocalisation", "Plusieurs établissements", "Support prioritaire"],
+    "franchise": ["Tout Pro AI, pour tout votre réseau", "Tous vos établissements, une seule carte",
+                  "Limites adaptées à votre réseau", "Tableau de bord par établissement et global",
+                  "Accompagnement dédié", "Prix sur devis"],
 }
 
 
@@ -405,22 +408,26 @@ def billing_overview(token_data: TokenData = Depends(require_role(["business_own
     tid = token_data.tenant_id
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
     plan = tenant.get("plan") or "silver"
-    f = core.get_plan_features(plan)
+    f = core.features_for(tenant)
     usage = PP.owner_usage(token_data=token_data)
     stores = len([b for b in tenant.get("branches") or [] if b.get("status") != "closed"]) or 1
     renew = _aware(tenant.get("subscription_period_end")) or _aware(tenant.get("trial_ends_at"))
     latest = _db.fidclic_invoices.find_one({"tenant_id": tid}, {"_id": 0}, sort=[("paid_at", -1)])
     catalogue = []
-    for key in ("silver", "gold", "vip"):
-        pf = core.get_plan_features(key)
-        catalogue.append({"key": key, "label": pf.get("label"), "price": pf.get("price"),
+    asked = _db.upgrade_requests.find_one({"tenant_id": tid, "requested_plan": "franchise", "status": "pending"})
+    for key in ("silver", "gold", "vip", "franchise"):
+        pf = core.features_for(tenant) if key == plan == "franchise" else core.get_plan_features(key)
+        quote = key == "franchise"
+        catalogue.append({"key": key, "label": pf.get("label"), "price": None if quote and key != plan else pf.get("price"),
+                          "on_quote": quote, "requested": bool(asked) if quote else False,
                           "features": PLAN_FEATURE_LIST.get(key, []), "current": key == plan,
                           "limits": {"max_customers": pf.get("max_customers"), "push_per_month": pf.get("push_per_month"),
                                      "campaigns_per_month": pf.get("campaigns_per_month"),
                                      "establishments": pf.get("establishments"), "staff_accounts": pf.get("staff_accounts")}})
     return {
         "configured": BL.is_configured(),
-        "plan": {"key": plan, "label": f.get("label"), "price": f.get("price"), "features": PLAN_FEATURE_LIST.get(plan, [])},
+        "plan": {"key": plan, "label": f.get("label"), "price": f.get("price") or None, "on_quote": plan == "franchise",
+                 "features": PLAN_FEATURE_LIST.get(plan, [])},
         "status": tenant.get("subscription_status") or ("trialing" if tenant.get("trial_ends_at") else None),
         "cancel_at_period_end": bool(tenant.get("subscription_cancel_at_period_end")),
         "renews_on": renew.isoformat() if renew else None,
