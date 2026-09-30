@@ -104,6 +104,7 @@ import CrmSoonPage from './pages/crm/CrmSoonPage';
 import CrmPipelinePage from './pages/crm/CrmPipelinePage';
 import CrmTasksPage from './pages/crm/CrmTasksPage';
 import CrmCalendarPage from './pages/crm/CrmCalendarPage';
+import CrmCallsPage from './pages/crm/CrmCallsPage';
 import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
@@ -462,7 +463,7 @@ function App() {
             <Route path="crm/calendrier" element={<CrmCalendarPage />} />
             <Route path="crm/sequences" element={<CrmSoonPage title="Séquences d'emails" text="Des séries d'emails envoyés depuis votre Gmail, avec ouvertures et réponses suivies." />} />
             <Route path="crm/modeles" element={<CrmSoonPage title="Modèles d'emails" text="Vos emails types, réutilisables dans les séquences." />} />
-            <Route path="crm/appels" element={<CrmSoonPage title="Appels" text="Appelez depuis votre téléphone et notez le résultat de chaque appel." />} />
+            <Route path="crm/appels" element={<CrmCallsPage />} />
             <Route path="crm/import" element={<CrmSoonPage title="Import / Export" text="L'historique de vos imports et exports. En attendant, importez depuis la page Prospects." />} />
             <Route path="crm/conversations" element={<CrmSoonPage title="Suivi des conversations" text="Chaque échange avec un commerce — emails, réponses, appels, notes — au même endroit." />} />
             <Route path="crm/statistiques" element={<CrmSoonPage title="Statistiques" text="Taux de conversion, performance par commercial, par source et par secteur." />} />
