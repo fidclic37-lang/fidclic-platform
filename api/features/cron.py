@@ -149,4 +149,10 @@ def agent_daily(authorization: str = Header(default="")):
         summary["limit_alerts"] = run_limit_alerts()
     except Exception as e:                                       # noqa: BLE001
         summary["failures"].append({"step": "limit_alerts", "error": str(e)[:120]})
+    # API & Intégrations: failed webhook deliveries get another try.
+    try:
+        from features.merchant_api import retry_failed
+        summary["webhooks"] = retry_failed()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "webhooks", "error": str(e)[:120]})
     return summary

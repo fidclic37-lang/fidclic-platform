@@ -4777,7 +4777,17 @@ def scan_visit(
                 raise HTTPException(status_code=400,
                                     detail="Choisissez l'établissement où a lieu le passage.")
     try:
-        return _scan_visit_impl(req, token_data)
+        result = _scan_visit_impl(req, token_data)
+        # API & Intégrations: visit.created (and reward.unlocked when this very
+        # visit completed the card) to the business's webhooks.
+        try:
+            from features.merchant_api import emit_customer
+            emit_customer("visit.created", token_data.tenant_id, result.get("id"), with_visit=True)
+            if result.get("reward_unlocked") and result.get("stamps_in_cycle") == result.get("reward_threshold"):
+                emit_customer("reward.unlocked", token_data.tenant_id, result.get("id"))
+        except Exception as _e:
+            print(f"scan_visit: webhook not sent (non-fatal): {_e}")
+        return result
     except HTTPException:
         # Pre-existing intentional HTTP errors (404 tenant mismatch etc.) pass through.
         raise
@@ -6221,6 +6231,12 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         welcome = _AM.welcome(tid, cust_doc)
     except Exception as _e:
         print(f"join: welcome not sent (non-fatal): {_e}")
+    # API & Intégrations: the business's webhooks hear about the new card.
+    try:
+        from features.merchant_api import emit_customer
+        emit_customer("customer.created", tid, cust_doc.get("id"))
+    except Exception as _e:
+        print(f"join: webhook not sent (non-fatal): {_e}")
     return {"barcode_id": barcode_id, "message": "Welcome!",
             "parrainage": bool(parrainage), "welcome": welcome}
 
@@ -10387,6 +10403,12 @@ def redeem_reward(
     )
     refresh_wallet_pass(cust["id"])          # the meter resets — show it now
     reward.pop("_id", None)
+    try:                                      # API & Intégrations: reward.redeemed
+        from features.merchant_api import emit_customer
+        emit_customer("reward.redeemed", token_data.tenant_id, cust["id"],
+                      {"reward": {"name": reward.get("reward_name"), "value_eur": reward.get("reward_value_eur")}})
+    except Exception as _e:
+        print(f"redeem: webhook not sent (non-fatal): {_e}")
     return reward
 
 

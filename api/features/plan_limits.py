@@ -215,6 +215,7 @@ PATH_RULES = [
     (re.compile(r"^/api/owner/(auto-campaigns|push-wallet)(/|$)"), "automations"),
     (re.compile(r"^/api/owner/referrals(/|$)"), "referral"),
     (re.compile(r"^/api/owner/geo(/|$)"), "geo_proximity"),
+    (re.compile(r"^/api/owner/integrations(/|$)"), "api_access"),
     (re.compile(r"^/api/owner/.*(/export(/|$|\?)|/export\.(pdf|csv))"), "csv_export"),
 ]
 # AI calls that cost a model request: counted against the plan.
