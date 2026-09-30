@@ -771,15 +771,23 @@ async def import_preview(file: UploadFile = File(...), token_data: TokenData = D
     if len(data) > MAX_FILE:
         raise HTTPException(status_code=413, detail="Fichier trop lourd (8 Mo maximum).")
     name = (file.filename or "").lower()
-    if not name.endswith((".csv", ".txt", ".md", ".markdown", ".pdf", ".tsv")):
-        raise HTTPException(status_code=400, detail="Formats acceptés : CSV, TXT, MD, PDF.")
+    if not data:
+        raise HTTPException(status_code=400, detail="Fichier vide.")
     try:
-        rows = crm_import.parse(name, data)
+        rows, merged = crm_import.parse_with_stats(name, data)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Fichier illisible ({str(exc)[:80]}).")
+        raise HTTPException(status_code=422, detail=f"Fichier illisible ({str(exc)[:120]}).")
     if not rows:
-        raise HTTPException(status_code=422, detail="Aucun commerce reconnu dans ce fichier.")
-    return {"filename": file.filename, "rows": [{**r, **_plan(r)} for r in rows[:2000]], "total": len(rows)}
+        raise HTTPException(status_code=422, detail="Aucun commerce reconnu dans ce fichier. Il faut une colonne (ou une ligne) avec le nom du commerce, "
+                                                    "et si possible adresse, téléphone ou e-mail.")
+    # The city most rows give — offered as the default for the rows without one.
+    cities: Dict[str, int] = {}
+    for r in rows:
+        if r.get("city"):
+            cities[r["city"]] = cities.get(r["city"], 0) + 1
+    return {"filename": file.filename, "rows": [{**r, **_plan(r)} for r in rows[:2000]], "total": len(rows),
+            "duplicates_in_file": merged, "no_city": sum(1 for r in rows if not r.get("city")),
+            "suggested_city": max(cities, key=cities.get) if cities else "", "formats": crm_import.ACCEPTED}
 
 
 class ImportIn(BaseModel):
@@ -787,6 +795,7 @@ class ImportIn(BaseModel):
     source: str = "import"
     assign_to: Optional[str] = None
     filename: Optional[str] = None
+    default_city: Optional[str] = Field(None, max_length=80)
 
 
 @router.post("/api/crm/import/commit")
@@ -799,6 +808,8 @@ def import_commit(body: ImportIn, token_data: TokenData = Depends(require_role(C
     out = {"created": 0, "updated": 0, "linked": 0, "skipped": 0}
     for raw in body.rows[:2000]:
         row = {k: str(raw.get(k) or "").strip() for k in FIELDS}
+        if not row["city"] and (body.default_city or "").strip():
+            row["city"] = body.default_city.strip()
         if not row["name"]:
             out["skipped"] += 1
             continue
