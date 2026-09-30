@@ -11078,6 +11078,14 @@ def run_daily_triggers(request: Request):
     except Exception as _e:
         print(f"crm sync failed (non-fatal): {_e}")
 
+    # CRM e-mails — read replies, then send the sequence steps that are due.
+    crm_mail_summary = {}
+    try:
+        from features.crm_email import daily as _crm_mail
+        crm_mail_summary = _crm_mail()
+    except Exception as _e:
+        print(f"crm mail failed (non-fatal): {_e}")
+
     # Suppression du compte — businesses whose 30 days have passed.
     purge_summary = {"tenants": 0}
     try:
@@ -11144,6 +11152,7 @@ def run_daily_triggers(request: Request):
         "retention": retention_summary,
         "account_purge": purge_summary,
         "crm_sync": crm_summary,
+        "crm_mail": crm_mail_summary,
         "campagnes": campagnes_summary,
         "copilot": copilot_summary,
         "tenants_processed": len(tenants),
