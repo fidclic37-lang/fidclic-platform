@@ -69,7 +69,7 @@ export default function RolesPage() {
     <div className="crm" onClick={() => setMenu(null)}>
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Breadcrumb items={[['Super Admin', '/admin'], ['Sécurité', '/admin/securite'], ['Rôles & Permissions']]} />
+          <Breadcrumb items={[['Super Admin', '/admin'], ['Admin', '/admin/securite'], ['Rôles & Permissions']]} />
           <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Rôles & Permissions</h1>
           <p className="text-[15px] text-[#475569]">Définissez les rôles et contrôlez les accès aux différentes fonctionnalités de la plateforme.</p>
         </div>
@@ -118,7 +118,7 @@ export default function RolesPage() {
                     </tr>); })}
                 </tbody>
               </table>
-              <p className="mt-2 text-[11.5px] text-[#94A3B8]">« Modifier » inclut « Voir ». Sécurité : modifier les utilisateurs, les rôles et les paramètres reste réservé au Super Admin, pour que personne ne puisse s'accorder plus d'accès.</p>
+              <p className="mt-2 text-[11.5px] text-[#94A3B8]">« Modifier » inclut « Voir ». Admin : modifier les utilisateurs, les rôles et les paramètres reste réservé au Super Admin, pour que personne ne puisse s'accorder plus d'accès.</p>
               {dirty && (
                 <div className="sticky bottom-3 mt-3 flex items-center justify-end gap-2 rounded-xl border border-[#BFD3FF] bg-white/95 p-2 shadow-lg">
                   <span className="mr-auto pl-2 text-[12.5px] text-[#475569]">Modifications non enregistrées</span>

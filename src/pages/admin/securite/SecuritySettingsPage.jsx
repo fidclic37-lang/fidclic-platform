@@ -50,7 +50,7 @@ export default function SecuritySettingsPage() {
   return (
     <div className="crm">
       <header className="mb-4">
-        <Breadcrumb items={[['Super Admin', '/admin'], ['Sécurité', '/admin/securite'], ['Paramètres sécurité']]} />
+        <Breadcrumb items={[['Super Admin', '/admin'], ['Admin', '/admin/securite'], ['Paramètres sécurité']]} />
         <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Paramètres sécurité</h1>
         <p className="text-[15px] text-[#475569]">Protégez les comptes de l'équipe FidClic. {!boss && 'Seul le Super Admin peut modifier ces réglages.'}</p>
       </header>

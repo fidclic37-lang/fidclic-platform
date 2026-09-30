@@ -44,8 +44,8 @@ export default function SecuriteOverviewPage() {
     <div className="crm" onClick={() => setMenu(null)}>
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Breadcrumb items={[['Super Admin', '/admin'], ['Sécurité']]} />
-          <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Sécurité</h1>
+          <Breadcrumb items={[['Super Admin', '/admin'], ['Admin']]} />
+          <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Admin</h1>
           <p className="text-[15px] text-[#475569]">Gérez les utilisateurs, les rôles, les permissions et suivez toutes les activités sensibles.</p>
         </div>
         <RangePicker value={range} onChange={setRange} />

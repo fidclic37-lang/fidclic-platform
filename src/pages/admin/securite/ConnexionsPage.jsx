@@ -23,7 +23,7 @@ export default function ConnexionsPage() {
     <div className="crm">
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Breadcrumb items={[['Super Admin', '/admin'], ['Sécurité', '/admin/securite'], ['Connexions']]} />
+          <Breadcrumb items={[['Super Admin', '/admin'], ['Admin', '/admin/securite'], ['Connexions']]} />
           <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Connexions</h1>
           <p className="text-[15px] text-[#475569]">Chaque connexion de l'équipe FidClic : lieu, appareil, et celles qui ont été refusées.</p>
         </div>
