@@ -539,7 +539,10 @@ def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
         tenants |= set(_db.push_scenario_overrides.distinct("tenant_id", {"enabled": True}))
     except Exception:
         return summary
+    from features import plan_limits
     for tid in tenants:
+        if not plan_limits.allows_tenant(tid, "automations"):    # Automatisation not in the plan
+            continue
         try:
             res = run_due_for_tenant(tid, at)
             summary["tenants"] += 1

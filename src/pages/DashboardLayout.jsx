@@ -6,6 +6,7 @@ import EstablishmentSwitcher from '../components/EstablishmentSwitcher';
 import { markPageOpened } from '../lib/chartAnimation';
 import { useBranch } from '../contexts/BranchContext';
 import BillingBanner from '../components/BillingBanner';
+import { PlanAccessContext, usePlanAccess, usePlanAccessState, UpgradeModal, LockedSection, LimitBanner, openUpgrade } from '../components/PlanAccess';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
 import { ownerAPI } from '../lib/api';
@@ -14,7 +15,7 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
-  Receipt, Eye, ShieldCheck, KeyRound,
+  Receipt, Eye, ShieldCheck, KeyRound, Lock,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -40,9 +41,12 @@ const isNavActive = (currentPath, target) => {
 const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, alsoActive = [] }) => {
   const active = isNavActive(currentPath, to) || alsoActive.some((p) => isNavActive(currentPath, p));
   const theme = themeForRole(role);
+  // Super admin › Plan Limits: a section the plan does not include.
+  const lock = usePlanAccess()?.lockOf?.(to);
   return (
     <Link
       to={to}
+      onClick={lock ? (e) => { e.preventDefault(); openUpgrade(lock); } : undefined}
       title={collapsed ? label : undefined}
       className={`flc-nav ${active ? 'on' : ''} relative group flex items-center ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-2.5'} py-[7px] rounded-xl text-[13.5px] transition-all`}
       style={{ fontWeight: active ? 600 : 450 }}
@@ -56,7 +60,8 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, a
       {!collapsed && (
         <>
           <span className="truncate flex-1">{label}</span>
-          {badge && (
+          {lock && <Lock className="h-3.5 w-3.5 shrink-0 opacity-60" aria-label="Offre supérieure" />}
+          {badge && !lock && (
             <span
               className="text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 bg-[#2F6BFF] text-white"
             >
@@ -408,8 +413,11 @@ const DashboardLayout = () => {
   // variable as `false` so a future per-route theme toggle has a single
   // place to wire in without re-introducing the dead branches.
   const isAnalyticsDark = false;
+  const planAccess = usePlanAccessState(role);
+  const pageLock = planAccess.lockOf(currentPath);
 
   return (
+    <PlanAccessContext.Provider value={planAccess}>
     <div
       className={`relative flex min-h-screen fdt-dash flc ${nuit ? "flc-nuit" : ""} ${isTeam(user) ? 'fd-admin' : ''}`}
       style={{ transition: 'background 200ms ease' }}
@@ -620,6 +628,7 @@ const DashboardLayout = () => {
             warn about (past-due, canceled, trial ending soon). Otherwise
             invisible and out of the way. */}
         {role === 'business_owner' && !user?.view_as && <BillingBanner />}
+        {role === 'business_owner' && !user?.view_as && <LimitBanner />}
         {/* Paramètres › Sécurité › Suppression du compte: the owner can still
             change its mind during the 30 days. */}
         {role === 'business_owner' && tenantInfo?.deletion_scheduled_at && (
@@ -719,10 +728,13 @@ const DashboardLayout = () => {
           )}
           {/* A new establishment chosen under the logo: the page is rebuilt,
               so it reads its data again for that establishment. */}
-          <Outlet key={branchId || 'all'} />
+          {/* The plan is known before a page loads, so a locked page never starts. */}
+          {!planAccess.ready ? null : pageLock ? <LockedSection detail={pageLock} /> : <Outlet key={branchId || 'all'} />}
         </div>
       </main>
+      <UpgradeModal />
     </div>
+    </PlanAccessContext.Provider>
   );
 };
 

@@ -9,6 +9,7 @@ import {
 import { ownerAPI } from '../lib/api';
 import { perPage as prefPerPage } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
+import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
 
 /**
  * Clients — built to the approved mockup.
@@ -193,6 +194,12 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
 
 export default function ClientsPage() {
   const { user } = useAuth();
+  // « CRM avancé » (Super admin › Plan Limits): without it, the simple list —
+  // search, statut and sort; segments and saved filters show the upgrade prompt.
+  const access = usePlanAccess();
+  const crm = access?.has ? access.has('crm_advanced') : true;
+  const crmReady = access?.ready !== false;
+  const needCrm = (fn) => (...a) => (crm ? fn(...a) : openUpgrade(access?.locked?.crm_advanced));
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
   const [feed, setFeed] = useState({ rows: [], total: 0, pages: 1, page: 1, per_page: 10 });
@@ -222,10 +229,11 @@ export default function ClientsPage() {
   useEffect(() => { ownerAPI.clientsOverview().then(({ data }) => setMeta(data)).catch(() => {}); }, []);
 
   const loadSaved = useCallback(() => {
+    if (!crmReady || !crm) { setSaved([]); return; }       // saved filters: CRM avancé
     ownerAPI.listSavedSegments()
       .then(({ data }) => setSaved(Array.isArray(data) ? data : (data?.segments || [])))
       .catch(() => setSaved([]));
-  }, []);
+  }, [crm, crmReady]);
   useEffect(() => { loadSaved(); }, [loadSaved]);
 
   // What the current filter is, in one place: saved as-is, and applied back
@@ -375,7 +383,7 @@ export default function ClientsPage() {
               </span>
             </span>
           </span>
-          <button type="button" onClick={() => navigate('/dashboard/segmentation')}
+          <button type="button" onClick={needCrm(() => navigate('/dashboard/segmentation'))}
                   className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[#2F6BFF] hover:underline">
             Voir tous les segments <ArrowRight size={13} />
           </button>
@@ -387,7 +395,7 @@ export default function ClientsPage() {
             const on = segment === s.key;
             return (
               <button key={s.key} type="button"
-                      onClick={() => { setSegment(s.key); setPage(1); setPicked([]); }}
+                      onClick={needCrm(() => { setSegment(s.key); setPage(1); setPicked([]); })}
                       className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition ${
                         on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E6EEFB] bg-white hover:border-[#C7DBFF]'}`}>
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
@@ -410,7 +418,7 @@ export default function ClientsPage() {
           {saved.map((row) => (
             <span key={row.id}
                   className="inline-flex items-center gap-1 rounded-full border border-[#E6EEFB] bg-white py-1 pl-3 pr-1">
-              <button type="button" onClick={() => applySaved(row)}
+              <button type="button" onClick={needCrm(() => applySaved(row))}
                       className="text-[12px] font-semibold text-[#334155] hover:text-[#2F6BFF]">
                 {row.name}
               </button>
@@ -441,7 +449,7 @@ export default function ClientsPage() {
               </button>
             </span>
           ) : (
-            <button type="button" onClick={() => setNaming(true)}
+            <button type="button" onClick={needCrm(() => setNaming(true))}
                     className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-dashed border-[#C9DBFB] px-3 py-1 text-[12px] font-semibold text-[#2F6BFF] transition hover:border-[#2F6BFF]">
               <BookmarkPlus size={13} /> Enregistrer ce filtre
             </button>
@@ -473,17 +481,17 @@ export default function ClientsPage() {
         </p>
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end">
           <Select label="Segment" value={segment}
-                  onChange={(v) => { setSegment(v); setPage(1); }}
+                  onChange={needCrm((v) => { setSegment(v); setPage(1); })}
                   options={segments.map((s) => ({ key: s.key, label: s.key === 'all' ? 'Tous' : s.label }))} />
           <Select label="Statut" value={status}
                   onChange={(v) => { setStatus(v); setPage(1); }}
                   options={[{ key: '', label: 'Tous' },
                             ...(meta?.statuses || []).map((s) => ({ key: s.key, label: s.label }))]} />
           <Select label="Dépenses" value={spend}
-                  onChange={(v) => { setSpend(v); setPage(1); }} options={SPEND_BANDS} />
+                  onChange={needCrm((v) => { setSpend(v); setPage(1); })} options={SPEND_BANDS} />
           <Select label="Date d'inscription" value={joined}
-                  onChange={(v) => { setJoined(v); setPage(1); }} options={JOINED_BANDS} />
-          <button type="button" onClick={() => setMore((v) => !v)}
+                  onChange={needCrm((v) => { setJoined(v); setPage(1); })} options={JOINED_BANDS} />
+          <button type="button" onClick={needCrm(() => setMore((v) => !v))}
                   className="inline-flex h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#E6EEFB] px-4 text-[13px] font-semibold text-[#475569] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <SlidersHorizontal size={14} /> Plus de filtres
           </button>
@@ -631,7 +639,7 @@ export default function ClientsPage() {
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Enregistrer une visite
                               </button>
-                              <button type="button" onClick={() => { setMenuFor(null); setSegment(r.segment); setPage(1); }}
+                              <button type="button" onClick={needCrm(() => { setMenuFor(null); setSegment(r.segment); setPage(1); })}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Filtrer sur « {r.segment_label} »
                               </button>

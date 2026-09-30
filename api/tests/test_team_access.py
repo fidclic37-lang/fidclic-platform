@@ -48,7 +48,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         except HTTPException as e:
             return e.status_code
 
-    db.tenants.insert_one({"id": "t1", "name": "Le Corner Café", "slug": "corner", "branches": [
+    db.tenants.insert_one({"id": "t1", "name": "Le Corner Café", "slug": "corner", "plan": "vip", "branches": [
         {"id": "b-tours", "name": "Le Corner Café", "city": "Tours"},
         {"id": "b-blois", "name": "Corner Blois", "city": "Blois"},
         {"id": "b-orleans", "name": "Corner Orléans", "city": "Orléans"},

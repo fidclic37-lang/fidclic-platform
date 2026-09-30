@@ -327,6 +327,13 @@ def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, p
         raise HTTPException(status_code=400, detail="Adresse email invalide.")
     if _db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Un compte existe déjà avec cet email.")
+    from features import plan_limits
+    f = plan_limits.tenant_features(token.tenant_id)
+    cap = int(f.get("staff_accounts") or 0)
+    if cap and _db.users.count_documents({"tenant_id": token.tenant_id}) >= cap:
+        raise HTTPException(status_code=403, detail={**plan_limits.locked(f, "staff_accounts"),
+                            "message": f"Votre offre {f.get('label')} inclut {cap} comptes équipe (propriétaire compris).",
+                            "upgrade": plan_limits._next_bigger(f, "staff_accounts")})
     ids = _check_assignment(body.role, body.branch_ids, me, all_ids)
     from services import password_policy
     password = (body.password or "").strip() or password_policy.generate()

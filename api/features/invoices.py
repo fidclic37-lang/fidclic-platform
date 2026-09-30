@@ -61,6 +61,10 @@ _db = None
 ISSUER_KEY = "invoice_issuer"
 ISSUER_REQUIRED = ("legal_name", "legal_form", "share_capital", "address", "postal_code", "city",
                    "siren", "rcs_city")
+# Franchise (sur devis) keeps its own words; the others come from the plan
+# itself (features/plan_limits.plan_bullets).
+from features.plan_limits import plan_bullets  # noqa: E402
+
 PLAN_FEATURE_LIST = {
     "silver": ["Carte de fidélité digitale (Wallet)", "Campagnes push", "Récompenses et paliers",
                "Scan en caisse", "Support par e-mail"],
@@ -421,14 +425,14 @@ def billing_overview(token_data: TokenData = Depends(require_role(["business_own
         quote = key == "franchise"
         catalogue.append({"key": key, "label": pf.get("label"), "price": None if quote and key != plan else pf.get("price"),
                           "on_quote": quote, "requested": bool(asked) if quote else False,
-                          "features": PLAN_FEATURE_LIST.get(key, []), "current": key == plan,
+                          "features": PLAN_FEATURE_LIST["franchise"] if quote else plan_bullets(pf), "current": key == plan,
                           "limits": {"max_customers": pf.get("max_customers"), "push_per_month": pf.get("push_per_month"),
                                      "campaigns_per_month": pf.get("campaigns_per_month"),
                                      "establishments": pf.get("establishments"), "staff_accounts": pf.get("staff_accounts")}})
     return {
         "configured": BL.is_configured(),
         "plan": {"key": plan, "label": f.get("label"), "price": f.get("price") or None, "on_quote": plan == "franchise",
-                 "features": PLAN_FEATURE_LIST.get(plan, [])},
+                 "features": PLAN_FEATURE_LIST["franchise"] if plan == "franchise" else plan_bullets(f)},
         "status": tenant.get("subscription_status") or ("trialing" if tenant.get("trial_ends_at") else None),
         "cancel_at_period_end": bool(tenant.get("subscription_cancel_at_period_end")),
         "renews_on": renew.isoformat() if renew else None,

@@ -51,7 +51,7 @@ def main():
     class TD:
         email, role, tenant_id = "owner@shop.fr", "business_owner", "t1"
 
-    db.tenants.insert_one({"id": "t1", "name": "Le Petit Café"})
+    db.tenants.insert_one({"id": "t1", "name": "Le Petit Café", "plan": "gold"})   # campaigns are a Pro feature
     db.tenants.insert_one({"id": "t2", "name": "Rival"})
 
     # id, visits, last visit (days ago), birthday (days from today), barcode

@@ -20,8 +20,9 @@ export default function WalletButtons({ barcodeId, onError }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.get('/wallet/config').then((r) => setCfg(r.data || {})).catch(() => setCfg({}));
-  }, []);
+    // The card's business plan decides too (Super admin › Plan Limits › Wallet).
+    api.get('/wallet/config', { params: { barcode: barcodeId } }).then((r) => setCfg(r.data || {})).catch(() => setCfg({}));
+  }, [barcodeId]);
 
   if (!cfg || (!cfg.apple && !cfg.google)) return null;
 

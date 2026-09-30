@@ -40,7 +40,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     now = dt.datetime.now(dt.timezone.utc)
     TOURS = (47.3941, 0.6848)
-    db.tenants.insert_one({"id": "t1", "name": "Le Petit Café", "lat": TOURS[0], "lng": TOURS[1]})
+    db.tenants.insert_one({"id": "t1", "name": "Le Petit Café", "lat": TOURS[0], "lng": TOURS[1], "plan": "gold"})   # CRM avancé: Pro
     db.tenants.insert_one({"id": "t2", "name": "Rival"})
 
     def north(km):

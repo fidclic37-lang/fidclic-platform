@@ -40,7 +40,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           [p["limits"]["push_per_month"] for p in cat["plans"]] == [2000, 6000, 0])
     check("staff accounts 2 / 6 / 15",
           [p["limits"]["staff_accounts"] for p in cat["plans"]] == [2, 6, 15])
-    check("Starter has campaigns (no push without them)", by_key["silver"]["features"]["campaigns"] is True)
+    check("Starter: no campaigns, Pro and Pro AI have them (pricing grid)", by_key["silver"]["features"]["campaigns"] is False
+          and by_key["gold"]["features"]["campaigns"] is True and by_key["vip"]["features"]["campaigns"] is True)
     check("AI only on Pro AI", [p["features"]["ai"] for p in cat["plans"]] == [False, True, True] or
           [p["features"]["ai"] for p in cat["plans"]] == [False, False, True] or True)
     check("trial 28 days, no card", cat["trial_days"] == 28 and cat["trial_requires_card"] is False)

@@ -948,6 +948,10 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
     scope = S.resolve(token_data, request)
     shop = E.Shop(token_data.tenant_id, _now(), scope)
     recs = _for(token_data, recommendations(shop))
+    from features import plan_limits                      # « Analyses de base »: a few recommendations
+    cap = plan_limits.ai_recommendation_limit(token_data.tenant_id)
+    if cap is not None:
+        recs = recs[:cap]
     fc = forecast_week(shop)
     opps = opportunities(shop, fc)
     return {

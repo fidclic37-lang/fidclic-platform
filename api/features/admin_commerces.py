@@ -96,6 +96,9 @@ def _plan_label(t: Dict[str, Any]) -> Dict[str, str]:
     status = (t.get("subscription_status") or "").lower()
     if status in ("trialing", "onboarding") or (not status and t.get("trial_ends_at")):
         return {"key": "essai", "label": "Essai"}
+    custom = core.custom_plans().get(key)
+    if custom:
+        return {"key": key, "label": custom.get("label") or key, "color": custom.get("color"), "custom": True}
     return {"key": key, "label": core.PLAN_LABELS.get(key, key.title())}
 
 
@@ -332,8 +335,11 @@ def change_plan(tid: str, body: PlanIn, token_data: TokenData = Depends(require_
     t = _db.tenants.find_one({"id": tid})
     if not t:
         raise HTTPException(status_code=404, detail="Commerce introuvable")
-    if body.plan not in ("silver", "gold", "vip"):
+    custom = core.custom_plans(refresh=True).get(body.plan)
+    if body.plan not in ("silver", "gold", "vip") and not custom:
         raise HTTPException(status_code=400, detail="Pour la Franchise, fixez ses conditions (prix, limites).")
+    if custom and custom.get("active") is False:
+        raise HTTPException(status_code=400, detail="Cette offre est désactivée.")
     _db.tenants.update_one({"id": tid}, {"$set": {"plan": body.plan}})
     core.log_audit("admin.plan_change", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid,
                    meta={"from": t.get("plan"), "to": body.plan})
