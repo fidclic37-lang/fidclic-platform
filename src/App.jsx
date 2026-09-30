@@ -139,7 +139,10 @@ import CopilotPage from './pages/CopilotPage';
 // Campagnes — rebuilt to the approved design. CampaignsPage stays in the
 // repo, unrouted, for rollback.
 import CampagnesPage from './pages/CampagnesPage';
-import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
+// Rollback: the previous AI assistant — import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
+import AiIntelligencePage from './pages/admin/ai/AiIntelligencePage';
+import AiSavedPage from './pages/admin/ai/AiSavedPage';
+import AiReportsPage from './pages/admin/ai/AiReportsPage';
 import AdminCampaignsPage from './pages/AdminCampaignsPage';
 // Rollback: the previous Insights page — import AdminInsightsPage from './pages/AdminInsightsPage';
 import AdminInsightsBoard from './pages/admin/InsightsPage';
@@ -489,7 +492,9 @@ function App() {
             <Route path="facturation" element={<AdminGate><AdminInvoicingPage /></AdminGate>} />
             <Route path="campaigns" element={<AdminGate><AdminCampaignsPage /></AdminGate>} />
             <Route path="card-designer" element={<Navigate to="/admin" replace />} />
-            <Route path="ai" element={<AdminGate><AdminAIAssistantPage /></AdminGate>} />
+            <Route path="ai" element={<AdminGate><AiIntelligencePage /></AdminGate>} />
+            <Route path="ai/sauvegardes" element={<AdminGate><AiSavedPage /></AdminGate>} />
+            <Route path="ai/rapports" element={<AdminGate><AiReportsPage /></AdminGate>} />
             {/* CRM de prospection */}
             <Route path="crm" element={<AdminGate><CrmOverviewPage /></AdminGate>} />
             <Route path="crm/prospects" element={<AdminGate><CrmProspectsPage /></AdminGate>} />
