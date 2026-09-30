@@ -117,7 +117,7 @@ import CrmCalendarPage from './pages/crm/CrmCalendarPage';
 import CrmCallsPage from './pages/crm/CrmCallsPage';
 import CrmSequencesPage from './pages/crm/CrmSequencesPage';
 import CrmTemplatesPage from './pages/crm/CrmTemplatesPage';
-import AdminCardDesignerPage from './pages/AdminCardDesignerPage';
+import AdminCardDesignerPage from './pages/AdminCardDesignerPage'; // eslint-disable-line no-unused-vars -- section removed (user, 2026-09-30), kept for rollback
 import LoyaltyCardPage from './pages/LoyaltyCardPage';
 import ComingSoonPage from './pages/ComingSoonPage';
 import HelpPage from './pages/HelpPage';
@@ -484,7 +484,7 @@ function App() {
             <Route path="plans" element={<AdminGate><AdminPlansPage /></AdminGate>} />
             <Route path="facturation" element={<AdminGate><AdminInvoicingPage /></AdminGate>} />
             <Route path="campaigns" element={<AdminGate><AdminCampaignsPage /></AdminGate>} />
-            <Route path="card-designer" element={<AdminGate><AdminCardDesignerPage /></AdminGate>} />
+            <Route path="card-designer" element={<Navigate to="/admin" replace />} />
             <Route path="ai" element={<AdminGate><AdminAIAssistantPage /></AdminGate>} />
             {/* CRM de prospection */}
             <Route path="crm" element={<AdminGate><CrmOverviewPage /></AdminGate>} />

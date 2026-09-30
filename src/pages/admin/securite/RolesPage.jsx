@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Plus, MoreHorizontal, Home, Store, User, BarChart3, Sparkles, Megaphone, Bell, CreditCard, Shield, Palette, BrainCircuit,
+  Plus, MoreHorizontal, Home, Store, User, BarChart3, Sparkles, Megaphone, Bell, CreditCard, Shield, BrainCircuit,
   UsersRound, Receipt, LifeBuoy, ShieldCheck, Settings2, Trash2, CheckCircle2, Eye, Pencil, Loader2, Lock, UserPlus, XCircle,
 } from 'lucide-react';
 import { securityAPI } from '../../../lib/api';
@@ -13,7 +13,7 @@ import { TONES, RoleIcon, ROLE_ICONS, UserModal, PasswordOnce } from './shared';
    Modifier. Only the super admin changes them; the server applies them. */
 
 const MOD_ICON = { dashboard: Home, commerces: Store, clients: User, analytics: BarChart3, insights: Sparkles, campagnes: Megaphone,
-  notifications: Bell, abonnements: CreditCard, plan_limits: Shield, card_designer: Palette, ai: BrainCircuit, crm: UsersRound,
+  notifications: Bell, abonnements: CreditCard, plan_limits: Shield, ai: BrainCircuit, crm: UsersRound,
   facturation: Receipt, support: LifeBuoy, securite: ShieldCheck, parametres: Settings2 };
 
 function Switch({ on, onChange, disabled, label, title }) {

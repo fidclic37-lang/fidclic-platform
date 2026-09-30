@@ -3280,7 +3280,7 @@ def admin_get_tenant_analytics(
 @app.get("/api/admin/card-template/{tenant_id}")
 def get_card_template_admin(
     tenant_id: str,
-    token_data: TokenData = Depends(require_admin("card_designer"))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Get card template for a tenant (admin only)"""
     t = db.card_templates.find_one({"tenant_id": tenant_id})
@@ -3293,7 +3293,7 @@ def get_card_template_admin(
 def save_card_template_admin(
     tenant_id: str,
     req: CardTemplate,
-    token_data: TokenData = Depends(require_admin("card_designer"))
+    token_data: TokenData = Depends(require_admin("commerces"))
 ):
     """Save card template for a tenant (admin only). Mirrors the owner-side
     save: snapshots old rules, writes new ones, and runs a retroactive

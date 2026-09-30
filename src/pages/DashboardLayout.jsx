@@ -10,11 +10,11 @@ import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
 import { ownerAPI } from '../lib/api';
 import {
-  Home, Users, QrCode, LogOut, BarChart3, Settings2, Palette,
+  Home, Users, QrCode, LogOut, BarChart3, Settings2,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
-  Receipt, Store, ShieldAlert, Eye, ShieldCheck, KeyRound,
+  Receipt, Eye, ShieldCheck, KeyRound,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -95,36 +95,6 @@ const CrmNav = ({ currentPath, role, collapsed }) => {
             const on = to === '/admin/crm' ? currentPath === '/admin/crm' : currentPath.startsWith(to);
             return (
               <Link key={to} to={to} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
-                <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Super admin › Commerces: the list, then two of its tabs as shortcuts.
-const COMMERCE_ITEMS = [['', 'Tous les commerces', Store], ['nouveaux', 'Nouveaux commerces', UserRound], ['a_risque', 'Commerces à risque', ShieldAlert]];
-const CommercesNav = ({ currentPath, role, collapsed }) => {
-  const { search } = useLocation();
-  const inside = currentPath.startsWith('/admin/commerces');
-  const tab = new URLSearchParams(search).get('tab') || '';
-  if (collapsed) return <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={collapsed} />;
-  return (
-    <div>
-      <Link to="/admin/commerces" className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-[7px] text-[13.5px] transition-all ${inside ? 'bg-[#2F6BFF] font-semibold text-white' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"><Database className="h-[18px] w-[18px]" /></span>
-        <span className="flex-1 truncate text-left">Commerces</span>
-        <ChevronDown size={15} className={`transition ${inside ? 'rotate-180' : ''}`} />
-      </Link>
-      {inside && (
-        <div className="mt-1 space-y-[1px] rounded-xl bg-[#F4F8FF] py-1">
-          {COMMERCE_ITEMS.map(([t, label, Icon]) => {
-            const on = currentPath === '/admin/commerces' && tab === t;
-            return (
-              <Link key={label} to={t ? `/admin/commerces?tab=${t}` : '/admin/commerces'} className={`flex items-center gap-2.5 rounded-lg px-4 py-[6px] text-[13px] ${on ? 'bg-[#E3EDFF] font-semibold text-[#2F6BFF]' : 'text-[#475569] hover:text-[#2F6BFF]'}`}>
                 <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
               </Link>
             );
@@ -584,13 +554,12 @@ const DashboardLayout = () => {
           {isTeam(user) && (
             <>
               {can(user, 'dashboard') && <NavLink to="/admin" icon={Home} label="Dashboard" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'commerces') && <CommercesNav currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'commerces') && <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'analytics') && <NavLink to="/admin/analytics" icon={BarChart3} label="Analytics" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'insights') && <NavLink to="/admin/insights" icon={Sparkles} label="Insights" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'campagnes') && <NavLink to="/admin/campaigns" icon={Megaphone} label="Campagnes" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'card_designer') && <NavLink to="/admin/card-designer" icon={Palette} label="Card Designer" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'securite') && <SecuriteNav currentPath={currentPath} role={role} collapsed={collapsed} />}
