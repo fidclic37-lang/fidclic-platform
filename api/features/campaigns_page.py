@@ -55,6 +55,7 @@ _db = None
 INACTIVE_DAYS = 30          # "Clients inactifs · Plus de 30 jours"
 LOYAL_VISITS = 3            # "Clients fidèles · Plus de 3 achats" — strictly more
 BIRTHDAY_DAYS = 7           # "Anniversaire · Cette semaine"
+MISSED_AFTER = timedelta(hours=24)   # a scheduled send later than this waits for the business
 OPEN_WINDOW_H = 72          # a card opened this long after a send counts as an open
 ATTRIBUTION_DAYS = 15       # a visit inside this window counts for the campaign
 WALLET_OFFER_DAYS = 30      # how long a campaign stays the card's current offer
@@ -268,8 +269,16 @@ def page(request: Request = None,
             "scheduled_for": (d.isoformat() if (d := _aware(c.get("scheduled_for"))) else None),
         })
 
+    missed = [{"id": c["id"], "kind": "campagne", "name": c.get("name") or "Campagne", "subtitle": (c.get("content") or "")[:80],
+               "scheduled_for": _iso_or_none(c.get("scheduled_for")), "audience_count": len(c.get("recipient_ids") or [])}
+              for c in _limit(list(_db.campaigns.find({"tenant_id": tid, "status": "missed"}, {"_id": 0})), mine)]
+    missed += [{"id": c["id"], "kind": "ancienne", "name": c.get("name") or "Campagne", "subtitle": (c.get("content") or "")[:80],
+                "scheduled_for": _iso_or_none(c.get("run_at")), "audience_count": None}
+               for c in _db.scheduled_campaigns.find({"tenant_id": tid, "status": "missed"}, {"_id": 0})]
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "campaign_sender_name": 1}) or {}
     return {
+        # Scheduled campaigns that could not leave on time (see run_due).
+        "missed": sorted(missed, key=lambda m: m["scheduled_for"] or ""),
         # The phone preview signs the notification with the name the customer
         # will actually see, not a placeholder.
         "tenant_name": tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic",
@@ -435,14 +444,74 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
     return {"delivered": delivered, "wallet_woken": woken, "reach": len(people)}
 
 
+def _iso_or_none(v: Any) -> Optional[str]:
+    d = _aware(v)
+    return d.isoformat() if d else None
+
+
+def _missed(tid: str, cid: str) -> tuple:
+    doc = _db.campaigns.find_one({"id": cid, "tenant_id": tid, "status": "missed"}, {"_id": 0})
+    if doc:
+        return "campagne", doc
+    doc = _db.scheduled_campaigns.find_one({"id": cid, "tenant_id": tid, "status": "missed"}, {"_id": 0})
+    if doc:
+        return "ancienne", doc
+    raise HTTPException(status_code=404, detail="Campagne non envoyée introuvable.")
+
+
+@router.post("/api/owner/campaigns/{cid}/send-missed")
+def send_missed(cid: str, token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))):
+    """« Envoyer maintenant » on a campaign that missed its time."""
+    import server as core
+    kind, doc = _missed(token_data.tenant_id, cid)
+    at = _now()
+    if kind == "ancienne":
+        claimed = _db.scheduled_campaigns.update_one({"id": cid, "status": "missed"}, {"$set": {"status": "sending"}})
+        if not getattr(claimed, "modified_count", 1):
+            raise HTTPException(status_code=409, detail="Déjà en cours d'envoi.")
+        n = core.send_legacy_scheduled(doc, at)
+        _db.scheduled_campaigns.update_one({"id": cid}, {"$set": {"status": "sent", "sent_at": at}})
+        return {"status": "sent", "recipients": n}
+    claimed = _db.campaigns.update_one({"id": cid, "status": "missed"}, {"$set": {"status": "sending"}})
+    if not getattr(claimed, "modified_count", 1):
+        raise HTTPException(status_code=409, detail="Déjà en cours d'envoi.")
+    people = list(_db.customers.find({"tenant_id": doc["tenant_id"], "id": {"$in": list(doc.get("recipient_ids") or [])}}, {"_id": 0}))
+    doc["sent_at"] = at
+    doc.setdefault("channels", {"push": True, "wallet": True})
+    try:
+        res = _deliver(doc["tenant_id"], doc, people)
+    except Exception:
+        _db.campaigns.update_one({"id": cid}, {"$set": {"status": "missed"}})
+        raise HTTPException(status_code=502, detail="Envoi impossible, réessayez.")
+    _db.campaigns.update_one({"id": cid}, {"$set": {"status": "sent", "sent_at": at, "delivered_count": res["delivered"]}})
+    return {"status": "sent", "recipients": res["reach"]}
+
+
+@router.post("/api/owner/campaigns/{cid}/dismiss-missed")
+def dismiss_missed(cid: str, token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True))):
+    """« Ne pas envoyer »: the campaign is kept, marked cancelled."""
+    kind, _doc = _missed(token_data.tenant_id, cid)
+    coll = _db.scheduled_campaigns if kind == "ancienne" else _db.campaigns
+    coll.update_one({"id": cid}, {"$set": {"status": "cancelled", "cancelled_at": _now()}})
+    return {"status": "cancelled"}
+
+
 def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
     """Send the campaigns whose scheduled time has come. Called by the daily
     cron; safe to call twice — a campaign leaves `scheduled` before it sends."""
     at = now or _now()
     out = {"sent": 0, "recipients": 0}
+    out["missed"] = 0
     for doc in list(_db.campaigns.find({"status": "scheduled"}, {"_id": 0})):
         when = _aware(doc.get("scheduled_for"))
         if not when or when > at:
+            continue
+        if at - when > MISSED_AFTER:
+            # Too late to go out on its own — the offer may be over. The
+            # business sees it under « Non envoyées » and decides.
+            _db.campaigns.update_one({"id": doc["id"], "status": "scheduled"},
+                                     {"$set": {"status": "missed", "missed_at": at}})
+            out["missed"] += 1
             continue
         claimed = _db.campaigns.update_one(
             {"id": doc["id"], "status": "scheduled"}, {"$set": {"status": "sending"}})

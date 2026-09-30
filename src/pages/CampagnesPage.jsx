@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Send, Users, Mail, BarChart3, Euro, Clock, Star, Gift, Plus, ChevronRight,
   Zap, Image as ImageIcon, Link2, Calendar, Loader2, Info, Sparkles, Check,
-  Bell, X, CheckCircle2,
+  Bell, X, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
@@ -43,6 +43,8 @@ const STATUS = {
   sending: { label: 'En cours', bg: '#EAF1FF', fg: '#1D4ED8' },
   scheduled: { label: 'Planifiée', bg: '#FFF7E6', fg: '#B45309' },
   draft: { label: 'Brouillon', bg: '#EEF2F8', fg: '#475569' },
+  missed: { label: 'Non envoyée', bg: '#FDECEF', fg: '#B91C1C' },
+  cancelled: { label: 'Annulée', bg: '#F1F5F9', fg: '#64748B' },
 };
 
 const Panel = ({ children, className = '' }) => (
@@ -524,6 +526,33 @@ export default function CampagnesPage() {
           </div>
         )}
       </Panel>
+
+      {/* Scheduled campaigns that could not leave on time (more than a day
+          late): never sent on their own — the business decides. */}
+      {data?.missed?.length > 0 && (
+        <Panel className="border-[#FCA5A5] p-5">
+          <h2 className="mb-1 flex items-center gap-2 text-[15px] font-bold text-[#B91C1C]"><AlertTriangle size={17} /> Campagnes non envoyées ({data.missed.length})</h2>
+          <p className="mb-3 text-[12.5px] text-[#475569]">Ces campagnes planifiées n'ont pas pu partir à l'heure prévue. Elles ne partiront pas toutes seules (l'offre est peut-être terminée) : envoyez-les maintenant ou laissez-les de côté.</p>
+          <ul className="divide-y divide-[#F4F7FC]">
+            {data.missed.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-[#0B1C3F]">{m.name}</span>
+                  <span className="block truncate text-[11.5px] text-[#64748B]">Prévue {m.scheduled_for ? `le ${new Date(m.scheduled_for).toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' })}` : ''}{m.audience_count ? ` · ${nf(m.audience_count)} destinataires` : ''}{m.subtitle ? ` — ${m.subtitle}` : ''}</span>
+                </span>
+                <button type="button" disabled={!!busy}
+                        onClick={async () => { if (!confirmImportant(`Envoyer « ${m.name} » maintenant ?`)) return; setBusy(`missed-${m.id}`); try { await ownerAPI.sendMissedCampaign(m.id); load(); } catch (e) { setError(e?.response?.data?.detail || 'Envoi impossible.'); } finally { setBusy(''); } }}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50" style={{ background: '#2F6BFF' }}>
+                  {busy === `missed-${m.id}` ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Envoyer maintenant
+                </button>
+                <button type="button" disabled={!!busy}
+                        onClick={async () => { setBusy(`missed-${m.id}`); try { await ownerAPI.dismissMissedCampaign(m.id); load(); } catch (e) { setError(e?.response?.data?.detail || 'Action impossible.'); } finally { setBusy(''); } }}
+                        className="rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[12.5px] text-[#475569] disabled:opacity-50">Ne pas envoyer</button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
 
       {/* recent + assistant */}
       <div className="grid gap-4 xl:grid-cols-[1.7fr_1fr]">

@@ -309,6 +309,8 @@ export const ownerAPI = {
   // Campagnes — the page in one call, the composer in one call.
   campaignsPage: () => api.get('/owner/campaigns/page'),
   composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
+  sendMissedCampaign: (id) => api.post(`/owner/campaigns/${id}/send-missed`),
+  dismissMissedCampaign: (id) => api.post(`/owner/campaigns/${id}/dismiss-missed`),
   campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
   googleWalletStatus: () => api.get('/owner/wallet/google-status'),
 

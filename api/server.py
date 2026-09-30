@@ -10898,6 +10898,89 @@ def _supersede_pending(tenant_id: str, kind: str) -> int:
 LEGACY_AUTO_ENGINE = False
 
 
+# A scheduled campaign more than this late is not sent on its own (decided
+# with the user, after the daily cron was off for two months): its offer may
+# be over. It shows as « Non envoyée » and the business chooses.
+MISSED_AFTER = timedelta(hours=24)
+_RECUR = {"daily": timedelta(days=1), "weekly": timedelta(days=7), "monthly": timedelta(days=30)}
+
+
+def send_legacy_scheduled(sc: Dict[str, Any], now: datetime) -> int:
+    """Send one campaign of the older scheduler now; returns the recipients."""
+    tenant = db.tenants.find_one({"id": sc["tenant_id"]})
+    if not tenant:
+        db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "cancelled"}})
+        return 0
+    # Prefer UI-style filters if the schedule was saved with them; fall back
+    # to the legacy segment-based resolver otherwise.
+    if sc.get("filters"):
+        recipients = list(db.customers.find(_filters_to_customer_query(sc["tenant_id"], sc["filters"])))
+    else:
+        recipients = _resolve_segment(sc["tenant_id"], sc.get("segment") or {"type": "all"})
+    dispatched = _dispatch_campaign_to_customers(tenant, name=sc["name"], content=sc["content"],
+                                                 customer_list=recipients, trigger_type="scheduled")
+    # Stamp the source so analytics attribute scheduled sends to their channel.
+    if dispatched and sc.get("source"):
+        db.campaigns.update_one({"id": dispatched["id"]}, {"$set": {"source": sc["source"]}})
+    return len(recipients)
+
+
+def drain_legacy_scheduled(now: datetime) -> Dict[str, int]:
+    """The older scheduler (scheduled_campaigns). On time: sent. More than a
+    day late: a one-off becomes « missed » for the business to decide; a
+    recurring one skips to its next date in the future, without catching up."""
+    out = {"sent": 0, "recipients": 0, "missed": 0}
+    for sc in list(db.scheduled_campaigns.find({"run_at": {"$lte": now}, "status": "scheduled"})):
+        run_at = sc["run_at"] if sc["run_at"].tzinfo else sc["run_at"].replace(tzinfo=timezone.utc)
+        step = _RECUR.get(sc.get("recurrence"))
+        if now - run_at > MISSED_AFTER:
+            if step:
+                nxt = run_at
+                while nxt <= now:
+                    nxt += step
+                db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"run_at": nxt}})
+            else:
+                db.scheduled_campaigns.update_one({"id": sc["id"], "status": "scheduled"},
+                                                  {"$set": {"status": "missed", "missed_at": now}})
+                out["missed"] += 1
+            continue
+        # Claim it first: two crons at once must not send it twice.
+        claimed = db.scheduled_campaigns.update_one({"id": sc["id"], "status": "scheduled"}, {"$set": {"status": "sending"}})
+        if not getattr(claimed, "modified_count", 1):
+            continue
+        try:
+            out["recipients"] += send_legacy_scheduled(sc, now)
+        except Exception as exc:
+            print(f"scheduled campaign {sc['id']} failed: {exc}")
+            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "scheduled"}})
+            continue
+        out["sent"] += 1
+        if step:
+            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "scheduled", "run_at": run_at + step}})
+        else:
+            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
+    return out
+
+
+def _cron_allowed(request: Request) -> bool:
+    provided = (request.headers.get("x-cron-secret")
+                or (request.headers.get("authorization", "").replace("Bearer ", "") if request.headers.get("authorization") else "")
+                or request.query_params.get("secret", ""))
+    return not CRON_SECRET or provided == CRON_SECRET
+
+
+@app.get("/api/cron/scheduled-campaigns")
+@app.post("/api/cron/scheduled-campaigns")
+def cron_scheduled_campaigns(request: Request):
+    """Vercel Cron, every 15 minutes: scheduled campaigns leave on time,
+    not at the next daily run."""
+    if not _cron_allowed(request):
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+    now = datetime.now(timezone.utc)
+    from features.campaigns_page import run_due as _run_due_campaigns
+    return {"campagnes": _run_due_campaigns(now), "legacy": drain_legacy_scheduled(now), "ran_at": now.isoformat()}
+
+
 @app.get("/api/cron/daily-triggers")
 @app.post("/api/cron/daily-triggers")
 def run_daily_triggers(request: Request):
@@ -11056,52 +11139,8 @@ def run_daily_triggers(request: Request):
                 })
                 almost_there_sent += len(at_eligible)
 
-    # D. Drain scheduled campaigns
-    due = list(db.scheduled_campaigns.find({
-        "run_at": {"$lte": now},
-        "status": "scheduled",
-    }))
-    for sc in due:
-        tenant = db.tenants.find_one({"id": sc["tenant_id"]})
-        if not tenant:
-            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "cancelled"}})
-            continue
-        # Prefer UI-style filters if the schedule was saved with them; fall back
-        # to the legacy segment-based resolver otherwise.
-        if sc.get("filters"):
-            q = _filters_to_customer_query(sc["tenant_id"], sc["filters"])
-            recipients = list(db.customers.find(q))
-        else:
-            recipients = _resolve_segment(sc["tenant_id"], sc.get("segment") or {"type": "all"})
-        dispatched = _dispatch_campaign_to_customers(
-            tenant,
-            name=sc["name"],
-            content=sc["content"],
-            customer_list=recipients,
-            trigger_type="scheduled",
-        )
-        # Stamp the source on the emitted campaign so analytics attribute
-        # scheduled sends to their channel (Instagram, email, push, etc.).
-        if dispatched and sc.get("source"):
-            db.campaigns.update_one(
-                {"id": dispatched["id"]},
-                {"$set": {"source": sc["source"]}},
-            )
-        scheduled_sent += len(recipients)
-
-        # Recurrence: bump run_at and keep scheduled, or mark sent.
-        rec = sc.get("recurrence")
-        if rec == "daily":
-            next_run = sc["run_at"] + timedelta(days=1)
-            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"run_at": next_run}})
-        elif rec == "weekly":
-            next_run = sc["run_at"] + timedelta(days=7)
-            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"run_at": next_run}})
-        elif rec == "monthly":
-            next_run = sc["run_at"] + timedelta(days=30)
-            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"run_at": next_run}})
-        else:
-            db.scheduled_campaigns.update_one({"id": sc["id"]}, {"$set": {"status": "sent", "sent_at": now}})
+    # D. Drain scheduled campaigns (the older scheduler) — see drain_legacy_scheduled().
+    scheduled_sent += drain_legacy_scheduled(now)["recipients"]
 
     # CRM — every business on FidClic has its prospect, at its real stage.
     crm_summary = {"created": 0}

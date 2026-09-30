@@ -164,7 +164,7 @@ def main():
           C.run_due(now)["sent"] == 0 and
           db.campaigns.find_one({"id": sch["id"]})["status"] == "scheduled")
 
-    fired = C.run_due(now + dt.timedelta(days=3))
+    fired = C.run_due(now + dt.timedelta(days=2, hours=1))
     doc = db.campaigns.find_one({"id": sch["id"]})
     check("the cron sends it once its time has come", fired["sent"] == 1 and doc["status"] == "sent")
     check("the delivery happened for real",

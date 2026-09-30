@@ -82,6 +82,14 @@
     {
       "path": "/api/cron/crm-mail",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/daily-triggers",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/scheduled-campaigns",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
