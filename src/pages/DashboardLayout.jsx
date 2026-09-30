@@ -539,7 +539,7 @@ const DashboardLayout = () => {
               {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Sécurité" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Admin" currentPath={currentPath} role={role} collapsed={collapsed} />}
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}

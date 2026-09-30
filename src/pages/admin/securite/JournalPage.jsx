@@ -27,7 +27,7 @@ export default function JournalPage() {
     <div className="crm">
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Breadcrumb items={[['Super Admin', '/admin'], ['Sécurité', '/admin/securite'], ["Journal d'activité"]]} />
+          <Breadcrumb items={[['Super Admin', '/admin'], ['Admin', '/admin/securite'], ["Journal d'activité"]]} />
           <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Journal d'activité</h1>
           <p className="text-[15px] text-[#475569]">Tout ce que l'équipe FidClic a modifié, qui, quand, depuis où — y compris les tentatives refusées.</p>
         </div>

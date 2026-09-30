@@ -37,7 +37,7 @@ MODULES = [
     ("dashboard", "Dashboard"), ("commerces", "Commerces"), ("clients", "Clients finaux"), ("analytics", "Analytics"),
     ("insights", "Insights"), ("notifications", "Notifications"), ("abonnements", "Abonnements"),
     ("plan_limits", "Plan Limits"), ("ai", "FIDCLIC AI"), ("crm", "CRM de prospection"),
-    ("facturation", "Facturation"), ("support", "Support"), ("securite", "Sécurité"), ("parametres", "Paramètres"),
+    ("facturation", "Facturation"), ("support", "Support"), ("securite", "Admin"), ("parametres", "Paramètres"),
 ]
 MODULE_KEYS = [k for k, _ in MODULES]
 # Managing users, roles and security settings stays with the super admin,
