@@ -152,7 +152,12 @@ def stage_of_tenant(t: Dict[str, Any]) -> str:
 
 SECTOR_LABELS = {"cafe": "Café / Salon de thé", "restaurant": "Restauration / Fast-food", "pizzeria": "Restauration / Fast-food",
                  "bakery": "Boulangerie", "boulangerie": "Boulangerie", "bar": "Bar", "spa": "Bien-être",
-                 "salon": "Coiffure / Beauté", "gym": "Salle de sport", "retail": "Commerce de proximité", "other": "Autre"}
+                 "salon": "Coiffure / Beauté", "gym": "Salle de sport", "retail": "Commerce de proximité", "other": "Autre",
+                 "optician": "Opticien", "wine bar": "Bar à vin", "wine_bar": "Bar à vin", "chocolatier": "Chocolatier",
+                 "book store": "Librairie", "bookstore": "Librairie", "creperie": "Crêperie", "crêperie": "Crêperie",
+                 "hair salon": "Coiffure / Beauté", "hair_salon": "Coiffure / Beauté", "barber": "Barbier", "florist": "Fleuriste",
+                 "butcher": "Boucherie", "cheese": "Fromagerie", "brasserie": "Brasserie", "fashion": "Mode", "clothing": "Mode",
+                 "beauty": "Coiffure / Beauté", "pharmacy": "Pharmacie", "hotel": "Hôtel", "tea": "Café / Salon de thé"}
 
 
 def _sector_label(key: str) -> str:

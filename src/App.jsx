@@ -95,7 +95,10 @@ import HistoryPage from './pages/HistoryPage';
 
 import AdminDashboard from './pages/AdminDashboard';
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
-import AdminTenantsPage from './pages/AdminTenantsPage';
+import AdminTenantsPage from './pages/AdminTenantsPage'; // eslint-disable-line no-unused-vars -- superseded by admin/CommercesPage, kept for rollback
+import CommercesPage from './pages/admin/CommercesPage';
+import CommerceDetailPage from './pages/admin/CommerceDetailPage';
+import ViewAsEntry from './pages/admin/ViewAsEntry';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminInvoicingPage from './pages/AdminInvoicingPage';
 import CrmOverviewPage from './pages/crm/CrmOverviewPage';
@@ -272,6 +275,7 @@ function App() {
               <OnboardingDonePage />
             </ProtectedRoute>
           } />
+          <Route path="/voir-compte" element={<ViewAsEntry />} />
           <Route path="/join/:slug" element={<JoinPage />} />
           {/* The French address the Paramètres page hands out; /join stays for every QR already printed. */}
           <Route path="/inscription/:slug" element={<JoinPage />} />
@@ -451,7 +455,9 @@ function App() {
             <Route index element={<SuperAdminOnly><AdminDashboard /></SuperAdminOnly>} />
             <Route path="analytics" element={<SuperAdminOnly><AdminAnalyticsPage /></SuperAdminOnly>} />
             <Route path="insights" element={<SuperAdminOnly><AdminInsightsPage /></SuperAdminOnly>} />
-            <Route path="tenants" element={<SuperAdminOnly><AdminTenantsPage /></SuperAdminOnly>} />
+            <Route path="tenants" element={<Navigate to="/admin/commerces" replace />} />
+            <Route path="commerces" element={<SuperAdminOnly><CommercesPage /></SuperAdminOnly>} />
+            <Route path="commerces/:id" element={<SuperAdminOnly><CommerceDetailPage /></SuperAdminOnly>} />
             <Route path="plans" element={<SuperAdminOnly><AdminPlansPage /></SuperAdminOnly>} />
             <Route path="facturation" element={<SuperAdminOnly><AdminInvoicingPage /></SuperAdminOnly>} />
             <Route path="campaigns" element={<SuperAdminOnly><AdminCampaignsPage /></SuperAdminOnly>} />

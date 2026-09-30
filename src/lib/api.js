@@ -18,9 +18,15 @@ export const setAuthToken = (token) => {
   } catch (_e) { /* private mode etc — silent */ }
 };
 
+// « Accéder au compte »: the super admin's read-only view of a business lives
+// in its own tab, with its own token kept in sessionStorage (per tab) so the
+// super admin's session in the other tabs is left untouched.
+export const VIEW_KEY = 'fidclic_view_token';
+export const viewToken = () => { try { return sessionStorage.getItem(VIEW_KEY); } catch (_e) { return null; } };
+
 api.interceptors.request.use((config) => {
   try {
-    const t = localStorage.getItem(TOKEN_KEY);
+    const t = viewToken() || localStorage.getItem(TOKEN_KEY);
     if (t) {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${t}`;
@@ -117,6 +123,19 @@ export const crmAPI = {
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
   franchise: () => api.get('/admin/franchise'),
+  commerces: (params) => api.get('/admin/commerces', { params }),
+  commercesExport: (params) => api.get('/admin/commerces/export', { params, responseType: 'blob' }),
+  commercesRules: (body) => api.put('/admin/commerces/rules', body),
+  addCommerce: (body) => api.post('/admin/commerces', body),
+  commerce: (id) => api.get(`/admin/commerces/${id}`),
+  editCommerce: (id, body) => api.put(`/admin/commerces/${id}`, body),
+  commerceClients: (id, params) => api.get(`/admin/commerces/${id}/clients`, { params }),
+  commerceDetails: (id) => api.get(`/admin/commerces/${id}/details`),
+  commerceZone: (id) => api.get(`/admin/commerces/${id}/zone`),
+  commercePlan: (id, plan) => api.post(`/admin/commerces/${id}/plan`, { plan }),
+  suspendCommerce: (id, reason) => api.post(`/admin/commerces/${id}/suspend`, { reason }),
+  reactivateCommerce: (id) => api.post(`/admin/commerces/${id}/reactivate`),
+  viewAs: (id) => api.post(`/admin/commerces/${id}/view-as`),
   setFranchise: (id, body) => api.put(`/admin/tenants/${id}/franchise`, body),
   invoicingIssuer: () => api.get('/admin/invoicing/issuer'),
   saveInvoicingIssuer: (body) => api.put('/admin/invoicing/issuer', body),
