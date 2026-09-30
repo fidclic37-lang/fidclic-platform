@@ -3,7 +3,8 @@ import { UploadCloud, FileText, Loader2, Check, UserPlus, Copy, Power } from 'lu
 import { crmAPI } from '../../lib/api';
 import { Modal, StageBadge, inputCls, Select, nf, BLUE } from './ui';
 
-/* Import: a file (CSV, TXT, MD, PDF — read without any language model), a
+/* Import: a file of any usual kind (CSV, Excel, PDF, Word, TXT, MD, JSON…
+   — read without any language model), a
    preview of what each row becomes (created / updated, and the stage it
    gets — a business on FidClic takes its real one), then « Importer ». */
 export function ImportModal({ meta, onClose, onDone }) {
@@ -13,6 +14,7 @@ export function ImportModal({ meta, onClose, onDone }) {
   const [keep, setKeep] = useState({});
   const [source, setSource] = useState('import');
   const [assign, setAssign] = useState('');
+  const [city, setCity] = useState('');
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
 
@@ -20,7 +22,7 @@ export function ImportModal({ meta, onClose, onDone }) {
     setFile(f); setErr(''); setPrev(null); setBusy('read');
     try {
       const { data } = await crmAPI.importPreview(f);
-      setPrev(data); setKeep(Object.fromEntries(data.rows.map((_, i) => [i, true])));
+      setPrev(data); setKeep(Object.fromEntries(data.rows.map((_, i) => [i, true]))); setCity(data.suggested_city || '');
     } catch (e) { setErr(e?.response?.data?.detail || 'Fichier illisible.'); }
     finally { setBusy(''); }
   };
@@ -28,7 +30,7 @@ export function ImportModal({ meta, onClose, onDone }) {
     setBusy('commit'); setErr('');
     try {
       const rows = prev.rows.filter((_, i) => keep[i]);
-      const { data } = await crmAPI.importCommit({ rows, source, assign_to: assign || null, filename: file?.name });
+      const { data } = await crmAPI.importCommit({ rows, source, assign_to: assign || null, filename: file?.name, default_city: city || null });
       onDone(`${nf(data.created)} ajouté(s), ${nf(data.updated)} mis à jour${data.linked ? `, ${nf(data.linked)} relié(s) à FidClic` : ''}.`);
     } catch (e) { setErr(e?.response?.data?.detail || "L'import n'a pas abouti."); setBusy(''); }
   };
@@ -43,12 +45,13 @@ export function ImportModal({ meta, onClose, onDone }) {
                   className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#C9D6EA] bg-[#F8FAFF] px-6 py-12 text-center hover:border-[#2F6BFF]">
             {busy === 'read' ? <Loader2 size={30} className="animate-spin text-[#2F6BFF]" /> : <UploadCloud size={34} className="text-[#2F6BFF]" />}
             <span className="text-[15px] font-semibold text-[#0B1C3F]">{busy === 'read' ? 'Lecture du fichier…' : 'Déposez un fichier ou cliquez pour choisir'}</span>
-            <span className="text-[12.5px] text-[#64748B]">CSV, TXT, MD ou PDF — 8 Mo maximum</span>
+            <span className="text-[12.5px] text-[#64748B]">Excel (XLSX, XLS), CSV, PDF, Word (DOCX), LibreOffice (ODS, ODT), TXT, MD, JSON, HTML, vCard — 8 Mo maximum</span>
           </button>
-          <input ref={input} type="file" accept=".csv,.tsv,.txt,.md,.markdown,.pdf" className="hidden" onChange={(e) => e.target.files[0] && read(e.target.files[0])} />
+          <input ref={input} type="file" accept=".csv,.tsv,.txt,.md,.markdown,.pdf,.xlsx,.xlsm,.xls,.ods,.odt,.docx,.json,.html,.htm,.vcf,.rtf,text/*,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.spreadsheet" className="hidden" onChange={(e) => { if (e.target.files[0]) read(e.target.files[0]); e.target.value = ''; }} />
           <ul className="mt-4 space-y-1.5 text-[12.5px] text-[#475569]">
-            <li>• <strong>Tableau</strong> (CSV, tableau Markdown…) : colonnes reconnues par leur titre — Nom du commerce, Secteur, Ville, Code postal, Contact, Téléphone, Email, SIRET, Statut…</li>
+            <li>• <strong>Tableaux</strong> (Excel, CSV, PDF, Word, Markdown…) : colonnes reconnues par leur titre — Commerce / Établissement / Restaurant, Secteur / Segment, Adresse, Ville, Code postal, Contact, Téléphone, Email, SIRET, Statut… Plusieurs tableaux dans un fichier : tous sont lus, même sur plusieurs pages.</li>
             <li>• <strong>Texte libre</strong> (TXT, MD, PDF) : un commerce par bloc ; e-mails, téléphones, SIRET, codes postaux et liens sont repérés automatiquement.</li>
+            <li>• Un commerce <strong>présent deux fois dans le fichier</strong> n'est importé qu'une fois.</li>
             <li>• Un commerce <strong>déjà inscrit sur FidClic</strong> prend son vrai statut (en essai, signé…). Un commerce déjà présent est mis à jour, jamais dupliqué.</li>
           </ul>
           {err && <p className="mt-3 text-[13px] text-[#C0392B]">{err}</p>}
@@ -56,8 +59,11 @@ export function ImportModal({ meta, onClose, onDone }) {
       ) : (
         <div>
           <div className="mb-3 flex flex-wrap items-end gap-3">
-            <p className="flex items-center gap-2 text-[13.5px] text-[#0B1C3F]"><FileText size={16} className="text-[#2F6BFF]" /> {file?.name} — {nf(prev.total)} commerce(s) reconnu(s)</p>
-            <Select label="Source" value={source} onChange={setSource} className="ml-auto w-48">
+            <p className="text-[13.5px] text-[#0B1C3F]"><span className="flex items-center gap-2"><FileText size={16} className="text-[#2F6BFF]" /> {file?.name} — <strong>{nf(prev.total)} commerce(s)</strong> reconnu(s)</span>
+              {prev.duplicates_in_file > 0 && <span className="mt-0.5 block text-[12px] text-[#64748B]">{nf(prev.duplicates_in_file)} doublon(s) dans le fichier fusionné(s)</span>}</p>
+            <label className="w-48"><span className="mb-1 block text-[11.5px] text-[#64748B]">Ville par défaut{prev.no_city ? ` (${nf(prev.no_city)} sans ville)` : ''}</span>
+              <input className={inputCls} value={city} onChange={(e) => setCity(e.target.value)} placeholder="Ex. Tours" /></label>
+            <Select label="Source" value={source} onChange={setSource} className="ml-auto w-44">
               {(meta?.sources || []).filter((s) => s.key !== 'inscription').map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
             </Select>
             <Select label="Assigner à" value={assign} onChange={setAssign} className="w-48">
@@ -69,7 +75,7 @@ export function ImportModal({ meta, onClose, onDone }) {
             <table className="w-full min-w-[860px] text-[12.5px]">
               <thead className="sticky top-0 bg-[#F8FAFF] text-left text-[#64748B]">
                 <tr><th className="w-8 px-2 py-2"><input type="checkbox" checked={n === prev.rows.length} onChange={(e) => setKeep(Object.fromEntries(prev.rows.map((_, i) => [i, e.target.checked])))} /></th>
-                  {['Commerce', 'Secteur', 'Ville', 'Contact', 'Téléphone', 'Email', 'Statut', 'Action'].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr>
+                  {['Commerce', 'Secteur', 'Adresse · Ville', 'Contact', 'Téléphone', 'Email', 'Statut', 'Action'].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {prev.rows.map((r, i) => (
@@ -77,7 +83,10 @@ export function ImportModal({ meta, onClose, onDone }) {
                     <td className="px-2 py-2"><input type="checkbox" checked={!!keep[i]} onChange={(e) => setKeep({ ...keep, [i]: e.target.checked })} /></td>
                     <td className="px-2 py-2 font-medium text-[#0B1C3F]">{r.name}</td>
                     <td className="px-2 py-2 text-[#475569]">{r.sector || '—'}</td>
-                    <td className="px-2 py-2 text-[#475569]">{[r.postal_code, r.city].filter(Boolean).join(' ') || '—'}</td>
+                    <td className="px-2 py-2 text-[#475569]">
+                      {r.address || '—'}
+                      <span className="block text-[11.5px]">{r.city ? [r.postal_code, r.city].filter(Boolean).join(' ') : city ? <span className="text-[#94A3B8]">{city} (par défaut)</span> : ''}</span>
+                    </td>
                     <td className="px-2 py-2 text-[#475569]">{r.contact_name || '—'}</td>
                     <td className="px-2 py-2 text-[#475569]">{r.phone || '—'}</td>
                     <td className="px-2 py-2 text-[#475569]">{r.email || '—'}</td>

@@ -112,7 +112,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     prev = upload("liste.pdf", buf.getvalue())
     check("a PDF → the same", prev["rows"][0]["name"] == "Maison Gourmet" and prev["rows"][0]["phone"] == "06 55 44 33 22"
           and prev["rows"][0]["postal_code"] == "37000")
-    check("an unknown format is refused", refused(lambda: upload("x.docx", "a"), 400))
+    check("an image is refused (422, with the formats accepted)", refused(lambda: upload("x.jpg", "a"), 422))
+    check("a damaged Word file is refused, not a crash", refused(lambda: upload("x.docx", "a"), 422))
     check("a file with nothing recognisable says so", refused(lambda: upload("vide.txt", "bonjour\nmerci"), 422))
 
     print("\nProspects, stages, notes")
