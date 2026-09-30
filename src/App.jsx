@@ -100,6 +100,12 @@ import AdminTenantsPage from './pages/AdminTenantsPage'; // eslint-disable-line 
 import CommercesPage from './pages/admin/CommercesPage';
 import CommerceDetailPage from './pages/admin/CommerceDetailPage';
 import ViewAsEntry from './pages/admin/ViewAsEntry';
+import SecuriteOverviewPage from './pages/admin/securite/SecuriteOverviewPage';
+import RolesPage from './pages/admin/securite/RolesPage';
+import ConnexionsPage from './pages/admin/securite/ConnexionsPage';
+import JournalPage from './pages/admin/securite/JournalPage';
+import SecuritySettingsPage from './pages/admin/securite/SecuritySettingsPage';
+import { can, moduleOfPath, firstAllowed } from './lib/perms';
 import AdminPlansPage from './pages/AdminPlansPage';
 import AdminInvoicingPage from './pages/AdminInvoicingPage';
 import CrmOverviewPage from './pages/crm/CrmOverviewPage';
@@ -167,11 +173,26 @@ const ScrollToTop = () => {
 // dashboard, no modules, until step 2 is done and the trial has started.
 const needsOnboarding = (user) => user?.role === 'business_owner' && user?.onboarding_status === 'company';
 
-/* Inside /admin: the sales team (« commercial ») sees the CRM only. */
-function SuperAdminOnly({ children }) {
+/* Inside /admin: each member of FidClic's team sees the sections their role
+   allows (Sécurité › Rôles & Permissions); the server refuses the rest too. */
+function AdminGate({ children }) {
   const { user } = useAuth();
-  if (user?.role === 'commercial') return <Navigate to="/admin/crm" replace />;
-  return children;
+  const { pathname } = useLocation();
+  const module = moduleOfPath(pathname);
+  if (!module || can(user, module)) return children;
+  const first = firstAllowed(user);
+  if (pathname === '/admin' || pathname === '/admin/') return first ? <Navigate to={first} replace /> : <NoAccess />;
+  return <NoAccess first={first} />;
+}
+
+function NoAccess({ first }) {
+  return (
+    <div className="mx-auto mt-16 max-w-md rounded-2xl border border-[#E6EEFB] bg-white p-8 text-center">
+      <p className="text-[18px] font-bold text-[#0B1C3F]">Accès non autorisé</p>
+      <p className="mt-2 text-[14px] text-[#475569]">Votre rôle ne permet pas d'ouvrir cette section. Demandez l'accès au Super Admin.</p>
+      {first && <a href={first} className="mt-4 inline-block rounded-xl bg-[#2F6BFF] px-4 py-2 text-[14px] font-medium text-white">Retour à mon espace</a>}
+    </div>
+  );
 }
 
 const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, partialOk = false }) => {
@@ -204,7 +225,8 @@ const PublicRoute = ({ children }) => {
   if (loading) return <div>Loading...</div>;
   if (user) {
     if (needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
-    if (user.role === 'super_admin') return <Navigate to="/admin" replace />;
+    if (['super_admin', 'fidclic_team'].includes(user.role)) return <Navigate to="/admin" replace />;
+    if (user.role === 'commercial') return <Navigate to="/admin/crm" replace />;
     // Owners land on the module chooser (CRM+Fidélité vs Facturation).
     // Handles already-logged-in sessions too (not just fresh logins).
     if (user.role === 'business_owner') return <Navigate to="/modules" replace />;
@@ -449,33 +471,39 @@ function App() {
           {/* The shell opens to the super admin and to the sales team
               (« commercial »), who only ever sees the CRM. */}
           <Route path="/admin" element={
-            <ProtectedRoute allowedRoles={['super_admin', 'commercial']}>
+            <ProtectedRoute allowedRoles={['super_admin', 'commercial', 'fidclic_team']}>
               <DashboardLayout />
             </ProtectedRoute>
           }>
-            <Route index element={<SuperAdminOnly><AdminDashboardPage /></SuperAdminOnly>} />
-            <Route path="analytics" element={<SuperAdminOnly><AdminAnalyticsPage /></SuperAdminOnly>} />
-            <Route path="insights" element={<SuperAdminOnly><AdminInsightsPage /></SuperAdminOnly>} />
+            <Route index element={<AdminGate><AdminDashboardPage /></AdminGate>} />
+            <Route path="analytics" element={<AdminGate><AdminAnalyticsPage /></AdminGate>} />
+            <Route path="insights" element={<AdminGate><AdminInsightsPage /></AdminGate>} />
             <Route path="tenants" element={<Navigate to="/admin/commerces" replace />} />
-            <Route path="commerces" element={<SuperAdminOnly><CommercesPage /></SuperAdminOnly>} />
-            <Route path="commerces/:id" element={<SuperAdminOnly><CommerceDetailPage /></SuperAdminOnly>} />
-            <Route path="plans" element={<SuperAdminOnly><AdminPlansPage /></SuperAdminOnly>} />
-            <Route path="facturation" element={<SuperAdminOnly><AdminInvoicingPage /></SuperAdminOnly>} />
-            <Route path="campaigns" element={<SuperAdminOnly><AdminCampaignsPage /></SuperAdminOnly>} />
-            <Route path="card-designer" element={<SuperAdminOnly><AdminCardDesignerPage /></SuperAdminOnly>} />
-            <Route path="ai" element={<SuperAdminOnly><AdminAIAssistantPage /></SuperAdminOnly>} />
+            <Route path="commerces" element={<AdminGate><CommercesPage /></AdminGate>} />
+            <Route path="commerces/:id" element={<AdminGate><CommerceDetailPage /></AdminGate>} />
+            <Route path="plans" element={<AdminGate><AdminPlansPage /></AdminGate>} />
+            <Route path="facturation" element={<AdminGate><AdminInvoicingPage /></AdminGate>} />
+            <Route path="campaigns" element={<AdminGate><AdminCampaignsPage /></AdminGate>} />
+            <Route path="card-designer" element={<AdminGate><AdminCardDesignerPage /></AdminGate>} />
+            <Route path="ai" element={<AdminGate><AdminAIAssistantPage /></AdminGate>} />
             {/* CRM de prospection */}
-            <Route path="crm" element={<CrmOverviewPage />} />
-            <Route path="crm/prospects" element={<CrmProspectsPage />} />
-            <Route path="crm/pipeline" element={<CrmPipelinePage />} />
-            <Route path="crm/taches" element={<CrmTasksPage />} />
-            <Route path="crm/calendrier" element={<CrmCalendarPage />} />
-            <Route path="crm/sequences" element={<CrmSequencesPage />} />
-            <Route path="crm/modeles" element={<CrmTemplatesPage />} />
-            <Route path="crm/appels" element={<CrmCallsPage />} />
-            <Route path="crm/import" element={<CrmSoonPage title="Import / Export" text="L'historique de vos imports et exports. En attendant, importez depuis la page Prospects." />} />
-            <Route path="crm/conversations" element={<CrmSoonPage title="Suivi des conversations" text="Chaque échange avec un commerce — emails, réponses, appels, notes — au même endroit." />} />
-            <Route path="crm/statistiques" element={<CrmSoonPage title="Statistiques" text="Taux de conversion, performance par commercial, par source et par secteur." />} />
+            <Route path="crm" element={<AdminGate><CrmOverviewPage /></AdminGate>} />
+            <Route path="crm/prospects" element={<AdminGate><CrmProspectsPage /></AdminGate>} />
+            <Route path="crm/pipeline" element={<AdminGate><CrmPipelinePage /></AdminGate>} />
+            <Route path="crm/taches" element={<AdminGate><CrmTasksPage /></AdminGate>} />
+            <Route path="crm/calendrier" element={<AdminGate><CrmCalendarPage /></AdminGate>} />
+            <Route path="crm/sequences" element={<AdminGate><CrmSequencesPage /></AdminGate>} />
+            <Route path="crm/modeles" element={<AdminGate><CrmTemplatesPage /></AdminGate>} />
+            <Route path="crm/appels" element={<AdminGate><CrmCallsPage /></AdminGate>} />
+            <Route path="crm/import" element={<AdminGate><CrmSoonPage title="Import / Export" text="L'historique de vos imports et exports. En attendant, importez depuis la page Prospects." /></AdminGate>} />
+            <Route path="crm/conversations" element={<AdminGate><CrmSoonPage title="Suivi des conversations" text="Chaque échange avec un commerce — emails, réponses, appels, notes — au même endroit." /></AdminGate>} />
+            {/* Sécurité — FidClic's own team */}
+            <Route path="securite" element={<AdminGate><SecuriteOverviewPage /></AdminGate>} />
+            <Route path="securite/roles" element={<AdminGate><RolesPage /></AdminGate>} />
+            <Route path="securite/connexions" element={<AdminGate><ConnexionsPage /></AdminGate>} />
+            <Route path="securite/journal" element={<AdminGate><JournalPage /></AdminGate>} />
+            <Route path="securite/parametres" element={<AdminGate><SecuritySettingsPage /></AdminGate>} />
+            <Route path="crm/statistiques" element={<AdminGate><CrmSoonPage title="Statistiques" text="Taux de conversion, performance par commercial, par source et par secteur." /></AdminGate>} />
           </Route>
         </Routes>
        </Router>

@@ -42,6 +42,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData, hash_password
 
 router = APIRouter(tags=["crm"])
+from features.platform_access import require_admin, require_super
 _db = None
 
 CRM = ["super_admin", "commercial"]
@@ -285,7 +286,7 @@ def _match_tenant(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # Views
 # ---------------------------------------------------------------------------
 def _users() -> Dict[str, Dict[str, Any]]:
-    return {u["email"]: u for u in _db.users.find({"role": {"$in": CRM}}, {"_id": 0, "hashed_password": 0})}
+    return {u["email"]: u for u in _db.users.find({"role": {"$in": CRM + ["fidclic_team"]}}, {"_id": 0, "hashed_password": 0})}
 
 
 def _name(u: Dict[str, Any]) -> str:
@@ -339,7 +340,7 @@ def _filter(q: str = "", sector: str = "", city: str = "", stage: str = "", assi
 @router.get("/api/crm/prospects")
 def list_prospects(q: str = "", sector: str = "", city: str = "", stage: str = "", assigned: str = "", source: str = "",
                    sort: str = "-last_activity_at", page: int = 1, per_page: int = 10,
-                   token_data: TokenData = Depends(require_role(CRM))):
+                   token_data: TokenData = Depends(require_admin("crm"))):
     page, per_page = max(1, int(page)), max(1, min(200, int(per_page)))
     f = _filter(q, sector, city, stage, assigned, source)
     key, direction = (sort[1:], -1) if sort.startswith("-") else (sort, 1)
@@ -357,7 +358,7 @@ def list_prospects(q: str = "", sector: str = "", city: str = "", stage: str = "
 
 
 @router.get("/api/crm/meta")
-def meta(token_data: TokenData = Depends(require_role(CRM))):
+def meta(token_data: TokenData = Depends(require_admin("crm"))):
     users = _users()
     return {
         "stages": [{"key": k, "label": v} for k, v in STAGES],
@@ -374,7 +375,7 @@ def meta(token_data: TokenData = Depends(require_role(CRM))):
 
 
 @router.get("/api/crm/prospects/{pid}")
-def get_prospect(pid: str, token_data: TokenData = Depends(require_role(CRM))):
+def get_prospect(pid: str, token_data: TokenData = Depends(require_admin("crm"))):
     p = _db.crm_prospects.find_one({"id": pid}, {"_id": 0})
     if not p:
         raise HTTPException(status_code=404, detail="Prospect introuvable")
@@ -453,7 +454,7 @@ def create(data: Dict[str, Any], by: Optional[str], source: str = "autre", note:
 
 
 @router.post("/api/crm/prospects")
-def add_prospect(body: ProspectIn, token_data: TokenData = Depends(require_role(CRM))):
+def add_prospect(body: ProspectIn, token_data: TokenData = Depends(require_admin("crm"))):
     d = _clean(body)
     if not d.get("name"):
         raise HTTPException(status_code=400, detail="Le nom du commerce est obligatoire.")
@@ -466,7 +467,7 @@ def add_prospect(body: ProspectIn, token_data: TokenData = Depends(require_role(
 
 
 @router.put("/api/crm/prospects/{pid}")
-def edit_prospect(pid: str, body: ProspectIn, token_data: TokenData = Depends(require_role(CRM))):
+def edit_prospect(pid: str, body: ProspectIn, token_data: TokenData = Depends(require_admin("crm"))):
     p = _db.crm_prospects.find_one({"id": pid})
     if not p:
         raise HTTPException(status_code=404, detail="Prospect introuvable")
@@ -490,7 +491,7 @@ class StageIn(BaseModel):
 
 
 @router.post("/api/crm/prospects/{pid}/stage")
-def set_stage(pid: str, body: StageIn, token_data: TokenData = Depends(require_role(CRM))):
+def set_stage(pid: str, body: StageIn, token_data: TokenData = Depends(require_admin("crm"))):
     p = _db.crm_prospects.find_one({"id": pid})
     if not p:
         raise HTTPException(status_code=404, detail="Prospect introuvable")
@@ -518,7 +519,7 @@ class NoteIn(BaseModel):
 
 
 @router.post("/api/crm/prospects/{pid}/notes")
-def add_note(pid: str, body: NoteIn, token_data: TokenData = Depends(require_role(CRM))):
+def add_note(pid: str, body: NoteIn, token_data: TokenData = Depends(require_admin("crm"))):
     if not _db.crm_prospects.find_one({"id": pid}):
         raise HTTPException(status_code=404, detail="Prospect introuvable")
     _log(pid, "note", body.text.strip(), token_data.email)
@@ -526,7 +527,7 @@ def add_note(pid: str, body: NoteIn, token_data: TokenData = Depends(require_rol
 
 
 @router.delete("/api/crm/prospects/{pid}")
-def delete_prospect(pid: str, token_data: TokenData = Depends(require_role(ADMIN))):
+def delete_prospect(pid: str, token_data: TokenData = Depends(require_super())):
     p = _db.crm_prospects.find_one({"id": pid})
     if not p:
         raise HTTPException(status_code=404, detail="Prospect introuvable")
@@ -633,7 +634,7 @@ def _task_query(q: str = "", assigned: str = "", priority: str = "", type: str =
 def list_tasks(status: str = "", assigned: str = "", day: str = "", prospect_id: str = "", q: str = "",
                priority: str = "", type: str = "", date_from: Optional[str] = Query(None, alias="from"),
                date_to: Optional[str] = Query(None, alias="to"), page: int = 1, per_page: int = 50,
-               token_data: TokenData = Depends(require_role(CRM))):
+               token_data: TokenData = Depends(require_admin("crm"))):
     page, per_page = max(1, int(page)), max(1, min(500, int(per_page)))
     f = _task_query(q, assigned, priority, type, prospect_id,
                     date_from if isinstance(date_from, str) else None, date_to if isinstance(date_to, str) else None, day)
@@ -650,7 +651,7 @@ def list_tasks(status: str = "", assigned: str = "", day: str = "", prospect_id:
 
 
 @router.get("/api/crm/tasks/summary")
-def tasks_summary(token_data: TokenData = Depends(require_role(CRM))):
+def tasks_summary(token_data: TokenData = Depends(require_admin("crm"))):
     now = _now()
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     users = _users()
@@ -694,7 +695,7 @@ class TemplateIn(BaseModel):
 
 
 @router.post("/api/crm/tasks/templates")
-def add_template(body: TemplateIn, token_data: TokenData = Depends(require_role(CRM))):
+def add_template(body: TemplateIn, token_data: TokenData = Depends(require_admin("crm"))):
     if body.type not in dict(TASK_TYPES) or body.priority not in PRIORITIES:
         raise HTTPException(status_code=400, detail="Type ou priorité inconnu.")
     t = {"id": uuid.uuid4().hex, **body.model_dump(), "created_by": token_data.email, "created_at": _now()}
@@ -704,14 +705,14 @@ def add_template(body: TemplateIn, token_data: TokenData = Depends(require_role(
 
 
 @router.delete("/api/crm/tasks/templates/{tid}")
-def delete_template(tid: str, token_data: TokenData = Depends(require_role(CRM))):
+def delete_template(tid: str, token_data: TokenData = Depends(require_admin("crm"))):
     if not _db.crm_task_templates.delete_one({"id": tid}).deleted_count:
         raise HTTPException(status_code=404, detail="Modèle introuvable")
     return {"deleted": True}
 
 
 @router.post("/api/crm/tasks")
-def add_task(body: TaskIn, token_data: TokenData = Depends(require_role(CRM))):
+def add_task(body: TaskIn, token_data: TokenData = Depends(require_admin("crm"))):
     d = _task_data(body)
     if not d.get("title") or not d.get("due_at"):
         raise HTTPException(status_code=400, detail="Titre et date d'échéance obligatoires.")
@@ -724,7 +725,7 @@ def add_task(body: TaskIn, token_data: TokenData = Depends(require_role(CRM))):
 
 
 @router.put("/api/crm/tasks/{tid}")
-def edit_task(tid: str, body: TaskIn, token_data: TokenData = Depends(require_role(CRM))):
+def edit_task(tid: str, body: TaskIn, token_data: TokenData = Depends(require_admin("crm"))):
     t = _db.crm_tasks.find_one({"id": tid})
     if not t:
         raise HTTPException(status_code=404, detail="Tâche introuvable")
@@ -738,7 +739,7 @@ def edit_task(tid: str, body: TaskIn, token_data: TokenData = Depends(require_ro
 
 
 @router.delete("/api/crm/tasks/{tid}")
-def delete_task(tid: str, token_data: TokenData = Depends(require_role(CRM))):
+def delete_task(tid: str, token_data: TokenData = Depends(require_admin("crm"))):
     if not _db.crm_tasks.delete_one({"id": tid}).deleted_count:
         raise HTTPException(status_code=404, detail="Tâche introuvable")
     return {"deleted": True}
@@ -765,7 +766,7 @@ def _plan(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.post("/api/crm/import/preview")
-async def import_preview(file: UploadFile = File(...), token_data: TokenData = Depends(require_role(CRM))):
+async def import_preview(file: UploadFile = File(...), token_data: TokenData = Depends(require_admin("crm"))):
     from features import crm_import
     data = await file.read()
     if len(data) > MAX_FILE:
@@ -790,7 +791,7 @@ class ImportIn(BaseModel):
 
 
 @router.post("/api/crm/import/commit")
-def import_commit(body: ImportIn, token_data: TokenData = Depends(require_role(CRM))):
+def import_commit(body: ImportIn, token_data: TokenData = Depends(require_admin("crm"))):
     from features.crm_import import FIELDS
     if body.source not in dict(SOURCES):
         raise HTTPException(status_code=400, detail="Source inconnue.")
@@ -834,7 +835,7 @@ def import_commit(body: ImportIn, token_data: TokenData = Depends(require_role(C
 
 @router.get("/api/crm/export")
 def export(q: str = "", sector: str = "", city: str = "", stage: str = "", assigned: str = "", source: str = "",
-           token_data: TokenData = Depends(require_role(CRM))):
+           token_data: TokenData = Depends(require_admin("crm"))):
     rows = list(_db.crm_prospects.find(_filter(q, sector, city, stage, assigned, source), {"_id": 0}).sort("name", 1))
     users = _users()
     buf = io.StringIO()
@@ -857,7 +858,7 @@ def export(q: str = "", sector: str = "", city: str = "", stage: str = "", assig
 @router.get("/api/crm/calendar")
 def calendar(date_from: str = Query(..., alias="from"), date_to: str = Query(..., alias="to"), type: str = "",
              assigned: str = "", sector: str = "", status: str = "", q: str = "",
-             token_data: TokenData = Depends(require_role(CRM))):
+             token_data: TokenData = Depends(require_admin("crm"))):
     start, end = _aware(date_from), _aware(date_to)
     if not start or not end or end <= start or end - start > timedelta(days=62):
         raise HTTPException(status_code=400, detail="Période invalide.")
@@ -903,7 +904,7 @@ def calendar(date_from: str = Query(..., alias="from"), date_to: str = Query(...
 # ---------------------------------------------------------------------------
 @router.get("/api/crm/pipeline")
 def pipeline(q: str = "", sector: str = "", city: str = "", assigned: str = "", source: str = "",
-             token_data: TokenData = Depends(require_role(CRM))):
+             token_data: TokenData = Depends(require_admin("crm"))):
     users = _users()
     cols = []
     for key, label in STAGES:
@@ -937,7 +938,7 @@ def _delta(now_v: int, prev_v: int) -> Optional[int]:
 
 @router.get("/api/crm/overview")
 def overview(date_from: Optional[str] = Query(None, alias="from"), date_to: Optional[str] = Query(None, alias="to"),
-             token_data: TokenData = Depends(require_role(CRM))):
+             token_data: TokenData = Depends(require_admin("crm"))):
     try:
         sync_tenants()
     except Exception as exc:
@@ -1011,7 +1012,7 @@ class GoalIn(BaseModel):
 
 
 @router.put("/api/crm/goal")
-def set_goal(body: GoalIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def set_goal(body: GoalIn, token_data: TokenData = Depends(require_super())):
     month = _now().strftime("%Y-%m")
     _db.crm_goals.update_one({"month": month}, {"$set": {"month": month, "target": body.target}}, upsert=True)
     return {"month": month, "target": body.target}
@@ -1027,7 +1028,7 @@ class MemberIn(BaseModel):
 
 
 @router.get("/api/crm/team")
-def team(token_data: TokenData = Depends(require_role(ADMIN))):
+def team(token_data: TokenData = Depends(require_super())):
     counts = {}
     for p in _db.crm_prospects.find({"assigned_to": {"$ne": None}}, {"assigned_to": 1}):
         counts[p["assigned_to"]] = counts.get(p["assigned_to"], 0) + 1
@@ -1036,7 +1037,7 @@ def team(token_data: TokenData = Depends(require_role(ADMIN))):
 
 
 @router.post("/api/crm/team")
-def add_member(body: MemberIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def add_member(body: MemberIn, token_data: TokenData = Depends(require_super())):
     email = body.email.strip().lower()
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
@@ -1056,7 +1057,7 @@ class ActiveIn(BaseModel):
 
 
 @router.post("/api/crm/team/{email}/status")
-def member_status(email: str, body: ActiveIn, token_data: TokenData = Depends(require_role(ADMIN))):
+def member_status(email: str, body: ActiveIn, token_data: TokenData = Depends(require_super())):
     u = _db.users.find_one({"email": email.lower(), "role": "commercial"})
     if not u:
         raise HTTPException(status_code=404, detail="Commercial introuvable")

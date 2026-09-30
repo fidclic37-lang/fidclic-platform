@@ -120,6 +120,27 @@ export const crmAPI = {
   runSequences: () => api.post('/crm/sequences/run'),
 };
 
+// Super admin › Sécurité — FidClic's own team, roles, logins, journal.
+export const securityAPI = {
+  overview: (params) => api.get('/admin/security/overview', { params }),
+  users: (params) => api.get('/admin/security/users', { params }),
+  addUser: (body) => api.post('/admin/security/users', body),
+  editUser: (email, body) => api.put(`/admin/security/users/${encodeURIComponent(email)}`, body),
+  resetPassword: (email) => api.post(`/admin/security/users/${encodeURIComponent(email)}/reset-password`),
+  unlock: (email) => api.post(`/admin/security/users/${encodeURIComponent(email)}/unlock`),
+  roles: () => api.get('/admin/security/roles'),
+  addRole: (body) => api.post('/admin/security/roles', body),
+  editRole: (id, body) => api.put(`/admin/security/roles/${id}`, body),
+  deleteRole: (id) => api.delete(`/admin/security/roles/${id}`),
+  assignRole: (id, emails) => api.post(`/admin/security/roles/${id}/assign`, { emails }),
+  logins: (params) => api.get('/admin/security/logins', { params }),
+  journal: (params) => api.get('/admin/security/journal', { params }),
+  journalExport: (params) => api.get('/admin/security/journal/export', { params, responseType: 'blob' }),
+  settings: () => api.get('/admin/security/settings'),
+  saveSettings: (body) => api.put('/admin/security/settings', body),
+  alerts: () => api.get('/admin/security/alerts'),
+};
+
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
   franchise: () => api.get('/admin/franchise'),

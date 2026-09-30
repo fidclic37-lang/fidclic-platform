@@ -11,7 +11,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, AlertTriangle, TrendingDown, TrendingUp, Sparkles, X, Building2, Users, Send, Cake, ChevronRight } from 'lucide-react';
-import api, { ownerAPI } from '../lib/api';
+import api, { ownerAPI, securityAPI } from '../lib/api';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -115,12 +115,17 @@ const NotificationBell = ({ platformAdmin = false }) => {
     const load = async () => {
       setLoading(true);
       try {
-        // Try multi-store first; fall back to single-tenant if it 404s
+        // The super admin's bell: suspicious, blocked and locked logins of
+        // FidClic's team (Sécurité). A business: its own alerts, per store.
         let res;
-        try {
-          res = await api.get('/owner/insights/alerts/multi-store');
-        } catch (_e) {
-          res = await ownerAPI.getProactiveAlerts({});
+        if (platformAdmin) {
+          res = await securityAPI.alerts();
+        } else {
+          try {
+            res = await api.get('/owner/insights/alerts/multi-store');
+          } catch (_e) {
+            res = await ownerAPI.getProactiveAlerts({});
+          }
         }
         if (!cancelled) setAlerts(Array.isArray(res.data?.alerts) ? res.data.alerts : (res.data || []));
       } catch (_e) { /* silent */ }
@@ -129,7 +134,7 @@ const NotificationBell = ({ platformAdmin = false }) => {
     load();
     const id = setInterval(load, 5 * 60 * 1000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [branchId]);
+  }, [branchId, platformAdmin]);
 
   // Account info — load once. Tenant name + branches for the dropdown header.
   // A platform admin has no shop of their own: these would only answer 403.
@@ -335,7 +340,17 @@ const NotificationBell = ({ platformAdmin = false }) => {
                         <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: color }} />
                       )}
                     </div>
-                    {/* Action row — Voir clients / Envoyer campagne, resolved by alert type */}
+                    {/* Action row — the alert's own link when it has one (security
+                        alerts), else Voir clients / Envoyer campagne by alert type */}
+                    {a.action?.href ? (
+                      <div className="mt-2 ml-12">
+                        <button type="button" onClick={() => { setOpen(false); navigate(a.action.href); }}
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2.5 py-1 text-white"
+                                style={{ background: color, border: `1px solid ${color}` }}>
+                          {a.action.label} <ChevronRight size={11} style={{ opacity: 0.8 }} />
+                        </button>
+                      </div>
+                    ) : (
                     <div className="mt-2 ml-12 flex items-center gap-2 flex-wrap">
                       <button
                         type="button"
@@ -355,6 +370,7 @@ const NotificationBell = ({ platformAdmin = false }) => {
                         <ChevronRight size={11} style={{ opacity: 0.8 }} />
                       </button>
                     </div>
+                    )}
                   </div>
                 );
               })

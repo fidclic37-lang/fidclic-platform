@@ -56,6 +56,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData, SECRET_KEY
+from features.platform_access import require_admin, require_super
 from features import crm as C
 
 router = APIRouter(tags=["crm"])
@@ -605,7 +606,7 @@ def unsubscribe(sid: str):
 # Status, test, one-off e-mail, preview
 # ---------------------------------------------------------------------------
 @router.get("/api/crm/email/status")
-def email_status(token_data: TokenData = Depends(require_role(C.CRM))):
+def email_status(token_data: TokenData = Depends(require_admin("crm"))):
     cfg = _cfg()
     err = (_db.platform_settings.find_one({"key": "crm_mail_error"}, {"_id": 0}) or {}).get("error")
     imap = _db.platform_settings.find_one({"key": "crm_imap_state"}, {"_id": 0}) or {}
@@ -626,7 +627,7 @@ class TestIn(BaseModel):
 
 
 @router.post("/api/crm/email/test")
-def email_test(body: TestIn, token_data: TokenData = Depends(require_role(C.ADMIN))):
+def email_test(body: TestIn, token_data: TokenData = Depends(require_super())):
     cfg = _need_cfg()
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = formataddr(("FidClic", cfg["user"])), body.to.strip(), "Test — CRM FidClic"
@@ -653,7 +654,7 @@ SAMPLE = {"id": "exemple", "name": "Café Lumière", "contact_name": "Thomas Dur
 
 
 @router.post("/api/crm/email/preview")
-def email_preview(body: PreviewIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def email_preview(body: PreviewIn, token_data: TokenData = Depends(require_admin("crm", write=False))):
     p = (_db.crm_prospects.find_one({"id": body.prospect_id}, {"_id": 0}) if body.prospect_id else None) or SAMPLE
     r = render(body.subject, body.body, p, _sender_name(token_data.email), "apercu")
     return {"subject": r["subject"], "html": r["html"], "prospect": p.get("name"),
@@ -668,7 +669,7 @@ class SendIn(BaseModel):
 
 
 @router.post("/api/crm/email/send")
-def email_send(body: SendIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def email_send(body: SendIn, token_data: TokenData = Depends(require_admin("crm"))):
     cfg = _need_cfg()
     _check_text(body.subject, body.body)
     if _unfinished(body.subject, body.body):
@@ -730,7 +731,7 @@ def _tpl_view(t: Dict[str, Any], stats: Dict[str, Any], users) -> Dict[str, Any]
 
 
 @router.get("/api/crm/email/templates")
-def list_templates(q: str = "", token_data: TokenData = Depends(require_role(C.CRM))):
+def list_templates(q: str = "", token_data: TokenData = Depends(require_admin("crm"))):
     f: Dict[str, Any] = {}
     if q:
         rx = {"$regex": re.escape(q.strip()), "$options": "i"}
@@ -747,7 +748,7 @@ def list_templates(q: str = "", token_data: TokenData = Depends(require_role(C.C
 
 
 @router.post("/api/crm/email/templates")
-def add_template(body: TemplateIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def add_template(body: TemplateIn, token_data: TokenData = Depends(require_admin("crm"))):
     if not (body.name or "").strip() or not (body.subject or "").strip() or not (body.body or "").strip():
         raise HTTPException(status_code=400, detail="Nom, objet et texte sont obligatoires.")
     _check_text(body.subject, body.body)
@@ -764,7 +765,7 @@ def _own(doc: Dict[str, Any], token: TokenData) -> None:
 
 
 @router.put("/api/crm/email/templates/{tid}")
-def edit_template(tid: str, body: TemplateIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def edit_template(tid: str, body: TemplateIn, token_data: TokenData = Depends(require_admin("crm"))):
     t = _db.crm_email_templates.find_one({"id": tid}, {"_id": 0})
     if not t:
         raise HTTPException(status_code=404, detail="Modèle introuvable")
@@ -778,7 +779,7 @@ def edit_template(tid: str, body: TemplateIn, token_data: TokenData = Depends(re
 
 
 @router.delete("/api/crm/email/templates/{tid}")
-def delete_template(tid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def delete_template(tid: str, token_data: TokenData = Depends(require_admin("crm"))):
     t = _db.crm_email_templates.find_one({"id": tid}, {"_id": 0})
     if not t:
         raise HTTPException(status_code=404, detail="Modèle introuvable")
@@ -863,7 +864,7 @@ def _tick() -> None:
 
 @router.get("/api/crm/sequences")
 def list_sequences(tab: str = "", q: str = "", sector: str = "", status: str = "", created_by: str = "", page: int = 1,
-                   per_page: int = 10, token_data: TokenData = Depends(require_role(C.CRM))):
+                   per_page: int = 10, token_data: TokenData = Depends(require_admin("crm"))):
     _tick()
     page, per_page = max(1, int(page)), max(1, min(100, int(per_page)))
     base = _seq_filter(q, sector, status, created_by)
@@ -879,7 +880,7 @@ def list_sequences(tab: str = "", q: str = "", sector: str = "", status: str = "
 
 
 @router.get("/api/crm/sequences/summary")
-def sequences_summary(token_data: TokenData = Depends(require_role(C.CRM))):
+def sequences_summary(token_data: TokenData = Depends(require_admin("crm"))):
     now = C._now()
     month, prev = now - timedelta(days=30), now - timedelta(days=60)
     allsends = _sends({"sent_at": {"$gte": prev}})
@@ -933,7 +934,7 @@ def sequences_summary(token_data: TokenData = Depends(require_role(C.CRM))):
 
 
 @router.get("/api/crm/sequences/{sid}")
-def get_sequence(sid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def get_sequence(sid: str, token_data: TokenData = Depends(require_admin("crm"))):
     s = _db.crm_sequences.find_one({"id": sid}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Séquence introuvable")
@@ -967,7 +968,7 @@ def _from_preset(key: str) -> List[Dict[str, Any]]:
 
 
 @router.post("/api/crm/sequences")
-def add_sequence(body: SequenceIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def add_sequence(body: SequenceIn, token_data: TokenData = Depends(require_admin("crm"))):
     if body.preset:
         steps = _from_preset(body.preset)
         name = body.name or next(x["name"] for x in SEQUENCE_PRESETS if x["key"] == body.preset)
@@ -989,7 +990,7 @@ def add_sequence(body: SequenceIn, token_data: TokenData = Depends(require_role(
 
 
 @router.put("/api/crm/sequences/{sid}")
-def edit_sequence(sid: str, body: SequenceIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def edit_sequence(sid: str, body: SequenceIn, token_data: TokenData = Depends(require_admin("crm"))):
     s = _db.crm_sequences.find_one({"id": sid}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Séquence introuvable")
@@ -1020,7 +1021,7 @@ class StatusIn(BaseModel):
 
 
 @router.post("/api/crm/sequences/{sid}/status")
-def sequence_status(sid: str, body: StatusIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def sequence_status(sid: str, body: StatusIn, token_data: TokenData = Depends(require_admin("crm"))):
     s = _db.crm_sequences.find_one({"id": sid}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Séquence introuvable")
@@ -1048,7 +1049,7 @@ def sequence_status(sid: str, body: StatusIn, token_data: TokenData = Depends(re
 
 
 @router.post("/api/crm/sequences/{sid}/duplicate")
-def duplicate_sequence(sid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def duplicate_sequence(sid: str, token_data: TokenData = Depends(require_admin("crm"))):
     s = _db.crm_sequences.find_one({"id": sid}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Séquence introuvable")
@@ -1060,7 +1061,7 @@ def duplicate_sequence(sid: str, token_data: TokenData = Depends(require_role(C.
 
 
 @router.delete("/api/crm/sequences/{sid}")
-def delete_sequence(sid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def delete_sequence(sid: str, token_data: TokenData = Depends(require_admin("crm"))):
     s = _db.crm_sequences.find_one({"id": sid}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Séquence introuvable")
@@ -1081,7 +1082,7 @@ class EnrollIn(BaseModel):
 
 
 @router.post("/api/crm/sequences/{sid}/enroll")
-def enroll(sid: str, body: EnrollIn, token_data: TokenData = Depends(require_role(C.CRM))):
+def enroll(sid: str, body: EnrollIn, token_data: TokenData = Depends(require_admin("crm"))):
     s = _db.crm_sequences.find_one({"id": sid}, {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Séquence introuvable")
@@ -1124,7 +1125,7 @@ def enroll(sid: str, body: EnrollIn, token_data: TokenData = Depends(require_rol
 
 
 @router.post("/api/crm/sequences/{sid}/enrollments/{eid}/stop")
-def stop_enrollment(sid: str, eid: str, token_data: TokenData = Depends(require_role(C.CRM))):
+def stop_enrollment(sid: str, eid: str, token_data: TokenData = Depends(require_admin("crm"))):
     e = _db.crm_enrollments.find_one({"id": eid, "sequence_id": sid}, {"_id": 0})
     if not e:
         raise HTTPException(status_code=404, detail="Introuvable")
@@ -1134,7 +1135,7 @@ def stop_enrollment(sid: str, eid: str, token_data: TokenData = Depends(require_
 
 
 @router.post("/api/crm/sequences/run")
-def run_now(token_data: TokenData = Depends(require_role(C.CRM))):
+def run_now(token_data: TokenData = Depends(require_admin("crm"))):
     _need_cfg()
     rep = check_replies(force=True)
     res = run_due(max_send=40, budget_s=20)

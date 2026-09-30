@@ -26,6 +26,8 @@ MODULES = [
     "features.privacy_page",
     "features.security_page",
     "features.preferences",
+    "features.platform_access",
+    "features.platform_security",
     "features.crm",
     "features.crm_calls",
     "features.crm_email",
