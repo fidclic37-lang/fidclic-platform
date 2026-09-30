@@ -94,5 +94,19 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     server.run_daily_triggers(req())
     check("daily run: late → missed, not sent", db.campaigns.find_one({"id": "daily-late"})["status"] == "missed" and "daily-late" not in SENT)
 
+    print("\nMonthly report (kept on the cron)")
+    first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_month = first - dt.timedelta(days=10)
+    db.users.insert_one({"email": "o@cafe.fr", "role": "business_owner", "tenant_id": "t1"})
+    db.visits.insert_many([{"id": "v1", "tenant_id": "t1", "customer_id": "c0", "amount_paid": 12.5, "visit_time": last_month},
+                           {"id": "v2", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 7.5, "visit_time": last_month}])
+    MAILS = []
+    server.send_email_to_customer = lambda to, sender, subject, html: MAILS.append((to, subject, html)) or True
+    server.run_monthly_report_dispatch(req())
+    mail = next((m for m in MAILS if m[0] == "o@cafe.fr"), None)
+    mois = server._MOIS[last_month.month - 1]
+    check("counts last month's visits by their visit time", mail and "2 visites" in mail[2])
+    check("month in French", mail and mail[1] == f"Récap {mois} {last_month.year}")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

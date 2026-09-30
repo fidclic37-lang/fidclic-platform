@@ -11231,6 +11231,14 @@ def run_daily_triggers(request: Request):
     }
 
 
+_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
+
+
+def _mois_fr(d: datetime) -> str:
+    """« septembre 2026 » — strftime('%B') would say « September »."""
+    return f"{_MOIS[d.month - 1]} {d.year}"
+
+
 @app.get("/api/cron/monthly-report")
 @app.post("/api/cron/monthly-report")
 def run_monthly_report_dispatch(request: Request):
@@ -11280,7 +11288,7 @@ def run_monthly_report_dispatch(request: Request):
             "tenant_id": tid, "created_at": {"$gte": last_month_start, "$lt": first_of_this_month},
         })
         visits_in_month = db.visits.aggregate([
-            {"$match": {"tenant_id": tid, "created_at": {"$gte": last_month_start, "$lt": first_of_this_month}}},
+            {"$match": {"tenant_id": tid, "visit_time": {"$gte": last_month_start, "$lt": first_of_this_month}}},
             {"$group": {"_id": None, "count": {"$sum": 1}, "revenue": {"$sum": {"$ifNull": ["$amount_paid", 0]}}}},
         ])
         rolled = next(iter(visits_in_month), {}) or {}
@@ -11290,7 +11298,7 @@ def run_monthly_report_dispatch(request: Request):
 
         body = (
             f"Bonjour,\n\n"
-            f"Voici votre récap pour {last_month_start.strftime('%B %Y')} chez {tenant.get('name','votre établissement')} :\n\n"
+            f"Voici votre récap pour {_mois_fr(last_month_start)} chez {tenant.get('name','votre établissement')} :\n\n"
             f"• {cust_count} clients au total ({new_cust_count} nouveaux ce mois-ci)\n"
             f"• {visits_count} visites enregistrées\n"
             f"• €{revenue:,.0f} de chiffre d'affaires fidélité\n"
@@ -11300,11 +11308,11 @@ def run_monthly_report_dispatch(request: Request):
         ).replace(",", " ")
         html = _campaign_html(
             "FidClic",
-            f"Récap {last_month_start.strftime('%B %Y')} — {tenant.get('name','')}",
+            f"Récap {_mois_fr(last_month_start)} — {tenant.get('name','')}",
             body,
             {"name": owner["email"].split("@")[0].title(), "tier": "owner", "visits": 0, "points": 0},
         )
-        if send_email_to_customer(owner["email"], "FidClic", f"Récap {last_month_start.strftime('%B %Y')}", html):
+        if send_email_to_customer(owner["email"], "FidClic", f"Récap {_mois_fr(last_month_start)}", html):
             sent += 1
         else:
             skipped += 1
