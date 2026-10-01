@@ -5,13 +5,13 @@ import {
   Users, UserCheck, UserX, Store, Target, Gift, RefreshCcw, ExternalLink, Mail, Pencil, MoreHorizontal, LayoutDashboard,
   Heart, Megaphone, Bell, Gauge, CreditCard, Settings, TrendingUp, PieChart as PieIcon, MapPinned, Award, Star, Crown,
   AlertTriangle, Send, Eye, MousePointerClick, ArrowRight, CalendarDays, BadgeCheck, Receipt, PauseCircle, PlayCircle,
-  Building2, Search, Loader2, Repeat, Clock,
+  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Head, Kpi, Donut, Select, Loading, Breadcrumb, Pager, Modal, useToast, nf, BLUE, inputCls } from '../crm/ui';
 import { ComposeEmail } from '../crm/emailUi';
 import { FranchiseTermsModal } from '../../components/admin/FranchisePanel';
-import { StatusPill, PlanPill, CommerceLogo, SuspendModal, openViewAs } from './CommercesPage';
+import { StatusPill, PlanPill, CommerceLogo, SuspendModal, ResilierModal, openViewAs, weekly } from './CommercesPage';
 
 /* Super admin › Commerces › one business — built to the approved « Café
    Lumière » mockup. Every figure is counted from the business's own data. */
@@ -72,9 +72,16 @@ export default function CommerceDetailPage() {
             <span className="flex items-center gap-1.5"><CreditCard size={14} /> Plan : <strong className="text-[#2F6BFF]">{d.plan?.label}</strong></span>
             <span className="flex items-center gap-1.5"><CalendarDays size={14} /> Inscrit le {dateFr(d.created_at, true)}</span>
             {d.renews_on && <span className="flex items-center gap-1.5"><Repeat size={14} /> {d.subscription_status === 'trialing' ? "Fin de l'essai" : 'Prochain renouvellement'} : {dateFr(d.renews_on, true)}</span>}
-            {d.cards_per_day != null && <span className="flex items-center gap-1.5"><TrendingUp size={14} /> {d.cards_per_day} nouvelles cartes / jour</span>}
+            {weekly(d) && <span className="flex items-center gap-1.5" title="Le plus faible des deux décide du statut"><TrendingUp size={14} /> {weekly(d)}</span>}
           </p>
           {d.suspended && <p className="mt-2 inline-flex items-center gap-2 rounded-lg bg-[#FEF2F2] px-3 py-1.5 text-[12.5px] text-[#B91C1C]"><PauseCircle size={14} /> Suspendu le {dateFr(d.suspended_at, true)}{d.suspended_reason ? ` — ${d.suspended_reason}` : ''}. L'équipe ne peut pas se connecter ; les cartes des clients fonctionnent.</p>}
+          {d.resiliated && (
+            <p className="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[#0B1C3F] px-3 py-2 text-[12.5px] text-white">
+              <Ban size={14} /> Résilié le {dateFr(d.resiliated_at, true)}{d.resiliation_reason ? ` — ${d.resiliation_reason}` : ''}. Compte fermé, cartes des clients désactivées.
+              <button type="button" onClick={() => { if (window.confirm(`Annuler la résiliation de ${d.name} ? Le compte et les cartes des clients fonctionneront de nouveau.`)) act(() => adminAPI.annulerResiliation(d.id), 'Résiliation annulée.'); }}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md bg-white/15 px-2 py-1 font-medium hover:bg-white/25"><Undo2 size={13} /> Annuler la résiliation</button>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => openViewAs(d.id, say)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#2F6BFF] bg-white px-4 text-[13.5px] font-medium text-[#2F6BFF]"><ExternalLink size={15} /> Accéder au compte</button>
@@ -89,6 +96,9 @@ export default function CommerceDetailPage() {
                 {d.suspended
                   ? <button type="button" onClick={() => { setMenu(false); act(() => adminAPI.reactivateCommerce(d.id), 'Commerce réactivé.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><PlayCircle size={14} /> Réactiver</button>
                   : <button type="button" onClick={() => { setMenu(false); setModal({ type: 'suspend' }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><PauseCircle size={14} /> Suspendre</button>}
+                {d.resiliated
+                  ? <button type="button" onClick={() => { setMenu(false); if (window.confirm(`Annuler la résiliation de ${d.name} ?`)) act(() => adminAPI.annulerResiliation(d.id), 'Résiliation annulée.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><Undo2 size={14} /> Annuler la résiliation</button>
+                  : <button type="button" onClick={() => { setMenu(false); setModal({ type: 'resilier' }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0B1C3F] hover:bg-[#F4F7FC]"><Ban size={14} /> Résilier…</button>}
               </span>
             )}
           </span>
@@ -115,6 +125,7 @@ export default function CommerceDetailPage() {
       {modal?.type === 'email' && <ComposeEmail prospect={{ id: d.crm_prospect_id, name: d.name, email: d.owner.email }} initial={modal.preset} onClose={() => setModal(null)} onSent={(m) => { setModal(null); say(m); }} />}
       {modal?.type === 'edit' && <EditModal d={d} onClose={() => setModal(null)} onDone={() => { setModal(null); say('Commerce modifié.'); load(); }} />}
       {modal?.type === 'suspend' && <SuspendModal c={d} onClose={() => setModal(null)} onDone={(m) => { setModal(null); say(m); load(); }} />}
+      {modal?.type === 'resilier' && <ResilierModal c={d} onClose={() => setModal(null)} onDone={(m) => { setModal(null); say(m); load(); }} />}
       {modal?.type === 'franchise' && <FranchiseTermsModal tenant={{ id: d.id, name: d.name, stores: d.stores, terms: d.franchise_terms }} onClose={() => setModal(null)} onSaved={() => { setModal(null); say('Conditions Franchise enregistrées.'); load(); }} />}
       {modal?.type === 'plan' && (
         <Modal title={`Changer le plan — ${d.name}`} onClose={() => setModal(null)}>

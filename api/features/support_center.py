@@ -469,9 +469,11 @@ def _panel(t: Dict[str, Any]) -> Dict[str, Any]:
     r = AC.rules()
     since = now - timedelta(days=int(r["window_days"]))
     cards = _db.customers.count_documents({"tenant_id": ten["id"], **AC.LIVE, "created_at": {"$gte": since}})
-    st = AC.status_of(ten, cards, r, now)
-    trial = (ten.get("subscription_status") or "").lower() in ("trialing", "onboarding")
-    label = "En essai" if trial else {"actif": "Client actif", "inactif": "Client inactif", "a_risque": "Client à risque", "suspendu": "Suspendu"}[st["key"]]
+    scans = _db.visits.count_documents({"tenant_id": ten["id"], "visit_time": {"$gte": since}})
+    st = AC.status_of(ten, cards, r, now, scans)
+    standing = AC.standing_of(ten, now)
+    label = {"essai": "En essai", "impaye": "Impayé", "resilie": "Résilié", "non_converti": "Essai non converti"}.get(standing) or \
+        {"actif": "Client actif", "inactif": "Client inactif", "a_risque": "Client à risque", "suspendu": "Suspendu"}.get(st["key"], "Client")
     owner = _owner(ten["id"])
     rated = [x["rating"]["stars"] for x in _db.support_tickets.find({"tenant_id": ten["id"], "rating.stars": {"$gte": 1}}, {"_id": 0, "rating": 1})]
     key = core._canonical_plan(ten.get("plan"))

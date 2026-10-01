@@ -1,12 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Store, Users, CreditCard, Megaphone, Euro, CalendarDays, ChevronDown, PieChart as PieIcon, Sparkles, ChevronRight, TrendingDown, Rocket, Clock, Building2, Trophy, Activity, Send, UserPlus, PauseCircle, PlayCircle, Inbox, ArrowUp, ArrowDown,
+  Store, Users, CreditCard, Megaphone, Euro, CalendarDays, ChevronDown, PieChart as PieIcon, Sparkles, ChevronRight, TrendingDown, Rocket, Clock, Building2, Trophy, Activity, Send, UserPlus, PauseCircle, PlayCircle, Inbox, ArrowUp, ArrowDown, CircleAlert,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Head, Kpi, Donut, Loading, Modal, nf, BLUE } from '../crm/ui';
 import { PlanPill, CommerceLogo } from './CommercesPage';
 import { CitiesSection, RevenueSection, SourcesSection } from './analytics/sections';
+import CommerceListModal from './CommerceListModal';
 
 /* Super admin › Dashboard — built to the approved mockup. */
 
@@ -33,8 +34,10 @@ export default function AdminDashboardPage() {
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(false);
   const [modal, setModal] = useState(null);
+  const [list, setList] = useState(null);       // the businesses behind a figure
 
   const range = () => (period === 'custom' ? custom : { from: iso(new Date(Date.now() - Number(period) * 86400000)), to: iso(new Date()) });
+  const listRange = useMemo(() => range(), [period, custom]); // eslint-disable-line react-hooks/exhaustive-deps
   const load = useCallback(() => {
     adminAPI.dashboard(range()).then(({ data }) => { setErr(''); setD(data); }).catch((e) => setErr(e?.response?.data?.detail || 'Impossible de charger le tableau de bord.'));
   }, [period, custom]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -44,30 +47,44 @@ export default function AdminDashboardPage() {
   const K = Object.fromEntries(d.kpis.map((k) => [k.key, k]));
   const S = Object.fromEntries(d.status_cards.map((k) => [k.key, k]));
   const oppTotal = d.opportunities.reduce((a, o) => a + o.count, 0);
-  // The figures (user, 2026-10-01): Visites, Campagnes and Notifications
-  // left; Commerces shows trial vs signed; new businesses this month and the
-  // chiffre d'affaires total joined.
+  // The figures (user, 2026-10-01): Commerces = en essai + abonnés only;
+  // Impayé (stopped paying or suspended) in place of « Nouveaux ce mois ».
+  // Every figure opens the businesses behind it (CommerceListModal).
   const kpis = [
-    ['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF'], ['nouveaux', 'Nouveaux ce mois', UserPlus, '#8B5CF6', '#F3EEFF'],
+    ['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF'], ['impaye', 'Impayé', CircleAlert, '#E11D48', '#FDECEF'],
     ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE'], ['cartes', 'Cartes actives', CreditCard, '#2F6BFF', '#EAF1FF'],
     ['ca', "Chiffre d'affaires total", Euro, '#F59E0B', '#FFF4DB'], ['mrr', 'MRR', Euro, '#10B981', '#E7F7EE'],
   ];
   const money = (k) => k === 'mrr' || k === 'ca';
   const split = K.commerces.breakdown || {};
-  const commercesFoot = (
-    <p className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-[#475569]" title="En essai : période d'essai gratuite. Abonnés : abonnement payant en cours (base du MRR). Autres : résilié, impayé, suspendu ou sans abonnement.">
-      <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-[#8B5CF6]" />{nf(split.essai)} en essai</span>
-      <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-[#10B981]" />{nf(split.abonne)} abonnés</span>
-      {split.autre > 0 && <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-[#CBD5E1]" />{nf(split.autre)} autres</span>}
-    </p>
-  );
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+  const feet = {
+    commerces: (
+      <p className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-[#475569]">
+        <button type="button" onClick={stop(() => setList('essai'))} title="Voir les commerces en essai" className="inline-flex items-center gap-1 rounded hover:text-[#7C3AED]"><i className="h-2 w-2 rounded-full bg-[#8B5CF6]" />{nf(split.essai)} en essai</button>
+        <button type="button" onClick={stop(() => setList('abonne'))} title="Voir les commerces abonnés" className="inline-flex items-center gap-1 rounded hover:text-[#0F8B58]"><i className="h-2 w-2 rounded-full bg-[#10B981]" />{nf(split.abonne)} abonnés</button>
+      </p>
+    ),
+    impaye: (
+      <p className="mt-2 text-[11.5px] text-[#475569]">{K.impaye.suspendus ? `dont ${nf(K.impaye.suspendus)} suspendu${K.impaye.suspendus > 1 ? 's' : ''} · ` : ''}€{nf(K.impaye.mrr_at_stake)} / mois en jeu</p>
+    ),
+  };
   const statusCards = [
-    ['nouveaux', 'Nouveaux commerces', '#2F6BFF', (c) => <><strong className="text-[26px] text-[#10B981]">+{nf(c.value)}</strong><span className="block text-[12.5px] text-[#64748B]">ce mois-ci</span></>, 'nouveaux'],
-    ['actif', 'Commerces actifs', '#10B981', (c) => <><strong className="text-[26px] text-[#0B1C3F]">{nf(c.value)}</strong><span className="block text-[12.5px] text-[#64748B]">{c.pct}% du total</span></>, 'actif'],
-    ['inactif', 'Commerces inactifs', '#F43F5E', (c) => <><strong className="text-[26px] text-[#E11D48]">{nf(c.value)}</strong><span className="block text-[12.5px] text-[#64748B]">{c.pct}% du total</span></>, 'inactif'],
-    ['a_risque', 'À risque', '#F43F5E', (c) => <><strong className="text-[26px] text-[#E11D48]">{nf(c.value)}</strong><span className="block text-[12.5px] text-[#64748B]">{c.pct}% du total</span></>, 'a_risque'],
+    ['nouveaux', 'Nouveaux commerces', '#2F6BFF', (c) => <><strong className="text-[24px] text-[#10B981]">+{nf(c.value)}</strong><span className="block text-[12px] text-[#64748B]">ce mois-ci</span></>],
+    ['actif', 'Commerces actifs', '#10B981', (c) => <><strong className="text-[24px] text-[#0B1C3F]">{nf(c.value)}</strong><span className="block text-[12px] text-[#64748B]">{c.pct}% du total</span></>],
+    ['inactif', 'Commerces inactifs', '#F43F5E', (c) => <><strong className="text-[24px] text-[#E11D48]">{nf(c.value)}</strong><span className="block text-[12px] text-[#64748B]">{c.pct}% du total</span></>],
+    ['a_risque', 'À risque', '#F59E0B', (c) => <><strong className="text-[24px] text-[#D97706]">{nf(c.value)}</strong><span className="block text-[12px] text-[#64748B]">{c.pct}% du total</span></>],
+    ['resilie', 'Résilié', '#0B1C3F', (c) => <><strong className="text-[24px] text-[#0B1C3F]">{nf(c.value)}</strong><span className="block text-[12px] text-[#64748B]">sur la période · {nf(c.total)} au total</span></>],
+    ['non_converti', 'Essais non convertis', '#8B5CF6', (c) => <><strong className="text-[24px] text-[#7C3AED]">{nf(c.value)}</strong><span className="block text-[12px] text-[#64748B]">{c.conversion != null ? `${c.conversion}% de conversion` : 'aucun essai terminé'}</span></>],
   ];
-  const badDelta = (k) => k === 'inactif' || k === 'a_risque';
+  const badDelta = (k) => ['inactif', 'a_risque', 'resilie', 'non_converti'].includes(k);
+  const tip = {
+    actif: 'Plus de 25 cartes et 25 scans par semaine (le plus faible des deux décide).',
+    a_risque: 'Entre 15 et 25 cartes et scans par semaine.', inactif: 'Moins de 15 cartes ou scans par semaine.',
+    resilie: 'Clients qui ont arrêté (marqués à la main) sur la période choisie.',
+    non_converti: "Essais terminés sur la période sans abonnement. Le % = essais convertis / essais terminés.",
+    nouveaux: 'Commerces inscrits ce mois-ci.',
+  };
 
   return (
     <div className="crm" onClick={() => setOpen(false)}>
@@ -95,8 +112,12 @@ export default function AdminDashboardPage() {
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {kpis.map(([k, l, I, c, bg]) => <Kpi compact key={k} icon={I} tone={c} bg={bg} value={money(k) ? `€${nf(Math.round(K[k].value))}` : nf(K[k].value)} label={l} delta={K[k].delta} series={K[k].series}
-                                             foot={k === 'commerces' ? commercesFoot : null} />)}
+        {kpis.map(([k, l, I, c, bg]) => (
+          <div key={k} role="button" tabIndex={0} title="Voir les commerces" onClick={() => setList(k)} onKeyDown={(e) => { if (e.key === 'Enter') setList(k); }}
+               className="cursor-pointer rounded-2xl transition hover:ring-2 hover:ring-[#BFD3FF]">
+            <Kpi compact icon={I} tone={c} bg={bg} value={money(k) ? `€${nf(Math.round(K[k].value))}` : nf(K[k].value)} label={l} delta={K[k].delta} series={K[k].series || []} foot={feet[k] || null} />
+          </div>
+        ))}
       </div>
 
       {/* Sources, plans, chiffre d'affaires, villes — the three Analytics
@@ -109,17 +130,17 @@ export default function AdminDashboardPage() {
         <CitiesSection rows={d.cities} Card={Card} Head={Head} />
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[repeat(4,1fr)_1.45fr]">
-        {statusCards.map(([k, l, color, body, tab]) => { const c = S[k]; const max = Math.max(1, ...c.bars); const up = (c.delta ?? 0) >= 0; const bad = badDelta(k) ? up : !up; return (
-          <button key={k} type="button" onClick={() => navigate(`/admin/commerces?tab=${tab}`)} className="rounded-2xl border border-[#EDF1F7] bg-white p-4 text-left shadow-[0_1px_2px_rgba(11,28,63,.03)] hover:border-[#BFD3FF]">
-            <p className="flex items-start justify-between gap-2 text-[13.5px] font-medium text-[#0B1C3F]">{l}
-              {c.delta != null && <span className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${bad ? 'bg-[#FDECEF] text-[#E11D48]' : 'bg-[#E7F7EE] text-[#0F8B58]'}`}>{up ? <ArrowUp size={11} /> : <ArrowDown size={11} />}{up ? '+' : ''}{c.delta}%</span>}</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(6,minmax(0,1fr))_minmax(250px,1.5fr)]">
+        {statusCards.map(([k, l, color, body]) => { const c = S[k]; const max = Math.max(1, ...c.bars); const up = (c.delta ?? 0) >= 0; const bad = badDelta(k) ? up : !up; return (
+          <button key={k} type="button" onClick={() => setList(k)} title={tip[k]} className="flex flex-col rounded-2xl border border-[#EDF1F7] bg-white p-3.5 text-left shadow-[0_1px_2px_rgba(11,28,63,.03)] hover:border-[#BFD3FF]">
+            <p className="flex min-h-[34px] items-start justify-between gap-1.5 text-[12.5px] font-medium leading-tight text-[#0B1C3F]">{l}
+              {c.delta != null && <span className={`inline-flex shrink-0 items-center gap-0.5 rounded-md px-1 py-0.5 text-[10.5px] font-semibold ${bad ? 'bg-[#FDECEF] text-[#E11D48]' : 'bg-[#E7F7EE] text-[#0F8B58]'}`}>{up ? <ArrowUp size={10} /> : <ArrowDown size={10} />}{up ? '+' : ''}{c.delta}%</span>}</p>
             <div className="mt-1">{body(c)}</div>
-            <div className="mt-3 flex h-12 items-end gap-[3px]" title="12 dernières semaines">
+            <div className="mt-auto flex h-11 items-end gap-[3px] pt-3" title="12 dernières semaines">
               {c.bars.map((v, i) => <span key={i} className="flex-1 rounded-t" style={{ height: `${Math.max(6, (v / max) * 100)}%`, background: color, opacity: 0.35 + (0.65 * (i + 1)) / c.bars.length }} />)}
             </div>
           </button>); })}
-        <Card className="border-[#D9C8FF] shadow-[0_0_0_3px_rgba(139,92,246,.06)]">
+        <Card className="border-[#D9C8FF] shadow-[0_0_0_3px_rgba(139,92,246,.06)] sm:col-span-2 lg:col-span-3 xl:col-span-1">
           <Head icon={Sparkles} tone="#8B5CF6" title="Opportunités IA" right={<span className="rounded-full bg-[#FDECEF] px-2.5 py-0.5 text-[12px] font-semibold text-[#E11D48]">{nf(oppTotal)}</span>} />
           <ul className="divide-y divide-[#F1F5F9]">
             {d.opportunities.map((o) => { const [I, c, bg] = OPP_ICON[o.icon] || OPP_ICON.limit; return (
@@ -157,6 +178,7 @@ export default function AdminDashboardPage() {
         </Card>
       </div>
 
+      {list && <CommerceListModal listKey={list} range={listRange} onClose={() => setList(null)} />}
       {modal?.type === 'opp' && (
         <Modal title={modal.o.label} onClose={() => setModal(null)}>
           <ul className="max-h-[60vh] divide-y divide-[#F1F5F9] overflow-y-auto">

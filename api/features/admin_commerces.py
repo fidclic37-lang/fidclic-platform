@@ -3,14 +3,26 @@ Super admin › Commerces — every business on FidClic, its health, and one
 page per business. Built to the approved mockups (« Tous les commerces »,
 « Café Lumière »).
 
-STATUT (decided with the user) is how much the business actually uses
-FidClic: new loyalty cards given per day, averaged over the last
-`window_days` days (or since sign-up when younger):
-    actif      ≥ actif_min cards a day              (default 10)
-    inactif    ≥ inactif_min and < actif_min        (default 2)
-    à risque   < inactif_min — almost not using it
+STATUT (decided with the user, 2026-10-01) is how much the business
+actually uses FidClic, per week: new loyalty cards given AND scans (visits),
+over the last `window_days` days brought to a week (or since sign-up when
+younger). The weaker of the two decides:
+    actif      both above actif_min            (default 25 a week)
+    à risque   the weaker between inactif_max and actif_min (15–25)
+    inactif    the weaker below inactif_max     (default 15 a week)
     suspendu   switched off by the super admin (see below)
-The super admin can change the three numbers (platform_settings).
+    résilié    the client told us they stop — marked by the team (see below)
+    essai non converti  the trial ended without a subscription
+The super admin can change the numbers (platform_settings).
+
+STANDING (where the business stands with FidClic, standing_of): en essai,
+abonné (paid subscription running), impayé (stopped paying, or suspended —
+the same thing for the user), résilié, essai non converti.
+
+RÉSILIER (decided with the user, 2026-10-01): marked by hand when the client
+says they stop. The account closes at once (team sessions end, sign-in
+refused) AND the customers' cards stop working (card page, wallet updates,
+joining). Nothing is deleted; « Annuler la résiliation » reopens everything.
 
 SUSPENDRE (decided with the user): the owner and the team can no longer
 sign in (their sessions end at once); the customers' cards keep working.
@@ -39,9 +51,12 @@ router = APIRouter(tags=["admin"])
 from features.platform_access import require_admin
 _db = None
 ADMIN = ["super_admin"]
-RULES_KEY = "commerce_status_rules"
-DEFAULT_RULES = {"actif_min": 10, "inactif_min": 2, "window_days": 7}
-STATUS_LABELS = {"actif": "Actif", "inactif": "Inactif", "a_risque": "À risque", "suspendu": "Suspendu"}
+# v2 (2026-10-01): weekly cards AND scans — the old per-day numbers are not reused.
+RULES_KEY = "commerce_status_rules_v2"
+DEFAULT_RULES = {"actif_min": 25, "inactif_max": 15, "window_days": 7}
+STATUS_LABELS = {"actif": "Actif", "a_risque": "À risque", "inactif": "Inactif", "suspendu": "Suspendu",
+                 "resilie": "Résilié", "non_converti": "Essai non converti"}
+STANDING_LABELS = {"essai": "En essai", "abonne": "Abonné", "impaye": "Impayé", "resilie": "Résilié", "non_converti": "Essai non converti"}
 TEAM = ["business_owner", "administrateur", "manager", "staff"]
 VIEW_MINUTES = 30
 
@@ -107,14 +122,41 @@ def _sector(key: Optional[str]) -> str:
     return _sector_label(key or "")
 
 
-def status_of(t: Dict[str, Any], new_cards: int, r: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+def standing_of(t: Dict[str, Any], now: Optional[datetime] = None) -> str:
+    """Where the business stands with FidClic — shared by the Commerces
+    page, the Dashboard, Analytics and Support."""
+    now = now or _now()
+    if t.get("resiliated_at"):
+        return "resilie"
+    status = (t.get("subscription_status") or "").lower()
+    if t.get("suspended_at") or status in ("past_due", "unpaid"):
+        return "impaye"
+    if status == "active":
+        return "abonne"
+    trial_end = _aware(t.get("trial_ends_at"))
+    if status in ("trialing", "onboarding") or (not status and trial_end):
+        return "non_converti" if trial_end and trial_end < now else "essai"
+    if status in ("canceled", "cancelled", "incomplete_expired"):
+        # Never paid → a trial that did not convert; paid then cancelled
+        # through Stripe → treated as résilié (the team marks the others).
+        return "resilie" if t.get("subscription_started_at") else "non_converti"
+    # No subscription data at all: a business FidClic set up by hand (demo
+    # accounts, early clients) — on its plan, as the Commerces page shows it.
+    return "abonne"
+
+
+def status_of(t: Dict[str, Any], new_cards: int, r: Dict[str, Any], now: datetime, scans: int = 0) -> Dict[str, Any]:
     if t.get("suspended_at"):
-        return {"key": "suspendu", "per_day": None}
+        return {"key": "suspendu", "cards_week": None, "scans_week": None}
+    standing = standing_of(t, now)
+    if standing in ("resilie", "non_converti"):
+        return {"key": standing, "cards_week": None, "scans_week": None}
     created = _aware(t.get("created_at")) or now
     days = max(1.0, min(float(r["window_days"]), (now - created).total_seconds() / 86400))
-    per_day = new_cards / days
-    key = "actif" if per_day >= r["actif_min"] else "inactif" if per_day >= r["inactif_min"] else "a_risque"
-    return {"key": key, "per_day": round(per_day, 1)}
+    cards_w, scans_w = new_cards / days * 7, scans / days * 7
+    weaker = min(cards_w, scans_w)
+    key = "actif" if weaker > r["actif_min"] else "a_risque" if weaker >= r["inactif_max"] else "inactif"
+    return {"key": key, "cards_week": round(cards_w, 1), "scans_week": round(scans_w, 1)}
 
 
 def snapshot(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -131,16 +173,19 @@ def snapshot(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
                                                                     "at": {"$max": "$last_visit_date"}}}]):
         clients[x["_id"]], visits[x["_id"]], last[x["_id"]] = x["n"], int(x.get("v") or 0), x.get("at")
     cards = _count_by_tenant("customers", {**LIVE, "created_at": {"$gte": since}})
+    scans = _count_by_tenant("visits", {"visit_time": {"$gte": since}})
     logos = {c["tenant_id"]: c.get("logo_url") or (c.get("brand_fields") or {}).get("logo_url")
              for c in _db.card_templates.find({}, {"_id": 0, "tenant_id": 1, "logo_url": 1, "brand_fields.logo_url": 1})}
     rows = []
     for t in tenants:
-        st = status_of(t, cards.get(t["id"], 0), r, now)
+        st = status_of(t, cards.get(t["id"], 0), r, now, scans.get(t["id"], 0))
+        standing = standing_of(t, now)
         la = _aware(last.get(t["id"]))
         rows.append({"id": t["id"], "name": t.get("name") or "—", "sector": _sector(t.get("sector")), "city": t.get("city") or "",
                      "postal_code": t.get("postal_code") or "", "plan": _plan_label(t), "logo": logos.get(t["id"]),
                      "clients": clients.get(t["id"], 0), "visits": visits.get(t["id"], 0), "cards_window": cards.get(t["id"], 0),
-                     "cards_per_day": st["per_day"], "last_activity": la.isoformat() if la else None,
+                     "cards_week": st["cards_week"], "scans_week": st["scans_week"], "last_activity": la.isoformat() if la else None,
+                     "standing": standing, "standing_label": STANDING_LABELS[standing],
                      "status": st["key"], "status_label": STATUS_LABELS[st["key"]],
                      "created_at": _iso(t.get("created_at")), "new_this_month": bool(_aware(t.get("created_at")) and
                                                                                     _aware(t.get("created_at")) >= now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)),
@@ -152,8 +197,8 @@ def snapshot(now: Optional[datetime] = None) -> List[Dict[str, Any]]:
 # Rules
 # ---------------------------------------------------------------------------
 class RulesIn(BaseModel):
-    actif_min: float = Field(..., gt=0, le=10000)
-    inactif_min: float = Field(..., ge=0, le=10000)
+    actif_min: float = Field(..., gt=0, le=100000)       # a week, cards AND scans
+    inactif_max: float = Field(..., ge=0, le=100000)
     window_days: int = Field(7, ge=1, le=90)
 
 
@@ -164,7 +209,7 @@ def get_rules(token_data: TokenData = Depends(require_admin("commerces"))):
 
 @router.put("/api/admin/commerces/rules")
 def put_rules(body: RulesIn, token_data: TokenData = Depends(require_admin("commerces"))):
-    if body.inactif_min >= body.actif_min:
+    if body.inactif_max > body.actif_min:
         raise HTTPException(status_code=400, detail="Le seuil « Inactif » doit être plus petit que le seuil « Actif ».")
     _db.platform_settings.update_one({"key": RULES_KEY}, {"$set": {"key": RULES_KEY, "value": body.dict(), "updated_at": _now(),
                                                                    "updated_by": token_data.email}}, upsert=True)
@@ -174,7 +219,7 @@ def put_rules(body: RulesIn, token_data: TokenData = Depends(require_admin("comm
 # ---------------------------------------------------------------------------
 # List
 # ---------------------------------------------------------------------------
-TABS = ("actif", "inactif", "a_risque", "nouveaux", "suspendu")
+TABS = ("actif", "inactif", "a_risque", "nouveaux", "suspendu", "resilie", "non_converti")
 SORTS = {"name": lambda r: (r["name"] or "").lower(), "clients": lambda r: r["clients"], "visits": lambda r: r["visits"],
          "last_activity": lambda r: r["last_activity"] or "", "status": lambda r: r["status"], "created_at": lambda r: r["created_at"] or ""}
 
@@ -248,12 +293,12 @@ def export_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "
     rows = _filtered(snapshot(), tab, q, sector, city, plan, status)
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["Commerce", "Secteur", "Ville", "Code postal", "Plan", "Clients", "Visites", "Cartes / jour",
-                "Dernière activité", "Statut", "Inscrit le"])
+    w.writerow(["Commerce", "Secteur", "Ville", "Code postal", "Plan", "Clients", "Visites", "Cartes / semaine", "Scans / semaine",
+                "Dernière activité", "Statut", "Situation", "Inscrit le"])
     for r in rows:
         w.writerow([r["name"], r["sector"], r["city"], r["postal_code"], r["plan"]["label"], r["clients"], r["visits"],
-                    r["cards_per_day"] if r["cards_per_day"] is not None else "", r["last_activity"] or "", r["status_label"],
-                    (r["created_at"] or "")[:10]])
+                    r["cards_week"] if r["cards_week"] is not None else "", r["scans_week"] if r["scans_week"] is not None else "",
+                    r["last_activity"] or "", r["status_label"], r["standing_label"], (r["created_at"] or "")[:10]])
     return Response(content="﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="commerces.csv"'})
 
@@ -365,7 +410,7 @@ def suspend(tid: str, body: SuspendIn, token_data: TokenData = Depends(require_a
     ended = _db.user_sessions.update_many({"email": {"$in": emails}, "revoked_at": None}, {"$set": {"revoked_at": _now()}}).modified_count
     core.log_audit("admin.commerce_suspend", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid,
                    meta={"reason": body.reason, "sessions_ended": ended})
-    _suspended_cache.pop(tid, None)
+    forget(tid)
     return {"suspended": True, "sessions_ended": ended}
 
 
@@ -376,24 +421,98 @@ def reactivate(tid: str, token_data: TokenData = Depends(require_admin("commerce
         raise HTTPException(status_code=404, detail="Commerce introuvable")
     _db.tenants.update_one({"id": tid}, {"$unset": {"suspended_at": "", "suspended_by": "", "suspended_reason": ""}})
     core.log_audit("admin.commerce_reactivate", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid)
-    _suspended_cache.pop(tid, None)
+    forget(tid)
     return {"suspended": False}
 
 
+class ResilierIn(BaseModel):
+    reason: str = Field(..., min_length=2, max_length=500)
+    contacted_at: Optional[str] = None           # when the client told us (defaults to now)
+
+
+def _end_sessions(tid: str) -> int:
+    emails = [u["email"] for u in _db.users.find({"tenant_id": tid, "role": {"$in": TEAM}}, {"email": 1})]
+    return _db.user_sessions.update_many({"email": {"$in": emails}, "revoked_at": None}, {"$set": {"revoked_at": _now()}}).modified_count
+
+
+@router.post("/api/admin/commerces/{tid}/resilier")
+def resilier(tid: str, body: ResilierIn, token_data: TokenData = Depends(require_admin("commerces"))):
+    """The client told us they stop (user, 2026-10-01): the account closes at
+    once and the customers' cards stop working. Nothing is deleted."""
+    import server as core
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    if t.get("resiliated_at"):
+        raise HTTPException(status_code=409, detail="Ce commerce est déjà résilié.")
+    if len(body.reason.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Indiquez la raison de la résiliation.")
+    told = _aware(body.contacted_at) or _now()
+    stripe_note = None
+    if t.get("stripe_subscription_id"):
+        try:
+            from features import billing as BL
+            if BL.is_configured():
+                BL.stripe.Subscription.cancel(t["stripe_subscription_id"])
+                stripe_note = "abonnement Stripe annulé"
+        except Exception as exc:                          # noqa: BLE001
+            stripe_note = f"Stripe : {str(exc)[:120]}"
+    _db.tenants.update_one({"id": tid}, {"$set": {"resiliated_at": _now(), "resiliated_by": token_data.email,
+                                                  "resiliation_reason": body.reason.strip(), "resiliation_told_at": told}})
+    ended = _end_sessions(tid)
+    core.log_audit("admin.commerce_resilie", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid,
+                   meta={"reason": body.reason.strip(), "told_at": told.isoformat(), "sessions_ended": ended, "stripe": stripe_note})
+    forget(tid)
+    return {"resiliated": True, "sessions_ended": ended, "stripe": stripe_note}
+
+
+@router.post("/api/admin/commerces/{tid}/annuler-resiliation")
+def annuler_resiliation(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
+    import server as core
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "resiliated_at": 1})
+    if not t:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    _db.tenants.update_one({"id": tid}, {"$unset": {"resiliated_at": "", "resiliated_by": "", "resiliation_reason": "", "resiliation_told_at": ""}})
+    core.log_audit("admin.commerce_resiliation_annulee", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid)
+    forget(tid)
+    return {"resiliated": False}
+
+
 _suspended_cache: Dict[str, Any] = {}
+_closed: Dict[str, Any] = {"at": None, "ids": set(), "slugs": set()}
 
 
-def is_suspended(tenant_id: Optional[str]) -> bool:
-    """Called by auth on every request of a business's team (cached 30 s)."""
+def forget(tid: Optional[str] = None) -> None:
+    """Drop what is cached about a business after it changed."""
+    if tid:
+        _suspended_cache.pop(tid, None)
+    _closed["at"] = None
+
+
+def is_suspended(tenant_id: Optional[str]):
+    """Called by auth on every request of a business's team (cached 30 s):
+    the reason the account is closed, or None."""
     if not tenant_id or _db is None:
-        return False
+        return None
     hit = _suspended_cache.get(tenant_id)
     if hit and hit[1] > _now():
         return hit[0]
-    t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "suspended_at": 1}) or {}
-    val = bool(t.get("suspended_at"))
+    t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "suspended_at": 1, "resiliated_at": 1}) or {}
+    val = ("Ce compte a été résilié. Contactez FidClic." if t.get("resiliated_at")
+           else "Ce compte est suspendu. Contactez FidClic." if t.get("suspended_at") else None)
     _suspended_cache[tenant_id] = (val, _now() + timedelta(seconds=30))
     return val
+
+
+def closed_programs() -> Dict[str, Any]:
+    """Résiliés businesses (ids and join slugs) — their customers' cards stop
+    working. Re-read every 30 s; empty almost always, so it costs nothing."""
+    if _db is None:
+        return {"ids": set(), "slugs": set()}
+    if not _closed["at"] or _closed["at"] < _now():
+        rows = list(_db.tenants.find({"resiliated_at": {"$ne": None}}, {"_id": 0, "id": 1, "slug": 1}))
+        _closed.update(at=_now() + timedelta(seconds=30), ids={r["id"] for r in rows}, slugs={r.get("slug") for r in rows if r.get("slug")})
+    return _closed
 
 
 @router.post("/api/admin/commerces/{tid}/view-as")
@@ -513,7 +632,9 @@ def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commer
         "id": tid, "name": t.get("name"), "logo": row.get("logo"), "sector": _sector(t.get("sector")), "city": t.get("city") or "",
         "postal_code": t.get("postal_code") or "", "address": t.get("address") or "", "phone": t.get("phone") or "",
         "website": t.get("website") or "", "status": row.get("status"), "status_label": row.get("status_label"),
-        "cards_per_day": row.get("cards_per_day"), "plan": row.get("plan"), "plan_key": core._canonical_plan(t.get("plan")),
+        "cards_week": row.get("cards_week"), "scans_week": row.get("scans_week"), "standing": row.get("standing"),
+        "standing_label": row.get("standing_label"), "resiliated": bool(t.get("resiliated_at")), "resiliated_at": _iso(t.get("resiliated_at")),
+        "resiliation_reason": t.get("resiliation_reason"), "plan": row.get("plan"), "plan_key": core._canonical_plan(t.get("plan")),
         "created_at": _iso(t.get("created_at")), "renews_on": _iso(t.get("subscription_period_end") or t.get("trial_ends_at")),
         "subscription_status": t.get("subscription_status"), "suspended": bool(t.get("suspended_at")),
         "suspended_reason": t.get("suspended_reason"), "suspended_at": _iso(t.get("suspended_at")),

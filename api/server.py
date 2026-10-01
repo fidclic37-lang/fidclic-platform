@@ -1849,6 +1849,42 @@ async def platform_journal(request: Request, call_next):
     return response
 
 
+# Résilié (user, 2026-10-01): the customers' cards of a business that left
+# FidClic stop working — card page, wallet passes and updates, joining. A
+# customer can still read or erase their own data (RGPD).
+_CARD_OPEN = re.compile(r"^/api/card/[^/]+/(my-data|forget-me)$")
+
+
+@app.middleware("http")
+async def closed_program(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith(("/api/card/", "/api/manifest/", "/api/join/", "/api/join-form/", "/api/passes/v1/passes/")):
+        return await call_next(request)
+    try:
+        from features import admin_commerces as _AC
+        closed = _AC.closed_programs()
+    except Exception:
+        return await call_next(request)
+    if not closed["ids"] or _CARD_OPEN.match(path) or (request.method == "DELETE" and path.count("/") == 3):
+        return await call_next(request)
+    parts = path.split("/")
+    tenant_id = None
+    if parts[2] in ("join", "join-form"):
+        if len(parts) > 3 and parts[3] in closed["slugs"]:
+            tenant_id = "closed"
+    else:
+        key = parts[-1] if parts[2] == "passes" else (parts[3] if len(parts) > 3 else "")
+        c = db.customers.find_one({"barcode_id": key}, {"_id": 0, "tenant_id": 1}) if key else None
+        tenant_id = (c or {}).get("tenant_id")
+    if tenant_id == "closed" or tenant_id in closed["ids"]:
+        from fastapi.responses import JSONResponse
+        # no-store: a 410 is cacheable by default — after « Annuler la
+        # résiliation » the card must open again at once.
+        return JSONResponse(status_code=410, content={"detail": "Ce programme de fidélité n'est plus disponible.", "code": "PROGRAM_CLOSED"},
+                            headers={"Cache-Control": "no-store"})
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def plan_guard(request: Request, call_next):
     """Super admin › Plan Limits: an owner call into a section the business's
@@ -2515,9 +2551,12 @@ def finish_login(response: Response, user: Dict[str, Any], request: Request = No
     - a business being deleted keeps everyone but its owner out;
     - an account with 2FA gets a 5-minute challenge instead of a session,
       answered at /api/auth/login/2fa (features/security_page.py)."""
-    tenant = db.tenants.find_one({"id": user.get("tenant_id")}, {"deletion_scheduled_at": 1, "suspended_at": 1}) if user.get("tenant_id") else None
+    tenant = db.tenants.find_one({"id": user.get("tenant_id")}, {"deletion_scheduled_at": 1, "suspended_at": 1, "resiliated_at": 1}) if user.get("tenant_id") else None
     if tenant and tenant.get("deletion_scheduled_at") and user.get("role") != "business_owner":
         raise HTTPException(status_code=403, detail="Ce compte est en cours de suppression. Contactez le propriétaire.")
+    if tenant and tenant.get("resiliated_at"):
+        # Résilié (features/admin_commerces.py): closed at once, cards included.
+        raise HTTPException(status_code=403, detail="Ce compte a été résilié. Contactez FidClic.")
     if tenant and tenant.get("suspended_at"):
         # Suspended by FidClic: nobody of the business signs in; its customers'
         # cards keep working (features/admin_commerces.py).

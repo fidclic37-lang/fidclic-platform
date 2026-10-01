@@ -80,6 +80,7 @@ const JoinPage = () => {
     return () => { alive = false; };
   }, [parrainBarcode]);
   const [tenant, setTenant] = useState(null);
+  const [closed, setClosed] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -121,7 +122,11 @@ const JoinPage = () => {
         return;
       }
       setTenant(res.data);
-    }).catch(console.error);
+    }).catch((e) => {
+      // Résilié (2026-10-01): the business left FidClic — say so instead of loading forever.
+      if (e?.response?.status === 410) setClosed(e.response.data?.detail || "Ce programme de fidélité n'est plus disponible.");
+      else console.error(e);
+    });
     publicAPI.joinPage(slug).then(({ data }) => setPage(data)).catch(() => {});
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -310,6 +315,7 @@ const JoinPage = () => {
     }
   };
 
+  if (closed) return <div className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E9E5E0] bg-white p-8"><p className="mb-2 font-semibold text-[#171412]">Programme terminé</p><p className="text-sm text-[#57504A]">{closed}</p></div></div>;
   if (!tenant) return <div className="p-8 text-center">{t('common.loading')}</div>;
 
   return (
