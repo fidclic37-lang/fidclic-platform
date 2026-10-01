@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 BAN_URL = "https://api-adresse.data.gouv.fr/search/"
 TIMEOUT_S = 4.0
@@ -193,3 +193,64 @@ def cities_for(postal_codes) -> Dict[str, str]:
         if city:
             out[postal] = city
     return out
+
+
+# ---------------------------------------------------------------------------
+# Positions (super admin › Analytics › « Carte des commerces », 2026-10-01):
+# the centre of a postal code — or of a town when there is no code — from the
+# same BAN service, kept in commune_cache so each place is asked once.
+# ---------------------------------------------------------------------------
+_positions: Dict[str, Any] = {}
+
+
+def _fetch_position(q: str, postcode: str = "", kind: str = "municipality"):
+    try:
+        import httpx
+    except ImportError:
+        return None
+    try:
+        params = {"q": q, "limit": 1, "type": kind}
+        if postcode:
+            params["postcode"] = postcode
+        r = httpx.get(BAN_URL, params=params, timeout=TIMEOUT_S)
+        if r.status_code != 200:
+            return None
+        features = (r.json() or {}).get("features") or []
+        coords = ((features[0] if features else {}).get("geometry") or {}).get("coordinates")
+        if coords and len(coords) == 2:
+            return float(coords[1]), float(coords[0])
+    except Exception:
+        return None
+    return None
+
+
+def position_for(postal_code: object = "", city: object = "", fetch: bool = True):
+    """(lat, lng) of a postal code (or of a town), or None. `fetch=False` only
+    reads what is already known (no network)."""
+    postal = _clean(postal_code)
+    town = str(city or "").strip()
+    key = postal or (f"ville:{town.lower()}" if town else "")
+    if not key:
+        return None
+    if key in _positions:
+        return _positions[key]
+    if _db is not None:
+        try:
+            row = _db.commune_cache.find_one({"postal_code": key}, {"_id": 0, "lat": 1, "lng": 1})
+            if row and row.get("lat") is not None:
+                _positions[key] = (row["lat"], row["lng"])
+                return _positions[key]
+        except Exception:
+            pass
+    if not fetch:
+        return None
+    pos = _fetch_position(postal or town, postal) if postal else _fetch_position(town)
+    if pos:
+        _positions[key] = pos
+        if _db is not None:
+            try:
+                _db.commune_cache.update_one({"postal_code": key}, {"$set": {"postal_code": key, "lat": pos[0], "lng": pos[1],
+                                                                            "at": datetime.now(timezone.utc)}}, upsert=True)
+            except Exception:
+                pass
+    return pos

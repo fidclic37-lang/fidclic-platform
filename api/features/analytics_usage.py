@@ -131,7 +131,7 @@ def _geo_on(t: Dict[str, Any], f: Dict[str, Any]) -> str:
 def _renewal(t: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
     from features import plan_limits as PL
     status = (t.get("subscription_status") or "").lower()
-    if t.get("suspended_at") or status in ("canceled", "cancelled", "incomplete_expired"):
+    if t.get("suspended_at") or t.get("resiliated_at") or status in ("canceled", "cancelled", "incomplete_expired"):
         return None
     trial = status in ("trialing", "onboarding") or (not status and t.get("trial_ends_at"))
     at = PL.next_cycle(t, now)

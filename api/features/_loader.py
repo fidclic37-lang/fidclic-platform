@@ -40,6 +40,7 @@ MODULES = [
     "features.admin_insights",
     "features.admin_analytics",
     "features.analytics_usage",
+    "features.analytics_deep",
     "features.support_center",
     "features.admin_ai",
     "features.plan_limits",
