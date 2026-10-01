@@ -14,7 +14,7 @@ import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
-  UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ArrowDownUp, MessagesSquare, ChevronDown,
+  UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown,
   Receipt, Eye, ShieldCheck, Lock,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
@@ -78,8 +78,7 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, a
 const CRM_ITEMS = [
   ['/admin/crm', 'Vue d\'ensemble', UserRound], ['/admin/crm/prospects', 'Prospects', Users], ['/admin/crm/pipeline', 'Pipeline', Kanban],
   ['/admin/crm/taches', 'Tâches', ListChecks], ['/admin/crm/calendrier', 'Calendrier', CalendarDays], ['/admin/crm/sequences', 'Séquences d\'emails', Mail],
-  ['/admin/crm/modeles', 'Modèles d\'emails', MailOpen], ['/admin/crm/appels', 'Appels', Phone], ['/admin/crm/import', 'Import / Export', ArrowDownUp],
-  ['/admin/crm/conversations', 'Suivi des conversations', MessagesSquare], ['/admin/crm/statistiques', 'Statistiques', PieChart],
+  ['/admin/crm/modeles', 'Modèles d\'emails', MailOpen], ['/admin/crm/appels', 'Appels', Phone],
 ];
 const CrmNav = ({ currentPath, role, collapsed }) => {
   const inCrm = currentPath.startsWith('/admin/crm');

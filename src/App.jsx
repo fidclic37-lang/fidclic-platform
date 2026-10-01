@@ -112,7 +112,6 @@ import AdminInvoicingPage from './pages/AdminInvoicingPage';
 import CrmOverviewPage from './pages/crm/CrmOverviewPage';
 // Rollback: the overview's previous layout — import CrmOverviewPageV1 from './pages/crm/CrmOverviewPageV1';
 import CrmProspectsPage from './pages/crm/CrmProspectsPage';
-import CrmSoonPage from './pages/crm/CrmSoonPage';
 import CrmPipelinePage from './pages/crm/CrmPipelinePage';
 import CrmTasksPage from './pages/crm/CrmTasksPage';
 import CrmCalendarPage from './pages/crm/CrmCalendarPage';
@@ -499,15 +498,16 @@ function App() {
             <Route path="crm/sequences" element={<AdminGate><CrmSequencesPage /></AdminGate>} />
             <Route path="crm/modeles" element={<AdminGate><CrmTemplatesPage /></AdminGate>} />
             <Route path="crm/appels" element={<AdminGate><CrmCallsPage /></AdminGate>} />
-            <Route path="crm/import" element={<AdminGate><CrmSoonPage title="Import / Export" text="L'historique de vos imports et exports. En attendant, importez depuis la page Prospects." /></AdminGate>} />
-            <Route path="crm/conversations" element={<AdminGate><CrmSoonPage title="Suivi des conversations" text="Chaque échange avec un commerce — emails, réponses, appels, notes — au même endroit." /></AdminGate>} />
+            {/* Import / Export, Suivi des conversations and Statistiques were removed from the CRM (user, 2026-10-01); old links land on the overview. */}
+            <Route path="crm/import" element={<Navigate to="/admin/crm" replace />} />
+            <Route path="crm/conversations" element={<Navigate to="/admin/crm" replace />} />
+            <Route path="crm/statistiques" element={<Navigate to="/admin/crm" replace />} />
             {/* Sécurité — FidClic's own team */}
             <Route path="securite" element={<AdminGate><SecuriteOverviewPage /></AdminGate>} />
             <Route path="securite/roles" element={<AdminGate><RolesPage /></AdminGate>} />
             <Route path="securite/connexions" element={<AdminGate><ConnexionsPage /></AdminGate>} />
             <Route path="securite/journal" element={<AdminGate><JournalPage /></AdminGate>} />
             <Route path="securite/parametres" element={<AdminGate><SecuritySettingsPage /></AdminGate>} />
-            <Route path="crm/statistiques" element={<AdminGate><CrmSoonPage title="Statistiques" text="Taux de conversion, performance par commercial, par source et par secteur." /></AdminGate>} />
           </Route>
         </Routes>
        </Router>
