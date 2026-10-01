@@ -64,8 +64,25 @@ def _buckets(start: datetime, end: datetime, n: int = 8):
     return [(start + step * i, start + step * (i + 1)) for i in range(n)]
 
 
+def _subscription(t: Dict[str, Any]) -> str:
+    """« essai » (trial / onboarding, as the Commerces page shows it),
+    « abonne » (signed: a paid subscription that is running — the MRR's
+    base) or « autre » (cancelled, unpaid, suspended, never subscribed)."""
+    status = (t.get("subscription_status") or "").lower()
+    if status in ("trialing", "onboarding") or (not status and t.get("trial_ends_at")):
+        return "essai"
+    if status == "active" and not t.get("suspended_at"):
+        return "abonne"
+    return "autre"
+
+
 def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
+    """The Dashboard's figures (user, 2026-10-01): Commerces — with how many
+    are in trial and how many have signed —, new businesses this month,
+    clients finaux, cartes actives, chiffre d'affaires total, MRR."""
     import server as core
+    from features import admin_analytics as AN
+    now = _now()
     prev = start - (end - start)
     B = _buckets(start, end)
     live_t = {"is_active": {"$ne": False}}
@@ -74,20 +91,34 @@ def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
         at = lambda t: _db[coll].count_documents({**match, field: {"$lt": t}})       # noqa: E731
         return at(end), at(start), [at(b) for _, b in B]
 
-    def flow(coll, match, field):
-        n = lambda a, b: _db[coll].count_documents({**match, field: {"$gte": a, "$lt": b}})   # noqa: E731
-        return n(start, end), n(prev, start), [n(a, b) for a, b in B]
-
     out = []
-    for key, (cur, old, series) in (
-        ("commerces", cum("tenants", live_t)),
-        ("clients", cum("customers", LIVE)),
-        ("cartes", cum("customers", {**LIVE, "pass_issued": True})),
-        ("visites", flow("visits", {}, "visit_time")),
-        ("campagnes", flow("campaigns", {"sent_at": {"$ne": None}}, "sent_at")),
-        ("notifications", flow("delivery_log", {"result.sent": {"$nin": [0, False, None]}}, "timestamp")),
-    ):
+    cur, old, series = cum("tenants", live_t)
+    split = defaultdict(int)
+    for t in tenants:
+        split[_subscription(t)] += 1
+    out.append({"key": "commerces", "value": cur, "delta": _delta(cur, old), "series": series,
+                "breakdown": {"essai": split["essai"], "abonne": split["abonne"], "autre": split["autre"]}})
+
+    # New businesses this calendar month, against the same days of last month.
+    m0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    p0 = (m0 - timedelta(days=1)).replace(day=1)
+    p_end = min(p0 + (now - m0), m0)
+    created = [d for d in (_aware(t.get("created_at")) for t in tenants) if d]
+    months = AC.month_windows(now, 8)
+    out.append({"key": "nouveaux", "value": sum(1 for d in created if d >= m0), "delta": _delta(sum(1 for d in created if d >= m0),
+                                                                                                   sum(1 for d in created if p0 <= d < p_end)),
+                "series": [sum(1 for d in created if a <= d < b) for a, b in months]})
+
+    for key, (cur, old, series) in (("clients", cum("customers", LIVE)), ("cartes", cum("customers", {**LIVE, "pass_issued": True}))):
         out.append({"key": key, "value": cur, "delta": _delta(cur, old), "series": series})
+
+    # Chiffre d'affaires total: what the businesses' customers spent (their
+    # visits) — the same figure as Analytics.
+    amounts = [(_aware(v.get("visit_time")), float(v.get("amount_paid") or 0))
+               for v in _db.visits.find({"visit_time": {"$gte": prev, "$lt": end}}, {"_id": 0, "visit_time": 1, "amount_paid": 1})]
+    ca = lambda a, b: round(sum(x for at, x in amounts if at and a <= at < b), 2)     # noqa: E731
+    out.append({"key": "ca", "value": ca(start, end), "delta": _delta(ca(start, end), ca(prev, start)), "series": [ca(a, b) for a, b in B]})
+
     paying = [t for t in tenants if (t.get("subscription_status") or "") == "active" and not t.get("suspended_at")]
     mrr = round(sum(core.tenant_price(t) for t in paying))
     mrr_at = lambda at: round(sum(core.tenant_price(t) for t in paying if (_aware(t.get("created_at")) or at) < at))   # noqa: E731
@@ -257,6 +288,7 @@ def dashboard(date_from: Optional[str] = Query(None, alias="from"), date_to: Opt
 def _build(start: datetime, end: datetime, months: int, now: datetime) -> Dict[str, Any]:
     import server as core
     import models
+    from features import admin_analytics as AN
     tenants = list(_db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0}))
     rows = AC.snapshot(now)
     names = {t["id"]: t.get("name") for t in tenants}
@@ -268,9 +300,6 @@ def _build(start: datetime, end: datetime, months: int, now: datetime) -> Dict[s
     new_now = sum(1 for t in tenants if (_aware(t.get("created_at")) or now) >= month_start)
     new_prev = sum(1 for t in tenants if prev_month <= (_aware(t.get("created_at")) or now) < month_start)
     four_weeks = lambda k: hist[k][-5] if len(hist[k]) >= 5 else 0          # noqa: E731
-    sectors = defaultdict(int)
-    for r in rows:
-        sectors[r["sector"] or "Autres"] += 1
     plans = defaultdict(int)
     for r in rows:
         plans[r["plan"]["key"]] += 1
@@ -282,8 +311,10 @@ def _build(start: datetime, end: datetime, months: int, now: datetime) -> Dict[s
     return {
         "period": {"from": start.date().isoformat(), "to": (end - timedelta(seconds=1)).date().isoformat()},
         "kpis": _kpis(tenants, start, end),
-        "evolution": _evolution(months),
-        "sectors": _share(sectors), "total": total, "plans": plan_rows,
+        # « Évolution de la plateforme » and the sector donut moved to Analytics;
+        # three of Analytics' sections are shown here too (user, 2026-10-01).
+        "total": total, "plans": plan_rows,
+        "cities": AN.cities(tenants), "revenue": AN.revenue_by_plan(tenants, start, end), "sources": AN.sources(start, end),
         "status_cards": [
             {"key": "nouveaux", "value": new_now, "delta": _delta(new_now, new_prev), "bars": hist["nouveaux"]},
             {"key": "actif", "value": by_status["actif"], "pct": round(by_status["actif"] / total * 100) if total else 0,

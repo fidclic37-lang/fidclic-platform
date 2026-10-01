@@ -1,19 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ComposedChart } from 'recharts';
 import {
-  Store, Users, CreditCard, Eye, Megaphone, Smartphone, Euro, CalendarDays, ChevronDown, TrendingUp, PieChart as PieIcon,
-  Sparkles, ChevronRight, AlertTriangle, CalendarClock, TrendingDown, Rocket, Clock, Building2, Trophy, Activity, Send,
-  UserPlus, PauseCircle, PlayCircle, Inbox, ArrowUp, ArrowDown,
+  Store, Users, CreditCard, Megaphone, Euro, CalendarDays, ChevronDown, PieChart as PieIcon, Sparkles, ChevronRight, TrendingDown, Rocket, Clock, Building2, Trophy, Activity, Send, UserPlus, PauseCircle, PlayCircle, Inbox, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Head, Kpi, Donut, Loading, Modal, nf, BLUE } from '../crm/ui';
 import { PlanPill, CommerceLogo } from './CommercesPage';
+import { CitiesSection, RevenueSection, SourcesSection } from './analytics/sections';
 
 /* Super admin › Dashboard — built to the approved mockup. */
 
 const PERIODS = [['7', '7 derniers jours'], ['30', '30 derniers jours'], ['90', '90 derniers jours'], ['365', '12 derniers mois'], ['custom', 'Personnalisé…']];
-const MONTHS = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
 const iso = (d) => d.toISOString().slice(0, 10);
 const frDate = (s) => new Date(`${s}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 const OPP_ICON = { limit: [CreditCard, '#F59E0B', '#FFF4DB'], campaign: [Megaphone, '#F97316', '#FFEDD5'], falling: [TrendingDown, '#8B5CF6', '#F3EEFF'],
@@ -32,7 +29,6 @@ export default function AdminDashboardPage() {
   const navigate = useNavigate();
   const [period, setPeriod] = useState('30');
   const [custom, setCustom] = useState({ from: iso(new Date(Date.now() - 30 * 86400000)), to: iso(new Date()) });
-  const [months, setMonths] = useState(6);
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(false);
@@ -40,20 +36,31 @@ export default function AdminDashboardPage() {
 
   const range = () => (period === 'custom' ? custom : { from: iso(new Date(Date.now() - Number(period) * 86400000)), to: iso(new Date()) });
   const load = useCallback(() => {
-    adminAPI.dashboard({ ...range(), months }).then(({ data }) => { setErr(''); setD(data); }).catch((e) => setErr(e?.response?.data?.detail || 'Impossible de charger le tableau de bord.'));
-  }, [period, custom, months]); // eslint-disable-line react-hooks/exhaustive-deps
+    adminAPI.dashboard(range()).then(({ data }) => { setErr(''); setD(data); }).catch((e) => setErr(e?.response?.data?.detail || 'Impossible de charger le tableau de bord.'));
+  }, [period, custom]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
   const K = Object.fromEntries(d.kpis.map((k) => [k.key, k]));
   const S = Object.fromEntries(d.status_cards.map((k) => [k.key, k]));
   const oppTotal = d.opportunities.reduce((a, o) => a + o.count, 0);
+  // The figures (user, 2026-10-01): Visites, Campagnes and Notifications
+  // left; Commerces shows trial vs signed; new businesses this month and the
+  // chiffre d'affaires total joined.
   const kpis = [
-    ['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF'], ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE'],
-    ['cartes', 'Cartes actives', CreditCard, '#2F6BFF', '#EAF1FF'], ['visites', 'Visites', Eye, '#10B981', '#E7F7EE'],
-    ['campagnes', 'Campagnes', Megaphone, '#E11D48', '#FDECEF'], ['notifications', 'Notifications', Smartphone, '#F97316', '#FFEDD5'],
-    ['mrr', 'MRR', Euro, '#10B981', '#E7F7EE'],
+    ['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF'], ['nouveaux', 'Nouveaux ce mois', UserPlus, '#8B5CF6', '#F3EEFF'],
+    ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE'], ['cartes', 'Cartes actives', CreditCard, '#2F6BFF', '#EAF1FF'],
+    ['ca', "Chiffre d'affaires total", Euro, '#F59E0B', '#FFF4DB'], ['mrr', 'MRR', Euro, '#10B981', '#E7F7EE'],
   ];
+  const money = (k) => k === 'mrr' || k === 'ca';
+  const split = K.commerces.breakdown || {};
+  const commercesFoot = (
+    <p className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-[#475569]" title="En essai : période d'essai gratuite. Abonnés : abonnement payant en cours (base du MRR). Autres : résilié, impayé, suspendu ou sans abonnement.">
+      <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-[#8B5CF6]" />{nf(split.essai)} en essai</span>
+      <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-[#10B981]" />{nf(split.abonne)} abonnés</span>
+      {split.autre > 0 && <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-[#CBD5E1]" />{nf(split.autre)} autres</span>}
+    </p>
+  );
   const statusCards = [
     ['nouveaux', 'Nouveaux commerces', '#2F6BFF', (c) => <><strong className="text-[26px] text-[#10B981]">+{nf(c.value)}</strong><span className="block text-[12.5px] text-[#64748B]">ce mois-ci</span></>, 'nouveaux'],
     ['actif', 'Commerces actifs', '#10B981', (c) => <><strong className="text-[26px] text-[#0B1C3F]">{nf(c.value)}</strong><span className="block text-[12.5px] text-[#64748B]">{c.pct}% du total</span></>, 'actif'],
@@ -87,35 +94,19 @@ export default function AdminDashboardPage() {
         </span>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        {kpis.map(([k, l, I, c, bg]) => <Kpi compact key={k} icon={I} tone={c} bg={bg} value={k === 'mrr' ? `€${nf(K[k].value)}` : nf(K[k].value)} label={l} delta={K[k].delta} series={K[k].series} />)}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        {kpis.map(([k, l, I, c, bg]) => <Kpi compact key={k} icon={I} tone={c} bg={bg} value={money(k) ? `€${nf(Math.round(K[k].value))}` : nf(K[k].value)} label={l} delta={K[k].delta} series={K[k].series}
+                                             foot={k === 'commerces' ? commercesFoot : null} />)}
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_1fr_1fr]">
-        <Card>
-          <Head icon={TrendingUp} title="Évolution de la plateforme" right={
-            <select value={months} onChange={(e) => setMonths(Number(e.target.value))} className="h-8 rounded-lg border border-[#DCE3EE] bg-white px-2 text-[12px]"><option value={6}>6 derniers mois</option><option value={12}>12 derniers mois</option></select>} />
-          <div className="mb-1 flex flex-wrap justify-end gap-3 text-[12px] text-[#475569]">
-            {[['#2F6BFF', 'Commerces (échelle de droite)'], ['#10B981', 'Clients'], ['#8B5CF6', 'Visites']].map(([c, l]) => <span key={l} className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full" style={{ background: c }} />{l}</span>)}
-          </div>
-          <div className="h-[230px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={d.evolution.map((m) => ({ ...m, m: MONTHS[Number(m.month.slice(5, 7)) - 1] }))} margin={{ top: 8, right: 4, left: -10, bottom: 0 }}>
-                <defs><linearGradient id="dashV" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.18} /><stop offset="100%" stopColor="#8B5CF6" stopOpacity={0} /></linearGradient></defs>
-                <CartesianGrid stroke="#EEF2F7" vertical={false} />
-                <XAxis dataKey="m" tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="l" tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}K` : v)} />
-                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: '#2F6BFF' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip formatter={(v, k) => [nf(v), { commerces: 'Commerces', clients: 'Clients', visites: 'Visites' }[k]]} />
-                <Area yAxisId="l" type="monotone" dataKey="visites" stroke="#8B5CF6" strokeWidth={2} fill="url(#dashV)" dot={{ r: 2.5 }} />
-                <Line yAxisId="l" type="monotone" dataKey="clients" stroke="#10B981" strokeWidth={2} dot={{ r: 2.5 }} />
-                <Line yAxisId="r" type="monotone" dataKey="commerces" stroke="#2F6BFF" strokeWidth={2} dot={{ r: 2.5 }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-        <Card><Head icon={PieIcon} title="Répartition des commerces par secteur" /><Donut rows={d.sectors} center={nf(d.total)} sub="commerces" /></Card>
+      {/* Sources, plans, chiffre d'affaires, villes — the three Analytics
+          sections the user wanted here too (same figures as Analytics). « Évolution
+          de la plateforme » and the sector donut moved to Analytics. */}
+      <div className="mt-4 grid gap-4 xl:grid-cols-2 min-[1700px]:grid-cols-[1.3fr_1fr_1fr_1fr]">
+        <SourcesSection rows={d.sources} Card={Card} Head={Head} />
         <Card><Head icon={PieIcon} title="Répartition par plan" /><Donut rows={d.plans} center={nf(d.total)} sub="commerces" /></Card>
+        <RevenueSection revenue={d.revenue} Card={Card} Head={Head} />
+        <CitiesSection rows={d.cities} Card={Card} Head={Head} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[repeat(4,1fr)_1.45fr]">

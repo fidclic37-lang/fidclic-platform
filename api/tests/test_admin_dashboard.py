@@ -52,7 +52,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # Visits: b drops from 40 to 10.
     db.visits.insert_many([{"id": f"vb{i}", "tenant_id": "b", "customer_id": "b1", "visit_time": now - dt.timedelta(days=31 + i % 25)} for i in range(40)]
                           + [{"id": f"vb2{i}", "tenant_id": "b", "customer_id": "b1", "visit_time": now - dt.timedelta(days=i % 25)} for i in range(10)]
-                          + [{"id": f"va{i}", "tenant_id": "a", "customer_id": "a1", "visit_time": now - dt.timedelta(days=i % 20)} for i in range(30)])
+                          + [{"id": f"va{i}", "tenant_id": "a", "customer_id": "a1", "visit_time": now - dt.timedelta(days=i % 20), "amount_paid": 10.5} for i in range(30)])
     db.campaigns.insert_one({"id": "k1", "tenant_id": "a", "name": "Promo", "sent_at": now - dt.timedelta(days=2)})
     db.delivery_log.insert_many([{"tenant_id": "a", "kind": "campaign", "result": {"sent": 1}, "timestamp": now - dt.timedelta(days=2)},
                                  {"tenant_id": "a", "kind": "campaign", "result": {"sent": 0}, "timestamp": now - dt.timedelta(days=2)}])
@@ -65,20 +65,35 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = D.dashboard(token_data=ADMIN)
     print("\nFigures")
     k = {x["key"]: x for x in d["kpis"]}
-    check("seven figures", list(k) == ["commerces", "clients", "cartes", "visites", "campagnes", "notifications", "mrr"])
+    check("six figures (visites, campagnes, notifications removed)", list(k) == ["commerces", "nouveaux", "clients", "cartes", "ca", "mrr"])
     check("commerces and clients", k["commerces"]["value"] == 4 and k["clients"]["value"] == 319)
+    check("commerces: 1 in trial, 3 signed (paid subscription running)", k["commerces"]["breakdown"] == {"essai": 1, "abonne": 3, "autre": 0})
+    month0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    expected_new = sum(1 for t in db.tenants.find({}, {"created_at": 1}) if t["created_at"].replace(tzinfo=dt.timezone.utc) >= month0)
+    check("nouveaux commerces = created this calendar month", k["nouveaux"]["value"] == expected_new)
     check("cartes actives = cards on a phone", k["cartes"]["value"] == 252 + 32)
-    check("visits and campaigns in the last 30 days", k["visites"]["value"] == 40 and k["campagnes"]["value"] == 1)
-    check("notifications count what reached someone", k["notifications"]["value"] == 1)
+    check("chiffre d'affaires total = what customers spent in the period", k["ca"]["value"] == 315.0)
     check("MRR: paying businesses, franchise at its agreed price", k["mrr"]["value"] == 79 + 39 + 450)
     check("each figure has its trend", all(len(x["series"]) == 8 for x in d["kpis"]))
     p = D.dashboard(date_from=(now - dt.timedelta(days=7)).date().isoformat(), date_to=now.date().isoformat(), token_data=ADMIN)
-    check("a shorter period counts less", {x["key"]: x for x in p["kpis"]}["visites"]["value"] < 40)
+    check("a shorter period counts less", {x["key"]: x for x in p["kpis"]}["ca"]["value"] < 315.0)
+    db.tenants.update_one({"id": "c"}, {"$set": {"suspended_at": now}})
+    D._cache.clear()
+    check("a suspended business is not counted as signed", {x["key"]: x for x in D.dashboard(token_data=ADMIN)["kpis"]}["commerces"]["breakdown"]["autre"] == 1)
+    db.tenants.update_one({"id": "c"}, {"$unset": {"suspended_at": ""}})
+    D._cache.clear()
 
     print("\nCharts")
-    check("six calendar months", len(d["evolution"]) == 6 and d["evolution"][-1]["commerces"] == 4)
-    check("twelve on request", len(D.dashboard(months=12, token_data=ADMIN)["evolution"]) == 12)
-    check("sectors in French", {s["label"] for s in d["sectors"]} == {"Boulangerie", "Café / Salon de thé", "Restauration / Fast-food"})
+    check("Évolution and the sector donut left the Dashboard", "evolution" not in d and "sectors" not in d)
+    check("ville, chiffre d'affaires per plan, sources", d["cities"][0] == {"key": "Tours", "label": "Tours", "count": 3, "pct": 75}
+          and d["revenue"]["total"] == 315.0 and d["revenue"]["rows"][0]["label"] == "Pro" and d["sources"])
+    from features import admin_analytics as AN
+    AN.init(db)
+    an = AN.analytics(token_data=ADMIN)
+    check("…the same figures as Analytics", an["cities"] == d["cities"] and an["revenue"] == d["revenue"] and an["sources"] == d["sources"])
+    check("Analytics: six calendar months of « Évolution »", len(an["evolution"]) == 6 and an["evolution"][-1]["commerces"] == 4)
+    check("…twelve on request", len(AN.analytics(months=12, token_data=ADMIN)["evolution"]) == 12)
+    check("Analytics: sector donut in French", {s["label"] for s in an["sectors_donut"]} == {"Boulangerie", "Café / Salon de thé", "Restauration / Fast-food"})
     check("plans incl. franchise and trial", {p_["key"]: p_["count"] for p_ in d["plans"]} == {"silver": 1, "gold": 1, "franchise": 1, "essai": 1})
 
     sh = D._share({"A": 5, "B": 4, "Autres": 2, "C": 1, "D": 1}, top=2)

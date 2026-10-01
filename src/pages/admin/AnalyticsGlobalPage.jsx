@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, LabelList, PieChart, Pie,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import {
-  Store, Users, BarChart3, Euro, ArrowUpRight, ArrowDownRight, Settings, Clock, MapPin, CalendarClock, Target, UserSquare2,
-  Plus, Crown, Star, Send, CreditCard, Pencil, Loader2, ChevronDown,
+  Store, Users, BarChart3, Euro, ArrowUpRight, ArrowDownRight, Settings, Clock, CalendarClock, UserSquare2, Plus, Crown, Star, Send, CreditCard, Pencil, Loader2, ChevronDown,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Kpi, Donut, Bars, Loading, Breadcrumb, Modal, nf } from '../crm/ui';
 import { RangePicker, useRange } from './securite/shared';
 import UsagePanel, { UsageFigures } from './analytics/UsagePanel';
+import { CitiesSection, RevenueSection, SourcesSection, EvolutionSection, SectorsDonutSection } from './analytics/sections';
 
 /* Super admin › Analytics global — built to the approved mockup
    (features/admin_analytics.py). « Répartition du chiffre d'affaires » shows
@@ -19,9 +19,7 @@ import UsagePanel, { UsageFigures } from './analytics/UsagePanel';
    (analytics/UsagePanel.jsx, features/analytics_usage.py). */
 
 const eur = (v, dec = 0) => `€${Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
-const eurAuto = (v) => eur(v, Number(v) % 1 ? 2 : 0);
 const GRAINS = [['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois']];
-const SOURCE_COLORS = { 'QR Store': '#8B5CF6', Instagram: '#F43F5E', Facebook: '#2F6BFF', 'Site web': '#F59E0B', TikTok: '#94A3B8', Autres: '#CBD5E1' };
 const KIND = {
   commerce: [Plus, '#10B981', 'Commerce', ['#E6F0FF', '#2F6BFF']], abonnement: [Crown, '#F59E0B', 'Abonnement', ['#E7F7EE', '#0F8B58']],
   avis: [Star, '#F59E0B', 'Avis', ['#FFF4DB', '#D97706']], marketing: [Send, '#2F6BFF', 'Marketing', ['#F3EEFF', '#7C3AED']],
@@ -76,13 +74,14 @@ export default function AnalyticsGlobalPage() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [all, setAll] = useState(null);
+  const [months, setMonths] = useState(6);
 
   const load = useCallback(() => {
     setBusy(true);
-    adminAPI.analyticsGlobal({ ...range, grain }).then(({ data }) => { setD(data); setErr(''); })
+    adminAPI.analyticsGlobal({ ...range, grain, months }).then(({ data }) => { setD(data); setErr(''); })
       .catch((e) => setErr(typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : 'Impossible de charger les analytics.'))
       .finally(() => setBusy(false));
-  }, [range, grain]);
+  }, [range, grain, months]);
   useEffect(() => { load(); }, [load]);
   const showAll = () => { setAll([]); adminAPI.analyticsActivity({ ...range, limit: 100 }).then(({ data }) => setAll(data.rows)).catch(() => setAll([])); };
 
@@ -91,7 +90,6 @@ export default function AnalyticsGlobalPage() {
   const kpis = [['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF', nf(K.commerces.value)], ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE', nf(K.clients.value)],
     ['visites', 'Visites', BarChart3, '#F59E0B', '#FFF4DB', nf(K.visites.value)], ['mrr', 'MRR', Euro, '#8B5CF6', '#F3EEFF', eur(K.mrr.value)],
     ['ca', "Chiffre d'affaires total", Euro, '#2F6BFF', '#EAF1FF', eur(K.ca.value, 2)]];
-  const cityMax = Math.max(1, ...d.cities.map((c) => c.count));
 
   return (
     <div className="crm">
@@ -134,19 +132,13 @@ export default function AnalyticsGlobalPage() {
       {/* 3 — sectors · cities */}
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <Card><Head icon={Clock} title="Répartition par secteur" sub="Nombre de commerces par secteur d'activité." /><Bars rows={d.sectors} /></Card>
-        <Card>
-          <Head icon={MapPin} title="Répartition par ville" sub="Nombre de commerces par ville." />
-          <ul className="space-y-2">
-            {d.cities.map((c) => (
-              <li key={c.label} className="grid grid-cols-[120px_1fr_72px] items-center gap-2 text-[12.5px]">
-                <span className="truncate text-[#475569]">{c.label}</span>
-                <span className="h-2.5 overflow-hidden rounded-sm bg-[#EEF2F8]"><span className="block h-full rounded-sm bg-[#2F6BFF]" style={{ width: `${(c.count / cityMax) * 100}%` }} /></span>
-                <span className="text-right text-[#64748B]">{nf(c.count)} ({c.pct}%)</span>
-              </li>
-            ))}
-            {!d.cities.length && <li className="text-[12.5px] text-[#94A3B8]">Aucune donnée pour le moment.</li>}
-          </ul>
-        </Card>
+        <CitiesSection rows={d.cities} Card={Card} Head={Head} />
+      </div>
+
+      {/* 3b — moved from the Dashboard (user, 2026-10-01) */}
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_1fr]">
+        <EvolutionSection rows={d.evolution} months={months} setMonths={setMonths} Card={Card} Head={Head} />
+        <SectorsDonutSection rows={d.sectors_donut} total={d.plans.total} Card={Card} Head={Head} />
       </div>
 
       {/* 4 — MRR · revenue per plan */}
@@ -155,55 +147,12 @@ export default function AnalyticsGlobalPage() {
           <Head icon={CalendarClock} title="Revenus récurrents (MRR)" sub="Évolution du revenu mensuel récurrent." right={<Delta v={d.mrr.delta} />} />
           <Curve points={d.mrr.points} grain={d.grain} color="#8B5CF6" money />
         </Card>
-        <Card>
-          <Head icon={Euro} title="Répartition du chiffre d'affaires" sub="CA par plan d'abonnement." />
-          <div className="flex flex-wrap items-center gap-5">
-            <div className="relative h-[180px] w-[180px] shrink-0">
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={d.revenue.rows.length ? d.revenue.rows : [{ amount: 1 }]} dataKey="amount" innerRadius={58} outerRadius={86} paddingAngle={d.revenue.rows.length > 1 ? 2 : 0} stroke="none" isAnimationActive={false}>
-                    {(d.revenue.rows.length ? d.revenue.rows : [{}]).map((r, i) => <Cell key={i} fill={r.color || '#EEF2F8'} />)}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-[20px] font-bold text-[#0B1C3F]">{eur(d.revenue.total)}</span><span className="text-[12.5px] text-[#64748B]">CA total</span>
-              </div>
-            </div>
-            <ul className="min-w-[150px] flex-1 space-y-3">
-              {d.revenue.rows.map((r) => (
-                <li key={r.key} className="flex items-start gap-3">
-                  <span className="mt-1 h-4 w-4 shrink-0 rounded" style={{ background: r.color }} />
-                  <span><span className="block text-[14px] text-[#0B1C3F]">{r.label}</span><strong className="block text-[15px] text-[#0B1C3F]">{eurAuto(r.amount)}</strong></span>
-                </li>
-              ))}
-              {!d.revenue.rows.length && <li className="text-[12.5px] text-[#94A3B8]">Aucun achat enregistré sur la période.</li>}
-            </ul>
-          </div>
-        </Card>
+        <RevenueSection revenue={d.revenue} Card={Card} Head={Head} />
       </div>
 
       {/* 5 — acquisition sources · customers */}
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <Card>
-          <Head icon={Target} title="Sources d'acquisition clients" sub="Nombre de clients finaux acquis par source." />
-          <div className="h-[220px]">
-            {d.sources.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={d.sources} margin={{ top: 22, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid stroke="#EEF2F7" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 11.5, fill: '#475569' }} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => [`${nf(v)} clients`, '']} separator="" cursor={{ fill: '#F4F7FC' }} />
-                  <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={56}>
-                    {d.sources.map((s) => <Cell key={s.label} fill={SOURCE_COLORS[s.label] || '#2F6BFF'} />)}
-                    <LabelList dataKey="count" position="top" style={{ fontSize: 13, fontWeight: 700, fill: '#0B1C3F' }} />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : <p className="pt-16 text-center text-[12.5px] text-[#94A3B8]">Aucun nouveau client sur la période.</p>}
-          </div>
-        </Card>
+        <SourcesSection rows={d.sources} Card={Card} Head={Head} />
         <Card>
           <Head icon={UserSquare2} title="Clients finaux" sub="Évolution du nombre de clients finaux sur la période." right={<Delta v={d.clients.delta} />} />
           <Curve points={d.clients.points} grain={d.grain} color="#10B981" unit="clients" />

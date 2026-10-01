@@ -126,7 +126,39 @@ def _activity(start: datetime, end: datetime, limit: int) -> List[Dict[str, Any]
     return [{**e, "at": AC._iso(e["at"])} for e in ev[:limit]]
 
 
-def _build(start: datetime, end: datetime, grain: str) -> Dict[str, Any]:
+def cities(tenants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """« Répartition par ville » — shared with the Dashboard."""
+    c: Dict[str, int] = defaultdict(int)
+    for t in tenants:
+        c[(t.get("city") or "").strip() or "Autres"] += 1
+    return AD._share(c, top=7)
+
+
+def revenue_by_plan(tenants: List[Dict[str, Any]], start: datetime, end: datetime) -> Dict[str, Any]:
+    """« Répartition du chiffre d'affaires »: what the businesses' customers
+    spent (their visits) over the period, per plan — amounts only (the user
+    asked for no percentages there). Shared with the Dashboard."""
+    plan_of = {t["id"]: _plan_key(t) for t in tenants}
+    per: Dict[str, float] = defaultdict(float)
+    for v in _db.visits.find({"visit_time": {"$gte": start, "$lt": end}}, {"_id": 0, "amount_paid": 1, "tenant_id": 1}):
+        if v.get("tenant_id") in plan_of:
+            per[plan_of[v["tenant_id"]]] += float(v.get("amount_paid") or 0)
+    rows = [{**_plan_info(k), "amount": round(a, 2)} for k, a in sorted(per.items(), key=lambda kv: (_plan_order(kv[0]), kv[0])) if a > 0]
+    return {"rows": rows, "total": round(sum(r["amount"] for r in rows), 2)}
+
+
+def sources(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    """« Sources d'acquisition clients » of the customers who joined in the
+    period. Shared with the Dashboard."""
+    src: Dict[str, int] = defaultdict(int)
+    for c in _db.customers.find({**LIVE, "created_at": {"$gte": start, "$lt": end}}, {"_id": 0, "acquisition_source": 1}):
+        k = (c.get("acquisition_source") or "").strip().lower()
+        src[SOURCES.get(k, "Autres")] += 1
+    order = list(SOURCES.values()) + ["Autres"]
+    return sorted(({"label": k, "count": v} for k, v in src.items() if v), key=lambda r: (-r["count"], order.index(r["label"])))
+
+
+def _build(start: datetime, end: datetime, grain: str, months: int = 6) -> Dict[str, Any]:
     import server as core
     now = _now()
     tenants = list(_db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0}))
@@ -172,28 +204,8 @@ def _build(start: datetime, end: datetime, grain: str) -> Dict[str, Any]:
              for k, n in sorted(per_plan.items(), key=lambda kv: (_plan_order(kv[0]), kv[0])) if n]
 
     sectors: Dict[str, int] = defaultdict(int)
-    cities: Dict[str, int] = defaultdict(int)
     for t in tenants:
         sectors[AC._sector(t.get("sector")) or "Autres"] += 1
-        cities[(t.get("city") or "").strip() or "Autres"] += 1
-
-    rev: Dict[str, float] = defaultdict(float)
-    for at, amount, tid in visits:
-        if start <= at < end:
-            rev[tid] += amount
-    plan_of = {t["id"]: _plan_key(t) for t in tenants}
-    ca_plan: Dict[str, float] = defaultdict(float)
-    for tid, amount in rev.items():
-        if tid in plan_of:
-            ca_plan[plan_of[tid]] += amount
-    ca_rows = [{**_plan_info(k), "amount": round(v, 2)} for k, v in sorted(ca_plan.items(), key=lambda kv: (_plan_order(kv[0]), kv[0])) if v > 0]
-
-    src: Dict[str, int] = defaultdict(int)
-    for c in _db.customers.find({**LIVE, "created_at": {"$gte": start, "$lt": end}}, {"_id": 0, "acquisition_source": 1}):
-        k = (c.get("acquisition_source") or "").strip().lower()
-        src[SOURCES.get(k, "Autres")] += 1
-    order = list(SOURCES.values()) + ["Autres"]
-    sources = sorted(({"label": k, "count": v} for k, v in src.items() if v), key=lambda r: (-r["count"], order.index(r["label"])))
 
     def change(series):
         return AC._delta(series[-1]["value"], series[0]["value"]) if series else None
@@ -202,21 +214,23 @@ def _build(start: datetime, end: datetime, grain: str) -> Dict[str, Any]:
             "growth": {"points": growth, "delta": base["commerces"]["delta"]},
             "mrr": {"points": mrr, "delta": base["mrr"]["delta"]},
             "clients": {"points": clients, "delta": base["clients"]["delta"]},
-            "plans": {"rows": plans, "total": total}, "sectors": AD._share(sectors, top=6), "cities": AD._share(cities, top=7),
-            "revenue": {"rows": ca_rows, "total": round(sum(r["amount"] for r in ca_rows), 2)},
-            "sources": sources, "activity": _activity(start, end, 6), "curve_change": {"growth": change(growth), "mrr": change(mrr), "clients": change(clients)}}
+            "plans": {"rows": plans, "total": total}, "sectors": AD._share(sectors, top=6), "cities": cities(tenants),
+            "revenue": revenue_by_plan(tenants, start, end), "sources": sources(start, end), "activity": _activity(start, end, 6),
+            # Moved here from the Dashboard (user, 2026-10-01): its sector donut and « Évolution de la plateforme ».
+            "sectors_donut": AD._share(sectors), "evolution": AD._evolution(months), "curve_change": {"growth": change(growth), "mrr": change(mrr), "clients": change(clients)}}
 
 
 @router.get("/api/admin/analytics/global")
 def analytics(date_from: Optional[str] = Query(None, alias="from"), date_to: Optional[str] = Query(None, alias="to"),
-              grain: str = "day", token_data: TokenData = Depends(require_admin("analytics"))):
+              grain: str = "day", months: int = 6, token_data: TokenData = Depends(require_admin("analytics"))):
     start, end = AD._period(date_from if isinstance(date_from, str) else None, date_to if isinstance(date_to, str) else None)
     grain = grain if grain in GRAINS else "day"
-    key = (start.isoformat(), end.isoformat(), grain)
+    months = 12 if int(months or 6) >= 12 else 6
+    key = (start.isoformat(), end.isoformat(), grain, months)
     hit = _cache.get(key)
     if hit and hit[0] > time.time():
         return hit[1]
-    out = _build(start, end, grain)
+    out = _build(start, end, grain, months)
     _cache.clear()
     _cache[key] = (time.time() + CACHE_SECONDS, out)
     return out
