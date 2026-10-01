@@ -12,6 +12,8 @@ Nothing else in the codebase changes.
 
 import importlib
 import logging
+import os
+from datetime import datetime, timezone
 
 logger = logging.getLogger("fidelitour.features")
 
@@ -175,27 +177,68 @@ MODULES = [
 ]
 
 
+INDEX_MARKER = "indexes_build"
+
+
+def _build_id() -> str:
+    """The deployment's commit — empty outside Vercel (local runs, tests)."""
+    return os.environ.get("VERCEL_GIT_COMMIT_SHA") or os.environ.get("VERCEL_DEPLOYMENT_ID") or ""
+
+
+def _indexes_done(db, build: str) -> bool:
+    if not build:
+        return False
+    try:
+        doc = db.platform_settings.find_one({"key": INDEX_MARKER}, {"_id": 0, "value": 1})
+        return bool(doc and doc.get("value") == build)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def register_all(app, db) -> None:
     """Import each feature module, run its optional init(db), and mount its router.
 
     Failures are logged but never raised — a broken feature module must not
     take down the whole server.
+
+    Speed (2026-10-01): the modules' init() ask MongoDB for ~120 indexes.
+    Indexes only change with the code, so this is done by the first start
+    of each deployment; the next cold starts of the same deployment skip
+    those round trips (the marker in platform_settings holds the commit).
     """
-    # Shared services that need the database before any feature uses them.
+    from pymongo.collection import Collection
+    build = _build_id()
+    skip = _indexes_done(db, build)
+    original = Collection.create_index
+    if skip:
+        Collection.create_index = lambda self, keys, *a, **k: None   # noqa: E731
+    failed = False
     try:
-        from services import communes
-        communes.init(db)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("commune resolver unavailable: %s", exc)
-    for dotted_path in MODULES:
+        # Shared services that need the database before any feature uses them.
         try:
-            module = importlib.import_module(dotted_path)
-            if hasattr(module, "init"):
-                module.init(db)
-            if hasattr(module, "router"):
-                app.include_router(module.router)
-                logger.info("feature loaded: %s", dotted_path)
-            else:
-                logger.warning("feature %s has no router; skipping", dotted_path)
+            from services import communes
+            communes.init(db)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("feature %s failed to load: %s", dotted_path, exc)
+            logger.warning("commune resolver unavailable: %s", exc)
+        for dotted_path in MODULES:
+            try:
+                module = importlib.import_module(dotted_path)
+                if hasattr(module, "init"):
+                    module.init(db)
+                if hasattr(module, "router"):
+                    app.include_router(module.router)
+                    logger.info("feature loaded: %s", dotted_path)
+                else:
+                    logger.warning("feature %s has no router; skipping", dotted_path)
+            except Exception as exc:  # noqa: BLE001
+                failed = True
+                logger.exception("feature %s failed to load: %s", dotted_path, exc)
+    finally:
+        Collection.create_index = original
+    if build and not skip and not failed:
+        try:
+            db.platform_settings.update_one({"key": INDEX_MARKER},
+                                            {"$set": {"key": INDEX_MARKER, "value": build, "at": datetime.now(timezone.utc)}},
+                                            upsert=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("index marker not saved: %s", exc)

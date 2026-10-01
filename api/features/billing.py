@@ -45,10 +45,27 @@ import pymongo
 
 # Stripe SDK is optional at import time so the platform still boots without it
 # (handy for local dev / preview builds without billing configured).
-try:
-    import stripe  # type: ignore
-except ImportError:  # pragma: no cover
-    stripe = None  # type: ignore
+# It is also loaded on first use, not at import: the SDK takes ~0.4 s to
+# import, which every cold start of the API used to pay (2026-10-01).
+import importlib.util as _ilu
+
+
+class _LazyStripe:
+    _mod = None
+
+    def _load(self):
+        if _LazyStripe._mod is None:
+            import stripe as _s  # type: ignore
+            if STRIPE_SECRET_KEY:
+                _s.api_key = STRIPE_SECRET_KEY
+            _LazyStripe._mod = _s
+        return _LazyStripe._mod
+
+    def __getattr__(self, name):
+        return getattr(self._load(), name)
+
+
+stripe = _LazyStripe() if _ilu.find_spec("stripe") is not None else None  # type: ignore
 
 from auth import require_role, TokenData
 
@@ -73,8 +90,7 @@ PLAN_PRICE_IDS = {
     # 'chain' tier is custom-quoted and not available via self-serve checkout.
 }
 
-if STRIPE_SECRET_KEY and stripe is not None:
-    stripe.api_key = STRIPE_SECRET_KEY
+# stripe.api_key is set when the SDK loads (_LazyStripe._load).
 
 # Lazy-import db at function-call time to dodge circular imports with server.py.
 def _db():

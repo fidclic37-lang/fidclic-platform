@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import lazyPage from './lib/lazyPage';
 import { BranchProvider } from './contexts/BranchContext';
 
 // Top-level error boundary so ANY uncaught render crash on ANY route
@@ -69,11 +70,11 @@ class RootErrorBoundary extends React.Component {
 }
 
 import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import OnboardingCompanyPage from './pages/OnboardingCompanyPage';
-import OnboardingCardPage from './pages/OnboardingCardPage';
-import OnboardingDonePage from './pages/OnboardingDonePage';
-import DashboardLayout from './pages/DashboardLayout';
+const RegisterPage = lazyPage(() => import('./pages/RegisterPage'));
+const OnboardingCompanyPage = lazyPage(() => import('./pages/OnboardingCompanyPage'));
+const OnboardingCardPage = lazyPage(() => import('./pages/OnboardingCardPage'));
+const OnboardingDonePage = lazyPage(() => import('./pages/OnboardingDonePage'));
+const DashboardLayout = lazyPage(() => import('./pages/DashboardLayout'));
 // Analyses is the page on /dashboard/analytics. The two older takes
 // (AnalyticsPage, AnalyticsPageV2) are kept on disk for rollback only —
 // to revert, import one of them here instead.
@@ -82,83 +83,83 @@ import DashboardLayout from './pages/DashboardLayout';
 // /dashboard/analytics route. To revert: swap the imports here.
 // import AnalyticsPage from './pages/AnalyticsPage';
 // import AnalyticsPage from './pages/AnalyticsPageV2';
-import AnalysesPage from './pages/AnalysesPage';
-import ScanPage from './pages/ScanPage';
-import CampaignsPage from './pages/CampaignsPage';
-import SettingsPage from './pages/SettingsPage';
-import ParametresPage from './pages/ParametresPage';
-import CataloguePage from './pages/CataloguePage';
-import JoinPage from './pages/JoinPage';
-import MyWalletCardPage from './pages/MyWalletCardPage';
-import HistoryPage from './pages/HistoryPage';
+const AnalysesPage = lazyPage(() => import('./pages/AnalysesPage'));
+const ScanPage = lazyPage(() => import('./pages/ScanPage'));
+const CampaignsPage = lazyPage(() => import('./pages/CampaignsPage'));
+const SettingsPage = lazyPage(() => import('./pages/SettingsPage'));
+const ParametresPage = lazyPage(() => import('./pages/ParametresPage'));
+const CataloguePage = lazyPage(() => import('./pages/CataloguePage'));
+const JoinPage = lazyPage(() => import('./pages/JoinPage'));
+const MyWalletCardPage = lazyPage(() => import('./pages/MyWalletCardPage'));
+const HistoryPage = lazyPage(() => import('./pages/HistoryPage'));
 
-import AdminDashboard from './pages/AdminDashboard'; // eslint-disable-line no-unused-vars -- superseded by admin/AdminDashboardPage, kept for rollback
-import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+const AdminDashboard = lazyPage(() => import('./pages/AdminDashboard')); // eslint-disable-line no-unused-vars -- superseded by admin/AdminDashboardPage, kept for rollback
+const AdminDashboardPage = lazyPage(() => import('./pages/admin/AdminDashboardPage'));
 // Rollback: the previous Analytics page — import AdminAnalyticsPage from './pages/AdminAnalyticsPage';
-import AnalyticsGlobalPage from './pages/admin/AnalyticsGlobalPage';
-import AdminTenantsPage from './pages/AdminTenantsPage'; // eslint-disable-line no-unused-vars -- superseded by admin/CommercesPage, kept for rollback
-import CommercesPage from './pages/admin/CommercesPage';
-import CommerceDetailPage from './pages/admin/CommerceDetailPage';
-import ViewAsEntry from './pages/admin/ViewAsEntry';
-import SecuriteOverviewPage from './pages/admin/securite/SecuriteOverviewPage';
-import RolesPage from './pages/admin/securite/RolesPage';
-import ConnexionsPage from './pages/admin/securite/ConnexionsPage';
-import JournalPage from './pages/admin/securite/JournalPage';
-import SecuritySettingsPage from './pages/admin/securite/SecuritySettingsPage';
+const AnalyticsGlobalPage = lazyPage(() => import('./pages/admin/AnalyticsGlobalPage'));
+const AdminTenantsPage = lazyPage(() => import('./pages/AdminTenantsPage')); // eslint-disable-line no-unused-vars -- superseded by admin/CommercesPage, kept for rollback
+const CommercesPage = lazyPage(() => import('./pages/admin/CommercesPage'));
+const CommerceDetailPage = lazyPage(() => import('./pages/admin/CommerceDetailPage'));
+const ViewAsEntry = lazyPage(() => import('./pages/admin/ViewAsEntry'));
+const SecuriteOverviewPage = lazyPage(() => import('./pages/admin/securite/SecuriteOverviewPage'));
+const RolesPage = lazyPage(() => import('./pages/admin/securite/RolesPage'));
+const ConnexionsPage = lazyPage(() => import('./pages/admin/securite/ConnexionsPage'));
+const JournalPage = lazyPage(() => import('./pages/admin/securite/JournalPage'));
+const SecuritySettingsPage = lazyPage(() => import('./pages/admin/securite/SecuritySettingsPage'));
 import { can, moduleOfPath, firstAllowed } from './lib/perms';
 // Rollback: the previous plan editor — import AdminPlansPage from './pages/AdminPlansPage';
-import PlanLimitsPage from './pages/admin/PlanLimitsPage';
-import AdminInvoicingPage from './pages/AdminInvoicingPage';
-import CrmOverviewPage from './pages/crm/CrmOverviewPage';
+const PlanLimitsPage = lazyPage(() => import('./pages/admin/PlanLimitsPage'));
+const AdminInvoicingPage = lazyPage(() => import('./pages/AdminInvoicingPage'));
+const CrmOverviewPage = lazyPage(() => import('./pages/crm/CrmOverviewPage'));
 // Rollback: the overview's previous layout — import CrmOverviewPageV1 from './pages/crm/CrmOverviewPageV1';
-import CrmProspectsPage from './pages/crm/CrmProspectsPage';
-import CrmPipelinePage from './pages/crm/CrmPipelinePage';
-import CrmTasksPage from './pages/crm/CrmTasksPage';
-import CrmCalendarPage from './pages/crm/CrmCalendarPage';
-import CrmCallsPage from './pages/crm/CrmCallsPage';
-import CrmSequencesPage from './pages/crm/CrmSequencesPage';
-import CrmTemplatesPage from './pages/crm/CrmTemplatesPage';
-import AdminCardDesignerPage from './pages/AdminCardDesignerPage'; // eslint-disable-line no-unused-vars -- section removed (user, 2026-09-30), kept for rollback
-import LoyaltyCardPage from './pages/LoyaltyCardPage';
-import ComingSoonPage from './pages/ComingSoonPage';
-import HelpPage from './pages/HelpPage';
-import GeolocationPage from './pages/GeolocationPage';
-import ReferralPage from './pages/ReferralPage';
-import AutomationsPage from './pages/AutomationsPage';
-import DashboardHomePage from './pages/DashboardHomePage';
-import ClientsPage from './pages/ClientsPage';
-import SegmentationPage from './pages/SegmentationPage';
+const CrmProspectsPage = lazyPage(() => import('./pages/crm/CrmProspectsPage'));
+const CrmPipelinePage = lazyPage(() => import('./pages/crm/CrmPipelinePage'));
+const CrmTasksPage = lazyPage(() => import('./pages/crm/CrmTasksPage'));
+const CrmCalendarPage = lazyPage(() => import('./pages/crm/CrmCalendarPage'));
+const CrmCallsPage = lazyPage(() => import('./pages/crm/CrmCallsPage'));
+const CrmSequencesPage = lazyPage(() => import('./pages/crm/CrmSequencesPage'));
+const CrmTemplatesPage = lazyPage(() => import('./pages/crm/CrmTemplatesPage'));
+const AdminCardDesignerPage = lazyPage(() => import('./pages/AdminCardDesignerPage')); // eslint-disable-line no-unused-vars -- section removed (user, 2026-09-30), kept for rollback
+const LoyaltyCardPage = lazyPage(() => import('./pages/LoyaltyCardPage'));
+const ComingSoonPage = lazyPage(() => import('./pages/ComingSoonPage'));
+const HelpPage = lazyPage(() => import('./pages/HelpPage'));
+const GeolocationPage = lazyPage(() => import('./pages/GeolocationPage'));
+const ReferralPage = lazyPage(() => import('./pages/ReferralPage'));
+const AutomationsPage = lazyPage(() => import('./pages/AutomationsPage'));
+const DashboardHomePage = lazyPage(() => import('./pages/DashboardHomePage'));
+const ClientsPage = lazyPage(() => import('./pages/ClientsPage'));
+const SegmentationPage = lazyPage(() => import('./pages/SegmentationPage'));
 // Insights — rebuilt to the approved design. The previous InsightsPage stays
 // in the repo, unrouted, for rollback.
-import InsightsGrowthPage from './pages/InsightsGrowthPage';
+const InsightsGrowthPage = lazyPage(() => import('./pages/InsightsGrowthPage'));
 // FidClic IA Copilote — replaces the previous AI assistant, which stays in the
 // repo, unrouted, for rollback.
-import CopilotPage from './pages/CopilotPage';
+const CopilotPage = lazyPage(() => import('./pages/CopilotPage'));
 // Campagnes — rebuilt to the approved design. CampaignsPage stays in the
 // repo, unrouted, for rollback.
-import CampagnesPage from './pages/CampagnesPage';
+const CampagnesPage = lazyPage(() => import('./pages/CampagnesPage'));
 // Rollback: the previous AI assistant — import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
-import AiIntelligencePage from './pages/admin/ai/AiIntelligencePage';
-import AiSavedPage from './pages/admin/ai/AiSavedPage';
-import AiReportsPage from './pages/admin/ai/AiReportsPage';
+const AiIntelligencePage = lazyPage(() => import('./pages/admin/ai/AiIntelligencePage'));
+const AiSavedPage = lazyPage(() => import('./pages/admin/ai/AiSavedPage'));
+const AiReportsPage = lazyPage(() => import('./pages/admin/ai/AiReportsPage'));
 // Removed from the super admin (2026-09-30): import AdminCampaignsPage from './pages/AdminCampaignsPage';
 // Rollback: the previous Insights page — import AdminInsightsPage from './pages/AdminInsightsPage';
-import AdminInsightsBoard from './pages/admin/InsightsPage';
+const AdminInsightsBoard = lazyPage(() => import('./pages/admin/InsightsPage'));
 import GoogleTranslateBridge, { RouteAwareRetranslator } from './components/GoogleTranslateBridge';
 // Facturation module (French e-invoicing) — post-login module chooser + home.
-import ModuleChooserPage from './pages/ModuleChooserPage';
-import FacturationHome from './pages/FacturationHome';
-import CabinetDashboard from './pages/CabinetDashboard';
-import CabinetTeam from './pages/CabinetTeam';
-import CabinetCases from './pages/CabinetCases';
-import CabinetReview from './pages/CabinetReview';
+const ModuleChooserPage = lazyPage(() => import('./pages/ModuleChooserPage'));
+const FacturationHome = lazyPage(() => import('./pages/FacturationHome'));
+const CabinetDashboard = lazyPage(() => import('./pages/CabinetDashboard'));
+const CabinetTeam = lazyPage(() => import('./pages/CabinetTeam'));
+const CabinetCases = lazyPage(() => import('./pages/CabinetCases'));
+const CabinetReview = lazyPage(() => import('./pages/CabinetReview'));
 import CabinetPasswordGate from './components/CabinetPasswordGate';
-import CabinetSignup from './pages/CabinetSignup';
-import ResetPasswordPage from './pages/ResetPasswordPage';
+const CabinetSignup = lazyPage(() => import('./pages/CabinetSignup'));
+const ResetPasswordPage = lazyPage(() => import('./pages/ResetPasswordPage'));
 // Public marketing pages — one per product line, so each audience gets a whole
 // page instead of an anchor buried in the homepage.
-import FacturationLanding from './pages/FacturationLanding';
-import CabinetLanding from './pages/CabinetLanding';
+const FacturationLanding = lazyPage(() => import('./pages/FacturationLanding'));
+const CabinetLanding = lazyPage(() => import('./pages/CabinetLanding'));
 
 /**
  * ScrollToTop — without this, navigating from the landing page to a product
@@ -263,6 +264,13 @@ const MarketingHome = () => {
   return null;
 };
 
+// Shown while a page's file downloads (first visit only, then cached).
+export const PageLoader = () => (
+  <div role="status" aria-label="Chargement" className="flex min-h-[40vh] items-center justify-center">
+    <span className="h-7 w-7 animate-spin rounded-full border-[3px] border-[#DCE6FA] border-t-[#2F6BFF]" />
+  </div>
+);
+
 function App() {
   return (
     <RootErrorBoundary>
@@ -280,6 +288,7 @@ function App() {
             from scratch and don't stay in French after navigation. */}
         <RouteAwareRetranslator />
         <ScrollToTop />
+        <React.Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/" element={<PublicRoute><MarketingHome /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
@@ -510,6 +519,7 @@ function App() {
             <Route path="securite/parametres" element={<AdminGate><SecuritySettingsPage /></AdminGate>} />
           </Route>
         </Routes>
+        </React.Suspense>
        </Router>
       </BranchProvider>
     </AuthProvider>

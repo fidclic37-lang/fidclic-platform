@@ -104,7 +104,7 @@ export default function OnboardingShell({ step, children, wide = false }) {
     <div className="min-h-screen bg-white lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
       {/* ── marketing nav ── */}
       <header className="flex h-[76px] shrink-0 items-center justify-between px-6 lg:px-12">
-        <a href={SITE} className="flex items-center"><img src={LOGO} alt="FidClic" className="h-11 w-auto" /></a>
+        <a href={SITE} className="flex items-center"><picture className="contents"><source srcSet={'/brand/fidclic-logo.webp'} type="image/webp" /><img src={LOGO} alt="FidClic" className="h-11 w-auto" /></picture></a>
         <nav className="hidden items-center gap-8 text-[15px] text-[#0B1C3F] lg:flex">
           {NAV.map((n) => <a key={n.key} href={n.href} className="hover:text-[#2F6BFF]">{t(`signup.nav_${n.key}`)}</a>)}
         </nav>
@@ -131,7 +131,7 @@ export default function OnboardingShell({ step, children, wide = false }) {
             object-cover only ever trims that background — phone, chips and
             badge stay in frame, edge to edge, no side bars, at any width. */}
         <aside className="relative hidden overflow-hidden lg:block lg:h-full">
-          <img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-center" />
+          <picture className="contents"><source srcSet={'/brand/onboarding-hero.webp'} type="image/webp" /><img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-center" /></picture>
         </aside>
 
         {/* ── right: step card ── */}
