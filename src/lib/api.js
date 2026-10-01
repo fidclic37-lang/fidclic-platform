@@ -165,6 +165,44 @@ export const securityAPI = {
   alerts: () => api.get('/admin/security/alerts'),
 };
 
+// Super admin › Centre de support, and the merchant's « Mes demandes »
+// (features/support_center.py).
+const upload = (url, file, onProgress) => { const f = new FormData(); f.append('file', file); return api.post(url, f, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress: onProgress }); };
+export const supportAPI = {
+  overview: () => api.get('/admin/support/overview'),
+  badge: () => api.get('/admin/support/badge'),
+  tickets: (params) => api.get('/admin/support/tickets', { params }),
+  ticket: (id) => api.get(`/admin/support/tickets/${id}`),
+  create: (body) => api.post('/admin/support/tickets', body),
+  send: (id, body) => api.post(`/admin/support/tickets/${id}/messages`, body),
+  patch: (id, body) => api.patch(`/admin/support/tickets/${id}`, body),
+  bulk: (body) => api.post('/admin/support/tickets/bulk', body),
+  unread: (id) => api.post(`/admin/support/tickets/${id}/unread`),
+  exportTickets: (params) => api.get('/admin/support/export', { params, responseType: 'blob' }),
+  exportThread: (id) => api.get(`/admin/support/tickets/${id}/export`, { responseType: 'blob' }),
+  replies: () => api.get('/admin/support/replies'),
+  addReply: (body) => api.post('/admin/support/replies', body),
+  editReply: (id, body) => api.put(`/admin/support/replies/${id}`, body),
+  deleteReply: (id) => api.delete(`/admin/support/replies/${id}`),
+  tags: () => api.get('/admin/support/tags'),
+  saveTags: (body) => api.put('/admin/support/tags', body),
+  commerces: (q) => api.get('/admin/support/commerces', { params: { q } }),
+  alerts: () => api.get('/admin/support/alerts'),
+  upload: (file, onProgress) => upload('/admin/support/files', file, onProgress),
+  file: (id, inline) => api.get(`/support/files/${id}`, { params: inline ? { inline: 1 } : {}, responseType: 'blob' }),
+};
+export const mySupportAPI = {
+  tickets: () => api.get('/owner/support/tickets'),
+  ticket: (id) => api.get(`/owner/support/tickets/${id}`),
+  create: (body) => api.post('/owner/support/tickets', body),
+  send: (id, body) => api.post(`/owner/support/tickets/${id}/messages`, body),
+  rate: (id, body) => api.post(`/owner/support/tickets/${id}/rating`, body),
+  alerts: () => api.get('/owner/support/alerts'),
+  unread: () => api.get('/owner/support/unread'),
+  upload: (file, onProgress) => upload('/owner/support/files', file, onProgress),
+  file: (id, inline) => api.get(`/support/files/${id}`, { params: inline ? { inline: 1 } : {}, responseType: 'blob' }),
+};
+
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
   franchise: () => api.get('/admin/franchise'),

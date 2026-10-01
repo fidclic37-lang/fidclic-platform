@@ -15,7 +15,7 @@ export function can(user, module, level = 'view') {
 export const ADMIN_ROUTES = [
   ['/admin', 'dashboard'], ['/admin/commerces', 'commerces'], ['/admin/analytics', 'analytics'], ['/admin/insights', 'insights'],
   ['/admin/plans', 'plan_limits'], ['/admin/facturation', 'facturation'],
-  ['/admin/crm', 'crm'], ['/admin/ai', 'ai'], ['/admin/securite', 'securite'],
+  ['/admin/crm', 'crm'], ['/admin/ai', 'ai'], ['/admin/securite', 'securite'], ['/admin/support', 'support'],
 ];
 
 export function moduleOfPath(path) {

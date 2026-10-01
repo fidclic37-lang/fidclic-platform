@@ -9,11 +9,11 @@ import BillingBanner from '../components/BillingBanner';
 import { PlanAccessContext, usePlanAccess, usePlanAccessState, UpgradeModal, LockedSection, LimitBanner, openUpgrade } from '../components/PlanAccess';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
-import { ownerAPI } from '../lib/api';
+import { ownerAPI, supportAPI } from '../lib/api';
 import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
-  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, PieChart, Share2, Zap, ShoppingBag,
+  Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Headphones, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown,
   Receipt, Eye, ShieldCheck, Lock,
 } from 'lucide-react';
@@ -272,6 +272,16 @@ const DashboardLayout = () => {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
+  // Centre de support: tickets with a merchant message nobody has read yet.
+  const [supportUnread, setSupportUnread] = React.useState(0);
+  const seesSupport = isTeam(user) && can(user, 'support');
+  React.useEffect(() => {
+    if (!seesSupport) return undefined;
+    const load = () => { if (!document.hidden) supportAPI.badge().then(({ data }) => setSupportUnread(data.unread || 0)).catch(() => {}); };
+    load();
+    const id = setInterval(load, 60000);
+    return () => clearInterval(id);
+  }, [seesSupport, location.pathname]);
   // Global search — smart routing.
   //
   // The owner expects: "card" → Card Designer, "settings" → Settings,
@@ -539,6 +549,7 @@ const DashboardLayout = () => {
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Admin" currentPath={currentPath} role={role} collapsed={collapsed} />}
+              {can(user, 'support') && <NavLink to="/admin/support" icon={Headphones} label="Centre de support" currentPath={currentPath} role={role} collapsed={collapsed} badge={supportUnread || null} />}
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
@@ -547,6 +558,9 @@ const DashboardLayout = () => {
         {/* Help — one row at the foot of the rail, in both states. The help
             icon that used to sit in the top bar went with the bar, so this is
             the single way in and it has to survive the collapsed rail. */}
+        {/* FidClic's team answers from « Centre de support » (in the menu); the
+            merchant's « Besoin d'aide ? » row is not theirs. */}
+        {!isTeam(user) && (
         <div className={`mt-auto ${collapsed ? 'flex justify-center px-2 pb-3' : 'px-3 pb-3'}`}>
           <button
             type="button"
@@ -571,6 +585,7 @@ const DashboardLayout = () => {
             )}
           </button>
         </div>
+        )}
 
       </aside>
 

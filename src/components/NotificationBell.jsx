@@ -11,7 +11,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, AlertTriangle, TrendingDown, TrendingUp, Sparkles, X, Building2, Users, Send, Cake, ChevronRight } from 'lucide-react';
-import api, { ownerAPI, securityAPI } from '../lib/api';
+import api, { ownerAPI, securityAPI, supportAPI, mySupportAPI } from '../lib/api';
+import { can } from '../lib/perms';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -117,17 +118,24 @@ const NotificationBell = ({ platformAdmin = false }) => {
       try {
         // The super admin's bell: suspicious, blocked and locked logins of
         // FidClic's team (Sécurité). A business: its own alerts, per store.
-        let res;
+        // Centre de support adds its own: new tickets, mentions and
+        // assignments for the team; the team's answers for a business.
+        const list = (r) => (r.status === 'fulfilled' ? (Array.isArray(r.value.data?.alerts) ? r.value.data.alerts : (Array.isArray(r.value.data) ? r.value.data : [])) : []);
+        let main;
+        let support;
         if (platformAdmin) {
-          res = await securityAPI.alerts();
+          [main, support] = await Promise.allSettled([
+            user?.role === 'super_admin' ? securityAPI.alerts() : Promise.reject(new Error('not super')),
+            can(user, 'support') ? supportAPI.alerts() : Promise.reject(new Error('no support')),
+          ]);
         } else {
-          try {
-            res = await api.get('/owner/insights/alerts/multi-store');
-          } catch (_e) {
-            res = await ownerAPI.getProactiveAlerts({});
-          }
+          [main, support] = await Promise.allSettled([
+            api.get('/owner/insights/alerts/multi-store').catch(() => ownerAPI.getProactiveAlerts({})),
+            ['business_owner', 'administrateur', 'manager'].includes(user?.role) ? mySupportAPI.alerts() : Promise.reject(new Error('no support')),
+          ]);
         }
-        if (!cancelled) setAlerts(Array.isArray(res.data?.alerts) ? res.data.alerts : (res.data || []));
+        const merged = [...list(support), ...list(main)];
+        if (!cancelled) setAlerts(merged);
       } catch (_e) { /* silent */ }
       finally { if (!cancelled) setLoading(false); }
     };

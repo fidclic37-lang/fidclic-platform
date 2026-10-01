@@ -177,10 +177,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         setattr(server, ch, lambda subject, message, ticket: (False, "not_configured"))
     server.submit_support_ticket(server.SupportTicketIn(subject="Aide", message="Bonjour", from_email="o@ai.fr"))
     server.submit_support_ticket(server.SupportTicketIn(subject="Aide", message="Bonjour", from_email="o@st.fr"))
-    tk = server.list_support_tickets(token_data=ADMIN)["tickets"]
-    check("Pro AI ticket: prioritaire, listed first, bell alert", tk[0]["priority"] == "prioritaire" and tk[0]["tenant_id"] == "ai"
-          and db.platform_alerts.count_documents({"kind": "support_priority"}) == 1)
-    check("Starter ticket: normale", any(t["tenant_id"] == "st" and t["priority"] == "normale" for t in tk))
+    from features import support_center as SC
+    tk = SC.list_tickets(token_data=ADMIN)["rows"]
+    check("Pro AI ticket: haute priorité, listed first, bell alert", tk[0]["priority"] == "haute" and tk[0]["commerce"]["id"] == "ai"
+          and db.support_alerts.count_documents({"kind": "new", "tenant_id": "ai"}) == 1)
+    check("Starter ticket: normale", any(t["commerce"]["id"] == "st" and t["priority"] == "normale" for t in tk))
     r = http("POST", "/api/owner/team-access/users", ST, json={"email": "new@st.fr", "first_name": "N", "last_name": "V", "role": "staff"})
     db.users.insert_one({"email": "second@st.fr", "role": "staff", "tenant_id": "st"})
     r = http("POST", "/api/owner/team-access/users", ST, json={"email": "third@st.fr", "first_name": "T", "last_name": "V", "role": "staff"})

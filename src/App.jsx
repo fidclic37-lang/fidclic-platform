@@ -106,6 +106,7 @@ const RolesPage = lazyPage(() => import('./pages/admin/securite/RolesPage'));
 const ConnexionsPage = lazyPage(() => import('./pages/admin/securite/ConnexionsPage'));
 const JournalPage = lazyPage(() => import('./pages/admin/securite/JournalPage'));
 const SecuritySettingsPage = lazyPage(() => import('./pages/admin/securite/SecuritySettingsPage'));
+const SupportCenterPage = lazyPage(() => import('./pages/admin/support/SupportCenterPage'));
 import { can, moduleOfPath, firstAllowed } from './lib/perms';
 // Rollback: the previous plan editor — import AdminPlansPage from './pages/AdminPlansPage';
 const PlanLimitsPage = lazyPage(() => import('./pages/admin/PlanLimitsPage'));
@@ -517,6 +518,7 @@ function App() {
             <Route path="securite/connexions" element={<AdminGate><ConnexionsPage /></AdminGate>} />
             <Route path="securite/journal" element={<AdminGate><JournalPage /></AdminGate>} />
             <Route path="securite/parametres" element={<AdminGate><SecuritySettingsPage /></AdminGate>} />
+            <Route path="support" element={<AdminGate><SupportCenterPage /></AdminGate>} />
           </Route>
         </Routes>
         </React.Suspense>
