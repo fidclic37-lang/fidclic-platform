@@ -1819,12 +1819,15 @@ def seed_extended_tenants():
         db.card_templates.insert_many(card_templates_docs)
 
 
-# Seed data on every cold start (Vercel serverless workaround)
-# RGPD/security: set DISABLE_SEED=1 in Vercel env to stop demo accounts +
-# demo credentials from being (re)created — REQUIRED before production
-# launch with real customer data. Default stays ON so current demos keep
-# working without any env change.
-SEED_DISABLED = os.environ.get("DISABLE_SEED", "") == "1"
+# Demo seed. On Vercel (production AND previews — they share one database)
+# it no longer runs by itself (2026-10-01): it cost ~40 database calls on
+# every cold start, and it deleted and re-created the test customer
+# « Akshansh » and their visits each time, resetting that card. The demo
+# accounts and data it created stay in the database. FORCE_SEED=1 runs it
+# again on Vercel (e.g. to bring back a deleted demo account); DISABLE_SEED=1
+# turns it off anywhere. Local runs keep seeding as before.
+_ON_VERCEL = bool(os.environ.get("VERCEL"))
+SEED_DISABLED = os.environ.get("DISABLE_SEED", "") == "1" or (_ON_VERCEL and os.environ.get("FORCE_SEED", "") != "1")
 _seeded = False
 _seed_error = None
 
@@ -2257,9 +2260,16 @@ def send_re_enablement_sms(
 
 
 @app.post("/api/reset-seed")
-def reset_and_reseed():
-    """Drop all collections and re-seed fresh data. Use for demo resets."""
+def reset_and_reseed(token_data: TokenData = Depends(require_role(["super_admin"]))):
+    """Drop all collections and re-seed fresh data. Use for demo resets.
+
+    Security (2026-10-01): this was open to anyone without signing in and
+    wiped every account, business, customer and visit. It now needs a super
+    admin, and never runs on Vercel (production and previews share the real
+    database) — only on a local copy."""
     global _seeded
+    if _ON_VERCEL:
+        raise HTTPException(status_code=403, detail="La réinitialisation n'est possible que sur une copie locale.")
     try:
         db.users.delete_many({})
         db.tenants.delete_many({})

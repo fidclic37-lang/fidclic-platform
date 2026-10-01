@@ -107,13 +107,19 @@ export default function SupportCenterPage() {
       .catch((e) => setErr(errText(e, 'Impossible de charger les tickets.')));
     supportAPI.overview().then(({ data }) => setOv(data)).catch(() => {});
   }, [tab, query, f, page]);
+  // Kept in refs so the loader never changes identity: a loader that changed
+  // on every render would fetch the ticket again on every render.
+  const sayRef = useRef(say);
+  const paramsRef = useRef(setParams);
+  sayRef.current = say;
+  paramsRef.current = setParams;
   const loadTicket = useCallback((id, quiet) => {
     if (!id) { setD(null); return; }
     if (!quiet) setLoadingTicket(true);
     supportAPI.ticket(id).then(({ data }) => setD(data))
-      .catch((e) => { if (!quiet) { say(errText(e, 'Ticket introuvable.')); setParams((p) => { p.delete('ticket'); return p; }); } })
+      .catch((e) => { if (!quiet) { sayRef.current(errText(e, 'Ticket introuvable.')); paramsRef.current((p) => { p.delete('ticket'); return p; }); } })
       .finally(() => setLoadingTicket(false));
-  }, [say, setParams]);
+  }, []);
 
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { loadTicket(sel); }, [sel, loadTicket]);

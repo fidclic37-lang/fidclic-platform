@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { ArrowUp, ArrowDown, ChevronRight, X, Loader2 } from 'lucide-react';
@@ -245,7 +245,8 @@ export function Pager({ page, pages, total, perPage, onPage, onPerPage, what = '
 
 export function useToast() {
   const [msg, setMsg] = useState('');
-  const say = (m) => { setMsg(m); setTimeout(() => setMsg(''), 3000); };
+  // Stable: a page may use `say` inside its loaders without reloading them.
+  const say = useCallback((m) => { setMsg(m); setTimeout(() => setMsg(''), 3000); }, []);
   const node = (
     <div aria-live="polite" className="pointer-events-none fixed bottom-5 left-1/2 z-[60] -translate-x-1/2 transition-opacity" style={{ opacity: msg ? 1 : 0 }}>
       <span className="inline-flex items-center gap-2 rounded-full bg-[#0B1C3F] px-4 py-2 text-[13px] font-medium text-white shadow-lg">{msg}</span>

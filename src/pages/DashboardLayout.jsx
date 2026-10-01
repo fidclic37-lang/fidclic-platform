@@ -712,7 +712,7 @@ const DashboardLayout = () => {
           {/* A new establishment chosen under the logo: the page is rebuilt,
               so it reads its data again for that establishment. */}
           {/* The plan is known before a page loads, so a locked page never starts. */}
-          {!planAccess.ready ? null : pageLock ? <LockedSection detail={pageLock} /> : <Outlet key={branchId || 'all'} />}
+          {!planAccess.ready ? null : pageLock ? <LockedSection detail={pageLock} /> : <React.Suspense fallback={<div role="status" aria-label="Chargement" className="flex min-h-[50vh] items-center justify-center"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-[#DCE6FA] border-t-[#2F6BFF]" /></div>}><Outlet key={branchId || 'all'} /></React.Suspense>}
         </div>
       </main>
       <UpgradeModal />
