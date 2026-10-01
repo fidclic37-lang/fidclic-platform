@@ -53,6 +53,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.visits.insert_many([{"id": f"vb{i}", "tenant_id": "b", "customer_id": "b1", "visit_time": now - dt.timedelta(days=31 + i % 25)} for i in range(40)]
                           + [{"id": f"vb2{i}", "tenant_id": "b", "customer_id": "b1", "visit_time": now - dt.timedelta(days=i % 25)} for i in range(10)]
                           + [{"id": f"va{i}", "tenant_id": "a", "customer_id": "a1", "visit_time": now - dt.timedelta(days=i % 20), "amount_paid": 10.5} for i in range(30)])
+    # This week's scans (statut = weekly cards AND scans, the weaker decides):
+    # a ≈ 35 scans and 84 cards → actif; b ≈ 16 scans and 21 cards → à risque.
+    db.visits.insert_many([{"id": f"wa{i}", "tenant_id": "a", "customer_id": "a1", "visit_time": now - dt.timedelta(hours=1 + i * 6)} for i in range(25)]
+                          + [{"id": f"wb{i}", "tenant_id": "b", "customer_id": "b1", "visit_time": now - dt.timedelta(hours=1 + i * 12)} for i in range(13)])
     db.campaigns.insert_one({"id": "k1", "tenant_id": "a", "name": "Promo", "sent_at": now - dt.timedelta(days=2)})
     db.delivery_log.insert_many([{"tenant_id": "a", "kind": "campaign", "result": {"sent": 1}, "timestamp": now - dt.timedelta(days=2)},
                                  {"tenant_id": "a", "kind": "campaign", "result": {"sent": 0}, "timestamp": now - dt.timedelta(days=2)}])
@@ -65,21 +69,21 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = D.dashboard(token_data=ADMIN)
     print("\nFigures")
     k = {x["key"]: x for x in d["kpis"]}
-    check("six figures (visites, campagnes, notifications removed)", list(k) == ["commerces", "nouveaux", "clients", "cartes", "ca", "mrr"])
-    check("commerces and clients", k["commerces"]["value"] == 4 and k["clients"]["value"] == 319)
-    check("commerces: 1 in trial, 3 signed (paid subscription running)", k["commerces"]["breakdown"] == {"essai": 1, "abonne": 3, "autre": 0})
-    month0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    expected_new = sum(1 for t in db.tenants.find({}, {"created_at": 1}) if t["created_at"].replace(tzinfo=dt.timezone.utc) >= month0)
-    check("nouveaux commerces = created this calendar month", k["nouveaux"]["value"] == expected_new)
+    check("figures: Commerces, Impayé, clients, cartes, CA, MRR", list(k) == ["commerces", "impaye", "clients", "cartes", "ca", "mrr"])
+    check("commerces = en essai + abonnés", k["commerces"]["value"] == 4 and k["clients"]["value"] == 319)
+    check("…1 in trial, 3 signed", k["commerces"]["breakdown"] == {"essai": 1, "abonne": 3})
+    check("no impayé yet", k["impaye"]["value"] == 0)
     check("cartes actives = cards on a phone", k["cartes"]["value"] == 252 + 32)
     check("chiffre d'affaires total = what customers spent in the period", k["ca"]["value"] == 315.0)
     check("MRR: paying businesses, franchise at its agreed price", k["mrr"]["value"] == 79 + 39 + 450)
-    check("each figure has its trend", all(len(x["series"]) == 8 for x in d["kpis"]))
+    check("each figure has its trend", all(len(x["series"]) == 8 for x in d["kpis"] if x["key"] != "impaye"))
     p = D.dashboard(date_from=(now - dt.timedelta(days=7)).date().isoformat(), date_to=now.date().isoformat(), token_data=ADMIN)
     check("a shorter period counts less", {x["key"]: x for x in p["kpis"]}["ca"]["value"] < 315.0)
     db.tenants.update_one({"id": "c"}, {"$set": {"suspended_at": now}})
     D._cache.clear()
-    check("a suspended business is not counted as signed", {x["key"]: x for x in D.dashboard(token_data=ADMIN)["kpis"]}["commerces"]["breakdown"]["autre"] == 1)
+    kk = {x["key"]: x for x in D.dashboard(token_data=ADMIN)["kpis"]}
+    check("a suspended business leaves Commerces and counts as Impayé", kk["commerces"]["value"] == 3 and kk["impaye"]["value"] == 1
+          and kk["impaye"]["suspendus"] == 1 and kk["impaye"]["mrr_at_stake"] == 450)
     db.tenants.update_one({"id": "c"}, {"$unset": {"suspended_at": ""}})
     D._cache.clear()
 
@@ -101,11 +105,13 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     print("\nStatus cards")
     sc = {x["key"]: x for x in d["status_cards"]}
-    check("actif / inactif / à risque now", sc["actif"]["value"] == 1 and sc["inactif"]["value"] == 1 and sc["a_risque"]["value"] == 2)
-    check("share of the total", sc["actif"]["pct"] == 25)
+    check("six cards: nouveaux, actifs, inactifs, à risque, résilié, essais non convertis",
+          [x["key"] for x in d["status_cards"]] == ["nouveaux", "actif", "inactif", "a_risque", "resilie", "non_converti"])
+    check("actif / à risque / inactif from weekly cards AND scans", sc["actif"]["value"] == 1 and sc["a_risque"]["value"] == 1 and sc["inactif"]["value"] == 2)
+    check("share of the businesses still with us", sc["actif"]["pct"] == 25)
     check("twelve weeks of history, ending with today's count", len(sc["actif"]["bars"]) == 12 and sc["actif"]["bars"][-1] == 1)
-    check("12 weeks ago: three businesses with no cards yet, the fourth not signed up",
-          sc["a_risque"]["bars"][0] == 3 and sc["actif"]["bars"][0] + sc["inactif"]["bars"][0] == 0)
+    check("12 weeks ago: three businesses with nothing yet → inactif, the fourth not signed up",
+          sc["inactif"]["bars"][0] == 3 and sc["actif"]["bars"][0] + sc["a_risque"]["bars"][0] == 0)
     check("new this month", sc["nouveaux"]["value"] >= 1 and sum(sc["nouveaux"]["bars"]) >= 1)
 
     print("\nOpportunities (rules, named)")
@@ -138,6 +144,50 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     first = D.dashboard(token_data=ADMIN)
     db.tenants.insert_one({"id": "z", "name": "Nouveau", "created_at": now})
     check("cached for a minute", D.dashboard(token_data=ADMIN) is first)
+
+    print("\nImpayé, résilié, essais non convertis, lists")
+    db.tenants.insert_many([
+        {"id": "e", "name": "Ex Client", "city": "Tours", "plan": "gold", "subscription_status": "active", "created_at": old,
+         "resiliated_at": now - dt.timedelta(days=3), "resiliation_reason": "Fermeture", "phone": "0611223344"},
+        {"id": "f", "name": "Essai Perdu", "city": "Tours", "plan": "silver", "subscription_status": "trialing", "created_at": now - dt.timedelta(days=40),
+         "trial_ends_at": now - dt.timedelta(days=5)},
+        {"id": "g", "name": "Retard Paiement", "city": "Blois", "plan": "silver", "subscription_status": "past_due", "created_at": old},
+        {"id": "i", "name": "Converti", "city": "Blois", "plan": "silver", "subscription_status": "active", "created_at": now - dt.timedelta(days=40),
+         "trial_ends_at": now - dt.timedelta(days=10), "subscription_started_at": now - dt.timedelta(days=10)},
+    ])
+    db.users.insert_one({"email": "owner@ex.fr", "role": "business_owner", "tenant_id": "e", "first_name": "Léa", "last_name": "Martin"})
+    D._cache.clear()
+    d2 = D.dashboard(token_data=ADMIN)
+    k2 = {x["key"]: x for x in d2["kpis"]}
+    s2 = {x["key"]: x for x in d2["status_cards"]}
+    z = 1                                   # the business added by hand earlier in this test
+    check("Commerces: the converted trial joins, résilié / non converti / impayé don't", k2["commerces"]["value"] == 5 + z
+          and k2["commerces"]["breakdown"] == {"essai": 1, "abonne": 4 + z} and k2["commerces"]["series"][-1] == 5 + z)
+    check("Impayé: the late payer", k2["impaye"]["value"] == 1 and k2["impaye"]["suspendus"] == 0)
+    check("MRR leaves out résilié and impayé", k2["mrr"]["value"] == 79 + 39 + 450 + 39)
+    check("Résilié card: 1 in the period, 1 in all", s2["resilie"]["value"] == 1 and s2["resilie"]["total"] == 1 and sum(s2["resilie"]["bars"]) == 1)
+    check("Essais non convertis: 1, conversion 50 % (1 of 2 trials ended)", s2["non_converti"]["value"] == 1
+          and s2["non_converti"]["ended"] == 2 and s2["non_converti"]["conversion"] == 50)
+    check("résilié and non converti stay out of actif / inactif / à risque",
+          s2["actif"]["value"] + s2["inactif"]["value"] + s2["a_risque"]["value"] == 6 + z)
+    L = lambda key: D.dashboard_list(key, token_data=ADMIN)                     # noqa: E731
+    r = L("resilie")
+    check("every card opens its businesses — résiliés with reason, owner and phone",
+          [x["id"] for x in r["rows"]] == ["e"] and r["rows"][0]["resiliation_reason"] == "Fermeture"
+          and r["rows"][0]["email"] == "owner@ex.fr" and r["rows"][0]["owner"] == "Léa Martin" and r["rows"][0]["phone"] == "0611223344")
+    check("essai / abonné / impayé / non converti lists", [x["id"] for x in L("essai")["rows"]] == ["d"]
+          and {x["id"] for x in L("abonne")["rows"]} - {"z"} == {"a", "b", "c", "i"} and [x["id"] for x in L("impaye")["rows"]] == ["g"]
+          and [x["id"] for x in L("non_converti")["rows"]] == ["f"])
+    check("Commerces list = essai + abonnés", {x["id"] for x in L("commerces")["rows"]} - {"z"} == {"a", "b", "c", "d", "i"})
+    check("actif list carries cards and scans a week", L("actif")["rows"][0]["id"] == "a" and L("actif")["rows"][0]["scans_week"] >= 25)
+    m = L("mrr")
+    check("MRR list: biggest first, € / mois", m["metric_label"] == "€ / mois" and m["rows"][0]["id"] == "c" and m["rows"][0]["metric"] == 450)
+    check("CA list sorted by what customers spent", L("ca")["rows"][0]["id"] == "a")
+    try:
+        L("nope"); unknown = False
+    except Exception as e:
+        unknown = getattr(e, "status_code", None) == 404
+    check("unknown list refused", unknown)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

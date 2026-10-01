@@ -274,7 +274,9 @@ const MyWalletCardPage = () => {
         // console for DevTools-on-mobile workflows.
         const status = e?.response?.status;
         const detail = e?.response?.data?.detail;
-        const msg = status === 404
+        const msg = status === 410
+          ? (detail || "Ce programme de fidélité n'est plus disponible.")
+          : status === 404
           ? `Aucune carte trouvée pour ${barcodeId}. Vérifiez que la carte a bien été créée (côté commerçant : Dashboard → Customers).`
           : status === 500
             ? `Erreur serveur (${detail || 'sans détail'}). Le commerçant doit recharger le seed ou contacter le support.`
@@ -574,7 +576,7 @@ const MyWalletCardPage = () => {
       <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center">
         <div className="bg-white rounded-2xl p-8 border border-[#E9E5E0] max-w-md text-center">
           <XCircle className="mx-auto text-[#B85C38] mb-3" size={40} />
-          <p className="text-[#171412] font-semibold mb-2">Carte introuvable</p>
+          <p className="text-[#171412] font-semibold mb-2">{/n'est plus disponible/.test(err) ? 'Programme terminé' : 'Carte introuvable'}</p>
           <p className="text-[#57504A] text-sm">{err}</p>
           <Link to="/" className="inline-block mt-5 text-[#B85C38] underline">Retour à l'accueil</Link>
         </div>

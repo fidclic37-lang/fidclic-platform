@@ -123,9 +123,10 @@ async def get_current_user_data(request: Request) -> TokenData:
         view_by = payload.get("view_by") if payload.get("view_only") else None
         if payload.get("view_only") and request.method not in READ_METHODS:
             raise HTTPException(status_code=403, detail="Mode lecture seule : aucune modification possible depuis cette vue.")
-        if (not view_by and role in SUSPENDABLE and tenant_id and _tenant_check is not None
-                and _tenant_check(tenant_id)):
-            raise HTTPException(status_code=403, detail="Ce compte est suspendu. Contactez FidClic.")
+        closed = (not view_by and role in SUSPENDABLE and tenant_id and _tenant_check is not None and _tenant_check(tenant_id))
+        if closed:
+            # Suspendu or résilié: the check says which (admin_commerces.is_suspended).
+            raise HTTPException(status_code=403, detail=closed if isinstance(closed, str) else "Ce compte est suspendu. Contactez FidClic.")
         return TokenData(email=email, role=role, tenant_id=tenant_id, sid=sid, view_by=view_by)
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)[:80]}")
