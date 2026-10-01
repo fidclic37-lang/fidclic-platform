@@ -66,7 +66,7 @@ export function Spark({ series = [], color = BLUE, w = 96, h = 32, fluid = false
   );
 }
 
-export function Kpi({ icon: Icon, tone, bg, value, label, delta, series, compact }) {
+export function Kpi({ icon: Icon, tone, bg, value, label, delta, series, compact, foot }) {
   const up = (delta ?? 0) >= 0;
   // `compact`: seven cards on one row down to 1280 px wide (13-inch laptops,
   // sidebar open) — the curve goes under the figures until there is room
@@ -85,6 +85,7 @@ export function Kpi({ icon: Icon, tone, bg, value, label, delta, series, compact
           </div>
           <div className="hidden shrink-0 self-end min-[1920px]:block"><Spark series={series} color={tone} w={80} /></div>
         </div>
+        {foot}
         <div className="mt-2 min-[1920px]:hidden"><Spark series={series} color={tone} w={120} h={26} fluid /></div>
       </div>
     );
