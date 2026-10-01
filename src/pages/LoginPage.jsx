@@ -77,7 +77,7 @@ const LoginPage = () => {
            bars), anchored to the bottom so the headline + benefits are always
            in frame — only sky/window at the top is trimmed on wide screens. */
         <aside className="relative hidden overflow-hidden lg:block lg:h-full">
-          <img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-bottom" />
+          <picture className="contents"><source srcSet={'/brand/login-hero.webp'} type="image/webp" /><img src={HERO} alt="Bienvenue chez FidClic — la fidélité en un clic" className="absolute inset-0 h-full w-full object-cover object-bottom" /></picture>
         </aside>
       ) : (
       <aside className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between px-14 py-14"
@@ -87,7 +87,7 @@ const LoginPage = () => {
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -left-24 h-[560px] w-[620px] rounded-[45%]"
              style={{ background: 'radial-gradient(closest-side, #D3E3FF 0%, rgba(211,227,255,0) 70%)' }} />
         <div className="relative">
-          <img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[64px] w-auto" />
+          <picture className="contents"><source srcSet={'/brand/fidclic-logo.webp'} type="image/webp" /><img src={LOGO} alt="FidClic — La fidélité en un clic" className="h-[64px] w-auto" /></picture>
           <h1 className="mt-16 text-[56px] font-extrabold leading-[1.02] tracking-[-0.02em] text-[#0B1C3F]">
             {t('login.welcome_line1')}<br />
             <span className="text-[#2F6BFF]">FIDCLIC</span> <span aria-hidden="true">👋</span>
@@ -114,7 +114,7 @@ const LoginPage = () => {
           <div className="text-center">
             {variant === 1
               ? <img src={ICON} alt="FidClic" className="mx-auto h-[40px] w-[40px] rounded-lg" />
-              : <img src={LOGO} alt="FidClic" className="mx-auto h-[52px] w-auto" />}
+              : <picture className="contents"><source srcSet={'/brand/fidclic-logo.webp'} type="image/webp" /><img src={LOGO} alt="FidClic" className="mx-auto h-[52px] w-auto" /></picture>}
             <h2 className="mt-5 text-[40px] font-extrabold tracking-[-0.025em] text-[#0B1C3F]">{t('login.title')}</h2>
             <p className="mt-2 text-[16px] text-[#4B5C7A]">{t('login.subtitle')}</p>
           </div>
