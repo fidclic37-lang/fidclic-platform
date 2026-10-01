@@ -169,7 +169,11 @@ function shouldTranslateNode(node) {
   if (/^[\d\s.,€$%+\-*/:_/()]+$/.test(trimmed)) return false;
   if (/^FT-[A-Z0-9]+$/i.test(trimmed)) return false;
   let p = node.parentElement;
-  while (p) {
+  const root = node.ownerDocument && node.ownerDocument.documentElement;
+  // An opt-out on <html> itself is about the BROWSER's translation, never
+  // this layer (it once switched this layer off on every page). Opt-outs
+  // inside the page still work.
+  while (p && p !== root) {
     if (SKIP_TAGS.has(p.tagName)) return false;
     if (p.getAttribute && p.getAttribute('translate') === 'no') return false;
     if (p.classList && p.classList.contains('notranslate')) return false;
