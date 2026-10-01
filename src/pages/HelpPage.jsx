@@ -5,9 +5,10 @@ import {
   Loader2, Clock, BookOpen,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
-import { useAuth } from '../contexts/AuthContext';
 import SupportChat from '../components/SupportChat';
-import SupportModal from '../components/SupportModal';
+// SupportModal (the older email form) is kept for rollback: requests now open a
+// conversation in « Mes demandes » (Centre de support, 2026-10-01).
+import MyRequests from '../components/support/MyRequests';
 
 /**
  * Besoin d'aide ? — the support page, built to the approved mockup.
@@ -112,7 +113,6 @@ function renderBody(body) {
 /* ── page ─────────────────────────────────────────────────────────────── */
 export default function HelpPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [kb, setKb] = useState(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -174,7 +174,7 @@ export default function HelpPage() {
           icon={Mail}
           tone="green"
           title="Nous envoyer un email"
-          body="Décrivez votre situation en détail, nous vous répondons directement par email."
+          body="Décrivez votre situation en détail, nous vous répondons ici, dans « Mes demandes », et par email."
           meta={`Réponse ${channels.email?.delay || 'sous 24h'}`}
           cta="Écrire à l'équipe"
           onClick={() => setEmailOpen(true)}
@@ -189,6 +189,8 @@ export default function HelpPage() {
           href={`tel:${(channels.phone?.number || '01 84 80 10 20').replace(/\s/g, '')}`}
         />
       </div>
+
+      <MyRequests newOpen={emailOpen} setNewOpen={setEmailOpen} />
 
       <div className="mt-5 grid items-start gap-5 lg:grid-cols-[1.15fr_1fr]">
         {/* FAQ */}
@@ -266,12 +268,6 @@ export default function HelpPage() {
         </div>
       </div>
 
-      <SupportModal
-        open={emailOpen}
-        onClose={() => setEmailOpen(false)}
-        defaultEmail={user?.email || ''}
-        tenantSlug={user?.tenant_slug || ''}
-      />
     </div>
   );
 }

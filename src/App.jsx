@@ -105,6 +105,7 @@ import RolesPage from './pages/admin/securite/RolesPage';
 import ConnexionsPage from './pages/admin/securite/ConnexionsPage';
 import JournalPage from './pages/admin/securite/JournalPage';
 import SecuritySettingsPage from './pages/admin/securite/SecuritySettingsPage';
+import SupportCenterPage from './pages/admin/support/SupportCenterPage';
 import { can, moduleOfPath, firstAllowed } from './lib/perms';
 // Rollback: the previous plan editor — import AdminPlansPage from './pages/AdminPlansPage';
 import PlanLimitsPage from './pages/admin/PlanLimitsPage';
@@ -508,6 +509,7 @@ function App() {
             <Route path="securite/connexions" element={<AdminGate><ConnexionsPage /></AdminGate>} />
             <Route path="securite/journal" element={<AdminGate><JournalPage /></AdminGate>} />
             <Route path="securite/parametres" element={<AdminGate><SecuritySettingsPage /></AdminGate>} />
+            <Route path="support" element={<AdminGate><SupportCenterPage /></AdminGate>} />
           </Route>
         </Routes>
        </Router>

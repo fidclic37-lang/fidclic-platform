@@ -2098,11 +2098,11 @@ class SupportTicketIn(BaseModel):
 
 @app.post("/api/support/contact")
 def submit_support_ticket(payload: SupportTicketIn):
-    """Receive a support query from a business and forward it to the
-    platform's support inbox. Always persists the ticket to MongoDB
-    regardless of email-delivery outcome so the support team can
-    review tickets in the database even if SMTP is misconfigured."""
-    import uuid as _uuid
+    """The contact form (older entry point, no sign-in needed). Since the
+    « Centre de support » (2026-10-01) it opens a conversation like the
+    merchant's « Mes demandes » form: stored first, then FidClic's mailbox
+    is told (features/support_center.py)."""
+    from features import support_center as SC
     subject = (payload.subject or "").strip()
     message = (payload.message or "").strip()
     if not subject:
@@ -2113,118 +2113,20 @@ def submit_support_ticket(payload: SupportTicketIn):
         raise HTTPException(status_code=400, detail="Subject is too long (max 200 chars).")
     if len(message) > 5000:
         raise HTTPException(status_code=400, detail="Message is too long (max 5000 chars).")
-
-    ticket = {
-        "id":           str(_uuid.uuid4()),
-        "subject":      subject,
-        "message":      message,
-        "from_email":   (payload.from_email or "").strip() or None,
-        "from_name":    (payload.from_name  or "").strip() or None,
-        "tenant_slug":  (payload.tenant_slug or "").strip() or None,
-        "created_at":   datetime.now(timezone.utc),
-        "status":       "open",
-        "email_sent":   False,
-        "email_error":  None,
-    }
-    # Super admin › Plan Limits › « Support prioritaire »: a business whose
-    # plan includes it jumps the queue and the super admin's bell rings.
+    email = (payload.from_email or "").strip() or None
+    tenant_id = None
     try:
-        t = (db.tenants.find_one({"slug": ticket["tenant_slug"]}, {"_id": 0}) if ticket["tenant_slug"] else None)
-        if not t and ticket["from_email"]:
-            u = db.users.find_one({"email": ticket["from_email"].lower()}, {"_id": 0, "tenant_id": 1})
-            t = db.tenants.find_one({"id": u.get("tenant_id")}, {"_id": 0}) if u and u.get("tenant_id") else None
-        if t:
-            ticket["tenant_id"] = t["id"]
-            ticket["tenant_name"] = t.get("name")
-            ticket["priority"] = "prioritaire" if features_for(t).get("priority_support") else "normale"
+        t = db.tenants.find_one({"slug": (payload.tenant_slug or "").strip()}, {"_id": 0, "id": 1}) if (payload.tenant_slug or "").strip() else None
+        if not t and email:
+            u = db.users.find_one({"email": email.lower()}, {"_id": 0, "tenant_id": 1})
+            t = {"id": u["tenant_id"]} if u and u.get("tenant_id") else None
+        tenant_id = (t or {}).get("id")
     except Exception as e:
-        print(f"[support] priority lookup failed: {e}")
-    ticket.setdefault("priority", "normale")
-    if ticket["priority"] == "prioritaire":
-        subject = f"[PRIORITAIRE] {subject}"
-        try:
-            db.platform_alerts.insert_one({"id": str(_uuid.uuid4()), "kind": "support_priority", "email": ticket["from_email"],
-                                           "text": f"Demande de support prioritaire — {ticket.get('tenant_name') or ticket['from_email'] or ''} : {ticket['subject']}",
-                                           "at": datetime.now(timezone.utc), "ip": None, "read_by": []})
-        except Exception:
-            pass
-
-    # 1) Persist first — never lose a ticket because of network flakiness.
-    try:
-        db.support_tickets.insert_one(ticket)
-    except Exception as e:
-        print(f"[support] DB insert failed: {e}")
-
-    # 2) Try delivery channels in priority order. First success wins.
-    #    Each helper returns (sent: bool, error_or_none: str|None).
-    #    Errors are accumulated so the admin can see which channel
-    #    failed and why in the ticket record.
-    delivered = False
-    delivery_via = None
-    delivery_errors = []
-    for channel_name, fn in (
-        ("smtp",       _support_send_smtp),
-        ("resend",     _support_send_resend),
-        ("formsubmit", _support_send_formsubmit),
-    ):
-        try:
-            sent, err = fn(subject, message, ticket)
-        except Exception as e:
-            sent, err = False, f"{channel_name}_uncaught: {type(e).__name__}: {e}"
-        if sent:
-            delivered = True
-            delivery_via = channel_name
-            print(f"[support] Delivered via {channel_name} (ticket {ticket['id']})")
-            break
-        if err and err != "not_configured":
-            delivery_errors.append(f"{channel_name}: {err}")
-    delivery_error = "; ".join(delivery_errors) if (delivery_errors and not delivered) else None
-    if not delivered:
-        print(f"[support] All channels failed for ticket {ticket['id']}: {delivery_error}")
-
-    # 3) Update ticket with delivery outcome + which channel succeeded.
-    try:
-        db.support_tickets.update_one(
-            {"id": ticket["id"]},
-            {"$set": {
-                "email_sent":   delivered,
-                "email_via":    delivery_via,
-                "email_error":  delivery_error,
-            }},
-        )
-    except Exception:
-        pass
-
-    return {
-        "ok": True,
-        "ticket_id": ticket["id"],
-        "delivered": delivered,
-        # We deliberately don't surface the email_error to the client —
-        # their ticket is safely stored regardless. The support team
-        # can read errors via /api/admin/support/tickets.
-    }
-
-
-@app.get("/api/admin/support/tickets")
-def list_support_tickets(
-    limit: int = 50,
-    token_data=Depends(require_admin("support")),
-):
-    """Admin-only view of recent support tickets so the platform team
-    can triage even if email delivery is broken."""
-    tickets = list(
-        db.support_tickets
-          .find({}, {"_id": 0})
-          .sort("created_at", -1)
-          .limit(max(1, min(int(limit or 50), 200)))
-    )
-    for t in tickets:
-        if isinstance(t.get("created_at"), datetime):
-            t["created_at"] = t["created_at"].isoformat()
-        t.setdefault("priority", "normale")
-    # Open priority tickets first (Plan Limits › « Support prioritaire »).
-    tickets.sort(key=lambda t: not (t.get("priority") == "prioritaire" and t.get("status") == "open"))
-    return {"tickets": tickets}
+        print(f"[support] tenant lookup failed: {e}")
+    ticket = SC.new_ticket(tenant_id=tenant_id, subject=subject, body=message, author_type="merchant", author_email=email,
+                           author_name=(payload.from_name or "").strip() or email, source="formulaire", from_email=email,
+                           from_name=(payload.from_name or "").strip() or None)
+    return {"ok": True, "ticket_id": ticket["id"], "delivered": True}
 
 
 # ═══════════════════════════════════════════════════════════════════════
