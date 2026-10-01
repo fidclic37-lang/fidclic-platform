@@ -387,6 +387,7 @@ LISTS = {
     "inactif": "Commerces inactifs", "a_risque": "Commerces à risque", "resilie": "Commerces résiliés",
     "non_converti": "Essais non convertis", "clients": "Clients finaux par commerce", "cartes": "Cartes actives par commerce",
     "ca": "Chiffre d'affaires par commerce", "mrr": "MRR par commerce",
+    "essai_7j": "Essais qui se terminent sous 7 jours", "limite": "Commerces à 90 % de leur limite",
 }
 
 
@@ -411,6 +412,14 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
         ids = [i for i, v in stand.items() if v in ("essai", "abonne")]
     elif key in ("essai", "abonne", "impaye"):
         ids = [i for i, v in stand.items() if v == key]
+    elif key == "essai_7j":
+        ids = [i for i, t in tenants.items() if stand[i] == "essai" and _aware(t.get("trial_ends_at"))
+               and now <= _aware(t["trial_ends_at"]) <= now + timedelta(days=7)]
+    elif key == "limite":
+        from features import analytics_usage as U
+        near = {r["id"]: r["near"] for r in U.rows(now) if (r.get("near") or 0) >= 90}
+        ids = [i for i in near if i in tenants]
+        metric, metric_label = near, "Limite utilisée (%)"
     elif key == "nouveaux":
         ids = [i for i, t in tenants.items() if (_aware(t.get("created_at")) or now) >= month0]
     elif key in ("actif", "inactif", "a_risque"):
@@ -454,7 +463,7 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
         rows.sort(key=lambda x: -(x["metric"] or 0))
     elif key in ("resilie",):
         rows.sort(key=lambda x: x["resiliated_at"] or "", reverse=True)
-    elif key in ("essai", "non_converti"):
+    elif key in ("essai", "non_converti", "essai_7j"):
         rows.sort(key=lambda x: x["trial_ends_at"] or "")
     elif key in ("actif", "inactif", "a_risque"):
         rows.sort(key=lambda x: min(x["cards_week"] or 0, x["scans_week"] or 0))
@@ -462,3 +471,120 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
         rows.sort(key=lambda x: x["name"].lower())
     return {"key": key, "title": LISTS[key], "rows": rows, "metric_label": metric_label,
             "period": {"from": start.date().isoformat(), "to": (end - timedelta(seconds=1)).date().isoformat()}}
+
+
+# ---------------------------------------------------------------------------
+# « À suivre aujourd'hui » (user, 2026-10-01): a section of its own, under
+# the figures — À faire aujourd'hui, Encaissements, Support, CRM. Each block
+# only for a member who may open that module.
+# ---------------------------------------------------------------------------
+def _can(token_data: TokenData, module: str) -> bool:
+    if token_data.role == "super_admin":
+        return True
+    from features import platform_access as PA
+    return bool(((PA.perms_for(token_data.email) or {}).get(module) or {}).get("view"))
+
+
+def _todo(now: datetime, tenants: List[Dict[str, Any]], token_data: TokenData) -> List[Dict[str, Any]]:
+    stand = {t["id"]: AC.standing_of(t, now) for t in tenants}
+    week = now + timedelta(days=7)
+    items = []
+    ending = [t for t in tenants if stand[t["id"]] == "essai" and _aware(t.get("trial_ends_at")) and now <= _aware(t["trial_ends_at"]) <= week]
+    items.append({"key": "essai_7j", "label": "Essais qui se terminent sous 7 jours", "count": len(ending), "icon": "clock", "tone": "violet",
+                  "action": {"list": "essai_7j"}})
+    late = sum(1 for v in stand.values() if v == "impaye")
+    items.append({"key": "impaye", "label": "Paiements en retard (impayés)", "count": late, "icon": "alert", "tone": "rose", "action": {"list": "impaye"}})
+    rows = AC.snapshot(now)
+    risk = sum(1 for r in rows if r["status"] == "a_risque")
+    items.append({"key": "a_risque", "label": "Commerces à risque", "count": risk, "icon": "trending-down", "tone": "amber", "action": {"list": "a_risque"}})
+    try:
+        from features import analytics_usage as U
+        near = sum(1 for r in U.rows(now) if (r.get("near") or 0) >= 90 and r.get("subscription_status") != "canceled")
+    except Exception:                       # noqa: BLE001
+        near = 0
+    items.append({"key": "limite", "label": "Commerces à 90 % de leur limite (à faire évoluer)", "count": near, "icon": "gauge", "tone": "blue",
+                  "action": {"list": "limite"}})
+    if _can(token_data, "support"):
+        urgent = _db.support_tickets.count_documents({"status": "urgent"})
+        unread = _db.support_tickets.count_documents({"unread_team": {"$gt": 0}})
+        items.append({"key": "support", "label": "Tickets support urgents ou non lus", "count": urgent + unread, "icon": "headset", "tone": "rose",
+                      "detail": f"{urgent} urgent{'s' if urgent != 1 else ''} · {unread} non lu{'s' if unread != 1 else ''}",
+                      "action": {"href": "/admin/support"}})
+    if _can(token_data, "crm"):
+        overdue = sum(1 for t in _db.crm_tasks.find({"status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
+                      if _aware(t.get("due_at")) and _aware(t["due_at"]) < now)
+        day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        rdv = sum(1 for t in _db.crm_tasks.find({"type": "rdv", "status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
+                  if _aware(t.get("due_at")) and day0 <= _aware(t["due_at"]) < day0 + timedelta(days=1))
+        items.append({"key": "crm_retard", "label": "Tâches CRM en retard", "count": overdue, "icon": "list", "tone": "amber", "action": {"href": "/admin/crm/taches"}})
+        items.append({"key": "crm_rdv", "label": "Rendez-vous prospects aujourd'hui", "count": rdv, "icon": "calendar", "tone": "blue", "action": {"href": "/admin/crm/calendrier"}})
+    return items
+
+
+def _encaissements(now: datetime, tenants: List[Dict[str, Any]]) -> Dict[str, Any]:
+    import server as core
+    m0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    p0 = (m0 - timedelta(days=1)).replace(day=1)
+    p_end = min(p0 + (now - m0), m0)
+    paid = lambda a, b: [i for i in _db.fidclic_invoices.find({"paid_at": {"$gte": a, "$lt": b}}, {"_id": 0, "amount_paid": 1, "total_ttc": 1})]   # noqa: E731
+    cur, prev = paid(m0, now + timedelta(seconds=1)), paid(p0, p_end)
+    amount = lambda rows: round(sum(float(i.get("amount_paid") or i.get("total_ttc") or 0) for i in rows), 2)                           # noqa: E731
+    stand = {t["id"]: AC.standing_of(t, now) for t in tenants}
+    late = [t for t in tenants if stand[t["id"]] == "impaye"]
+    upcoming = 0.0
+    n_up = 0
+    try:
+        from features import analytics_usage as U
+        for r in U.rows(now):
+            rn = r.get("renewal") or {}
+            if r.get("subscription_status") == "active" and rn.get("kind") == "renouvellement" and rn.get("days", 99) <= 30:
+                upcoming += float(r.get("price") or 0)
+                n_up += 1
+    except Exception:                       # noqa: BLE001
+        pass
+    return {"month": amount(cur), "month_invoices": len(cur), "delta": _delta(amount(cur), amount(prev)),
+            "upcoming_30": round(upcoming, 2), "upcoming_count": n_up,
+            "late": round(sum(core.tenant_price(t) for t in late), 2), "late_count": len(late)}
+
+
+def _support_health(now: datetime) -> Dict[str, Any]:
+    since = now - timedelta(days=30)
+    tickets = list(_db.support_tickets.find({}, {"_id": 0, "status": 1, "unread_team": 1, "created_at": 1, "first_response_at": 1,
+                                                 "resolved_at": 1, "rating": 1, "last_from": 1}))
+    first = [(_aware(t.get("first_response_at")) - _aware(t.get("created_at"))).total_seconds() / 3600 for t in tickets
+             if _aware(t.get("first_response_at")) and _aware(t.get("created_at")) and _aware(t["created_at"]) >= since]
+    rated = [t["rating"]["stars"] for t in tickets if (t.get("rating") or {}).get("stars") and _aware(t["rating"].get("at")) and _aware(t["rating"]["at"]) >= since]
+    return {"open": sum(1 for t in tickets if t.get("status") != "resolu"), "unread": sum(1 for t in tickets if (t.get("unread_team") or 0) > 0),
+            "urgent": sum(1 for t in tickets if t.get("status") == "urgent"),
+            "waiting_us": sum(1 for t in tickets if t.get("status") != "resolu" and t.get("last_from") == "merchant"),
+            "first_response_hours": round(sum(first) / len(first), 1) if first else None,
+            "satisfaction": round(sum(rated) / len(rated), 1) if rated else None, "ratings": len(rated),
+            "resolved_30": sum(1 for t in tickets if _aware(t.get("resolved_at")) and _aware(t["resolved_at"]) >= since)}
+
+
+def _crm_summary(now: datetime) -> Dict[str, Any]:
+    from features import crm_pilotage as P
+    active = _db.crm_prospects.count_documents({"stage": {"$in": P.ACTIVE}})
+    proposals = _db.crm_prospects.count_documents({"stage": "proposition"})
+    m0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    signed = _db.crm_activities.count_documents({"type": "stage", "meta.to": "signe", "at": {"$gte": m0}})
+    try:
+        forecast = P._health(now - timedelta(days=30), now, now).get("forecast")
+    except Exception:                       # noqa: BLE001
+        forecast = None
+    week_end = now + timedelta(days=7)
+    rdv = sum(1 for t in _db.crm_tasks.find({"type": "rdv", "status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
+              if _aware(t.get("due_at")) and now <= _aware(t["due_at"]) <= week_end)
+    overdue = sum(1 for t in _db.crm_tasks.find({"status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
+                  if _aware(t.get("due_at")) and _aware(t["due_at"]) < now)
+    return {"active": active, "proposals": proposals, "signed_month": signed, "forecast": forecast, "rdv_7j": rdv, "overdue": overdue}
+
+
+@router.get("/api/admin/dashboard/today")
+def dashboard_today(token_data: TokenData = Depends(require_admin("dashboard"))):
+    now = _now()
+    tenants = list(_db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0}))
+    return {"todo": _todo(now, tenants, token_data),
+            "encaissements": _encaissements(now, tenants) if _can(token_data, "facturation") else None,
+            "support": _support_health(now) if _can(token_data, "support") else None,
+            "crm": _crm_summary(now) if _can(token_data, "crm") else None}

@@ -8,6 +8,7 @@ import { Card, Head, Kpi, Donut, Loading, Modal, nf, BLUE } from '../crm/ui';
 import { PlanPill, CommerceLogo } from './CommercesPage';
 import { CitiesSection, RevenueSection, SourcesSection } from './analytics/sections';
 import CommerceListModal from './CommerceListModal';
+import DashboardToday from './DashboardToday';
 
 /* Super admin › Dashboard — built to the approved mockup. */
 
@@ -152,6 +153,8 @@ export default function AdminDashboardPage() {
           <p className="mt-2 text-[11px] text-[#94A3B8]">Détectées par des règles sur vos données, sans IA générative.</p>
         </Card>
       </div>
+
+      <DashboardToday openList={setList} />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <Card>

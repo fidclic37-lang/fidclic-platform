@@ -10,6 +10,7 @@ import { Kpi, Donut, Bars, Loading, Breadcrumb, Modal, nf } from '../crm/ui';
 import { RangePicker, useRange } from './securite/shared';
 import UsagePanel, { UsageFigures } from './analytics/UsagePanel';
 import { CitiesSection, RevenueSection, SourcesSection, EvolutionSection, SectorsDonutSection } from './analytics/sections';
+import { CohortsSection, BenchmarksSection, AdoptionSection, PlanMovesSection, GrowthSection, MapSection } from './analytics/deep';
 
 /* Super admin › Analytics global — built to the approved mockup
    (features/admin_analytics.py). « Répartition du chiffre d'affaires » shows
@@ -158,6 +159,18 @@ export default function AnalyticsGlobalPage() {
           <Curve points={d.clients.points} grain={d.grain} color="#10B981" unit="clients" />
         </Card>
       </div>
+
+      {/* Analyses avancées (user, 2026-10-01) — each section loads on its own */}
+      <h2 className="mb-1 mt-8 text-[20px] font-bold text-[#0B1C3F]">Analyses avancées</h2>
+      <p className="mb-3 text-[13px] text-[#64748B]">Rétention, comparaisons par secteur, usage des fonctionnalités, mouvements de plans, croissance et carte.</p>
+      <CohortsSection Card={Card} Head={Head} />
+      <div className="mt-4"><BenchmarksSection Card={Card} Head={Head} /></div>
+      <div className="mt-4"><AdoptionSection Card={Card} Head={Head} /></div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <PlanMovesSection range={range} Card={Card} Head={Head} />
+        <GrowthSection range={range} Card={Card} Head={Head} />
+      </div>
+      <div className="mt-4"><MapSection Card={Card} Head={Head} /></div>
 
       {/* 6 — plan usage (from the « Gestion des abonnements » mockup) */}
       <div className="mt-4"><UsageFigures range={range} /></div>
