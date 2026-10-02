@@ -760,11 +760,11 @@ export default function AnalysesPage() {
       {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
 
       {loading && !payload ? (
-        <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-20 text-[13px] text-[#64748B]">
-          <Loader2 size={16} className="animate-spin" /> Chargement des analyses…
+        <div key="loading" className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-20 text-[13px] text-[#64748B]">
+          <Loader2 size={16} className="animate-spin" /> <span>Chargement des analyses…</span>
         </div>
       ) : payload ? (
-        <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
+        <div key="data" className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
           <OpenCtx.Provider value={open}>
             <TabCtx.Provider value={payload.tab}>
               <Renderer d={payload.data} />
