@@ -51,6 +51,11 @@ export default function SecuriteOverviewPage() {
         <RangePicker value={range} onChange={setRange} />
       </header>
 
+      {/* The tabs sit right under the title, as on the other Admin pages. */}
+      <Card className="mb-4 p-0" onClick={(e) => e.stopPropagation()}>
+        <SecuTabs right={boss && <button type="button" onClick={() => setModal({ type: 'user' })} className="my-2 inline-flex h-10 items-center gap-2 rounded-xl px-4 text-[13.5px] font-medium text-white" style={{ background: BLUE }}><Plus size={16} /> Ajouter un utilisateur</button>} />
+      </Card>
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <Kpi icon={Users} tone="#2F6BFF" bg="#EAF1FF" value={nf(K.users.value)} label="Utilisateurs de l'équipe" delta={K.users.delta} series={K.users.series} />
         <Kpi icon={ShieldCheck} tone="#10B981" bg="#E7F7EE" value={nf(K.actions.value)} label="Actions enregistrées" delta={K.actions.delta} series={K.actions.series} />
@@ -97,9 +102,9 @@ export default function SecuriteOverviewPage() {
       </div>
 
       <div className="mt-4 grid items-start gap-4 xl:grid-cols-[1fr_390px]">
-        <Card className="min-w-0 p-0">
-          <SecuTabs right={boss && <button type="button" onClick={() => setModal({ type: 'user' })} className="my-2 inline-flex h-10 items-center gap-2 rounded-xl px-4 text-[13.5px] font-medium text-white" style={{ background: BLUE }}><Plus size={16} /> Ajouter un utilisateur</button>} />
-          <div className="overflow-x-auto p-3">
+        <Card className="min-w-0">
+          <Head icon={Users} title="Utilisateurs de l'équipe" sub={`${nf(users.length)} compte${users.length > 1 ? 's' : ''} FidClic`} />
+          <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-[13px]">
               <thead><tr className="border-b border-[#EDF1F7] text-left text-[#64748B]">{['Nom', 'Email', 'Rôle', 'Statut', 'Dernière connexion', boss ? 'Actions' : ''].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr></thead>
               <tbody>
