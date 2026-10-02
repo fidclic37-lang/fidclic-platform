@@ -21,7 +21,7 @@ os.environ["DISABLE_SEED"] = "1"
 
 with mongomock.patch(servers=(("localhost", 27017),)):
     import server                      # noqa: F401 — boots the app + db
-    from features import dashboard_home as DH
+    from features import dashboard_home as DH, clients_page as CP
 
     db = server.db
     DH.init(db)
@@ -79,14 +79,17 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     # ---- the four figures -----------------------------------------------------
     print("\nThe four figures")
-    check("four cards, in the design's order",
-          [c["key"] for c in d["cards"]] == ["revenue", "clients", "loyal", "basket"])
+    check("four cards: CA, clients, fidélisés, inactifs (« Panier moyen » replaced, user 2026-10-02)",
+          [c["key"] for c in d["cards"]] == ["revenue", "clients", "loyal", "inactive"])
     check("chiffre d'affaires is the money actually taken", cards["revenue"]["value"] == 100.0)
     check("the rival's 500 € is not in it", cards["revenue"]["value"] != 600.0)
     check("clients totaux counts the whole base", cards["clients"]["value"] == 6)
-    check("clients fidélisés is five visits or more", cards["loyal"]["value"] == 2)
-    check("panier moyen is revenue over visits, not over clients",
-          cards["basket"]["value"] == 20.0)
+    CP.init(db)
+    cp = {c["key"]: c["value"] for c in CP.overview(token_data=TD())["cards"]}
+    check("fidélisés = the Clients page's « Clients fidèles » (same rules)", cards["loyal"]["value"] == cp["loyal"])
+    check("inactifs = the Clients page's « Clients inactifs » (gone 90 days, never came)", cards["inactive"]["value"] == cp["inactive"] == 2)
+    check("each card opens its list", cards["loyal"]["to"] == "/dashboard/customers?segment=loyal"
+          and cards["inactive"]["to"] == "/dashboard/customers?segment=inactive" and cards["clients"]["to"] == "/dashboard/customers")
     check("the comparison is against the window before",
           cards["revenue"]["delta_pct"] == round((100 - 60) / 60 * 100))
     check("the revenue card carries the FidClic badge of the design",
@@ -185,9 +188,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           == ["loyal", "new", "occasional", "inactive"])
     check("everyone is in exactly one",
           sum(s["count"] for s in d["status_mix"]["slices"]) == 6)
-    check("fidélisés are the frequent, recent ones", mix["loyal"]["count"] == 2)
-    check("a client gone ninety days is inactif however many visits they had",
-          mix["inactive"]["count"] == 2)
+    check("inactif first: gone ninety days or never came", mix["inactive"]["count"] == 2)
+    seg = lambda k: CP.list_page(segment=k, per_page=100, token_data=TD())["total"]       # noqa: E731
+    check("each slice opens exactly its clients on the Clients page",
+          all(mix[k]["count"] == seg(mix[k]["segment"]) for k in mix))
     check("a client who joined this week is nouveau", mix["new"]["count"] == 1)
     check("shares add up to about 100 %",
           99 <= sum(s["pct"] for s in d["status_mix"]["slices"]) <= 101)
@@ -212,7 +216,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     empty = DH.overview(days=30, token_data=Fresh())
     check("every figure reads zero", all(c["value"] == 0 for c in empty["cards"]))
     check("no figure invents a percentage", all(c["delta_pct"] is None for c in empty["cards"]))
-    check("the basket does not divide by no visits", empty["cards"][3]["value"] == 0)
     check("the charts still have their days", len(empty["revenue_series"]) == 30)
     check("there are no products to show", empty["products"] == [])
     check("and no best campaign to name", empty["campaigns"]["best"] is None)

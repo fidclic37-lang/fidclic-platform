@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, Users, Crown, ShoppingBag, Target, TrendingUp, Send, CalendarDays,
   MousePointerClick, ShoppingCart, ChevronDown, ChevronRight, ArrowRight,
-  Loader2, Mail, UserPlus, QrCode, Star, FileDown, Info, Zap, Check, X,
+  Loader2, Mail, UserX, Star, FileDown, Info, Zap, Check, X,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -22,13 +22,14 @@ import { useAuth } from '../contexts/AuthContext';
  * grid covers 8h–20h, so a bar's late trade is reported beside it rather than
  * silently dropped.
  */
-const KPI_ICONS = { chart: BarChart3, users: Users, crown: Crown, bag: ShoppingBag, target: Target, star: Star };
+const KPI_ICONS = { chart: BarChart3, users: Users, crown: Crown, bag: ShoppingBag, target: Target, star: Star, moon: UserX };
 const TONES = {
   blue:   { bg: '#EAF1FF', fg: '#1D4ED8', dot: '#2F6BFF' },
   green:  { bg: '#E7F7EE', fg: '#0F8B58', dot: '#10B981' },
   amber:  { bg: '#FFF7E6', fg: '#B45309', dot: '#F59E0B' },
   violet: { bg: '#F3EEFF', fg: '#6D28D9', dot: '#8B5CF6' },
   slate:  { bg: '#EEF2F8', fg: '#475569', dot: '#94A3B8' },
+  rose:   { bg: '#FDECEF', fg: '#E11D48', dot: '#F43F5E' },
 };
 
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -89,12 +90,17 @@ const RangePicker = ({ value, onChange, busy = false, lead = false }) => (
   </div>
 );
 
-const KpiCard = ({ card }) => {
+// The figures read big and green (user, 2026-10-02); « Clients inactifs » in
+// rose — more of them is bad news. Each card opens what it counts.
+const KpiCard = ({ card, onOpen }) => {
   const Icon = KPI_ICONS[card.icon] || BarChart3;
   const t = TONES[card.tone] || TONES.blue;
   const up = (card.delta_pct ?? 0) >= 0;
+  const good = card.lower_is_better ? !up : up;
   return (
-    <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+    <div role="button" tabIndex={0} onClick={() => card.to && onOpen(card.to)} onKeyDown={(e) => { if (e.key === 'Enter' && card.to) onOpen(card.to); }}
+         title={card.to ? 'Voir le détail' : undefined}
+         className="cursor-pointer rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] transition hover:border-[#BFD3FF] hover:shadow-[0_18px_40px_-28px_rgba(47,107,255,.45)]">
       <div className="mb-3 flex items-center justify-between gap-2">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl"
               style={{ background: t.bg, color: t.fg }}>
@@ -107,7 +113,7 @@ const KpiCard = ({ card }) => {
         )}
       </div>
       <p className="text-[12.5px] text-[#64748B]">{card.label}</p>
-      <p className="mt-0.5 text-[25px] font-bold leading-none tracking-tight text-[#0B1C3F] tabular-nums">
+      <p className="mt-1 text-[32px] font-extrabold leading-none tracking-tight tabular-nums" style={{ color: card.lower_is_better ? '#E11D48' : '#0F8B58' }}>
         {card.unit === '€' ? money(card.value) : nf(card.value)}
       </p>
       {card.delta_pct === null || card.delta_pct === undefined ? (
@@ -115,7 +121,7 @@ const KpiCard = ({ card }) => {
       ) : (
         <div className="mt-2.5">
           <span className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold"
-                style={up ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#FEECEC', color: '#C0392B' }}>
+                style={good ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#FEECEC', color: '#C0392B' }}>
             {up ? '↑' : '↓'} {up ? '+' : ''}{card.delta_pct}%
           </span>
           <span className="mt-1 block text-[11px] text-[#94A3B8]">vs période précédente</span>
@@ -210,7 +216,7 @@ const BarChart = ({ series }) => {
   );
 };
 
-const Donut = ({ mix }) => {
+const Donut = ({ mix, onOpen }) => {
   const R = 54, C = 2 * Math.PI * R;
   let offset = 0;
   const total = mix?.total || 0;
@@ -238,10 +244,15 @@ const Donut = ({ mix }) => {
       </div>
       <ul className="min-w-[190px] flex-1 space-y-2.5">
         {(mix?.slices || []).map((s) => (
-          <li key={s.key} className="flex items-center gap-2.5 text-[12.5px]">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
-            <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>
-            <span className="shrink-0 font-bold text-[#0B1C3F] tabular-nums">{s.pct}%</span>
+          <li key={s.key}>
+            <button type="button" onClick={() => onOpen(`/dashboard/customers?segment=${s.segment}`)} title={`Voir ces ${nf(s.count)} clients`}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-1 py-0.5 text-left text-[12.5px] hover:bg-[#F4F7FC]">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
+              <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>
+              <span className="shrink-0 text-[11.5px] text-[#94A3B8] tabular-nums">{nf(s.count)}</span>
+              <span className="w-10 shrink-0 text-right font-bold text-[#0B1C3F] tabular-nums">{s.pct}%</span>
+              <ChevronRight size={13} className="shrink-0 text-[#94A3B8]" />
+            </button>
           </li>
         ))}
       </ul>
@@ -250,7 +261,8 @@ const Donut = ({ mix }) => {
 };
 
 const GoalModal = ({ current, onClose, onSaved }) => {
-  const [value, setValue] = useState(current || 0);
+  // Text, not a number: the field can be empty while typing (no « 0 » in front).
+  const [value, setValue] = useState(current ? String(current) : '');
   const [saving, setSaving] = useState(false);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B1C3F]/25 p-6" onClick={onClose}>
@@ -266,8 +278,8 @@ const GoalModal = ({ current, onClose, onSaved }) => {
             <span className="mb-1.5 block text-[12.5px] font-semibold text-[#334155]">
               Objectif de chiffre d'affaires mensuel (€)
             </span>
-            <input type="number" min={0} step={50} value={value}
-                   onChange={(e) => setValue(Math.max(0, Number(e.target.value) || 0))}
+            <input type="number" min={0} step={50} value={value} placeholder="Ex. 5000" autoFocus
+                   onChange={(e) => setValue(e.target.value.replace(/^0+(?=\d)/, '').replace(/^-/, ''))}
                    className="w-full rounded-xl border border-[#E6EEFB] px-3 py-2.5 text-[13px] outline-none focus:border-[#2F6BFF]" />
           </label>
           <p className="mt-2 text-[11.5px] leading-snug text-[#94A3B8]">
@@ -279,7 +291,7 @@ const GoalModal = ({ current, onClose, onSaved }) => {
           <button type="button" disabled={saving}
                   onClick={async () => {
                     setSaving(true);
-                    try { await ownerAPI.setHomeGoal({ monthly_revenue_goal: value }); onSaved(); }
+                    try { await ownerAPI.setHomeGoal({ monthly_revenue_goal: Math.max(0, Number(value) || 0) }); onSaved(); }
                     finally { setSaving(false); }
                   }}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white disabled:opacity-60">
@@ -343,9 +355,6 @@ export default function DashboardHomePage() {
 
   const QUICK = [
     { label: 'Créer une campagne', icon: Mail, to: '/dashboard/campaigns' },
-    { label: 'Ajouter un client', icon: UserPlus, to: '/dashboard/scan' },
-    { label: 'Envoyer une offre', icon: Send, to: '/dashboard/automations' },
-    { label: 'Générer un QR code', icon: QrCode, to: '/dashboard/card' },
     { label: 'Voir mes avis', icon: Star, to: '/dashboard/analytics#reviews' },
     { label: 'Exporter un rapport', icon: FileDown, to: '/dashboard/history' },
   ];
@@ -382,7 +391,7 @@ export default function DashboardHomePage() {
 
       {/* the four figures */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {(d?.cards || []).map((c) => <KpiCard key={c.key} card={c} />)}
+        {(d?.cards || []).map((c) => <KpiCard key={c.key} card={c} onOpen={navigate} />)}
       </div>
 
       {/* goal + impact */}
@@ -447,19 +456,21 @@ export default function DashboardHomePage() {
           </div>
         </Panel>
 
+        <div role="button" tabIndex={0} onClick={() => navigate('/dashboard/campaigns')} onKeyDown={(e) => { if (e.key === 'Enter') navigate('/dashboard/campaigns'); }}
+             title="Voir les campagnes à l'origine de ce chiffre" className="cursor-pointer rounded-2xl transition hover:ring-2 hover:ring-[#BFD3FF]">
         <Panel>
           <div className="flex items-start gap-3.5">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EAF1FF] text-[#2F6BFF]">
-              <BarChart3 size={19} />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E7F7EE] text-[#0F8B58]">
+              <BarChart3 size={20} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[12.5px] text-[#64748B]">Impact FidClic</span>
-                <span className="text-[22px] font-bold text-[#0B1C3F] tabular-nums">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-[13px] font-medium text-[#64748B]">Impact FidClic</span>
+                <span className="text-[30px] font-extrabold leading-none tabular-nums text-[#0F8B58]">
                   +{money(d?.impact?.value)}
                 </span>
                 {d?.impact?.delta_pct !== null && d?.impact?.delta_pct !== undefined && (
-                  <span className="rounded-md bg-[#E7F7EE] px-1.5 py-0.5 text-[11.5px] font-semibold text-[#0F8B58]">
+                  <span className={`rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${d.impact.delta_pct >= 0 ? 'bg-[#E7F7EE] text-[#0F8B58]' : 'bg-[#FEECEC] text-[#C0392B]'}`}>
                     {d.impact.delta_pct >= 0 ? '↑ +' : '↓ '}{d.impact.delta_pct}%
                   </span>
                 )}
@@ -472,15 +483,16 @@ export default function DashboardHomePage() {
             </div>
           </div>
         </Panel>
+        </div>
       </div>
 
       {/* the two charts */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
         <Panel title="Évolution du chiffre d'affaires" action={<RangePicker value={days} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
-            <span className="text-[22px] font-bold text-[#0B1C3F] tabular-nums">{money(d?.revenue_total)}</span>
+            <button type="button" onClick={() => navigate('/dashboard/analytics')} title="Voir les analyses" className="text-[22px] font-bold text-[#0F8B58] tabular-nums hover:underline">{money(d?.revenue_total)}</button>
             {d?.revenue_delta !== null && d?.revenue_delta !== undefined && (
-              <span className="rounded-md bg-[#E7F7EE] px-1.5 py-0.5 text-[11.5px] font-semibold text-[#0F8B58]">
+              <span className={`rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${d.revenue_delta >= 0 ? 'bg-[#E7F7EE] text-[#0F8B58]' : 'bg-[#FEECEC] text-[#C0392B]'}`}>
                 {d.revenue_delta >= 0 ? '↑ +' : '↓ '}{d.revenue_delta}%
               </span>
             )}
@@ -489,9 +501,9 @@ export default function DashboardHomePage() {
         </Panel>
         <Panel title="Nouveaux clients" action={<RangePicker value={days} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
-            <span className="text-[22px] font-bold text-[#0B1C3F] tabular-nums">{nf(d?.new_total)}</span>
+            <button type="button" onClick={() => navigate('/dashboard/customers?segment=new')} title="Voir ces nouveaux clients" className="text-[22px] font-bold text-[#0F8B58] tabular-nums hover:underline">{nf(d?.new_total)}</button>
             {d?.new_delta !== null && d?.new_delta !== undefined && (
-              <span className="rounded-md bg-[#E7F7EE] px-1.5 py-0.5 text-[11.5px] font-semibold text-[#0F8B58]">
+              <span className={`rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${d.new_delta >= 0 ? 'bg-[#E7F7EE] text-[#0F8B58]' : 'bg-[#FEECEC] text-[#C0392B]'}`}>
                 {d.new_delta >= 0 ? '↑ +' : '↓ '}{d.new_delta}%
               </span>
             )}
@@ -514,17 +526,18 @@ export default function DashboardHomePage() {
               const Icon = t.icon;
               const tone = TONES[t.tone];
               return (
-                <div key={t.label} className="rounded-xl p-3 text-center" style={{ background: tone.bg }}>
+                <button type="button" key={t.label} onClick={() => navigate('/dashboard/campaigns')} className="rounded-xl p-3 text-center transition hover:brightness-[.97]" style={{ background: tone.bg }}>
                   <Icon size={17} className="mx-auto mb-1.5" style={{ color: tone.fg }} />
                   <p className="text-[18px] font-bold leading-none text-[#0B1C3F] tabular-nums">{nf(t.value)}</p>
                   <p className="mt-1 text-[10.5px] leading-tight" style={{ color: tone.fg }}>{t.label}</p>
-                </div>
+                </button>
               );
             })}
           </div>
           <h3 className="mb-2 mt-4 text-[12.5px] font-bold text-[#0B1C3F]">Campagne la plus performante</h3>
           {d?.campaigns?.best ? (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#E6EEFB] p-3">
+            <div role="button" tabIndex={0} onClick={() => navigate('/dashboard/campaigns')} onKeyDown={(e) => { if (e.key === 'Enter') navigate('/dashboard/campaigns'); }}
+                 className="flex cursor-pointer flex-wrap items-center gap-3 rounded-xl border border-[#E6EEFB] p-3 hover:border-[#BFD3FF]">
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-[13px] font-semibold text-[#0B1C3F]">{d.campaigns.best.name}</span>
@@ -583,7 +596,7 @@ export default function DashboardHomePage() {
 
       {/* hours + status */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Panel title="Heures d'affluence">
+        <Panel title="Heures d'affluence" action={<SeeAll onClick={() => navigate('/dashboard/analytics')} label="Voir le détail" />}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[380px] border-separate" style={{ borderSpacing: '3px' }}>
               <thead>
@@ -628,7 +641,7 @@ export default function DashboardHomePage() {
         </Panel>
 
         <Panel title="Statut des clients">
-          {d?.status_mix?.total ? <Donut mix={d.status_mix} /> : (
+          {d?.status_mix?.total ? <Donut mix={d.status_mix} onOpen={navigate} /> : (
             <p className="py-12 text-center text-[12.5px] text-[#94A3B8]">
               Vos clients apparaîtront ici dès la première inscription.
             </p>
