@@ -39,8 +39,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'FidClic';
   const body = payload.body || '';
   const url = payload.url || '/';
-  const icon = payload.icon || '/favicon.svg';
-  const badge = payload.badge || '/favicon.svg';
+  const icon = payload.icon || '/icon-192.png';
+  const badge = payload.badge || '/badge-96.png';
   const tag = payload.tag || 'fidelitour';   // collapses similar pushes into one
 
   event.waitUntil(

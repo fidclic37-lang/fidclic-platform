@@ -242,7 +242,7 @@ export default function CopilotPage() {
   // daily and weekly campaigns on or off; their days and times are set there.
   const toggleAutopilot = async () => {
     if (d.plan.autopilot_plan_ok === false) {
-      openUpgrade({ feature: 'ai', message: "L'Autopilot est inclus dans l'offre Pro AI." });
+      openUpgrade({ feature: 'ai', label: 'Autopilot', message: "L'Autopilot est inclus dans l'offre Pro AI.", upgrade: { label: 'Pro AI' } });
       return;
     }
     setBusy('autopilot');

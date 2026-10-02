@@ -237,8 +237,8 @@ export default function CampaignReportsPage() {
       {!d.plan_ok ? (
         <Card className="flex flex-wrap items-center justify-between gap-3">
           <p className="flex items-center gap-2 text-[13px] text-[#475569]"><Lock size={15} /> Le rapport mensuel des campagnes est inclus dans l'offre Pro AI.</p>
-          <button type="button" onClick={() => openUpgrade({ feature: 'ai', message: "Le rapport mensuel des campagnes est inclus dans l'offre Pro AI." })}
-                  className="rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white">Voir les offres</button>
+          <button type="button" onClick={() => openUpgrade({ feature: 'ai', label: 'Rapport mensuel', message: "Le rapport mensuel des campagnes est inclus dans l'offre Pro AI.", upgrade: { label: 'Pro AI' } })}
+                  className="rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white">Passer à Pro AI</button>
         </Card>
       ) : (
         <>
