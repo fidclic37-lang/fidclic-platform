@@ -185,31 +185,36 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
     tenant = _db.tenants.find_one({"id": tid}) or {}
     rows = _visits(tid, start, end, scope)
     prev_rows = _visits(tid, prev_start, prev_end, scope)
-    customers = list(_db.customers.find(
-        S.customer_filter(scope),
-        {"_id": 0, "id": 1, "name": 1, "visits": 1, "created_at": 1, "last_visit_date": 1}))
+    from features import clients_page as CP
+    # The Clients page's columns: the shop's rules may read any of them.
+    customers = list(_db.customers.find(S.customer_filter(scope), CP.FIELDS))
 
     revenue, prev_revenue = _revenue(rows), _revenue(prev_rows)
+    # « Clients fidélisés » and « Clients inactifs » are the Clients page's own
+    # (the shop's Règles clients, features/clients_page.py): a click on a card
+    # opens a list with exactly that many people (user, 2026-10-02).
+    from features import clients_page as CP, customer_rules as R
+    rules = R.load(tid)
     total_clients = len(customers)
-    prev_clients = sum(1 for c in customers if (_aware(c.get("created_at")) or at) < start)
-    loyal = sum(1 for c in customers if int(c.get("visits") or 0) >= LOYAL_VISITS)
-    prev_loyal = sum(1 for c in customers
-                     if int(c.get("visits") or 0) >= LOYAL_VISITS
-                     and (_aware(c.get("created_at")) or at) < start)
-    basket = (revenue / len(rows)) if rows else 0.0
-    prev_basket = (prev_revenue / len(prev_rows)) if prev_rows else 0.0
+    before = [c for c in customers if (_aware(c.get("created_at")) or at) < start]
+    prev_clients = len(before)
+    loyal = sum(1 for c in customers if CP.is_loyal(c, at, rules))
+    prev_loyal = sum(1 for c in before if CP.is_loyal(c, start, rules))
+    inactive = sum(1 for c in customers if CP.is_inactive(c, at, rules))
+    prev_inactive = sum(1 for c in before if CP.is_inactive(c, start, rules))
 
-    # ---- the four figures --------------------------------------------------
+    # ---- the four figures (« Panier moyen » gave its place to « Clients inactifs », user 2026-10-02)
     cards = [
         {"key": "revenue", "label": "Chiffre d'affaires", "icon": "chart", "tone": "blue",
          "value": _money(revenue), "unit": "€", "badge": "FidClic",
-         "delta_pct": _delta(revenue, prev_revenue)},
+         "delta_pct": _delta(revenue, prev_revenue), "to": "/dashboard/analytics"},
         {"key": "clients", "label": "Clients totaux", "icon": "users", "tone": "green",
-         "value": total_clients, "delta_pct": _delta(total_clients, prev_clients)},
+         "value": total_clients, "delta_pct": _delta(total_clients, prev_clients), "to": "/dashboard/customers"},
         {"key": "loyal", "label": "Clients fidélisés", "icon": "crown", "tone": "amber",
-         "value": loyal, "delta_pct": _delta(loyal, prev_loyal)},
-        {"key": "basket", "label": "Panier moyen", "icon": "bag", "tone": "violet",
-         "value": _money(basket), "unit": "€", "delta_pct": _delta(basket, prev_basket)},
+         "value": loyal, "delta_pct": _delta(loyal, prev_loyal), "to": "/dashboard/customers?segment=loyal"},
+        {"key": "inactive", "label": "Clients inactifs", "icon": "moon", "tone": "rose",
+         "value": inactive, "delta_pct": _delta(inactive, prev_inactive), "lower_is_better": True,
+         "to": "/dashboard/customers?segment=inactive"},
     ]
 
     # ---- the month's goal ---------------------------------------------------
@@ -330,29 +335,23 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
              "covers": f"{HOURS[0][0]}h – {HOURS[-1][1]}h"}
 
     # ---- who the clients are ------------------------------------------------------
+    # One slice per client, the Clients page's definitions in this order:
+    # inactif, then fidèle, then nouveau, else occasionnel — each slice opens
+    # the same people on the Clients page (segments *_active / occasional).
     buckets = {"loyal": 0, "new": 0, "occasional": 0, "inactive": 0}
     for c in customers:
-        last = _aware(c.get("last_visit_date"))
-        created = _aware(c.get("created_at"))
-        if not last or (at - last).days >= INACTIVE_DAYS:
-            buckets["inactive"] += 1
-        elif int(c.get("visits") or 0) >= LOYAL_VISITS:
-            buckets["loyal"] += 1
-        elif created and (at - created).days <= NEW_DAYS:
-            buckets["new"] += 1
-        else:
-            buckets["occasional"] += 1
+        buckets[CP.home_bucket(c, at, rules)] += 1
     total_b = sum(buckets.values()) or 1
     status_mix = {
         "total": sum(buckets.values()),
         "slices": [
-            {"key": "loyal", "label": "Clients fidélisés", "tone": "green",
+            {"key": "loyal", "label": "Clients fidélisés (actifs)", "tone": "green", "segment": "loyal_active",
              "count": buckets["loyal"], "pct": round(buckets["loyal"] / total_b * 100)},
-            {"key": "new", "label": "Nouveaux clients", "tone": "blue",
+            {"key": "new", "label": "Nouveaux clients (actifs)", "tone": "blue", "segment": "new_active",
              "count": buckets["new"], "pct": round(buckets["new"] / total_b * 100)},
-            {"key": "occasional", "label": "Clients occasionnels", "tone": "amber",
+            {"key": "occasional", "label": "Clients occasionnels", "tone": "amber", "segment": "occasional",
              "count": buckets["occasional"], "pct": round(buckets["occasional"] / total_b * 100)},
-            {"key": "inactive", "label": "Clients inactifs", "tone": "slate",
+            {"key": "inactive", "label": "Clients inactifs", "tone": "slate", "segment": "inactive",
              "count": buckets["inactive"], "pct": round(buckets["inactive"] / total_b * 100)},
         ],
     }
@@ -382,9 +381,9 @@ def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
             "key": "reactivate", "icon": "users", "tone": "blue",
             "title": "Réactivez vos clients inactifs",
             "body": f"{buckets['inactive']} client{'s' if buckets['inactive'] > 1 else ''} "
-                    f"ne sont pas venus depuis plus de {INACTIVE_DAYS} jours. "
+                    "ne sont plus venus depuis un moment (règle « Client actif »). "
                     "Envoyez-leur une offre personnalisée.",
-            "cta": "Relancer ces clients", "to": "/dashboard/campaigns"})
+            "cta": "Voir et relancer ces clients", "to": "/dashboard/customers?segment=inactive"})
     if not campaigns["sent"]:
         out.append({
             "key": "first_campaign", "icon": "chart", "tone": "green",

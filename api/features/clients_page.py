@@ -151,6 +151,27 @@ def segment_of(cust: Dict[str, Any], at: datetime, shop_avg: float,
     return "active"
 
 
+# The Tableau de bord's « Statut des clients » slices — one per client, in
+# this order — open the Clients page on these (not shown as chips).
+HOME_SEGMENTS = {"loyal_active": "Clients fidélisés (actifs)", "new_active": "Nouveaux clients (actifs)",
+                 "occasional": "Clients occasionnels"}
+
+
+# Segments a figure of the Tableau de bord opens — on every plan.
+DRILL_DOWN = {"loyal", "inactive", "new", "loyal_active", "new_active", "occasional"}
+
+
+def home_bucket(cust: Dict[str, Any], at: datetime, rules: Optional[List[Dict[str, Any]]] = None) -> str:
+    if is_inactive(cust, at, rules):
+        return "inactive"
+    if is_loyal(cust, at, rules):
+        return "loyal"
+    created = _aware(cust.get("created_at"))
+    if created and (at - created).days <= NEW_DAYS:
+        return "new"
+    return "occasional"
+
+
 def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
                      shop_avg: float, local_ids: set,
                      rules: Optional[List[Dict[str, Any]]] = None) -> bool:
@@ -174,6 +195,8 @@ def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
         return str(cust.get("birthday") or "")[:2] == at.strftime("%m")
     if key == "vip":
         return (cust.get("tier") or "").lower() == "vip"
+    if key in HOME_SEGMENTS:
+        return home_bucket(cust, at, rules) == {"loyal_active": "loyal", "new_active": "new", "occasional": "occasional"}[key]
     return True
 
 
@@ -361,6 +384,7 @@ def overview(request: Request = None, token_data: TokenData = Depends(require_ro
                                         if _matches_segment(s["key"], c, at, shop_avg, local, rules))}
                      for s in SEGMENTS],
         "sorts": SORT_LABELS,
+        "home_segments": [{"key": k, "label": v} for k, v in HOME_SEGMENTS.items()],
         "statuses": R.statuses(rules),
         "shop_average_ticket": round(shop_avg, 2),
         "definitions": {
@@ -409,9 +433,12 @@ def list_page(
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     # « CRM avancé » not in the plan: the simple list — search, statut, sort.
+    # The Tableau de bord's own figures still open their clients (the list
+    # behind a number every plan shows is not segmentation).
     from features import plan_limits
     if not plan_limits.allows_tenant(token_data.tenant_id, "crm_advanced"):
-        segment, spend, joined = "all", "", ""
+        segment = segment if segment in DRILL_DOWN else "all"
+        spend, joined = "", ""
     tid = token_data.tenant_id
     at = _now()
     per_page = max(1, min(MAX_PER_PAGE, int(per_page or 10)))

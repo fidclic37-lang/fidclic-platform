@@ -2,6 +2,25 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 
+// Number fields (user, 2026-10-02): a field holding 0 kept its 0 when the
+// person typed (« 0878 »), on every number field of the app (82 of them).
+// Before React reads the keystroke, leading zeros go: « 0878 » → « 878 »,
+// « 05 » → « 5 » (« 0 » alone and « 0,5 » stay). The value is written with
+// the browser's own setter so React still sees the change and keeps its
+// state in step.
+if (typeof document !== 'undefined' && typeof HTMLInputElement === 'function') {
+  const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const numeric = (el) => el instanceof HTMLInputElement
+    && (el.type === 'number' || ['numeric', 'decimal'].includes((el.getAttribute('inputmode') || '').toLowerCase()));
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!numeric(el) || !nativeValue?.set) return;
+    const v = el.value;
+    const clean = typeof v === 'string' ? v.replace(/^(-?)0+(?=\d)/, '$1') : v;
+    if (clean !== v) nativeValue.set.call(el, clean);
+  }, true);
+}
+
 // Browser translation (Chrome « Traduire », Edge, Safari) — wanted by the user
 // (2026-10-01). Those tools wrap the page's text in <font> elements; React
 // then tries to remove or insert next to a node that is no longer where it

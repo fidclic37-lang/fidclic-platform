@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Users, Crown, Send, UserPlus, Target, ShoppingBag, MapPin, Gift, Star,
-  Plus, Upload, Search, Filter, SlidersHorizontal, ChevronDown, ChevronLeft,
+  Upload, Search, Filter, SlidersHorizontal, ChevronDown, ChevronLeft,
   ChevronRight, Mail, MoreVertical, Loader2, Columns3, Download, X, ArrowRight,
   Bookmark, BookmarkPlus, Check, Send as SendIcon,
 } from 'lucide-react';
@@ -206,7 +206,18 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [segment, setSegment] = useState('all');
+  // The Tableau de bord opens this page on a figure's own clients
+  // (?segment=loyal, inactive, new, or a « Statut des clients » slice).
+  const [urlParams, setUrlParams] = useSearchParams();
+  const [segment, setSegmentState] = useState(() => urlParams.get('segment') || 'all');
+  const setSegment = (k) => {
+    setSegmentState(k);
+    if (urlParams.get('segment')) setUrlParams((p) => { p.delete('segment'); return p; }, { replace: true });
+  };
+  useEffect(() => {
+    const k = urlParams.get('segment');
+    if (k && k !== segment) { setSegmentState(k); setPage(1); }
+  }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [status, setStatus] = useState('');
   const [spend, setSpend] = useState('');
   const [joined, setJoined] = useState('');
@@ -307,7 +318,8 @@ export default function ClientsPage() {
   useEffect(() => { load(); }, [load]);
 
   const segments = meta?.segments || [];
-  const activeSegment = segments.find((s) => s.key === segment);
+  const homeSegment = (meta?.home_segments || []).find((s) => s.key === segment);
+  const activeSegment = segments.find((s) => s.key === segment) || homeSegment;
 
   const exportCsv = async () => {
     setExporting(true);
@@ -345,10 +357,8 @@ export default function ClientsPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
-          <button type="button" onClick={() => navigate('/dashboard/scan')}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
-            <Plus size={16} /> Ajouter un client
-          </button>
+          {/* « Ajouter un client » removed (user, 2026-10-02): it opened the staff
+              scan page. Clients join with the shop's QR code; a file is imported. */}
           {/* Importing a file is a shop-wide setting: the owner's. */}
           {user?.role === 'business_owner' && (
             <button type="button" onClick={() => navigate('/dashboard/settings#settings-import')}
@@ -522,7 +532,10 @@ export default function ClientsPage() {
           <h2 className="text-[17px] font-bold text-[#0B1C3F]">
             {nf(feed.total)} client{feed.total > 1 ? 's' : ''}
             {activeSegment && segment !== 'all' && (
-              <span className="ml-2 text-[13px] font-medium text-[#64748B]">· {activeSegment.label}</span>
+              <span className="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-[#EAF1FF] px-2 py-0.5 align-middle text-[12.5px] font-semibold text-[#2F6BFF]">
+                {activeSegment.label}
+                <button type="button" aria-label="Retirer ce filtre" onClick={() => { setSegment('all'); setPage(1); }} className="text-[#2F6BFF] hover:text-[#0B1C3F]">×</button>
+              </span>
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
