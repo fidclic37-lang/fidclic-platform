@@ -8,6 +8,7 @@ import {
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
+import InfoTip from '../components/InfoTip';
 
 /**
  * Tableau de bord — the home page, built to the approved design.
@@ -41,11 +42,20 @@ const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MO
 const pointLabel = (q) => q.label || dayLabel(q.date);
 
 /* ── pieces ───────────────────────────────────────────────────────────── */
+// Each panel's « ? » (lib/metricHelp), found from its title.
+const PANEL_HELP = {
+  "Évolution du chiffre d'affaires": 'revenue', 'Nouveaux clients': 'new_clients',
+  'Performance des campagnes': 'campaign_perf', 'Produits les plus populaires': 'products',
+  "Heures d'affluence": 'hours', 'Statut des clients': 'segmentation', 'Recommandations pour vous': 'recommendations',
+};
+
 const Panel = ({ title, action, children, className = '' }) => (
   <section className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
     {(title || action) && (
       <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-[15px] font-bold text-[#0B1C3F]">{title}</h2>
+        <h2 className="flex items-center gap-1.5 text-[15px] font-bold text-[#0B1C3F]">
+          {title} {PANEL_HELP[title] && <InfoTip k={PANEL_HELP[title]} />}
+        </h2>
         {action}
       </header>
     )}
@@ -89,7 +99,7 @@ const KpiCard = ({ card, onOpen }) => {
           </span>
         )}
       </div>
-      <p className="text-[12.5px] text-[#64748B]">{card.label}</p>
+      <p className="flex items-center gap-1 text-[12.5px] text-[#64748B]">{card.label} <InfoTip k={card.key} /></p>
       <p className="mt-1 text-[32px] font-extrabold leading-none tracking-tight tabular-nums" style={{ color: card.lower_is_better ? '#E11D48' : '#0F8B58' }}>
         {card.unit === '€' ? money(card.value) : nf(card.value)}
       </p>
@@ -381,7 +391,7 @@ export default function DashboardHomePage() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span>
-                  <span className="block text-[12.5px] text-[#64748B]">Objectif du mois</span>
+                  <span className="flex items-center gap-1 text-[12.5px] text-[#64748B]">Objectif du mois <InfoTip k="goal" /></span>
                   <span className="text-[22px] font-bold text-[#0B1C3F] tabular-nums">
                     {d?.goal?.is_set ? money(d.goal.target) : '—'}
                   </span>
@@ -444,7 +454,7 @@ export default function DashboardHomePage() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2.5">
-                <span className="text-[13px] font-medium text-[#64748B]">Impact FidClic</span>
+                <span className="inline-flex items-center gap-1 text-[13px] font-medium text-[#64748B]">Impact FidClic <InfoTip k="impact" /></span>
                 <span className="text-[30px] font-extrabold leading-none tabular-nums text-[#0F8B58]">
                   +{money(d?.impact?.value)}
                 </span>

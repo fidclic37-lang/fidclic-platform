@@ -5,6 +5,7 @@ import {
 import { ownerAPI } from '../lib/api';
 import { useResendCheck } from './ResendCheck';
 import { openUpgrade } from './PlanAccess';
+import InfoTip from './InfoTip';
 
 /**
  * Autopilot — FidClic IA prepares a campaign every day and one every week;
@@ -176,7 +177,7 @@ export default function AutopilotPanel() {
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F3EEFF] text-[#6D28D9]"><Bot size={19} /></span>
           <div>
             <h2 className="flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
-              Autopilot <span className="rounded-md bg-[#F3EEFF] px-1.5 py-0.5 text-[10.5px] font-bold text-[#6D28D9]">Pro AI</span>
+              Autopilot <InfoTip k="autopilot" /> <span className="rounded-md bg-[#F3EEFF] px-1.5 py-0.5 text-[10.5px] font-bold text-[#6D28D9]">Pro AI</span>
             </h2>
             <p className="text-[12.5px] leading-snug text-[#64748B]">
               FidClic IA prépare vos campagnes à partir de ce qui marche chez vous. Rien ne part sans votre validation.

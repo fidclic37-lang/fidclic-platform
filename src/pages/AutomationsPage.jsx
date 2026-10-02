@@ -10,6 +10,7 @@ import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import AutoMessagesPanel from '../components/AutoMessagesPanel';
 import AutopilotPanel from '../components/AutopilotPanel';
+import InfoTip from '../components/InfoTip';
 import PendingLotsPanel from '../components/PendingLotsPanel';
 
 /**
@@ -70,7 +71,7 @@ const KpiCard = ({ card, tone }) => {
         <p className="text-[25px] font-bold leading-none tracking-tight text-[#0B1C3F] tabular-nums">
           {card.unit === '%' ? `${String(card.value).replace('.', ',')}%` : nf(card.value)}
         </p>
-        <p className="mt-1 text-[12.5px] leading-tight text-[#64748B]">{card.label}</p>
+        <p className="mt-1 flex items-center gap-1 text-[12.5px] leading-tight text-[#64748B]">{card.label} <InfoTip k={card.key} page="auto" size={12} /></p>
         {card.delta_pct === null || card.delta_pct === undefined ? (
           <p className="mt-2 text-[11px] leading-tight text-[#94A3B8]">
             {card.note || 'pas encore de période précédente'}

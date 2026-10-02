@@ -3,6 +3,7 @@ import {
   Lightbulb, TrendingUp, TrendingDown, Info, Loader2, X, Clock, Check, AlertTriangle, Sparkles,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import InfoTip from './InfoTip';
 
 /**
  * « Ce qui marche chez vous » — what FidClic learnt from the campaigns this
@@ -161,7 +162,7 @@ export function LearningPanel() {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
           <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#F3EEFF] text-[#6D28D9]"><Lightbulb size={16} /></span>
-          Ce qui marche chez vous
+          Ce qui marche chez vous <InfoTip k="learning" />
         </h2>
         <span className="text-[11.5px] text-[#64748B]">
           {d.campaigns_measured} campagne{d.campaigns_measured > 1 ? 's' : ''} mesurée{d.campaigns_measured > 1 ? 's' : ''}
