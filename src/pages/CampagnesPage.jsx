@@ -273,8 +273,8 @@ export default function CampagnesPage() {
       go: () => document.getElementById('cg-composer')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
     { icon: Zap, title: 'Automatiser', sub: 'Activez des scénarios pour relancer vos clients automatiquement.',
       go: () => navigate('/dashboard/automations') },
-    { icon: BarChart3, title: 'Voir les performances', sub: 'Suivez vos résultats en temps réel et améliorez vos campagnes.',
-      go: () => navigate('/dashboard/analytics') },
+    { icon: BarChart3, title: 'Voir les performances', sub: 'Le rapport de vos campagnes, mois par mois : ce qu\'elles ont vraiment rapporté.',
+      go: () => navigate('/dashboard/campaigns/reports') },
   ];
 
   return (

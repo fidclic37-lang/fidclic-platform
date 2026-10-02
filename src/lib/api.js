@@ -466,6 +466,11 @@ export const ownerAPI = {
   autopilotApprove: (id, body) => api.post(`/owner/autopilot/${id}/approve`, body || {}),
   autopilotSkip: (id) => api.post(`/owner/autopilot/${id}/skip`),
   copilotPreparePlan: () => api.post('/owner/copilot/plan/prepare'),
+  // Rapport mensuel des campagnes (features/campaign_report.py).
+  campaignReports: () => api.get('/owner/campaign-reports'),
+  campaignReport: (month) => api.get(`/owner/campaign-reports/${month}`),
+  saveCampaignReportSettings: (body) => api.put('/owner/campaign-reports/settings', body),
+  generateCampaignReport: (body) => api.post('/owner/campaign-reports/generate', body || {}),
   composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
   campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
   googleWalletStatus: () => api.get('/owner/wallet/google-status'),

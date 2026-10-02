@@ -82,6 +82,7 @@ MODULES = [
     "features.resend_guard",           # « déjà contactés » check before a send
     "features.campaign_learning",      # « Ce qui marche chez vous » — learns from sent campaigns
     "features.autopilot",              # Autopilot: daily + weekly campaigns, owner validates
+    "features.campaign_report",        # Rapport mensuel des campagnes (Pro AI)
     "features.client_import",          # Clients › Importer + invitation emails
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
