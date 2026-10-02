@@ -115,10 +115,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # ---- the tabs exist ------------------------------------------------------
     print("\nThe eight tabs")
     top = A.analyses(token_data=TD())
-    check("eight tabs, in the design's order",
+    check("six tabs: « Moments de visite » and « Comportement » live in the overview",
           [t["key"] for t in top["tabs"]]
-          == ["vue", "campagnes", "fidelisation", "avis", "moments", "produits",
-              "acquisition", "comportement"])
+          == ["vue", "campagnes", "fidelisation", "avis", "produits", "acquisition"])
     check("they carry the design's labels",
           [t["label"] for t in top["tabs"]][:4]
           == ["Vue d'ensemble", "Campagnes", "Fidélisation", "Avis clients"])
@@ -132,11 +131,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nVue d'ensemble")
     v = tab("vue")
     strip = {s["key"]: s for s in v["strip"]}
-    check("nine figures across the strip, money first",
+    check("thirteen figures across the strip, money first",
           [s["key"] for s in v["strip"]] == ["revenue", "fidclic", "referral", "basket", "visits",
-                                             "campaign_visits", "clients", "loyal", "inactive"])
-    check("on two rows: the money, then the visits and clients",
-          [s["row"] for s in v["strip"]] == [1, 1, 1, 1, 2, 2, 2, 2, 2])
+                                             "campaign_visits", "clients", "loyal", "inactive",
+                                             "ltv", "ltv_total", "life", "avg_visits"])
+    check("on three rows: the money, the visits and clients, their whole history",
+          [s["row"] for s in v["strip"]] == [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3])
+    beh = A._tab_comportement(A.Reader("t1", 30))
+    bs0 = {s["key"]: s for s in beh["strip"]}
+    check("the overview's LTV is Comportement's", strip["ltv"]["value"] == bs0["ltv"]["value"]
+          and strip["ltv_total"]["value"] == bs0["ltv_total"]["value"])
+    check("and its durée moyenne", strip["life"]["value"] == bs0["life"]["value"])
+    check("visites par client since joining", strip["avg_visits"]["value"] == beh["avg_visits"]
+          and v["avg_visits"]["lifetime"] == beh["avg_visits"])
+    check("and over the period: the window's visits per client",
+          v["avg_visits"]["period"] == round(4 / 5, 1))
+    check("the basket bands are in the overview", v["basket_bands"] == beh["basket_bands"])
+    mo = A._tab_moments(A.Reader("t1", 30))
+    check("and the moments: same weekdays, same best slot",
+          v["moments"]["weekday_bars"] == mo["weekday_bars"] and v["moments"]["best_slot"] == mo["best_slot"])
+    check("the weekdays add up to the window's visits",
+          sum(b["value"] for b in v["moments"]["weekday_bars"]) == 4)
     check("chiffre d'affaires is the money taken in the window", strip["revenue"]["value"] == 120.0)
     check("the rival's 999 € is not in it", strip["revenue"]["value"] != 1119.0)
     check("visites total counts the visits, not the clients", strip["visits"]["value"] == 4)
