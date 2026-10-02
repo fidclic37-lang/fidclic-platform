@@ -45,7 +45,7 @@ def init(db):
 class EarnRules(BaseModel):
     tenant_id: Optional[str] = None
     welcome_bonus_points: int = 0           # 0 = disabled
-    welcome_bonus_message: str = "Welcome! Here are some bonus points to start."
+    welcome_bonus_message: str = ""
     welcome_bonus_only_first_visit: bool = True
     points_per_visit: int = 10              # mirrored from card_templates for clarity
     max_redemption_pct: float = 100.0       # 0..100 — cap on % of bill payable with points
@@ -59,17 +59,46 @@ class WelcomeBonusClaim(BaseModel):
     barcode_id: str
 
 
+# ---------- One reading of the welcome, for every page ----------
+# The Bonus de bienvenue is edited on the Automatisations page and read by the
+# sign-up (features/auto_messages.welcome). It used to be edited on the Carte de
+# fidélité too, and the two pages read it differently: a shop that had never
+# saved it saw « Activé » + an English default message on one page and
+# « Désactivé » on the other (user, 2026-10-02). Both now read `welcome_state`.
+DEFAULT_MESSAGE = "Bienvenue {first_name} ! Votre carte de fidélité {business_name} est prête."
+LEGACY_DEFAULTS = {"Welcome! Here are some bonus points to start.", "Welcome bonus credited."}
+
+
+def welcome_state(tid: str) -> dict:
+    """{enabled, message, points, only_first_visit, active, saved}. `active`
+    is what the sign-up actually does: on, with a message or points to give."""
+    doc = _db.earn_rules.find_one({"tenant_id": tid}) or {}
+    message = (doc.get("welcome_bonus_message") or "").strip()
+    if message in LEGACY_DEFAULTS:            # a placeholder saved by the old page, never chosen
+        message = ""
+    points = max(0, int(doc.get("welcome_bonus_points") or 0))
+    # Never saved = nothing is sent at sign-up, so it reads « désactivé ».
+    enabled = bool(doc) and doc.get("enabled", True) is not False
+    return {"enabled": enabled, "message": message, "points": points,
+            "only_first_visit": doc.get("welcome_bonus_only_first_visit", True) is not False,
+            "active": enabled and bool(message or points), "saved": bool(doc),
+            "default_message": DEFAULT_MESSAGE}
+
+
 # ---------- Owner endpoints ----------
 @router.get("/api/owner/earn-rules")
 def get_earn_rules(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"],
                                                                 partial_ok=True))):
-    """Read on the Carte de fidélité page by everyone who sees it; changed by
-    the owner only (the card is the same at every establishment)."""
-    doc = _db.earn_rules.find_one({"tenant_id": token_data.tenant_id})
-    if not doc:
-        return EarnRules(tenant_id=token_data.tenant_id).model_dump()
+    """Read by everyone who sees the Automatisations page; changed by the owner
+    only (the welcome is the same at every establishment)."""
+    doc = _db.earn_rules.find_one({"tenant_id": token_data.tenant_id}) or {}
     doc.pop("_id", None)
-    return doc
+    state = welcome_state(token_data.tenant_id)
+    return {**EarnRules(tenant_id=token_data.tenant_id).model_dump(), **doc,
+            "enabled": state["enabled"], "welcome_bonus_message": state["message"],
+            "welcome_bonus_points": state["points"],
+            "welcome_bonus_only_first_visit": state["only_first_visit"],
+            "active": state["active"], "default_message": DEFAULT_MESSAGE}
 
 
 @router.put("/api/owner/earn-rules")
@@ -79,6 +108,11 @@ def update_earn_rules(
 ):
     rules.tenant_id = token_data.tenant_id
     rules.updated_at = datetime.now(timezone.utc)
+    rules.welcome_bonus_message = (rules.welcome_bonus_message or "").strip()[:200]
+    rules.welcome_bonus_points = max(0, int(rules.welcome_bonus_points or 0))
+    if rules.enabled and not rules.welcome_bonus_message and not rules.welcome_bonus_points:
+        raise HTTPException(status_code=400, detail=(
+            "Écrivez un message de bienvenue ou offrez des points, sinon rien ne sera envoyé."))
     payload = rules.model_dump()
     _db.earn_rules.update_one(
         {"tenant_id": token_data.tenant_id},
@@ -129,7 +163,7 @@ def claim_welcome_bonus(req: WelcomeBonusClaim):
     return {
         "claimed": True,
         "credited": bonus,
-        "message": rules_doc.get("welcome_bonus_message", "Welcome bonus credited."),
+        "message": rules_doc.get("welcome_bonus_message") or "Bonus de bienvenue crédité.",
     }
 
 

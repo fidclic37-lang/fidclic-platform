@@ -75,6 +75,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         check("a flat ladder is refused", False)
     except HTTPException as e:
         check("a flat ladder is refused", e.status_code == 400)
+    before = [(t["key"], t["min"]) for t in LC.tiers_for("t1")]
+    try:
+        # Bronze's ceiling (Argent's floor) typed above Argent's own ceiling.
+        LC.put_rewards([LC.RewardTier(key="bronze", min=0), LC.RewardTier(key="silver", min=500),
+                        LC.RewardTier(key="gold", min=300), LC.RewardTier(key="vip", min=600)], TD())
+        check("a ceiling above the next rung's is refused, saying which", False)
+    except HTTPException as e:
+        check("a ceiling above the next rung's is refused, saying which",
+              e.status_code == 400 and "Or" in e.detail and "Argent" in e.detail)
+    check("and the rungs keep their names and order", [(t["key"], t["min"]) for t in LC.tiers_for("t1")] == before)
 
     check("classified on points in a points programme",
           LC.classify({"points": 350, "visits": 1}, "t1") == "gold")

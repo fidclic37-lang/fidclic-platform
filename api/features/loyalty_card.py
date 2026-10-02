@@ -305,6 +305,12 @@ def put_card_settings(body: CardSettings,
     so the advanced Card Designer's knobs are never wiped by this page."""
     tid = token_data.tenant_id
     payload = {k: v for k, v in body.model_dump().items() if v is not None}
+    # « Afficher le QR code » and « Ajouter la carte au wallet » are gone from
+    # the page (user, 2026-10-02): every card has its code (its kind is the
+    # « Type de code » option) and can be added to the wallet. A card saved
+    # with either switched off gets them back on its next save.
+    payload["show_qr"] = True
+    payload["wallet_enabled"] = True
 
     if "programme" in payload:
         payload["programme"] = LEGACY_PROGRAMMES.get(payload["programme"], payload["programme"])
@@ -420,14 +426,20 @@ def put_rewards(tiers: List[RewardTier],
         raise HTTPException(status_code=400, detail="Au moins un palier est requis")
     keys = ["bronze", "silver", "gold", "vip"]
     for i, row in enumerate(rows):
-        row["key"] = row.get("key") or keys[i]
+        row["key"] = row.get("key") if row.get("key") in keys else keys[i]
         row["min"] = max(0, int(row.get("min") or 0))
-    rows.sort(key=lambda r: r["min"])
+    # The rungs keep their order — Bronze, Argent, Or, VIP — whatever numbers
+    # are typed. Sorting by number used to move the names: a Bronze ceiling
+    # typed above Argent's made Argent the top rung (user's page, 2026-10-02).
+    rows.sort(key=lambda r: keys.index(r["key"]))
     rows[0]["min"] = 0
     for i in range(1, len(rows)):
         if rows[i]["min"] <= rows[i - 1]["min"]:
-            raise HTTPException(status_code=400,
-                                detail="Chaque palier doit démarrer au-dessus du précédent")
+            below = TIER_LABELS.get(rows[i - 1]["key"], rows[i - 1]["key"])
+            here = TIER_LABELS.get(rows[i]["key"], rows[i]["key"])
+            raise HTTPException(status_code=400, detail=(
+                f"Le palier {here} doit commencer au-dessus du palier {below} : "
+                "chaque palier va plus loin que le précédent."))
     _db.card_templates.update_one({"tenant_id": token_data.tenant_id},
                                   {"$set": {"reward_tiers": rows, "tenant_id": token_data.tenant_id,
                                             "updated_at": _now()}}, upsert=True)
