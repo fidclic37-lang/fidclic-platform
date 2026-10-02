@@ -230,6 +230,25 @@ def _local_ids(tid: str, rows: List[Dict[str, Any]]) -> set:
     return near
 
 
+def status_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """« Statut des clients »: one slice per client, `home_bucket`'s order —
+    inactif, then fidèle, then nouveau, else occasionnel. Each slice opens the
+    same people on the Clients page (segments *_active / occasional / inactive).
+    The Tableau de bord and Analyses draw the same donut from this."""
+    buckets = {"loyal": 0, "new": 0, "occasional": 0, "inactive": 0}
+    for c in customers:
+        buckets[home_bucket(c, at, rules)] += 1
+    total = sum(buckets.values())
+    whole = total or 1
+    labels = [("loyal", "Clients fidélisés (actifs)", "green", "loyal_active"),
+              ("new", "Nouveaux clients (actifs)", "blue", "new_active"),
+              ("occasional", "Clients occasionnels", "amber", "occasional"),
+              ("inactive", "Clients inactifs", "slate", "inactive")]
+    return {"total": total,
+            "slices": [{"key": k, "label": l, "tone": t, "segment": seg, "count": buckets[k],
+                        "pct": round(buckets[k] / whole * 100)} for k, l, t, seg in labels]}
+
+
 FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visits": 1,
           "points": 1, "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
           "birthday": 1, "postal_code": 1, "city": 1, "barcode_id": 1,

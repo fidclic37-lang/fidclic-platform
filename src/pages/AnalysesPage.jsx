@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, Users, Activity, Send, Crown, AlertTriangle, ShoppingBag,
   MousePointerClick, ShoppingCart, Star, MessageSquare, Repeat, Gift, UserPlus,
-  ChevronDown, Download, Loader2, Info,
+  ChevronRight, Download, Loader2, Info, Sparkles,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 
 /**
  * Analyses — eight tabs over one window, built to the approved design.
@@ -21,6 +23,7 @@ const ICONS = {
   users: Users, activity: Activity, send: Send, crown: Crown, alert: AlertTriangle,
   bag: ShoppingBag, chart: BarChart3, click: MousePointerClick, cart: ShoppingCart,
   star: Star, message: MessageSquare, repeat: Repeat, gift: Gift, userplus: UserPlus,
+  sparkles: Sparkles,
 };
 const TONES = {
   blue:   { bg: '#EAF1FF', fg: '#1D4ED8', dot: '#2F6BFF' },
@@ -36,14 +39,19 @@ const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'aoû
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
 const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
 const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+// A point of a series: a day, or an hour for « Aujourd'hui » (it carries its label).
+const pointLabel = (q) => q.label || dayLabel(q.date);
 const fullDate = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
 
-const RANGES = [
-  { key: 7, label: '7 derniers jours' },
-  { key: 30, label: '30 derniers jours' },
-  { key: 90, label: '90 derniers jours' },
-  { key: 365, label: '12 derniers mois' },
-];
+// What a figure opens: a page (`to`), another tab (`tab`) or a panel of this one (`anchor`).
+const OpenCtx = createContext(() => {});
+
+// The design's tab names, and the anchors other pages link to (« Voir mes avis »).
+const HASH_TABS = { reviews: 'avis', avis: 'avis', campaigns: 'campagnes', campagnes: 'campagnes',
+  loyalty: 'fidelisation', fidelisation: 'fidelisation', moments: 'moments', hours: 'moments',
+  products: 'produits', produits: 'produits', acquisition: 'acquisition',
+  behaviour: 'comportement', comportement: 'comportement', vue: 'vue', overview: 'vue', impact: 'vue' };
+const tabFromHash = () => HASH_TABS[(window.location.hash || '').replace('#', '').toLowerCase()] || 'vue';
 
 /* ── pieces ───────────────────────────────────────────────────────────── */
 const Panel = ({ title, note, children, className = '' }) => (
@@ -64,21 +72,33 @@ const Empty = ({ message }) => (
   </div>
 );
 
+// The figures read big; « CA FidClic » in green (user, 2026-10-02). A figure
+// that counts something opens it.
 const Stat = ({ s, i = 0 }) => {
+  const open = useContext(OpenCtx);
   const Icon = ICONS[s.icon] || BarChart3;
-  const t = TONES[TONE_ORDER[i % TONE_ORDER.length]];
+  const t = s.highlight ? TONES.green : TONES[TONE_ORDER[i % TONE_ORDER.length]];
   const good = s.lower_is_better ? (s.delta_pct ?? 0) <= 0 : (s.delta_pct ?? 0) >= 0;
   const up = (s.delta_pct ?? 0) >= 0;
+  const target = s.to || s.tab || s.anchor;
+  const go = () => target && open(s);
   return (
-    <div className="h-full rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+    <div role={target ? 'button' : undefined} tabIndex={target ? 0 : undefined} onClick={go}
+         onKeyDown={(e) => { if (e.key === 'Enter') go(); }}
+         title={target ? 'Voir le détail' : undefined}
+         className={`h-full rounded-2xl border bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] transition ${
+           s.highlight ? 'border-[#BEE9D2]' : 'border-[#E6EEFB]'} ${
+           target ? 'cursor-pointer hover:border-[#BFD3FF] hover:shadow-[0_18px_40px_-28px_rgba(47,107,255,.45)]' : ''}`}>
       <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl"
             style={{ background: t.bg, color: t.fg }}>
         <Icon size={17} />
       </span>
-      <p className="whitespace-nowrap text-[21px] font-bold leading-none text-[#0B1C3F] tabular-nums">
+      <p className="whitespace-nowrap text-[23px] font-extrabold leading-none tabular-nums"
+         style={{ color: s.highlight ? '#0F8B58' : '#0B1C3F' }}>
         {s.unit === '€' ? money(s.value) : `${nf(s.value)}${s.unit || ''}`}
       </p>
-      <p className="mt-1 text-[11.5px] leading-tight text-[#64748B]">{s.label}</p>
+      <p className="mt-1 text-[11.5px] font-medium leading-tight text-[#64748B]">{s.label}</p>
+      {s.hint && <p className="mt-0.5 text-[10.5px] leading-tight text-[#94A3B8]">{s.hint}</p>}
       {s.delta_pct !== null && s.delta_pct !== undefined && (
         <span className="mt-1.5 inline-flex rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
               style={good ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#FEECEC', color: '#C0392B' }}>
@@ -117,11 +137,21 @@ const COLS = {
   7: 'grid-cols-2 lg:grid-cols-4 xl:grid-cols-7',
 };
 
-const Strip = ({ items }) => (
-  <div className={`mb-4 grid gap-3 ${COLS[items.length] || COLS[4]}`}>
-    {items.map((s, i) => <Stat key={s.key} s={s} i={i} />)}
-  </div>
-);
+// A strip may come in rows (`row` on each figure): the overview puts the
+// money on the first and the visits and clients on the second.
+const Strip = ({ items }) => {
+  const rows = [];
+  items.forEach((s) => {
+    const r = s.row || 1;
+    (rows[r - 1] = rows[r - 1] || []).push(s);
+  });
+  let n = 0;
+  return rows.filter(Boolean).map((row, ri) => (
+    <div key={ri} className={`mb-3 grid gap-3 last:mb-4 ${COLS[row.length] || COLS[4]}`}>
+      {row.map((s) => <Stat key={s.key} s={s} i={n++} />)}
+    </div>
+  ));
+};
 
 const Line = ({ series, money: isMoney }) => {
   const W = 620, H = 190, L = 46, B = 22, T = 10, R = 8;
@@ -154,13 +184,13 @@ const Line = ({ series, money: isMoney }) => {
       <path d={line} fill="none" stroke="#2F6BFF" strokeWidth="2.2" strokeLinejoin="round" />
       {p.map((q, i) => (
         <circle key={q.date} cx={x(i)} cy={y(q.value)} r="2.4" fill="#fff" stroke="#2F6BFF" strokeWidth="1.7">
-          <title>{`${dayLabel(q.date)} — ${isMoney ? money(q.value) : nf(q.value)}`}</title>
+          <title>{`${pointLabel(q)} — ${isMoney ? money(q.value) : nf(q.value)}`}</title>
         </circle>
       ))}
       {idx.map((i) => (
         <text key={i} x={x(i)} y={H - 4} fontSize="10" fill="#94A3B8"
               textAnchor={i === 0 ? 'start' : i === p.length - 1 ? 'end' : 'middle'}>
-          {dayLabel(p[i].date)}
+          {pointLabel(p[i])}
         </text>
       ))}
     </svg>
@@ -229,6 +259,7 @@ const HoursGrid = ({ hours }) => (
 );
 
 const Donut = ({ mix, unit = 'Clients' }) => {
+  const open = useContext(OpenCtx);
   const R = 52, C = 2 * Math.PI * R;
   let off = 0;
   return (
@@ -252,15 +283,85 @@ const Donut = ({ mix, unit = 'Clients' }) => {
         </div>
       </div>
       <ul className="min-w-[180px] flex-1 space-y-2.5">
-        {mix.slices.map((s) => (
-          <li key={s.key} className="flex items-center gap-2.5 text-[12.5px]">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
-            <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>
-            <span className="shrink-0 font-bold text-[#0B1C3F] tabular-nums">{s.pct}%</span>
-          </li>
-        ))}
+        {mix.slices.map((s) => {
+          const row = (
+            <>
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
+              <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>
+              {s.segment && <span className="shrink-0 text-[#94A3B8] tabular-nums">{nf(s.count)}</span>}
+              <span className="w-10 shrink-0 text-right font-bold text-[#0B1C3F] tabular-nums">{s.pct}%</span>
+              {s.segment && <ChevronRight size={14} className="shrink-0 text-[#94A3B8]" />}
+            </>
+          );
+          // A slice of the clients donut opens those very clients.
+          return (
+            <li key={s.key}>
+              {s.segment ? (
+                <button type="button" onClick={() => open({ to: `/dashboard/customers?segment=${s.segment}` })}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-1 py-0.5 text-left text-[12.5px] transition hover:bg-[#F5F8FE]">
+                  {row}
+                </button>
+              ) : <div className="flex items-center gap-2.5 text-[12.5px]">{row}</div>}
+            </li>
+          );
+        })}
       </ul>
     </div>
+  );
+};
+
+/* « Impact FidClic »: the revenue FidClic brought back, by what brought it. */
+const ImpactPanel = ({ imp }) => {
+  const up = (imp.delta_pct ?? 0) >= 0;
+  return (
+    <section id="impact" className="mb-4 scroll-mt-24 rounded-2xl border border-[#BEE9D2] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
+        <div>
+          <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#E7F7EE] text-[#0F8B58]"><Sparkles size={16} /></span>
+            Impact FidClic
+          </h2>
+          <p className="flex flex-wrap items-baseline gap-2">
+            <span className="text-[32px] font-extrabold leading-none text-[#0F8B58] tabular-nums">{money(imp.revenue)}</span>
+            {imp.delta_pct !== null && imp.delta_pct !== undefined && (
+              <span className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
+                    style={up ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#FEECEC', color: '#C0392B' }}>
+                {up ? `↑ +${imp.delta_pct}%` : `↓ ${imp.delta_pct}%`}
+              </span>
+            )}
+          </p>
+          <p className="mt-2 text-[12.5px] text-[#475569]">
+            CA des clients revenus grâce à FidClic — <b className="text-[#0B1C3F]">{imp.share_pct}%</b> de votre
+            chiffre d'affaires ({money(imp.revenue_total)}).
+          </p>
+          <p className="mt-1 text-[12.5px] text-[#475569]">
+            <b className="text-[#0B1C3F] tabular-nums">{nf(imp.visits)}</b> visite{imp.visits > 1 ? 's' : ''} ramenée{imp.visits > 1 ? 's' : ''} par FidClic.
+          </p>
+          <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#EEF3FB]" title={`${imp.share_pct}% du CA`}>
+            <span className="block h-full rounded-full bg-[#10B981]" style={{ width: `${Math.min(100, imp.share_pct)}%` }} />
+          </div>
+        </div>
+        <ul className="space-y-3">
+          {imp.sources.map((x) => (
+            <li key={x.key} className="text-[12.5px]">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[x.tone]?.dot }} />
+                <span className="flex-1 font-medium text-[#334155]">{x.label}</span>
+                <span className="text-[#94A3B8] tabular-nums">{nf(x.visits)} visite{x.visits > 1 ? 's' : ''}</span>
+                <span className="w-24 text-right font-bold text-[#0B1C3F] tabular-nums">{money(x.revenue)}</span>
+                <span className="w-10 text-right text-[#64748B] tabular-nums">{x.pct}%</span>
+              </div>
+              <span className="block h-2 overflow-hidden rounded-full bg-[#EEF3FB]">
+                <span className="block h-full rounded-full" style={{ width: `${x.pct}%`, background: TONES[x.tone]?.dot }} />
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="mt-4 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
+        <Info size={12} className="mt-px shrink-0" /> {imp.note}
+      </p>
+    </section>
   );
 };
 
@@ -268,6 +369,7 @@ const Donut = ({ mix, unit = 'Clients' }) => {
 const TabVue = ({ d }) => (
   <>
     <Strip items={d.strip} />
+    {d.impact && <ImpactPanel imp={d.impact} />}
     <div className="mb-4 grid gap-4 lg:grid-cols-2">
       <Panel title="Évolution du chiffre d'affaires">
         <Total value={money(d.revenue_total)} delta={d.revenue_delta} />
@@ -495,9 +597,40 @@ const RENDERERS = {
 };
 
 /* ── page ─────────────────────────────────────────────────────────────── */
+const PERIOD_KEY = 'fidclic:an_period';
+
 export default function AnalysesPage() {
-  const [tab, setTab] = useState('vue');
-  const [days, setDays] = useState(30);
+  const navigate = useNavigate();
+  // The tab follows the address (#avis…), so « Voir mes avis » lands on the reviews.
+  const [tab, setTabState] = useState(tabFromHash);
+  const setTab = useCallback((key) => {
+    setTabState(key);
+    try { window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}#${key}`); } catch (_e) { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    const onHash = () => setTabState(tabFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // The period: « Aujourd'hui », a preset, or one the merchant typed — kept
+  // for the next visit.
+  const [period, setPeriodState] = useState(() => {
+    // The Tableau de bord sends its own period along (« Impact FidClic »).
+    const fromUrl = new URLSearchParams(window.location.search).get('period');
+    if (validPeriod(fromUrl)) return fromUrl;
+    try {
+      const stored = localStorage.getItem(PERIOD_KEY);
+      if (validPeriod(stored)) return stored;
+    } catch (_e) { /* private window */ }
+    return '30';
+  });
+  const setPeriod = useCallback((token) => {
+    const next = validPeriod(token) ? token : '30';
+    setPeriodState(next);
+    try { localStorage.setItem(PERIOD_KEY, next); } catch (_e) { /* ignore */ }
+  }, []);
+  const days = periodDays(period);
   const [payload, setPayload] = useState(null);
   const [tabs, setTabs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -527,6 +660,20 @@ export default function AnalysesPage() {
 
   const Renderer = RENDERERS[payload?.tab] || TabVue;
 
+  // Arriving on #impact: once the overview is drawn, bring its panel into view.
+  useEffect(() => {
+    if (payload?.tab === 'vue' && window.location.hash === '#impact') {
+      document.getElementById('impact')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [payload]);
+
+  // A figure opens a page, another tab, or a panel further down this one.
+  const open = useCallback((s) => {
+    if (s.to) navigate(s.to);
+    else if (s.tab) { setTab(s.tab); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+    else if (s.anchor) document.getElementById(s.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [navigate, setTab]);
+
   return (
     <div className="an">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -542,13 +689,7 @@ export default function AnalysesPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative">
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))}
-                    className="appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2.5 pl-3 pr-8 text-[12.5px] font-medium text-[#334155] outline-none focus:border-[#2F6BFF]">
-              {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-            </select>
-            <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-          </div>
+          <PeriodMenu value={period} onChange={setPeriod} busy={loading} lead />
           <button type="button" onClick={exportCsv} disabled={exporting}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-60">
             {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Exporter le rapport
@@ -578,7 +719,9 @@ export default function AnalysesPage() {
         </div>
       ) : payload ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
-          <Renderer d={payload.data} />
+          <OpenCtx.Provider value={open}>
+            <Renderer d={payload.data} />
+          </OpenCtx.Provider>
         </div>
       ) : null}
     </div>

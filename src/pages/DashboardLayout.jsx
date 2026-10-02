@@ -32,6 +32,10 @@ import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 // Resolves whether a given nav row is "active" given the current path.
 // /dashboard and /admin are exact-match (otherwise they'd swallow every
 // child route); everything else uses startsWith so subpages stay lit.
+// The logo's two colours (public/brand/fidclic-logo.png).
+const BRAND_BLUE = '#1450B8';
+const BRAND_YELLOW = '#F8B008';
+
 const isNavActive = (currentPath, target) => {
   if (target === '/dashboard' || target === '/admin') return currentPath === target;
   return currentPath === target || currentPath.startsWith(target + '/');
@@ -145,7 +149,7 @@ const SignOutNavItem = ({ onClick, collapsed }) => {
  * UserMenu — clickable avatar in the top toolbar.
  *
  * What's inside:
- *   • Big circle with the user's initial — gradient matches the role theme.
+ *   • A tile with the user's initial, in the FidClic logo's blue.
  *   • Small dot at the bottom-right ("you're logged in" indicator — purely
  *     visual cue, lifted from the reference mockup).
  *   • Click → opens a dropdown panel showing the full email, the role label,
@@ -185,11 +189,14 @@ function UserMenu({ user, theme, role, onLogout }) {
         type="button"
         aria-label={t('nav.account_menu')}
         onClick={() => setOpen((v) => !v)}
-        className="relative w-9 h-9 rounded-full flex items-center justify-center text-white hover:opacity-90 transition-opacity"
+        className="relative w-10 h-10 rounded-[12px] flex items-center justify-center text-white hover:opacity-90 transition-opacity"
         style={{
-          background: `linear-gradient(135deg, ${theme.from} 0%, ${theme.to} 100%)`,
-          fontWeight: 500,
-          fontSize: 13,
+          // The FidClic mark's own blue tile (user, 2026-10-02).
+          background: `linear-gradient(135deg, #1F63E0 0%, ${BRAND_BLUE} 100%)`,
+          boxShadow: '0 8px 16px -10px rgba(20,80,184,.8)',
+          color: '#FFFFFF',
+          fontWeight: 700,
+          fontSize: 15,
           letterSpacing: '0.02em',
         }}
       >
@@ -197,7 +204,7 @@ function UserMenu({ user, theme, role, onLogout }) {
         <span
           aria-hidden="true"
           className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full"
-          style={{ background: 'var(--tone-success-line, #7FA269)', boxShadow: '0 0 0 2px var(--flc-card, #FFFFFF)' }}
+          style={{ background: BRAND_YELLOW, boxShadow: '0 0 0 2px var(--flc-card, #FFFFFF)' }}
         />
       </button>
 
@@ -213,10 +220,10 @@ function UserMenu({ user, theme, role, onLogout }) {
           <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--hairline, #EFEDE9)' }}>
             <div className="flex items-center gap-2.5">
               <div
-                className="w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0"
+                className="w-9 h-9 rounded-[11px] flex items-center justify-center text-white shrink-0"
                 style={{
-                  background: `linear-gradient(135deg, ${theme.from} 0%, ${theme.to} 100%)`,
-                  fontWeight: 500, fontSize: 13,
+                  background: `linear-gradient(135deg, #1F63E0 0%, ${BRAND_BLUE} 100%)`,
+                  color: '#FFFFFF', fontWeight: 700, fontSize: 14,
                 }}
               >
                 {initial}
@@ -442,16 +449,14 @@ const DashboardLayout = () => {
             place to say which shop you are looking at. */}
         <div className={collapsed ? 'px-3 pt-3 pb-1' : 'px-4 pt-4 pb-1'}>
           <Link to="/" className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5'}`}>
-            <div
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[16px] font-bold text-white"
-              style={{ background: '#2F6BFF', boxShadow: '0 8px 18px -10px rgba(47,107,255,.9)' }}
-              title={collapsed ? 'FidClic' : undefined}
-            >
-              F
-            </div>
+            {/* The FidClic logo: the F-and-cursor mark, « Fid » in blue, « Clic » in yellow. */}
+            <img src="/brand/fidclic-icon.png" alt="FidClic" width="36" height="36"
+                 className="h-9 w-9 shrink-0 object-contain"
+                 style={{ filter: 'drop-shadow(0 8px 14px rgba(20,80,184,.28))' }}
+                 title={collapsed ? 'FidClic' : undefined} />
             {!collapsed && (
-              <span className="text-[19px] font-bold leading-none tracking-[-0.02em]" style={{ color: '#0B1C3F' }}>
-                FidClic
+              <span className="text-[21px] font-extrabold leading-none tracking-[-0.02em]">
+                <span style={{ color: BRAND_BLUE }}>Fid</span><span style={{ color: BRAND_YELLOW }}>Clic</span>
               </span>
             )}
             {!collapsed && isTeam(user) && (

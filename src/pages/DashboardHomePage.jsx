@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  BarChart3, Users, Crown, ShoppingBag, Target, TrendingUp, Send, CalendarDays,
-  MousePointerClick, ShoppingCart, ChevronDown, ChevronRight, ArrowRight,
+  BarChart3, Users, Crown, ShoppingBag, Target, TrendingUp, Send,
+  MousePointerClick, ShoppingCart, ChevronRight, ArrowRight,
   Loader2, Mail, UserX, Star, FileDown, Info, Zap, Check, X,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 
 /**
  * Tableau de bord — the home page, built to the approved design.
@@ -36,13 +37,8 @@ const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'aoû
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
 const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
 const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
-
-const RANGES = [
-  { key: 7, label: '7 derniers jours' },
-  { key: 30, label: '30 derniers jours' },
-  { key: 90, label: '90 derniers jours' },
-  { key: 365, label: '12 derniers mois' },
-];
+// A point of a series: a day, or an hour for « Aujourd'hui » (it carries its label).
+const pointLabel = (q) => q.label || dayLabel(q.date);
 
 /* ── pieces ───────────────────────────────────────────────────────────── */
 const Panel = ({ title, action, children, className = '' }) => (
@@ -65,29 +61,10 @@ const SeeAll = ({ onClick, label = 'Voir toutes' }) => (
 );
 
 /* One control, three places. Every picker on this page reads and writes the
-   same `days`, so the header, the revenue chart and the new-clients chart can
-   never disagree about which period is on screen. `lead` is the header's
-   version — the calendar pill of the design; the others are plain selects.
-   `busy` greys it out while the page refetches, so a second change cannot race
-   the first. */
+   same period, so the header, the revenue chart and the new-clients chart can
+   never disagree about which period is on screen (components/PeriodMenu). */
 const RangePicker = ({ value, onChange, busy = false, lead = false }) => (
-  <div className="relative">
-    {lead && (
-      <CalendarDays size={15}
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#2F6BFF]" />
-    )}
-    <select value={value} disabled={busy}
-            aria-label="Période analysée"
-            onChange={(e) => onChange(Number(e.target.value))}
-            className={`appearance-none rounded-xl border border-[#E6EEFB] bg-white font-medium text-[#334155] outline-none transition focus:border-[#2F6BFF] disabled:opacity-60 ${
-              lead ? 'py-2.5 pl-9 pr-9 text-[13px] shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]'
-                   : 'py-2 pl-3 pr-8 text-[12.5px]'}`}>
-      {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-    </select>
-    {busy
-      ? <Loader2 size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-[#2F6BFF]" />
-      : <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />}
-  </div>
+  <PeriodMenu value={value} onChange={onChange} busy={busy} lead={lead} />
 );
 
 // The figures read big and green (user, 2026-10-02); « Clients inactifs » in
@@ -166,13 +143,13 @@ const LineChart = ({ series, money: isMoney }) => {
       <path d={line} fill="none" stroke="#2F6BFF" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
       {pts.map((p, i) => (
         <circle key={p.date} cx={x(i)} cy={y(p.value)} r="2.6" fill="#fff" stroke="#2F6BFF" strokeWidth="1.8">
-          <title>{`${dayLabel(p.date)} — ${isMoney ? money(p.value) : nf(p.value)}`}</title>
+          <title>{`${pointLabel(p)} — ${isMoney ? money(p.value) : nf(p.value)}`}</title>
         </circle>
       ))}
       {idx.map((i) => (
         <text key={i} x={x(i)} y={H - 5} fontSize="10.5" fill="#94A3B8"
               textAnchor={i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}>
-          {dayLabel(pts[i].date)}
+          {pointLabel(pts[i])}
         </text>
       ))}
     </svg>
@@ -202,14 +179,14 @@ const BarChart = ({ series }) => {
         return (
           <rect key={p.date} x={cx - bw / 2} y={y(p.value)} width={bw}
                 height={Math.max(0, PAD_T + ih - y(p.value))} rx="2.5" fill="#2F6BFF">
-            <title>{`${dayLabel(p.date)} — ${nf(p.value)}`}</title>
+            <title>{`${pointLabel(p)} — ${nf(p.value)}`}</title>
           </rect>
         );
       })}
       {idx.map((i) => (
         <text key={i} x={PAD_L + (i + 0.5) * (iw / pts.length)} y={H - 5} fontSize="10.5" fill="#94A3B8"
               textAnchor={i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}>
-          {dayLabel(pts[i].date)}
+          {pointLabel(pts[i])}
         </text>
       ))}
     </svg>
@@ -309,27 +286,27 @@ export default function DashboardHomePage() {
   const { user } = useAuth();
   // The period survives a reload and travels in the URL, so a merchant who
   // works on 90 days does not land back on 30 every morning, and a link they
-  // send shows what they were looking at. Only the four offered values are
-  // accepted — ?days=99999 would otherwise reach the API.
-  const [days, setDaysState] = useState(() => {
-    const allowed = RANGES.map((r) => r.key);
-    const fromUrl = Number(new URLSearchParams(window.location.search).get('days'));
-    if (allowed.includes(fromUrl)) return fromUrl;
+  // send shows what they were looking at. Only a valid period is accepted —
+  // « Aujourd'hui », a preset, or one typed up to two years (?days=99999 never
+  // reaches the API).
+  const [period, setPeriodState] = useState(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('days');
+    if (validPeriod(fromUrl)) return fromUrl;
     try {
-      const stored = Number(localStorage.getItem('fidclic:dh_days'));
-      if (allowed.includes(stored)) return stored;
+      const stored = localStorage.getItem('fidclic:dh_days');
+      if (validPeriod(stored)) return stored;
     } catch (_e) { /* private window — fall through to the default */ }
-    return 30;
+    return '30';
   });
+  const days = periodDays(period);
 
   const setDays = useCallback((next) => {
-    const allowed = RANGES.map((r) => r.key);
-    const value = allowed.includes(Number(next)) ? Number(next) : 30;
-    setDaysState(value);
-    try { localStorage.setItem('fidclic:dh_days', String(value)); } catch (_e) { /* ignore */ }
+    const value = validPeriod(next) ? String(next) : '30';
+    setPeriodState(value);
+    try { localStorage.setItem('fidclic:dh_days', value); } catch (_e) { /* ignore */ }
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('days', String(value));
+      url.searchParams.set('days', value);
       window.history.replaceState({}, '', url);
     } catch (_e) { /* ignore */ }
   }, []);
@@ -355,7 +332,7 @@ export default function DashboardHomePage() {
 
   const QUICK = [
     { label: 'Créer une campagne', icon: Mail, to: '/dashboard/campaigns' },
-    { label: 'Voir mes avis', icon: Star, to: '/dashboard/analytics#reviews' },
+    { label: 'Voir mes avis', icon: Star, to: '/dashboard/analytics#avis' },
     { label: 'Exporter un rapport', icon: FileDown, to: '/dashboard/history' },
   ];
 
@@ -384,7 +361,7 @@ export default function DashboardHomePage() {
             Voici un aperçu de la performance de votre fidélité et de vos dernières actions.
           </p>
         </div>
-        <RangePicker value={days} onChange={setDays} busy={loading} lead />
+        <RangePicker value={period} onChange={setDays} busy={loading} lead />
       </header>
 
       {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
@@ -456,8 +433,10 @@ export default function DashboardHomePage() {
           </div>
         </Panel>
 
-        <div role="button" tabIndex={0} onClick={() => navigate('/dashboard/campaigns')} onKeyDown={(e) => { if (e.key === 'Enter') navigate('/dashboard/campaigns'); }}
-             title="Voir les campagnes à l'origine de ce chiffre" className="cursor-pointer rounded-2xl transition hover:ring-2 hover:ring-[#BFD3FF]">
+        {/* Opens its detail — source by source — in Analyses, over the same period. */}
+        <div role="button" tabIndex={0} onClick={() => navigate(`/dashboard/analytics?period=${period}#impact`)}
+             onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/dashboard/analytics?period=${period}#impact`); }}
+             title="Voir le détail par source" className="cursor-pointer rounded-2xl transition hover:ring-2 hover:ring-[#BFD3FF]">
         <Panel>
           <div className="flex items-start gap-3.5">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E7F7EE] text-[#0F8B58]">
@@ -477,8 +456,8 @@ export default function DashboardHomePage() {
               </div>
               <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-snug text-[#94A3B8]">
                 <Info size={12} className="mt-px shrink-0" />
-                {d?.impact?.note} — uniquement les visites survenues dans les
-                {' '}{d?.impact?.window_days} jours suivant un envoi.
+                {d?.impact?.note} — les visites dans les {d?.impact?.window_days} jours suivant
+                un message, et toutes celles des filleuls. Un simple passage en caisse n'est pas compté.
               </p>
             </div>
           </div>
@@ -488,7 +467,7 @@ export default function DashboardHomePage() {
 
       {/* the two charts */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">
-        <Panel title="Évolution du chiffre d'affaires" action={<RangePicker value={days} onChange={setDays} busy={loading} />}>
+        <Panel title="Évolution du chiffre d'affaires" action={<RangePicker value={period} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
             <button type="button" onClick={() => navigate('/dashboard/analytics')} title="Voir les analyses" className="text-[22px] font-bold text-[#0F8B58] tabular-nums hover:underline">{money(d?.revenue_total)}</button>
             {d?.revenue_delta !== null && d?.revenue_delta !== undefined && (
@@ -499,7 +478,7 @@ export default function DashboardHomePage() {
           </p>
           <LineChart series={d?.revenue_series} money />
         </Panel>
-        <Panel title="Nouveaux clients" action={<RangePicker value={days} onChange={setDays} busy={loading} />}>
+        <Panel title="Nouveaux clients" action={<RangePicker value={period} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
             <button type="button" onClick={() => navigate('/dashboard/customers?segment=new')} title="Voir ces nouveaux clients" className="text-[22px] font-bold text-[#0F8B58] tabular-nums hover:underline">{nf(d?.new_total)}</button>
             {d?.new_delta !== null && d?.new_delta !== undefined && (
