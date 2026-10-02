@@ -22,24 +22,67 @@ if (typeof document !== 'undefined' && typeof HTMLInputElement === 'function') {
 }
 
 // Browser translation (Chrome « Traduire », Edge, Safari) — wanted by the user
-// (2026-10-01). Those tools wrap the page's text in <font> elements; React
-// then tries to remove or insert next to a node that is no longer where it
-// left it and the page crashes (« Failed to execute 'removeChild' on 'Node' »).
-// The well-known guard: if the node moved, let the operation pass quietly.
+// (2026-10-01). Those tools replace each text node of the page with <font>
+// elements holding the translation. React still points at the original text
+// node, which is no longer in the page: removing it failed (« Failed to
+// execute 'removeChild' on 'Node' ») and, once that was let through, the
+// translated <font> stayed on screen — « Chargement des analyses… » above the
+// loaded cards (2026-10-02). So we note which <font> replaced which text node,
+// and when React removes the text node, its translation goes with it.
 if (typeof Node === 'function' && Node.prototype && !Node.prototype.__fcTranslateSafe) {
+  const stand = new WeakMap();                   // original text node → the <font> nodes that replaced it
+  const note = (records) => {
+    for (const r of records) {
+      if (r.type !== 'childList' || !r.removedNodes.length || !r.addedNodes.length) continue;
+      const fonts = [...r.addedNodes].filter((n) => n.nodeName === 'FONT');
+      if (!fonts.length) continue;
+      for (const n of r.removedNodes) if (n.nodeType === 3) stand.set(n, fonts);
+    }
+  };
+  let watcher = null;
+  if (typeof MutationObserver === 'function') {
+    watcher = new MutationObserver(note);
+    watcher.observe(document.documentElement, { childList: true, subtree: true });
+  }
+  const standIns = (node) => {
+    if (watcher) note(watcher.takeRecords());
+    return (stand.get(node) || []).filter((f) => f.parentNode);
+  };
+
   const removeChild = Node.prototype.removeChild;
   Node.prototype.removeChild = function patchedRemoveChild(child) {
     if (child && child.parentNode !== this) {
-      if (child.parentNode) return child.parentNode.removeChild(child);
+      for (const f of standIns(child)) removeChild.call(f.parentNode, f);
+      if (child.parentNode) return removeChild.call(child.parentNode, child);
       return child;
     }
     return removeChild.call(this, child);
   };
   const insertBefore = Node.prototype.insertBefore;
   Node.prototype.insertBefore = function patchedInsertBefore(newNode, ref) {
-    if (ref && ref.parentNode !== this) return insertBefore.call(this, newNode, null);
+    if (ref && ref.parentNode !== this) {
+      const f = standIns(ref).find((x) => x.parentNode === this);
+      return insertBefore.call(this, newNode, f || null);
+    }
     return insertBefore.call(this, newNode, ref);
   };
+  // A figure React changes after translation (a count, a loader that becomes
+  // text) is written into the original node, off screen: put it back in place
+  // of its stale translation — the browser translates it again.
+  const value = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeValue');
+  if (value && value.set) {
+    Object.defineProperty(Node.prototype, 'nodeValue', {
+      ...value,
+      set(v) {
+        value.set.call(this, v);
+        if (this.nodeType !== 3 || this.parentNode) return;
+        const fonts = standIns(this);
+        if (!fonts.length) return;
+        insertBefore.call(fonts[0].parentNode, this, fonts[0]);
+        for (const f of fonts) if (f.parentNode) removeChild.call(f.parentNode, f);
+      },
+    });
+  }
   Node.prototype.__fcTranslateSafe = true;
 }
 import './index.css';
