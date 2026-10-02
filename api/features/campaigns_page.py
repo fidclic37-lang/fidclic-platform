@@ -288,10 +288,14 @@ def page(request: Request = None,
         })
 
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "campaign_sender_name": 1}) or {}
+    card = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1, "brand_fields.logo_url": 1}) or {}
     return {
         # The phone preview signs the notification with the name the customer
         # will actually see, not a placeholder.
         "tenant_name": tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic",
+        # Apple Wallet signs its alert with the card's name and logo.
+        "wallet_name": tenant.get("name") or "FidClic",
+        "logo_url": (card.get("brand_fields") or {}).get("logo_url") or card.get("logo_url") or "",
         "strip": strip,
         "segments": segments,
         "recent": recent,
