@@ -388,10 +388,9 @@ def _inactive(shop: Shop) -> List[Dict[str, Any]]:
 
 
 def _one_timers(shop: Shop) -> List[Dict[str, Any]]:
-    cut = shop.at - timedelta(days=NEW_DAYS)
-    return [c for c in shop.people
-            if int(_num(c.get("visits"))) == 1
-            and (d := _aware(c.get("created_at"))) and d >= cut]
+    # One definition with the bell and the Clients list (clients_page).
+    from features import clients_page as CP
+    return [c for c in shop.people if CP.is_one_timer(c, shop.at)]
 
 
 def _birthdays(shop: Shop, days: int = 30) -> List[Dict[str, Any]]:
@@ -406,18 +405,10 @@ def _at_risk(shop: Shop) -> List[Dict[str, Any]]:
     their average gap between visits. They are "at risk" once their silence
     is both longer than 45 days and more than twice their usual gap — a
     monthly customer silent for 45 days is not the same as a weekly one.
+    One definition with the bell and the Clients list (clients_page).
     """
-    out = []
-    for c in shop.people:
-        visits = int(_num(c.get("visits")))
-        first, last = _aware(c.get("created_at")), _aware(c.get("last_visit_date"))
-        if visits < 4 or not first or not last or last <= first:
-            continue
-        gap = (last - first).days / max(1, visits - 1)
-        silent = (shop.at - last).days
-        if silent > 45 and silent > 2 * gap:
-            out.append(c)
-    return out
+    from features import clients_page as CP
+    return [c for c in shop.people if CP.is_at_risk(c, shop.at)]
 
 
 def _students(shop: Shop) -> List[Dict[str, Any]]:
@@ -1001,6 +992,18 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
                 "message": "Une offre spéciale vous attend cette semaine sur présentation de votre carte.",
                 "segment": "all",
                 "audience": {"label": seg["name"], "hint": "Segment", "ids": seg["ids"]}}
+    # One client — the bell's « meilleur client silencieux », or « Contacter »
+    # on a row of Clients: the composer writes to that person only.
+    if key.startswith("client:"):
+        cust = next((c for c in shop.people if c.get("id") == key[7:]), None)
+        if not cust:
+            raise HTTPException(status_code=404, detail="Client introuvable")
+        return {"key": key, "title": "💛 Une attention rien que pour vous",
+                "message": "Cela fait un moment ! Une attention vous attend à votre prochaine visite, "
+                           "sur présentation de votre carte.",
+                "segment": "all",
+                "audience": {"label": cust.get("name") or "Ce client", "hint": "Un seul client",
+                             "ids": [cust["id"]]}}
     spec = _templates(shop.food).get(key)
     if not spec:
         raise HTTPException(status_code=404, detail="Modèle introuvable")

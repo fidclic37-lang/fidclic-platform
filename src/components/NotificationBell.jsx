@@ -1,107 +1,71 @@
 /**
  * NotificationBell — header bell with unread count + dropdown.
  *
- * Pulls from the existing /api/owner/insights/alerts endpoint (smart alerts).
- * For multi-store franchises, alerts follow the establishment menu: the
- * chosen establishment, or every establishment the account covers.
+ * A business: /api/owner/insights/alerts/multi-store (its clients' alerts per
+ * establishment, then what waits for its OK) + its support answers. The
+ * platform team: security and support alerts.
  *
- * "Unread" is tracked in localStorage by alert ID hash. When the user opens
- * the dropdown, all currently-shown alerts are marked read.
+ * Every alert carries its own links from the server (`actions`, `href`):
+ * « Voir les clients » opens exactly the clients it counts, « Envoyer … » the
+ * composer already written for them, and clicking the alert opens its first
+ * link (user, 2026-10-03).
+ *
+ * Read = acted on (opened, a link clicked, or « Tout marquer comme lu »).
+ * « × » hides an alert until what it says changes.
  */
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, AlertTriangle, TrendingDown, TrendingUp, Sparkles, X, Building2, Users, Send, Cake, ChevronRight } from 'lucide-react';
+import { Bell, AlertTriangle, TrendingDown, TrendingUp, Sparkles, X, Building2, Users, Send, ChevronRight } from 'lucide-react';
 import api, { ownerAPI, securityAPI, supportAPI, mySupportAPI } from '../lib/api';
 import { can } from '../lib/perms';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 
-const STORAGE_KEY = 'ft_read_alerts_v1';
+// What has been read, and what the owner hid: by alert AND by what it says,
+// so an alert whose figure changes (15 → 22 clients) comes back as new.
+const READ_KEY = 'fidclic:bell-read';
+const HIDDEN_KEY = 'fidclic:bell-hidden';
 
-const loadReadIds = () => {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'));
-  } catch { return new Set(); }
+const loadSet = (key) => {
+  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } catch { return new Set(); }
 };
-const saveReadIds = (set) => {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...set])); } catch { /* ignore */ }
+const saveSet = (key, set) => {
+  try { localStorage.setItem(key, JSON.stringify([...set].slice(-300))); } catch { /* private mode */ }
 };
+const sig = (a) => `${a.id || a.title}|${a.metric ?? ''}|${a.title || ''}`;
 
 const severityIcon = (severity) => {
   if (severity === 'critical') return AlertTriangle;
   if (severity === 'warning')  return TrendingDown;
-  if (severity === 'positive') return TrendingUp;
+  if (severity === 'positive' || severity === 'win') return TrendingUp;
   return Sparkles;
 };
 const severityColor = (severity) => {
   // The dashboard's own palette (Tableau de bord / Analyses).
   if (severity === 'critical') return '#E11D48';
   if (severity === 'warning')  return '#D97706';
-  if (severity === 'positive') return '#0F8B58';
+  if (severity === 'positive' || severity === 'win') return '#0F8B58';
   return '#2F6BFF';
 };
 
-// Resolve an alert into "Voir clients" + "Envoyer campagne" navigation
-// targets based on its type/title keywords. Each alert in the dropdown
-// becomes a real to-do item the owner can act on in two clicks.
-const resolveAlertActions = (alert) => {
-  const title = (alert.title || '').toLowerCase();
-  const type = (alert.type || alert.category || '').toLowerCase();
-  // Birthday flow
-  if (type.includes('birthday') || title.includes('anniversaire') || title.includes('birthday')) {
-    return {
-      icon: Cake,
-      customersUrl: '/dashboard/customers?has_birthday_this_month=true',
-      campaignUrl: '/dashboard/campaigns?preset_name=' + encodeURIComponent('Joyeux anniversaire') +
-        '&preset_content=' + encodeURIComponent('Joyeux anniversaire {first_name} ! Une attention vous attend chez {business_name}.'),
-      campaignLabel: 'Envoyer un vœu',
-    };
-  }
-  // At risk / about to lose / inactif
-  if (type.includes('at_risk') || type.includes('inactive') || title.includes('risque') || title.includes('inactif') || title.includes('point de partir')) {
-    return {
-      icon: Users,
-      customersUrl: '/dashboard/customers?inactive_days_min=14&inactive_days_max=29',
-      campaignUrl: '/dashboard/campaigns?preset_name=' + encodeURIComponent('Vous nous manquez') +
-        '&preset_content=' + encodeURIComponent('{first_name}, ça fait un moment ! Une attention vous attend chez {business_name}.'),
-      campaignLabel: 'Envoyer "We miss you"',
-    };
-  }
-  // New customers
-  if (type.includes('new') || title.includes('nouveau') || title.includes('nouveaux')) {
-    return {
-      icon: Users,
-      customersUrl: '/dashboard/customers?created_within_days=7',
-      campaignUrl: '/dashboard/campaigns?preset_name=' + encodeURIComponent('Bienvenue') +
-        '&preset_content=' + encodeURIComponent('Bienvenue {first_name} ! Une attention vous attend lors de votre prochain passage.'),
-      campaignLabel: 'Envoyer Bienvenue',
-    };
-  }
-  // VIP / loyal segment
-  if (type.includes('vip') || type.includes('loyal') || title.includes('vip') || title.includes('loyal')) {
-    return {
-      icon: Users,
-      customersUrl: '/dashboard/customers?tier=vip',
-      campaignUrl: '/dashboard/campaigns?preset_name=' + encodeURIComponent('Merci VIP') +
-        '&preset_content=' + encodeURIComponent('{first_name}, un grand merci pour votre fidélité. Une attention exclusive vous attend.'),
-      campaignLabel: 'Récompenser les VIP',
-    };
-  }
-  // Default — just open Customers
-  return {
-    icon: Users,
-    customersUrl: '/dashboard/customers',
-    campaignUrl: '/dashboard/campaigns',
-    campaignLabel: 'Envoyer une campagne',
-  };
+// An alert's links, as the server wrote them (`actions`: the clients' list,
+// the composer written for them; or one « Voir … » link). Nothing is guessed
+// from the title any more.
+const actionsOf = (a) => {
+  if (Array.isArray(a.actions) && a.actions.length) return a.actions.filter((x) => x && x.href);
+  if (a.action && typeof a.action === 'object' && a.action.href) return [{ kind: 'open', label: a.action.label || 'Voir', href: a.action.href }];
+  if (typeof a.action === 'string' && a.action) return [{ kind: 'open', label: 'Voir', href: a.action }];
+  return [];
 };
+const hrefOf = (a) => a.href || actionsOf(a)[0]?.href || null;
 
 const NotificationBell = ({ platformAdmin = false }) => {
   const navigate = useNavigate();
   const { branchId } = useBranch();
   const { user } = useAuth();
   const [alerts, setAlerts] = useState([]);
-  const [readIds, setReadIds] = useState(loadReadIds);
+  const [readIds, setReadIds] = useState(() => loadSet(READ_KEY));
+  const [hiddenIds, setHiddenIds] = useState(() => loadSet(HIDDEN_KEY));
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   // Account / franchise headline data — business name + list of all stores
@@ -176,20 +140,28 @@ const NotificationBell = ({ platformAdmin = false }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const unreadAlerts = alerts.filter((a) => !readIds.has(a.id || a.title));
-  const unreadCount = unreadAlerts.length;
+  const shown = alerts.filter((a) => !hiddenIds.has(sig(a)));
+  const hiddenCount = alerts.length - shown.length;
+  const isUnread = (a) => !readIds.has(sig(a));
+  const unreadCount = shown.filter(isUnread).length;
 
-  const markAllRead = () => {
+  const markRead = (list) => {
     const next = new Set(readIds);
-    alerts.forEach((a) => next.add(a.id || a.title));
-    setReadIds(next);
-    saveReadIds(next);
+    list.forEach((a) => next.add(sig(a)));
+    setReadIds(next); saveSet(READ_KEY, next);
   };
-
-  const handleOpen = () => {
-    setOpen(true);
-    // After 600ms, mark visible alerts as read so the dot doesn't disappear instantly
-    setTimeout(markAllRead, 600);
+  const hide = (a) => {
+    const next = new Set(hiddenIds); next.add(sig(a));
+    setHiddenIds(next); saveSet(HIDDEN_KEY, next);
+    markRead([a]);
+  };
+  const showHidden = () => { setHiddenIds(new Set()); saveSet(HIDDEN_KEY, new Set()); };
+  // An alert is read once the owner acts on it — opens it or one of its links.
+  const go = (a, href) => {
+    if (!href) return;
+    markRead([a]);
+    setOpen(false);
+    navigate(href);
   };
 
   return (
@@ -206,7 +178,7 @@ const NotificationBell = ({ platformAdmin = false }) => {
       )}
       <button
         type="button"
-        onClick={() => (open ? setOpen(false) : handleOpen())}
+        onClick={() => setOpen((o) => !o)}
         className="relative w-10 h-10 rounded-[12px] flex items-center justify-center transition-all hover:scale-105"
         style={{
           // The FidClic logo's blue tile, like the account icon beside it.
@@ -216,8 +188,8 @@ const NotificationBell = ({ platformAdmin = false }) => {
             : '0 8px 16px -10px rgba(20,80,184,0.8)',
           animation: unreadCount > 0 ? 'ftBellPulse 2.4s ease-in-out infinite' : 'none',
         }}
-        aria-label={`Notifications — ${unreadCount} unread`}
-        title={unreadCount > 0 ? `${unreadCount} alerte(s) non lue(s) · toutes les boutiques` : 'Aucune alerte · toutes les boutiques'}
+        aria-label={`Notifications — ${unreadCount} non lue${unreadCount > 1 ? 's' : ''}`}
+        title={unreadCount > 0 ? `${unreadCount} alerte${unreadCount > 1 ? 's' : ''} non lue${unreadCount > 1 ? 's' : ''}` : 'Aucune nouvelle alerte'}
       >
         {/* A literal colour, not currentColor: the toolbar's text rule (index.css,
             main:has(...) > div:first-child *) would repaint the strokes slate. */}
@@ -239,7 +211,7 @@ const NotificationBell = ({ platformAdmin = false }) => {
 
       {open && (
         <div
-          className="absolute right-0 mt-2 w-[380px] max-w-[calc(100vw-24px)] rounded-2xl border z-50 overflow-hidden"
+          className="absolute right-0 mt-2 w-[420px] max-w-[calc(100vw-24px)] rounded-2xl border z-50 overflow-hidden"
           style={{ borderColor: '#E6EEFB', background: '#FFFFFF', boxShadow: '0 24px 48px -20px rgba(11,28,63,.35)' }}
         >
           {/* Account headline — the franchise/business name + every store under it */}
@@ -284,34 +256,45 @@ const NotificationBell = ({ platformAdmin = false }) => {
           </div>
           <div className="px-4 py-2 border-b flex items-center justify-between" style={{ borderColor: '#E6EEFB', background: '#F5F8FE' }}>
             <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#64748B' }}>
-              Alertes par boutique
+              {platformAdmin ? 'Alertes' : 'Alertes par boutique'}
             </p>
-            <p className="text-[10px]" style={{ color: '#94A3B8' }}>
-              MAJ 5 min
-            </p>
+            {unreadCount > 0 ? (
+              <button type="button" onClick={() => markRead(shown)}
+                      className="text-[11px] font-semibold hover:underline" style={{ color: '#2F6BFF' }}>
+                Tout marquer comme lu
+              </button>
+            ) : (
+              <p className="text-[10px]" style={{ color: '#94A3B8' }}>Mise à jour toutes les 5 min</p>
+            )}
           </div>
           <div className="max-h-[420px] overflow-y-auto">
             {loading && alerts.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm" style={{ color: '#64748B' }}>
-                Chargement…
+                <span>Chargement…</span>
               </div>
-            ) : alerts.length === 0 ? (
+            ) : shown.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm" style={{ color: '#64748B' }}>
-                Tout va bien — aucune alerte aujourd'hui ✨
+                <span>Tout va bien — aucune alerte pour le moment ✨</span>
               </div>
             ) : (
-              alerts.map((a, i) => {
+              shown.map((a, i) => {
                 const Icon = severityIcon(a.severity);
                 const color = severityColor(a.severity);
-                const isUnread = !readIds.has(a.id || a.title);
-                const actions = resolveAlertActions(a);
+                const unread = isUnread(a);
+                const actions = actionsOf(a);
+                const href = hrefOf(a);
                 return (
                   <div
                     key={a.id || i}
-                    className="px-4 py-3 border-b last:border-b-0"
+                    data-alert={a.id}
+                    role={href ? 'button' : undefined}
+                    tabIndex={href ? 0 : undefined}
+                    onClick={() => go(a, href)}
+                    onKeyDown={(e) => { if (href && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(a, href); } }}
+                    className={`group relative px-4 py-3 border-b last:border-b-0 transition ${href ? 'cursor-pointer hover:bg-[#F5F8FE] focus:bg-[#F5F8FE] focus:outline-none' : ''}`}
                     style={{
                       borderColor: '#EEF3FB',
-                      background: isUnread ? `linear-gradient(90deg, ${color}0D 0%, transparent 30%)` : 'white',
+                      background: unread ? `linear-gradient(90deg, ${color}0D 0%, transparent 30%)` : undefined,
                     }}
                   >
                     <div className="flex gap-3 items-start">
@@ -319,21 +302,18 @@ const NotificationBell = ({ platformAdmin = false }) => {
                            style={{ background: `${color}1A` }}>
                         <Icon size={16} style={{ color }} />
                       </div>
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 pr-5">
                         {a.branch_name && (
                           <span
                             className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full mb-1.5"
-                            style={{
-                              background: `${color}1A`,
-                              color: color,
-                              border: `1px solid ${color}33`,
-                            }}
+                            style={{ background: `${color}1A`, color, border: `1px solid ${color}33` }}
                             title={`Boutique : ${a.branch_name}`}
                           >
                             <Building2 size={9} /> {a.branch_name}
                           </span>
                         )}
                         <p className="text-sm font-bold leading-tight" style={{ color: '#0B1C3F' }}>
+                          {unread && <span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: color }} aria-label="Non lue" />}
                           {a.title}
                         </p>
                         {a.body && (
@@ -342,40 +322,32 @@ const NotificationBell = ({ platformAdmin = false }) => {
                           </p>
                         )}
                       </div>
-                      {isUnread && (
-                        <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: color }} />
-                      )}
                     </div>
-                    {/* Action row — the alert's own link when it has one (security
-                        alerts), else Voir clients / Envoyer campagne by alert type */}
-                    {a.action?.href ? (
-                      <div className="mt-2 ml-12">
-                        <button type="button" onClick={() => { setOpen(false); navigate(a.action.href); }}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 text-white transition hover:bg-[#2559DB]"
-                                style={{ background: '#2F6BFF', border: '1px solid #2F6BFF' }}>
-                          {a.action.label} <ChevronRight size={11} style={{ opacity: 0.8 }} />
-                        </button>
+                    {!platformAdmin && (
+                      <button type="button" aria-label="Masquer cette alerte" title="Masquer cette alerte"
+                              onClick={(e) => { e.stopPropagation(); hide(a); }}
+                              className="absolute right-2.5 top-2.5 grid h-6 w-6 place-items-center rounded-full text-[#94A3B8] opacity-60 transition hover:bg-[#EAF1FF] hover:text-[#334155] hover:opacity-100 group-hover:opacity-100">
+                        <X size={13} />
+                      </button>
+                    )}
+                    {actions.length > 0 && (
+                      <div className="mt-2 ml-12 flex items-center gap-2 flex-wrap">
+                        {actions.map((x, k) => {
+                          const primary = x.kind === 'campaign' || (actions.length === 1);
+                          const XIcon = x.kind === 'customers' ? Users : x.kind === 'campaign' ? Send : null;
+                          return (
+                            <button key={k} type="button"
+                                    onClick={(e) => { e.stopPropagation(); go(a, x.href); }}
+                                    className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 transition ${primary ? 'text-white hover:bg-[#2559DB]' : 'hover:bg-[#EAF1FF]'}`}
+                                    // Literal colours: the toolbar's text rule (index.css) repaints classes.
+                                    style={primary ? { background: '#2F6BFF', border: '1px solid #2F6BFF', color: '#FFFFFF' }
+                                      : { background: '#FFFFFF', color: '#2F6BFF', border: '1px solid #D6E3FF' }}>
+                              {XIcon && <XIcon size={11} color={primary ? '#FFFFFF' : '#2F6BFF'} />} {x.label}
+                              {primary && <ChevronRight size={11} color="#FFFFFF" style={{ opacity: 0.8 }} />}
+                            </button>
+                          );
+                        })}
                       </div>
-                    ) : (
-                    <div className="mt-2 ml-12 flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => { setOpen(false); navigate(actions.customersUrl); }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 transition hover:bg-[#EAF1FF]"
-                        style={{ background: '#FFFFFF', color: '#2F6BFF', border: '1px solid #D6E3FF' }}
-                      >
-                        <Users size={11} /> Voir les clients
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setOpen(false); navigate(actions.campaignUrl); }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 text-white transition hover:bg-[#2559DB]"
-                        style={{ background: '#2F6BFF', border: '1px solid #2F6BFF' }}
-                      >
-                        <Send size={11} /> {actions.campaignLabel}
-                        <ChevronRight size={11} style={{ opacity: 0.8 }} />
-                      </button>
-                    </div>
                     )}
                   </div>
                 );
@@ -384,8 +356,16 @@ const NotificationBell = ({ platformAdmin = false }) => {
           </div>
           {alerts.length > 0 && (
             <div className="px-4 py-2 border-t text-center" style={{ borderColor: '#E6EEFB', background: '#F5F8FE' }}>
-              <p className="text-[10px]" style={{ color: '#64748B' }}>
-                {alerts.length} résumé{alerts.length > 1 ? 's' : ''} · Cliquez sur une carte pour voir le détail
+              <p className="text-[10.5px]" style={{ color: '#64748B' }}>
+                {shown.length > 0 && <span>Cliquez sur une alerte pour agir.</span>}
+                {hiddenCount > 0 && (
+                  <>
+                    {shown.length > 0 && ' · '}
+                    <button type="button" onClick={showHidden} className="font-semibold hover:underline" style={{ color: '#2F6BFF' }}>
+                      Réafficher {hiddenCount} alerte{hiddenCount > 1 ? 's' : ''} masquée{hiddenCount > 1 ? 's' : ''}
+                    </button>
+                  </>
+                )}
               </p>
             </div>
           )}

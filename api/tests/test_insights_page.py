@@ -388,13 +388,14 @@ def main():
           "reportlab" in open(os.path.join(here, "..", "requirements.txt")).read())
     comp = open(os.path.join(here, "..", "..", "src", "pages", "CampagnesPage.jsx")).read()
     check("the composer reads ?template= and asks the server for the copy",
-          "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'))" in comp)
+          "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))" in comp)
     check("… and sends the recommendation's key with the campaign, so it can step aside",
           "...(fromTemplate ? { template: fromTemplate } : {})" in comp)
     check("a narrower audience is sent by id, not widened to a card",
           "...(custom ? { customer_ids: custom.ids } : {})" in comp)
     check("the parameter is dropped once applied, so a reload never overwrites edits",
-          "url.searchParams.delete('template')" in comp)
+          "['template', 'day', 'store', 'from'].forEach((k) => rest.delete(k))" in comp
+          and "{ replace: true }" in comp)
     card = open(os.path.join(here, "..", "..", "src", "pages", "MyWalletCardPage.jsx")).read()
     check("the card shows the Google invitation only when the server hands one back",
           "setGoogleReviewUrl(sent?.google_review_url || null)" in card

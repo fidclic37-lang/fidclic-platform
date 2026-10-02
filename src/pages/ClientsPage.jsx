@@ -9,6 +9,7 @@ import {
 import { ownerAPI } from '../lib/api';
 import { perPage as prefPerPage } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
+import { useBranch } from '../contexts/BranchContext';
 import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
 import { useResendCheck } from '../components/ResendCheck';
 import InfoTip from '../components/InfoTip';
@@ -200,6 +201,9 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
   );
 };
 
+// What an alert of the bell opens (clients_page.ALERT_SEGMENTS).
+const ALERT_SEGMENTS = { at_risk: 'Clients qui décrochent', one_timers: 'Venus une seule fois' };
+
 export default function ClientsPage() {
   const { user } = useAuth();
   // « CRM avancé » (Super admin › Plan Limits): without it, the simple list —
@@ -218,13 +222,25 @@ export default function ClientsPage() {
   // (?segment=loyal, inactive, new, or a « Statut des clients » slice).
   const [urlParams, setUrlParams] = useSearchParams();
   const [segment, setSegmentState] = useState(() => urlParams.get('segment') || 'all');
+  // An alert of the bell names its establishment (?store=): the list is that
+  // establishment's, whatever the menu shows, until the filter is removed.
+  const [store, setStore] = useState(() => urlParams.get('store') || '');
+  const { branches } = useBranch();
   const setSegment = (k) => {
     setSegmentState(k);
-    if (urlParams.get('segment')) setUrlParams((p) => { p.delete('segment'); return p; }, { replace: true });
+    setStore('');
+    if (urlParams.get('segment') || urlParams.get('store')) {
+      setUrlParams((p) => { p.delete('segment'); p.delete('store'); return p; }, { replace: true });
+    }
   };
   useEffect(() => {
     const k = urlParams.get('segment');
     if (k && k !== segment) { setSegmentState(k); setPage(1); }
+    if (k) setStore(urlParams.get('store') || '');
+    // Opened from an alert: straight to its clients.
+    if (k && (ALERT_SEGMENTS[k] || k.startsWith('client:'))) {
+      setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    }
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [status, setStatus] = useState('');
   const [spend, setSpend] = useState('');
@@ -301,7 +317,7 @@ export default function ClientsPage() {
       return;
     }
     try {
-      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search });
+      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, ...(store ? { store } : {}) });
       if (!data.ids?.length) { setError('Aucun client ne correspond à ce filtre.'); return; }
       setCompose({ ids: data.ids, label: activeSegment?.label || 'ce filtre' });
     } catch (e) { setError(e?.response?.data?.detail || 'Impossible de constituer la liste.'); }
@@ -327,8 +343,8 @@ export default function ClientsPage() {
   }, [typed]);
 
   const params = useMemo(() => ({
-    segment, status, spend, joined, search, sort, page, per_page: perPage,
-  }), [segment, status, spend, joined, search, sort, page, perPage]);
+    segment, status, spend, joined, search, sort, page, per_page: perPage, ...(store ? { store } : {}),
+  }), [segment, status, spend, joined, search, sort, page, perPage, store]);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -341,12 +357,17 @@ export default function ClientsPage() {
 
   const segments = meta?.segments || [];
   const homeSegment = (meta?.home_segments || []).find((s) => s.key === segment);
-  const activeSegment = segments.find((s) => s.key === segment) || homeSegment;
+  // The bell's own lists: its alerts' clients, or one client.
+  const alertSegment = ALERT_SEGMENTS[segment] ? { key: segment, label: ALERT_SEGMENTS[segment] }
+    : segment.startsWith('client:') ? { key: segment, label: feed.rows[0]?.name ? `Client : ${feed.rows[0].name}` : 'Un client' }
+      : null;
+  const activeSegment = segments.find((s) => s.key === segment) || homeSegment || alertSegment;
+  const storeName = store ? ((branches || []).find((b) => b.id === store)?.name || 'un établissement') : '';
 
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, sort });
+      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, sort, ...(store ? { store } : {}) });
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-clients-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -565,7 +586,7 @@ export default function ClientsPage() {
             {nf(feed.total)} client{feed.total > 1 ? 's' : ''}
             {activeSegment && segment !== 'all' && (
               <span className="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-[#EAF1FF] px-2 py-0.5 align-middle text-[12.5px] font-semibold text-[#2F6BFF]">
-                {activeSegment.label}
+                {activeSegment.label}{storeName ? ` · ${storeName}` : ''}
                 <button type="button" aria-label="Retirer ce filtre" onClick={() => { setSegment('all'); setPage(1); }} className="text-[#2F6BFF] hover:text-[#0B1C3F]">×</button>
               </span>
             )}
@@ -661,7 +682,7 @@ export default function ClientsPage() {
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1">
                         <button type="button" aria-label={`Contacter ${r.name}`}
-                                onClick={() => navigate('/dashboard/campaigns')}
+                                onClick={() => navigate(`/dashboard/campaigns?template=client:${encodeURIComponent(r.id)}&from=clients`)}
                                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E6EEFB] text-[#475569] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
                           <Mail size={14} />
                         </button>

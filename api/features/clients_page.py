@@ -125,6 +125,42 @@ def is_inactive(cust: Dict[str, Any], at: datetime,
     return not last or (at - last).total_seconds() / 86400.0 >= days + 1
 
 
+# « Clients qui décrochent » (the bell, Insights' « Clients à risque », user
+# 2026-10-03: « Habitués ka rhythm »): a regular — this many visits or more —
+# whose silence is longer than AT_RISK_SILENT_DAYS AND more than twice their
+# own usual gap. A monthly client silent for 45 days is not a weekly one.
+AT_RISK_MIN_VISITS = 4
+AT_RISK_SILENT_DAYS = 45
+ONE_TIMER_DAYS = 30          # « 1 seule visite »: joined inside this, came once
+TOP_SILENT_DAYS = 30         # « Meilleur client silencieux »
+
+
+def is_at_risk(cust: Dict[str, Any], at: datetime) -> bool:
+    visits = int(cust.get("visits") or 0)
+    first, last = _aware(cust.get("created_at")), _aware(cust.get("last_visit_date"))
+    if visits < AT_RISK_MIN_VISITS or not first or not last or last <= first:
+        return False
+    gap = (last - first).days / max(1, visits - 1)
+    silent = (at - last).days
+    return silent > AT_RISK_SILENT_DAYS and silent > 2 * gap
+
+
+def is_one_timer(cust: Dict[str, Any], at: datetime) -> bool:
+    created = _aware(cust.get("created_at"))
+    return int(cust.get("visits") or 0) == 1 and bool(created) and (at - created).days <= ONE_TIMER_DAYS
+
+
+def top_silent(rows: List[Dict[str, Any]], at: datetime) -> Optional[Dict[str, Any]]:
+    """The client who has spent the most, when they have not been back for
+    TOP_SILENT_DAYS. None when the best client is still coming."""
+    paying = [c for c in rows if float(c.get("total_amount_paid") or 0) > 0]
+    if not paying:
+        return None
+    top = max(paying, key=lambda c: float(c.get("total_amount_paid") or 0))
+    last = _aware(top.get("last_visit_date"))
+    return top if last and (at - last).days >= TOP_SILENT_DAYS else None
+
+
 def _avg_ticket(cust: Dict[str, Any]) -> float:
     visits = int(cust.get("visits") or 0)
     if visits <= 0:
@@ -157,8 +193,14 @@ HOME_SEGMENTS = {"loyal_active": "Clients fidélisés (actifs)", "new_active": "
                  "occasional": "Clients occasionnels"}
 
 
-# Segments a figure of the Tableau de bord opens — on every plan.
-DRILL_DOWN = {"loyal", "inactive", "new", "loyal_active", "new_active", "occasional"}
+# Segments a figure of the Tableau de bord — or an alert of the bell — opens,
+# on every plan. « client:<id> » is one client (the bell's best client).
+DRILL_DOWN = {"loyal", "inactive", "new", "loyal_active", "new_active", "occasional", "at_risk", "one_timers"}
+ALERT_SEGMENTS = {"at_risk": "Clients qui décrochent", "one_timers": "Venus une seule fois"}
+
+
+def drill_down(key: str) -> bool:
+    return key in DRILL_DOWN or str(key).startswith("client:")
 
 
 def home_bucket(cust: Dict[str, Any], at: datetime, rules: Optional[List[Dict[str, Any]]] = None) -> str:
@@ -195,6 +237,12 @@ def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
         return str(cust.get("birthday") or "")[:2] == at.strftime("%m")
     if key == "vip":
         return (cust.get("tier") or "").lower() == "vip"
+    if key == "at_risk":
+        return is_at_risk(cust, at)
+    if key == "one_timers":
+        return is_one_timer(cust, at)
+    if key.startswith("client:"):
+        return cust.get("id") == key[7:]
     if key in HOME_SEGMENTS:
         return home_bucket(cust, at, rules) == {"loyal_active": "loyal", "new_active": "new", "occasional": "occasional"}[key]
     return True
@@ -461,7 +509,7 @@ def list_page(
     # behind a number every plan shows is not segmentation).
     from features import plan_limits
     if not plan_limits.allows_tenant(token_data.tenant_id, "crm_advanced"):
-        segment = segment if segment in DRILL_DOWN else "all"
+        segment = segment if drill_down(segment) else "all"
         spend, joined = "", ""
     tid = token_data.tenant_id
     at = _now()

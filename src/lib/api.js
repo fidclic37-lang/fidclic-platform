@@ -511,7 +511,9 @@ export const ownerAPI = {
 
   // Insights — « Faites grandir votre commerce ».
   insightsPage: () => api.get('/owner/insights/page'),
-  insightTemplate: (key, day) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`, { params: day != null && day !== '' ? { day } : {} }),
+  insightTemplate: (key, day, store) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`, {
+    params: { ...(day != null && day !== '' ? { day } : {}), ...(store ? { store } : {}) },
+  }),
   activateInsight: (action) => api.post(`/owner/insights/actions/${action}/activate`),
   setGoogleReview: (body) => api.put('/owner/insights/google-review', body),
   insightsExport: () => api.get('/owner/insights/export.pdf', { responseType: 'blob' }),

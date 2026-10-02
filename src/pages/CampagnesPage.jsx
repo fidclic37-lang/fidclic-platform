@@ -4,7 +4,7 @@ import {
   Zap, Image as ImageIcon, Link2, Calendar, Loader2, Info, Sparkles, Check,
   Bell, X, CheckCircle2,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import { useResendCheck } from '../components/ResendCheck';
@@ -142,15 +142,21 @@ export default function CampagnesPage() {
   // ?template=<key>. The copy comes from the server — one source for the page
   // that suggests it and the composer that sends it. The parameter is dropped
   // once applied, so a reload never writes over what the merchant has edited.
+  // Read on every change of the address, not only on arrival: the bell's
+  // « Envoyer une campagne » opened while already on Campagnes must work too.
+  const location = useLocation();
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(location.search);
     const key = params.get('template');
     if (!key) return;
-    ownerAPI.insightTemplate(key, params.get('day'))
+    // An alert of the bell names its establishment (?store=) and where it
+    // came from (?from=alerte): its clients are that establishment's.
+    const source = { alerte: 'depuis une alerte', clients: 'depuis Clients' }[params.get('from')] || 'proposé par Insights';
+    ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))
       .then(({ data: t }) => {
-        setTitle(t.title || ''); setMessage(t.message || ''); setFromTemplate(key);
+        setTitle(t.title || ''); setMessage(t.message || ''); setFromTemplate(key.startsWith('client:') ? 'client' : key);
         setSegment(t.segment || 'all');
-        setCustom(t.audience && t.audience.ids?.length ? t.audience : null);
+        setCustom(t.audience && t.audience.ids?.length ? { ...t.audience, source } : null);
         setStep(2);
         setFlash(t.audience && !t.audience.ids?.length
           ? `Modèle chargé — mais aucun client ne correspond à « ${t.audience.label} » pour l'instant.`
@@ -159,14 +165,12 @@ export default function CampagnesPage() {
       })
       .catch(() => setError("Ce modèle n'a pas pu être chargé."))
       .finally(() => {
-        try {
-          const url = new URL(window.location.href);
-          url.searchParams.delete('template');
-          url.searchParams.delete('day');
-          window.history.replaceState({}, '', url);
-        } catch (_e) { /* ignore */ }
+        const rest = new URLSearchParams(location.search);
+        ['template', 'day', 'store', 'from'].forEach((k) => rest.delete(k));
+        const q = rest.toString();
+        navigate({ pathname: location.pathname, search: q ? `?${q}` : '', hash: location.hash }, { replace: true });
       });
-  }, []);
+  }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const limits = data?.limits || { title: 50, message: 160 };
   const segments = data?.segments || [];
@@ -332,7 +336,7 @@ export default function CampagnesPage() {
                   <span className="block text-[12.5px] font-semibold text-[#0B1C3F]">{custom.label}</span>
                   {custom.hint && <span className="block text-[10.5px] text-[#94A3B8]">{custom.hint}</span>}
                   <span className="mt-1 block text-[11px] font-medium text-[#64748B]">
-                    {nf(custom.ids.length)} client{custom.ids.length > 1 ? 's' : ''} · proposé par Insights
+                    {nf(custom.ids.length)} client{custom.ids.length > 1 ? 's' : ''} · {custom.source || 'proposé par Insights'}
                   </span>
                 </span>
                 <button type="button" onClick={() => setCustom(null)} title="Choisir une autre audience"
