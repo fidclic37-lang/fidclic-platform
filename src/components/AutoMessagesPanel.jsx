@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Gift, Cake, Star, Target, Check, Loader2, ExternalLink, Zap } from 'lucide-react';
+import { Gift, Cake, Star, Target, Check, Loader2, Zap } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 
 /**
@@ -8,6 +7,11 @@ import { ownerAPI } from '../lib/api';
  * (features/auto_messages.py): Bienvenue at sign-up, Anniversaire on the day,
  * Avis Google after a scan and « Récompense proche » two visits from the
  * reward. The owner sets them; everyone else reads.
+ *
+ * Bienvenue is edited here — it used to live on the Carte de fidélité page,
+ * where it read differently from this panel (user, 2026-10-02). Both now read
+ * features/welcome_bonus.welcome_state; « Actif » means a new client really
+ * gets it: switched on, with a message or points.
  */
 const inputCls = 'w-full rounded-xl border border-[#E6EEFB] bg-white px-3 py-2.5 text-[13px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF] disabled:bg-[#F8FAFF]';
 
@@ -41,12 +45,17 @@ export default function AutoMessagesPanel({ canEdit, onEditScenario }) {
   const [d, setD] = useState(null);
   const [g, setG] = useState(null);
   const [n, setN] = useState(null);
+  const [w, setW] = useState(null);
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
-  const apply = (data) => { setD(data); setG(data.google_review); setN(data.near_reward); setLink(data.google_link?.url || ''); };
+  const apply = (data) => {
+    setD(data); setG(data.google_review); setN(data.near_reward); setLink(data.google_link?.url || '');
+    setW({ enabled: data.welcome.enabled, message: data.welcome.message || '', points: String(data.welcome.points || 0),
+           only_first_visit: data.welcome.only_first_visit !== false });
+  };
   useEffect(() => {
     ownerAPI.autoMessages().then(({ data }) => apply(data)).catch(() => setErr('Messages automatiques indisponibles.'));
   }, []);
@@ -55,6 +64,21 @@ export default function AutoMessagesPanel({ canEdit, onEditScenario }) {
     setBusy(key); setErr(''); setMsg('');
     try { const { data } = await ownerAPI.saveAutoMessages({ [key]: body }); apply(data); setMsg('Enregistré.'); }
     catch (e) { setErr(e?.response?.data?.detail || "L'enregistrement n'a pas abouti."); }
+    finally { setBusy(''); }
+  };
+  const saveWelcome = async () => {
+    setBusy('welcome'); setErr(''); setMsg('');
+    try {
+      // The earn rules hold other settings too: send them back as they are.
+      const { data: cur } = await ownerAPI.earnRules();
+      await ownerAPI.saveEarnRules({
+        ...cur, enabled: w.enabled,
+        welcome_bonus_message: w.enabled && !w.message.trim() ? d.welcome.default_message : w.message.trim(),
+        welcome_bonus_points: Math.max(0, parseInt(w.points || '0', 10) || 0),
+        welcome_bonus_only_first_visit: w.only_first_visit,
+      });
+      const { data } = await ownerAPI.autoMessages(); apply(data); setMsg('Bienvenue enregistré.');
+    } catch (e) { setErr(e?.response?.data?.detail || "L'enregistrement n'a pas abouti."); }
     finally { setBusy(''); }
   };
   const saveLink = async () => {
@@ -85,15 +109,31 @@ export default function AutoMessagesPanel({ canEdit, onEditScenario }) {
       {msg && <p className="mb-3 rounded-xl bg-[#E7F7EE] px-4 py-2 text-[12.5px] text-[#0F8B58]">{msg}</p>}
       {err && <p className="mb-3 rounded-xl bg-[#FEECEC] px-4 py-2 text-[12.5px] text-[#C0392B]">{err}</p>}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Box icon={Gift} tone="#2F6BFF" title="Bienvenue" when="À l'inscription"
-             on={d.welcome.enabled && (!!d.welcome.message || d.welcome.points > 0)}>
-          <p className="rounded-xl bg-[#F4F7FC] px-3 py-2 text-[12px] leading-snug text-[#475569]">
-            {d.welcome.message || 'Aucun message pour l\'instant.'}
-            {d.welcome.points > 0 && <strong className="mt-1 block text-[#0B1C3F]">+{d.welcome.points} points offerts</strong>}
-          </p>
-          <Link to="/dashboard/card" className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF] hover:underline">
-            Modifier sur la Carte de fidélité <ExternalLink size={12} />
-          </Link>
+        <Box icon={Gift} tone="#2F6BFF" title="Bienvenue" when="À l'inscription, avec des points offerts" on={d.welcome.active}>
+          <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-2.5 border-0 p-0">
+            <div className="flex items-center justify-between"><span className="text-[12px] text-[#334155]">Activé</span>
+              <Switch on={!!w.enabled} onChange={(v) => setW({ ...w, enabled: v, message: v && !w.message ? d.welcome.default_message : w.message })} /></div>
+            <div className={w.enabled ? '' : 'opacity-50'}>
+              <Label>Message</Label>
+              <textarea className={`${inputCls} min-h-[64px] resize-y`} maxLength={200} value={w.message}
+                        placeholder={d.welcome.default_message} onChange={(e) => setW({ ...w, message: e.target.value })} />
+              <p className="mt-1 text-[11px] text-[#94A3B8]">{'{first_name}, {name} et {business_name} sont remplacés.'}</p>
+            </div>
+            <div className={w.enabled ? '' : 'opacity-50'}>
+              <Label>Points offerts (0 = message seul)</Label>
+              <input type="number" min={0} className={inputCls} value={w.points}
+                     onChange={(e) => setW({ ...w, points: e.target.value })} />
+            </div>
+            <div className={`flex items-center justify-between gap-2 ${w.enabled ? '' : 'opacity-50'}`}>
+              <span className="text-[12px] leading-snug text-[#334155]">Seulement avant la première visite</span>
+              <Switch on={!!w.only_first_visit} onChange={(v) => setW({ ...w, only_first_visit: v })} /></div>
+          </fieldset>
+          {canEdit && (w.enabled !== d.welcome.enabled || w.message !== (d.welcome.message || '')
+            || String(parseInt(w.points || '0', 10) || 0) !== String(d.welcome.points || 0)
+            || w.only_first_visit !== (d.welcome.only_first_visit !== false)) && (
+            <p className="text-[11px] font-semibold text-[#B45309]">Modifications non enregistrées</p>
+          )}
+          <SaveBtn k="welcome" onClick={saveWelcome} />
         </Box>
 
         <Box icon={Cake} tone="#F43F5E" title="Anniversaire" when="Le jour de l'anniversaire" on={d.birthday.enabled}>

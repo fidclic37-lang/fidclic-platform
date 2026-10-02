@@ -5,8 +5,8 @@ anyone approving them.
 Decided with the user: four messages are automatic, everything else waits
 for an OK (features/push_wallet.py, "À valider").
 
-    Bienvenue           at sign-up — worded, with its points, on the Carte
-                        de fidélité page (features/welcome_bonus.py rules).
+    Bienvenue           at sign-up — worded, with its points, on this
+                        Automatisations page (features/welcome_bonus.py rules).
     Avis Google         after a scan — how often is each shop's choice:
                         at every scan, once every N days, or once only; and
                         never again once the client followed the link, if
@@ -124,13 +124,11 @@ def welcome(tid: str, cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The shop's welcome: its message, and its points credited once. Never
     raises — a welcome that cannot be sent must not cost a client its card."""
     try:
-        rules = _db.earn_rules.find_one({"tenant_id": tid}) or {}
-        if rules.get("enabled", True) is False:
+        from features.welcome_bonus import welcome_state
+        state = welcome_state(tid)
+        if not state["active"]:
             return None
-        points = max(0, int(rules.get("welcome_bonus_points") or 0))
-        message = (rules.get("welcome_bonus_message") or "").strip()
-        if not message and not points:
-            return None
+        points, message = state["points"], state["message"]
         tenant = _db.tenants.find_one({"id": tid}) or {}
         if points and not _db.welcome_bonus_claims.find_one({"tenant_id": tid, "customer_id": cust["id"]}):
             _db.customers.update_one({"id": cust["id"]}, {"$inc": {"points": points}})
@@ -277,14 +275,15 @@ class AutoMessagesIn(BaseModel):
 def _view(tid: str) -> Dict[str, Any]:
     tenant = _db.tenants.find_one({"id": tid}) or {}
     birthday = _db.push_scenarios.find_one({"tenant_id": tid, "builtin": "birthday"}, {"_id": 0}) or {}
-    rules = _db.earn_rules.find_one({"tenant_id": tid}) or {}
+    from features.welcome_bonus import welcome_state
+    w = welcome_state(tid)
     return {
         **config(tid),
         "google_link": {"url": tenant.get("google_review_url") or "",
                         "on": bool(tenant.get("google_reviews_enabled") and tenant.get("google_review_url"))},
-        "welcome": {"enabled": rules.get("enabled", True) is not False,
-                    "message": rules.get("welcome_bonus_message") or "",
-                    "points": int(rules.get("welcome_bonus_points") or 0)},
+        "welcome": {"enabled": w["enabled"], "message": w["message"], "points": w["points"],
+                    "only_first_visit": w["only_first_visit"], "active": w["active"],
+                    "default_message": w["default_message"]},
         "birthday": {"id": birthday.get("id"), "enabled": bool(birthday.get("enabled")),
                      "title": birthday.get("title") or "", "body": birthday.get("body") or ""},
     }
