@@ -30,10 +30,12 @@ THE FORECAST
     the source says "Météo + historique", not "événement".
 
 AUTOPILOT PREPARES, THE MERCHANT DECIDES
-    With Autopilot on, every campaign step of the 7-day plan is prepared as a
-    draft — audience resolved, copy written — and surfaced in the bell. Nothing
-    reaches a customer until the merchant approves the step: today's is sent,
-    a future one is scheduled for its day.
+    There is one Autopilot (features/autopilot.py, user 2026-10-02): a daily
+    and a weekly campaign, prepared for the owner's OK. This page's « Mode
+    Autopilot » switch is that one. The 7-day plan stays, and its steps are
+    prepared when the owner asks (« Préparer les étapes ») or approves one.
+    Nothing reaches a customer until the merchant approves: today's step is
+    sent, a future one is scheduled for its day.
 
 THE CHAT ANSWERS, IT NEVER ACTS
     Answers are grounded on the shop's computed facts; the model is told to
@@ -845,12 +847,13 @@ def _prepare_step(shop, step: Dict[str, Any]) -> Optional[str]:
     return res["id"]
 
 
-def autopilot_prepare(tid: str, at: Optional[datetime] = None) -> int:
-    """Prepare every campaign step of the plan that has no draft yet."""
+def autopilot_prepare(tid: str, at: Optional[datetime] = None, force: bool = False) -> int:
+    """Prepare every campaign step of the plan that has no draft yet — when
+    the owner asks (`force`), or for a plan still flagged by the old switch."""
     E = _engine()
     shop = E.Shop(tid, at or _now())
     doc = _plan(shop, recommendations(shop))
-    if not doc.get("autopilot"):
+    if not force and not doc.get("autopilot"):
         return 0
     made = 0
     for step in doc["steps"]:
@@ -935,7 +938,9 @@ def _plan_view(shop, token_data: TokenData, recs: List[Dict[str, Any]]) -> Dict[
                          "pour tout le commerce.")}
     doc = _plan(shop, recs)
     by_key = {r["key"]: r for r in recs}
-    return {"available": True, "autopilot": bool(doc.get("autopilot")), "start": doc["start"],
+    from features import autopilot as AP
+    return {"available": True, "autopilot": AP.any_on(shop.tid), "autopilot_plan_ok": AP.plan_ok(shop.tid),
+            "start": doc["start"],
             "steps": [_step_view(shop, doc, s, by_key) for s in doc["steps"]]}
 
 
@@ -1001,13 +1006,25 @@ class Autopilot(BaseModel):
 
 @router.put("/api/owner/copilot/autopilot")
 def set_autopilot(body: Autopilot, token_data: TokenData = Depends(require_role(["business_owner"]))):
-    E = _engine()
+    """The Copilote's switch drives the one Autopilot (features/autopilot.py):
+    on = its daily and weekly campaigns, at their current times; off = both off."""
+    from features import autopilot as AP
     tid = token_data.tenant_id
-    shop = E.Shop(tid, _now())
-    _plan(shop, recommendations(shop))
-    _db.copilot_plans.update_one({"tenant_id": tid}, {"$set": {"autopilot": bool(body.enabled)}})
-    prepared = autopilot_prepare(tid) if body.enabled else 0
-    return {"autopilot": bool(body.enabled), "prepared": prepared}
+    AP._require_plan(tid)
+    cur = AP.settings(tid)
+    on = bool(body.enabled)
+    AP._db.autopilot_config.update_one({"tenant_id": tid}, {"$set": {
+        "tenant_id": tid, "daily": {**cur["daily"], "enabled": on}, "weekly": {**cur["weekly"], "enabled": on},
+        "updated_at": _now(), "updated_by": token_data.email}}, upsert=True)
+    _db.copilot_plans.update_one({"tenant_id": tid}, {"$set": {"autopilot": False}})
+    made = AP.prepare(tid) if on else []
+    return {"autopilot": on, "prepared": sum(1 for m in made if m.get("status") == "pending")}
+
+
+@router.post("/api/owner/copilot/plan/prepare")
+def prepare_plan(token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """« Préparer les étapes » — drafts for the plan's campaign steps, sent by nobody."""
+    return {"prepared": autopilot_prepare(token_data.tenant_id, force=True)}
 
 
 class PlanEdit(BaseModel):

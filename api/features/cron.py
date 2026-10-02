@@ -137,6 +137,22 @@ def agent_daily(authorization: str = Header(default="")):
         except Exception as e:                                   # noqa: BLE001
             summary["failures"].append({"cabinet": cab.get("name"),
                                         "step": "gardien", "error": str(e)[:120]})
+    # The loyalty side's daily run — scheduled campaigns, Push Wallet, the
+    # Autopilot, birthdays, retention… It had its own Vercel cron until
+    # 2026-08-02, when vercel.json kept only this one: it runs from here now.
+    try:
+        import server as core
+        summary["daily_triggers"] = core.daily_triggers_pass()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "daily_triggers", "error": str(e)[:120]})
+    # The owners' monthly recap, in the first days of the month (idempotent).
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        if _dt.now(_tz.utc).day <= 3:
+            import server as core
+            summary["monthly_report"] = core.monthly_report_pass()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "monthly_report", "error": str(e)[:120]})
     # Loyalty-side: day-27 "choose your plan" reminder for trialing tenants.
     try:
         from features.onboarding import run_trial_reminders
