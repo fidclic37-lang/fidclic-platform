@@ -21,11 +21,11 @@ WHAT IS COUNTED, AND FROM WHERE
     Two of them are worth spelling out because they could be read as more than
     they are:
 
-    Impact FidClic  revenue from visits the platform can attribute to something
-                    it did — a campaign the customer was sent inside the
-                    attribution window, or a Push Wallet scenario they received.
-                    It is a floor, not a claim about everything the programme
-                    caused.
+    Impact FidClic  revenue from visits a FidClic feature brought in — a
+                    campaign, proximity push, offer or automation received in
+                    the 15 days before, or a filleul's visit. A plain scan is
+                    not counted (features/fidclic_impact.py). It is a floor,
+                    not a claim about everything the programme caused.
     Objectif        the merchant's own number, set in Paramètres. Until they set
                     one the card asks for it instead of inventing a target.
 """
@@ -39,11 +39,12 @@ from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
 from features import store_scope as S
+from features import period as P, fidclic_impact as FI
 
 router = APIRouter(tags=["dashboard"])
 _db = None
 
-ATTRIBUTION_DAYS = 15       # a visit this soon after a send is attributed to it
+ATTRIBUTION_DAYS = FI.WINDOW_DAYS   # a visit this soon after a send is attributed to it
 LOYAL_VISITS = 5
 INACTIVE_DAYS = 30
 NEW_DAYS = 30
@@ -55,6 +56,7 @@ WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 def init(db):
     global _db
     _db = db
+    FI.init(db)
 
 
 def _now() -> datetime:
@@ -74,9 +76,7 @@ def _aware(value: Any) -> Optional[datetime]:
 
 
 def _window(days: int) -> Tuple[datetime, datetime]:
-    end = _now()
-    start = (end - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return start, end
+    return P.window(days, _now())
 
 
 def _delta(now_value: float, was_value: float) -> Optional[int]:
@@ -151,32 +151,13 @@ def _revenue(rows: List[Dict[str, Any]]) -> float:
     return sum(float(v.get("amount_paid") or 0) for v in rows)
 
 
-def _attributed_ids(tid: str, start: datetime, end: datetime) -> set:
-    """Customers the platform reached shortly before they came in — by campaign
-    or by a Push Wallet scenario. Their visits are what "Impact FidClic" counts."""
-    reached: set = set()
-    since = start - timedelta(days=ATTRIBUTION_DAYS)
-    try:
-        for c in _db.campaigns.find(
-                {"tenant_id": tid, "sent_at": {"$gte": since, "$lte": end}},
-                {"_id": 0, "recipient_ids": 1}):
-            reached.update(c.get("recipient_ids") or [])
-    except Exception:
-        pass
-    try:
-        reached.update(_db.push_wallet_log.distinct(
-            "customer_id", {"tenant_id": tid, "sent_at": {"$gte": since, "$lte": end}}))
-    except Exception:
-        pass
-    return reached
-
-
 @router.get("/api/owner/home/overview")
-def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
+def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
     scope = S.resolve(token_data, request)
     at = _now()
+    days = P.clamp_days(days)
     start, end = _window(days)
     span = end - start
     prev_end = start - timedelta(microseconds=1)
@@ -231,32 +212,34 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
     }
 
     # ---- impact --------------------------------------------------------------
-    reached_ids = _attributed_ids(tid, start, end)
-    impact_rows = [v for v in rows if v.get("customer_id") in reached_ids]
-    prev_reached = _attributed_ids(tid, prev_start, prev_end)
-    prev_impact = _revenue([v for v in prev_rows if v.get("customer_id") in prev_reached])
-    impact_value = _revenue(impact_rows)
+    # CA FidClic: only the visits a FidClic feature brought in — a campaign, a
+    # proximity push, an offer, an automation received in the 15 days before,
+    # or a filleul's (features/fidclic_impact.py). A plain scan is not counted.
+    impact_now = FI.impact(tid, rows)
+    impact_value, prev_impact = impact_now["revenue"], FI.impact(tid, prev_rows)["revenue"]
     impact = {
         "value": _money(impact_value), "delta_pct": _delta(impact_value, prev_impact),
-        "note": "CA généré par vos campagnes et actions suivies",
-        "window_days": ATTRIBUTION_DAYS,
+        "note": "CA des clients revenus grâce à FidClic : campagnes, géolocalisation, offres, automatisations, parrainage",
+        "window_days": FI.WINDOW_DAYS,
     }
 
     # ---- the two charts --------------------------------------------------------
-    per_day_rev = {(start.date() + timedelta(days=i)).isoformat(): 0.0
-                   for i in range((end.date() - start.date()).days + 1)}
+    per_day_rev = {s["date"]: 0.0 for s in P.slots(start, end, days)}
+    labels = {s["date"]: s.get("label") for s in P.slots(start, end, days)}
     for v in rows:
         t = _aware(v.get("visit_time"))
-        if t and t.date().isoformat() in per_day_rev:
-            per_day_rev[t.date().isoformat()] += float(v.get("amount_paid") or 0)
-    revenue_series = [{"date": d, "value": _money(per_day_rev[d])} for d in sorted(per_day_rev)]
+        k = P.key_of(t, days) if t else None
+        if k in per_day_rev:
+            per_day_rev[k] += float(v.get("amount_paid") or 0)
+    revenue_series = [{"date": d, "label": labels[d], "value": _money(per_day_rev[d])} for d in sorted(per_day_rev)]
 
     per_day_new = {d: 0 for d in per_day_rev}
     for c in customers:
         t = _aware(c.get("created_at"))
-        if t and t.date().isoformat() in per_day_new:
-            per_day_new[t.date().isoformat()] += 1
-    new_series = [{"date": d, "value": per_day_new[d]} for d in sorted(per_day_new)]
+        k = P.key_of(t, days) if t else None
+        if k in per_day_new:
+            per_day_new[k] += 1
+    new_series = [{"date": d, "label": labels[d], "value": per_day_new[d]} for d in sorted(per_day_new)]
     new_count = sum(per_day_new.values())
     prev_new = sum(1 for c in customers
                    if prev_start <= (_aware(c.get("created_at")) or at) <= prev_end)
@@ -318,6 +301,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
         t = _aware(v.get("visit_time"))
         if not t:
             continue
+        t = P.local(t)          # the hour on the shop's clock
         for hi, (lo, hi_h) in enumerate(HOURS):
             if lo <= t.hour < hi_h:
                 grid[t.weekday()][hi] += 1
@@ -338,23 +322,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
     # One slice per client, the Clients page's definitions in this order:
     # inactif, then fidèle, then nouveau, else occasionnel — each slice opens
     # the same people on the Clients page (segments *_active / occasional).
-    buckets = {"loyal": 0, "new": 0, "occasional": 0, "inactive": 0}
-    for c in customers:
-        buckets[CP.home_bucket(c, at, rules)] += 1
-    total_b = sum(buckets.values()) or 1
-    status_mix = {
-        "total": sum(buckets.values()),
-        "slices": [
-            {"key": "loyal", "label": "Clients fidélisés (actifs)", "tone": "green", "segment": "loyal_active",
-             "count": buckets["loyal"], "pct": round(buckets["loyal"] / total_b * 100)},
-            {"key": "new", "label": "Nouveaux clients (actifs)", "tone": "blue", "segment": "new_active",
-             "count": buckets["new"], "pct": round(buckets["new"] / total_b * 100)},
-            {"key": "occasional", "label": "Clients occasionnels", "tone": "amber", "segment": "occasional",
-             "count": buckets["occasional"], "pct": round(buckets["occasional"] / total_b * 100)},
-            {"key": "inactive", "label": "Clients inactifs", "tone": "slate", "segment": "inactive",
-             "count": buckets["inactive"], "pct": round(buckets["inactive"] / total_b * 100)},
-        ],
-    }
+    status_mix = CP.status_mix(customers, at, rules)
 
     return {
         "from": start.isoformat(), "to": end.isoformat(), "days": days,
@@ -367,7 +335,8 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=365),
         "new_delta": _delta(new_count, prev_new),
         "campaigns": campaigns, "products": products, "hours": hours,
         "status_mix": status_mix,
-        "recommendations": _recommendations(buckets, campaigns, products, goal),
+        "recommendations": _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
+                                            campaigns, products, goal),
     }
 
 

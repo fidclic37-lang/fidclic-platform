@@ -38,6 +38,7 @@ from fastapi.responses import Response
 
 from auth import require_role, TokenData
 from features import store_scope as S
+from features import period as P, fidclic_impact as FI
 
 # Analyses are read by the owner, administrateurs and managers — each on the
 # establishments it may see (features/store_scope.py).
@@ -76,6 +77,7 @@ TIER_LABELS = {"bronze": "Bronze", "silver": "Argent", "gold": "Or", "vip": "VIP
 def init(db):
     global _db
     _db = db
+    FI.init(db)
 
 
 def _now() -> datetime:
@@ -95,9 +97,7 @@ def _aware(value: Any) -> Optional[datetime]:
 
 
 def _window(days: int) -> Tuple[datetime, datetime]:
-    end = _now()
-    start = (end - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return start, end
+    return P.window(days, _now())
 
 
 def _delta(now_value: float, was_value: float) -> Optional[int]:
@@ -118,10 +118,7 @@ def _days(value: Any, fallback: int = 30) -> int:
     """FastAPI hands this an int; anything else calling in — a test, a report,
     the cron — may hand over the Query default object instead. Coerce rather
     than fail on a page that is only ever read."""
-    try:
-        return max(1, min(365, int(value)))
-    except (TypeError, ValueError):
-        return fallback
+    return P.clamp_days(value, fallback)
 
 
 class Reader:
@@ -145,12 +142,15 @@ class Reader:
             {"_id": 0, "customer_id": 1, "amount_paid": 1, "visit_time": 1, "items": 1}))
 
     def customers(self) -> List[Dict[str, Any]]:
+        from features import clients_page as CP
+        # The Clients page's columns too: the shop's Règles clients may read any of them.
         return list(_db.customers.find(
             S.customer_filter(self.scope) if self.scope else {"tenant_id": self.tid},
-            {"_id": 0, "id": 1, "name": 1, "visits": 1, "points": 1, "tier": 1,
-             "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
-             "acquisition_source": 1, "city": 1, "postal_code": 1,
-             "visits_at_last_redemption": 1}))
+            {**CP.FIELDS, "acquisition_source": 1, "visits_at_last_redemption": 1}))
+
+    def rules(self):
+        from features import customer_rules as R
+        return R.load(self.tid)
 
     def campaigns(self) -> List[Dict[str, Any]]:
         rows = list(_db.campaigns.find(
@@ -193,72 +193,103 @@ def _empty(label: str) -> Dict[str, Any]:
 # the tabs
 # ---------------------------------------------------------------------------
 def _tab_vue(r: Reader) -> Dict[str, Any]:
+    from features import clients_page as CP
     rows, prev = r.visits(), r.visits(r.prev_start, r.prev_end)
-    people = r.customers()
+    people, rules = r.customers(), r.rules()
     revenue, prev_revenue = _revenue(rows), _revenue(prev)
-    loyal = sum(1 for c in people if int(c.get("visits") or 0) >= LOYAL_VISITS)
-    inactive = sum(1 for c in people
-                   if not _aware(c.get("last_visit_date"))
-                   or (r.at - _aware(c.get("last_visit_date"))).days >= INACTIVE_DAYS)
-    campaign_visitors = set()
-    for c in r.campaigns():
-        campaign_visitors.update(c.get("attributed_visit_customer_ids") or [])
+    # « Clients fidélisés » / « Clients inactifs »: the Clients page's own
+    # (the shop's Règles clients) — the same figures as the Tableau de bord.
+    loyal = sum(1 for c in people if CP.is_loyal(c, r.at, rules))
+    inactive = sum(1 for c in people if CP.is_inactive(c, r.at, rules))
     new_in_window = sum(1 for c in people
                         if r.start <= (_aware(c.get("created_at")) or r.at) <= r.end)
     prev_new = sum(1 for c in people
                    if r.prev_start <= (_aware(c.get("created_at")) or r.at) <= r.prev_end)
 
+    # CA FidClic: the visits a FidClic feature brought in (features/fidclic_impact.py).
+    imp, prev_imp = FI.impact(r.tid, rows), FI.impact(r.tid, prev)
+    src, prev_src = imp["sources"], prev_imp["sources"]
+    referral, prev_referral = src["parrainage"]["revenue"], prev_src["parrainage"]["revenue"]
+    campaign_visits = src["campagnes"]["visits"] + src["automatisations"]["visits"]
+    prev_campaign_visits = prev_src["campagnes"]["visits"] + prev_src["automatisations"]["visits"]
+
+    # Money first, then activity, then the clients (user, 2026-10-02).
     strip = [
-        {"key": "clients", "label": "Clients totaux", "value": len(people), "icon": "users",
-         "delta_pct": _delta(len(people), len(people) - new_in_window)},
-        {"key": "visits", "label": "Visites total", "value": len(rows), "icon": "activity",
-         "delta_pct": _delta(len(rows), len(prev))},
-        {"key": "campaign_visits", "label": "Visites avec campagnes",
-         "value": len(campaign_visitors), "icon": "send", "delta_pct": None},
-        {"key": "loyal", "label": "Clients fidélisés", "value": loyal, "icon": "crown",
-         "delta_pct": None},
-        {"key": "inactive", "label": "Clients inactifs", "value": inactive, "icon": "alert",
-         "delta_pct": None, "lower_is_better": True},
+        {"key": "revenue", "label": "Chiffre d'affaires", "unit": "€", "value": _money(revenue),
+         "icon": "chart", "delta_pct": _delta(revenue, prev_revenue), "row": 1},
+        {"key": "fidclic", "label": "CA FidClic", "unit": "€", "value": imp["revenue"],
+         "icon": "sparkles", "delta_pct": _delta(imp["revenue"], prev_imp["revenue"]),
+         "highlight": True, "hint": "Clients revenus grâce à FidClic", "anchor": "impact", "row": 1},
+        {"key": "referral", "label": "CA Parrainage", "unit": "€", "value": _money(referral),
+         "icon": "gift", "delta_pct": _delta(referral, prev_referral),
+         "hint": "Clients venus par parrainage", "anchor": "impact", "row": 1},
         {"key": "basket", "label": "Panier moyen", "unit": "€",
          "value": _money(revenue / len(rows)) if rows else 0, "icon": "bag",
          "delta_pct": _delta(revenue / len(rows) if rows else 0,
-                             prev_revenue / len(prev) if prev else 0)},
-        {"key": "revenue", "label": "Chiffre d'affaires", "unit": "€", "value": _money(revenue),
-         "icon": "chart", "delta_pct": _delta(revenue, prev_revenue)},
+                             prev_revenue / len(prev) if prev else 0), "row": 1},
+        {"key": "visits", "label": "Visites total", "value": len(rows), "icon": "activity",
+         "delta_pct": _delta(len(rows), len(prev)), "row": 2},
+        {"key": "campaign_visits", "label": "Visites avec campagnes", "value": campaign_visits,
+         "icon": "send", "delta_pct": _delta(campaign_visits, prev_campaign_visits),
+         "hint": f"Venus dans les {FI.WINDOW_DAYS} jours suivant une campagne", "tab": "campagnes", "row": 2},
+        {"key": "clients", "label": "Clients totaux", "value": len(people), "icon": "users",
+         "delta_pct": _delta(len(people), len(people) - new_in_window),
+         "to": "/dashboard/customers", "row": 2},
+        {"key": "loyal", "label": "Clients fidélisés", "value": loyal, "icon": "crown",
+         "delta_pct": None, "to": "/dashboard/customers?segment=loyal", "row": 2},
+        {"key": "inactive", "label": "Clients inactifs", "value": inactive, "icon": "alert",
+         "delta_pct": None, "lower_is_better": True,
+         "to": "/dashboard/customers?segment=inactive", "row": 2},
     ]
+    sources = [{"key": k, "label": l, "tone": t, "revenue": src[k]["revenue"], "visits": src[k]["visits"],
+                "pct": _pct(src[k]["revenue"], imp["revenue"]) if imp["revenue"] else 0}
+               for k, l, t in FI.SOURCES]
+    impact = {
+        "revenue": imp["revenue"], "visits": imp["visits"],
+        "delta_pct": _delta(imp["revenue"], prev_imp["revenue"]),
+        "share_pct": round(imp["revenue"] / revenue * 100) if revenue else 0,
+        "revenue_total": _money(revenue),
+        "sources": sources, "window_days": FI.WINDOW_DAYS,
+        "note": (f"Compté : les visites dans les {FI.WINDOW_DAYS} jours suivant une campagne, "
+                 "une notification de géolocalisation, une offre ou une automatisation, et toutes "
+                 "les visites des clients venus par parrainage. Un simple passage en caisse "
+                 "n'est pas compté."),
+    }
     return {
         "strip": strip,
+        "impact": impact,
         "revenue_series": _series(rows, r, money=True),
         "new_series": _new_series(people, r),
         "new_total": new_in_window, "new_delta": _delta(new_in_window, prev_new),
         "revenue_total": _money(revenue), "revenue_delta": _delta(revenue, prev_revenue),
         "hours": _hours_grid(rows),
         "products": _top_products(rows),
-        "status_mix": _status_mix(people, r.at),
+        "status_mix": CP.status_mix(people, r.at, rules),
     }
 
 
+# One point per Paris day — or per hour for « Aujourd'hui » (features/period.py).
 def _series(rows, r: Reader, money: bool = False) -> List[Dict[str, Any]]:
-    per_day = {(r.start.date() + timedelta(days=i)).isoformat(): 0.0
-               for i in range((r.end.date() - r.start.date()).days + 1)}
+    slots = P.slots(r.start, r.end, r.days)
+    per_day = {x["date"]: 0.0 for x in slots}
     for v in rows:
         t = _aware(v.get("visit_time"))
-        key = t.date().isoformat() if t else None
+        key = P.key_of(t, r.days) if t else None
         if key in per_day:
             per_day[key] += float(v.get("amount_paid") or 0) if money else 1
-    return [{"date": d, "value": _money(per_day[d]) if money else int(per_day[d])}
-            for d in sorted(per_day)]
+    return [{**x, "value": _money(per_day[x["date"]]) if money else int(per_day[x["date"]])}
+            for x in slots]
 
 
 def _new_series(people, r: Reader) -> List[Dict[str, Any]]:
-    per_day = {(r.start.date() + timedelta(days=i)).isoformat(): 0
-               for i in range((r.end.date() - r.start.date()).days + 1)}
+    slots = P.slots(r.start, r.end, r.days)
+    per_day = {x["date"]: 0 for x in slots}
     for c in people:
         t = _aware(c.get("created_at"))
-        key = t.date().isoformat() if t else None
+        key = P.key_of(t, r.days) if t else None
         if key in per_day:
             per_day[key] += 1
-    return [{"date": d, "value": per_day[d]} for d in sorted(per_day)]
+    return [{**x, "value": per_day[x["date"]]} for x in slots]
 
 
 def _hours_grid(rows) -> Dict[str, Any]:
@@ -268,6 +299,7 @@ def _hours_grid(rows) -> Dict[str, Any]:
         t = _aware(v.get("visit_time"))
         if not t:
             continue
+        t = P.local(t)          # the hour on the shop's clock
         for hi, (lo, hi_h) in enumerate(HOURS):
             if lo <= t.hour < hi_h:
                 grid[t.weekday()][hi] += 1
@@ -293,26 +325,6 @@ def _top_products(rows, limit: int = 5) -> List[Dict[str, Any]]:
             acc["revenue"] += float(item.get("price") or 0) * qty
     return [{"name": n, "sales": int(a["sales"]), "revenue": _money(a["revenue"])}
             for n, a in sorted(tally.items(), key=lambda kv: -kv[1]["sales"])[:limit]]
-
-
-def _status_mix(people, at: datetime) -> Dict[str, Any]:
-    b = {"loyal": 0, "new": 0, "occasional": 0, "inactive": 0}
-    for c in people:
-        last, created = _aware(c.get("last_visit_date")), _aware(c.get("created_at"))
-        if not last or (at - last).days >= INACTIVE_DAYS:
-            b["inactive"] += 1
-        elif int(c.get("visits") or 0) >= LOYAL_VISITS:
-            b["loyal"] += 1
-        elif created and (at - created).days <= NEW_DAYS:
-            b["new"] += 1
-        else:
-            b["occasional"] += 1
-    total = sum(b.values())
-    labels = [("loyal", "Clients fidélisés", "green"), ("new", "Nouveaux clients", "blue"),
-              ("occasional", "Clients occasionnels", "amber"), ("inactive", "Clients inactifs", "slate")]
-    return {"total": total,
-            "slices": [{"key": k, "label": l, "tone": t, "count": b[k], "pct": _pct(b[k], total)}
-                       for k, l, t in labels]}
 
 
 def _tab_campagnes(r: Reader) -> Dict[str, Any]:
@@ -355,7 +367,9 @@ def _tab_fidelisation(r: Reader) -> Dict[str, Any]:
     people = r.customers()
     if not people:
         return {"empty": True, "message": "Aucun client pour l'instant."}
-    loyal = sum(1 for c in people if int(c.get("visits") or 0) >= LOYAL_VISITS)
+    from features import clients_page as CP
+    rules = r.rules()
+    loyal = sum(1 for c in people if CP.is_loyal(c, r.at, rules))
     returning = sum(1 for c in people if int(c.get("visits") or 0) >= 2)
     tiers: Dict[str, int] = defaultdict(int)
     for c in people:
@@ -380,7 +394,7 @@ def _tab_fidelisation(r: Reader) -> Dict[str, Any]:
         "tiers": [{"key": k, "label": TIER_LABELS.get(k, k.title()),
                    "count": tiers.get(k, 0), "pct": _pct(tiers.get(k, 0), len(people))}
                   for k in ("bronze", "silver", "gold", "vip")],
-        "status_mix": _status_mix(people, r.at),
+        "status_mix": CP.status_mix(people, r.at, rules),
     }
 
 
@@ -615,7 +629,7 @@ BUILDERS = {
 
 
 @router.get("/api/owner/analyses")
-def analyses(request: Request = None, tab: str = "vue", days: int = Query(30, ge=1, le=365),
+def analyses(request: Request = None, tab: str = "vue", days: int = Query(30, ge=1, le=P.MAX_DAYS),
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     key = tab if tab in BUILDERS else "vue"
     r = Reader(token_data.tenant_id, days, S.resolve(token_data, request))
@@ -625,7 +639,7 @@ def analyses(request: Request = None, tab: str = "vue", days: int = Query(30, ge
 
 
 @router.get("/api/owner/analyses/export")
-def export_analyses(request: Request = None, days: int = Query(30, ge=1, le=365),
+def export_analyses(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
                     token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """The overview's figures, day by day, as a CSV."""
     r = Reader(token_data.tenant_id, days, S.resolve(token_data, request))

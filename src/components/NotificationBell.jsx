@@ -34,10 +34,11 @@ const severityIcon = (severity) => {
   return Sparkles;
 };
 const severityColor = (severity) => {
-  if (severity === 'critical') return '#B85C38';
-  if (severity === 'warning')  return '#E3A869';
-  if (severity === 'positive') return '#4A5D23';
-  return '#B85C38';
+  // The dashboard's own palette (Tableau de bord / Analyses).
+  if (severity === 'critical') return '#E11D48';
+  if (severity === 'warning')  return '#D97706';
+  if (severity === 'positive') return '#0F8B58';
+  return '#2F6BFF';
 };
 
 // Resolve an alert into "Voir clients" + "Envoyer campagne" navigation
@@ -198,35 +199,37 @@ const NotificationBell = ({ platformAdmin = false }) => {
       {unreadCount > 0 && (
         <style>{`
           @keyframes ftBellPulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(184,92,56,0.55), 0 4px 14px -4px rgba(184,92,56,0.55); }
-            50%      { box-shadow: 0 0 0 6px rgba(184,92,56,0.10), 0 4px 14px -4px rgba(184,92,56,0.55); }
+            0%, 100% { box-shadow: 0 0 0 0 rgba(20,80,184,0.45), 0 4px 14px -4px rgba(20,80,184,0.55); }
+            50%      { box-shadow: 0 0 0 6px rgba(20,80,184,0.08), 0 4px 14px -4px rgba(20,80,184,0.55); }
           }
         `}</style>
       )}
       <button
         type="button"
         onClick={() => (open ? setOpen(false) : handleOpen())}
-        className="relative w-11 h-11 rounded-full flex items-center justify-center transition-all hover:scale-105"
+        className="relative w-10 h-10 rounded-[12px] flex items-center justify-center transition-all hover:scale-105"
         style={{
-          background: 'linear-gradient(135deg, #B85C38 0%, #E3A869 100%)',
-          border: '2px solid color-mix(in srgb, var(--flc-card, #FFFFFF) 85%, transparent)',
+          // The FidClic logo's blue tile, like the account icon beside it.
+          background: 'linear-gradient(135deg, #1F63E0 0%, #1450B8 100%)',
           boxShadow: unreadCount > 0
-            ? '0 4px 14px -4px rgba(184,92,56,0.55)'
-            : '0 2px 8px -2px rgba(184,92,56,0.35)',
+            ? '0 4px 14px -4px rgba(20,80,184,0.55)'
+            : '0 8px 16px -10px rgba(20,80,184,0.8)',
           animation: unreadCount > 0 ? 'ftBellPulse 2.4s ease-in-out infinite' : 'none',
         }}
         aria-label={`Notifications — ${unreadCount} unread`}
         title={unreadCount > 0 ? `${unreadCount} alerte(s) non lue(s) · toutes les boutiques` : 'Aucune alerte · toutes les boutiques'}
       >
-        <Bell size={18} style={{ color: 'white' }} fill="white" strokeWidth={2.2} />
+        {/* A literal colour, not currentColor: the toolbar's text rule (index.css,
+            main:has(...) > div:first-child *) would repaint the strokes slate. */}
+        <Bell size={18} color="#FFFFFF" fill="#FFFFFF" strokeWidth={2.2} />
         {unreadCount > 0 && (
           <span
             className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center"
             style={{
-              background: 'var(--flc-card, #FFFFFF)',
-              color: 'var(--flc-accent, #B85C38)',
-              border: '1.5px solid #B85C38',
-              boxShadow: '0 2px 4px rgba(184,92,56,0.4)',
+              background: '#F8B008',
+              color: '#0B1C3F',
+              border: '1.5px solid #FFFFFF',
+              boxShadow: '0 2px 4px rgba(11,28,63,0.25)',
             }}
           >
             {unreadCount > 9 ? '9+' : unreadCount}
@@ -236,23 +239,18 @@ const NotificationBell = ({ platformAdmin = false }) => {
 
       {open && (
         <div
-          className="absolute right-0 mt-2 w-[380px] rounded-2xl border shadow-2xl z-50 overflow-hidden"
-          style={{ borderColor: 'var(--flc-line, #EFE9E0)', background: 'var(--flc-card, #FFFFFF)' }}
+          className="absolute right-0 mt-2 w-[380px] max-w-[calc(100vw-24px)] rounded-2xl border z-50 overflow-hidden"
+          style={{ borderColor: '#E6EEFB', background: '#FFFFFF', boxShadow: '0 24px 48px -20px rgba(11,28,63,.35)' }}
         >
           {/* Account headline — the franchise/business name + every store under it */}
           <div
             className="px-4 py-3 border-b relative overflow-hidden"
-            style={{
-              borderColor: '#EFE9E0',
-              background: 'linear-gradient(135deg, #171412 0%, #2A1C2E 100%)',
-              color: 'white',
-            }}
+            style={{ borderColor: '#E6EEFB', background: 'linear-gradient(135deg, #FFFFFF 0%, #EAF1FF 100%)', color: '#0B1C3F' }}
           >
             <div className="flex items-start justify-between gap-2 relative">
               <div className="flex-1 min-w-0">
-                <p className="text-[9px] font-bold uppercase tracking-widest opacity-70">Compte</p>
-                <p className="text-base font-bold leading-tight truncate"
-                   style={{ fontFamily: 'Cormorant Garamond' }}>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-[#64748B]">Compte</p>
+                <p className="text-[15px] font-bold leading-tight truncate text-[#0B1C3F]">
                   {accountName || 'Mon compte'}
                 </p>
                 {stores.length > 0 ? (
@@ -260,45 +258,45 @@ const NotificationBell = ({ platformAdmin = false }) => {
                     {stores.slice(0, 6).map((s) => (
                       <span
                         key={s.id}
-                        className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full"
-                        style={{ background: 'rgba(227,168,105,0.18)', color: '#FFD7A8', border: '1px solid rgba(227,168,105,0.35)' }}
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                        style={{ background: '#FFFFFF', color: '#2F6BFF', border: '1px solid #D6E3FF' }}
                       >
                         <Building2 size={9} /> {s.name}
                       </span>
                     ))}
                     {stores.length > 6 && (
-                      <span className="text-[9px] opacity-70 self-center">+{stores.length - 6} autres</span>
+                      <span className="text-[10px] text-[#64748B] self-center">+{stores.length - 6} autres</span>
                     )}
                   </div>
                 ) : (
-                  <p className="text-[10px] opacity-70 mt-1">Boutique unique · résumé toutes boutiques</p>
+                  <p className="text-[11px] text-[#64748B] mt-1">Boutique unique · résumé toutes boutiques</p>
                 )}
               </div>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center shrink-0"
-                aria-label="Close"
+                className="w-7 h-7 rounded-full hover:bg-[#DCE7FF] flex items-center justify-center shrink-0"
+                aria-label="Fermer"
               >
-                <X size={14} style={{ color: 'white' }} />
+                <X size={14} style={{ color: '#475569' }} />
               </button>
             </div>
           </div>
-          <div className="px-4 py-2 border-b flex items-center justify-between" style={{ borderColor: 'var(--flc-line, #EFE9E0)', background: 'var(--flc-paper2, #FAFAF8)' }}>
-            <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#8D857D' }}>
+          <div className="px-4 py-2 border-b flex items-center justify-between" style={{ borderColor: '#E6EEFB', background: '#F5F8FE' }}>
+            <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#64748B' }}>
               Alertes par boutique
             </p>
-            <p className="text-[9px]" style={{ color: '#A8A29E' }}>
+            <p className="text-[10px]" style={{ color: '#94A3B8' }}>
               MAJ 5 min
             </p>
           </div>
           <div className="max-h-[420px] overflow-y-auto">
             {loading && alerts.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm" style={{ color: '#8D857D' }}>
+              <div className="px-4 py-8 text-center text-sm" style={{ color: '#64748B' }}>
                 Chargement…
               </div>
             ) : alerts.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm" style={{ color: '#8D857D' }}>
+              <div className="px-4 py-8 text-center text-sm" style={{ color: '#64748B' }}>
                 Tout va bien — aucune alerte aujourd'hui ✨
               </div>
             ) : (
@@ -312,8 +310,8 @@ const NotificationBell = ({ platformAdmin = false }) => {
                     key={a.id || i}
                     className="px-4 py-3 border-b last:border-b-0"
                     style={{
-                      borderColor: '#F5F1EB',
-                      background: isUnread ? `linear-gradient(90deg, ${color}0F 0%, transparent 30%)` : 'white',
+                      borderColor: '#EEF3FB',
+                      background: isUnread ? `linear-gradient(90deg, ${color}0D 0%, transparent 30%)` : 'white',
                     }}
                   >
                     <div className="flex gap-3 items-start">
@@ -335,11 +333,11 @@ const NotificationBell = ({ platformAdmin = false }) => {
                             <Building2 size={9} /> {a.branch_name}
                           </span>
                         )}
-                        <p className="text-sm font-bold leading-tight" style={{ color: '#171412' }}>
+                        <p className="text-sm font-bold leading-tight" style={{ color: '#0B1C3F' }}>
                           {a.title}
                         </p>
                         {a.body && (
-                          <p className="text-xs mt-1 leading-snug" style={{ color: '#57504A' }}>
+                          <p className="text-xs mt-1 leading-snug" style={{ color: '#475569' }}>
                             {a.body}
                           </p>
                         )}
@@ -353,8 +351,8 @@ const NotificationBell = ({ platformAdmin = false }) => {
                     {a.action?.href ? (
                       <div className="mt-2 ml-12">
                         <button type="button" onClick={() => { setOpen(false); navigate(a.action.href); }}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2.5 py-1 text-white"
-                                style={{ background: color, border: `1px solid ${color}` }}>
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 text-white transition hover:bg-[#2559DB]"
+                                style={{ background: '#2F6BFF', border: '1px solid #2F6BFF' }}>
                           {a.action.label} <ChevronRight size={11} style={{ opacity: 0.8 }} />
                         </button>
                       </div>
@@ -363,16 +361,16 @@ const NotificationBell = ({ platformAdmin = false }) => {
                       <button
                         type="button"
                         onClick={() => { setOpen(false); navigate(actions.customersUrl); }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2.5 py-1 transition"
-                        style={{ background: 'var(--flc-paper2, #F5F4F1)', color: 'var(--flc-ink, #171412)', border: '1px solid var(--flc-line, #E9E5E0)' }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 transition hover:bg-[#EAF1FF]"
+                        style={{ background: '#FFFFFF', color: '#2F6BFF', border: '1px solid #D6E3FF' }}
                       >
                         <Users size={11} /> Voir les clients
                       </button>
                       <button
                         type="button"
                         onClick={() => { setOpen(false); navigate(actions.campaignUrl); }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2.5 py-1 text-white transition"
-                        style={{ background: color, border: `1px solid ${color}` }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-lg px-2.5 py-1 text-white transition hover:bg-[#2559DB]"
+                        style={{ background: '#2F6BFF', border: '1px solid #2F6BFF' }}
                       >
                         <Send size={11} /> {actions.campaignLabel}
                         <ChevronRight size={11} style={{ opacity: 0.8 }} />
@@ -385,8 +383,8 @@ const NotificationBell = ({ platformAdmin = false }) => {
             )}
           </div>
           {alerts.length > 0 && (
-            <div className="px-4 py-2 border-t text-center" style={{ borderColor: 'var(--flc-line, #EFE9E0)', background: 'var(--flc-paper2, #FAFAF8)' }}>
-              <p className="text-[10px]" style={{ color: '#8D857D' }}>
+            <div className="px-4 py-2 border-t text-center" style={{ borderColor: '#E6EEFB', background: '#F5F8FE' }}>
+              <p className="text-[10px]" style={{ color: '#64748B' }}>
                 {alerts.length} résumé{alerts.length > 1 ? 's' : ''} · Cliquez sur une carte pour voir le détail
               </p>
             </div>

@@ -40,6 +40,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         email, role, tenant_id = "new@shop.fr", "business_owner", "t9"
 
     now = dt.datetime.now(dt.timezone.utc)
+    from zoneinfo import ZoneInfo
+    PARIS = ZoneInfo("Europe/Paris")
+
+    def at(days_ago, hour):
+        """`hour` on the shop's clock (Paris), `days_ago` days back — in UTC."""
+        local = (now.astimezone(PARIS) - dt.timedelta(days=days_ago)).replace(
+            hour=hour, minute=0, second=0, microsecond=0)
+        return local.astimezone(dt.timezone.utc)
+
     db.tenants.insert_one({"id": "t1", "name": "Le Petit Café"})
     db.tenants.insert_one({"id": "t2", "name": "Rival"})
 
@@ -69,20 +78,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # this window: 120 € over 4 visits. One earlier, for the comparison.
     db.visits.insert_many([
         {"id": "v1", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 40.0,
-         "visit_time": (now - dt.timedelta(days=1)).replace(hour=12),
+         "visit_time": at(1, 12),
          # the Scan page's own key — `qty` — must count as much as `quantity`
          "items": [{"name": "Café latte", "price": 5.0, "qty": 2}]},
         {"id": "v2", "tenant_id": "t1", "customer_id": "c2", "amount_paid": 30.0,
-         "visit_time": (now - dt.timedelta(days=2)).replace(hour=13),
+         "visit_time": at(2, 13),
          "items": [{"name": "Café latte", "price": 5.0, "quantity": 1},
                    {"name": "Croissant", "price": 2.0, "quantity": 2}]},
         {"id": "v3", "tenant_id": "t1", "customer_id": "c3", "amount_paid": 20.0,
-         "visit_time": (now - dt.timedelta(days=3)).replace(hour=9),
+         "visit_time": at(3, 9),
          "items": [{"name": "Croissant", "price": 2.0, "quantity": 1}]},
         {"id": "v4", "tenant_id": "t1", "customer_id": "c5", "amount_paid": 30.0,
-         "visit_time": (now - dt.timedelta(days=4)).replace(hour=19)},
+         "visit_time": at(4, 19)},
         {"id": "v0", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 60.0,
-         "visit_time": (now - dt.timedelta(days=40)).replace(hour=12)},
+         "visit_time": at(40, 12)},
     ])
     db.visits.insert_one({"id": "vx", "tenant_id": "t2", "customer_id": "x1",
                           "amount_paid": 999.0, "visit_time": now})
@@ -123,16 +132,36 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nVue d'ensemble")
     v = tab("vue")
     strip = {s["key"]: s for s in v["strip"]}
-    check("seven figures across the strip, as the design draws", len(v["strip"]) == 7)
+    check("nine figures across the strip, money first",
+          [s["key"] for s in v["strip"]] == ["revenue", "fidclic", "referral", "basket", "visits",
+                                             "campaign_visits", "clients", "loyal", "inactive"])
+    check("on two rows: the money, then the visits and clients",
+          [s["row"] for s in v["strip"]] == [1, 1, 1, 1, 2, 2, 2, 2, 2])
     check("chiffre d'affaires is the money taken in the window", strip["revenue"]["value"] == 120.0)
     check("the rival's 999 € is not in it", strip["revenue"]["value"] != 1119.0)
     check("visites total counts the visits, not the clients", strip["visits"]["value"] == 4)
     check("panier moyen is revenue over visits", strip["basket"]["value"] == 30.0)
-    check("clients fidélisés is five visits or more", strip["loyal"]["value"] == 3)
+    from features import clients_page as CP, customer_rules as R
+    _people = list(db.customers.find({"tenant_id": "t1"}, CP.FIELDS))
+    _rules = R.load("t1")
+    loyal_cp = sum(1 for c in _people if CP.is_loyal(c, now, _rules))
+    inactive_cp = sum(1 for c in _people if CP.is_inactive(c, now, _rules))
+    check("clients fidélisés is the Clients page's own count", strip["loyal"]["value"] == loyal_cp)
+    check("clients inactifs too", strip["inactive"]["value"] == inactive_cp)
+    check("the client cards open the Clients page",
+          strip["loyal"]["to"] == "/dashboard/customers?segment=loyal"
+          and strip["inactive"]["to"] == "/dashboard/customers?segment=inactive"
+          and strip["clients"]["to"] == "/dashboard/customers")
     check("clients inactifs is thirty days without coming", strip["inactive"]["value"] == 1)
     check("and is marked as one where down is good", strip["inactive"]["lower_is_better"] is True)
-    check("visites avec campagnes counts the attributed visitors",
-          strip["campaign_visits"]["value"] == 2)
+    # the campaign went out 5 days ago to c1–c4: v1, v2 and v3 came after it.
+    check("visites avec campagnes counts the visits that followed a campaign",
+          strip["campaign_visits"]["value"] == 3)
+    check("CA FidClic is those visits' money", strip["fidclic"]["value"] == 90.0)
+    check("and the panel agrees", v["impact"]["revenue"] == 90.0
+          and v["impact"]["sources"][0]["key"] == "campagnes"
+          and v["impact"]["sources"][0]["revenue"] == 90.0)
+    check("its share of the CA", v["impact"]["share_pct"] == 75)
     check("the revenue series adds up to the figure",
           round(sum(p["value"] for p in v["revenue_series"]), 2) == 120.0)
     check("one point per day of the window", len(v["revenue_series"]) == 30)
@@ -161,7 +190,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nFidélisation")
     f = tab("fidelisation")
     fs = {s["key"]: s for s in f["strip"]}
-    check("clients fidélisés agrees with the overview", fs["loyal"]["value"] == 3)
+    check("clients fidélisés agrees with the overview", fs["loyal"]["value"] == loyal_cp)
     check("clients revenus is two visits or more", fs["returning"]["value"] == 4)
     check("the retention rate is that share of the base", fs["retention"]["value"] == 80)
     check("and the page says it is not a monthly cohort",
@@ -270,10 +299,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nThe window")
     short = A.analyses(tab="vue", days=2, token_data=TD())["data"]
     check("a shorter window has fewer days", len(short["revenue_series"]) == 2)
-    check("and less money in it",
-          short["strip"][6]["value"] < 120.0 or short["strip"][6]["value"] == 40.0)
+    check("and less money in it", short["strip"][0]["value"] == 40.0)
     long_ = A.analyses(tab="vue", days=90, token_data=TD())["data"]
-    check("a longer one reaches the older visit", long_["strip"][6]["value"] == 180.0)
+    check("a longer one reaches the older visit", long_["strip"][0]["value"] == 180.0)
+    two_years = A.analyses(tab="vue", days=730, token_data=TD())
+    check("a period typed by the merchant may reach two years", two_years["days"] == 730
+          and len(two_years["data"]["revenue_series"]) == 730)
+    check("and no further", A.analyses(tab="vue", days=9999, token_data=TD())["days"] == 730)
+    today = A.analyses(tab="vue", days=1, token_data=TD())
+    hours_now = now.astimezone(PARIS).hour
+    check("« Aujourd'hui » is drawn hour by hour, midnight to now",
+          len(today["data"]["revenue_series"]) == hours_now + 1
+          and today["data"]["revenue_series"][0]["label"] == "0h")
+    check("and starts at midnight in Paris",
+          dt.datetime.fromisoformat(today["from"]).astimezone(PARIS).hour == 0)
 
     # ---- a shop with nothing ------------------------------------------------------------------
     print("\nA shop with nothing yet")

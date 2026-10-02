@@ -11,6 +11,7 @@ claims visits the platform can actually tie to something it sent.
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -238,10 +239,24 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the period survives a reload", "localStorage.setItem('fidclic:dh_days'" in src)
     check("and travels in the URL, so a shared link shows the same thing",
           "url.searchParams.set('days'" in src)
-    check("a period nobody offers never reaches the API",
-          "allowed.includes(Number(next)) ? Number(next) : 30" in src)
+    check("a period that is not valid never reaches the API",
+          "validPeriod(next) ? String(next) : '30'" in src)
     check("every picker on the page reads the same value",
-          src.count("RangePicker value={days} onChange={setDays}") == 3)
+          src.count("RangePicker value={period} onChange={setDays}") == 3)
+    menu = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "components", "PeriodMenu.jsx")).read()
+    check("the menu offers « Aujourd'hui » and a period of one's own",
+          "label: \"Aujourd'hui\"" in menu and "Personnalisé" in menu)
+    check("a typed period is capped at two years, as the API is",
+          "MAX_DAYS = 730" in menu and "MAX_MONTHS = 24" in menu)
+
+    print("\nThe period")
+    today = DH.overview(days=1, token_data=TD())
+    check("« Aujourd'hui » reads from midnight in Paris",
+          dt.datetime.fromisoformat(today["from"]).astimezone(ZoneInfo("Europe/Paris")).hour == 0)
+    check("and draws the day hour by hour",
+          today["revenue_series"][0]["label"] == "0h"
+          and len(today["revenue_series"]) == dt.datetime.now(ZoneInfo("Europe/Paris")).hour + 1)
+    check("two years can be asked for", DH.overview(days=730, token_data=TD())["days"] == 730)
     check("and none of them can be changed mid-refetch",
           src.count("busy={loading}") == 3)
 
