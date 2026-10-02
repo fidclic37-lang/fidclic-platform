@@ -94,7 +94,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           cards["loyal"]["value"] == sum(1 for c in CAST if rate(c[1], c[4]) >= 4))
     check("clients inactifs is outside the 30-day 'Client actif' window",
           cards["inactive"]["value"] == 2)
-    check("nouveaux clients is this calendar month", cards["new"]["value"] >= 2)
+    seg_new = next(x["count"] for x in ov["segments"] if x["key"] == "new")
+    check("nouveaux clients is the « Nouveaux clients » segment, whatever the day of the month",
+          cards["new"]["value"] == seg_new and seg_new >= 2 and cards["new"]["note"] == "30 derniers jours")
     check("the inactive card is marked as one where down is good",
           cards["inactive"]["lower_is_better"] is True)
 

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus, Crown, Sparkles, MoreHorizontal, PieChart, Store, CreditCard, Bell, MapPin, Wallet, GitBranch, Headphones, Megaphone,
   BarChart3, Download, Plug, Database, Zap, Share2, Users, Clock, Info, RotateCcw, Settings2, MessageSquare, History, Loader2,
-  Building2,
+  Building2, Mail,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Loading, Breadcrumb, Modal, useToast, nf, BLUE, inputCls } from '../crm/ui';
@@ -13,7 +13,7 @@ import { Card, Loading, Breadcrumb, Modal, useToast, nf, BLUE, inputCls } from '
 
 const ICONS = { store: Store, card: CreditCard, bell: Bell, sparkles: Sparkles, pin: MapPin, wallet: Wallet, branches: GitBranch,
   headset: Headphones, megaphone: Megaphone, chart: BarChart3, download: Download, plug: Plug, database: Database, pie: PieChart,
-  zap: Zap, share: Share2, users: Users, clock: Clock };
+  zap: Zap, share: Share2, users: Users, clock: Clock, mail: Mail };
 const tint = (hex, a) => `${hex}${Math.round(a * 255).toString(16).padStart(2, '0')}`;
 const MAIN_ROWS = 12;          // the mockup's rows; the others follow under « Autres limites »
 

@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
+import { useResendCheck } from '../components/ResendCheck';
 
 /**
  * Campagnes — the composer, built to the approved design.
@@ -129,6 +130,7 @@ export default function CampagnesPage() {
   const [flash, setFlash] = useState('');
 
   const [step, setStep] = useState(1);
+  const [guardResend, resendModal] = useResendCheck();
   const [segment, setSegment] = useState('all');
   // An audience handed over by Insights (clients within 2 km, one-time new
   // clients…) that none of the four cards names. Its members were resolved
@@ -204,12 +206,21 @@ export default function CampagnesPage() {
 
   const submit = async (mode) => {
     // Paramètres › Préférences › Confirmation des actions importantes.
-    if (mode !== 'draft' && !scheduleAt() && !confirmImportant('Envoyer cette campagne maintenant ?')) return;
+    const now = mode !== 'draft' && !scheduleAt();
+    if (now && !confirmImportant('Envoyer cette campagne maintenant ?')) return;
     setBusy(mode); setError('');
     try {
+      // « Déjà contactés »: who on the list got a campaign in the last days —
+      // the owner picks who gets this one too (components/ResendCheck).
+      let exclude = [];
+      if (now) {
+        exclude = await guardResend(custom ? { customer_ids: custom.ids } : { segment });
+        if (exclude === null) { setBusy(''); return; }
+      }
       const { data: res } = await ownerAPI.composeCampaign({
         title: title.trim(), message: message.trim(), segment,
         ...(custom ? { customer_ids: custom.ids } : {}),
+        ...(exclude.length ? { exclude_ids: exclude } : {}),
         ...(fromTemplate ? { template: fromTemplate } : {}),
         image_url: image || null, link_url: link.trim() || null,
         schedule_at: mode === 'draft' ? null : scheduleAt(),
@@ -266,6 +277,7 @@ export default function CampagnesPage() {
 
   return (
     <div className="cg">
+      {resendModal}
       {/* the five figures */}
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {(data?.strip || []).map((s, i) => <Stat key={s.key} s={s} i={i} />)}

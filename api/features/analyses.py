@@ -70,6 +70,7 @@ SOURCE_LABELS = {
     "qr_store": "Passage en magasin", "instagram": "Réseaux sociaux",
     "facebook": "Réseaux sociaux", "tiktok": "Réseaux sociaux",
     "website": "Site web", "google": "Google", "referral": "Parrainage",
+    "import": "Import de fichier",
 }
 TIER_LABELS = {"bronze": "Bronze", "silver": "Argent", "gold": "Or", "vip": "VIP"}
 

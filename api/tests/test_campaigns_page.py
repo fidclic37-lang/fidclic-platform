@@ -82,9 +82,13 @@ def main():
     check("another shop's clients are never in the audience", "x1" not in ids("all"))
 
     loyal = ids("loyal")
-    check("'Plus de 3 achats' means strictly more than 3",
-          loyal == {c[0] for c in CAST if c[1] > C.LOYAL_VISITS})
-    check("a client with exactly 3 visits is not 'plus de 3'", "c3" not in loyal)
+    from features import clients_page as CP_, customer_rules as R_
+    _people = list(db.customers.find({"tenant_id": "t1"}, {"_id": 0}))
+    _rules = R_.load("t1")
+    check("'Clients fidèles' is the Clients page's own (the shop's Règles clients)",
+          loyal == {c["id"] for c in _people if CP_.is_loyal(c, now, _rules)})
+    check("and so is 'Clients inactifs'",
+          ids("inactive") == {c["id"] for c in _people if CP_.is_inactive(c, now, _rules)})
 
     inactive = ids("inactive")
     check("'Plus de 30 jours' catches the client who stopped coming", "c4" in inactive)
@@ -235,7 +239,9 @@ def main():
     check("the four audience cards of the design are there", len(p["segments"]) == 4)
     check("each card carries its own live count",
           segs["all"]["count"] == len(ids("all")) and segs["loyal"]["count"] == len(ids("loyal")))
-    check("the cards say what they mean", segs["inactive"]["hint"] == "Plus de 30 jours")
+    check("the cards say what they mean, from the shop's Règles clients",
+          segs["inactive"]["hint"] == f"Pas venus depuis {R_.active_days(_rules)} jours"
+          and segs["loyal"]["hint"] == "Selon vos Règles clients")
 
     rows = {r["id"]: r for r in p["recent"]}
     check("the recent list is newest first", p["recent"][0]["id"] == "new-1")

@@ -301,6 +301,7 @@ _PLAN_LIMIT_FIELDS = (
     "max_customers",
     "new_cards_per_month",
     "push_per_month",
+    "invite_emails_per_month",
     "campaigns_per_month",
     "staff_accounts",
     "establishments",
@@ -2929,7 +2930,7 @@ class PlanOverrideReq(BaseModel):
 
 NEXT_PLAN = {"basic": "gold", "silver": "gold", "gold": "vip", "vip": "franchise", "chain": "franchise", "franchise": None}
 
-FRANCHISE_TERM_FIELDS = ("price", "max_customers", "new_cards_per_month", "push_per_month", "campaigns_per_month",
+FRANCHISE_TERM_FIELDS = ("price", "max_customers", "new_cards_per_month", "push_per_month", "invite_emails_per_month", "campaigns_per_month",
                          "staff_accounts", "establishments", "ai_queries_per_day")
 
 
@@ -7140,6 +7141,13 @@ def send_campaign_to_group(
         customer_ids = [c for c in customer_ids if c in _mine]
         if not customer_ids:
             raise HTTPException(status_code=400, detail="Aucun de ces clients n'appartient à vos établissements.")
+    # « Déjà contactés »: the clients the owner chose not to message again
+    # (features/resend_guard.py).
+    _drop = set(req.get("exclude_ids") or [])
+    if _drop:
+        customer_ids = [c for c in customer_ids if c not in _drop]
+        if not customer_ids:
+            raise HTTPException(status_code=400, detail="Aucun client à contacter : tous ont été retirés de l'envoi.")
 
     # Dispatch per-customer with template rendering.
     delivered = 0

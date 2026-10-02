@@ -374,15 +374,20 @@ def overview(request: Request = None, token_data: TokenData = Depends(require_ro
     loyal = sum(1 for c in rows if is_loyal(c, at, rules))
     inactive = sum(1 for c in rows if is_inactive(c, at, rules))
     month_start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    new_this_month = sum(1 for c in rows
-                         if (_aware(c.get("created_at")) or at) >= month_start)
+    # « Nouveaux clients » is the segment of the same name — joined in the last
+    # NEW_DAYS days — so the card and the segment chip never disagree (the card
+    # used to read the calendar month: 0 on the 1st while the segment said 17).
+    new_recent = sum(1 for c in rows if _matches_segment("new", c, at, shop_avg, local, rules))
+    # The NEW_DAYS before that, for the comparison.
+    was = at - timedelta(days=NEW_DAYS + 1)
+    prev_new_recent = sum(1 for c in rows
+                          if (_aware(c.get("created_at")) or at) <= was
+                          and _matches_segment("new", c, was, shop_avg, local, rules))
 
     # The month before, for the comparison the design puts under each figure.
     prev_end = month_start - timedelta(microseconds=1)
     prev_start = prev_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     before = [c for c in rows if (_aware(c.get("created_at")) or at) < month_start]
-    prev_new = sum(1 for c in rows
-                   if prev_start <= (_aware(c.get("created_at")) or at) <= prev_end)
     prev_loyal = sum(1 for c in before if is_loyal(c, prev_end, rules))
     prev_inactive = sum(1 for c in before if is_inactive(c, prev_end, rules))
 
@@ -396,8 +401,8 @@ def overview(request: Request = None, token_data: TokenData = Depends(require_ro
              "value": inactive, "delta_pct": _delta(inactive, prev_inactive),
              "note": "vs mois précédent", "lower_is_better": True},
             {"key": "new", "label": "Nouveaux clients", "icon": "userplus", "tone": "violet",
-             "value": new_this_month, "delta_pct": _delta(new_this_month, prev_new),
-             "note": "ce mois-ci"},
+             "value": new_recent, "delta_pct": _delta(new_recent, prev_new_recent),
+             "note": f"{NEW_DAYS} derniers jours"},
         ],
         "segments": [{**s, "count": sum(1 for c in rows
                                         if _matches_segment(s["key"], c, at, shop_avg, local, rules))}

@@ -130,19 +130,29 @@ def audience(tid: str, segment: str, at: Optional[datetime] = None,
         raise HTTPException(status_code=400, detail=f"Segment inconnu : {segment}")
 
     q: Dict[str, Any] = {"tenant_id": tid}
-    if segment == "loyal":
-        q["visits"] = {"$gt": LOYAL_VISITS}
-    elif segment == "birthday":
+    if segment == "birthday":
         q["birthday"] = {"$in": _birthday_window(at)}
 
     if mine is not None:
         q["id"] = {"$in": list(mine)}
     people = list(_db.customers.find(q, {"_id": 0}))
-    if segment == "inactive":
-        cut = at - timedelta(days=INACTIVE_DAYS)
-        people = [c for c in people
-                  if not _aware(c.get("last_visit_date")) or _aware(c.get("last_visit_date")) < cut]
+    # « Fidèles » and « Inactifs » are the Clients page's own — the shop's
+    # Règles clients — so a campaign reaches exactly the people that page
+    # lists under the same name (user, 2026-10-02).
+    if segment in ("loyal", "inactive"):
+        from features import clients_page as CP, customer_rules as R
+        rules = R.load(tid)
+        test = CP.is_loyal if segment == "loyal" else CP.is_inactive
+        people = [c for c in people if test(c, at, rules)]
     return people
+
+
+def segment_cards(tid: str) -> List[Dict[str, str]]:
+    """The audience cards, their hints read from the shop's Règles clients."""
+    from features import customer_rules as R
+    days = R.active_days(R.load(tid))
+    hints = {"inactive": f"Pas venus depuis {days} jours", "loyal": "Selon vos Règles clients"}
+    return [{**s, "hint": hints.get(s["key"], s["hint"])} for s in SEGMENTS]
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +255,7 @@ def page(request: Request = None,
     ]
 
     segments = []
-    for s in SEGMENTS:
+    for s in segment_cards(tid):
         segments.append({**s, "count": len(audience(tid, s["key"], at, mine))})
 
     recent = []
@@ -294,6 +304,9 @@ class Compose(BaseModel):
     message: str
     segment: str = "all"
     customer_ids: Optional[List[str]] = None
+    # Clients the owner chose not to message again (« Déjà contactés »,
+    # features/resend_guard.py).
+    exclude_ids: Optional[List[str]] = None
     image_url: Optional[str] = None
     link_url: Optional[str] = None
     schedule_at: Optional[str] = None
@@ -336,6 +349,10 @@ def compose(req: Compose, request: Request = None,
     else:
         people = audience(tid, req.segment, at, mine)
         label = SEGMENT_LABELS.get(req.segment, "Sélection")
+    from features.resend_guard import without
+    people = without(people, req.exclude_ids)
+    if not people and not req.draft and req.exclude_ids:
+        raise HTTPException(status_code=400, detail="Aucun client à contacter : tous ont été retirés de l'envoi.")
     if mine is not None and not people and not req.draft:
         raise HTTPException(status_code=400, detail="Aucun client à contacter dans vos établissements.")
 

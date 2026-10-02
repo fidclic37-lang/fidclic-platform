@@ -79,6 +79,8 @@ MODULES = [
     # Campagnes — the composer, its audience, and what the last sends did.
     # Delivers on two channels at once: web push and the wallet card's offer.
     "features.campaigns_page",
+    "features.resend_guard",           # « déjà contactés » check before a send
+    "features.client_import",          # Clients › Importer + invitation emails
     "features.analytics_history",       # extended weekly/daily/monthly history
     "features.customer_status",         # configurable active/inactive definition
     "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
