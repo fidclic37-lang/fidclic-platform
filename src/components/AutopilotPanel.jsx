@@ -195,8 +195,8 @@ export default function AutopilotPanel() {
       {!d.plan_ok ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#F5F8FE] px-4 py-3">
           <p className="flex items-center gap-2 text-[12.5px] text-[#475569]"><Lock size={14} /> L'Autopilot est inclus dans l'offre Pro AI.</p>
-          <button type="button" onClick={() => openUpgrade({ feature: 'ai', message: "L'Autopilot est inclus dans l'offre Pro AI." })}
-                  className="rounded-xl bg-[#2F6BFF] px-3.5 py-2 text-[12.5px] font-semibold text-white">Voir les offres</button>
+          <button type="button" onClick={() => openUpgrade({ feature: 'ai', label: 'Autopilot', message: "L'Autopilot est inclus dans l'offre Pro AI.", upgrade: { label: 'Pro AI' } })}
+                  className="rounded-xl bg-[#2F6BFF] px-3.5 py-2 text-[12.5px] font-semibold text-white">Passer à Pro AI</button>
         </div>
       ) : (
         <>

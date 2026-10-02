@@ -60,8 +60,11 @@ def send_push(subscription: dict, title: str, body: str, *,
             "title": title,
             "body": body,
             "url": url or "/",
-            "icon": icon or "/favicon.svg",
-            "badge": badge or "/favicon.svg",
+            # The FidClic app icon, and its white « F » alone for Android's
+            # status bar (a badge must be a shape on transparent, or it shows
+            # as a white square). /favicon.svg never existed.
+            "icon": icon or "/icon-192.png",
+            "badge": badge or "/badge-96.png",
         }
         webpush(
             subscription_info=subscription,

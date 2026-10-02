@@ -9,6 +9,7 @@ import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import { useResendCheck } from '../components/ResendCheck';
 import InfoTip from '../components/InfoTip';
+import PushPreview from '../components/PushPreview';
 import { ResultChip, ResultModal, ComposerTips, LearningPanel } from '../components/CampaignLearning';
 
 /**
@@ -92,36 +93,6 @@ const Stat = ({ s, i }) => {
     </div>
   );
 };
-
-/* ── the phone ────────────────────────────────────────────────────────── */
-const PhonePreview = ({ title, message, image, tenant }) => (
-  <div className="mx-auto w-[236px] overflow-hidden rounded-[30px] border-[7px] border-[#111827] bg-[#111827] shadow-[0_28px_60px_-28px_rgba(11,28,63,.7)]">
-    <div className="relative h-[430px] overflow-hidden rounded-[22px]"
-         style={{ background: 'linear-gradient(165deg,#1D4ED8 0%,#4F46E5 45%,#7C3AED 100%)' }}>
-      <div className="mx-auto mt-1.5 h-[18px] w-[80px] rounded-full bg-[#111827]" />
-      <p className="mt-5 text-center text-[36px] font-light leading-none text-white">9:41</p>
-      <p className="mt-1 text-center text-[11px] text-white/85">
-        {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
-      </p>
-      <div className="mx-2.5 mt-5 rounded-2xl bg-white/22 p-2.5 backdrop-blur-md">
-        <div className="flex items-center gap-1.5">
-          <span className="flex h-4 w-4 items-center justify-center rounded bg-[#2F6BFF] text-[8px] font-bold text-white">F</span>
-          <span className="text-[10px] font-semibold text-white">{tenant || 'FidClic'}</span>
-          <span className="ml-auto text-[9px] text-white/75">maintenant</span>
-        </div>
-        <p className="mt-1.5 break-words text-[11px] font-semibold leading-snug text-white">
-          {title || 'Titre de votre notification'}
-        </p>
-        <p className="mt-0.5 break-words text-[10.5px] leading-snug text-white/90">
-          {message || 'Le message que vos clients recevront apparaît ici.'}
-        </p>
-        {image && (
-          <img src={image} alt="" className="mt-1.5 h-16 w-full rounded-lg object-cover" />
-        )}
-      </div>
-    </div>
-  </div>
-);
 
 /* ── page ─────────────────────────────────────────────────────────────── */
 export default function CampagnesPage() {
@@ -512,8 +483,9 @@ export default function CampagnesPage() {
           </div>
 
           {/* 3 — preview */}
-          <div className="lg:w-[252px]">
-            <PhonePreview title={title} message={message} image={image} tenant={data?.tenant_name} />
+          <div className="lg:w-[262px]">
+            <PushPreview title={title} message={message} image={image} push={push} wallet={wallet}
+                         walletName={data?.wallet_name || data?.tenant_name} logo={data?.logo_url} at={scheduleAt()} />
           </div>
         </div>
 
