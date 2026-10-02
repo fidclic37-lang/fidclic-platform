@@ -313,8 +313,10 @@ def main():
     check("the analysis waits for something to analyse", view[-1]["status"] == "Après les envois")
 
     sent_before = db.push_notifications.count_documents({})
-    res = K.set_autopilot(K.Autopilot(enabled=True), token_data=T())
-    check("Autopilot prepares every campaign step", res["prepared"] == 3)
+    # The plan's steps are prepared on the owner's « Préparer les étapes » —
+    # the Autopilot is features/autopilot.py now (tests/test_autopilot.py).
+    res = K.prepare_plan(token_data=T())
+    check("« Préparer les étapes » prepares every campaign step", res["prepared"] == 3)
     check("… and sends NOTHING", db.push_notifications.count_documents({}) == sent_before)
     doc = K._plan(shop, recs)
     drafts = [db.campaigns.find_one({"id": s["campaign_id"]}) for s in doc["steps"] if s.get("campaign_id")]
@@ -322,7 +324,7 @@ def main():
     check("… each tagged with the recommendation it came from", all(d.get("template") for d in drafts))
     view = [K._step_view(shop, doc, s, {r["key"]: r for r in recs}) for s in doc["steps"]]
     check("and read 'Préparée'", all(v["status"] == "Préparée" for v in view[:3]))
-    check("preparing again prepares nothing twice", K.autopilot_prepare("cafe", now) == 0)
+    check("preparing again prepares nothing twice", K.autopilot_prepare("cafe", now, force=True) == 0)
 
     alerts = K.pending_alerts("cafe", now)
     check("the bell announces today's prepared step", len(alerts) == 1 and "prête" in alerts[0]["title"])
@@ -442,7 +444,8 @@ def main():
                  "/api/owner/copilot/recommendations/{key}/feedback"):
         check(f"{want} is mounted", want in paths)
     src = open(os.path.join(os.path.dirname(__file__), "..", "server.py")).read()
-    check("the daily cron runs the Autopilot", "run_autopilot as _run_autopilot" in src)
+    check("the daily cron runs the one Autopilot", "from features.autopilot import run as _run_autopilot" in src)
+    check("the plan's « Préparer les étapes » is mounted", "/api/owner/copilot/plan/prepare" in paths)
     here = os.path.dirname(__file__)
     for f in ("robot-hero.webp", "robot-avatar.webp"):
         check(f"public/copilot/{f} is bundled",

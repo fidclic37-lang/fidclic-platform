@@ -459,6 +459,13 @@ export const ownerAPI = {
   campaignLearning: () => api.get('/owner/campaigns/learning'),
   campaignResult: (id) => api.get(`/owner/campaigns/${id}/result`),
   campaignTips: (body) => api.post('/owner/campaigns/learning/tips', body),
+  // Autopilot — daily + weekly campaigns for the owner's OK (features/autopilot.py).
+  autopilot: () => api.get('/owner/autopilot'),
+  saveAutopilot: (body) => api.put('/owner/autopilot', body),
+  autopilotPrepare: () => api.post('/owner/autopilot/prepare'),
+  autopilotApprove: (id, body) => api.post(`/owner/autopilot/${id}/approve`, body || {}),
+  autopilotSkip: (id) => api.post(`/owner/autopilot/${id}/skip`),
+  copilotPreparePlan: () => api.post('/owner/copilot/plan/prepare'),
   composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
   campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
   googleWalletStatus: () => api.get('/owner/wallet/google-status'),

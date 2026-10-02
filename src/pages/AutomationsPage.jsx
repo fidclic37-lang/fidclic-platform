@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import AutoMessagesPanel from '../components/AutoMessagesPanel';
+import AutopilotPanel from '../components/AutopilotPanel';
 import PendingLotsPanel from '../components/PendingLotsPanel';
 
 /**
@@ -424,6 +425,10 @@ export default function AutomationsPage() {
           <div key={i} className="h-[118px] animate-pulse rounded-2xl border border-[#E6EEFB] bg-white" />
         ))}
       </div>
+
+      {/* Autopilot — the daily and weekly campaigns FidClic IA prepares for the
+          owner's OK (components/AutopilotPanel); the bell links here. */}
+      <AutopilotPanel />
 
       {data && (
         <AutoMessagesPanel canEdit={can.create}

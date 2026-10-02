@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { openUpgrade } from '../components/PlanAccess';
 import {
   Sparkle, CircleCheck, BarChart3, TrendingUp, Heart, Zap, ArrowUp, Users, UserPlus,
   RefreshCcw, Gift, Star, MoreHorizontal, Send, Megaphone, Target, ChevronRight,
@@ -237,15 +238,33 @@ export default function CopilotPage() {
     } catch { setError("Votre retour n'a pas pu être enregistré."); }
   };
 
+  // The one Autopilot (Automatisations › Autopilot): this switch turns its
+  // daily and weekly campaigns on or off; their days and times are set there.
   const toggleAutopilot = async () => {
+    if (d.plan.autopilot_plan_ok === false) {
+      openUpgrade({ feature: 'ai', message: "L'Autopilot est inclus dans l'offre Pro AI." });
+      return;
+    }
     setBusy('autopilot');
     try {
       const { data } = await ownerAPI.copilotAutopilot(!d.plan.autopilot);
       setFlash(data.autopilot
-        ? `Mode Autopilot activé : ${data.prepared} étape${data.prepared > 1 ? 's' : ''} préparée${data.prepared > 1 ? 's' : ''}. Rien n'est envoyé sans votre validation.`
-        : 'Mode Autopilot désactivé.');
+        ? `Autopilot activé : ${data.prepared} campagne${data.prepared > 1 ? 's' : ''} préparée${data.prepared > 1 ? 's' : ''}, à valider dans Automatisations. Rien n'est envoyé sans votre validation.`
+        : 'Autopilot désactivé.');
       load();
-    } catch (e) { setError(e?.response?.data?.detail || "Le mode Autopilot n'a pas pu être changé."); }
+    } catch (e) { setError(e?.response?.data?.detail?.message || e?.response?.data?.detail || "L'Autopilot n'a pas pu être changé."); }
+    finally { setBusy(''); }
+  };
+
+  // The plan's steps are prepared when the owner asks.
+  const preparePlan = async () => {
+    setBusy('prepare');
+    try {
+      const { data } = await ownerAPI.copilotPreparePlan();
+      setFlash(data.prepared ? `${data.prepared} étape${data.prepared > 1 ? 's' : ''} préparée${data.prepared > 1 ? 's' : ''} : cliquez sur une étape « Préparée » pour la valider.`
+        : 'Les étapes du plan sont déjà prêtes.');
+      load();
+    } catch (e) { setError(e?.response?.data?.detail || "Les étapes n'ont pas pu être préparées."); }
     finally { setBusy(''); }
   };
 
@@ -549,11 +568,15 @@ export default function CopilotPage() {
                 Mode Autopilot
                 <button type="button" onClick={toggleAutopilot} disabled={busy === 'autopilot'} role="switch"
                         aria-checked={d.plan.autopilot}
-                        title="Autopilot prépare chaque étape ; rien n'est envoyé sans votre validation."
+                        title="L'Autopilot prépare une campagne chaque jour et chaque semaine ; rien n'est envoyé sans votre validation."
                         className={`relative h-6 w-11 rounded-full transition ${d.plan.autopilot ? 'bg-[#2F6BFF]' : 'bg-[#CBD5E1]'}`}>
                   <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${d.plan.autopilot ? 'left-[22px]' : 'left-0.5'}`} />
                 </button>
               </span>
+              <button type="button" onClick={() => navigate('/dashboard/automations#autopilot')}
+                      className="text-[12.5px] font-semibold text-[#6D28D9] hover:underline">Régler l'Autopilot</button>
+              <button type="button" onClick={preparePlan} disabled={busy === 'prepare'}
+                      className="text-[12.5px] font-semibold text-[#2F6BFF] hover:underline disabled:opacity-50">Préparer les étapes</button>
               <button type="button" onClick={() => setModal({ type: 'plan' })}
                       className="text-[12.5px] font-semibold text-[#2F6BFF] hover:underline">Modifier le plan</button>
             </header>
@@ -585,12 +608,11 @@ export default function CopilotPage() {
                 );
               })}
             </div>
-            {d.plan.autopilot && (
-              <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
-                <Info size={12} className="mt-px shrink-0" /> Autopilot prépare les campagnes du plan. Rien n'est envoyé
-                tant que vous n'avez pas validé l'étape — cliquez sur une étape « Préparée » pour la valider.
-              </p>
-            )}
+            <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
+              <Info size={12} className="mt-px shrink-0" />
+              « Préparer les étapes » rédige les campagnes du plan ; rien n'est envoyé tant que vous n'avez pas validé
+              l'étape. {d.plan.autopilot ? "L'Autopilot est actif : ses campagnes du jour et de la semaine vous attendent dans Automatisations." : ''}
+            </p>
           </Panel>
           )}
         </div>
