@@ -264,8 +264,17 @@ def page(request: Request = None,
                     reverse=True)[:8]:
         ids = list(c.get("recipient_ids") or [])
         sent_at = _aware(c.get("sent_at"))
+        res = None
+        if c.get("status") == "sent" and ids and sent_at:
+            try:
+                from features.campaign_learning import measure
+                res = measure(tid, c, at)
+            except Exception as exc:
+                print(f"campagnes: result unavailable ({exc})")
         recent.append({
             "id": c.get("id"),
+            # What it did: clients back vs expected (features/campaign_learning.py).
+            "result": res,
             "name": c.get("name") or "Campagne",
             "subtitle": (c.get("content") or "")[:60],
             "image_url": c.get("image_url"),
@@ -561,6 +570,15 @@ def ai_draft(req: Draft,
     who = SEGMENT_LABELS.get(req.segment or "all", "vos clients")
     user = (f"Commerce : {tenant.get('name') or 'un commerce'}. "
             f"Audience : {who}. Objectif : {objective}.")
+    # What this shop's own campaigns taught (features/campaign_learning.py):
+    # the IA writes in the style that brought clients back here.
+    try:
+        from features.campaign_learning import prompt_hints
+        hints = prompt_hints(token_data.tenant_id)
+        if hints:
+            user += " " + hints
+    except Exception as exc:
+        print(f"campagnes: learning hints unavailable ({exc})")
     try:
         from services import llm
         # Say which of the two it is: "reformulez" is the wrong advice when the
