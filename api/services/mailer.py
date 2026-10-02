@@ -62,3 +62,45 @@ def send(to: str, subject: str, html: str,
         return {"sent": True, "message_id": res.get("messageId")}
     except Exception as e:                                   # noqa: BLE001
         return {"sent": False, "reason": str(e)[:200]}
+
+
+BATCH_SIZE = 500     # Brevo takes up to 1 000 versions per call; stay well under
+
+
+def ready() -> bool:
+    """Whether emails can go out at all (BREVO_API_KEY set)."""
+    return bool(_api_key())
+
+
+def send_batch(messages: List[Dict[str, Any]], sender_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Many personal emails in a few calls (Brevo « messageVersions »).
+
+    `messages`: [{"to", "to_name"?, "subject", "html", "text"?}]. Returns one
+    result per message, in order: {"sent": bool, "reason"?}. Never raises —
+    a chunk that fails marks its own messages failed and the rest carry on.
+    One call per BATCH_SIZE recipients keeps an import of a thousand clients
+    inside a single request's time."""
+    key = _api_key()
+    if not key:
+        return [{"sent": False, "reason": "mailer_disabled"} for _ in messages]
+    out: List[Dict[str, Any]] = []
+    for i in range(0, len(messages), BATCH_SIZE):
+        chunk = messages[i:i + BATCH_SIZE]
+        first = chunk[0]
+        payload = {
+            "sender": {"email": SENDER_EMAIL, "name": (sender_name or SENDER_NAME)[:70]},
+            "subject": first["subject"],
+            "htmlContent": first["html"],
+            "messageVersions": [{
+                "to": [{"email": m["to"], **({"name": m["to_name"]} if m.get("to_name") else {})}],
+                "subject": m["subject"],
+                "htmlContent": m["html"],
+                **({"textContent": m["text"]} if m.get("text") else {}),
+            } for m in chunk],
+        }
+        try:
+            _post(payload, key)
+            out.extend({"sent": True} for _ in chunk)
+        except Exception as e:                               # noqa: BLE001
+            out.extend({"sent": False, "reason": str(e)[:200]} for _ in chunk)
+    return out

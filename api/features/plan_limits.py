@@ -57,6 +57,8 @@ ROWS = [
      "help": "Nouvelles cartes données dans le mois. 0 = illimité."},
     {"key": "push_per_month", "label": "Nombre de notifications (par mois)", "type": "int", "icon": "bell",
      "help": "Notifications envoyées dans le mois. 0 = illimité."},
+    {"key": "invite_emails_per_month", "label": "Emails d'invitation (par mois)", "type": "int", "icon": "mail",
+     "help": "Emails « Ajoutez votre carte » aux clients importés, relances comprises. 0 = illimité."},
     {"key": "ai_level", "label": "Accès à l'IA (analyses de base/avancées)", "type": "ai", "icon": "sparkles",
      "help": "Non : pas d'IA. Base : IA limitée. Avancées : toute l'IA, sans limite par fonction."},
     {"key": "geo_proximity", "label": "Géolocalisation", "type": "bool", "icon": "pin",
@@ -361,6 +363,14 @@ def plan_access(token_data: TokenData = Depends(require_role(OWNER))):
             "ai_queries_per_day": f.get("ai_queries_per_day")}
 
 
+def _invites_this_month(tid: str, now: datetime) -> int:
+    try:
+        from features.client_import import invites_used_this_month
+        return invites_used_this_month(tid, now)
+    except Exception:
+        return 0
+
+
 def usage_of(tenant: Dict[str, Any], now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """The limits that count, with how much is used."""
     import server as core
@@ -371,6 +381,7 @@ def usage_of(tenant: Dict[str, Any], now: Optional[datetime] = None) -> List[Dic
     month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     rows = [("new_cards_per_month", "cartes de fidélité", _db.customers.count_documents({"tenant_id": tid, "created_at": {"$gte": month}})),
             ("push_per_month", "notifications", PP.push_used_this_month(tid, now)),
+            ("invite_emails_per_month", "emails d'invitation", _invites_this_month(tid, now)),
             ("max_customers", "clients actifs", core.count_active_customers(tid, now))]
     if allows(f, "campaigns"):
         rows.append(("campaigns_per_month", "campagnes", PP.campaigns_used_this_month(tid)))

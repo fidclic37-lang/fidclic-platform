@@ -26,6 +26,8 @@ PLAN_FEATURES = {
         "max_customers": 1500,
         "new_cards_per_month": 500,
         "push_per_month": 2000,         # 0 = unlimited; counted from delivery_log
+        # « Ajoutez votre carte » emails to imported clients (Clients › Importer).
+        "invite_emails_per_month": 200,
         "campaigns_per_month": 20,      # counted only where « campaigns » is on
         "staff_accounts": 2,            # owner + 1 collaborator
         "establishments": 1,
@@ -51,6 +53,7 @@ PLAN_FEATURES = {
         "max_customers": 4500,
         "new_cards_per_month": 1500,
         "push_per_month": 6000,
+        "invite_emails_per_month": 1000,
         "campaigns_per_month": 100,
         "staff_accounts": 6,
         "establishments": 1,
@@ -73,6 +76,7 @@ PLAN_FEATURES = {
         "max_customers": 15000,
         "new_cards_per_month": 4000,
         "push_per_month": 0,            # unlimited
+        "invite_emails_per_month": 3000,
         "campaigns_per_month": 0,       # unlimited
         "staff_accounts": 15,
         "establishments": 3,
@@ -99,6 +103,7 @@ PLAN_FEATURES = {
         "max_customers": 50000,
         "new_cards_per_month": 20000,
         "push_per_month": 0,
+        "invite_emails_per_month": 10000,
         "campaigns_per_month": 0,
         "staff_accounts": 50,
         "establishments": 10,

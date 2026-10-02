@@ -10,6 +10,8 @@ import { ownerAPI } from '../lib/api';
 import { perPage as prefPerPage } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
+import { useResendCheck } from '../components/ResendCheck';
+import { ImportModal, InvitationsPanel } from '../components/ClientImport';
 
 /**
  * Clients — built to the approved mockup.
@@ -76,7 +78,8 @@ const Avatar = ({ initials, tier, size = 36 }) => {
   );
 };
 
-const KpiCard = ({ card }) => {
+// A figure opens what it counts: the list below, on the same segment.
+const KpiCard = ({ card, onOpen }) => {
   const Icon = SEGMENT_ICONS[card.icon] || Users;
   const t = TONES[card.tone] || TONES.blue;
   // On "clients inactifs" a fall is the good news, so the colour follows the
@@ -84,7 +87,9 @@ const KpiCard = ({ card }) => {
   const good = card.lower_is_better ? (card.delta_pct ?? 0) <= 0 : (card.delta_pct ?? 0) >= 0;
   const up = (card.delta_pct ?? 0) >= 0;
   return (
-    <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+    <div role="button" tabIndex={0} title="Voir ces clients" onClick={onOpen}
+         onKeyDown={(e) => { if (e.key === 'Enter') onOpen(); }}
+         className="cursor-pointer rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] transition hover:border-[#BFD3FF] hover:shadow-[0_18px_40px_-28px_rgba(47,107,255,.45)]">
       <div className="flex items-start gap-4">
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full"
               style={{ background: t.bg, color: t.fg }}>
@@ -139,8 +144,10 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
 
   const send = async () => {
     setBusy(true); setErr('');
-    try { await onSend(title.trim(), message.trim()); }
-    catch (e) { setErr(e?.response?.data?.detail || "L'envoi n'a pas abouti."); setBusy(false); }
+    try {
+      // « Déjà contactés » may be cancelled: the message stays to be sent.
+      if (await onSend(title.trim(), message.trim()) === 'cancelled') setBusy(false);
+    } catch (e) { setErr(e?.response?.data?.detail || "L'envoi n'a pas abouti."); setBusy(false); }
   };
 
   return (
@@ -238,8 +245,14 @@ export default function ClientsPage() {
   const [segName, setSegName] = useState('');
   const [compose, setCompose] = useState(null);   // { ids, label } | null
   const [flash, setFlash] = useState('');
+  const [guardResend, resendModal] = useResendCheck();
+  const [importOpen, setImportOpen] = useState(false);
+  const [invitesKey, setInvitesKey] = useState(0);      // bumped after an import
 
-  useEffect(() => { ownerAPI.clientsOverview().then(({ data }) => setMeta(data)).catch(() => {}); }, []);
+  const loadMeta = useCallback(() => {
+    ownerAPI.clientsOverview().then(({ data }) => setMeta(data)).catch(() => {});
+  }, []);
+  useEffect(() => { loadMeta(); }, [loadMeta]);
 
   const loadSaved = useCallback(() => {
     if (!crmReady || !crm) { setSaved([]); return; }       // saved filters: CRM avancé
@@ -293,12 +306,18 @@ export default function ClientsPage() {
     } catch (e) { setError(e?.response?.data?.detail || 'Impossible de constituer la liste.'); }
   };
 
+  // Before it goes: who on this list already got a campaign lately — the
+  // owner picks who gets this one too (components/ResendCheck).
   const sendCompose = async (title, message) => {
+    const exclude = await guardResend({ customer_ids: compose.ids });
+    if (exclude === null) return 'cancelled';
     await ownerAPI.sendCampaignToGroup({
-      customer_ids: compose.ids, name: title, content: message, message,
+      customer_ids: compose.ids, exclude_ids: exclude, name: title, content: message, message,
     });
-    setFlash(`Message envoyé à ${nf(compose.ids.length)} client${compose.ids.length > 1 ? 's' : ''}.`);
+    const n = compose.ids.length - exclude.length;
+    setFlash(`Message envoyé à ${nf(n)} client${n > 1 ? 's' : ''}.`);
     setCompose(null); setPicked([]);
+    return 'sent';
   };
 
   useEffect(() => {
@@ -361,9 +380,11 @@ export default function ClientsPage() {
         <div className="flex flex-wrap items-center gap-2.5">
           {/* « Ajouter un client » removed (user, 2026-10-02): it opened the staff
               scan page. Clients join with the shop's QR code; a file is imported. */}
-          {/* Importing a file is a shop-wide setting: the owner's. */}
-          {user?.role === 'business_owner' && (
-            <button type="button" onClick={() => navigate('/dashboard/settings#settings-import')}
+          {/* Importing a client file (and inviting them by email): the owner's
+              and an administrateur's (features/client_import.py). The button
+              used to lead to a settings page with no import on it. */}
+          {['business_owner', 'administrateur'].includes(user?.role) && (
+            <button type="button" onClick={() => setImportOpen(true)}
                     className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
               <Upload size={15} /> Importer
             </button>
@@ -375,11 +396,19 @@ export default function ClientsPage() {
 
       {/* the four figures */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {(meta?.cards || []).map((c) => <KpiCard key={c.key} card={c} />)}
+        {(meta?.cards || []).map((c) => (
+          <KpiCard key={c.key} card={c} onOpen={() => {
+            setSegment(c.key === 'total' ? 'all' : c.key); setPage(1); setPicked([]);
+            document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }} />
+        ))}
         {!meta && Array.from({ length: 4 }, (_, i) => (
           <div key={i} className="h-[136px] animate-pulse rounded-2xl border border-[#E6EEFB] bg-white" />
         ))}
       </div>
+
+      <InvitationsPanel refreshKey={invitesKey} canSend={['business_owner', 'administrateur'].includes(user?.role)}
+                        onSent={(m) => setFlash(m)} />
 
       {/* quick segments */}
       <section className="mb-4 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
@@ -529,7 +558,7 @@ export default function ClientsPage() {
       </section>
 
       {/* table */}
-      <section className="rounded-2xl border border-[#E6EEFB] bg-white shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <section id="clients-list" className="scroll-mt-24 rounded-2xl border border-[#E6EEFB] bg-white shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
         <header className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <h2 className="text-[17px] font-bold text-[#0B1C3F]">
             {nf(feed.total)} client{feed.total > 1 ? 's' : ''}
@@ -716,6 +745,11 @@ export default function ClientsPage() {
       {compose && (
         <ComposeModal count={compose.ids.length} label={compose.label}
                       onClose={() => setCompose(null)} onSend={sendCompose} />
+      )}
+      {resendModal}
+      {importOpen && (
+        <ImportModal onClose={() => setImportOpen(false)}
+                     onDone={() => { loadMeta(); load(); setInvitesKey((k) => k + 1); }} />
       )}
     </div>
   );

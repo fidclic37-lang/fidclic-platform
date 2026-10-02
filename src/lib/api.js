@@ -440,6 +440,18 @@ export const ownerAPI = {
   // Every client the current filter matches — ids only, so a message goes to
   // the whole filter rather than to the page that happens to be on screen.
   clientIds: (params) => api.get('/owner/clients/ids', { params }),
+  // Clients › Importer + invitation emails (features/client_import.py).
+  clientsImportPreview: (file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return api.post('/owner/clients/import/preview', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  clientsImportCommit: (body) => api.post('/owner/clients/import/commit', body),
+  clientInvitations: () => api.get('/owner/clients/invitations'),
+  clientRelanceList: () => api.get('/owner/clients/invitations/relance'),
+  clientRelanceSend: (customer_ids) => api.post('/owner/clients/invitations/relance', { customer_ids }),
+  // « Déjà contactés » before a campaign (features/resend_guard.py).
+  campaignRecentCheck: (body) => api.post('/owner/campaigns/recent-check', body),
   sendCampaignToGroup: (body) => api.post('/owner/campaigns/send-to-group', body),
   // Campagnes — the page in one call, the composer in one call.
   campaignsPage: () => api.get('/owner/campaigns/page'),
