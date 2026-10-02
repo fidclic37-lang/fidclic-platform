@@ -6,15 +6,15 @@ Mounts at:
     GET /api/owner/analyses?tab=...&days=...   → one tab's panels
     GET /api/owner/analyses/export             → the overview as CSV
 
-THE EIGHT TABS
+THE TABS (six on screen)
     vue          Vue d'ensemble   the headline strip and the panels beneath it
     campagnes    Campagnes        every campaign, and what it brought back
     fidelisation Fidélisation     retention, the tier ladder, the card cycle
     avis         Avis clients     ratings, their trend, what they talk about
-    moments      Moments de visite  when people come, by day and by hour
+    moments      Moments de visite  when people come — drawn in the Vue d'ensemble, no tab
     produits     Produits         what sells, and what it brings in
     acquisition  Acquisition      where new clients come from, and what they cost
-    comportement Comportement     frequency, basket, lifetime, RFM
+    comportement Comportement     basket, lifetime — drawn in the Vue d'ensemble, no tab
 
     A tab is asked for one at a time. They share the same window and the same
     reader, but the page only ever pays for the one on screen.
@@ -55,15 +55,15 @@ ATTRIBUTION_DAYS = 15
 HOURS = [(8, 10), (10, 12), (12, 14), (14, 16), (16, 18), (18, 20)]
 WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 
+# « Moments de visite » and « Comportement » live in the Vue d'ensemble now
+# (user, 2026-10-02): their builders stay, their tabs do not.
 TABS = [
     {"key": "vue",          "label": "Vue d'ensemble"},
     {"key": "campagnes",    "label": "Campagnes"},
     {"key": "fidelisation", "label": "Fidélisation"},
     {"key": "avis",         "label": "Avis clients"},
-    {"key": "moments",      "label": "Moments de visite"},
     {"key": "produits",     "label": "Produits"},
     {"key": "acquisition",  "label": "Acquisition"},
-    {"key": "comportement", "label": "Comportement"},
 ]
 
 SOURCE_LABELS = {
@@ -241,6 +241,24 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
          "delta_pct": None, "lower_is_better": True,
          "to": "/dashboard/customers?segment=inactive", "row": 2},
     ]
+    # The clients' whole history (« Comportement » before, user 2026-10-02).
+    life = _lifetime(people)
+    period_visits = round(len(rows) / len(people), 1) if people else 0.0
+    strip += [
+        {"key": "ltv", "label": "LTV moyenne", "unit": "€", "value": life["ltv"], "icon": "chart",
+         "delta_pct": None, "hint": "Dépense moyenne d'un client depuis son inscription",
+         "to": "/dashboard/customers?sort=spend", "row": 3},
+        {"key": "ltv_total", "label": "LTV totale", "unit": "€", "value": life["ltv_total"],
+         "icon": "bag", "delta_pct": None, "hint": "Dépense de tous vos clients depuis leur inscription",
+         "to": "/dashboard/customers?sort=spend", "row": 3},
+        {"key": "life", "label": "Durée moyenne", "unit": " mois", "value": life["avg_life"],
+         "icon": "activity", "delta_pct": None,
+         "hint": "De l'inscription à la dernière visite", "row": 3},
+        {"key": "avg_visits", "label": "Visites par client", "value": life["avg_visits"],
+         "icon": "repeat", "delta_pct": None,
+         "hint": f"Depuis l'inscription · {str(period_visits).replace('.', ',')} sur la période",
+         "to": "/dashboard/customers?sort=visits", "row": 3},
+    ]
     sources = [{"key": k, "label": l, "tone": t, "revenue": src[k]["revenue"], "visits": src[k]["visits"],
                 "pct": _pct(src[k]["revenue"], imp["revenue"]) if imp["revenue"] else 0}
                for k, l, t in FI.SOURCES]
@@ -263,8 +281,11 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
         "new_total": new_in_window, "new_delta": _delta(new_in_window, prev_new),
         "revenue_total": _money(revenue), "revenue_delta": _delta(revenue, prev_revenue),
         "hours": _hours_grid(rows),
+        "moments": _moments(rows),
         "products": _top_products(rows),
         "status_mix": CP.status_mix(people, r.at, rules),
+        "avg_visits": {"lifetime": life["avg_visits"], "period": period_visits},
+        "basket_bands": _basket_bands(people),
     }
 
 
@@ -444,11 +465,16 @@ def _tab_moments(r: Reader) -> Dict[str, Any]:
     rows = r.visits()
     if not rows:
         return {"empty": True, "message": "Aucune visite sur cette période."}
+    return _moments(rows)
+
+
+def _moments(rows) -> Dict[str, Any]:
+    """The hours grid, the weekdays, and the busiest of each — on the shop's clock."""
     per_weekday = [0] * 7
     for v in rows:
         t = _aware(v.get("visit_time"))
         if t:
-            per_weekday[t.weekday()] += 1
+            per_weekday[P.local(t).weekday()] += 1
     best_day = max(range(7), key=lambda i: per_weekday[i])
     grid = _hours_grid(rows)
     flat = [(d, h, grid["grid"][d][h]) for d in range(7) for h in range(len(HOURS))]
@@ -555,20 +581,30 @@ def _tab_acquisition(r: Reader) -> Dict[str, Any]:
     }
 
 
-def _tab_comportement(r: Reader) -> Dict[str, Any]:
-    people = r.customers()
+def _lifetime(people) -> Dict[str, float]:
+    """Each client's whole history, since they joined: what they spent, how
+    often they came, and how long they have been coming."""
     if not people:
-        return {"empty": True, "message": "Aucun client pour l'instant."}
+        return {"ltv": 0.0, "ltv_total": 0.0, "avg_visits": 0.0, "avg_life": 0.0}
     spend = [float(c.get("total_amount_paid") or 0) for c in people]
     visits = [int(c.get("visits") or 0) for c in people]
-    ltv = round(sum(spend) / len(people), 2)
-    avg_visits = round(sum(visits) / len(people), 1)
     lifespans = []
     for c in people:
         created, last = _aware(c.get("created_at")), _aware(c.get("last_visit_date"))
         if created and last and last > created:
             lifespans.append((last - created).days)
-    avg_life = round(sum(lifespans) / len(lifespans) / 30.0, 1) if lifespans else 0.0
+    return {"ltv": round(sum(spend) / len(people), 2), "ltv_total": _money(sum(spend)),
+            "avg_visits": round(sum(visits) / len(people), 1),
+            "avg_life": round(sum(lifespans) / len(lifespans) / 30.0, 1) if lifespans else 0.0}
+
+
+def _tab_comportement(r: Reader) -> Dict[str, Any]:
+    people = r.customers()
+    if not people:
+        return {"empty": True, "message": "Aucun client pour l'instant."}
+    life = _lifetime(people)
+    spend = [float(c.get("total_amount_paid") or 0) for c in people]
+    ltv, avg_visits, avg_life = life["ltv"], life["avg_visits"], life["avg_life"]
 
     # Frequency buckets, as the design's "segmentation comportementale" shows.
     buckets = {"reguliers": 0, "occasionnels": 0, "nouveaux": 0, "inactifs": 0}

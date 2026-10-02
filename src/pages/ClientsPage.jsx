@@ -223,7 +223,9 @@ export default function ClientsPage() {
   const [joined, setJoined] = useState('');
   const [typed, setTyped] = useState('');
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('recent');
+  // ?sort=spend / ?sort=visits: the LTV and « Visites par client » figures of
+  // Analyses open the list ordered by what they measure.
+  const [sort, setSort] = useState(() => (['spend', 'visits'].includes(urlParams.get('sort')) ? urlParams.get('sort') : 'recent'));
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(() => prefPerPage());
   const [more, setMore] = useState(false);

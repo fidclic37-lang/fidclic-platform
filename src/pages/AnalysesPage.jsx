@@ -48,9 +48,13 @@ const OpenCtx = createContext(() => {});
 
 // The design's tab names, and the anchors other pages link to (« Voir mes avis »).
 const HASH_TABS = { reviews: 'avis', avis: 'avis', campaigns: 'campagnes', campagnes: 'campagnes',
-  loyalty: 'fidelisation', fidelisation: 'fidelisation', moments: 'moments', hours: 'moments',
-  products: 'produits', produits: 'produits', acquisition: 'acquisition',
-  behaviour: 'comportement', comportement: 'comportement', vue: 'vue', overview: 'vue', impact: 'vue' };
+  loyalty: 'fidelisation', fidelisation: 'fidelisation', products: 'produits', produits: 'produits',
+  acquisition: 'acquisition', vue: 'vue', overview: 'vue',
+  // Panels of the overview: the page opens on it and scrolls to the panel.
+  impact: 'vue', moments: 'vue', hours: 'vue', comportement: 'vue', behaviour: 'vue' };
+// Old links to the « Moments de visite » / « Comportement » tabs land on their panels.
+const HASH_ANCHORS = { impact: 'impact', moments: 'moments', hours: 'moments',
+  comportement: 'comportement', behaviour: 'comportement' };
 const tabFromHash = () => HASH_TABS[(window.location.hash || '').replace('#', '').toLowerCase()] || 'vue';
 
 /* ── pieces ───────────────────────────────────────────────────────────── */
@@ -380,12 +384,26 @@ const TabVue = ({ d }) => (
         <Line series={d.new_series} />
       </Panel>
     </div>
-    <div className="mb-4 grid gap-4 lg:grid-cols-2">
-      <Panel title="Moments de visite"><HoursGrid hours={d.hours} /></Panel>
-      <Panel title="Statut des clients">
+    {d.moments && <MomentsPanels d={d.moments} />}
+    <div id="comportement" className="mb-4 grid scroll-mt-24 gap-4 lg:grid-cols-2">
+      {/* The same four groups as the Clients page and the Tableau de bord (the
+          shop's Règles clients); each opens its clients. */}
+      <Panel title="Segmentation comportementale">
         {d.status_mix.total ? <Donut mix={d.status_mix} />
           : <p className="py-10 text-center text-[12.5px] text-[#94A3B8]">Aucun client pour l'instant.</p>}
+        {d.avg_visits && (
+          <p className="mt-4 border-t border-[#EEF3FB] pt-3 text-[12.5px] text-[#64748B]">
+            Moyenne de <strong className="text-[#0B1C3F]">{nf(d.avg_visits.lifetime)}</strong> visites par client
+            depuis l'inscription · <strong className="text-[#0B1C3F]">{nf(d.avg_visits.period)}</strong> sur la période choisie.
+          </p>
+        )}
       </Panel>
+      {d.basket_bands && (
+        <Panel title="Panier moyen par client"
+               note="Ce qu'un client dépense en moyenne par visite, depuis son inscription. Clients venus au moins une fois.">
+          <Bars items={d.basket_bands.map((b) => ({ label: b.label, value: b.count }))} />
+        </Panel>
+      )}
     </div>
     <Panel title="Produits les plus populaires">
       {d.products.length ? <Bars items={d.products.map((p) => ({ name: p.name, value: p.sales }))} />
@@ -492,28 +510,33 @@ const TabAvis = ({ d }) => d.empty ? <Empty message={d.message} /> : (
   </>
 );
 
-const TabMoments = ({ d }) => d.empty ? <Empty message={d.message} /> : (
-  <div className="grid gap-4 lg:grid-cols-2">
+// When people come: the hours grid and the weekdays, with the busiest of each.
+const MomentsPanels = ({ d }) => (
+  <div id="moments" className="mb-4 grid scroll-mt-24 gap-4 lg:grid-cols-2">
     <Panel title="Heures d'affluence"><HoursGrid hours={d.hours} /></Panel>
     <Panel title="Visites par jour de la semaine">
       <Bars items={d.weekday_bars} />
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <div className="rounded-xl bg-[#EAF1FF] p-3">
-          <p className="text-[11px] text-[#1D4ED8]">Jour le plus fréquenté</p>
-          <p className="text-[15px] font-bold text-[#0B1C3F]">
-            {d.best_day.label} · {nf(d.best_day.visits)} visites
-          </p>
-        </div>
-        {d.best_slot && (
-          <div className="rounded-xl bg-[#E7F7EE] p-3">
-            <p className="text-[11px] text-[#0F8B58]">Créneau le plus chargé</p>
-            <p className="text-[15px] font-bold text-[#0B1C3F]">{d.best_slot.label}</p>
+      {d.total > 0 ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <div className="rounded-xl bg-[#EAF1FF] p-3">
+            <p className="text-[11px] text-[#1D4ED8]">Jour le plus fréquenté</p>
+            <p className="text-[15px] font-bold text-[#0B1C3F]">
+              {d.best_day.label} · {nf(d.best_day.visits)} visite{d.best_day.visits > 1 ? 's' : ''}
+            </p>
           </div>
-        )}
-      </div>
+          {d.best_slot && (
+            <div className="rounded-xl bg-[#E7F7EE] p-3">
+              <p className="text-[11px] text-[#0F8B58]">Créneau le plus chargé</p>
+              <p className="text-[15px] font-bold text-[#0B1C3F]">{d.best_slot.label}</p>
+            </div>
+          )}
+        </div>
+      ) : <p className="mt-4 text-[12.5px] text-[#94A3B8]">Aucune visite sur cette période.</p>}
     </Panel>
   </div>
 );
+
+const TabMoments = ({ d }) => d.empty ? <Empty message={d.message} /> : <MomentsPanels d={d} />;
 
 const TabProduits = ({ d }) => d.empty ? <Empty message={d.message} /> : (
   <>
@@ -660,10 +683,12 @@ export default function AnalysesPage() {
 
   const Renderer = RENDERERS[payload?.tab] || TabVue;
 
-  // Arriving on #impact: once the overview is drawn, bring its panel into view.
+  // Arriving on #impact (or an old #moments / #comportement link): once the
+  // overview is drawn, bring that panel into view.
   useEffect(() => {
-    if (payload?.tab === 'vue' && window.location.hash === '#impact') {
-      document.getElementById('impact')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const anchor = HASH_ANCHORS[(window.location.hash || '').replace('#', '').toLowerCase()];
+    if (payload?.tab === 'vue' && anchor) {
+      document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [payload]);
 
