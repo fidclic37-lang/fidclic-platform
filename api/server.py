@@ -9281,6 +9281,27 @@ def get_ltv_breakdown(
 ALERT_READERS = ["business_owner", "administrateur", "manager"]
 
 
+# « 1 seule visite » is said from this many new clients on (one or two is
+# ordinary at the start of any shop).
+ONE_TIMERS_ALERT_MIN = 3
+
+# The bell's links for alerts that carry a bare path or a {href, label}.
+_ALERT_LABELS = (("/dashboard/automations?tab=pending", "Valider les envois"),
+                 ("/dashboard/automations", "Voir et valider"),
+                 ("/dashboard/ai-assistant", "Voir le plan"),
+                 ("/dashboard/campaigns/reports", "Voir le rapport"),
+                 ("/dashboard/aide", "Voir la demande"))
+
+
+def _alert_actions(action) -> list:
+    if isinstance(action, dict) and action.get("href"):
+        return [{"kind": "open", "label": action.get("label") or "Voir", "href": action["href"]}]
+    if isinstance(action, str) and action:
+        label = next((l for p, l in _ALERT_LABELS if action.startswith(p)), "Voir")
+        return [{"kind": "open", "label": label, "href": action}]
+    return []
+
+
 @app.get("/api/owner/insights/alerts")
 def get_proactive_alerts(
     request: Request = None,
@@ -9294,17 +9315,18 @@ def get_proactive_alerts(
     title, body, metric (the number that triggered it), and action
     (a deep-link the UI can offer as a CTA).
 
-    Trigger conditions (transparent so owners trust them):
-      - critical: repeat-rate dropped >10pp vs prior period
-                  OR ≥30 customers entering "about to lose" window
-      - warning:  one-and-done rate >35%
-                  OR top spender silent >30 days
-                  OR new-customer pace down >20% vs prior 30d
-      - win:      Gold/VIP segment spend up >25% vs prior period
-                  OR ≥10 dormant customers reactivated this period
-                  OR campaign open-rate above 60%
-      - info:     birthdays this month ≥5
-                  OR cards filled today ≥3
+    The clients' alerts (user, 2026-10-03), in French, each with its links
+    (`actions`: the clients' list, the composer written for them; `href`:
+    what clicking the alert opens):
+      - « N habitués décrochent »: regulars silent for over twice their
+        rhythm (clients_page.is_at_risk) — warning, critical from 10.
+      - « Votre meilleur client n'est pas venu depuis N jours »: the biggest
+        spender, silent 30 days or more — warning.
+      - « N nouveaux clients ne sont venus qu'une fois »: joined these 30
+        days, one visit (clients_page.is_one_timer), from 3 — info.
+    Then what waits for the owner's OK: Autopilot, the Copilote's plan, the
+    monthly report. (Repeat rate, VIP spend, « reactivated » and birthdays
+    were dropped: wrong formulas, or nothing to do.)
     """
     from features import store_scope as _S
     tid = token_data.tenant_id
@@ -9326,119 +9348,68 @@ def get_proactive_alerts(
 
     alerts = []
 
-    def push(sev, _id, title, body, metric=None, action=None):
+    def push(sev, _id, title, body, metric=None, action=None, actions=None):
+        actions = actions or _alert_actions(action)
         alerts.append({
             "id": _id, "severity": sev, "title": title, "body": body,
-            "metric": metric, "action": action, "ts": now.isoformat(),
+            "metric": metric, "action": action, "actions": actions,
+            # Clicking the alert itself opens its first link.
+            "href": actions[0]["href"] if actions else None,
+            "ts": now.isoformat(),
         })
 
-    # --- Repeat rate movement (critical/win)
-    repeat_now = sum(1 for c in customers if int(c.get("visits") or 0) >= 2) / total
-    # Approximation: prior-period repeat rate uses customers created >60d ago.
-    older = [c for c in customers if isinstance(c.get("created_at"), datetime) and c["created_at"] < p60]
-    if older:
-        repeat_prev = sum(1 for c in older if int(c.get("visits") or 0) >= 2) / len(older)
-        delta = (repeat_now - repeat_prev) * 100
-        if delta < -10:
-            push("critical", "repeat_drop",
-                 f"Repeat rate down {abs(delta):.0f}pp",
-                 "Fewer customers are coming back than last period. Consider a reactivation campaign for inactive customers.",
-                 metric=f"{repeat_now*100:.0f}%",
-                 action="/dashboard/insights")
-        elif delta > 10:
-            push("win", "repeat_up",
-                 f"Repeat rate up {delta:.0f}pp",
-                 "Loyalty is climbing. Whatever you launched recently is working — double down on it.",
-                 metric=f"{repeat_now*100:.0f}%",
-                 action="/dashboard/analytics")
+    # --- The clients' alerts (user, 2026-10-03). Each one names its clients
+    # with the SAME definition as the Clients list and Insights
+    # (features/clients_page.py), and carries its two links: the list of
+    # exactly those clients, and the composer already written for them. An
+    # alert about one establishment keeps it in both links (?store=).
+    from features import clients_page as _CP
+    _store = f"&store={branch_id}" if isinstance(branch_id, str) and branch_id else ""
 
-    # --- About-to-lose count (critical at scale)
-    about_to_lose = []
-    for c in customers:
-        lv = c.get("last_visit_date")
-        if isinstance(lv, datetime):
-            days_since = (now - lv).days
-            if 14 <= days_since <= 29 and int(c.get("visits") or 0) >= 2:
-                about_to_lose.append(c)
-    if len(about_to_lose) >= 30:
-        push("critical", "about_to_lose_surge",
-             f"{len(about_to_lose)} customers about to lose",
-             f"They were regulars but haven't visited in 14–29 days. Send a soft 'we miss you' offer this week before they go silent for 30+ days.",
-             metric=str(len(about_to_lose)),
-             action="/dashboard/customers?segment=about_to_lose")
-    elif len(about_to_lose) >= 10:
-        push("warning", "about_to_lose_warn",
-             f"{len(about_to_lose)} customers slipping",
-             "Customers in the 14–29 day inactivity window. A timely push gets most of them back.",
-             metric=str(len(about_to_lose)),
-             action="/dashboard/customers?segment=about_to_lose")
+    def _links(segment, template, see, send):
+        return [{"kind": "customers", "label": see, "href": f"/dashboard/customers?segment={segment}{_store}"},
+                {"kind": "campaign", "label": send, "href": f"/dashboard/campaigns?template={template}{_store}&from=alerte"}]
 
-    # --- One-and-done detection (warning)
-    one_and_done = sum(1 for c in customers if int(c.get("visits") or 0) == 1)
-    one_and_done_pct = (one_and_done / total) * 100
-    if one_and_done_pct > 35:
-        push("warning", "one_and_done",
-             f"{one_and_done_pct:.0f}% never came back after 1st visit",
-             "A welcome offer triggered after the 1st scan can lift second-visit conversion. Aim for under 30%.",
-             metric=f"{one_and_done_pct:.0f}%",
-             action="/dashboard/customers?segment=one_and_done")
+    def _s(n, one, many):
+        return one if n == 1 else many
 
-    # --- Gold / VIP win signals
-    gold_vip = [c for c in customers if (c.get("tier") or "").lower() in ("gold", "vip")]
-    if gold_vip:
-        gv_avg = sum(float(c.get("total_amount_paid") or 0) for c in gold_vip) / len(gold_vip)
-        bronze_silver = [c for c in customers if (c.get("tier") or "").lower() in ("bronze", "silver")]
-        bs_avg = (sum(float(c.get("total_amount_paid") or 0) for c in bronze_silver) / len(bronze_silver)) if bronze_silver else 0
-        if bs_avg > 0:
-            ratio = gv_avg / bs_avg
-            if ratio >= 3:
-                push("win", "vip_spend",
-                     f"Gold + VIP members spend {ratio*100-100:.0f}% more",
-                     f"Average spend €{gv_avg:.0f} vs €{bs_avg:.0f} for Bronze/Silver. Treat top-tier members like co-owners — they fund the rest.",
-                     metric=f"{ratio*100-100:.0f}%",
-                     action="/dashboard/customers?tier=vip")
+    # Habitués qui décrochent — regulars silent for over twice their rhythm.
+    at_risk = [c for c in customers if _CP.is_at_risk(c, now)]
+    if at_risk:
+        n = len(at_risk)
+        push("critical" if n >= 10 else "warning", "at_risk",
+             f"{n} {_s(n, 'habitué décroche', 'habitués décrochent')}",
+             f"{_s(n, 'Un client régulier', 'Des clients réguliers')} ({_CP.AT_RISK_MIN_VISITS} visites ou plus) "
+             f"qui ne {_s(n, 'vient', 'viennent')} plus depuis plus de {_CP.AT_RISK_SILENT_DAYS} jours, soit plus "
+             "de deux fois leur rythme habituel. Un message maintenant en fait revenir une bonne partie.",
+             metric=str(n),
+             actions=_links("at_risk", "a_risque", "Voir les clients", "Envoyer « On pense à vous »"))
 
-    # --- Top spender silent
-    if customers:
-        top = max(customers, key=lambda c: float(c.get("total_amount_paid") or 0))
-        if float(top.get("total_amount_paid") or 0) > 0:
-            lv = top.get("last_visit_date")
-            if isinstance(lv, datetime):
-                days = (now - lv).days
-                if days >= 30:
-                    push("warning", "top_silent",
-                         f"Top spender silent {days} days",
-                         f"{top.get('name','Top customer')} spent €{float(top.get('total_amount_paid')):.0f} with you and hasn't been back. A personal note converts ~3× a generic offer.",
-                         metric=f"{days}d",
-                         action=f"/dashboard/customers?customer_id={top.get('id')}")
+    # Meilleur client silencieux — the biggest spender, not back for 30 days.
+    top = _CP.top_silent(customers, now)
+    if top:
+        days = (now - _CP._aware(top.get("last_visit_date"))).days
+        spent = float(top.get("total_amount_paid") or 0)
+        push("warning", f"top_silent:{top.get('id')}",
+             f"Votre meilleur client n'est pas venu depuis {days} jours",
+             f"{top.get('name') or 'Votre meilleur client'} a dépensé {spent:,.0f} € chez vous".replace(",", "\u202f")
+             + ". Un message personnel lui montre qu'il compte pour vous.",
+             metric=f"{days}j",
+             actions=[{"kind": "customers", "label": "Voir le client",
+                       "href": f"/dashboard/customers?segment=client:{top.get('id')}{_store}"},
+                      {"kind": "campaign", "label": "Lui écrire",
+                       "href": f"/dashboard/campaigns?template=client:{top.get('id')}{_store}&from=alerte"}])
 
-    # --- Birthdays this month (info)
-    cur_month = now.strftime("%m")
-    birthday_count = sum(1 for c in customers if (c.get("birthday") or "").startswith(cur_month + "-"))
-    if birthday_count >= 5:
-        push("info", "birthdays",
-             f"{birthday_count} birthdays this month",
-             "Auto-fire a birthday offer for them — birthday emails see 3× the open rate.",
-             metric=str(birthday_count),
-             action="/dashboard/customers?segment=birthday_this_month")
-
-    # --- Recent reactivations (win)
-    reactivated = [
-        c for c in customers
-        if isinstance(c.get("last_visit_date"), datetime)
-        and (now - c["last_visit_date"]).days <= 30
-        and int(c.get("visits") or 0) >= 2
-        and isinstance(c.get("created_at"), datetime)
-        and (c["last_visit_date"] - c["created_at"]).days >= 60
-    ]
-    # Heuristic: reactivated = visited recently after a 60+ day gap from
-    # signup AND has >=2 lifetime visits — proxy for "came back after quiet".
-    if len(reactivated) >= 10:
-        push("win", "reactivations",
-             f"🔥 {len(reactivated)} dormant customers reactivated",
-             "Customers who'd been quiet are coming back. Whatever woke them up is working — capture the playbook.",
-             metric=str(len(reactivated)),
-             action="/dashboard/insights")
+    # 1 seule visite — joined these 30 days, never came back.
+    once = [c for c in customers if _CP.is_one_timer(c, now)]
+    if len(once) >= ONE_TIMERS_ALERT_MIN:
+        n = len(once)
+        push("info", "one_timers",
+             f"{n} nouveaux clients ne sont venus qu'une fois",
+             f"Inscrits ces {_CP.ONE_TIMER_DAYS} derniers jours, ils ne sont pas revenus. Une offre pour "
+             "leur 2e visite les aide à prendre l'habitude.",
+             metric=str(n),
+             actions=_links("one_timers", "seconde_visite", "Voir les clients", "Envoyer l'offre 2e visite"))
 
     # --- FidClic IA Autopilot: steps it prepared that are waiting for the OK.
     # The plan sends to the whole shop: it is the owner's, on the whole shop.
@@ -9549,7 +9520,9 @@ def get_proactive_alerts_multi_store(
             from features.campaign_report import alerts as _report_alerts
             _t = datetime.now(timezone.utc)
             for _a in _copilot_alerts(tid, _t) + _autopilot_alerts(tid, _t) + _report_alerts(tid, _t):
+                _acts = _alert_actions(_a.get("action"))
                 alerts_combined.append({**_a, "metric": _a.get("metric"), "ts": _t.isoformat(),
+                                        "actions": _acts, "href": _acts[0]["href"] if _acts else None,
                                         "branch_id": None, "branch_name": None, "scope": "shop"})
         except Exception as _e:
             print(f"alerts: copilot hook failed (non-fatal): {_e}")
@@ -9566,6 +9539,8 @@ def get_proactive_alerts_multi_store(
                 "title": f"{len(_lots)} envoi{'s' if len(_lots) > 1 else ''} automatique{'s' if len(_lots) > 1 else ''} à valider",
                 "body": f"{_n} client{'s' if _n > 1 else ''} au total. Rien ne part sans votre validation.",
                 "metric": str(len(_lots)), "action": "/dashboard/automations?tab=pending",
+                "actions": _alert_actions("/dashboard/automations?tab=pending"),
+                "href": "/dashboard/automations?tab=pending",
                 "ts": datetime.now(timezone.utc).isoformat(), "branch_id": None, "branch_name": None, "scope": "shop"})
     except Exception as _e:
         print(f"alerts: automations hook failed (non-fatal): {_e}")

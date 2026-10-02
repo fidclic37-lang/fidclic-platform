@@ -85,7 +85,10 @@ def resolve(token: TokenData, request: Optional[Request] = None, requested: Opti
     if not allowed:
         raise HTTPException(status_code=403, detail="Aucun établissement ne vous est attribué.")
     if requested is None and request is not None:
-        requested = request.headers.get(HEADER) or request.query_params.get("store")
+        # An explicit ?store= wins over the menu's header: a link that names
+        # its establishment (an alert of the bell about Plumereau) opens that
+        # establishment's clients, whatever the menu shows.
+        requested = request.query_params.get("store") or request.headers.get(HEADER)
     requested = (requested or "").strip()
     if requested and requested != ALL and requested not in allowed:
         # A store since removed, or one this account does not cover (a choice
