@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import { useResendCheck } from '../components/ResendCheck';
+import { ResultChip, ResultModal, ComposerTips, LearningPanel } from '../components/CampaignLearning';
 
 /**
  * Campagnes — the composer, built to the approved design.
@@ -131,6 +132,7 @@ export default function CampagnesPage() {
 
   const [step, setStep] = useState(1);
   const [guardResend, resendModal] = useResendCheck();
+  const [resultOf, setResultOf] = useState(null);       // a sent campaign's id, its result open
   const [segment, setSegment] = useState('all');
   // An audience handed over by Insights (clients within 2 km, one-time new
   // clients…) that none of the four cards names. Its members were resolved
@@ -278,6 +280,7 @@ export default function CampagnesPage() {
   return (
     <div className="cg">
       {resendModal}
+      {resultOf && <ResultModal id={resultOf} onClose={() => setResultOf(null)} />}
       {/* the five figures */}
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {(data?.strip || []).map((s, i) => <Stat key={s.key} s={s} i={i} />)}
@@ -427,6 +430,9 @@ export default function CampagnesPage() {
                       onChange={(e) => { setMessage(e.target.value); setStep((v) => Math.max(v, 2)); }}
                       placeholder={'On vous attend !\nProfitez-en cette semaine.'}
                       className="mb-3 w-full resize-none rounded-xl border border-[#E6EEFB] bg-white px-3 py-2.5 text-[13px] leading-snug text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
+            {/* Advice from what this shop's campaigns taught (components/CampaignLearning). */}
+            <ComposerTips title={title} message={message} segment={custom ? 'custom' : segment}
+                          image={image} link={link.trim()} scheduleAt={scheduleAt()} />
 
             <div className="mb-3 grid gap-2.5 sm:grid-cols-2">
               <button type="button" onClick={() => fileRef.current?.click()}
@@ -537,6 +543,8 @@ export default function CampagnesPage() {
         )}
       </Panel>
 
+      <LearningPanel />
+
       {/* recent + assistant */}
       <div className="grid gap-4 xl:grid-cols-[1.7fr_1fr]">
         <Panel className="p-5">
@@ -547,8 +555,9 @@ export default function CampagnesPage() {
                 <table className="w-full min-w-[620px] border-collapse">
                   <thead>
                     <tr className="border-b border-[#EEF3FB] text-left">
-                      {['Nom de la campagne', 'Audience', 'Envoyées', "Taux d'ouverture", 'Statut', 'Action'].map((h, i) => (
-                        <th key={h} className={`px-2 py-2.5 text-[11.5px] font-semibold text-[#64748B] ${i >= 2 && i <= 3 ? 'text-right' : ''}`}>{h}</th>
+                      {['Nom de la campagne', 'Audience', 'Envoyées', "Taux d'ouverture", 'Effet', 'Statut', 'Action'].map((h, i) => (
+                        <th key={h} className={`px-2 py-2.5 text-[11.5px] font-semibold text-[#64748B] ${i >= 2 && i <= 3 ? 'text-right' : ''}`}
+                            title={h === 'Effet' ? 'Clients revenus en plus de ceux qui seraient venus de toute façon' : undefined}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -574,15 +583,18 @@ export default function CampagnesPage() {
                           </td>
                           <td className="px-2 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(r.sent)}</td>
                           <td className="px-2 py-3 text-right text-[12.5px] font-semibold tabular-nums text-[#0B1C3F]">{r.open_rate}%</td>
+                          <td className="px-2 py-3"><ResultChip result={r.result} /></td>
                           <td className="px-2 py-3">
                             <span className="rounded-md px-2 py-0.5 text-[11px] font-semibold"
                                   style={{ background: st.bg, color: st.fg }}>{st.label}</span>
                           </td>
                           <td className="px-2 py-3">
-                            <button type="button" onClick={() => navigate('/dashboard/analytics')}
-                                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF] hover:underline">
-                              Voir les résultats <ChevronRight size={13} />
-                            </button>
+                            {r.status === 'sent' ? (
+                              <button type="button" onClick={() => setResultOf(r.id)}
+                                      className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF] hover:underline">
+                                Voir les résultats <ChevronRight size={13} />
+                              </button>
+                            ) : <span className="text-[11.5px] text-[#94A3B8]">—</span>}
                           </td>
                         </tr>
                       );

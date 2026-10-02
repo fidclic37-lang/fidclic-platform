@@ -455,6 +455,10 @@ export const ownerAPI = {
   sendCampaignToGroup: (body) => api.post('/owner/campaigns/send-to-group', body),
   // Campagnes — the page in one call, the composer in one call.
   campaignsPage: () => api.get('/owner/campaigns/page'),
+  // « Ce qui marche chez vous » (features/campaign_learning.py).
+  campaignLearning: () => api.get('/owner/campaigns/learning'),
+  campaignResult: (id) => api.get(`/owner/campaigns/${id}/result`),
+  campaignTips: (body) => api.post('/owner/campaigns/learning/tips', body),
   composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
   campaignAiDraft: (body) => api.post('/owner/campaigns/ai-draft', body),
   googleWalletStatus: () => api.get('/owner/wallet/google-status'),
