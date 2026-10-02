@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api, { ownerAPI } from '../lib/api';
 import { openUpgrade } from '../components/PlanAccess';
+import InfoTip from '../components/InfoTip';
 
 /**
  * Rapports de vos campagnes — the month's campaigns, measured
@@ -90,9 +91,9 @@ function Report({ month }) {
   if (!d) return <Card><p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={14} className="animate-spin" /> Chargement…</p></Card>;
   const t = d.totals, p = d.previous;
   const tiles = [
-    ['Campagnes envoyées', nf(t.campaigns), '#0B1C3F'], ['Clients touchés', nf(t.touched), '#0B1C3F'],
-    ['Clients revenus', nf(t.came), '#0B1C3F'], ['Venus en plus grâce aux messages', signed(t.extra), t.extra >= 1 ? '#0F8B58' : '#64748B'],
-    ['CA des clients revenus', money(t.revenue), '#0B1C3F'], ['CA FidClic du mois', money(d.fidclic_ca), '#0F8B58'],
+    ['Campagnes envoyées', nf(t.campaigns), '#0B1C3F', 'campaigns_sent'], ['Clients touchés', nf(t.touched), '#0B1C3F', 'reach'],
+    ['Clients revenus', nf(t.came), '#0B1C3F', 'report_back'], ['Venus en plus grâce aux messages', signed(t.extra), t.extra >= 1 ? '#0F8B58' : '#64748B', 'effect'],
+    ['CA des clients revenus', money(t.revenue), '#0B1C3F', 'report_revenue'], ['CA FidClic du mois', money(d.fidclic_ca), '#0F8B58', 'fidclic'],
   ];
   return (
     <div className="space-y-4">
@@ -108,10 +109,10 @@ function Report({ month }) {
           </button>
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          {tiles.map(([label, v, color]) => (
+          {tiles.map(([label, v, color, help]) => (
             <div key={label} className="rounded-xl border border-[#EEF3FB] p-3">
               <p className="text-[21px] font-extrabold leading-none tabular-nums" style={{ color }}>{v}</p>
-              <p className="mt-1 text-[11.5px] text-[#64748B]">{label}</p>
+              <p className="mt-1 flex items-center gap-1 text-[11.5px] text-[#64748B]">{label} <InfoTip k={help} size={12} /></p>
             </div>
           ))}
         </div>

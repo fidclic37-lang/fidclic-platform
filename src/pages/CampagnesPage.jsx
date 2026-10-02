@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import { useResendCheck } from '../components/ResendCheck';
+import InfoTip from '../components/InfoTip';
 import { ResultChip, ResultModal, ComposerTips, LearningPanel } from '../components/CampaignLearning';
 
 /**
@@ -72,7 +73,9 @@ const Stat = ({ s, i }) => {
           <Icon size={18} />
         </span>
         <div className="min-w-0">
-          <p className="text-[11.5px] leading-tight text-[#64748B]">{s.label}</p>
+          <p className="flex items-center gap-1 text-[11.5px] leading-tight text-[#64748B]">
+            {s.label} <InfoTip k={{ sent: 'campaigns_sent', revenue: 'campaign_revenue' }[s.key] || s.key} size={12} />
+          </p>
           <p className="mt-0.5 whitespace-nowrap text-[21px] font-bold leading-none text-[#0B1C3F] tabular-nums">
             {s.unit === '€' ? money(s.value) : `${nf(s.value)}${s.unit || ''}`}
           </p>
@@ -557,7 +560,9 @@ export default function CampagnesPage() {
                     <tr className="border-b border-[#EEF3FB] text-left">
                       {['Nom de la campagne', 'Audience', 'Envoyées', "Taux d'ouverture", 'Effet', 'Statut', 'Action'].map((h, i) => (
                         <th key={h} className={`px-2 py-2.5 text-[11.5px] font-semibold text-[#64748B] ${i >= 2 && i <= 3 ? 'text-right' : ''}`}
-                            title={h === 'Effet' ? 'Clients revenus en plus de ceux qui seraient venus de toute façon' : undefined}>{h}</th>
+                            title={h === 'Effet' ? 'Clients revenus en plus de ceux qui seraient venus de toute façon' : undefined}>
+                          {h === 'Effet' ? <span className="inline-flex items-center gap-1">{h} <InfoTip k="effect" size={12} /></span> : h}
+                        </th>
                       ))}
                     </tr>
                   </thead>

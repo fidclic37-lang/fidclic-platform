@@ -11,6 +11,7 @@ import { perPage as prefPerPage } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
 import { useResendCheck } from '../components/ResendCheck';
+import InfoTip from '../components/InfoTip';
 import { ImportModal, InvitationsPanel } from '../components/ClientImport';
 
 /**
@@ -99,7 +100,7 @@ const KpiCard = ({ card, onOpen }) => {
           <p className="text-[26px] font-bold leading-none tracking-tight text-[#0B1C3F] tabular-nums">
             {nf(card.value)}
           </p>
-          <p className="mt-1.5 text-[12.5px] text-[#64748B]">{card.label}</p>
+          <p className="mt-1.5 flex items-center gap-1 text-[12.5px] text-[#64748B]">{card.label} <InfoTip k={card.key} page="clients" /></p>
         </div>
       </div>
       {card.delta_pct === null || card.delta_pct === undefined ? (

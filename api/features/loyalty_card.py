@@ -494,31 +494,18 @@ def card_stats(days: int = Query(30, ge=1, le=365),
     def rewards_between(a: datetime, b: datetime) -> int:
         return _db.rewards_redeemed.count_documents({"tenant_id": tid, "redeemed_at": {"$gte": a, "$lt": b}, **tills})
 
-    def loyal_between(a: datetime, b: datetime) -> int:
-        """Customers who came back at least twice inside the window — the
-        figure a merchant actually cares about behind "clients fidèles"."""
-        try:
-            rows = _db.visits.aggregate([
-                {"$match": {"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}, **tills}},
-                {"$group": {"_id": "$customer_id", "n": {"$sum": 1}}},
-                {"$match": {"n": {"$gte": 2}}},
-                {"$count": "total"},
-            ])
-            return next(iter(rows), {}).get("total", 0)
-        except Exception:
-            # mongomock cannot always run this pipeline — count in Python.
-            seen: Dict[str, int] = {}
-            for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}, **tills},
-                                     {"customer_id": 1}):
-                seen[v.get("customer_id")] = seen.get(v.get("customer_id"), 0) + 1
-            return sum(1 for n in seen.values() if n >= 2)
-
     active_cards = _db.customers.count_documents({
         "tenant_id": tid, "card_deleted_at": {"$exists": False}, "deleted_at": {"$exists": False}, **people,
     })
     scans, scans_prev = visits_between(start, now), visits_between(prev_start, start)
     rewards, rewards_prev = rewards_between(start, now), rewards_between(prev_start, start)
-    loyal, loyal_prev = loyal_between(start, now), loyal_between(prev_start, start)
+    # « Clients fidèles » is the Clients page's own (the shop's Règles clients),
+    # as on every page (user, 2026-10-02) — today, against the period's start.
+    from features import clients_page as CP, customer_rules as R
+    rules = R.load(tid)
+    base = list(_db.customers.find({"tenant_id": tid, "deleted_at": None, **people}, CP.FIELDS))
+    loyal = sum(1 for c in base if CP.is_loyal(c, now, rules))
+    loyal_prev = sum(1 for c in base if (CP._aware(c.get("created_at")) or now) < start and CP.is_loyal(c, start, rules))
     new_cards, new_cards_prev = customers_created(start, now), customers_created(prev_start, start)
 
     return {
@@ -531,5 +518,5 @@ def card_stats(days: int = Query(30, ge=1, le=365),
         "rewards_used": {"value": rewards, "delta": _delta(rewards, rewards_prev),
                          "hint": "Récompenses remises aux clients sur la période."},
         "loyal_customers": {"value": loyal, "delta": _delta(loyal, loyal_prev),
-                            "hint": "Clients venus au moins deux fois sur la période."},
+                            "hint": "Selon vos Règles clients, comme sur la page Clients. L'évolution compare avec le début de la période."},
     }

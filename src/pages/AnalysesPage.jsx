@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
+import InfoTip from '../components/InfoTip';
 
 /**
  * Analyses — eight tabs over one window, built to the approved design.
@@ -58,9 +59,26 @@ const HASH_ANCHORS = { impact: 'impact', moments: 'moments', hours: 'moments',
 const tabFromHash = () => HASH_TABS[(window.location.hash || '').replace('#', '').toLowerCase()] || 'vue';
 
 /* ── pieces ───────────────────────────────────────────────────────────── */
-const Panel = ({ title, note, children, className = '' }) => (
+// Each panel's « ? » (lib/metricHelp), found from its title.
+const PANEL_HELP = {
+  "Évolution du chiffre d'affaires": 'revenue', 'Évolution du nombre de clients': 'new_clients',
+  'Segmentation comportementale': 'segmentation', 'Statut des clients': 'segmentation',
+  'Panier moyen par client': 'basket_bands', 'Produits les plus populaires': 'products', 'Tous les produits': 'products',
+  'Performance des campagnes': 'sales', 'Répartition par palier': 'tiers', "Heures d'affluence": 'hours',
+  'Visites par jour de la semaine': 'weekdays', 'Origine des nouveaux clients': 'sources',
+  'Données géographiques': 'places', 'Acquisition de nouveaux clients': 'new_clients',
+};
+// The tab on screen: the same figure name can mean something else on another tab.
+const TabCtx = createContext('vue');
+const STAT_ALIAS = { sent: 'campaigns_sent' };
+
+const Panel = ({ title, note, children, className = '', help }) => (
   <section className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
-    {title && <h2 className="mb-4 text-[15px] font-bold text-[#0B1C3F]">{title}</h2>}
+    {title && (
+      <h2 className="mb-4 flex items-center gap-1.5 text-[15px] font-bold text-[#0B1C3F]">
+        {title} {(help || PANEL_HELP[title]) && <InfoTip k={help || PANEL_HELP[title]} />}
+      </h2>
+    )}
     {children}
     {note && (
       <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
@@ -80,6 +98,7 @@ const Empty = ({ message }) => (
 // that counts something opens it.
 const Stat = ({ s, i = 0 }) => {
   const open = useContext(OpenCtx);
+  const tab = useContext(TabCtx);
   const Icon = ICONS[s.icon] || BarChart3;
   const t = s.highlight ? TONES.green : TONES[TONE_ORDER[i % TONE_ORDER.length]];
   const good = s.lower_is_better ? (s.delta_pct ?? 0) <= 0 : (s.delta_pct ?? 0) >= 0;
@@ -101,7 +120,9 @@ const Stat = ({ s, i = 0 }) => {
          style={{ color: s.highlight ? '#0F8B58' : '#0B1C3F' }}>
         {s.unit === '€' ? money(s.value) : `${nf(s.value)}${s.unit || ''}`}
       </p>
-      <p className="mt-1 text-[11.5px] font-medium leading-tight text-[#64748B]">{s.label}</p>
+      <p className="mt-1 flex items-center gap-1 text-[11.5px] font-medium leading-tight text-[#64748B]">
+        {s.label} <InfoTip k={STAT_ALIAS[s.key] || s.key} page={tab} size={12} />
+      </p>
       {s.hint && <p className="mt-0.5 text-[10.5px] leading-tight text-[#94A3B8]">{s.hint}</p>}
       {s.delta_pct !== null && s.delta_pct !== undefined && (
         <span className="mt-1.5 inline-flex rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
@@ -323,7 +344,7 @@ const ImpactPanel = ({ imp }) => {
         <div>
           <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
             <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#E7F7EE] text-[#0F8B58]"><Sparkles size={16} /></span>
-            Impact FidClic
+            Impact FidClic <InfoTip k="impact" />
           </h2>
           <p className="flex flex-wrap items-baseline gap-2">
             <span className="text-[32px] font-extrabold leading-none text-[#0F8B58] tabular-nums">{money(imp.revenue)}</span>
@@ -745,7 +766,9 @@ export default function AnalysesPage() {
       ) : payload ? (
         <div className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
           <OpenCtx.Provider value={open}>
-            <Renderer d={payload.data} />
+            <TabCtx.Provider value={payload.tab}>
+              <Renderer d={payload.data} />
+            </TabCtx.Provider>
           </OpenCtx.Provider>
         </div>
       ) : null}

@@ -8,6 +8,7 @@ import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import WalletPassPreview from '../components/WalletPassPreview';
 import WalletCard from '../components/WalletCard';
+import InfoTip from '../components/InfoTip';
 
 /**
  * Carte de fidélité — the one page where a merchant designs their card, sets
@@ -32,7 +33,7 @@ const INK = '#0B1C3F';
 
 /* ── small building blocks, all in the mockup's idiom ─────────────────── */
 // `locked`: shown, not editable — the card is the owner's to change.
-const Card = ({ icon: Icon, title, subtitle, action, children, className = '', locked = false, id }) => (
+const Card = ({ icon: Icon, title, subtitle, action, children, className = '', locked = false, id, help }) => (
   <section id={id} className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
     <header className="mb-4 flex items-start gap-3">
       {Icon && (
@@ -41,7 +42,7 @@ const Card = ({ icon: Icon, title, subtitle, action, children, className = '', l
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <h2 className="text-[15px] font-bold leading-tight text-[#0B1C3F]">{title}</h2>
+        <h2 className="flex items-center gap-1.5 text-[15px] font-bold leading-tight text-[#0B1C3F]">{title} {help && <InfoTip k={help} />}</h2>
         {subtitle && <p className="mt-0.5 text-[12.5px] leading-snug text-[#64748B]">{subtitle}</p>}
       </div>
       {action}
@@ -134,15 +135,15 @@ const Toggle = ({ icon: Icon, label, checked, onChange }) => (
 );
 
 /** One statistic: figure, label, and the change against the previous window. */
-const Stat = ({ icon: Icon, tone, value, label, delta, hint }) => {
+const Stat = ({ icon: Icon, tone, value, label, delta, hint, help }) => {
   const up = typeof delta === 'number' && delta >= 0;
   return (
-    <div className="rounded-xl border border-[#E6EEFB] bg-white p-3.5" title={hint}>
+    <div className="rounded-xl border border-[#E6EEFB] bg-white p-3.5">
       <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: tone.bg, color: tone.fg }}>
         <Icon size={15} />
       </span>
       <div className="text-[22px] font-extrabold leading-none tracking-[-0.02em] text-[#0B1C3F]">{value}</div>
-      <div className="mt-1 text-[12px] text-[#64748B]">{label}</div>
+      <div className="mt-1 flex items-center gap-1 text-[12px] text-[#64748B]">{label} {help && <InfoTip k={help} size={12} />}</div>
       {typeof delta === 'number' ? (
         <div className={`mt-2 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold ${up ? 'bg-[#E8F8EE] text-[#15803D]' : 'bg-[#FEECEC] text-[#B91C1C]'}`}>
           {up ? <TrendingUp size={11} /> : <TrendingDown size={11} />}{up ? '+' : ''}{delta}%
@@ -829,13 +830,13 @@ export default function LoyaltyCardPage() {
           {stats ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat icon={CreditCard} tone={{ bg: '#E8F8EE', fg: '#15803D' }} value={stats.cards_active.value}
-                    label="Cartes actives" delta={stats.cards_active.delta} hint={stats.cards_active.hint} />
+                    label="Cartes actives" delta={stats.cards_active.delta} hint={stats.cards_active.hint} help="cards_active" />
               <Stat icon={QrCode} tone={{ bg: '#EAF1FF', fg: '#2F6BFF' }} value={stats.qr_scans.value}
-                    label="Scans QR code" delta={stats.qr_scans.delta} hint={stats.qr_scans.hint} />
+                    label="Scans QR code" delta={stats.qr_scans.delta} hint={stats.qr_scans.hint} help="qr_scans" />
               <Stat icon={Gift} tone={{ bg: '#FFF4D6', fg: '#B45309' }} value={stats.rewards_used.value}
-                    label="Récompenses utilisées" delta={stats.rewards_used.delta} hint={stats.rewards_used.hint} />
+                    label="Récompenses utilisées" delta={stats.rewards_used.delta} hint={stats.rewards_used.hint} help="rewards_used" />
               <Stat icon={Users} tone={{ bg: '#F0E9FF', fg: '#7C3AED' }} value={stats.loyal_customers.value}
-                    label="Clients fidèles" delta={stats.loyal_customers.delta} hint={stats.loyal_customers.hint} />
+                    label="Clients fidèles" delta={stats.loyal_customers.delta} hint={stats.loyal_customers.hint} help="loyal" />
             </div>
           ) : (
             <div className="flex h-[132px] items-center justify-center text-[#94A3B8]"><Loader2 className="animate-spin" size={18} /></div>
@@ -845,6 +846,7 @@ export default function LoyaltyCardPage() {
         <Card
           icon={Gift}
           title="Récompenses et paliers"
+          help="tiers"
           subtitle="Configurez les récompenses et visualisez les paliers de fidélité."
           action={edit && (
             <button type="button" onClick={() => (editTiers ? saveTiers() : setEditTiers(true))} disabled={saving}

@@ -216,7 +216,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("cartes actives ignores deleted cards", st["cards_active"]["value"] == 4)
     check("scans = visits in the window", st["qr_scans"]["value"] == 4)
     check("récompenses = redemptions in the window", st["rewards_used"]["value"] == 1)
-    check("clients fidèles = came back twice", st["loyal_customers"]["value"] == 1)
+    from features import clients_page as _CP, customer_rules as _R
+    _rules = _R.load("t1")
+    _loyal = sum(1 for c in db.customers.find({"tenant_id": "t1", "deleted_at": None}, _CP.FIELDS)
+                 if _CP.is_loyal(c, LC._now(), _rules))
+    check("clients fidèles = the Clients page's own (Règles clients)", st["loyal_customers"]["value"] == _loyal)
     check("delta compares with the previous window",
           st["qr_scans"]["delta"] == round((4 - 3) / 3 * 100, 1))
     check("no delta invented out of zero", LC.card_stats(2, TD())["rewards_used"]["delta"] is None)
