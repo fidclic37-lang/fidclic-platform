@@ -139,6 +139,8 @@ const CopilotPage = lazyPage(() => import('./pages/CopilotPage'));
 // Campagnes — rebuilt to the approved design. CampaignsPage stays in the
 // repo, unrouted, for rollback.
 const CampagnesPage = lazyPage(() => import('./pages/CampagnesPage'));
+// Rapports mensuels des campagnes (Pro AI).
+const CampaignReportsPage = lazyPage(() => import('./pages/CampaignReportsPage'));
 // Rollback: the previous AI assistant — import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 const AiIntelligencePage = lazyPage(() => import('./pages/admin/ai/AiIntelligencePage'));
 const AiSavedPage = lazyPage(() => import('./pages/admin/ai/AiSavedPage'));
@@ -443,6 +445,11 @@ function App() {
             <Route path="campaigns" element={
               <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <CampagnesPage />
+              </ProtectedRoute>
+            } />
+            <Route path="campaigns/reports" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <CampaignReportsPage />
               </ProtectedRoute>
             } />
             <Route path="ai-assistant" element={

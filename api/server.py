@@ -9454,8 +9454,9 @@ def get_proactive_alerts(
     # --- Autopilot: today's / this week's campaign waiting for the owner's OK.
     try:
         from features.autopilot import alerts as _autopilot_alerts
+        from features.campaign_report import alerts as _report_alerts
         if with_copilot and token_data.role == "business_owner" and scope.is_all:
-            for _a in _autopilot_alerts(tid, now):
+            for _a in _autopilot_alerts(tid, now) + _report_alerts(tid, now):
                 push(_a["severity"], _a["id"], _a["title"], _a["body"], _a.get("metric"), _a.get("action"))
     except Exception as _e:
         print(f"alerts: autopilot hook failed (non-fatal): {_e}")
@@ -9464,7 +9465,7 @@ def get_proactive_alerts(
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     # What waits for the owner's OK (Autopilot, the Copilote's plan) comes first in its severity.
     alerts.sort(key=lambda a: (severity_order.get(a["severity"], 99),
-                               0 if str(a.get("id", "")).startswith(("autopilot:", "copilot:")) else 1))
+                               0 if str(a.get("id", "")).startswith(("autopilot:", "copilot:", "report:")) else 1))
 
     counts = {"critical": 0, "warning": 0, "info": 0, "win": 0}
     for a in alerts:
@@ -9546,8 +9547,9 @@ def get_proactive_alerts_multi_store(
         try:
             from features.copilot import pending_alerts as _copilot_alerts
             from features.autopilot import alerts as _autopilot_alerts
+            from features.campaign_report import alerts as _report_alerts
             _t = datetime.now(timezone.utc)
-            for _a in _copilot_alerts(tid, _t) + _autopilot_alerts(tid, _t):
+            for _a in _copilot_alerts(tid, _t) + _autopilot_alerts(tid, _t) + _report_alerts(tid, _t):
                 alerts_combined.append({**_a, "metric": _a.get("metric"), "ts": _t.isoformat(),
                                         "branch_id": None, "branch_name": None, "scope": "shop"})
         except Exception as _e:
@@ -9572,7 +9574,7 @@ def get_proactive_alerts_multi_store(
     # Sort by severity only.
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
     alerts_combined.sort(key=lambda a: (severity_order.get(a.get("severity"), 99),
-                                        0 if str(a.get("id", "")).startswith(("autopilot:", "copilot:")) else 1))
+                                        0 if str(a.get("id", "")).startswith(("autopilot:", "copilot:", "report:")) else 1))
 
     counts = {"critical": 0, "warning": 0, "info": 0, "win": 0}
     for a in alerts_combined:
@@ -11317,6 +11319,12 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         copilot_summary = _run_autopilot(now)
     except Exception as _e:
         print(f"autopilot runner failed (non-fatal): {_e}")
+    # Rapport mensuel des campagnes — on each shop's chosen day (Pro AI).
+    try:
+        from features.campaign_report import run as _run_reports
+        copilot_summary["reports"] = _run_reports(now)
+    except Exception as _e:
+        print(f"campaign report runner failed (non-fatal): {_e}")
 
     # Campagnes planifiées — the composer's "Planifier pour plus tard" lands
     # here. Wrapped for the same reason: one tenant's send must not stop the
