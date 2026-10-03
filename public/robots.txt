@@ -1,0 +1,9 @@
+# app.fidclic.com — the FidClic software (logins, dashboards, customers' cards).
+# Nothing here belongs in search results: every response carries
+# « X-Robots-Tag: noindex, nofollow » (vercel.json) and the pages
+# <meta name="robots" content="noindex, nofollow">.
+# Crawling stays allowed ON PURPOSE: a robot must be able to read that
+# « noindex » to drop a page it may already have listed.
+# The public website, to be indexed, is https://www.fidclic.com/
+User-agent: *
+Allow: /
