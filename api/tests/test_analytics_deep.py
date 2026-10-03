@@ -120,7 +120,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     pm = X.plan_moves(date_from=(now - dt.timedelta(days=30)).date().isoformat(), date_to=(now + dt.timedelta(days=1)).date().isoformat(), token_data=ADMIN)
     check("1 upgrade, 1 downgrade, 1 activation", pm["upgrades"] == 1 and pm["downgrades"] == 1 and pm["activations"] == 1)
     up = next(r for r in pm["rows"] if r["kind"] == "upgrade")
-    check("with the € / month it moved and who did it", up["name"] == "Café Beta" and up["mrr_change"] == 40.0 and up["by"] == "boss@fidclic.com")
+    check("with the € / month it moved and who did it", up["name"] == "Café Beta" and up["mrr_change"] == 32.0 and up["by"] == "boss@fidclic.com")
     check("online payment named", any(r["by"] == "Paiement en ligne" for r in pm["rows"]))
 
     print("\nTop / bottom croissance (combined score)")
@@ -163,8 +163,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("each line says what it opens", todo["essai_7j"]["action"] == {"list": "essai_7j"} and todo["support"]["action"]["href"] == "/admin/support")
     en = td["encaissements"]
     check("encaissé ce mois", en["month"] == 79.0 and en["month_invoices"] == 1)
-    check("en retard: the impayé's € / month", en["late_count"] == 1 and en["late"] == 39.0)
-    check("à encaisser sous 30 jours: running subscriptions, not the résilié one", en["upcoming_count"] == 3 and en["upcoming_30"] == 79 + 39 + 129)
+    check("en retard: the impayé's € / month", en["late_count"] == 1 and en["late"] == 33.0)
+    check("à encaisser sous 30 jours: running subscriptions, not the résilié one", en["upcoming_count"] == 3 and en["upcoming_30"] == 65 + 33 + 108)
     sp = td["support"]
     check("support: open, urgent, unread, waiting for us, first answer, satisfaction",
           sp["open"] == 2 and sp["urgent"] == 1 and sp["unread"] == 1 and sp["waiting_us"] == 1 and sp["first_response_hours"] == 2.0 and sp["satisfaction"] == 4.0)

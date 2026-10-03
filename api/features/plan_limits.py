@@ -3,7 +3,7 @@ Super admin › Plan Limits — built to the approved mockup, and the rules that
 make every limit and switch real for the businesses.
 
 What the user decided (2026-09-30):
-- Prices stay 39 / 79 / 129 € (Starter / Pro / Pro AI).
+- Prices 33 / 65 / 108 € HT (Starter / Pro / Pro AI), since 2026-10-03.
 - What each plan unlocks follows the pricing grid (models.PLAN_FEATURES):
   Starter gets the card, wallet and rewards; CRM avancé, segmentation,
   campagnes, automatisations, géolocalisation, parrainage, analytics avancés
