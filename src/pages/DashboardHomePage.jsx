@@ -378,7 +378,9 @@ export default function DashboardHomePage() {
 
       {/* the four figures */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {(d?.cards || []).map((c) => <KpiCard key={c.key} card={c} onOpen={navigate} />)}
+        {/* Analyses opens on the same period, its card highlighted (?focus=). */}
+        {(d?.cards || []).map((c) => <KpiCard key={c.key} card={c} onOpen={(to) => navigate(
+          to.startsWith('/dashboard/analytics') ? `${to}${to.includes('?') ? '&' : '?'}period=${period}` : to)} />)}
       </div>
 
       {/* goal + impact */}

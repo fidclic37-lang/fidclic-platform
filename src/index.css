@@ -2257,3 +2257,20 @@ main:has(.sc) > div:first-child input { background: #F4F7FC; border-color: #E6EE
 /* Super admin + sales team — the blue design everywhere (CRM mockups). */
 .fd-admin main { background: #F4F7FC !important; }
 .fd-admin main > div:first-child { background: #FFFFFF !important; border-bottom: 1px solid #E6EEFB; backdrop-filter: none !important; }
+
+/* lib/flash.js — the element a link pointed at pulses for ~2 s. */
+@keyframes fcFlash {
+  0%   { box-shadow: 0 0 0 0 rgba(47, 107, 255, 0); }
+  15%  { box-shadow: 0 0 0 4px rgba(47, 107, 255, .55), 0 18px 40px -18px rgba(47, 107, 255, .55); }
+  70%  { box-shadow: 0 0 0 4px rgba(47, 107, 255, .45), 0 18px 40px -18px rgba(47, 107, 255, .45); }
+  100% { box-shadow: 0 0 0 0 rgba(47, 107, 255, 0); }
+}
+.fc-flash {
+  animation: fcFlash 2s ease-in-out;
+  border-color: #2F6BFF !important;
+  position: relative;
+  z-index: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fc-flash { animation: none; box-shadow: 0 0 0 3px rgba(47, 107, 255, .5); }
+}

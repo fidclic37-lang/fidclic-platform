@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
+import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
 
 /**
@@ -106,7 +107,7 @@ const Stat = ({ s, i = 0 }) => {
   const target = s.to || s.tab || s.anchor;
   const go = () => target && open(s);
   return (
-    <div role={target ? 'button' : undefined} tabIndex={target ? 0 : undefined} onClick={go}
+    <div data-stat={s.key} role={target ? 'button' : undefined} tabIndex={target ? 0 : undefined} onClick={go}
          onKeyDown={(e) => { if (e.key === 'Enter') go(); }}
          title={target ? 'Voir le détail' : undefined}
          className={`h-full rounded-2xl border bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] transition ${
@@ -711,6 +712,21 @@ export default function AnalysesPage() {
     if (payload?.tab === 'vue' && anchor) {
       document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+  }, [payload]);
+
+  // Arriving from a figure of the Tableau de bord (?focus=revenue): that same
+  // figure is brought on screen and pulses for ~2 s, then the parameter goes.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const key = params.get('focus');
+    if (!key || !payload) return;
+    const t = window.setTimeout(() => {
+      flash(document.querySelector(`[data-stat="${CSS.escape(key)}"]`));
+      params.delete('focus');
+      const q = params.toString();
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${q ? `?${q}` : ''}${window.location.hash}`);
+    }, 150);
+    return () => window.clearTimeout(t);
   }, [payload]);
 
   // A figure opens a page, another tab, or a panel further down this one.

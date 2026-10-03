@@ -188,7 +188,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     cards = [
         {"key": "revenue", "label": "Chiffre d'affaires", "icon": "chart", "tone": "blue",
          "value": _money(revenue), "unit": "€", "badge": "FidClic",
-         "delta_pct": _delta(revenue, prev_revenue), "to": "/dashboard/analytics"},
+         "delta_pct": _delta(revenue, prev_revenue), "to": "/dashboard/analytics?focus=revenue"},
         {"key": "clients", "label": "Clients totaux", "icon": "users", "tone": "green",
          "value": total_clients, "delta_pct": _delta(total_clients, prev_clients), "to": "/dashboard/customers"},
         {"key": "loyal", "label": "Clients fidélisés", "icon": "crown", "tone": "amber",

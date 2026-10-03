@@ -5,6 +5,7 @@ import {
   Store, Send,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { flash } from '../lib/flash';
 
 /* Paramètres › Équipe & accès — the franchise's accounts, their roles and
    their establishments.
@@ -382,7 +383,9 @@ export default function EquipeAccesPage() {
           </div>
         </div>
         {canCreate && (
-          <button type="button" onClick={() => { setTab('users'); setTimeout(() => inviteBox.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50); }}
+          /* The form comes on screen, pulses, and the cursor waits in « Nom »:
+             a scroll alone looked like nothing happened (user, 2026-10-03). */
+          <button type="button" onClick={() => { setTab('users'); setTimeout(() => flash(inviteBox.current, { focus: 'input' }), 60); }}
                   className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#2F6BFF] px-5 text-[14.5px] font-medium text-white shadow-[0_10px_24px_-14px_rgba(47,107,255,.9)] hover:bg-[#2559DB]">
             <UserPlus size={17} /> Inviter un utilisateur
           </button>
