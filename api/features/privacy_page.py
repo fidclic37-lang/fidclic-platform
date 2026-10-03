@@ -42,6 +42,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["privacy"])
 _db = None
@@ -151,6 +152,7 @@ class PrivacyIn(BaseModel):
 
 
 @router.put("/api/owner/privacy")
+@SV.records("donnees")
 def put_privacy(body: PrivacyIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     sets: Dict[str, Any] = {}

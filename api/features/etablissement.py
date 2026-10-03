@@ -40,6 +40,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["etablissement"])
 _db = None
@@ -213,6 +214,7 @@ def _clean_siret(raw: str) -> str:
 
 
 @router.put("/api/owner/etablissement")
+@SV.records("etablissement")
 def put_etablissement(body: EtablissementIn,
                       token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id
@@ -407,6 +409,7 @@ def add_store(body: StoreIn, token_data: TokenData = Depends(require_role(["busi
 
 
 @router.put("/api/owner/etablissement/stores/{store_id}")
+@SV.records("etablissement")
 def edit_store(store_id: str, body: StoreIn,
                token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id

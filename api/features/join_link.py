@@ -34,6 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["join-link"])
 _db = None
@@ -231,6 +232,7 @@ class SlugIn(BaseModel):
 
 
 @router.put("/api/owner/join-link/slug")
+@SV.records("lien-inscription")
 def put_slug(body: SlugIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     result = check_slug(body.slug, tid)
@@ -256,6 +258,7 @@ class PageIn(BaseModel):
 
 
 @router.put("/api/owner/join-link/page")
+@SV.records("lien-inscription")
 def put_page(body: PageIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
     title, subtitle, button = body.title.strip(), body.subtitle.strip(), body.button.strip()
     benefits = [b.strip() for b in body.benefits if b and b.strip()]

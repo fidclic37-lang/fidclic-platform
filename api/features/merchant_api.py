@@ -45,6 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from auth import TokenData, require_role
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["api"])
 _db = None
@@ -542,6 +543,7 @@ def create_hook(body: HookIn, token_data: TokenData = Depends(require_role(OWNER
 
 
 @router.put("/api/owner/integrations/webhooks/{hook_id}")
+@SV.records("api")
 def edit_hook(hook_id: str, body: HookIn, token_data: TokenData = Depends(require_role(OWNER))):
     _need_plan(token_data)
     r = _db.webhooks.update_one({"id": hook_id, "tenant_id": token_data.tenant_id},

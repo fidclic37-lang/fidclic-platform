@@ -24,6 +24,7 @@ MODULES = [
     "features.auto_messages",
     "features.etablissement",
     "features.send_rules",
+    "features.settings_versions",
     "features.invoices",
     "features.privacy_page",
     "features.security_page",

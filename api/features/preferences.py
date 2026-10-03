@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["preferences"])
 _db = None
@@ -109,6 +110,7 @@ def _valid_timezone(tz: str) -> bool:
 
 
 @router.put("/api/me/preferences")
+@SV.records("preferences")
 def put_prefs(body: PrefsIn, token_data: TokenData = Depends(require_role(ROLES, partial_ok=True))):
     sets: Dict[str, Any] = {}
     checks = (("language", LANGUAGES), ("date_format", DATE_FORMATS), ("link_target", LINK_TARGETS),
@@ -142,6 +144,7 @@ def put_prefs(body: PrefsIn, token_data: TokenData = Depends(require_role(ROLES,
 
 
 @router.post("/api/me/preferences/reset")
+@SV.records("preferences")
 def reset_prefs(token_data: TokenData = Depends(require_role(ROLES, partial_ok=True))):
     """Back to the defaults — the business's currency is not a preference of
     this account, so it stays."""
