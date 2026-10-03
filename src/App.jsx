@@ -141,6 +141,7 @@ const CopilotPage = lazyPage(() => import('./pages/CopilotPage'));
 const CampagnesPage = lazyPage(() => import('./pages/CampagnesPage'));
 // Rapports mensuels des campagnes (Pro AI).
 const CampaignReportsPage = lazyPage(() => import('./pages/CampaignReportsPage'));
+const NotificationsPage = lazyPage(() => import('./pages/NotificationsPage'));
 // Rollback: the previous AI assistant — import AdminAIAssistantPage from './pages/AdminAIAssistantPage';
 const AiIntelligencePage = lazyPage(() => import('./pages/admin/ai/AiIntelligencePage'));
 const AiSavedPage = lazyPage(() => import('./pages/admin/ai/AiSavedPage'));
@@ -473,6 +474,12 @@ function App() {
             <Route path="settings" element={
               <ProtectedRoute allowedRoles={['business_owner']}>
                 <SettingsPage />
+              </ProtectedRoute>
+            } />
+            {/* The bell's « Voir toutes les notifications de cette boutique ». */}
+            <Route path="notifications" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <NotificationsPage />
               </ProtectedRoute>
             } />
             <Route path="history" element={
