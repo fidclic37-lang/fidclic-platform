@@ -289,7 +289,7 @@ export function FilterChips({ value, onChange, counts, simple = false }) {
 }
 
 /** One alert: icon tile · ● title · text · links · time ›. */
-export function AlertRow({ a, unread, when, onGo, onHide, hideable = true, showBranch = true }) {
+export function AlertRow({ a, unread, when, onGo, onHide, hideable = true, showBranch = true, wideLabel = false }) {
   const { Icon, tone } = lookOf(a);
   const t = TONES[tone];
   const href = hrefOf(a);
@@ -313,6 +313,9 @@ export function AlertRow({ a, unread, when, onGo, onHide, hideable = true, showB
         </div>
         {a.body && <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-[#475569]">{a.body}</p>}
         {showBranch && a.branch_name && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">{a.branch_name}</p>}
+        {/* One shop on screen: an alert about the whole business says so, so
+            it is never taken for this shop's own (user, 2026-10-03). */}
+        {wideLabel && !a.branch_id && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">Toutes les boutiques</p>}
         {actions.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {actions.map((x, k) => {
@@ -470,7 +473,7 @@ const NotificationBell = ({ platformAdmin = false }) => {
             ) : shown.length === 0 ? <EmptyAlerts /> : (
               shown.slice(0, PANEL_MAX).map((a, i) => (
                 <AlertRow key={a.id || i} a={a} unread={n.isUnread(a)} when={n.seenAt(a)} onGo={go} onHide={n.hide} hideable={!platformAdmin}
-                          showBranch={storeSel === 'all' && many} />
+                          showBranch={storeSel === 'all' && many} wideLabel={many && storeSel !== 'all'} />
               ))
             )}
           </div>

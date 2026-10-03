@@ -159,5 +159,22 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           pw and pw["href"] == "/dashboard/automations?tab=pending" and pw["actions"][0]["label"] == "Valider les envois",
           pw)
 
+    print("\nEach shop its own — never mixed")
+    db.push_wallet_pending.insert_one({"id": "lot2", "tenant_id": "t1", "status": "pending", "scenario_id": "s",
+                                       "count": 7, "prepared_at": now, "store_id": "b2", "store_name": "Plumereau"})
+    al = http("GET", "/api/owner/insights/alerts/multi-store", OWN).json()["alerts"]
+    pws = [a for a in al if a["id"].startswith("pushwallet:")]
+    b2 = [a for a in pws if a.get("branch_id") == "b2"]
+    whole = [a for a in pws if not a.get("branch_id")]
+    check("a batch for Plumereau is Plumereau's alert, named", len(b2) == 1 and b2[0]["branch_name"] == "Plumereau"
+          and b2[0]["title"].startswith("1 envoi") and "7 clients" in b2[0]["body"], b2)
+    check("… the whole-shop batch stays a whole-shop alert, alone", len(whole) == 1 and "4 clients" in whole[0]["body"], whole)
+    check("… Centre has no Plumereau alert", not any(a.get("branch_id") == "b1" and "lot2" in a["id"] for a in al))
+    ids = [a["id"] for a in al if a.get("branch_id")]
+    check("every shop alert has its own id (read / hidden apart)", len(ids) == len(set(ids)))
+    check("… and every link of a shop alert stays in that shop",
+          all(("store=" + a["branch_id"]) in x["href"] for a in al if a.get("branch_id") and not a["id"].startswith("pushwallet:")
+              for x in a.get("actions") or []))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
