@@ -50,7 +50,9 @@ INACTIVE_DAYS = 30
 NEW_DAYS = 30
 
 HOURS = [(8, 10), (10, 12), (12, 14), (14, 16), (16, 18), (18, 20)]
-WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+# Whole day names: the browser's translator turned the short ones into
+# nonsense (« Mer » → Sea, « Jeu » → Game, « Mar » → March — user, 2026-10-03).
+WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
 
 def init(db):

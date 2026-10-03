@@ -53,7 +53,9 @@ NEW_DAYS = 30
 ATTRIBUTION_DAYS = 15
 
 HOURS = [(8, 10), (10, 12), (12, 14), (14, 16), (16, 18), (18, 20)]
-WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+# Whole day names: the browser's translator turned the short ones into
+# nonsense (« Mer » → Sea, « Jeu » → Game, « Mar » → March — user, 2026-10-03).
+WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
 # « Moments de visite » and « Comportement » live in the Vue d'ensemble now
 # (user, 2026-10-02): their builders stay, their tabs do not.
@@ -229,8 +231,9 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
          "value": _money(revenue / len(rows)) if rows else 0, "icon": "bag",
          "delta_pct": _delta(revenue / len(rows) if rows else 0,
                              prev_revenue / len(prev) if prev else 0), "row": 1},
+        # Opens « Visites par jour de la semaine », highlighted (user, 2026-10-03).
         {"key": "visits", "label": "Visites total", "value": len(rows), "icon": "activity",
-         "delta_pct": _delta(len(rows), len(prev)), "row": 2},
+         "delta_pct": _delta(len(rows), len(prev)), "anchor": "weekdays", "row": 2},
         {"key": "campaign_visits", "label": "Visites avec campagnes", "value": campaign_visits,
          "icon": "send", "delta_pct": _delta(campaign_visits, prev_campaign_visits),
          "hint": f"Venus dans les {FI.WINDOW_DAYS} jours suivant une campagne", "tab": "campagnes", "row": 2},

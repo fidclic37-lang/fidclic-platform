@@ -166,7 +166,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # ---- when people come --------------------------------------------------------------------
     print("\nHeures d'affluence")
     h = d["hours"]
-    check("seven days", h["weekdays"] == ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"])
+    check("seven days", h["weekdays"] == ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"])
     check("six slots, as the design draws", len(h["slots"]) == 6)
     check("the grid matches the axes", len(h["grid"]) == 7 and len(h["grid"][0]) == 6)
     check("the busiest cell is published so the scale can be drawn", h["peak"] >= 1)
