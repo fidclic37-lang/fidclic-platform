@@ -135,6 +135,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           [s["key"] for s in v["strip"]] == ["revenue", "fidclic", "referral", "basket", "visits",
                                              "campaign_visits", "clients", "loyal", "inactive",
                                              "ltv", "ltv_total", "life", "avg_visits"])
+    check("CA Parrainage opens the Parrainage page", next(s for s in v["strip"] if s["key"] == "referral").get("to") == "/dashboard/referral")
     check("on three rows: the money, the visits and clients, their whole history",
           [s["row"] for s in v["strip"]] == [1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3])
     beh = A._tab_comportement(A.Reader("t1", 30))
