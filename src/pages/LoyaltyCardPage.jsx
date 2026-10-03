@@ -215,6 +215,16 @@ export default function LoyaltyCardPage() {
   const [view, setView] = useState('client');      // client | wallet
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  // The save bar shows only when there is something to save — and for a few
+  // seconds after a save, to say it went through (user, 2026-10-03: « Toutes
+  // les modifications sont enregistrées » sat there all the time).
+  const [justSaved, setJustSaved] = useState(false);
+  useEffect(() => {
+    if (!savedAt) return undefined;
+    setJustSaved(true);
+    const t = window.setTimeout(() => setJustSaved(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [savedAt]);
   const [error, setError] = useState('');
   const [editTiers, setEditTiers] = useState(false);
   const [tierError, setTierError] = useState('');
@@ -914,7 +924,7 @@ export default function LoyaltyCardPage() {
           hunted for at the bottom of a column (Safari hid it, user 2026-10-02). ── */}
       {/* Fixed, not sticky: the layout's scroll container would hold a sticky
           bar at the foot of the page, out of sight. */}
-      {edit && (
+      {edit && (dirty || saving || justSaved) && (
         <div className="fixed right-4 z-40 max-w-[calc(100vw-32px)] sm:right-6" style={{ bottom: 'calc(16px + env(safe-area-inset-bottom))' }}>
           <div className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-white px-4 py-3 shadow-[0_18px_44px_-16px_rgba(11,28,63,.5)] ${
             dirty ? 'border-[#BFD3FF]' : 'border-[#E6EEFB]'}`}>
@@ -923,7 +933,7 @@ export default function LoyaltyCardPage() {
                 <><span className="h-2.5 w-2.5 rounded-full bg-[#F59E0B]" /><span className="text-[#0B1C3F]">Modifications non enregistrées</span></>
               ) : (
                 <><Check size={15} className="text-[#15803D]" /><span className="text-[#15803D]">
-                  {savedAt ? `Enregistré${savedAt.wallet > 0 ? ` · ${savedAt.wallet} carte${savedAt.wallet > 1 ? 's' : ''} Wallet mise${savedAt.wallet > 1 ? 's' : ''} à jour` : ''}` : 'Toutes les modifications sont enregistrées'}
+                  {saving ? 'Enregistrement…' : `Modifications enregistrées${savedAt?.wallet > 0 ? ` · ${savedAt.wallet} carte${savedAt.wallet > 1 ? 's' : ''} Wallet mise${savedAt.wallet > 1 ? 's' : ''} à jour` : ''}`}
                 </span></>
               )}
             </p>

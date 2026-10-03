@@ -287,6 +287,7 @@ export default function HistoryPage() {
     }
   };
 
+  const fr = (n) => Number(n || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
   const first = feed.total === 0 ? 0 : (feed.page - 1) * feed.per_page + 1;
   const last = Math.min(feed.total, feed.page * feed.per_page);
   const pageNumbers = useMemo(() => {
@@ -402,6 +403,13 @@ export default function HistoryPage() {
                       className={`px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.04em] text-[#64748B] ${
                         i === 4 ? 'text-right' : ''}`}>
                     {h}
+                    {/* How many on this page, out of all (user, 2026-10-03): 20/31, then 11/31. */}
+                    {h === 'Client' && feed.total > 0 && (
+                      <span className="ml-2 rounded-md bg-[#EAF1FF] px-1.5 py-0.5 text-[11px] font-bold normal-case tracking-normal text-[#2F6BFF] tabular-nums"
+                            title={`${feed.rows.length} sur cette page, ${feed.total} au total`}>
+                        {fr(feed.rows.length)}/{fr(feed.total)}
+                      </span>
+                    )}
                   </th>
                 ))}
               </tr>
@@ -503,8 +511,9 @@ export default function HistoryPage() {
 
         {/* pagination */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#EEF3FB] px-4 py-3.5">
-          <p className="text-[12.5px] text-[#64748B]">
-            Affichage de {first} à {last} sur {feed.total.toLocaleString('fr-FR')} résultats
+          <p className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-[#F1F5FF] px-3 py-1.5 text-[13.5px] font-semibold text-[#0B1C3F]">
+            Affichage de <strong className="font-extrabold text-[#2F6BFF] tabular-nums">{fr(first)} à {fr(last)}</strong>
+            sur <strong className="font-extrabold text-[#2F6BFF] tabular-nums">{fr(feed.total)}</strong> résultats
           </p>
           <div className="flex items-center gap-2">
             <button type="button" disabled={feed.page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}
