@@ -9531,17 +9531,27 @@ def get_proactive_alerts_multi_store(
     try:
         from features import push_wallet as _PW
         _lots = _PW.pending_lots(token_data, scope)
-        if _lots:
-            _n = sum(int(l.get("count") or 0) for l in _lots)
+        # One alert per establishment (user, 2026-10-03: each shop its own
+        # alerts, never mixed). A batch with no establishment concerns the
+        # whole shop.
+        _names = {b.get("id"): b.get("name") for b in branches}
+        _by_store: Dict[Any, list] = {}
+        for _l in _lots:
+            _by_store.setdefault(_l.get("store_id"), []).append(_l)
+        for _sid, _group in _by_store.items():
+            _n = sum(int(l.get("count") or 0) for l in _group)
             alerts_combined.append({
-                "id": "pushwallet:pending:" + ",".join(sorted(l["id"] for l in _lots))[:120],
+                "id": ("pushwallet:pending:" + (f"{_sid}:" if _sid else "")
+                       + ",".join(sorted(l["id"] for l in _group)))[:160],
                 "severity": "warning",
-                "title": f"{len(_lots)} envoi{'s' if len(_lots) > 1 else ''} automatique{'s' if len(_lots) > 1 else ''} à valider",
+                "title": f"{len(_group)} envoi{'s' if len(_group) > 1 else ''} automatique{'s' if len(_group) > 1 else ''} à valider",
                 "body": f"{_n} client{'s' if _n > 1 else ''} au total. Rien ne part sans votre validation.",
-                "metric": str(len(_lots)), "action": "/dashboard/automations?tab=pending",
+                "metric": str(len(_group)), "action": "/dashboard/automations?tab=pending",
                 "actions": _alert_actions("/dashboard/automations?tab=pending"),
                 "href": "/dashboard/automations?tab=pending",
-                "ts": datetime.now(timezone.utc).isoformat(), "branch_id": None, "branch_name": None, "scope": "shop"})
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "branch_id": _sid, "branch_name": (_names.get(_sid) or _group[0].get("store_name")) if _sid else None,
+                "scope": "branch" if _sid else "shop"})
     except Exception as _e:
         print(f"alerts: automations hook failed (non-fatal): {_e}")
 

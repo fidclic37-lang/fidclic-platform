@@ -67,7 +67,7 @@ export default function NotificationsPage() {
         ) : shown.length === 0 ? <EmptyAlerts /> : (
           <div>
             {shown.map((a, i) => (
-              <AlertRow key={a.id || i} a={a} unread={n.isUnread(a)} when={n.seenAt(a)} onGo={go} onHide={n.hide} showBranch={store === 'all' && many} />
+              <AlertRow key={a.id || i} a={a} unread={n.isUnread(a)} when={n.seenAt(a)} onGo={go} onHide={n.hide} showBranch={store === 'all' && many} wideLabel={many && store !== 'all'} />
             ))}
           </div>
         )}
