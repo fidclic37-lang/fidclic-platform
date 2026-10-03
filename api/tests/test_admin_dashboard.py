@@ -75,7 +75,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("no impayé yet", k["impaye"]["value"] == 0)
     check("cartes actives = cards on a phone", k["cartes"]["value"] == 252 + 32)
     check("chiffre d'affaires total = what customers spent in the period", k["ca"]["value"] == 315.0)
-    check("MRR: paying businesses, franchise at its agreed price", k["mrr"]["value"] == 79 + 39 + 450)
+    check("MRR: paying businesses, franchise at its agreed price", k["mrr"]["value"] == 65 + 33 + 450)
     check("each figure has its trend", all(len(x["series"]) == 8 for x in d["kpis"] if x["key"] != "impaye"))
     p = D.dashboard(date_from=(now - dt.timedelta(days=7)).date().isoformat(), date_to=now.date().isoformat(), token_data=ADMIN)
     check("a shorter period counts less", {x["key"]: x for x in p["kpis"]}["ca"]["value"] < 315.0)
@@ -164,7 +164,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("Commerces: the converted trial joins, résilié / non converti / impayé don't", k2["commerces"]["value"] == 5 + z
           and k2["commerces"]["breakdown"] == {"essai": 1, "abonne": 4 + z} and k2["commerces"]["series"][-1] == 5 + z)
     check("Impayé: the late payer", k2["impaye"]["value"] == 1 and k2["impaye"]["suspendus"] == 0)
-    check("MRR leaves out résilié and impayé", k2["mrr"]["value"] == 79 + 39 + 450 + 39)
+    check("MRR leaves out résilié and impayé", k2["mrr"]["value"] == 65 + 33 + 450 + 33)
     check("Résilié card: 1 in the period, 1 in all", s2["resilie"]["value"] == 1 and s2["resilie"]["total"] == 1 and sum(s2["resilie"]["bars"]) == 1)
     check("Essais non convertis: 1, conversion 50 % (1 of 2 trials ended)", s2["non_converti"]["value"] == 1
           and s2["non_converti"]["ended"] == 2 and s2["non_converti"]["conversion"] == 50)

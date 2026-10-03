@@ -19,7 +19,7 @@ PLAN_FEATURES = {
     # admin override already references them. PLAN_LABELS below carries the
     # commercial names shown to merchants (Starter / Pro / Pro AI), so a
     # rename never has to touch the database.
-    "silver": {                         # Starter — 39 €
+    "silver": {                         # Starter — 33 € HT
         # The cap counts ACTIVE customers — those who came at least once in
         # the last 12 months. A client who stopped coming two years ago stays
         # in the merchant's database, stays visible, and costs them nothing.
@@ -49,7 +49,7 @@ PLAN_FEATURES = {
         "wallet": True,
         "api_access": False,
     },
-    "gold": {                           # Pro — 79 €
+    "gold": {                           # Pro — 65 € HT
         "max_customers": 4500,
         "new_cards_per_month": 1500,
         "push_per_month": 6000,
@@ -72,7 +72,7 @@ PLAN_FEATURES = {
         "wallet": True,
         "api_access": False,
     },
-    "vip": {                            # Pro AI — 129 €
+    "vip": {                            # Pro AI — 108 € HT
         "max_customers": 15000,
         "new_cards_per_month": 4000,
         "push_per_month": 0,            # unlimited
@@ -157,10 +157,12 @@ PLAN_LABELS = {
 PLAN_ORDER = ("silver", "gold", "vip")
 QUOTE_PLANS = ("franchise",)
 
+# Monthly prices, HT (user, 2026-10-03). HT everywhere in the app and on
+# fidclic.com; the TTC (TVA 20 %) only at payment and on the invoice.
 PLAN_PRICES = {
-    "silver": 39,
-    "gold": 79,
-    "vip": 129,
+    "silver": 33,
+    "gold": 65,
+    "vip": 108,
     "franchise": 0,      # sur devis — the real price is tenant.franchise_terms.price
 }
 

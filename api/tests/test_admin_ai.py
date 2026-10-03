@@ -93,7 +93,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("limite: Optique Vision at 90 % of its cards, upgrade to Pro", any(x["tenant_id"] == "full" and x["pct"] == 90 and x["action"] == "Proposer l'offre Pro"
                                                                              for x in lim["rows"]))
     up = A.analysis("upgrade", token_data=ADMIN)
-    check("upgrade: with the MRR it would bring (+40 €)", any(x["tenant_id"] == "full" and x["gain"] == 40 for x in up["rows"]) and "+€40" in up["headline"])
+    check("upgrade: with the MRR it would bring (+32 €)", any(x["tenant_id"] == "full" and x["gain"] == 32 for x in up["rows"]) and "+€32" in up["headline"])
     sec = A.analysis("secteurs", token_data=ADMIN)
     check("secteurs: sorted by visits, with basket and change", sec["rows"][0]["name"] == "Barbier" and sec["rows"][0]["visites"] == 54
           and sec["rows"][0]["panier"] == round((32 * 20 + 22 * 10) / 54, 2))

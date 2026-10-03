@@ -75,7 +75,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           f["silver"]["wallet"] and not any(f["silver"][k] for k in locked_on_starter) and f["silver"]["ai_level"] == "none")
     check("Pro: every section, a little AI (analyses de base)", all(f["gold"][k] for k in locked_on_starter) and f["gold"]["ai_level"] == "basic")
     check("Pro AI: everything, analyses avancées, API", f["vip"]["ai_level"] == "advanced" and f["vip"]["api_access"] and f["vip"]["priority_support"])
-    check("prices 39 / 79 / 129 €", [f[k]["price"] for k in ("silver", "gold", "vip")] == [39, 79, 129])
+    check("prices 33 / 65 / 108 € HT", [f[k]["price"] for k in ("silver", "gold", "vip")] == [33, 65, 108])
     pub = {p["key"]: p["features"] for p in PP.public_plans()["plans"]}
     check("the public grid reads the same switches", not pub["silver"]["campaigns"] and pub["gold"]["segments"] and pub["vip"]["api"])
 
@@ -93,7 +93,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     r = http("GET", "/api/owner/segmentation/page", ST)
     d = r.json().get("detail") or {}
     check("Starter → 403 PLAN_FEATURE_DISABLED with the plan that unlocks it",
-          r.status_code == 403 and d.get("code") == "PLAN_FEATURE_DISABLED" and d["upgrade"]["label"] == "Pro" and d["upgrade"]["price"] == 79)
+          r.status_code == 403 and d.get("code") == "PLAN_FEATURE_DISABLED" and d["upgrade"]["label"] == "Pro" and d["upgrade"]["price"] == 65)
     check("Pro gets through the lock", http("GET", "/api/owner/segmentation/page", PR).status_code != 403)
     check("Starter: FIDCLIC AI locked, upgrade to Pro", http("GET", "/api/owner/copilot/page", ST).json()["detail"]["upgrade"]["key"] == "gold")
     check("no token → the endpoint's own 401, not the lock", http("GET", "/api/owner/segmentation/page", "x").status_code == 401)

@@ -82,7 +82,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           or db.audit_log.find_one({"action": "admin.franchise_terms"}) is not None)
 
     print("\nOther plans unchanged")
-    check("Starter / Pro / Pro AI prices", [server.get_plan_features(k)["price"] for k in ("silver", "gold", "vip")] == [39, 79, 129])
+    check("Starter / Pro / Pro AI prices", [server.get_plan_features(k)["price"] for k in ("silver", "gold", "vip")] == [33, 65, 108])
     check("features_for on a normal plan = the plan", server.features_for({"plan": "gold"})["max_customers"]
           == server.get_plan_features("gold")["max_customers"])
 

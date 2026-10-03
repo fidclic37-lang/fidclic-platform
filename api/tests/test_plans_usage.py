@@ -33,7 +33,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("catalogue exposes the 3 plans in order", [p["key"] for p in cat["plans"]] == ["silver", "gold", "vip"])
     check("commercial labels Starter / Pro / Pro AI",
           [p["label"] for p in cat["plans"]] == ["Starter", "Pro", "Pro AI"])
-    check("prices 39 / 79 / 129", [p["price_monthly"] for p in cat["plans"]] == [39, 79, 129])
+    check("prices 33 / 65 / 108 € HT", [p["price_monthly"] for p in cat["plans"]] == [33, 65, 108])
     check("customer caps 1500 / 4500 / 15000",
           [p["limits"]["max_customers"] for p in cat["plans"]] == [1500, 4500, 15000])
     check("push 2000 / 6000 / unlimited(0)",
