@@ -145,7 +145,7 @@ function Thread({ id, onClose, onChanged }) {
   return (
     <Sheet title={t ? t.subject : 'Demande'} onClose={onClose} wide>
       {!d ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-[#64748B]">{err || <><Loader2 size={15} className="animate-spin" /> Chargement…</>}</div>
+        <div key="loading" className="flex items-center justify-center gap-2 py-16 text-[13px] text-[#64748B]">{err || <><Loader2 size={15} className="animate-spin" /> Chargement…</>}</div>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 border-b border-[#EEF2F8] px-5 py-2.5 text-[12.5px] text-[#64748B]">
@@ -232,7 +232,7 @@ export default function MyRequests({ newOpen, setNewOpen }) {
         <button type="button" onClick={() => setNewOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 text-[13px] font-semibold text-white"><Plus size={16} /> Nouvelle demande</button>
       </header>
       {!rows ? (
-        <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
+        <div key="loading" className="flex items-center justify-center gap-2 py-8 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
       ) : !rows.length ? (
         <div className="rounded-xl border border-dashed border-[#D9E4F7] px-4 py-8 text-center">
           <MessageSquareText size={22} className="mx-auto text-[#94A3B8]" />

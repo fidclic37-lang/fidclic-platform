@@ -82,7 +82,7 @@ export default function SecuritePage() {
 
   if (!d) {
     return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p>
-      : <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
+      : <div key="loading" className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
   }
   const la = d.last_activity;
   const place = [la.country, la.city && `(${la.city})`].filter(Boolean).join(' ');
@@ -391,7 +391,7 @@ function HistoryModal({ onClose }) {
   useEffect(() => { ownerAPI.securityActivity().then(({ data }) => setRows(data.activity || [])).catch(() => setRows([])); }, []);
   return (
     <Modal title="Historique de sécurité" onClose={onClose}>
-      {rows === null ? <p className="text-[13px] text-[#64748B]"><Loader2 size={14} className="mr-1 inline animate-spin" /> Chargement…</p> : (
+      {rows === null ? <p key="loading" className="text-[13px] text-[#64748B]"><Loader2 size={14} className="mr-1 inline animate-spin" /> Chargement…</p> : (
         <ul className="divide-y divide-[#F1F5F9]">
           {rows.map((a, i) => (
             <li key={i} className="py-2">

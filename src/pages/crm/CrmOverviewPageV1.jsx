@@ -151,7 +151,7 @@ export default function CrmOverviewPageV1() {
               <thead><tr className="border-b border-[#EDF1F7] text-left text-[#64748B]">
                 {['Nom du commerce', 'Secteur', 'Ville', 'Contact', 'Téléphone', 'Statut', 'Dernière action', 'Prochaine action', 'Assigné à'].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr></thead>
               <tbody>
-                {!list && <tr><td colSpan={9} className="py-8 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
+                {!list && <tr key="loading"><td colSpan={9} className="py-8 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
                 {list?.rows.map((p) => (
                   <tr key={p.id} onClick={() => navigate(`/admin/crm/prospects?open=${p.id}`)} className="cursor-pointer border-b border-[#F4F7FC] hover:bg-[#FAFCFF]">
                     <td className="px-2 py-2"><span className="flex items-center gap-2.5"><Logo name={p.name} size={30} /><span className="font-semibold text-[#0B1C3F]">{p.name}</span></span></td>

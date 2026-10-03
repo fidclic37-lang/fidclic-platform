@@ -218,7 +218,7 @@ export default function HelpPage() {
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-[13px] text-[#64748B]">
+            <div key="loading" className="flex items-center justify-center gap-2 py-10 text-[13px] text-[#64748B]">
               <Loader2 size={15} className="animate-spin" /> Chargement des réponses…
             </div>
           ) : filtered.length === 0 ? (

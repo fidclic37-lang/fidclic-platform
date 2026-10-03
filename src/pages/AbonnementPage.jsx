@@ -78,7 +78,7 @@ export default function AbonnementPage() {
 
   if (!d) {
     return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p>
-      : <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
+      : <div key="loading" className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
   }
   const latest = d.latest_invoice;
   const pm = d.payment_method;
@@ -333,7 +333,7 @@ export default function AbonnementPage() {
         <Card>
           <Head icon={FileText} title="Historique des factures" sub="Toutes vos factures FidClic, au format PDF." />
           {!issuerReady && <p className="mb-3 rounded-xl bg-[#FFF7E6] px-3 py-2.5 text-[12.5px] text-[#92400E]">Vos paiements sont enregistrés ; les factures correspondantes sont en cours d'émission.</p>}
-          {invoices === null ? <p className="py-8 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</p>
+          {invoices === null ? <p key="loading" className="py-8 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</p>
             : invoices.length === 0 ? <p className="py-10 text-center text-[13px] text-[#64748B]">Aucune facture pour le moment.</p> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-[13.5px]">

@@ -154,7 +154,7 @@ export default function CrmOverviewPageV2() {
               <th className="w-8 px-2 py-2 text-center"><MoreHorizontal size={15} className="inline text-[#94A3B8]" /></th>
             </tr></thead>
             <tbody>
-              {!list && <tr><td colSpan={11} className="py-8 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
+              {!list && <tr key="loading"><td colSpan={11} className="py-8 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
               {rows.map((p) => (
                 <tr key={p.id} onClick={() => navigate(`/admin/crm/prospects?open=${p.id}`)} className="cursor-pointer border-b border-[#F4F7FC] hover:bg-[#FAFCFF]">
                   <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Sélectionner ${p.name}`} checked={picked.includes(p.id)} onChange={() => pick(p.id)} className="h-4 w-4 accent-[#2F6BFF]" /></td>
@@ -246,7 +246,7 @@ export default function CrmOverviewPageV2() {
         <Card>
           <Head icon={Megaphone} title="Campagnes de prospection" sub="Les séquences d'emails personnalisées." right={<button type="button" onClick={() => navigate('/admin/crm/sequences')} className={outline}>Voir toutes</button>} />
           <ul className="space-y-3">
-            {!seqs && <li className="py-3 text-center text-[12.5px] text-[#64748B]"><Loader2 size={14} className="mr-1 inline animate-spin" /> Chargement…</li>}
+            {!seqs && <li key="loading" className="py-3 text-center text-[12.5px] text-[#64748B]"><Loader2 size={14} className="mr-1 inline animate-spin" /> Chargement…</li>}
             {seqs?.map((s) => { const [bg, fg] = toneOf(s.name); const [sb, sf] = SEQ_TONE[s.status] || SEQ_TONE.brouillon; return (
               <li key={s.id}>
                 <button type="button" onClick={() => navigate('/admin/crm/sequences')} className="grid w-full grid-cols-[34px_1fr_auto_48px_40px] items-center gap-2.5 text-left">

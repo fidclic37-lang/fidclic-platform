@@ -242,7 +242,7 @@ const TeamCard = ({ id }) => {
           Membres de l'équipe ({team.length})
         </p>
         {loading ? (
-          <p className="text-sm" style={{ color: C.inkMute }}>Chargement…</p>
+          <p key="loading" className="text-sm" style={{ color: C.inkMute }}>Chargement…</p>
         ) : team.length === 0 ? (
           <p className="text-sm italic" style={{ color: C.inkMute }}>
             Aucun membre. Ajoutez votre premier collaborateur ci-dessus.

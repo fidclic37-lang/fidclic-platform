@@ -28,7 +28,7 @@ export default function Pilotage({ data, meta, onTask, onNewTask, onDone }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(null);
   if (!data) {
-    return <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-6 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement du pilotage…</section>;
+    return <section key="loading" className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-6 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement du pilotage…</section>;
   }
   const h = data.health;
   return (
@@ -133,7 +133,7 @@ function AttentionModal({ item, meta, onClose, onTask, onNewTask, onDone }) {
   const btn = 'inline-flex items-center gap-1 rounded-md border border-[#DCE3EE] bg-white px-2.5 py-1 text-[12px] text-[#2F6BFF] hover:border-[#2F6BFF] disabled:opacity-50';
   return (
     <Modal title={`${item.label} (${item.count})`} onClose={onClose} wide>
-      {!d ? <p className="py-8 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</p> : (
+      {!d ? <p key="loading" className="py-8 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</p> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-[12.5px]">
             {d.kind === 'tasks' ? (

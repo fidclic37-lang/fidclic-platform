@@ -437,7 +437,7 @@ export default function CabinetDashboard() {
                                        : `${FILTERS[filter].label} (${shownClients.length})`}>
           <div data-tour="dossiers">
           {loading ? (
-            <div className="py-10 text-center text-sm" style={{ color: MC.ink3 }}>Chargement…</div>
+            <div key="loading" className="py-10 text-center text-sm" style={{ color: MC.ink3 }}>Chargement…</div>
           ) : shownClients.length === 0 ? (
             <div className="py-10 text-center text-sm" style={{ color: MC.ink3 }}>
               {filter === 'all'

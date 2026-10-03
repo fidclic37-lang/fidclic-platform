@@ -128,7 +128,7 @@ export default function CatalogManager() {
 
   if (loading) {
     return (
-      <div style={{ padding: 24, textAlign: 'center', color: '#8D857D' }}>
+      <div key="loading" style={{ padding: 24, textAlign: 'center', color: '#8D857D' }}>
         Chargement du catalogue…
       </div>
     );

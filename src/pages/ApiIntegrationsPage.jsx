@@ -61,7 +61,7 @@ export default function ApiIntegrationsPage() {
   const run = async (fn, ok) => { try { await fn(); if (ok) say(ok); load(); } catch (e) { say(typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : 'Action impossible.'); } };
 
   if (access?.ready !== false && !allowed) return <LockedSection detail={access?.locked?.api_access} />;
-  if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <p className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={16} className="mr-1 inline animate-spin" /> Chargement…</p>;
+  if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <p key="loading" className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={16} className="mr-1 inline animate-spin" /> Chargement…</p>;
 
   const TABS = [['keys', 'Clés API', KeyRound], ['webhooks', 'Webhooks', Webhook], ['docs', 'Documentation', BookOpen]];
   return (

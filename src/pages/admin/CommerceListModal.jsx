@@ -73,7 +73,7 @@ export default function CommerceListModal({ listKey, range, onClose }) {
         </header>
         <div className="flex-1 overflow-y-auto px-3 pb-3">
           {!d ? (
-            <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-[#64748B]">{err || <><Loader2 size={15} className="animate-spin" /> Chargement…</>}</div>
+            <div key="loading" className="flex items-center justify-center gap-2 py-16 text-[13px] text-[#64748B]">{err || <><Loader2 size={15} className="animate-spin" /> Chargement…</>}</div>
           ) : !rows.length ? (
             <p className="py-16 text-center text-[13px] text-[#64748B]">{q ? 'Aucun commerce ne correspond.' : 'Aucun commerce ici pour le moment.'}</p>
           ) : (

@@ -317,7 +317,7 @@ function Player({ callId, onDelete }) {
     crmAPI.recording(callId).then(({ data }) => { u = URL.createObjectURL(data); setUrl(u); }).catch(() => {});
     return () => { if (u) URL.revokeObjectURL(u); };
   }, [callId]);
-  if (!url) return <p className="flex items-center gap-2 text-[12px] text-[#64748B]"><Loader2 size={13} className="animate-spin" /> Chargement…</p>;
+  if (!url) return <p key="loading" className="flex items-center gap-2 text-[12px] text-[#64748B]"><Loader2 size={13} className="animate-spin" /> Chargement…</p>;
   return (
     <div className="flex items-center gap-2 rounded-lg border border-[#EDF1F7] p-2">
       <audio ref={a} src={url} onTimeUpdate={(e) => setT(e.target.currentTime)} onLoadedMetadata={(e) => setLen(Number.isFinite(e.target.duration) ? e.target.duration : 0)} onEnded={() => setPlaying(false)} />

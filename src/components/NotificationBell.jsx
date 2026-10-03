@@ -269,7 +269,7 @@ const NotificationBell = ({ platformAdmin = false }) => {
           </div>
           <div className="max-h-[420px] overflow-y-auto">
             {loading && alerts.length === 0 ? (
-              <div className="px-4 py-8 text-center text-sm" style={{ color: '#64748B' }}>
+              <div key="loading" className="px-4 py-8 text-center text-sm" style={{ color: '#64748B' }}>
                 <span>Chargement…</span>
               </div>
             ) : shown.length === 0 ? (

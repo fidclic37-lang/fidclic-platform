@@ -61,7 +61,7 @@ export default function BillingCard() {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-2xl border border-[#E9E5E0] p-5">
+      <div key="loading" className="bg-white rounded-2xl border border-[#E9E5E0] p-5">
         <div className="text-sm text-[#57504A]">Chargement de l'abonnement…</div>
       </div>
     );

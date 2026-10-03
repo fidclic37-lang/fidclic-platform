@@ -240,7 +240,7 @@ export default function CampagnesPage() {
 
   if (loading && !data) {
     return (
-      <div className="cg flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]">
+      <div key="loading" className="cg flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]">
         <Loader2 size={16} className="animate-spin" /> Chargement…
       </div>
     );

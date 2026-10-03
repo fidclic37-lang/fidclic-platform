@@ -133,7 +133,7 @@ function ReEnableNotificationsButton() {
                   </button>
                 </div>
               ) : stats === null ? (
-                <p style={{ margin: 0, fontSize: 13, color: '#8D857D' }}>Chargement des statistiques…</p>
+                <p key="loading" style={{ margin: 0, fontSize: 13, color: '#8D857D' }}>Chargement des statistiques…</p>
               ) : stats.error ? (
                 <p style={{ margin: 0, fontSize: 13, color: '#B85C38' }}>Impossible de charger les statistiques.</p>
               ) : (

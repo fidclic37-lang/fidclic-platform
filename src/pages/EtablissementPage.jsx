@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Store, Save, UploadCloud, Pencil, MapPin, Plus, MoreVertical, X, Check, Loader2,
+  Store, Save, Pencil, MapPin, Plus, MoreVertical, X, Check, Loader2,
   Clock, Radar, Landmark, LocateFixed, Info, Trash2,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
@@ -207,22 +207,6 @@ function StoreModal({ store, onClose, onSaved }) {
   );
 }
 
-const readImage = (file, max = 512) => new Promise((resolve, reject) => {
-  if (file.size > 2 * 1024 * 1024) { reject(new Error('Le logo dépasse 2 Mo.')); return; }
-  const img = new Image();
-  const url = URL.createObjectURL(file);
-  img.onload = () => {
-    const k = Math.min(1, max / Math.max(img.width, img.height));
-    const c = document.createElement('canvas');
-    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    URL.revokeObjectURL(url);
-    resolve(c.toDataURL(file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', 0.9));
-  };
-  img.onerror = () => reject(new Error('Image illisible.'));
-  img.src = url;
-});
-
 export default function EtablissementPage() {
   const [d, setD] = useState(null);
   const [biz, setBiz] = useState(null);
@@ -239,7 +223,6 @@ export default function EtablissementPage() {
   const [pin, setPin] = useState(false);
   const [store, setStore] = useState(null);
   const [menu, setMenu] = useState(null);
-  const file = useRef(null);
 
   const apply = useCallback((data) => {
     setD(data); setBiz(data.business); setAddr(data.address); setLegal(data.legal); setGeo(data.geo);
@@ -254,7 +237,7 @@ export default function EtablissementPage() {
 
   if (!d) {
     return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p>
-      : <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
+      : <div key="loading" className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
   }
   const can = d.can;
   const anyEdit = can.brand || can.legal || can.geo || can.hours;
@@ -284,11 +267,6 @@ export default function EtablissementPage() {
     finally { setSaving(false); }
   };
 
-  const pickLogo = async (e) => {
-    const f = e.target.files?.[0]; e.target.value = '';
-    if (!f) return;
-    try { setBiz({ ...biz, logo_url: await readImage(f) }); } catch (x) { setErr(x.message); }
-  };
   const setDay = (i, patch) => { setHours(hours.map((h, j) => (j === i ? { ...h, ...patch } : h))); setDirtyHours({ ...dirtyHours, weekly: true }); };
   const shopLabel = addr.city || biz.name;
 
@@ -328,27 +306,16 @@ export default function EtablissementPage() {
         </Block>
 
         {/* 2 */}
-        <Block n={2} title="Logo">
-          <div className="flex gap-4">
-            <div className="relative h-[118px] w-[148px] shrink-0 overflow-hidden rounded-xl bg-[#0B0F17]">
-              {biz.logo_url ? <img src={biz.logo_url} alt="Logo" className="h-full w-full object-contain"
-                                   onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }} />
-                : <span className="flex h-full items-center justify-center text-[12px] text-white/60">Aucun logo</span>}
-              {can.brand && (
-                <button type="button" onClick={() => file.current?.click()} aria-label="Changer le logo"
-                        className="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-white text-[#2F6BFF] shadow"><Pencil size={13} /></button>
-              )}
+        <Block n={2} title="Secteur d'activité">
+          <label className="block"><Label required>Secteur d'activité</Label>
+            <div className="relative">
+              <select className={`${inputCls} appearance-none pr-9`} value={biz.sector} onChange={(e) => setBiz({ ...biz, sector: e.target.value })}>
+                <option value="" disabled>Choisir…</option>
+                {d.sectors.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+              <svg className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0B1C3F" strokeWidth="2.5"><path d="m6 9 6 6 6-6" /></svg>
             </div>
-            <button type="button" onClick={() => file.current?.click()}
-                    className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-[#C9D6EA] bg-[#F8FAFF] px-3 py-3 text-center hover:border-[#2F6BFF]">
-              <UploadCloud size={26} className="text-[#2F6BFF]" />
-              <span className="mt-1 text-[14.5px] font-semibold text-[#2F6BFF]">Changer le logo</span>
-              <span className="text-[11.5px] text-[#64748B]">PNG, JPG (max 2 Mo)</span>
-              <span className="text-[11.5px] text-[#64748B]">Recommandé : 512 × 512 px</span>
-            </button>
-            <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={pickLogo} />
-          </div>
-          <p className="mt-2 text-[11.5px] text-[#94A3B8]">Le même logo apparaît sur la carte de fidélité de vos clients.</p>
+          </label>
         </Block>
 
         {/* 3 */}
@@ -392,21 +359,8 @@ export default function EtablissementPage() {
           </Block>
         </div>
 
-        {/* 6 */}
-        <Block n={6} title="Secteur d'activité">
-          <label className="block"><Label required>Secteur d'activité</Label>
-            <div className="relative">
-              <select className={`${inputCls} appearance-none pr-9`} value={biz.sector} onChange={(e) => setBiz({ ...biz, sector: e.target.value })}>
-                <option value="" disabled>Choisir…</option>
-                {d.sectors.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-              <svg className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0B1C3F" strokeWidth="2.5"><path d="m6 9 6 6 6-6" /></svg>
-            </div>
-          </label>
-        </Block>
-
-        {/* 7 */}
-        <Block n={7} title="Informations générales">
+        {/* 6 — the whole width */}
+        <Block n={6} title="Informations générales" className="lg:col-span-2">
           <Label required>Description du commerce</Label>
           <textarea className={`${inputCls} h-auto min-h-[90px] resize-y py-2.5 leading-snug`} maxLength={500} value={biz.description}
                     onChange={(e) => setBiz({ ...biz, description: e.target.value })} placeholder="Ce qui rend votre commerce unique…" />
@@ -415,8 +369,8 @@ export default function EtablissementPage() {
       </div>
       </fieldset>
 
-      {/* 8 */}
-      <Block n={8} title="Établissements / points de vente" className="mt-5"
+      {/* 7 */}
+      <Block n={7} title="Établissements / points de vente" className="mt-5"
              action={can.brand && (
                <button type="button" onClick={() => setStore({})} disabled={!can.add_store}
                        title={can.add_store ? '' : 'Votre formule ne permet pas plusieurs points de vente.'}
@@ -467,8 +421,8 @@ export default function EtablissementPage() {
 
       {/* additions: 9 hours · 10 proximity · 11 legal */}
       <div className="mt-5 grid gap-5 lg:grid-cols-[1.08fr_1fr]">
-        <Block n={9} title="Horaires d'ouverture" action={<Clock size={18} className="text-[#94A3B8]" />}>
-          {!hours ? <p className="text-[13px] text-[#64748B]"><Loader2 size={14} className="mr-1 inline animate-spin" /> Chargement…</p> : (
+        <Block n={8} title="Horaires d'ouverture" action={<Clock size={18} className="text-[#94A3B8]" />}>
+          {!hours ? <p key="loading" className="text-[13px] text-[#64748B]"><Loader2 size={14} className="mr-1 inline animate-spin" /> Chargement…</p> : (
             <fieldset disabled={!can.hours} className="m-0 min-w-0 border-0 p-0">
               <div className="divide-y divide-[#F1F5F9]">
                 {hours.map((h, i) => (
@@ -529,7 +483,7 @@ export default function EtablissementPage() {
         </Block>
 
         <div className="grid content-start gap-5">
-          <Block n={10} title="Rappel de proximité" action={<Radar size={18} className="text-[#94A3B8]" />}>
+          <Block n={9} title="Rappel de proximité" action={<Radar size={18} className="text-[#94A3B8]" />}>
             <fieldset disabled={!can.geo} className="m-0 min-w-0 space-y-3.5 border-0 p-0">
               <label className="flex items-center justify-between gap-3">
                 <span className="text-[13.5px] text-[#1E293B]">Prévenir un client qui passe près de votre commerce</span>
@@ -551,7 +505,7 @@ export default function EtablissementPage() {
             </fieldset>
           </Block>
 
-          <Block n={11} title="Informations légales" action={<Landmark size={18} className="text-[#94A3B8]" />}>
+          <Block n={10} title="Informations légales" action={<Landmark size={18} className="text-[#94A3B8]" />}>
             <fieldset disabled={!can.legal} className="m-0 min-w-0 space-y-3 border-0 p-0">
               <label className="block"><Label>Raison sociale</Label>
                 <input className={inputCls} value={legal.legal_name} onChange={(e) => setLegal({ ...legal, legal_name: e.target.value })} /></label>
