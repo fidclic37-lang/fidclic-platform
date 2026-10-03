@@ -73,8 +73,8 @@ const PANEL_HELP = {
 const TabCtx = createContext('vue');
 const STAT_ALIAS = { sent: 'campaigns_sent' };
 
-const Panel = ({ title, note, children, className = '', help }) => (
-  <section className={`rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
+const Panel = ({ title, note, children, className = '', help, id }) => (
+  <section id={id} className={`scroll-mt-24 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] ${className}`}>
     {title && (
       <h2 className="mb-4 flex items-center gap-1.5 text-[15px] font-bold text-[#0B1C3F]">
         {title} {(help || PANEL_HELP[title]) && <InfoTip k={help || PANEL_HELP[title]} />}
@@ -536,7 +536,8 @@ const TabAvis = ({ d }) => d.empty ? <Empty message={d.message} /> : (
 const MomentsPanels = ({ d }) => (
   <div id="moments" className="mb-4 grid scroll-mt-24 gap-4 lg:grid-cols-2">
     <Panel title="Heures d'affluence"><HoursGrid hours={d.hours} /></Panel>
-    <Panel title="Visites par jour de la semaine">
+    <Panel id="weekdays" title="Visites par jour de la semaine"
+           note={'Toutes les visites de la période choisie, additionnées par jour de la semaine\u00a0: sur 30 jours, «\u00a0Lundi\u00a0» compte les visites des 4 ou 5 lundis de ces 30 jours.'}>
       <Bars items={d.weekday_bars} />
       {d.total > 0 ? (
         <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -733,7 +734,8 @@ export default function AnalysesPage() {
   const open = useCallback((s) => {
     if (s.to) navigate(s.to);
     else if (s.tab) { setTab(s.tab); window.scrollTo({ top: 0, behavior: 'smooth' }); }
-    else if (s.anchor) document.getElementById(s.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // A panel of this page: brought on screen and highlighted for ~2 s.
+    else if (s.anchor) flash(document.getElementById(s.anchor), { block: 'center' });
   }, [navigate, setTab]);
 
   return (
