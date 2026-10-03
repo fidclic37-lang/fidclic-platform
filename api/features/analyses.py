@@ -223,7 +223,8 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
          "highlight": True, "hint": "Clients revenus grâce à FidClic", "anchor": "impact", "row": 1},
         {"key": "referral", "label": "CA Parrainage", "unit": "€", "value": _money(referral),
          "icon": "gift", "delta_pct": _delta(referral, prev_referral),
-         "hint": "Clients venus par parrainage", "anchor": "impact", "row": 1},
+         # Opens the Parrainage page itself (user, 2026-10-03), not a panel here.
+         "hint": "Clients venus par parrainage", "to": "/dashboard/referral", "row": 1},
         {"key": "basket", "label": "Panier moyen", "unit": "€",
          "value": _money(revenue / len(rows)) if rows else 0, "icon": "bag",
          "delta_pct": _delta(revenue / len(rows) if rows else 0,
