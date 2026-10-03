@@ -569,7 +569,7 @@ const MyWalletCardPage = () => {
   }, [data?.offers, data?.notifications]);
 
   if (loading) {
-    return <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center text-[#57504A]">Chargement de votre carte…</div>;
+    return <div key="loading" className="min-h-screen bg-[#FAFAF8] flex items-center justify-center text-[#57504A]">Chargement de votre carte…</div>;
   }
   if (err) {
     return (

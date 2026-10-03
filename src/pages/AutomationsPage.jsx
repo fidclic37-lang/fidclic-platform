@@ -563,7 +563,7 @@ export default function AutomationsPage() {
                   </thead>
                   <tbody>
                     {loading && !scenarios.length && (
-                      <tr><td colSpan={7} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                      <tr key="loading"><td colSpan={7} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                         <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement…
                       </td></tr>
                     )}

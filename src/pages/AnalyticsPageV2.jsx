@@ -601,7 +601,7 @@ export default function AnalyticsPageV2() {
                     size={150}
                   />
                 ) : (
-                  <div style={{ display: 'grid', placeItems: 'center', height: 200, color: 'var(--flc-ink3, #524A40)', fontSize: 12 }}>
+                  <div key="loading" style={{ display: 'grid', placeItems: 'center', height: 200, color: 'var(--flc-ink3, #524A40)', fontSize: 12 }}>
                     {loading ? 'Chargement…' : 'Aucune source d\'acquisition pour cette branche.'}
                   </div>
                 )}

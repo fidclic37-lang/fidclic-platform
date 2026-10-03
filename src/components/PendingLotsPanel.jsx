@@ -55,7 +55,7 @@ export default function PendingLotsPanel({ onChanged }) {
       {msg && <p className="mb-3 rounded-xl bg-[#E7F7EE] px-4 py-2.5 text-[12.5px] text-[#0F8B58]">{msg}</p>}
       {err && <p className="mb-3 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{err}</p>}
       {lots === null ? (
-        <p className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement…</p>
+        <p key="loading" className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement…</p>
       ) : lots.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-12 text-center">
           <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#EAF1FF] text-[#2F6BFF]"><Inbox size={20} /></span>

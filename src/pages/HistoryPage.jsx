@@ -408,7 +408,7 @@ export default function HistoryPage() {
             </thead>
             <tbody>
               {loading && feed.rows.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                <tr key="loading"><td colSpan={6} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                   <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement de l'historique…
                 </td></tr>
               )}

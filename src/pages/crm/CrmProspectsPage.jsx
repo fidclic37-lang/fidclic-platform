@@ -40,7 +40,7 @@ function Detail({ id, ver, meta, onChanged, onEdit, admin, say }) {
   useEffect(() => { setP(null); setTab('info'); }, [id]);
   useEffect(() => { load(); }, [load, ver]);
   if (p === false) return <Card><p className="text-[13px] text-[#64748B]">Prospect introuvable.</p></Card>;
-  if (!p) return <Card><p className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</p></Card>;
+  if (!p) return <Card key="loading"><p className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</p></Card>;
   const change = async (fn, ok) => {
     setErr('');
     try { await fn(); say(ok); load(); onChanged(); } catch (e) { setErr(e?.response?.data?.detail || 'Action impossible.'); }
@@ -253,7 +253,7 @@ export default function CrmProspectsPage() {
                       <thead><tr className="border-b border-[#EDF1F7] text-left text-[#64748B]">
                         {['#', 'Nom du commerce', 'Secteur', 'Ville', 'Contact', 'Téléphone', 'Statut', 'Prochaine action', 'Assigné à', 'Dernière activité', ''].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr></thead>
                       <tbody>
-                        {!list && <tr><td colSpan={11} className="py-10 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
+                        {!list && <tr key="loading"><td colSpan={11} className="py-10 text-center text-[#64748B]"><Loader2 size={15} className="mr-1 inline animate-spin" /> Chargement…</td></tr>}
                         {list?.rows.map((p) => (
                           <tr key={p.id} onClick={() => setSel(p.id)} className={`cursor-pointer border-b border-[#F4F7FC] ${sel === p.id ? 'bg-[#F4F8FF]' : 'hover:bg-[#FAFCFF]'}`}>
                             <td className="px-2 py-2.5 text-[#94A3B8]">{p.ref || '—'}</td>

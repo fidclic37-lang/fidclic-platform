@@ -22,21 +22,52 @@ if (typeof document !== 'undefined' && typeof HTMLInputElement === 'function') {
 }
 
 // Browser translation (Chrome « Traduire », Edge, Safari) — wanted by the user
-// (2026-10-01). Those tools replace each text node of the page with <font>
-// elements holding the translation. React still points at the original text
-// node, which is no longer in the page: removing it failed (« Failed to
-// execute 'removeChild' on 'Node' ») and, once that was let through, the
-// translated <font> stayed on screen — « Chargement des analyses… » above the
-// loaded cards (2026-10-02). So we note which <font> replaced which text node,
-// and when React removes the text node, its translation goes with it.
+// (2026-10-01). Those tools put each text of the page into <font> elements
+// holding the translation; React still points at its own text node. When
+// React then removes or changes that text (« Chargement… » once the page has
+// loaded, a figure after a new period), the translation was left on screen
+// (2026-10-02, and again 2026-10-03 on the live site).
+//
+// The translator's exact steps are not documented, so every way it can do it
+// is covered — each one links React's text node to the <font> showing it:
+//   1. the text node replaced by the <font>, in one step;
+//   2. the <font> inserted next to the text node, then the text node removed;
+//   3. the text node moved inside the <font>;
+//   4. the text node left in place, emptied, with the <font> beside it.
+// Removing a text node removes its <font>; a text React changes is put back
+// in place of its stale <font>, and the browser translates it again.
+// (Loaders also carry key="loading", so React drops the whole element.)
 if (typeof Node === 'function' && Node.prototype && !Node.prototype.__fcTranslateSafe) {
-  const stand = new WeakMap();                   // original text node → the <font> nodes that replaced it
+  const isFont = (n) => !!n && n.nodeName === 'FONT';
+  const stand = new WeakMap();                   // text node → the <font> nodes showing it
+  const link = (text, fonts) => {
+    const list = fonts.filter(isFont);
+    if (!list.length) return;
+    const had = stand.get(text) || [];
+    stand.set(text, [...had, ...list.filter((f) => !had.includes(f))]);
+  };
+  // Each link is made from the mutation record itself (a snapshot taken when
+  // the translator acted), never from the live neighbours — a sentence made of
+  // several React texts (« {pct} % de votre CA ({ca}) ») has translated
+  // neighbours that are NOT this text's translation.
   const note = (records) => {
     for (const r of records) {
-      if (r.type !== 'childList' || !r.removedNodes.length || !r.addedNodes.length) continue;
-      const fonts = [...r.addedNodes].filter((n) => n.nodeName === 'FONT');
-      if (!fonts.length) continue;
-      for (const n of r.removedNodes) if (n.nodeType === 3) stand.set(n, fonts);
+      if (r.type !== 'childList') continue;
+      const fonts = [...r.addedNodes].filter(isFont);
+      const texts = [...r.removedNodes].filter((n) => n.nodeType === 3);
+      if (texts.length && fonts.length) {                       // 1. replaced in one step
+        texts.forEach((t) => link(t, fonts));
+        continue;
+      }
+      if (fonts.length && r.nextSibling && r.nextSibling.nodeType === 3) {
+        link(r.nextSibling, fonts);                             // 2./3./4. <font> put just before its text
+      }
+      for (const t of texts) {                                  // 3. text moved inside its <font>
+        if (!isFont(t.parentNode)) continue;
+        let f = t.parentNode;
+        while (isFont(f.parentNode)) f = f.parentNode;
+        link(t, [f]);
+      }
     }
   };
   let watcher = null;
@@ -46,13 +77,25 @@ if (typeof Node === 'function' && Node.prototype && !Node.prototype.__fcTranslat
   }
   const standIns = (node) => {
     if (watcher) note(watcher.takeRecords());
-    return (stand.get(node) || []).filter((f) => f.parentNode);
+    return (stand.get(node) || []).filter((f) => f.parentNode && f !== node && !f.contains(node));
+  };
+  const outerFont = (node, parent) => {         // 3. the <font> (inside `parent`) holding a moved text node
+    let f = node.parentNode;
+    if (!isFont(f)) return null;
+    while (f && f.parentNode !== parent && isFont(f.parentNode)) f = f.parentNode;
+    return f && f.parentNode === parent ? f : null;
   };
 
   const removeChild = Node.prototype.removeChild;
   Node.prototype.removeChild = function patchedRemoveChild(child) {
-    if (child && child.parentNode !== this) {
+    if (child && child.nodeType === 3) {
       for (const f of standIns(child)) removeChild.call(f.parentNode, f);
+      if (child.parentNode !== this) {
+        const f = outerFont(child, this);
+        if (f) { removeChild.call(this, f); return child; }
+      }
+    }
+    if (child && child.parentNode !== this) {
       if (child.parentNode) return removeChild.call(child.parentNode, child);
       return child;
     }
@@ -61,25 +104,28 @@ if (typeof Node === 'function' && Node.prototype && !Node.prototype.__fcTranslat
   const insertBefore = Node.prototype.insertBefore;
   Node.prototype.insertBefore = function patchedInsertBefore(newNode, ref) {
     if (ref && ref.parentNode !== this) {
-      const f = standIns(ref).find((x) => x.parentNode === this);
+      const f = standIns(ref).find((x) => x.parentNode === this) || (ref.nodeType === 3 ? outerFont(ref, this) : null);
       return insertBefore.call(this, newNode, f || null);
     }
     return insertBefore.call(this, newNode, ref);
   };
-  // A figure React changes after translation (a count, a loader that becomes
-  // text) is written into the original node, off screen: put it back in place
-  // of its stale translation — the browser translates it again.
+  // A text React changes after translation: written into its own node, off
+  // screen or emptied. Put it back in place of its stale translation; the
+  // browser translates it again.
   const value = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeValue');
   if (value && value.set) {
     Object.defineProperty(Node.prototype, 'nodeValue', {
       ...value,
       set(v) {
         value.set.call(this, v);
-        if (this.nodeType !== 3 || this.parentNode) return;
+        if (this.nodeType !== 3) return;
         const fonts = standIns(this);
-        if (!fonts.length) return;
-        insertBefore.call(fonts[0].parentNode, this, fonts[0]);
-        for (const f of fonts) if (f.parentNode) removeChild.call(f.parentNode, f);
+        const moved = !this.parentNode ? null : (isFont(this.parentNode) ? this.parentNode : null);
+        if (!fonts.length && !moved) return;
+        const anchor = fonts[0] || (() => { let f = moved; while (isFont(f.parentNode)) f = f.parentNode; return f; })();
+        if (!anchor.parentNode) return;
+        insertBefore.call(anchor.parentNode, this, anchor);
+        for (const f of [...fonts, anchor]) if (f.parentNode && f !== this) removeChild.call(f.parentNode, f);
       },
     });
   }

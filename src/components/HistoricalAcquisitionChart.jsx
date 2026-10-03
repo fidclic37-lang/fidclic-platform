@@ -187,7 +187,7 @@ const HistoricalAcquisitionChart = () => {
 
       <div className="h-72">
         {loading ? (
-          <div className="h-full flex items-center justify-center text-sm" style={{ color: C_PS.inkMute }}>
+          <div key="loading" className="h-full flex items-center justify-center text-sm" style={{ color: C_PS.inkMute }}>
             Chargement…
           </div>
         ) : data.length === 0 ? (

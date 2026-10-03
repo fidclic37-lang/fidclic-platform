@@ -94,7 +94,7 @@ export default function GrilleModal({ tenantId, clientName, members, onClose }) 
         )}
 
         {rows === null ? (
-          <div className="py-10 text-center text-sm text-[#7C879F]">Chargement…</div>
+          <div key="loading" className="py-10 text-center text-sm text-[#7C879F]">Chargement…</div>
         ) : (
           <div className="divide-y" style={{ borderColor: 'rgba(255,255,255,.10)' }}>
             {rows.map((t) => {

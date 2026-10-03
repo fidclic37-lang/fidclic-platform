@@ -286,7 +286,7 @@ function RelanceModal({ onClose, onSent }) {
              </Btn>
            </>}>
       {err && <Box tone="red" icon={AlertTriangle}>{err}</Box>}
-      {!d ? <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={14} className="animate-spin" /> Chargement…</p> : (
+      {!d ? <p key="loading" className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={14} className="animate-spin" /> Chargement…</p> : (
         <>
           <div className="mb-2 flex items-center justify-between text-[12px]">
             <span className="text-[#64748B]">Emails d'invitation : {quotaText(d.limits)}</span>

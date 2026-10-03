@@ -31,7 +31,7 @@ export default function DashboardToday({ openList }) {
     <section className="mt-6">
       <h2 className="mb-3 flex items-center gap-2 text-[18px] font-bold text-[#0B1C3F]"><ClipboardCheck size={20} className="text-[#2F6BFF]" /> À suivre aujourd'hui</h2>
       {!d ? (
-        <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#EDF1F7] bg-white py-10 text-[13px] text-[#64748B]">{err || <><Loader2 size={15} className="animate-spin" /> Chargement…</>}</div>
+        <div key="loading" className="flex items-center justify-center gap-2 rounded-2xl border border-[#EDF1F7] bg-white py-10 text-[13px] text-[#64748B]">{err || <><Loader2 size={15} className="animate-spin" /> Chargement…</>}</div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-[1.35fr_1fr_1fr_1fr]">
           <Card>

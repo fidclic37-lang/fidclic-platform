@@ -88,7 +88,7 @@ function Report({ month }) {
     finally { setPdf(false); }
   };
   if (err) return <Card><p className="text-[13px] text-[#C0392B]">{err}</p></Card>;
-  if (!d) return <Card><p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={14} className="animate-spin" /> Chargement…</p></Card>;
+  if (!d) return <Card key="loading"><p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={14} className="animate-spin" /> Chargement…</p></Card>;
   const t = d.totals, p = d.previous;
   const tiles = [
     ['Campagnes envoyées', nf(t.campaigns), '#0B1C3F', 'campaigns_sent'], ['Clients touchés', nf(t.touched), '#0B1C3F', 'reach'],

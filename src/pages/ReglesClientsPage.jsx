@@ -359,7 +359,7 @@ export default function ReglesClientsPage() {
 
   if (!d && !loadError) {
     return (
-      <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]">
+      <div key="loading" className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]">
         <Loader2 size={16} className="animate-spin" /> Chargement…
       </div>
     );

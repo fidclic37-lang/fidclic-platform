@@ -51,7 +51,7 @@ export default function AdminInvoicingPage() {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   };
 
-  if (!s) return <div className="p-6 text-[13px] text-[#64748B]">{err || 'Chargement…'}</div>;
+  if (!s) return <div key="loading" className="p-6 text-[13px] text-[#64748B]">{err || 'Chargement…'}</div>;
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6" data-currency="eur">
       <header className="mb-5 flex items-start gap-3">

@@ -102,7 +102,7 @@ const BusinessHoursCard = () => {
 
   if (loading) {
     return (
-      <div className="rounded-xl bg-white p-6 mt-6" style={{ border: `1px solid ${C_PS.hairline}` }}>
+      <div key="loading" className="rounded-xl bg-white p-6 mt-6" style={{ border: `1px solid ${C_PS.hairline}` }}>
         <p className="text-sm" style={{ color: C_PS.inkMute }}>Chargement des horaires…</p>
       </div>
     );
