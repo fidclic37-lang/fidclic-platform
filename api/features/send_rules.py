@@ -35,6 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["notifications"])
 _db = None
@@ -256,6 +257,7 @@ class RulesIn(BaseModel):
 
 
 @router.put("/api/owner/notifications/rules")
+@SV.records("notifications")
 def put_rules(body: RulesIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     new = {**rules(tid), **{k: v for k, v in body.model_dump().items() if v is not None}}

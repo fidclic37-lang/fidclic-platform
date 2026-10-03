@@ -43,7 +43,17 @@ api.interceptors.request.use((config) => {
 // (403 PLAN_FEATURE_DISABLED) or a quota reached (429 PLAN_QUOTA_REACHED)
 // opens the upgrade prompt (components/PlanAccess.jsx). The caller still gets
 // the error, so its own « chargement impossible » stays quiet or short.
-api.interceptors.response.use((r) => r, async (error) => {
+// A settings tab saved: Paramètres' « Réinitialiser » refreshes what it can undo.
+const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules|join-link\/(slug|page)|team-access\/(users|stores)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
+const settingsSaved = (r) => {
+  try {
+    const m = String(r?.config?.method || '').toLowerCase();
+    if (m && m !== 'get' && SETTINGS_SAVE.test(r?.config?.url || '')) window.dispatchEvent(new Event('fidclic:settings-saved'));
+  } catch (_e) { /* never in the way of a response */ }
+  return r;
+};
+
+api.interceptors.response.use(settingsSaved, async (error) => {
   try {
     const res = error?.response;
     if (res && (res.status === 403 || res.status === 429)) {
@@ -492,6 +502,8 @@ export const ownerAPI = {
   customerRules: () => api.get('/owner/customer-rules'),
   saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
   restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),
+  settingsVersion: (section) => api.get(`/owner/settings-versions/${section}`),
+  revertSettings: (section) => api.post(`/owner/settings-versions/${section}/revert`),
   teamAccess: () => api.get('/owner/team-access'),
   teamCreate: (body) => api.post('/owner/team-access/users', body),
   teamUpdate: (id, body) => api.put(`/owner/team-access/users/${encodeURIComponent(id)}`, body),

@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["customer-rules"])
 _db = None
@@ -488,6 +489,7 @@ def get_rules(token_data: TokenData = Depends(require_role(["business_owner", "m
 
 
 @router.put("/api/owner/customer-rules")
+@SV.records("regles-clients")
 def put_rules(body: RulesIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     _save(tid, _clean(body))
@@ -495,6 +497,7 @@ def put_rules(body: RulesIn, token_data: TokenData = Depends(require_role(["busi
 
 
 @router.post("/api/owner/customer-rules/restore")
+@SV.records("regles-clients")
 def restore_builtins(token_data: TokenData = Depends(require_role(["business_owner"]))):
     """Brings back the built-in rules the owner deleted, at their usual place,
     with their usual figures. Rules still present are left as they are."""

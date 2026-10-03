@@ -27,6 +27,7 @@ from typing import Optional, Dict, List, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from auth import require_role
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 # dateutil is now in requirements.txt
 try:
@@ -187,6 +188,7 @@ def get_hours(token_data=Depends(require_role(["business_owner", "administrateur
 
 
 @router.put("/api/owner/settings/hours/weekly")
+@SV.records("etablissement")
 def set_weekly(
     payload: Dict[str, Any],
     token_data=Depends(require_role(["business_owner"])),
@@ -211,6 +213,7 @@ def set_weekly(
 
 
 @router.put("/api/owner/settings/hours/holidays")
+@SV.records("etablissement")
 def set_holidays(
     payload: Dict[str, Any],
     token_data=Depends(require_role(["business_owner"])),
@@ -228,6 +231,7 @@ def set_holidays(
 
 
 @router.put("/api/owner/settings/hours/annual")
+@SV.records("etablissement")
 def set_annual(
     payload: Dict[str, Any],
     token_data=Depends(require_role(["business_owner"])),

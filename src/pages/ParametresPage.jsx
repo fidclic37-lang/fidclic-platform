@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { Settings2, ArrowRight, Lock } from 'lucide-react';
 import { sectionsFor, sectionPath } from './parametres/sections';
@@ -14,6 +14,7 @@ import SecuritePage from './SecuritePage';
 import PreferencesPage from './PreferencesPage';
 import ApiIntegrationsPage from './ApiIntegrationsPage';
 import { usePlanAccess } from '../components/PlanAccess';
+import ResetSection from '../components/ResetSection';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -56,6 +57,7 @@ export default function ParametresPage() {
   const { user } = useAuth();
   const sections = sectionsFor(user?.role);
   const access = usePlanAccess();             // a tab the plan does not include shows a lock
+  const [version, setVersion] = useState(0);  // a reset reloads the tab from the server
   const section = sections.find((s) => s.slug === slug);
   if (!section) return <Navigate to={sectionPath(sections[0].slug)} replace />;
   const Page = PAGES[section.slug];
@@ -74,12 +76,16 @@ export default function ParametresPage() {
             </p>
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+        {/* « Réinitialiser » — this tab back to before its last save. */}
+        <ResetSection key={section.slug} section={section.slug} label={section.label} onReverted={() => setVersion((v) => v + 1)} />
         {user?.role === 'business_owner' && (
           <Link to="/dashboard/settings"
                 className="inline-flex items-center gap-1.5 rounded-xl border border-[#E6EEFB] bg-white px-3.5 py-2.5 text-[12.5px] font-medium text-[#334155] hover:border-[#C9DBFB] hover:text-[#2F6BFF]">
             Tous les anciens réglages <ArrowRight size={14} />
           </Link>
         )}
+        </div>
       </header>
 
       <nav className="mb-5 flex gap-1 overflow-x-auto border-b border-[#E6EEFB]" role="tablist">
@@ -97,7 +103,7 @@ export default function ParametresPage() {
         })}
       </nav>
 
-      {Page ? <Page /> : <EmptySection section={section} />}
+      {Page ? <Page key={`${section.slug}-${version}`} /> : <EmptySection section={section} />}
     </div>
   );
 }

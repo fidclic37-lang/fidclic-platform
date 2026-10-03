@@ -52,6 +52,7 @@ from pydantic import BaseModel
 
 import auth as auth_mod
 from auth import require_role, TokenData, hash_password
+from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
 
 router = APIRouter(tags=["team-access"])
 _db = None
@@ -355,6 +356,7 @@ class UserUpdate(BaseModel):
 
 
 @router.put("/api/owner/team-access/users/{uid}")
+@SV.records("equipe", token_arg="token")
 def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
     me = _me(token)
     all_ids = [s["id"] for s in stores(token.tenant_id)]
@@ -377,6 +379,7 @@ class StatusIn(BaseModel):
 
 
 @router.post("/api/owner/team-access/users/{uid}/status")
+@SV.records("equipe", token_arg="token")
 def set_status(uid: str, body: StatusIn, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
     me = _me(token)
     all_ids = [s["id"] for s in stores(token.tenant_id)]
@@ -424,6 +427,7 @@ class StoreAccessIn(BaseModel):
 
 
 @router.put("/api/owner/team-access/stores/{store_id}/users/{uid}")
+@SV.records("equipe", token_arg="token")
 def store_access(store_id: str, uid: str, body: StoreAccessIn,
                  token: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """Accès par établissement. An administrateur's establishments are a set
