@@ -288,7 +288,52 @@ export function FilterChips({ value, onChange, counts, simple = false }) {
   );
 }
 
-/** One alert: icon tile · ● title · text · links · time ›. */
+/** « ⓘ » next to an alert's title: its explanation while the pointer is on
+ *  it (or the button has focus), gone when it leaves; a tap toggles it on a
+ *  phone (user, 2026-10-03). Drawn in a portal so the panel's scroll area
+ *  never cuts it. */
+function DescTip({ text, title }) {
+  const [pos, setPos] = useState(null);
+  const btn = useRef(null);
+  const show = () => {
+    const r = btn.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = Math.min(300, window.innerWidth - 24);
+    const left = Math.max(12, Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - 12));
+    const below = r.bottom + 8;
+    setPos({ left, width, top: below + 140 > window.innerHeight ? null : below, bottom: below + 140 > window.innerHeight ? window.innerHeight - r.top + 8 : null });
+  };
+  const hide = () => setPos(null);
+  useEffect(() => {
+    if (!pos) return undefined;
+    window.addEventListener('scroll', hide, true);
+    return () => window.removeEventListener('scroll', hide, true);
+  }, [pos]);
+  if (!text) return null;
+  return (
+    <>
+      <button ref={btn} type="button" aria-label={`Détail : ${title}`} aria-expanded={!!pos}
+              onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}
+              // A tap opens it (focus already did on desktop); tapping elsewhere
+              // blurs the button and closes it.
+              onClick={(e) => { e.stopPropagation(); show(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); if (e.key === 'Escape') hide(); }}
+              className="ml-1 inline-grid h-[18px] w-[18px] shrink-0 -translate-y-px place-items-center rounded-full align-middle text-[#94A3B8] transition hover:text-[#2F6BFF] focus:text-[#2F6BFF] focus:outline-none">
+        <Info size={14} strokeWidth={2.2} />
+      </button>
+      {pos && createPortal(
+        <div role="tooltip" style={{ position: 'fixed', left: pos.left, width: pos.width, zIndex: 90,
+                                     ...(pos.top != null ? { top: pos.top } : { bottom: pos.bottom }) }}
+             className="pointer-events-none rounded-xl border border-[#E6EEFB] bg-white px-3.5 py-3 text-[13px] leading-[1.45] text-[#334155] shadow-[0_20px_44px_-18px_rgba(11,28,63,.45)]">
+          {text}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/** One alert: icon tile · ● title ⓘ · links · time ›. */
 export function AlertRow({ a, unread, when, onGo, onHide, hideable = true, showBranch = true, wideLabel = false }) {
   const { Icon, tone } = lookOf(a);
   const t = TONES[tone];
@@ -298,26 +343,27 @@ export function AlertRow({ a, unread, when, onGo, onHide, hideable = true, showB
     <div data-alert={a.id} role={href ? 'button' : undefined} tabIndex={href ? 0 : undefined}
          onClick={() => href && onGo(a, href)}
          onKeyDown={(e) => { if (href && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onGo(a, href); } }}
-         className={`group relative flex gap-3.5 rounded-lg border-b border-[#EEF3FB] px-1 py-3.5 transition last:border-b-0 hover:bg-[#F5F8FE] focus:bg-[#F5F8FE] focus:outline-none ${
+         className={`group relative flex items-start gap-3 rounded-lg border-b border-[#EEF3FB] px-1 py-2.5 transition last:border-b-0 hover:bg-[#F5F8FE] focus:bg-[#F5F8FE] focus:outline-none ${
            href ? 'cursor-pointer' : ''} ${unread ? 'bg-[#FAFCFF]' : ''}`}>
-      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl" style={{ background: t.bg }}>
-        <Icon size={20} color={t.fg} fill={tone === 'red' ? t.fg : 'none'} stroke={tone === 'red' ? '#FFFFFF' : t.fg} strokeWidth={tone === 'red' ? 2 : 2.2} />
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ background: t.bg }}>
+        <Icon size={17} color={t.fg} fill={tone === 'red' ? t.fg : 'none'} stroke={tone === 'red' ? '#FFFFFF' : t.fg} strokeWidth={tone === 'red' ? 2 : 2.2} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
-          <p className={`min-w-0 flex-1 text-[14px] leading-snug text-[#0B1C3F] ${unread ? 'font-bold' : 'font-semibold'}`}>
+          <p className={`min-w-0 flex-1 text-[13.5px] leading-snug text-[#0B1C3F] ${unread ? 'font-bold' : 'font-semibold'}`}>
             <span className="mr-2 inline-block h-2 w-2 -translate-y-px rounded-full align-middle" style={{ background: t.fg }} aria-hidden="true" />
             {a.title}
+            {/* The explanation lives in « ⓘ » now: the row stays short (user, 2026-10-03). */}
+            <DescTip text={a.body} title={a.title} />
           </p>
-          {when && <span className="shrink-0 pt-0.5 text-[12px] text-[#94A3B8]">{ago(when)}</span>}
+          {when && <span className="shrink-0 pt-0.5 text-[11.5px] text-[#94A3B8]">{ago(when)}</span>}
         </div>
-        {a.body && <p className="mt-1 line-clamp-2 text-[12.5px] leading-snug text-[#475569]">{a.body}</p>}
-        {showBranch && a.branch_name && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">{a.branch_name}</p>}
+        {showBranch && a.branch_name && <p className="mt-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#94A3B8]">{a.branch_name}</p>}
         {/* One shop on screen: an alert about the whole business says so, so
             it is never taken for this shop's own (user, 2026-10-03). */}
-        {wideLabel && !a.branch_id && <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8]">Toutes les boutiques</p>}
+        {wideLabel && !a.branch_id && <p className="mt-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-[#94A3B8]">Toutes les boutiques</p>}
         {actions.length > 0 && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {actions.map((x, k) => {
               const primary = x.kind === 'campaign' || actions.length === 1;
               const XIcon = x.kind === 'customers' ? Users : x.kind === 'campaign' ? Send : null;
@@ -340,7 +386,7 @@ export function AlertRow({ a, unread, when, onGo, onHide, hideable = true, showB
             <X size={13} />
           </button>
         )}
-        {href && <ChevronRight size={18} className="my-auto text-[#94A3B8]" />}
+        {href && <ChevronRight size={17} className="my-auto text-[#94A3B8]" />}
       </div>
     </div>
   );
