@@ -5,18 +5,17 @@ import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import { Download, Printer, Link2, Share2, CheckCircle2, ArrowRight, Eye, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
-import WalletPassPreview from '../components/WalletPassPreview';
+import WalletPassLive from '../components/WalletPassLive';
 import OnboardingShell from '../components/OnboardingShell';
 
 /**
  * OnboardingDonePage — after step 4: "Votre carte est créée !" (approved mockup).
  *
- * Shows the saved card (the real <WalletPassPreview>, read back from the template
+ * Shows the saved card (the real <WalletPassLive> — the pass as the server builds it, read back from the template
  * just written) next to the tenant's join QR code — the one customers scan
  * to get their card (/join/<slug>). Download / print / copy / share all act
  * on that same link. "Accéder à mon espace établissement" → the dashboard.
  */
-const PREVIEW_CUSTOMER = { name: 'Marie', tier: 'gold', points: 70, visits: 7, reward_threshold: 10, barcode_id: 'FIDCLIC-7392-6841' };
 
 const SUPPORT = [
   { key: 'print', icon: Printer },
@@ -78,7 +77,7 @@ const OnboardingDonePage = () => {
       <div className="mt-7 grid grid-cols-1 gap-5 md:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)]">
         <div>
           <div className="rounded-2xl border border-[#E6EEFB] bg-white p-3">
-            {card ? <div className="mx-auto w-fit"><WalletPassPreview customer={PREVIEW_CUSTOMER} tenant={tenant} card={card} width={220} /></div> : <div className="h-[300px] animate-pulse rounded-xl bg-[#F4F7FC]" />}
+            {card ? <div className="mx-auto w-fit"><WalletPassLive card={card} width={220} /></div> : <div className="h-[300px] animate-pulse rounded-xl bg-[#F4F7FC]" />}
           </div>
           <button type="button" onClick={() => setFullscreen(true)} className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-medium text-[#2F6BFF] underline underline-offset-2">
             <Eye size={15} /> {t('done.preview_full')}
@@ -135,7 +134,7 @@ const OnboardingDonePage = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B1C3F]/70 p-6" onClick={() => setFullscreen(false)}>
           <div className="w-full max-w-[400px]" onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={() => setFullscreen(false)} className="mb-3 ml-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0B1C3F]" aria-label="close"><X size={20} /></button>
-            <div className="mx-auto w-fit"><WalletPassPreview customer={PREVIEW_CUSTOMER} tenant={tenant} card={card} width={375} /></div>
+            <div className="mx-auto w-fit"><WalletPassLive card={card} width={375} /></div>
           </div>
         </div>
       )}
