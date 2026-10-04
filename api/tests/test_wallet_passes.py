@@ -116,7 +116,17 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # where the stamps — the one that matters — become hard to read.
     check("member/tier/stamps in one readable row", sec == {"member": "Marie", "tier": "Or", "stamps": "7 / 10"})
     check("points = the customer's real balance", sc["headerFields"][0]["value"] == 70)
-    check("reward text", sc["auxiliaryFields"][0]["value"] == "Encore 3 tampons · Une coupe offerte")
+    back_by_key = {f["key"]: f for f in sc["backFields"]}
+    check("reward spelt out on the back, not squeezed in the front row",
+          back_by_key["next_reward"]["value"] == "Encore 3 tampons avant : Une coupe offerte"
+          and sc["auxiliaryFields"] == [])
+    # Wallet only notifies when an EXISTING field changes: the offer field is
+    # there before any campaign, so the first campaign is a change, not a birth.
+    check("offer field always on the back, with a changeMessage",
+          back_by_key["offer"]["value"] == "Aucune offre en ce moment." and back_by_key["offer"]["changeMessage"] == "%@")
+    from PIL import Image as _LI
+    lw, lh = _LI.open(io.BytesIO(z.read("logo.png"))).size
+    check(f"logo only as wide as it is (no 160-pt padding eating the name): {lw}x{lh}", lw <= 50 and lh == 50)
     check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
     check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)
     tok = pj["authenticationToken"]
@@ -230,6 +240,39 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("notify_tenant covers the whole customer base", WP.notify_tenant("t1")["devices"] == 1)
     server.refresh_wallet_pass("c1")          # must never raise
     check("refresh_wallet_pass is fire-and-forget", calls["tokens"] == ["tok9"])
+
+    # A push must be answered with the pass: the device asks what changed since
+    # its last fetch. A campaign doesn't touch the customer, so before this fix
+    # the answer was 204 and the pass (and its notification) never came.
+    db.customers.update_one({"id": "c1"}, {"$unset": {"updated_at": ""}})
+    before = str(int(time.time()) - 5)
+    WP.notify_customer("c1")
+    st, r = status(WP.serials_for_device, "dev9", "pass.com.fidclic.test", before)
+    check("after a push, the device is told the pass changed", st == 200 and r["serialNumbers"] == ["FT-TEST0001"])
+    st, _ = status(WP.serials_for_device, "dev9", "pass.com.fidclic.test", str(int(time.time()) + 60))
+    check("and only once: nothing newer → 204", st == 204)
+
+    # ---- a wallet campaign: short title in front, full text on the back ---
+    db.campaigns.insert_one({"id": "camp1", "tenant_id": "t1", "status": "sent", "wallet_offer": True,
+                             "recipient_ids": ["c1"], "name": "Salut",
+                             "content": "On vous attend pour un cadeau",
+                             "sent_at": dt.datetime.now(dt.timezone.utc)})
+    pjc = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    front = pjc["storeCard"]["secondaryFields"] + pjc["storeCard"]["auxiliaryFields"]
+    check("campaign: at most three short fields in the front row", len(front) <= 3)
+    check("campaign: its title in front", any(f["key"] == "offer_title" and f["value"] == "Salut" for f in front))
+    offer_back = next(f for f in pjc["storeCard"]["backFields"] if f["key"] == "offer")
+    check("campaign: full text on the back, it is what the notification says",
+          offer_back["value"] == "Salut — On vous attend pour un cadeau" and offer_back["changeMessage"] == "%@")
+    check("campaign: statut kept on the back", any(f["key"] == "tier_back" for f in pjc["storeCard"]["backFields"]))
+    db.campaigns.delete_one({"id": "camp1"})
+
+    # ---- nothing written over the merchant's photo ------------------------
+    photo = _LI.new("RGB", (1125, 432), (10, 120, 200)); pb = io.BytesIO(); photo.save(pb, "PNG")
+    with_text = _LI.open(io.BytesIO(WP.compose_strip(pb.getvalue(), {}, 0, 10, False, title="SALUT",
+                                                     subtitle="On vous attend"))).convert("RGB")
+    check("photo strip: the offer is not burnt into the picture",
+          all(with_text.getpixel((x, 200)) == (10, 120, 200) for x in range(300, 830, 10)))
 
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""

@@ -270,10 +270,15 @@ def _fetch_image(src: Optional[str]) -> Optional[bytes]:
 
 
 def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = False,
-                  fallback_rgb: Tuple[int, int, int] = (28, 29, 34)) -> Dict[str, bytes]:
+                  fallback_rgb: Tuple[int, int, int] = (28, 29, 34), tight: bool = False) -> Dict[str, bytes]:
     """Return {'':1x, '@2x':2x, '@3x':3x} PNGs fitted (contain) or filling (cover)
     the given point box. Falls back to a flat brand tile when Pillow is missing
-    or the image is unreadable — a pass MUST ship icon.png."""
+    or the image is unreadable — a pass MUST ship icon.png.
+
+    `tight` (the logo): the canvas is only as wide as the fitted image. Wallet
+    reserves the logo's full width, transparent padding included — a square
+    logo centred in a 160-pt canvas left the shop name 20 pt and cut it to
+    « Royal T… »."""
     out: Dict[str, bytes] = {}
     try:
         from PIL import Image  # Pillow — in api/requirements.txt
@@ -286,7 +291,7 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
         for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
             w, h = box[0] * k, box[1] * k
             if base is None:
-                img = Image.new("RGBA", (w, h), fallback_rgb + (255,))
+                img = Image.new("RGBA", ((h if tight else w), h), fallback_rgb + (255,))
             elif cover:
                 img = base.copy()
                 scale = max(w / img.width, h / img.height)
@@ -295,9 +300,12 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
                 img = img.crop((left, top, left + w, top + h))
             else:
                 img = base.copy()
-                img.thumbnail((w, h), Image.LANCZOS)
-                canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-                canvas.paste(img, ((w - img.width) // 2, (h - img.height) // 2), img)
+                # fit, up or down: a 64-px logo must still fill a 150-px @3x box
+                scale = min(w / img.width, h / img.height)
+                img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
+                cw = img.width if tight else w
+                canvas = Image.new("RGBA", (cw, h), (0, 0, 0, 0))
+                canvas.paste(img, ((cw - img.width) // 2, (h - img.height) // 2), img)
                 img = canvas
             buf = io.BytesIO()
             img.save(buf, format="PNG", optimize=True)
@@ -374,11 +382,11 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
     ink = (255, 255, 255) if (raw is not None or _lum(surface) <= 0.45) else (25, 25, 28)
     shadow = (0, 0, 0, 130) if ink == (255, 255, 255) else (255, 255, 255, 140)
 
-    # ---- the offer, written across the banner ------------------------------
-    # This is the band the customer sees on the web card ("Avantage exclusif
-    # fidélité · 10 € cagnottés"). Wallet cannot lay out text over an image, so
-    # it is drawn here — otherwise the pass looks emptier than the card.
-    if title:
+    # ---- the offer, written across the brand gradient ----------------------
+    # Only on the gradient (no photo): there it fills an otherwise plain band.
+    # Over the merchant's own photo it fought with whatever the picture holds
+    # and read as amateur (user, 2026-10-04); the offer has its own field.
+    if title and base is None:
         d0 = ImageDraw.Draw(img, "RGBA")
         # Pillow's built-in font has no É, è or € — French copy came out as
         # tofu boxes. DejaVu (bundled, free licence) covers Latin-1 and the
@@ -660,40 +668,51 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "changeMessage": (card.get("points_change_message") or "Vous avez maintenant %@ points")}
     show_tier = show("show_tier") and show("show_tier_badge")
 
+    # ---- the front row ------------------------------------------------------
+    # With a strip, Wallet puts secondary AND auxiliary fields on ONE line, so
+    # every field must be a short value or the row turns into « PROCHAINE
+    # RÉCOM… · Encore 9 tampons · Un café gra… » (user's iPhone, 2026-10-04).
+    # Three fields at most: who, how far, and the offer (or the statut).
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
-    if has_banner and show_tier:
-        # Statut moves down next to the member name (the header now holds points).
-        secondary.append(tier_field)
-    # Visits only when there is room: a storeCard row that carries four values
-    # squeezes them to the point where the important one (the stamps) is hard
-    # to read on a small screen.
-    if show("show_visits") and len(secondary) < 2:
-        secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
     if show("show_stamps"):
         secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
                           "value": f"{stamps} / {threshold}",
                           "changeMessage": (card.get("stamps_change_message") or "Tampons : %@")})
-
-    # changeMessage is what makes Wallet raise a lock-screen notification when
-    # the value changes after an update push. Without it the pass changes in
-    # silence — which is why the offer and the reward both carry one.
-    auxiliary = [{
-        "key": "reward", "label": "PROCHAINE RÉCOMPENSE",
-        "value": "Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} · {reward}",
-        "changeMessage": "%@",
-    }]
+    else:
+        # changeMessage is what makes Wallet raise a lock-screen notification
+        # when the value changes after an update push.
+        secondary.append({"key": "reward", "label": "RÉCOMPENSE",
+                          "value": "Débloquée !" if remaining <= 0 else f"Encore {remaining}",
+                          "changeMessage": "Récompense : %@"})
     offer_title, offer_sub = _offer_text(card)
+    tier_front = False
     if offer_title:
-        auxiliary.append({"key": "offer", "label": "OFFRE",
-                          "value": f"{offer_title} · {offer_sub}" if offer_sub else offer_title,
-                          "changeMessage": "%@"})
+        secondary.append({"key": "offer_title", "label": "OFFRE", "value": offer_title})
+    elif show_tier and (has_banner or not show("show_points")):
+        secondary.append(tier_field)
+        tier_front = True
+    elif show("show_visits"):
+        secondary.append({"key": "visits", "label": (card.get("visits_label") or "Visites").upper(), "value": visits})
+    auxiliary: List[Dict[str, Any]] = []
 
+    # The offer lives on the back in full, and is ALWAYS there. Wallet only
+    # notifies when an existing field changes value — a field that appears
+    # for the first time is silent — so the very first campaign a customer
+    # receives must change this field, not create it.
+    offer_full = (f"{offer_title} — {offer_sub}" if offer_sub else offer_title) if offer_title \
+        else "Aucune offre en ce moment."
     back = [
+        {"key": "offer", "label": "Offre du moment", "value": offer_full, "changeMessage": "%@"},
+        {"key": "next_reward", "label": "Prochaine récompense",
+         "value": "Récompense débloquée : présentez votre carte !" if remaining <= 0
+         else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}"},
         {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
         {"key": "card", "label": "Ma carte en ligne", "value": f"{_site_url()}/card/{serial}"},
     ]
+    if show_tier and not tier_front:
+        back.insert(1, {"key": "tier_back", "label": "Statut", "value": tier_field["value"]})
     if card.get("tagline"):
-        back.insert(0, {"key": "tagline", "label": org, "value": card["tagline"]})
+        back.append({"key": "tagline", "label": org, "value": card["tagline"]})
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
         if tenant.get(k):
             back.append({"key": k, "label": lbl, "value": tenant[k]})
@@ -740,7 +759,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "primaryFields": [] if has_banner
             else ([points_field] if show("show_points") else []),
             "secondaryFields": secondary[:3],
-            "auxiliaryFields": auxiliary[:4],
+            "auxiliaryFields": auxiliary,
             "backFields": back,
         },
     }
@@ -840,7 +859,9 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     logo_raw = _fetch_image(card.get("logo_url"))
     for suffix, png in _png_variants(logo_raw, (29, 29), cover=True, fallback_rgb=brand).items():
         files[f"icon{suffix}.png"] = png
-    for suffix, png in _png_variants(logo_raw, (160, 50), fallback_rgb=brand).items():
+    # The logo sits left of the shop name: at most 50 pt square-ish, never
+    # wider than it needs, so the name is written out in full.
+    for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
         files[f"logo{suffix}.png"] = png
     # ---- strip: banner photo and/or the progress meter ---------------------
     # A strip is produced when the merchant uploaded a banner OR when the meter
@@ -888,6 +909,13 @@ def notify_passes(serials: Iterable[str]) -> Dict[str, Any]:
     serials = [s for s in dict.fromkeys(serials) if s]
     if not serials or not apns_passes.is_configured():
         return {"devices": 0, "sent": 0, "skipped": "not configured" if serials else "no serials"}
+    # Stamp the change BEFORE the push: the device answers the push by asking
+    # which passes changed since its last fetch (serials_for_device). Without
+    # this a campaign or a design change left the customer record untouched,
+    # the answer was « nothing changed » (204), and the pass — and its
+    # lock-screen notification — never came.
+    _db.pass_registrations.update_many({"serial": {"$in": serials}},
+                                       {"$set": {"pass_changed_at": datetime.now(timezone.utc)}})
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}}, {"push_token": 1, "device_id": 1}))
     if not regs:
         return {"devices": 0, "sent": 0}
@@ -1021,9 +1049,15 @@ def serials_for_device(device_id: str, pass_type_id: str, passesUpdatedSince: Op
         except ValueError:
             since = None
     if since:
-        # A pass changed when its customer changed (visit, redemption, tier).
-        changed = _db.customers.find({"barcode_id": {"$in": serials}, "updated_at": {"$gt": since}}, {"barcode_id": 1})
-        serials = [c["barcode_id"] for c in changed]
+        # A pass changed when its customer changed (visit, redemption, tier)
+        # or when we pushed it an update (campaign, offer, design — see
+        # notify_passes).
+        def _aware(d):
+            return d if d is None or d.tzinfo else d.replace(tzinfo=timezone.utc)
+        pushed = {r["serial"] for r in regs if (_aware(r.get("pass_changed_at")) or since) > since}
+        changed = {c["barcode_id"] for c in _db.customers.find(
+            {"barcode_id": {"$in": serials}, "updated_at": {"$gt": since}}, {"barcode_id": 1})}
+        serials = [x for x in serials if x in pushed or x in changed]
         if not serials:
             return Response(status_code=204)
     return {"serialNumbers": serials, "lastUpdated": str(int(time.time()))}
