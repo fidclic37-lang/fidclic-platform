@@ -62,9 +62,12 @@ def reset():
 
 STEP1 = {"first_name": "Marie", "last_name": "Dupont", "email": "Marie@Cafe.fr",
          "phone": "06 12 34 56 78", "password": "Cafe-Lumiere2026!", "accepted_terms": True}
+from services import addresses as ADR   # noqa: E402
+TOURS = {"kind": "address", "country": "FR", "street": "12 rue des Halles", "postcode": "37000",
+         "city": "Tours", "lat": 47.393, "lng": 0.684}
 STEP2 = {"legal_name": "SARL Café Lumière", "name": "Café Lumière", "sector": "cafe",
          "activity": "Café / brunch", "siret": "123 456 789 00012",
-         "address": "12 rue des Halles", "postal_code": "37000", "city": "Tours"}
+         "address_token": ADR.sign(TOURS)}
 
 
 def test_step1():
@@ -105,8 +108,8 @@ def test_legacy_register():
 def test_step2(u):
     print("\nStep 2 — /api/onboarding/company")
     tk = tok(u["email"], tenant_id=u["tenant_id"])
-    expect_status("bad postal code → 400", 400,
-                  lambda: OB.complete_company(OB.CompanyDetails(**{**STEP2, "postal_code": "3700"}), None, tk))
+    expect_status("address not picked from the list → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**STEP2, "address_token": None}), None, tk))
     expect_status("13-digit SIRET → 400", 400,
                   lambda: OB.complete_company(OB.CompanyDetails(**{**STEP2, "siret": "1234567890001"}), None, tk))
     expect_status("unknown sector → 400", 400,
@@ -207,6 +210,57 @@ def test_oauth():
                   lambda: OA.google_login(OA.GoogleLogin(credential="not-a-jwt"), None, Response()))
 
 
+def test_verified_address():
+    print("\nStep 2 — the address comes from the address service, inside the chosen country")
+    reset()
+    out = S.register({**STEP1, "email": "addr@shop.fr"}, Response())
+    tk = tok("addr@shop.fr", tenant_id=out["tenant_id"])
+    base = {k: v for k, v in STEP2.items() if k != "address_token"}
+    expect_status("no suggestion picked → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**base, "address": "12 rue X", "postal_code": "75000", "city": "Lyon"}), None, tk))
+    forged = ADR.sign(TOURS)[:-3] + "AAA"
+    expect_status("tampered token → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**base, "address_token": forged}), None, tk))
+    raw, mac = ADR.sign(TOURS).split(".")
+    import base64 as _b, json as _j
+    edited = _j.dumps({**TOURS, "city": "Lyon"}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    expect_status("city edited inside the token → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**base, "address_token":
+                      _b.urlsafe_b64encode(edited).decode().rstrip("=") + "." + mac}), None, tk))
+    expect_status("French address with Belgium selected → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**STEP2, "country": "BE"}), None, tk))
+    OB.complete_company(OB.CompanyDetails(**{**STEP2, "address": "999 fake street", "city": "Paris", "postal_code": "75001"}), None, tk)
+    t = S.db.tenants.find_one({"id": out["tenant_id"]})
+    check("typed text ignored: the address is the verified one", t["address"] == "12 rue des Halles, 37000 Tours"
+          and t["city"] == "Tours" and t["postal_code"] == "37000" and t["address_verified"] == "address")
+    check("coordinates stored from the address", t["lat"] == 47.393 and t["lng"] == 0.684 and t["pin_source"] == "adresse")
+    # « Adresse introuvable » : verified city, typed street
+    city_be = ADR.sign({"kind": "city", "country": "BE", "street": "", "postcode": "", "city": "Bruxelles", "lat": 50.85, "lng": 4.35})
+    cb = {**base, "country": "BE", "address_token": city_be}
+    expect_status("city path without a street → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**cb, "address": "12", "postal_code": "1000"}), None, tk))
+    expect_status("Belgian city, French-looking postcode → 400", 400,
+                  lambda: OB.complete_company(OB.CompanyDetails(**{**cb, "address": "Rue Neuve 15", "postal_code": "75000"}), None, tk))
+    OB.complete_company(OB.CompanyDetails(**{**cb, "address": "Rue Neuve 15", "postal_code": "1000"}), None, tk)
+    t = S.db.tenants.find_one({"id": out["tenant_id"]})
+    check("city path: verified city + typed street + 4-digit Belgian code", t["address"] == "Rue Neuve 15, 1000 Bruxelles"
+          and t["country"] == "BE" and t["address_verified"] == "city")
+    # search: never a city of another country
+    real_get = ADR._get
+    ADR._get = lambda url, params: {"features": [
+        {"properties": {"type": "city", "name": "Paris", "countrycode": "US", "state": "Texas"}, "geometry": {"coordinates": [-95.5, 33.6]}},
+        {"properties": {"type": "city", "name": "Paris", "countrycode": "FR", "postcode": "75001"}, "geometry": {"coordinates": [2.35, 48.85]}},
+    ]}
+    try:
+        res = ADR.search("Paris", "US", "city")
+        check("search keeps only the selected country", [r["city"] for r in res] == ["Paris"] and res[0]["country"] == "US")
+        check("each suggestion is signed and verifies", ADR.verify(res[0]["token"])["city"] == "Paris")
+    finally:
+        ADR._get = real_get
+    check("postcode shapes", ADR.postcode_ok("FR", "37000") and not ADR.postcode_ok("FR", "3700")
+          and ADR.postcode_ok("CH", "1003") and ADR.postcode_ok("MC", "98000") and not ADR.postcode_ok("MC", "75000"))
+
+
 def test_drafts():
     print("\nHidden drafts — never in the super admin, purged after 7 days")
     reset()
@@ -255,6 +309,7 @@ if __name__ == "__main__":
     test_reminder(u)
     test_legacy_register()
     test_oauth()
+    test_verified_address()
     test_drafts()
     _patch.stop()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

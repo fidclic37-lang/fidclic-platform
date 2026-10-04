@@ -1,16 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Building2, Store, MapPin, Mail, Globe, ChevronDown } from 'lucide-react';
+import { Building2, Store, Globe, ChevronDown } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
 import { LEGAL_LINKS } from '../lib/legal';
 import OnboardingShell, { Field, FieldLabel, INPUT, StepButtons } from '../components/OnboardingShell';
+import AddressPicker from '../components/AddressPicker';
+import { countryOptions } from '../lib/countries';
 
 /**
  * OnboardingCompanyPage — STEP 2 of 4: "Votre établissement" (approved mockup).
  *
- *   nom de l'établissement · secteur · adresse · code postal · ville · pays
+ *   nom de l'établissement · secteur · pays · adresse (AddressPicker: picked
+ *   from the address service, inside the chosen country — never free text)
  *   → POST /api/onboarding/company → tenant onboarding_status="plan" (still a
  *     hidden draft) → step 3 (/onboarding/formule), where the trial starts.
  *
@@ -35,21 +38,16 @@ const SECTOR_KEYS = [
   { value: 'retail',     i18nKey: 'auth.sector_retail' },
   { value: 'other',      i18nKey: 'auth.sector_other' },
 ];
-const COUNTRIES = [
-  { code: 'FR', flag: '🇫🇷', label: 'France' },
-  { code: 'BE', flag: '🇧🇪', label: 'Belgique' },
-  { code: 'CH', flag: '🇨🇭', label: 'Suisse' },
-  { code: 'LU', flag: '🇱🇺', label: 'Luxembourg' },
-  { code: 'MC', flag: '🇲🇨', label: 'Monaco' },
-];
 const SELECT = INPUT + ' cursor-pointer appearance-none pr-10';
 const Caret = () => <ChevronDown size={18} className="pointer-events-none mr-4 self-center text-[#2F6BFF]" />;
 
 const OnboardingCompanyPage = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { checkAuth } = useAuth();
+  const countries = useMemo(() => countryOptions(i18n.language || 'fr'), [i18n.language]);
+  const [place, setPlace] = useState(null);
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', sector: '', address: '', postal_code: '', city: '', country: 'FR', accepted_terms: false });
+  const [form, setForm] = useState({ name: '', sector: '', country: 'FR', accepted_terms: false });
   const [needsTerms, setNeedsTerms] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,7 +56,7 @@ const OnboardingCompanyPage = () => {
     onboardingAPI.status().then((r) => {
       const d = r.data || {};
       setNeedsTerms(!d.terms_accepted);
-      setForm((f) => ({ ...f, postal_code: d.prefill?.postal_code || f.postal_code, sector: d.prefill?.sector || f.sector }));
+      setForm((f) => ({ ...f, sector: d.prefill?.sector || f.sector }));
     }).catch(() => {});
   }, []);
 
@@ -69,15 +67,17 @@ const OnboardingCompanyPage = () => {
     setError('');
     if (form.name.trim().length < 2) return setError(t('onboarding.name_required'));
     if (!form.sector) return setError(t('onboarding.sector_required'));
-    if (!form.address.trim() || !form.city.trim()) return setError(t('onboarding.address_required'));
-    if (!/^\d{5}$/.test(form.postal_code.trim())) return setError(t('onboarding.postal_code_invalid'));
+    if (!place) return setError(t('onboarding.address_pick'));
+    if (place.kind === 'city' && place.address.trim().length < 3) return setError(t('onboarding.street_required'));
+    if (place.needs_postcode && !place.postal_code.trim()) return setError(t('onboarding.postal_code_invalid'));
     if (needsTerms && !form.accepted_terms) return setError(t('auth.terms_required'));
     setLoading(true);
     try {
       await onboardingAPI.company({
         legal_name: form.name.trim(), name: form.name.trim(), sector: form.sector,
-        address: form.address.trim(), postal_code: form.postal_code.trim(), city: form.city.trim(),
-        country: form.country, accepted_terms: needsTerms ? form.accepted_terms : undefined,
+        country: form.country, address_token: place.address_token,
+        address: place.address.trim(), postal_code: (place.postal_code || '').trim(),
+        accepted_terms: needsTerms ? form.accepted_terms : undefined,
       });
       await checkAuth();            // refreshes user.onboarding_status → guards let us through
       navigate('/onboarding/formule', { replace: true });
@@ -113,39 +113,15 @@ const OnboardingCompanyPage = () => {
             </select>
           </Field>
         </div>
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-[1.15fr_1fr]">
-          <div>
-            <FieldLabel>{t('onboarding.address')}</FieldLabel>
-            <Field icon={MapPin}>
-              <input required type="text" autoComplete="street-address" placeholder={t('onboarding.address_placeholder')}
-                     className={INPUT} value={form.address} onChange={set('address')} />
-            </Field>
-          </div>
-          <div>
-            <FieldLabel>{t('auth.postal_code')}</FieldLabel>
-            <Field icon={Mail}>
-              <input required type="text" inputMode="numeric" maxLength="5" autoComplete="postal-code" placeholder="75000"
-                     className={INPUT} value={form.postal_code} onChange={set('postal_code')} />
-            </Field>
-          </div>
+        <div>
+          <FieldLabel>{t('onboarding.country')}</FieldLabel>
+          <Field icon={Globe} trailing={<Caret />}>
+            <select className={SELECT} value={form.country} onChange={set('country')} autoComplete="country">
+              {countries.map((c) => <option key={c.code} value={c.code}>{c.flag} {c.label}</option>)}
+            </select>
+          </Field>
         </div>
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-[1fr_1.15fr]">
-          <div>
-            <FieldLabel>{t('onboarding.city')}</FieldLabel>
-            <Field icon={Building2}>
-              <input required type="text" autoComplete="address-level2" placeholder={t('onboarding.city_placeholder')}
-                     className={INPUT} value={form.city} onChange={set('city')} />
-            </Field>
-          </div>
-          <div>
-            <FieldLabel>{t('onboarding.country')}</FieldLabel>
-            <Field icon={Globe} trailing={<Caret />}>
-              <select className={SELECT} value={form.country} onChange={set('country')}>
-                {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.flag} {c.label}</option>)}
-              </select>
-            </Field>
-          </div>
-        </div>
+        <AddressPicker country={form.country} onChange={setPlace} />
 
         {needsTerms && (
           <label className="flex cursor-pointer items-start gap-2.5 text-[13px] leading-relaxed text-[#4B5C7A]">

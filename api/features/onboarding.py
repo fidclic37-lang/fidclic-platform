@@ -94,10 +94,16 @@ class CompanyDetails(BaseModel):
     sector: str
     activity: Optional[str] = None       # free text: "Boulangerie artisanale bio"
     siret: Optional[str] = None          # 14 digits, optional at signup
-    address: str                         # rue
-    postal_code: str
-    city: str
+    # The address is taken from `address_token` (services/addresses.py), a
+    # suggestion signed by our own address search inside `country`. The text
+    # fields below only matter for the « adresse introuvable » path: a
+    # verified city (token kind "city") plus the street the owner typed, and
+    # the postal code when the city's record has none.
+    address: str = ""                    # rue
+    postal_code: str = ""
+    city: str = ""
     country: Optional[str] = "FR"          # ISO-3166 alpha-2 (step-2 select)
+    address_token: Optional[str] = None
     phone: Optional[str] = None
     accepted_terms: Optional[bool] = None  # required only for Google/Apple users (no step 1 checkbox)
 
@@ -123,6 +129,42 @@ def onboarding_status(token_data: TokenData = Depends(require_role(["business_ow
     }
 
 
+def _verified_place(body: CompanyDetails) -> Dict[str, Any]:
+    """The address from the signed suggestion, never from the typed text — so
+    the city always exists, belongs to the selected country and matches the
+    postal code."""
+    from services import addresses
+    country = (body.country or "FR").strip().upper()[:2]
+    tok = addresses.verify(body.address_token or "")
+    if not tok:
+        raise HTTPException(status_code=400, detail="Choisissez votre adresse dans la liste proposée.")
+    if (tok.get("country") or "").upper() != country:
+        raise HTTPException(status_code=400, detail="Cette adresse n'est pas dans le pays sélectionné.")
+    street, postcode = tok.get("street") or "", tok.get("postcode") or ""
+    if tok.get("kind") == "city":
+        street = body.address.strip()
+        if len(street) < 3 or not re.search(r"[^\W\d_]", street):
+            raise HTTPException(status_code=400, detail="Indiquez le numéro et le nom de la rue.")
+    if not postcode:
+        postcode = body.postal_code.strip()
+        if not addresses.postcode_ok(country, postcode):
+            raise HTTPException(status_code=400, detail="Code postal invalide pour ce pays.")
+    return {"kind": tok.get("kind"), "country": country, "street": street, "postcode": postcode,
+            "city": tok.get("city") or "", "lat": tok.get("lat"), "lng": tok.get("lng")}
+
+
+@router.get("/api/onboarding/address-search")
+def address_search(q: str = "", country: str = "FR", kind: str = "address",
+                   token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """Suggestions for step 2, inside the selected country only."""
+    from services import addresses
+    try:
+        return {"results": addresses.search(q, country, kind)}
+    except Exception as exc:      # noqa: BLE001 — a geocoder outage is a message, not a 500
+        print(f"onboarding: address search failed ({country}): {exc}")
+        raise HTTPException(status_code=503, detail="La recherche d'adresse est momentanément indisponible. Réessayez dans un instant.")
+
+
 @router.post("/api/onboarding/company")
 def complete_company(body: CompanyDetails, request: Request,
                      token_data: TokenData = Depends(require_role(["business_owner"]))):
@@ -143,10 +185,7 @@ def complete_company(body: CompanyDetails, request: Request,
         raise HTTPException(status_code=400, detail="La raison sociale est requise")
     if body.sector not in SECTORS:
         raise HTTPException(status_code=400, detail="Secteur inconnu")
-    if not body.address.strip() or not body.city.strip():
-        raise HTTPException(status_code=400, detail="L'adresse complète est requise")
-    if not re.fullmatch(r"\d{5}", body.postal_code.strip()):
-        raise HTTPException(status_code=400, detail="Code postal invalide (5 chiffres)")
+    place = _verified_place(body)
     siret = re.sub(r"\D", "", body.siret or "")
     if siret and len(siret) != 14:
         raise HTTPException(status_code=400, detail="Le SIRET doit contenir 14 chiffres")
@@ -169,11 +208,14 @@ def complete_company(body: CompanyDetails, request: Request,
         "legal_name": legal_name,
         "sector": body.sector,
         "activity": (body.activity or "").strip() or None,
-        "address": f"{body.address.strip()}, {body.postal_code.strip()} {body.city.strip()}",
-        "postal_code": body.postal_code.strip(),
-        "city": body.city.strip(),
-        "country": (body.country or "FR").strip().upper()[:2],
+        "address": f"{place['street']}, {place['postcode']} {place['city']}",
+        "postal_code": place["postcode"],
+        "city": place["city"],
+        "country": place["country"],
+        "address_verified": place["kind"],          # "address" (exact) or "city" (street typed)
     }
+    if place["kind"] == "address" and place.get("lat") is not None:
+        update.update({"lat": place["lat"], "lng": place["lng"], "pin_source": "adresse"})
     if siret:
         update["siret"] = siret
         update["siren"] = siret[:9]
