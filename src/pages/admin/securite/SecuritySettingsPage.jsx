@@ -4,6 +4,7 @@ import { securityAPI } from '../../../lib/api';
 import { useAuth } from '../../../contexts/AuthContext';
 import { Card, Head, Loading, Breadcrumb, useToast, BLUE, inputCls } from '../../crm/ui';
 import { flag, SecuTabs } from './shared';
+import PlatformResetCard from './PlatformResetCard';
 
 /* Super admin › Sécurité › Paramètres sécurité — decided with the user:
    blocked after N wrong passwords, an alert on a new country, and the
@@ -119,6 +120,7 @@ export default function SecuritySettingsPage() {
           <button type="button" disabled={busy || (limit && !chosen.length)} onClick={save} className="inline-flex h-11 items-center gap-2 rounded-xl px-6 text-[14px] font-semibold text-white disabled:opacity-50" style={{ background: BLUE }}>{busy && <Loader2 size={15} className="animate-spin" />} Enregistrer</button>
         </div>
       )}
+      {boss && <PlatformResetCard />}
       {toast}
     </div>
   );
