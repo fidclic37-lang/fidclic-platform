@@ -161,6 +161,10 @@ export const crmAPI = {
 
 // Super admin › Sécurité — FidClic's own team, roles, logins, journal.
 export const securityAPI = {
+  // Remise à zéro (features/platform_reset.py) — super admin only, three gates.
+  resetPreview: (include_crm) => api.get('/admin/reset/preview', { params: { include_crm } }),
+  resetBackup: (include_crm) => api.get('/admin/reset/backup', { params: { include_crm }, responseType: 'blob' }),
+  reset: (body) => api.post('/admin/reset', body),
   overview: (params) => api.get('/admin/security/overview', { params }),
   users: (params) => api.get('/admin/security/users', { params }),
   addUser: (body) => api.post('/admin/security/users', body),
