@@ -62,7 +62,8 @@
     "team": "Team & access",
     "segmentation": "Segmentation",
     "referral": "Referral",
-    "help_cta": "Contact the team"
+    "help_cta": "Contact the team",
+    "scan_short": "Scan"
   },
   "auth": {
     "login_title": "Sign in",
@@ -416,7 +417,8 @@
     "error_camera_firefox": "Firefox: allow camera access in site settings, or use “Import a photo” below.",
     "error_camera_android": "On Android, check that this page has camera access (lock icon → Permissions).",
     "error_camera_default": "Check your browser's camera permissions.",
-    "error_camera_full": "Camera unavailable. {{hint}} You can also import a photo of the QR."
+    "error_camera_full": "Camera unavailable. {{hint}} You can also import a photo of the QR.",
+    "points_auto": "Points are added automatically from your card's rules — nothing to type. The customer's card (Apple Wallet included) updates by itself."
   },
   "onboarding": {
     "title": "Your business",

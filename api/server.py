@@ -4857,27 +4857,27 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             req.amount_paid = computed_amount
 
     # Compute points to add — owner-controlled via card_template.points_mode.
-    if req.points is not None:
-        points_to_add = int(req.points)
+    # The client's `points` is ignored (user, 2026-10-04): the till has no
+    # points field any more, and a number sent by a browser must never beat
+    # the card's own rules (it gave a cashback card 10 instead of its euros).
+    try:
+        card_template = db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
+    except Exception:
+        card_template = {}
+    mode = (card_template.get("points_mode") or "per_visit").lower()
+    ppe = float(card_template.get("points_per_euro") or 10)
+    ppv = int(card_template.get("points_per_visit", 10) or 10)
+    programme = (card_template.get("programme") or "").lower()
+    amount = float(req.amount_paid or 0)
+    if programme == "cashback":
+        # The customer builds a euro balance, held in cents so the ledger
+        # stays in integers like every other points programme.
+        rate = float(card_template.get("cashback_rate") or 5)
+        points_to_add = int(round(amount * rate))            # % of euros → cents
+    elif mode == "per_euro" and amount > 0:
+        points_to_add = int(round(ppe * amount))
     else:
-        try:
-            card_template = db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
-        except Exception:
-            card_template = {}
-        mode = (card_template.get("points_mode") or "per_visit").lower()
-        ppe = float(card_template.get("points_per_euro") or 10)
-        ppv = int(card_template.get("points_per_visit", 10) or 10)
-        programme = (card_template.get("programme") or "").lower()
-        amount = float(req.amount_paid or 0)
-        if programme == "cashback":
-            # The customer builds a euro balance, held in cents so the ledger
-            # stays in integers like every other points programme.
-            rate = float(card_template.get("cashback_rate") or 5)
-            points_to_add = int(round(amount * rate))            # % of euros → cents
-        elif mode == "per_euro" and amount > 0:
-            points_to_add = int(round(ppe * amount))
-        else:
-            points_to_add = ppv
+        points_to_add = ppv
 
     new_visits = current_visits + 1
     new_points = current_points + points_to_add
@@ -5057,6 +5057,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "email": cust.get("email", ""),
         "visits": new_visits,
         "points": new_points,
+        # What this scan added, by the card's rules — the till shows it.
+        "points_earned": points_to_add,
         "total_amount_paid": round(new_paid, 2),
         "tier": new_tier,
         "previous_tier": previous_tier,

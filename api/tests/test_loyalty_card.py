@@ -112,6 +112,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("points par visite: flat 25 whatever the bill", scan_once(20.0) == 25)
     LC.put_card_settings(LC.CardSettings(programme="cashback", cashback_rate=5), TD())
     check("cagnotte 5 %: 20 € → 100 cents (1,00 €)", scan_once(20.0) == 100)
+    # The till has no points field: a number sent by a browser never beats the
+    # card's rules (it used to give a cashback card 10 instead of its euros).
+    before = db.customers.find_one({"id": "cscan"})["points"]
+    r = server.scan_visit(server.ScanRequest(barcode_id="FT-SCAN1", amount_paid=20.0, points=999), STD())
+    check("a points value sent by the client is ignored (cashback still 100)", r["points"] - before == 100)
+    check("the scan answer says what it added (the till shows it)", r["points_earned"] == 100)
     LC.put_card_settings(LC.CardSettings(programme="stamps"), TD())
     check("tampons: the bill does not change the earning", scan_once(20.0) == scan_once(3.0))
     LC.put_card_settings(LC.CardSettings(programme="cashback"), TD())

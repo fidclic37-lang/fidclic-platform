@@ -480,6 +480,8 @@ const DashboardLayout = () => {
               {/* Order follows the approved sidebar mockup. Every row points at
                   a page that exists. */}
               <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              {/* At the till the owner scans from their own account too. */}
+              <NavLink to="/dashboard/scan"          icon={QrCode}       label={t('nav.scan_visit')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
@@ -508,6 +510,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/segmentation" icon={PieChart} label={t('nav.segmentation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/scan"      icon={QrCode}    label={t('nav.scan_visit')}   currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
@@ -650,7 +653,7 @@ const DashboardLayout = () => {
                 text search. */}
             <form
               onSubmit={submitSearch}
-              className="flex items-center gap-2 rounded-full px-3.5 py-2 shrink-0 w-[260px] lg:w-[420px] xl:w-[520px]"
+              className="flex items-center gap-2 rounded-full px-3.5 py-2 shrink-0 w-[260px] lg:w-[340px] xl:w-[460px] 2xl:w-[520px]"
               style={{ background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--hairline, #EFEDE9)' }}
             >
               <button type="submit" aria-label={t('common.search')} className="shrink-0" style={{ lineHeight: 0 }}>
@@ -691,11 +694,21 @@ const DashboardLayout = () => {
               </kbd>
             </form>
 
-            {/* The bar carries the search, the bell and the account — nothing
-                else. The branch pills moved into the sidebar's establishment
-                switcher, where picking a shop belongs; help has its own row at
-                the foot of the sidebar. */}
+            {/* The bar carries the scanner shortcut, the search, the bell and
+                the account. Scanner (user, 2026-10-04): an owner at the counter
+                scans from any page in one click. The branch pills moved into the
+                sidebar's establishment switcher; help has its own row at the
+                foot of the sidebar. */}
             <div className="absolute right-6 lg:right-8 flex items-center gap-3">
+              {!user?.view_as && (
+                <Link to="/dashboard/scan" title={t('nav.scan_visit')} aria-label={t('nav.scan_visit')}
+                      className={`inline-flex h-9 items-center gap-2 rounded-full px-2.5 text-[13.5px] font-semibold text-white transition hover:-translate-y-px xl:px-4 ${
+                        currentPath === '/dashboard/scan' ? 'bg-[#1E4FD8]' : 'bg-[#2F6BFF] hover:bg-[#2559DB]'}`}
+                      style={{ boxShadow: '0 8px 18px -10px rgba(47,107,255,.8)' }}>
+                  <QrCode size={16} strokeWidth={2.2} />
+                  <span className="hidden xl:inline">{t('nav.scan_short')}</span>
+                </Link>
+              )}
               <NotificationBell platformAdmin={role === 'super_admin'} />
 
               {/* User menu avatar */}
