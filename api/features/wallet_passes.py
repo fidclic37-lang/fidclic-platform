@@ -974,6 +974,75 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     }
 
 
+class PassPreviewIn(BaseModel):
+    card: Dict[str, Any] = {}          # the designer's unsaved fields, if any
+    visits: int = 3
+
+
+# Keys a draft may change on the preview — the designer's own fields, nothing
+# that would let a request read another tenant's data.
+_PREVIEW_KEYS = {
+    "card_name", "surface_color", "surface", "brand_color", "logo_url", "hero_image_url", "hero_mode",
+    "tagline", "offer_box_text", "offer_box_subtext", "show_offer_box", "show_points", "show_tier",
+    "show_tier_badge", "show_visits", "show_stamps", "show_meter", "code_type", "show_card_number",
+    "use_full_name", "greeting_label", "points_label", "visits_label", "stamps_label",
+    "reward_threshold_stamps", "reward_description", "points_per_visit", "visits_per_stamp",
+    "header_field", "strip_shine", "back_fields", "allow_sharing",
+}
+
+
+def _data_url(png: Optional[bytes]) -> Optional[str]:
+    return "data:image/png;base64," + base64.b64encode(png).decode() if png else None
+
+
+@router.post("/api/owner/wallet/preview")
+def owner_wallet_preview(body: PassPreviewIn,
+                         token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"]))):
+    """The Apple Wallet pass exactly as build_pkpass() would make it — the same
+    pass.json fields, the same strip and logo images — for a sample customer,
+    with the designer's unsaved fields applied. The page draws THIS, so the
+    preview cannot drift from the real pass again (user, 2026-10-04: the
+    preview still showed the old layout after the pass changed)."""
+    import server as core
+    tid = token_data.tenant_id
+    visits = max(0, min(int(body.visits or 0), 500))
+    sample = {"id": "preview-sample", "tenant_id": tid, "barcode_id": "FT-EXEMPLE1",
+              "name": "Marie Dupont", "visits": visits, "tier": "bronze", "points": 0}
+    payload = core._serialize_card_payload(sample)
+    card = payload["card"]
+    card.update({k: v for k, v in (body.card or {}).items() if k in _PREVIEW_KEYS and v is not None})
+    if body.card.get("reward_threshold_stamps"):
+        card["reward_threshold"] = body.card["reward_threshold_stamps"]
+    card.pop("stamps_earned", None)            # recomputed from the sample's visits
+    sample["points"] = visits * int(card.get("points_per_visit") or 10)
+    payload["customer"] = {**payload.get("customer", {}), **sample}
+
+    pj = build_pass_json(payload)
+    strip3x = strip_png(payload)
+    strip2x = _strip_variants(strip3x).get("@2x") if strip3x else None
+    logo2x = _png_variants(_fetch_image(card.get("logo_url")), (100, 50),
+                           fallback_rgb=_rgb(card.get("brand_color")) or (184, 92, 56), tight=True).get("@2x")
+    logo_w = 50
+    try:
+        from PIL import Image
+        if logo2x:
+            logo_w = round(Image.open(io.BytesIO(logo2x)).width / 2)
+    except Exception:
+        pass
+    sc = pj.get("storeCard", {})
+    bc = (pj.get("barcodes") or [{}])[0]
+    return {
+        "logoText": pj.get("logoText"),
+        "colors": {k: pj.get(k) for k in ("backgroundColor", "foregroundColor", "labelColor")},
+        "headerFields": sc.get("headerFields", []), "primaryFields": sc.get("primaryFields", []),
+        "secondaryFields": sc.get("secondaryFields", []), "auxiliaryFields": sc.get("auxiliaryFields", []),
+        "backFields": sc.get("backFields", []),
+        "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
+        "strip": _data_url(strip2x), "logo": _data_url(logo2x), "logo_width": logo_w,
+        "sample": {"name": sample["name"], "visits": visits},
+    }
+
+
 @router.post("/api/owner/wallet/notify")
 def owner_notify(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
     """Manual "refresh my customers' passes" — handy after a design change."""

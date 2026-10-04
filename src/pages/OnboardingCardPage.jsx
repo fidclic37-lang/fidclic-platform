@@ -4,14 +4,14 @@ import { useTranslation } from 'react-i18next';
 import { Upload, Pipette, Store, PenLine, X, ImagePlus, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
-import WalletPassPreview from '../components/WalletPassPreview';
+import WalletPassLive from '../components/WalletPassLive';
 import OnboardingShell, { Field, FieldLabel, INPUT, StepButtons } from '../components/OnboardingShell';
 
 /**
  * OnboardingCardPage — STEP 4 of 4, optional: "Configuration de votre carte" (approved mockup).
  *
  * The preview on the left IS the customer's card: it renders
- * <WalletPassPreview>, the pkpass-faithful component MyWalletCardPage shows
+ * <WalletPassLive> — the pass as the server builds it, the pkpass-faithful component MyWalletCardPage shows
  * once a customer joins (real Apple Wallet storeCard geometry), fed with the
  * same template fields this page saves. Nothing is mocked — what the merchant
  * sees here is what their customers get, on the web card and on the native
@@ -34,7 +34,6 @@ const DEFAULTS = { surface_color: '#000000', brand_color: '#D4AF37', card_name: 
 const HEX = /^#[0-9a-f]{6}$/i;
 
 // Preview customer — the numbers on the mockup card ("Points 150 · Gold").
-const PREVIEW_CUSTOMER = { name: 'Marie', tier: 'gold', points: 70, visits: 7, reward_threshold: 10, barcode_id: 'FIDCLIC-7392-6841' };
 
 /** Downscale the picked logo to ≤320px so the base64 stays far below the
  *  API's body limit (large PNG uploads used to 413). Returns a data URL. */
@@ -188,7 +187,7 @@ const OnboardingCardPage = () => {
         <div>
           <p className="mb-2 text-[15px] font-semibold text-[#0B1C3F]">{t('card_step.preview')}</p>
           <div className="rounded-2xl border border-dashed border-[#C9D6F2] bg-[#F7FAFF] p-3">
-            <div className="mx-auto w-fit"><WalletPassPreview customer={PREVIEW_CUSTOMER} tenant={tenant} card={card} width={236} /></div>
+            <div className="mx-auto w-fit"><WalletPassLive card={card} width={236} /></div>
             <button type="button" onClick={() => setFullscreen(true)} className="mt-3 block w-full text-center text-[13px] font-medium text-[#2F6BFF] underline underline-offset-2">
               {t('card_step.preview_full')}
             </button>
@@ -274,7 +273,7 @@ const OnboardingCardPage = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0B1C3F]/70 p-6" onClick={() => setFullscreen(false)}>
           <div className="w-full max-w-[400px]" onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={() => setFullscreen(false)} className="mb-3 ml-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#0B1C3F]" aria-label="close"><X size={20} /></button>
-            <div className="mx-auto w-fit"><WalletPassPreview customer={PREVIEW_CUSTOMER} tenant={tenant} card={card} width={375} /></div>
+            <div className="mx-auto w-fit"><WalletPassLive card={card} width={375} /></div>
           </div>
         </div>
       )}

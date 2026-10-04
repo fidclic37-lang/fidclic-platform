@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import WalletPassPreview from '../components/WalletPassPreview';
+import WalletPassLive from '../components/WalletPassLive';
 import WalletCard from '../components/WalletCard';
 import InfoTip from '../components/InfoTip';
 
@@ -496,7 +496,7 @@ export default function LoyaltyCardPage() {
                 "Vue client" shows it as the web page renders it, "Vue wallet"
                 inside Apple's pass frame. */}
             {view === 'wallet' ? (
-              <WalletPassPreview customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} width={250} />
+              <WalletPassLive card={cardForPreview} width={250} />
             ) : (
               <div style={{ width: 250 }}>
                 <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />
@@ -504,7 +504,7 @@ export default function LoyaltyCardPage() {
             )}
           </div>
           <p className="mt-2 text-center text-[11.5px] text-[#94A3B8]">
-            {view === 'wallet' ? 'Rendu identique à Apple Wallet.' : 'Rendu identique à la carte ouverte par le client.'}
+            {view === 'wallet' ? 'Construit par le serveur, exactement comme le pass Apple Wallet.' : 'Rendu identique à la carte ouverte par le client.'}
           </p>
         </Card>
 

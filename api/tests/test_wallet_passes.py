@@ -274,6 +274,21 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("photo strip: the offer is not burnt into the picture",
           all(with_text.getpixel((x, 200)) == (10, 120, 200) for x in range(300, 830, 10)))
 
+    # ---- the designer's preview IS the pass ------------------------------
+    class _OT:
+        email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
+    pv = WP.owner_wallet_preview(WP.PassPreviewIn(card={"card_name": "NOUVEAU NOM"}, visits=3), _OT())
+    real = WP.build_pass_json(WP._card_payload("FT-TEST0001"))["storeCard"]
+    check("preview: same front fields as the real pass (keys, order)",
+          [f["key"] for f in pv["secondaryFields"]] == [f["key"] for f in real["secondaryFields"]]
+          and [f["key"] for f in pv["headerFields"]] == [f["key"] for f in real["headerFields"]])
+    check("preview: the unsaved name is used", pv["logoText"] == "NOUVEAU NOM")
+    check("preview: strip and logo are the real images", (pv["strip"] or "").startswith("data:image/png;base64,")
+          and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 100)
+    check("preview: the offer is on the back, like the pass", any(f["key"] == "offer" for f in pv["backFields"]))
+    check("preview: a sample customer, never a real one", pv["sample"]["name"] == "Marie Dupont"
+          and pv["barcode"]["altText"] == "FT-EXEMPLE1")
+
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""
     check("unconfigured → 503", status(WP.download_apple_pass, "FT-TEST0001")[0] == 503)
