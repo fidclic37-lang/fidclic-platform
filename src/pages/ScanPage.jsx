@@ -132,13 +132,12 @@ const ScanPage = () => {
   const [mode, setMode] = useState('manual'); // 'manual' or 'camera'
   const [barcode, setBarcode] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
-  const [points, setPoints] = useState('');
-  const [pointsManuallyEdited, setPointsManuallyEdited] = useState(false);
   // Live points rule from this tenant's card template.
   // Two modes: 'per_visit' (flat, default) or 'per_euro' (amount × rate).
   const [pointsMode, setPointsMode] = useState('per_visit');
   const [pointsPerEuro, setPointsPerEuro] = useState(10);
   const [pointsPerVisit, setPointsPerVisit] = useState(10);
+  const [cashback, setCashback] = useState(false);
   // Tenant identity — shown as a banner so staff knows which shop they're in.
   const [tenantInfo, setTenantInfo] = useState(null);
   const [status, setStatus] = useState(null); // { type: 'success' | 'error' | 'info', message: '' }
@@ -186,6 +185,7 @@ const ScanPage = () => {
         const rate = Number(t.data?.points_per_euro);
         const visit = Number(t.data?.points_per_visit);
         setPointsMode(m === 'per_euro' ? 'per_euro' : 'per_visit');
+        setCashback((t.data?.programme || '').toLowerCase() === 'cashback');
         if (rate && rate > 0) setPointsPerEuro(rate);
         if (visit && visit > 0) setPointsPerVisit(visit);
       } catch (_e) { /* keep defaults */ }
@@ -425,11 +425,12 @@ const ScanPage = () => {
     detect();
   };
 
-  // Compute auto-points based on the tenant's chosen mode.
+  // Preview of what the server will add — same rule, same rounding as
+  // scan_visit() in server.py (the server decides; this is display only).
   const computeAutoPoints = (amount) => {
     if (pointsMode === 'per_euro') {
       const a = parseFloat(amount);
-      if (!isNaN(a) && a > 0) return Math.floor(a * pointsPerEuro);
+      if (!isNaN(a) && a > 0) return Math.round(a * pointsPerEuro);
       return pointsPerVisit; // no amount → fall back to flat
     }
     return pointsPerVisit; // per_visit mode → always flat
@@ -439,16 +440,6 @@ const ScanPage = () => {
     const value = e.target.value;
     setAmountPaid(value);
 
-    // Auto-fill the points field per the mode, unless the cashier overrode it.
-    if (!pointsManuallyEdited) {
-      const calculated = computeAutoPoints(value);
-      if (calculated >= 0) setPoints(String(calculated));
-    }
-  };
-
-  const handlePointsChange = (e) => {
-    setPoints(e.target.value);
-    setPointsManuallyEdited(true); // Mark as manually edited
   };
 
   // Derived: which catalog items currently have a positive qty? + the
@@ -495,18 +486,12 @@ const ScanPage = () => {
         return;
     }
 
-    // Calculate final points based on the chosen mode
-    const finalPoints = points.trim() !== '' && pointsManuallyEdited
-      ? parseInt(points)
-      : computeAutoPoints(parsedAmount);
-
     setLoading(true);
     setStatus(null);
     setScanResult(null);
     try {
       const res = await ownerAPI.scanVisit({
         barcode_id: barcode.trim(),
-        points: finalPoints > 0 ? finalPoints : undefined,
         amount_paid: parsedAmount,
         branch_id: branchId || undefined,
         // When the cashier picked items from the catalog, send the list
@@ -523,7 +508,7 @@ const ScanPage = () => {
       // forever). The server now ships stamps_in_cycle + reward_threshold
       // + reward_unlocked computed from (visits - visits_at_last_redemption).
       const customerData = res.data;
-      const pointsEarned = finalPoints > 0 ? finalPoints : 10;
+      const pointsEarned = customerData.points_earned ?? 0;   // the server's own count
       const stampsCurrent = customerData.stamps_in_cycle ?? 0;
       const stampsRequired = customerData.reward_threshold ?? 10;
       const canRedeem = !!customerData.reward_unlocked;
@@ -549,8 +534,6 @@ const ScanPage = () => {
       setStatus({ type: 'success', message: t('scan.success') });
       setBarcode('');
       setAmountPaid('');
-      setPoints('');
-      setPointsManuallyEdited(false);
       clearPicker();
       setPickerOpen(false);
     } catch (error) {
@@ -751,7 +734,7 @@ const ScanPage = () => {
                   onBlur={(e) => (e.target.style.borderColor = '#E6EEFB')}
                 />
               </div>
-              {amountPaid && parseFloat(amountPaid) > 0 && (
+              {!cashback && amountPaid && parseFloat(amountPaid) > 0 && (
                 <p className="text-[11px] font-semibold" style={{ color: '#0F8B58' }}>
                   ✓ {t('scan.points_will_credit', { count: computeAutoPoints(amountPaid) })}
                 </p>
@@ -952,25 +935,15 @@ const ScanPage = () => {
               }</p>
             </div>
 
-            <div>
-              <label className="block text-sm font-bold text-[#0B1C3F] mb-2 uppercase tracking-wide">{t('scan.points_label')}</label>
-              <input
-                type="number"
-                min="0"
-                value={points}
-                onChange={handlePointsChange}
-                placeholder={t('scan.points_placeholder')}
-                className="w-full px-4 py-4 rounded-xl border-2 border-[#E6EEFB] focus:border-[#2F6BFF] focus:ring-0 outline-none text-lg font-bold font-['Inter'] transition-colors"
-                disabled={loading}
-              />
-              <p className="text-xs text-[#475569] mt-2">{
-                pointsMode === 'per_euro'
-                  ? (points && amountPaid
-                      ? t('scan.points_hint_per_euro_filled', { points: computeAutoPoints(amountPaid), rate: pointsPerEuro })
-                      : t('scan.points_hint_per_euro_empty', { rate: pointsPerEuro }))
-                  : t('scan.points_hint_per_visit', { points: pointsPerVisit })
-              }</p>
-            </div>
+            {/* No points field (user, 2026-10-04): the server adds them from the
+                card's own rules (per visit, per euro or cashback) and the
+                customer's Wallet card updates by itself. A typed number used
+                to override those rules — and a cashback card got 10 « points »
+                instead of its euros. */}
+            <p className="flex items-start gap-2 rounded-xl bg-[#F4F7FC] px-4 py-3 text-[13px] text-[#334155]">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#2F6BFF]" />
+              <span>{t('scan.points_auto')}</span>
+            </p>
 
             <button
               type="submit"

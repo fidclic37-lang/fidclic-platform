@@ -416,7 +416,7 @@ function App() {
             } />
             {/* Scan is the ONE page staff can reach. */}
             <Route path="scan" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager', 'staff']}>
                 <ScanPage />
               </ProtectedRoute>
             } />
@@ -446,7 +446,7 @@ function App() {
             {/* Besoin d'aide ? — FAQ + assistant + the three contact channels.
                 Reachable by every role; the sidebar's help row points here. */}
             <Route path="aide" element={
-              <ProtectedRoute allowedRoles={['business_owner', 'manager', 'staff', 'super_admin']}>
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager', 'staff', 'super_admin']}>
                 <HelpPage />
               </ProtectedRoute>
             } />

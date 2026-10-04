@@ -416,7 +416,8 @@
     "error_camera_firefox": "Firefox : autorisez la caméra dans les paramètres du site, ou utilisez « Importer une photo » ci-dessous.",
     "error_camera_android": "Sur Android, vérifiez que cette page a accès à la caméra (icône cadenas → Autorisations).",
     "error_camera_default": "Vérifiez les permissions caméra de votre navigateur.",
-    "error_camera_full": "Caméra inaccessible. {{hint}} Vous pouvez aussi importer une photo du QR."
+    "error_camera_full": "Caméra inaccessible. {{hint}} Vous pouvez aussi importer une photo du QR.",
+    "points_auto": "Les points sont ajoutés automatiquement selon les règles de votre carte — rien à saisir. La carte du client (Apple Wallet comprise) se met à jour toute seule."
   },
   "onboarding": {
     "title": "Votre établissement",

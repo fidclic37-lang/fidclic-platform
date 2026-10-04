@@ -480,6 +480,8 @@ const DashboardLayout = () => {
               {/* Order follows the approved sidebar mockup. Every row points at
                   a page that exists. */}
               <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              {/* At the till the owner scans from their own account too. */}
+              <NavLink to="/dashboard/scan"          icon={QrCode}       label={t('nav.scan_visit')}       currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
@@ -508,6 +510,7 @@ const DashboardLayout = () => {
               <NavLink to="/dashboard/segmentation" icon={PieChart} label={t('nav.segmentation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/scan"      icon={QrCode}    label={t('nav.scan_visit')}   currentPath={currentPath} role={role} collapsed={collapsed} />
               <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
