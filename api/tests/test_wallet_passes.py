@@ -362,6 +362,97 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a class id whose head is not an issuer number is refused",
           WP._gw_issuer() == "" and WP.google_configured() is False)
 
+    # ---- a mangled private key is repaired (user, 2026-10-04: MalformedFraming) ----
+    print("\nGoogle Wallet — clé privée abîmée, réparée")
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from cryptography.hazmat.primitives import serialization as _ser
+    _k = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = _k.private_bytes(_ser.Encoding.PEM, _ser.PrivateFormat.PKCS8, _ser.NoEncryption()).decode()
+    body = "".join(pem.strip().splitlines()[1:-1])
+    def loads(k):
+        try:
+            _ser.load_pem_private_key(WP._normalize_pem(k).encode(), password=None)
+            return True
+        except Exception:
+            return False
+    check("clean key loads", loads(pem))
+    check("quoted, with literal backslash-n (JSON copy) loads", loads('"' + pem.replace(chr(10), chr(92) + "n") + '"'))
+    check("one line, breaks turned into spaces, loads", loads(pem.replace(chr(10), " ")))
+    check("body only, no BEGIN/END, loads", loads(body))
+    check("whole PEM base64-encoded loads", loads(_b64.b64encode(pem.encode()).decode()))
+
+    # ---- Google follows every change, notifies on campaign + reward only --------
+    print("\nGoogle Wallet — synchronisation et notifications")
+    only(GOOGLE_WALLET_ISSUER_ID="3388000000012345678",
+         GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL="sa@p.iam.gserviceaccount.com",
+         GOOGLE_WALLET_PRIVATE_KEY=pem.replace(chr(10), " "))
+    gcalls = []
+    quota = {"on": False}
+    def fake_call(method, path, body, token):
+        gcalls.append((method, path, body))
+        if path.endswith("/addMessage") and quota["on"] and body["message"]["messageType"] == "TEXT_AND_NOTIFY":
+            return 429, {"error": {"message": "QuotaExceededException"}}
+        return 200, {}
+    real_call, real_tok = WP._gw_call, WP._gw_access_token
+    WP._gw_call, WP._gw_access_token = fake_call, (lambda: "tok")
+    try:
+        check("nothing synced for a customer who never added the Google card",
+              WP.google_sync(["FT-TEST0001"])["cards"] == 0 and not gcalls)
+        db.google_wallet_objects.insert_one({"serial": "FT-TEST0001", "tenant_id": "t1",
+                                             "object_id": "3388000000012345678.FT_TEST0001"})
+        res = WP.notify_customer("c1")
+        put = [c for c in gcalls if c[0] == "PUT" and "/loyaltyObject/" in c[1]]
+        check("a scan sends the new card to Google", res["google"]["synced"] == 1 and len(put) == 1)
+        check("a plain scan does not notify", not any(c[1].endswith("/addMessage") for c in gcalls))
+        obj = put[0][2]
+        check("same content as Apple: member, points, offer on the details",
+              obj["accountName"] == "Marie" and obj["loyaltyPoints"]["label"] == "Points"
+              and any(t["header"] == "Offre du moment" for t in obj["textModulesData"]))
+        gcalls.clear()
+        WP.notify_customer("c1", google_notify="reward")
+        msg = [c[2]["message"] for c in gcalls if c[1].endswith("/addMessage")]
+        check("reward unlocked → one notifying message", len(msg) == 1 and msg[0]["messageType"] == "TEXT_AND_NOTIFY"
+              and msg[0]["header"] == "Récompense débloquée !")
+        gcalls.clear()
+        db.campaigns.insert_one({"id": "gcamp", "tenant_id": "t1", "status": "sent", "wallet_offer": True,
+                                 "recipient_ids": ["c1"], "name": "Bonjour {first_name}", "content": "-20 % ce soir",
+                                 "sent_at": dt.datetime.now(dt.timezone.utc)})
+        WP.notify_passes(["FT-TEST0001"], google_notify="campaign")
+        msg = [c[2]["message"] for c in gcalls if c[1].endswith("/addMessage")]
+        put = [c[2] for c in gcalls if c[0] == "PUT" and "/loyaltyObject/" in c[1]]
+        check("campaign → notifying message, name filled in", len(msg) == 1 and msg[0]["messageType"] == "TEXT_AND_NOTIFY"
+              and msg[0]["header"] == "Bonjour Marie")
+        check("and not twice in the card (the PUT leaves it to addMessage)", not put[0].get("messages"))
+        gcalls.clear()
+        quota["on"] = True
+        r = WP.notify_passes(["FT-TEST0001"], google_notify="campaign")
+        kinds = [c[2]["message"]["messageType"] for c in gcalls if c[1].endswith("/addMessage")]
+        check("over Google's 3-a-day limit: still in the card, without notification",
+              kinds == ["TEXT_AND_NOTIFY", "TEXT"] and r["google"]["notified"] == 0)
+        quota["on"] = False
+        db.campaigns.delete_one({"id": "gcamp"})
+        check("automations' call with message= no longer raises", isinstance(WP.notify_customer("c1", message="Joyeux anniversaire"), dict))
+        class _OT3:
+            email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
+        g = WP.owner_wallet_stats(_OT3())["google"]
+        check("stats show the Google side", g["cards"] == 1 and g["recent"][0]["last_sync_result"].startswith("ok"))
+        # the scan really asks for a notification when it completes a card
+        seen = {}
+        real_refresh = server.refresh_wallet_pass
+        server.refresh_wallet_pass = lambda cid, reward_earned=False: seen.setdefault("r", []).append(reward_earned)
+        try:
+            db.customers.update_one({"id": "c1"}, {"$set": {"visits": 9, "visits_at_last_redemption": 0}})
+            class _ST:
+                email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
+            server.scan_visit(server.ScanRequest(barcode_id="FT-TEST0001", amount_paid=5.0), _ST())
+            server.scan_visit(server.ScanRequest(barcode_id="FT-TEST0001", amount_paid=5.0), _ST())
+        finally:
+            server.refresh_wallet_pass = real_refresh
+        check("the scan that completes the card asks for the reward notification, the next one does not",
+              seen.get("r") == [True, False])
+    finally:
+        WP._gw_call, WP._gw_access_token = real_call, real_tok
+
     only(**{k: v for k, v in saved.items() if v is not None})
 
     print(f"\n{passed} passed, {failed} failed")

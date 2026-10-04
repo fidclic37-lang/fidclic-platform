@@ -171,7 +171,13 @@ def google_status(token_data: TokenData = Depends(require_role(["business_owner"
         status, body = _gw_call("GET", f"/loyaltyClass/{class_id}", None, token)
     except Exception as exc:
         return {"configured": True, "issuer_id": _gw_issuer(),
-                "review_status": None, "message": f"Google n'a pas répondu : {exc}"}
+                "review_status": None,
+                "message": (("La clé privée Google est illisible, même après réparation automatique. "
+                             "Dans Vercel, remplacez GOOGLE_WALLET_SA_B64 par le fichier JSON du compte de "
+                             "service encodé en base64 (ou GOOGLE_WALLET_PRIVATE_KEY par le champ "
+                             "« private_key » de ce fichier, recopié tel quel), puis redéployez.")
+                            if any(w in str(exc) for w in ("PEM", "key", "Key", "Could not deserialize"))
+                            else f"Google n'a pas répondu : {exc}")}
     if status != 200:
         return {"configured": True, "issuer_id": _gw_issuer(),
                 "review_status": "draft",
@@ -515,8 +521,15 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
             if at and at >= since and (newest_at is None or at > newest_at):
                 newest, newest_at = c, at
         if newest and (newest.get("name") or "").strip():
-            card["campaign_offer"] = {"title": newest["name"].strip(),
-                                      "subtitle": (newest.get("content") or "").strip()}
+            title, sub = newest["name"].strip(), (newest.get("content") or "").strip()
+            # {first_name}, {points}… filled for this customer, as in the push.
+            try:
+                import server as core
+                tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}) or {}
+                title, sub = core.render_template(title, cust, tenant), core.render_template(sub, cust, tenant)
+            except Exception:
+                pass
+            card["campaign_offer"] = {"title": title, "subtitle": sub}
     except Exception as exc:        # a missing offer must never cost the pass
         print(f"wallet: campaign offer lookup failed (non-fatal): {exc}")
 
@@ -901,12 +914,23 @@ def _pkpass_response(barcode_id: str) -> Response:
                                      "Cache-Control": "no-store"})
 
 
-def notify_passes(serials: Iterable[str]) -> Dict[str, Any]:
-    """Tell every device holding these passes to refresh. Best effort — a scan
-    must never fail because a push did. Dead tokens are dropped."""
+def notify_passes(serials: Iterable[str], google_notify: Optional[str] = None,
+                  design_changed: bool = False) -> Dict[str, Any]:
+    """Tell every device holding these passes to refresh — Apple by push,
+    Google by sending it the new card. Best effort — a scan must never fail
+    because a push did. Dead tokens are dropped."""
+    serials = [s for s in dict.fromkeys(serials) if s]
+    res = _notify_apple(serials)
+    try:
+        res["google"] = google_sync(serials, notify=google_notify, update_class=design_changed)
+    except Exception as exc:                       # noqa: BLE001
+        res["google"] = {"errors": [str(exc)[:160]]}
+    return res
+
+
+def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     from services import apns_passes
 
-    serials = [s for s in dict.fromkeys(serials) if s]
     if not serials or not apns_passes.is_configured():
         return {"devices": 0, "sent": 0, "skipped": "not configured" if serials else "no serials"}
     # Stamp the change BEFORE the push: the device answers the push by asking
@@ -935,9 +959,15 @@ def notify_passes(serials: Iterable[str]) -> Dict[str, Any]:
             "errors": res.get("errors", [])[:3]}
 
 
-def notify_customer(customer_id: str) -> Dict[str, Any]:
+def notify_customer(customer_id: str, message: Optional[str] = None,
+                    google_notify: Optional[str] = None) -> Dict[str, Any]:
+    """`message` is accepted for the automations' calls (push_wallet), which
+    passed it while this function took no such argument — every scenario's
+    wake-up raised a TypeError and was silently skipped. The message itself
+    reaches the customer by web push / SMS; the pass shows the card."""
     cust = _db.customers.find_one({"id": customer_id}, {"barcode_id": 1}) or {}
-    return notify_passes([cust.get("barcode_id")]) if cust.get("barcode_id") else {"devices": 0, "sent": 0}
+    return (notify_passes([cust.get("barcode_id")], google_notify=google_notify)
+            if cust.get("barcode_id") else {"devices": 0, "sent": 0})
 
 
 def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -947,7 +977,7 @@ def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> D
     if customer_ids:
         q["id"] = {"$in": list(customer_ids)}
     serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
-    return notify_passes(serials)
+    return notify_passes(serials, design_changed=not customer_ids)
 
 
 def _iso_or_none(d: Any) -> Optional[str]:
@@ -992,6 +1022,14 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         } for r in sorted(regs, key=lambda r: _iso_or_none(r.get("updated_at") or r.get("created_at")) or "", reverse=True)[:10]],
         # Only lines naming one of THIS shop's cards: the log is shared by every
         # device, and another shop's card numbers are not ours to show.
+        "google": {
+            "configured": google_configured(),
+            "cards": _db.google_wallet_objects.count_documents({"serial": {"$in": serials}}),
+            "recent": [{"card": g.get("serial"), "last_sync_at": _iso_or_none(g.get("last_sync_at")),
+                        "last_sync_result": g.get("last_sync_result")}
+                       for g in _db.google_wallet_objects.find({"serial": {"$in": serials}}, {"_id": 0})
+                       .sort("updated_at", -1).limit(10)],
+        },
         "device_logs": [{"at": _iso_or_none(d.get("at")), "line": d.get("line")}
                         for d in _db.pass_device_logs.find({}, {"_id": 0}).sort("at", -1).limit(200)
                         if any(sr in (d.get("line") or "") for sr in serials)][:10],
@@ -1219,6 +1257,7 @@ def _gw_credentials() -> Optional[Dict[str, Any]]:
             return None
         if sa.get("client_email") and sa.get("private_key"):
             sa.setdefault("token_uri", "https://oauth2.googleapis.com/token")
+            sa["private_key"] = _normalize_pem(sa["private_key"])
             return sa
         return None
 
@@ -1226,10 +1265,38 @@ def _gw_credentials() -> Optional[Dict[str, Any]]:
     key = _env("GOOGLE_WALLET_PRIVATE_KEY") or _b64_env("GOOGLE_WALLET_PRIVATE_KEY_B64").decode(errors="ignore")
     if not (email and key):
         return None
-    if "\\n" in key and "\n" not in key.strip("\n"):
-        key = key.replace("\\n", "\n")
-    return {"client_email": email, "private_key": key,
+    return {"client_email": email, "private_key": _normalize_pem(key),
             "token_uri": "https://oauth2.googleapis.com/token"}
+
+
+
+def _normalize_pem(key: str) -> str:
+    """Repair the ways a private key gets mangled on its way into an
+    environment variable (user, 2026-10-04: « Unable to load PEM file …
+    MalformedFraming »):
+      - wrapped in quotes, or with the JSON's literal \n kept as text;
+      - its line breaks turned into spaces (a one-line paste);
+      - pasted without the BEGIN/END lines, or base64-encoded whole.
+    The key itself is never changed, only its framing."""
+    import re as _re
+    k = (key or "").strip().strip('"').strip("'").strip()
+    k = k.replace("\\r", "").replace("\\n", "\n").replace("\r", "")
+    if "BEGIN" not in k:
+        try:                                                  # the whole PEM, base64-encoded
+            dec = base64.b64decode(k, validate=False).decode("utf-8", "ignore")
+            if "-----BEGIN" in dec:
+                k = dec.strip()
+        except Exception:
+            pass
+    m = _re.search(r"-----BEGIN ([A-Z ]*PRIVATE KEY)-----(.*?)-----END \1-----", k, _re.S)
+    if m:
+        kind, body = m.group(1), _re.sub(r"\s+", "", m.group(2))
+    elif "BEGIN" not in k and _re.fullmatch(r"[A-Za-z0-9+/=\s]{100,}", k):
+        kind, body = "PRIVATE KEY", _re.sub(r"\s+", "", k)   # body only, no frame
+    else:
+        return k
+    lines = [body[i:i + 64] for i in range(0, len(body), 64)]
+    return f"-----BEGIN {kind}-----\n" + "\n".join(lines) + f"\n-----END {kind}-----\n"
 
 
 def _gw_sa() -> Dict[str, Any]:
@@ -1240,15 +1307,22 @@ def _gw_sa() -> Dict[str, Any]:
     return sa
 
 
+_GW_TOKEN: Dict[str, Any] = {"token": None, "exp": 0}
+
+
 def _gw_access_token() -> str:
     import jwt  # pyjwt
+    if _GW_TOKEN["token"] and _GW_TOKEN["exp"] > time.time() + 60:
+        return _GW_TOKEN["token"]
     sa = _gw_sa()
     now = int(time.time())
     assertion = jwt.encode({"iss": sa["client_email"], "scope": _GW_SCOPE, "aud": sa["token_uri"],
                             "iat": now, "exp": now + 3600}, sa["private_key"], algorithm="RS256")
     data = urllib.parse.urlencode({"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion}).encode()
     with urllib.request.urlopen(urllib.request.Request(sa["token_uri"], data=data), timeout=10) as r:
-        return json.loads(r.read())["access_token"]
+        tok = json.loads(r.read())["access_token"]
+    _GW_TOKEN.update(token=tok, exp=now + 3300)
+    return tok
 
 
 def _gw_call(method: str, path: str, body: Optional[Dict[str, Any]], token: str) -> Tuple[int, Dict[str, Any]]:
@@ -1267,74 +1341,166 @@ def _hex6(rgb_css: str) -> str:
     return "#%02X%02X%02X" % tuple(nums)
 
 
-def google_save_url(payload: Dict[str, Any]) -> str:
-    import jwt
-    cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
+def _gw_ids(tenant_id: str, serial: str) -> Tuple[str, str]:
     issuer = _gw_issuer()
-    sa = _gw_sa()
-    token = _gw_access_token()
-    org = card.get("card_name") or tenant.get("name") or "FidClic"
-    colors = derive_colors(card)
-    class_id = f"{issuer}.fidclic_{tenant['id']}".replace("-", "_")
-    object_id = f"{issuer}.{cust['barcode_id']}".replace("-", "_")
+    return (f"{issuer}.fidclic_{tenant_id}".replace("-", "_"),
+            f"{issuer}.{serial}".replace("-", "_"))
 
-    logo = card.get("logo_url") if (card.get("logo_url") or "").startswith("http") else None
+
+def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
+    tenant, card = payload["tenant"], payload["card"]
+    org = card.get("card_name") or tenant.get("name") or "FidClic"
+    class_id, _ = _gw_ids(tenant["id"], payload["customer"]["barcode_id"])
     cls: Dict[str, Any] = {
         "id": class_id, "issuerName": tenant.get("name") or org, "programName": org,
-        "reviewStatus": "UNDER_REVIEW", "hexBackgroundColor": _hex6(colors["backgroundColor"]),
+        "reviewStatus": "UNDER_REVIEW", "hexBackgroundColor": _hex6(derive_colors(card)["backgroundColor"]),
         "countryCode": "FR",
     }
+    logo = card.get("logo_url") if (card.get("logo_url") or "").startswith("http") else None
     if logo:
         cls["programLogo"] = {"sourceUri": {"uri": logo}}
-    status, _ = _gw_call("GET", f"/loyaltyClass/{class_id}", None, token)
-    _gw_call("PUT" if status == 200 else "POST", f"/loyaltyClass/{class_id}" if status == 200 else "/loyaltyClass", cls, token)
+    return cls
 
-    visits = int(cust.get("visits") or 0)
-    threshold = max(1, int(card.get("reward_threshold") or 10))
-    stamps = min(threshold, int(card.get("stamps_earned") or 0))
+
+def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The Google card, read off the SAME pass.json Apple gets (build_pass_json):
+    the member, the progress and the offer say the same thing on both phones."""
+    cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
+    pj = build_pass_json(payload)
+    sc = pj.get("storeCard", {})
+    by_key = {f["key"]: f for grp in ("headerFields", "primaryFields", "secondaryFields", "auxiliaryFields")
+              for f in sc.get(grp, [])}
+    class_id, object_id = _gw_ids(tenant["id"], cust["barcode_id"])
+    member = by_key.get("member", {}).get("value") or cust.get("name") or "Client"
+    points = by_key.get("points")
+    progress = by_key.get("stamps") or by_key.get("reward")
     obj: Dict[str, Any] = {
-        "id": object_id, "classId": class_id, "state": "ACTIVE",
-        "accountId": cust["barcode_id"], "accountName": cust.get("name") or "Client",
-        "barcode": {"type": "QR_CODE",
-                    "value": f"{_site_url()}/card/{cust['barcode_id']}",
+        "id": object_id, "classId": class_id, "state": "INACTIVE" if pj.get("voided") else "ACTIVE",
+        "accountId": cust["barcode_id"], "accountName": str(member),
+        "barcode": {"type": "QR_CODE", "value": f"{_site_url()}/card/{cust['barcode_id']}",
                     "alternateText": cust["barcode_id"]},
-        "loyaltyPoints": {"label": "Tampons", "balance": {"string": f"{stamps} / {threshold}"}},
-        "secondaryLoyaltyPoints": {"label": "Statut", "balance": {"string": TIER_LABELS.get((cust.get("tier") or "bronze").lower(), "Bronze")}},
-        "textModulesData": [
-            {"id": "reward", "header": "Prochaine récompense", "body": card.get("reward_description") or "Une récompense fidélité"},
-            {"id": "visits", "header": "Visites", "body": str(visits)},
-        ],
-        # Google has no strip and no progress element either, but it does have a
-        # hero image — so it gets the very same painted banner Apple's strip
-        # carries, meter included. Without this the card reads "7 / 10" as bare
-        # text on Google while Apple shows the bar.
+        # Google has no strip either: it gets the same painted banner, meter in.
         "heroImage": {"sourceUri": {"uri": f"{_site_url()}/api/card/{cust['barcode_id']}/wallet-strip.png"
-                                           f"?v={stamps}-{threshold}"}},
+                                           f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"}},
+        # Apple's back of the pass = Google's details: offer, reward, statut…
+        "textModulesData": [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
+                            for f in sc.get("backFields", []) if f["key"] != "card"][:10],
         "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
     }
-    if card.get("tagline"):
-        obj["textModulesData"].insert(0, {"id": "tagline", "header": org, "body": card["tagline"]})
-    # Google's own message element: the banner the customer sees inside the
-    # card, tappable, with the merchant's campaign in it. This is Google's
-    # equivalent of Apple's changeMessage — Apple has no banner element, it
-    # raises a lock-screen notification when a field changes instead. Only a
-    # campaign the merchant chose to put on the wallet ever lands here.
+    if points:
+        obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": {"int": int(points["value"] or 0)}}
+    if progress:
+        obj["secondaryLoyaltyPoints" if points else "loyaltyPoints"] = {
+            "label": str(progress["label"]).title(), "balance": {"string": str(progress["value"])}}
+    # The campaign stays as a message in the card (Google's banner element).
     campaign = card.get("campaign_offer") if isinstance(card.get("campaign_offer"), dict) else {}
     if (campaign.get("title") or "").strip():
-        obj["messages"] = [{
-            "id": "campaign",
-            "header": campaign["title"].strip()[:60],
-            "body": (campaign.get("subtitle") or "").strip()[:300],
-            "messageType": "TEXT",
-        }]
-    status, _ = _gw_call("GET", f"/loyaltyObject/{object_id}", None, token)
-    _gw_call("PUT" if status == 200 else "POST", f"/loyaltyObject/{object_id}" if status == 200 else "/loyaltyObject", obj, token)
+        obj["messages"] = [{"id": "campaign", "header": campaign["title"].strip()[:60],
+                            "body": (campaign.get("subtitle") or "").strip()[:300] or campaign["title"].strip()[:300],
+                            "messageType": "TEXT"}]
+    return obj
 
+
+def google_save_url(payload: Dict[str, Any]) -> str:
+    import jwt
+    sa = _gw_sa()
+    token = _gw_access_token()
+    cls, obj = _gw_class(payload), _gw_object(payload)
+    status, _ = _gw_call("GET", f"/loyaltyClass/{cls['id']}", None, token)
+    _gw_call("PUT" if status == 200 else "POST", f"/loyaltyClass/{cls['id']}" if status == 200 else "/loyaltyClass", cls, token)
+    status, _ = _gw_call("GET", f"/loyaltyObject/{obj['id']}", None, token)
+    _gw_call("PUT" if status == 200 else "POST", f"/loyaltyObject/{obj['id']}" if status == 200 else "/loyaltyObject", obj, token)
+    # Remembered so every later change is sent to Google (google_sync).
+    cust = payload["customer"]
+    _db.google_wallet_objects.update_one(
+        {"serial": cust["barcode_id"]},
+        {"$set": {"object_id": obj["id"], "tenant_id": payload["tenant"]["id"], "updated_at": datetime.now(timezone.utc)},
+         "$setOnInsert": {"created_at": datetime.now(timezone.utc)}}, upsert=True)
     claims = {"iss": sa["client_email"], "aud": "google", "typ": "savetowallet", "iat": int(time.time()),
-              "origins": [_site_url()], "payload": {"loyaltyObjects": [{"id": object_id}]}}
+              "origins": [_site_url()], "payload": {"loyaltyObjects": [{"id": obj["id"]}]}}
     return "https://pay.google.com/gp/v/save/" + jwt.encode(claims, sa["private_key"], algorithm="RS256")
+
+
+# Notifications on Google (user, 2026-10-04): only a campaign and a reward
+# unlock. Google allows 3 notifying messages per card per 24 h; past that the
+# message still lands in the card, silently.
+GOOGLE_NOTIFY = {"campaign", "reward"}
+
+
+def _gw_reason(body: Dict[str, Any]) -> str:
+    err = (body or {}).get("error") or {}
+    return str(err.get("message") or err.get("status") or "")[:160]
+
+
+def google_sync(serials: Iterable[str], notify: Optional[str] = None, update_class: bool = False) -> Dict[str, Any]:
+    """Push the current card to Google for every customer who added it.
+
+    Apple pulls a changed pass after a push; Google does not — the server has
+    to send the new object itself. Called wherever Apple passes are woken
+    (scan, redemption, campaign, card design), so both wallets move together.
+    `notify` ("campaign" | "reward") adds a TEXT_AND_NOTIFY message; anything
+    else updates the card without a notification. `update_class`: the design
+    changed (colours, logo, name) — only then is the class sent again."""
+    serials = [x for x in dict.fromkeys(serials) if x]
+    out: Dict[str, Any] = {"cards": 0, "synced": 0, "notified": 0, "errors": []}
+    if not serials or not google_configured():
+        return out
+    rows = list(_db.google_wallet_objects.find({"serial": {"$in": serials}}, {"_id": 0}))
+    if not rows:
+        return out
+    out["cards"] = len(rows)
+    try:
+        token = _gw_access_token()
+    except Exception as exc:                       # bad key, Google down: say so, never raise
+        msg = f"Connexion à Google impossible : {str(exc)[:120]}"
+        _db.google_wallet_objects.update_many({"serial": {"$in": serials}}, {"$set": {
+            "last_sync_at": datetime.now(timezone.utc), "last_sync_result": msg}})
+        out["errors"].append(msg)
+        return out
+    classes_done = set()
+    for row in rows:
+        result = "ok"
+        try:
+            payload = _card_payload(row["serial"])
+            cls = _gw_class(payload)
+            if update_class and cls["id"] not in classes_done:   # the design lives on the class
+                _gw_call("PUT", f"/loyaltyClass/{cls['id']}", cls, token)
+                classes_done.add(cls["id"])
+            obj = _gw_object(payload)
+            message = None
+            if notify == "campaign" and obj.get("messages"):
+                message = dict(obj["messages"][0])
+                obj["messages"] = []                   # sent below, with the notification
+            elif notify == "reward":
+                reward = payload["card"].get("reward_description") or "Votre récompense"
+                message = {"id": f"reward-{int(time.time())}", "header": "Récompense débloquée !",
+                           "body": f"{reward} — présentez votre carte en caisse."}
+            st, body = _gw_call("PUT", f"/loyaltyObject/{obj['id']}", obj, token)
+            if st != 200:
+                result = f"HTTP {st} {_gw_reason(body)}".strip()
+            else:
+                out["synced"] += 1
+                if message and notify in GOOGLE_NOTIFY:
+                    st2, body2 = _gw_call("POST", f"/loyaltyObject/{obj['id']}/addMessage",
+                                          {"message": {**message, "messageType": "TEXT_AND_NOTIFY"}}, token)
+                    if st2 == 200:
+                        out["notified"] += 1
+                        result = "ok · notification envoyée"
+                    else:
+                        # Over Google's 3-a-day limit (or refused): still put it in the card.
+                        _gw_call("POST", f"/loyaltyObject/{obj['id']}/addMessage",
+                                 {"message": {**message, "messageType": "TEXT"}}, token)
+                        result = f"ok · sans notification ({_gw_reason(body2) or 'HTTP ' + str(st2)})"
+        except Exception as exc:                       # one card must not stop the others
+            result = f"erreur : {str(exc)[:140]}"
+        if not result.startswith("ok"):
+            out["errors"].append(result)
+        _db.google_wallet_objects.update_one({"serial": row["serial"]}, {"$set": {
+            "last_sync_at": datetime.now(timezone.utc), "last_sync_result": result[:200]}})
+    out["errors"] = out["errors"][:3]
+    return out
 
 
 @router.get("/api/card/{barcode_id}/google-wallet")
