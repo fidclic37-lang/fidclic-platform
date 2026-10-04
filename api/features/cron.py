@@ -153,12 +153,18 @@ def agent_daily(authorization: str = Header(default="")):
             summary["monthly_report"] = core.monthly_report_pass()
     except Exception as e:                                       # noqa: BLE001
         summary["failures"].append({"step": "monthly_report", "error": str(e)[:120]})
-    # Loyalty-side: day-27 "choose your plan" reminder for trialing tenants.
+    # Loyalty-side: day-29 "choose your plan" reminder for trialing tenants.
     try:
         from features.onboarding import run_trial_reminders
         summary["trial_reminders"] = run_trial_reminders()
     except Exception as e:                                       # noqa: BLE001
         summary["failures"].append({"step": "trial_reminders", "error": str(e)[:120]})
+    # Sign-ups that stopped before the plan step: hidden, deleted after 7 days.
+    try:
+        from features.onboarding import purge_abandoned_signups
+        summary["abandoned_signups"] = purge_abandoned_signups()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "abandoned_signups", "error": str(e)[:120]})
     # Plan Limits: one email per business, limit and month near the limit.
     try:
         from features.plan_limits import run_limit_alerts

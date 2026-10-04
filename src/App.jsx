@@ -71,7 +71,9 @@ class RootErrorBoundary extends React.Component {
 
 import LoginPage from './pages/LoginPage';
 const RegisterPage = lazyPage(() => import('./pages/RegisterPage'));
+import { onboardingPath } from './lib/onboarding';
 const OnboardingCompanyPage = lazyPage(() => import('./pages/OnboardingCompanyPage'));
+const OnboardingPlanPage = lazyPage(() => import('./pages/OnboardingPlanPage'));
 const OnboardingCardPage = lazyPage(() => import('./pages/OnboardingCardPage'));
 const OnboardingDonePage = lazyPage(() => import('./pages/OnboardingDonePage'));
 const DashboardLayout = lazyPage(() => import('./pages/DashboardLayout'));
@@ -178,10 +180,10 @@ const ScrollToTop = () => {
   return null;
 };
 
-// An owner who created their account but never completed the company step
-// (onboarding_status="company") is parked on /onboarding/entreprise: no
-// dashboard, no modules, until step 2 is done and the trial has started.
-const needsOnboarding = (user) => user?.role === 'business_owner' && user?.onboarding_status === 'company';
+// An owner whose sign-up isn't finished is parked on the step they stopped at
+// (lib/onboarding.js). No dashboard, no modules, until the plan step has
+// started the trial.
+const needsOnboarding = (user) => Boolean(onboardingPath(user));
 
 /* Inside /admin: each member of FidClic's team sees the sections their role
    allows (Sécurité › Rôles & Permissions); the server refuses the rest too. */
@@ -209,7 +211,7 @@ const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, pa
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
-  if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
+  if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to={onboardingPath(user)} replace />;
   // Administrateurs, and managers covering only some establishments, reach
   // the data pages once those pages filter by establishment; until then they
   // work from Paramètres › Équipe & accès (the server refuses the rest too).
@@ -234,7 +236,7 @@ const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (user) {
-    if (needsOnboarding(user)) return <Navigate to="/onboarding/entreprise" replace />;
+    if (needsOnboarding(user)) return <Navigate to={onboardingPath(user)} replace />;
     if (['super_admin', 'fidclic_team'].includes(user.role)) return <Navigate to="/admin" replace />;
     if (user.role === 'commercial') return <Navigate to="/admin/crm" replace />;
     // Owners land on the module chooser (CRM+Fidélité vs Facturation).
@@ -297,10 +299,15 @@ function App() {
           <Route path="/" element={<PublicRoute><MarketingHome /></PublicRoute>} />
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-          {/* Onboarding step 2 — the only protected page a half-registered owner may see. */}
+          {/* Onboarding steps 2 and 3 — the only protected pages a half-registered owner may see. */}
           <Route path="/onboarding/entreprise" element={
             <ProtectedRoute allowedRoles={['business_owner']} skipOnboardingGate>
               <OnboardingCompanyPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/onboarding/formule" element={
+            <ProtectedRoute allowedRoles={['business_owner']} skipOnboardingGate>
+              <OnboardingPlanPage />
             </ProtectedRoute>
           } />
           <Route path="/onboarding/carte" element={

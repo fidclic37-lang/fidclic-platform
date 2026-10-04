@@ -144,6 +144,7 @@ def _upsert_user(provider: str, sub: str, email: str, first_name: Optional[str],
             address="", onboarding_status="company",
         ).model_dump()
         tenant["subscription_status"] = "onboarding"
+        tenant["is_active"] = False          # hidden draft until the plan step
         tenant["owner_name"] = display
         _db.tenants.insert_one(tenant)
         user = core.UserInDB(

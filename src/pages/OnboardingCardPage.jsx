@@ -8,7 +8,7 @@ import WalletPassPreview from '../components/WalletPassPreview';
 import OnboardingShell, { Field, FieldLabel, INPUT, StepButtons } from '../components/OnboardingShell';
 
 /**
- * OnboardingCardPage — STEP 3 of 3: "Configuration de votre carte" (approved mockup).
+ * OnboardingCardPage — STEP 4 of 4, optional: "Configuration de votre carte" (approved mockup).
  *
  * The preview on the left IS the customer's card: it renders
  * <WalletPassPreview>, the pkpass-faithful component MyWalletCardPage shows
@@ -176,7 +176,7 @@ const OnboardingCardPage = () => {
   };
 
   return (
-    <OnboardingShell step={3} wide>
+    <OnboardingShell step={4} wide>
       <div className="mt-8 text-center">
         <h1 className="text-[36px] font-extrabold tracking-[-0.02em] text-[#0B1C3F]">{t('card_step.title')}</h1>
         <p className="mt-2 text-[16px] text-[#4B5C7A]">{t('card_step.subtitle')}</p>
@@ -259,8 +259,14 @@ const OnboardingCardPage = () => {
         </div>
 
         <div className="md:col-span-2">
-          <StepButtons onBack={() => navigate('/onboarding/entreprise')} backLabel={t('onboarding.back')}
+          <StepButtons onBack={() => navigate('/onboarding/formule')} backLabel={t('onboarding.back')}
                        nextLabel={saving ? t('auth.creating') : t('card_step.finish')} loading={saving} />
+          {/* Optional step (user, 2026-10-04): the card can be designed later
+              from Carte de fidélité; the trial is already running. */}
+          <button type="button" onClick={() => navigate('/modules', { replace: true })}
+                  className="mx-auto mt-4 block text-[14px] font-semibold text-[#2F6BFF] hover:underline">
+            {t('card_step.skip')}
+          </button>
         </div>
       </form>
 

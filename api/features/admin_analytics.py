@@ -99,7 +99,8 @@ def _activity(start: datetime, end: datetime, limit: int) -> List[Dict[str, Any]
     who = lambda tid: (lambda n: f"{n[0]} ({n[1]})" if n[1] else n[0])(names.get(tid, ("—", "")))   # noqa: E731
     span = {"$gte": start, "$lte": end}
     ev: List[Dict[str, Any]] = []
-    for t in _db.tenants.find({"created_at": span}, {"_id": 0, "id": 1, "created_at": 1}):
+    for t in _db.tenants.find({"created_at": span, "onboarding_status": {"$nin": ["company", "plan"]}},
+                              {"_id": 0, "id": 1, "created_at": 1}):
         ev.append({"kind": "commerce", "text": f"Nouveau commerce ajouté : {who(t['id'])}", "at": t["created_at"], "tenant_id": t["id"]})
     for a in _db.audit_logs.find({"action": {"$in": ["billing.plan_activated", "admin.plan_change"]}, "ts": span}, {"_id": 0}):
         tid = a.get("tenant_id") or a.get("target")

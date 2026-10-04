@@ -9,7 +9,7 @@ import WalletPassPreview from '../components/WalletPassPreview';
 import OnboardingShell from '../components/OnboardingShell';
 
 /**
- * OnboardingDonePage — after step 3: "Votre carte est créée !" (approved mockup).
+ * OnboardingDonePage — after step 4: "Votre carte est créée !" (approved mockup).
  *
  * Shows the saved card (the real <WalletPassPreview>, read back from the template
  * just written) next to the tenant's join QR code — the one customers scan
@@ -68,7 +68,7 @@ const OnboardingDonePage = () => {
   const actions = { print: () => window.print(), link: copyLink, social: share };
 
   return (
-    <OnboardingShell step={4} wide>
+    <OnboardingShell step={5} wide>
       <div className="mt-8 flex items-center justify-center gap-4">
         <span className="text-[44px] leading-none" aria-hidden="true">🎉</span>
         <h1 className="text-[32px] font-extrabold tracking-[-0.02em] text-[#0B1C3F]">{t('done.title', { name: shopName.toUpperCase() })}</h1>

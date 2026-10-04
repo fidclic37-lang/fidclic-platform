@@ -83,7 +83,7 @@ DEFAULT_TEMPLATES = [
              "revenir leurs clients plus souvent, grâce à une carte de fidélité 100 % digitale.\n\nConcrètement :\n"
              "- vos clients ajoutent la carte à leur téléphone en scannant un QR code, sans application à télécharger ;\n"
              "- vous leur envoyez des offres et des rappels au bon moment ;\n- vous voyez qui revient, et quand.\n\n"
-             "L'essai est gratuit pendant 28 jours, sans carte bancaire.\n\nAuriez-vous 15 minutes cette semaine pour que "
+             "L'essai est gratuit pendant 30 jours, sans carte bancaire.\n\nAuriez-vous 15 minutes cette semaine pour que "
              "je vous montre ?\n\nBien cordialement,\n{expediteur}\nFidClic"},
     {"id": "tpl-valeur", "name": "Relance valeur", "category": "Relance",
      "subject": "Un outil simple pour plus de clients fidèles",
@@ -107,7 +107,7 @@ DEFAULT_TEMPLATES = [
      "subject": "On reste en contact ?",
      "body": "Bonjour {prenom},\n\nJe ne veux pas encombrer votre boîte mail : ce sera mon dernier message à ce sujet.\n\n"
              "Si fidéliser vos clients devient une priorité pour {commerce}, il suffit de répondre à cet email et je reviens "
-             "vers vous. L'essai gratuit de 28 jours reste disponible.\n\nJe vous souhaite une excellente continuation,\n"
+             "vers vous. L'essai gratuit de 30 jours reste disponible.\n\nJe vous souhaite une excellente continuation,\n"
              "{expediteur}"},
 ]
 SEQUENCE_PRESETS = [

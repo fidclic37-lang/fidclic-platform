@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { onboardingPath } from '../lib/onboarding';
 import { authAPI } from '../lib/api';
 
 /**
@@ -33,7 +34,8 @@ function loadScript(src) {
 }
 
 export function routeAfterAuth(navigate, session) {
-  if (session?.onboarding_status === 'company') return navigate('/onboarding/entreprise');
+  const step = onboardingPath(session);
+  if (step) return navigate(step);
   if (session?.role === 'super_admin' || session?.role === 'fidclic_team') return navigate('/admin');
   if (session?.role === 'commercial') return navigate('/admin/crm');
   if (session?.role === 'staff') return navigate('/dashboard/scan');

@@ -372,7 +372,7 @@ def get_plan_features(plan: str) -> Dict[str, Any]:
     baseline = dict(PLAN_FEATURES.get(plan) or PLAN_FEATURES["silver"])
     # Fold trial + price baselines in too, so the admin editor and any
     # consumer that calls get_plan_features() sees a uniform shape.
-    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 28)
+    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 30)
     baseline["trial_reminder_days_before"] = TRIAL_REMINDER_DAYS_BEFORE
     baseline["price"] = PLAN_PRICES.get(plan, 0)
     baseline["label"] = PLAN_LABELS.get(plan, plan.title())
@@ -2393,9 +2393,9 @@ def _unique_slug(name: str) -> str:
 
 def _start_trial(tenant_doc: Dict[str, Any], plan: str = "silver") -> None:
     """Stamp the trial fields on a tenant document (in place). Called when the
-    company details are complete — that is the moment the 28 days start,
+    sign-up reaches the plan step — that is the moment the 30 days start,
     not the moment the personal account was created."""
-    trial_days = int(get_plan_features(plan).get("trial_duration_days", 28))
+    trial_days = int(get_plan_features(plan).get("trial_duration_days", 30))
     now_utc = datetime.now(timezone.utc)
     tenant_doc["subscription_status"] = "trialing"
     tenant_doc["trial_started_at"] = now_utc
@@ -2409,8 +2409,9 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
 
     New flow (app.fidclic.com/register):
       first_name, last_name, email, phone, password, accepted_terms=true
-      → user + a tenant STUB with onboarding_status="company". The trial does
-        NOT start yet: it starts when /api/onboarding/company completes step 2.
+      → user + a tenant STUB with onboarding_status="company", is_active=False
+        (a hidden draft). The trial does NOT start yet: it starts on the plan
+        step, /api/onboarding/start-trial (features/onboarding.py).
       → the response carries a session (cookie + token) so the browser goes
         straight to /onboarding/entreprise without a second login round-trip.
 
@@ -2471,6 +2472,9 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
             _start_trial(tenant_doc, "silver")
         else:
             tenant_doc["subscription_status"] = "onboarding"
+            # A hidden draft until the plan step: every super-admin list and
+            # count, and every cron, skips is_active=False tenants.
+            tenant_doc["is_active"] = False
         # Stamp postal_code + owner_name as extras so they're easy to surface in Settings
         if payload.get("postal_code"):
             tenant_doc["postal_code"] = payload["postal_code"]
@@ -2970,7 +2974,7 @@ def _plan_row(plan: str) -> Dict[str, Any]:
     # Build the full baseline shape, including trial + price fields, so the
     # UI can render a uniform table for the 3 plans.
     baseline = dict(PLAN_FEATURES.get(plan) or {})
-    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 28)
+    baseline["trial_duration_days"] = PLAN_TRIAL_DAYS.get(plan, 30)
     baseline["trial_reminder_days_before"] = TRIAL_REMINDER_DAYS_BEFORE
     baseline["price"] = PLAN_PRICES.get(plan, 0)
     effective = get_plan_features(plan)
@@ -3105,7 +3109,7 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
             base = tenant["created_at"]
             if isinstance(base, str):
                 base = datetime.fromisoformat(base.replace("Z", "+00:00"))
-            trial_ends_at = base + timedelta(days=int(features.get("trial_duration_days", 28)))
+            trial_ends_at = base + timedelta(days=int(features.get("trial_duration_days", 30)))
         except Exception:
             trial_ends_at = None
 
@@ -3138,7 +3142,7 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
         "days_left": days_left,
         "hours_left": hours_left,
         "trial_ends_at": trial_ends_at.isoformat() if trial_ends_at else None,
-        "trial_duration_days": int(features.get("trial_duration_days", 28)),
+        "trial_duration_days": int(features.get("trial_duration_days", 30)),
         "reminder_window": in_reminder,
         "reminder_days_before": reminder_days,
         "plan": plan,

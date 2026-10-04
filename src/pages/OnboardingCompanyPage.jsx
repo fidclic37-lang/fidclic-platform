@@ -8,11 +8,11 @@ import { LEGAL_LINKS } from '../lib/legal';
 import OnboardingShell, { Field, FieldLabel, INPUT, StepButtons } from '../components/OnboardingShell';
 
 /**
- * OnboardingCompanyPage — STEP 2 of 3: "Votre établissement" (approved mockup).
+ * OnboardingCompanyPage — STEP 2 of 4: "Votre établissement" (approved mockup).
  *
  *   nom de l'établissement · secteur · adresse · code postal · ville · pays
- *   → POST /api/onboarding/company → tenant onboarding_status="done",
- *     28-day trial starts → step 3 (/onboarding/carte).
+ *   → POST /api/onboarding/company → tenant onboarding_status="plan" (still a
+ *     hidden draft) → step 3 (/onboarding/formule), where the trial starts.
  *
  * The backend still stores legal_name (Kbis name) — at signup it is the shop
  * name; SIRET / raison sociale / activité can be completed later in Settings.
@@ -80,7 +80,7 @@ const OnboardingCompanyPage = () => {
         country: form.country, accepted_terms: needsTerms ? form.accepted_terms : undefined,
       });
       await checkAuth();            // refreshes user.onboarding_status → guards let us through
-      navigate('/onboarding/carte', { replace: true });
+      navigate('/onboarding/formule', { replace: true });
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || t('onboarding.failed'));
     } finally {
