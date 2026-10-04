@@ -382,9 +382,11 @@ def _goal(shop: Shop) -> Dict[str, Any]:
 # Groups the advice reasons over
 # ---------------------------------------------------------------------------
 def _inactive(shop: Shop) -> List[Dict[str, Any]]:
+    # Since the last visit — or the sign-up, for a client who hasn't come yet:
+    # a client who joined yesterday is not « inactif » (clients_page.last_contact).
+    from features import clients_page as CP
     cut = shop.at - timedelta(days=INACTIVE_DAYS)
-    return [c for c in shop.people
-            if not (d := _aware(c.get("last_visit_date"))) or d < cut]
+    return [c for c in shop.people if not (d := CP.last_contact(c)) or d < cut]
 
 
 def _one_timers(shop: Shop) -> List[Dict[str, Any]]:

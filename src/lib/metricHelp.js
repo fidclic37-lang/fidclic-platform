@@ -104,7 +104,7 @@ const H = {
   inactive: {
     t: 'Clients inactifs',
     what: "Les clients qui ne viennent plus.",
-    how: "Les clients pas venus depuis la durée « Client actif » de vos Règles clients (30 jours par défaut), y compris ceux jamais revenus après leur inscription.",
+    how: "Les clients sans visite pendant toute la durée « Client actif » de vos Règles clients (30 jours par défaut) : depuis leur dernière visite, ou depuis leur inscription s'ils ne sont pas encore venus. Un client inscrit aujourd'hui n'est jamais inactif.",
     why: "C'est votre réserve de chiffre d'affaires : une relance bien faite en fait revenir une partie. Moins il y en a, mieux c'est.",
   },
   new_clients: {
