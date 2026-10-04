@@ -252,6 +252,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     st, _ = status(WP.serials_for_device, "dev9", "pass.com.fidclic.test", str(int(time.time()) + 60))
     check("and only once: nothing newer → 204", st == 204)
 
+    # ---- the owner can see the update chain --------------------------------
+    import asyncio
+    class _Req:
+        async def json(self): return {"logs": ["Error fetching pass FT-TEST0001: 401", "other shop FT-ZZZZ9999 failed"]}
+    asyncio.run(WP.passkit_log(_Req()))
+    WP.latest_pass("pass.com.fidclic.test", "FT-TEST0001", "ApplePass " + WP._auth_token("FT-TEST0001"))
+    class _OT2:
+        email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
+    st = WP.owner_wallet_stats(_OT2())
+    d0 = st["devices_detail"][0]
+    check("stats: last push, its result, the check and the fetch are visible",
+          bool(d0["last_push_at"] and d0["last_push_result"] == "ok" and d0["last_check_at"] and d0["last_fetch_at"]))
+    check("stats: only this shop's device log lines", [x["line"] for x in st["device_logs"]] == ["Error fetching pass FT-TEST0001: 401"])
+
     # ---- a wallet campaign: short title in front, full text on the back ---
     db.campaigns.insert_one({"id": "camp1", "tenant_id": "t1", "status": "sent", "wallet_offer": True,
                              "recipient_ids": ["c1"], "name": "Salut",

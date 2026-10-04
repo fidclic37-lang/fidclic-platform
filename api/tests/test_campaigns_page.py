@@ -150,6 +150,23 @@ def main():
     check("the card feed carries the title and the message",
           feed[0]["title"] == "Café offert" and feed[0]["body"] == "Cette semaine seulement")
 
+    # The Wallet wake-up must find the campaign already saved as sent: the
+    # iPhone fetches its pass within seconds and the pass reads the offer from
+    # the database. Saved after, the pass came back unchanged — no notification.
+    import features.wallet_passes as _WP
+    seen = {}
+    real_notify = _WP.notify_passes
+    def spy(serials):
+        c = db.campaigns.find_one({"name": "Wallet ordre"})
+        seen["at_wake"] = (c or {}).get("status")
+        return {"sent": 0}
+    _WP.notify_passes = spy
+    try:
+        compose(title="Wallet ordre", message="Le pass doit le voir", customer_ids=["c1"])
+    finally:
+        _WP.notify_passes = real_notify
+    check("when the passes are woken, the campaign is already saved as sent", seen.get("at_wake") == "sent")
+
     chosen = compose(title="Pour vous", message="Une attention", customer_ids=["c1", "c2"])
     hand = db.campaigns.find_one({"id": chosen["id"]})
     check("a hand-picked list is honoured as given", set(hand["recipient_ids"]) == {"c1", "c2"})

@@ -920,6 +920,11 @@ def notify_passes(serials: Iterable[str]) -> Dict[str, Any]:
     if not regs:
         return {"devices": 0, "sent": 0}
     res = apns_passes.push_to_tokens([r.get("push_token") for r in regs])
+    # What Apple answered, kept on the registrations: the owner's Wallet stats
+    # show it, so « no notification » can be traced without server logs.
+    outcome = "ok" if res.get("sent") else ("; ".join(res.get("errors", [])[:2]) or "not sent")
+    _db.pass_registrations.update_many({"serial": {"$in": serials}}, {"$set": {
+        "last_push_at": datetime.now(timezone.utc), "last_push_result": outcome[:200]}})
     for dead in res.get("gone", []):
         try:
             _db.pass_registrations.delete_many({"push_token": dead})
@@ -945,6 +950,12 @@ def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> D
     return notify_passes(serials)
 
 
+def _iso_or_none(d: Any) -> Optional[str]:
+    if not isinstance(d, datetime):
+        return None
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).isoformat()
+
+
 @router.get("/api/owner/wallet/stats")
 def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
     """How the Wallet side of the programme is doing: how many customers carry
@@ -953,7 +964,8 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     serials = [c["barcode_id"] for c in _db.customers.find(
         {"tenant_id": tid, "barcode_id": {"$exists": True}}, {"barcode_id": 1}) if c.get("barcode_id")]
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
-                                            {"serial": 1, "updated_at": 1, "created_at": 1}))
+                                            {"serial": 1, "updated_at": 1, "created_at": 1, "last_push_at": 1,
+                                             "last_push_result": 1, "last_check_at": 1, "last_fetch_at": 1}))
     customers = len(serials)
     installed = len({r["serial"] for r in regs})
     last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
@@ -971,6 +983,18 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         "devices": len(regs),                 # iPhone + Watch count as two
         "install_rate": round(installed / customers * 100) if customers else 0,
         "last_registration_at": last.isoformat() if last else None,
+        # The update chain, newest device first: we push → the iPhone asks
+        # what changed → it fetches the pass. A gap shows where it breaks.
+        "devices_detail": [{
+            "card": r.get("serial"),
+            "last_push_at": _iso_or_none(r.get("last_push_at")), "last_push_result": r.get("last_push_result"),
+            "last_check_at": _iso_or_none(r.get("last_check_at")), "last_fetch_at": _iso_or_none(r.get("last_fetch_at")),
+        } for r in sorted(regs, key=lambda r: _iso_or_none(r.get("updated_at") or r.get("created_at")) or "", reverse=True)[:10]],
+        # Only lines naming one of THIS shop's cards: the log is shared by every
+        # device, and another shop's card numbers are not ours to show.
+        "device_logs": [{"at": _iso_or_none(d.get("at")), "line": d.get("line")}
+                        for d in _db.pass_device_logs.find({}, {"_id": 0}).sort("at", -1).limit(200)
+                        if any(sr in (d.get("line") or "") for sr in serials)][:10],
     }
 
 
@@ -1041,6 +1065,7 @@ def serials_for_device(device_id: str, pass_type_id: str, passesUpdatedSince: Op
     regs = list(_db.pass_registrations.find({"device_id": device_id, "pass_type_id": pass_type_id}))
     if not regs:
         return Response(status_code=204)
+    _db.pass_registrations.update_many({"device_id": device_id}, {"$set": {"last_check_at": datetime.now(timezone.utc)}})
     serials = [r["serial"] for r in regs]
     since = None
     if passesUpdatedSince:
@@ -1074,6 +1099,7 @@ def unregister_device(device_id: str, pass_type_id: str, serial: str,
 @router.get("/api/passes/v1/passes/{pass_type_id}/{serial}")
 def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
+    _db.pass_registrations.update_many({"serial": serial}, {"$set": {"last_fetch_at": datetime.now(timezone.utc)}})
     return _pkpass_response(serial)
 
 
@@ -1081,8 +1107,16 @@ def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = H
 async def passkit_log(request: Request):
     try:
         body = await request.json()
-        for line in (body or {}).get("logs", [])[:20]:
+        lines = [str(x)[:500] for x in (body or {}).get("logs", [])[:20]]
+        for line in lines:
             print(f"[passkit] {line}")
+        # Kept (last 50) so the owner's Wallet stats can show what the iPhone
+        # complained about — Vercel logs are not something a merchant reads.
+        if lines:
+            _db.pass_device_logs.insert_many([{"at": datetime.now(timezone.utc), "line": l} for l in lines])
+            old = [d["_id"] for d in _db.pass_device_logs.find({}, {"_id": 1}).sort("at", -1).skip(50)]
+            if old:
+                _db.pass_device_logs.delete_many({"_id": {"$in": old}})
     except Exception:
         pass
     return Response(status_code=200)

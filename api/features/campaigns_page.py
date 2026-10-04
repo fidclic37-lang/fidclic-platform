@@ -407,10 +407,15 @@ def compose(req: Compose, request: Request = None,
         return {"id": doc["id"], "status": status, "audience": len(people),
                 "scheduled_for": when.isoformat() if when else None}
 
+    # Saved as sent BEFORE delivering: _deliver() wakes the Wallet passes, and
+    # an iPhone fetches its new pass within seconds. The pass builder reads the
+    # campaign from the database (wallet_passes._attach_campaign_offer); saved
+    # after, the pass came back unchanged and Wallet raised no notification
+    # (user, 2026-10-04 — the offer only appeared later, silently).
     doc["sent_at"] = at
-    result = _deliver(tid, doc, people)
-    doc["delivered_count"] = result["delivered"]
     _db.campaigns.insert_one(dict(doc))
+    result = _deliver(tid, doc, people)
+    _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": result["delivered"]}})
     return {"id": doc["id"], "status": "sent", "audience": len(people), **result}
 
 
@@ -486,14 +491,15 @@ def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
             {"_id": 0}))
         doc["sent_at"] = at
         doc.setdefault("channels", {"push": True, "wallet": True})
+        # Sent first, then delivered — the passes it wakes must find it (see compose).
+        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "sent", "sent_at": at}})
         try:
             res = _deliver(doc["tenant_id"], doc, people)
         except Exception as exc:                       # one tenant must not stop the cron
             print(f"campagnes: scheduled send failed for {doc['id']}: {exc}")
-            _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "scheduled"}})
+            _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "scheduled", "sent_at": None}})
             continue
-        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {
-            "status": "sent", "sent_at": at, "delivered_count": res["delivered"]}})
+        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": res["delivered"]}})
         out["sent"] += 1
         out["recipients"] += res["reach"]
     return out
