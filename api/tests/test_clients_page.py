@@ -260,6 +260,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           d["loyal_visits"] == 5 and d["inactive_days"] == 30 and d["local_km"] == 5.0)
     check("so does the sort vocabulary", len(ov["sorts"]) == 6)
 
+    # ---- « inactif » counts from the last visit, or the sign-up (user, 2026-10-04) ----------
+    print("\nInactif : depuis la dernière visite, ou l'inscription")
+    t0 = dt.datetime.now(dt.timezone.utc)
+    ago = lambda d: t0 - dt.timedelta(days=d)          # noqa: E731
+    check("signed up today, no visit yet → NOT inactive", not CP.is_inactive({"visits": 0, "created_at": ago(0)}, t0))
+    check("signed up 20 days ago, no visit → not inactive yet", not CP.is_inactive({"visits": 0, "created_at": ago(20)}, t0))
+    check("signed up 32 days ago, never came → inactive", CP.is_inactive({"visits": 0, "created_at": ago(32)}, t0))
+    check("came 40 days ago → inactive", CP.is_inactive({"visits": 3, "created_at": ago(200), "last_visit_date": ago(40)}, t0))
+    check("came 5 days ago → active", not CP.is_inactive({"visits": 3, "created_at": ago(200), "last_visit_date": ago(5)}, t0))
+    from features import customer_rules as R
+    sixty = [dict(r, conditions=[{**r["conditions"][0], "value": 60}]) if r.get("key") == "actif" else r for r in R.defaults()]
+    check("the owner's own window (60 days): signed up 45 days ago → not inactive",
+          not CP.is_inactive({"visits": 0, "created_at": ago(45)}, t0, sixty))
+
     # ---- the page's own wiring ---------------------------------------------------------------
     print("\nLe câblage de la page")
     src = open(os.path.join(os.path.dirname(__file__), "..", "..",

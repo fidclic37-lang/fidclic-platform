@@ -117,11 +117,22 @@ def is_loyal(cust: Dict[str, Any], at: datetime,
     return int(cust.get("visits") or 0) >= LOYAL_VISITS
 
 
+def last_contact(cust: Dict[str, Any]) -> Optional[datetime]:
+    """The last time the client was with the shop: their last visit, or their
+    sign-up when they haven't visited since — whichever is later."""
+    dates = [d for d in (_aware(cust.get("last_visit_date")), _aware(cust.get("created_at")),
+                         _aware(cust.get("join_date"))) if d]
+    return max(dates) if dates else None
+
+
 def is_inactive(cust: Dict[str, Any], at: datetime,
                 rules: Optional[List[Dict[str, Any]]] = None) -> bool:
-    """Not seen inside the "Client actif" window — never-seen clients included."""
+    """Nothing for the whole "Client actif" window (30 days by default, the
+    shop's Règles clients) since the last visit — or since the sign-up for a
+    client who hasn't come yet. A client who signed up today is not inactive
+    (user, 2026-10-04: it was, from the first second)."""
     days = R.active_days(rules if rules is not None else R.defaults())
-    last = _aware(cust.get("last_visit_date"))
+    last = last_contact(cust)
     return not last or (at - last).total_seconds() / 86400.0 >= days + 1
 
 
