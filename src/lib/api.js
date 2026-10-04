@@ -93,6 +93,8 @@ export const onboardingAPI = {
   // Step 3: the plans shown side by side, then « Commencer l'essai ».
   plans: () => api.get('/public/plans'),
   startTrial: () => api.post('/onboarding/start-trial'),
+  // Step 2: suggestions inside the selected country (services/addresses.py).
+  addressSearch: (params) => api.get('/onboarding/address-search', { params }),
 };
 
 // CRM de prospection — FidClic's own sales (super admin + commercials).

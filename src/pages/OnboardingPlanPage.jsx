@@ -98,8 +98,8 @@ const OnboardingPlanPage = () => {
                 </span>
               )}
               <p className="text-[17px] font-bold text-[#0B1C3F]">{p.label}</p>
-              <p className="mt-3 text-[14px] text-[#94A3B8]">
-                <s>{fmt(p.price_monthly)} {t('plan_step.per_month')}</s>
+              <p className="mt-3 text-[15px] font-semibold text-[#334155]">
+                <s className="decoration-[#DC2626] decoration-2">{fmt(p.price_monthly)} {t('plan_step.per_month')}</s>
               </p>
               <p className="mt-0.5 flex items-baseline gap-1.5">
                 <span className="text-[34px] font-extrabold leading-none tracking-[-0.02em] text-[#0B1C3F]">0 €</span>
