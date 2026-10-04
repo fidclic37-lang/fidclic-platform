@@ -62,7 +62,8 @@
     "team": "Team & access",
     "segmentation": "Segmentation",
     "referral": "Referral",
-    "help_cta": "Contact the team"
+    "help_cta": "Contact the team",
+    "scan_short": "Scan"
   },
   "auth": {
     "login_title": "Sign in",

@@ -62,7 +62,8 @@
     "team": "Équipe & accès",
     "segmentation": "Segmentation",
     "referral": "Parrainage",
-    "help_cta": "Contacter l'équipe"
+    "help_cta": "Contacter l'équipe",
+    "scan_short": "Scanner"
   },
   "auth": {
     "login_title": "Connexion",

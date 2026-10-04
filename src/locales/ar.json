@@ -62,7 +62,8 @@
     "team": "الفريق والصلاحيات",
     "segmentation": "التقسيم",
     "referral": "الإحالة",
-    "help_cta": "اتصل بالفريق"
+    "help_cta": "اتصل بالفريق",
+    "scan_short": "مسح"
   },
   "auth": {
     "login_title": "تسجيل الدخول",
