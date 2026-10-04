@@ -160,10 +160,17 @@ export const crmAPI = {
 };
 
 // Super admin › Sécurité — FidClic's own team, roles, logins, journal.
+const resetQs = (include_crm, keep) => {
+  const q = new URLSearchParams({ include_crm: String(include_crm) });
+  keep.forEach((e) => q.append('keep', e));
+  return q.toString();
+};
+
 export const securityAPI = {
   // Remise à zéro (features/platform_reset.py) — super admin only, three gates.
-  resetPreview: (include_crm) => api.get('/admin/reset/preview', { params: { include_crm } }),
-  resetBackup: (include_crm) => api.get('/admin/reset/backup', { params: { include_crm }, responseType: 'blob' }),
+  // keep=a&keep=b (FastAPI's list form, not axios' keep[]=)
+  resetPreview: (include_crm, keep = []) => api.get(`/admin/reset/preview?${resetQs(include_crm, keep)}`),
+  resetBackup: (include_crm, keep = []) => api.get(`/admin/reset/backup?${resetQs(include_crm, keep)}`, { responseType: 'blob' }),
   reset: (body) => api.post('/admin/reset', body),
   overview: (params) => api.get('/admin/security/overview', { params }),
   users: (params) => api.get('/admin/security/users', { params }),

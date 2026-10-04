@@ -13,6 +13,7 @@ const fmt = (n) => Number(n || 0).toLocaleString('fr-FR');
 
 export default function PlatformResetCard() {
   const [crm, setCrm] = useState(true);
+  const [keep, setKeep] = useState([]);           // other super admins who stay
   const [pv, setPv] = useState(null);
   const [token, setToken] = useState('');
   const [phrase, setPhrase] = useState('');
@@ -23,14 +24,14 @@ export default function PlatformResetCard() {
 
   const load = () => {
     setErr(''); setToken('');
-    securityAPI.resetPreview(crm).then((r) => setPv(r.data)).catch((e) => setErr(e?.response?.data?.detail || 'Aperçu impossible.'));
+    securityAPI.resetPreview(crm, keep).then((r) => setPv(r.data)).catch((e) => setErr(e?.response?.data?.detail || 'Aperçu impossible.'));
   };
-  useEffect(() => { if (pv) load(); }, [crm]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (pv) load(); }, [crm, keep.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const backup = async () => {
     setBusy('backup'); setErr('');
     try {
-      const r = await securityAPI.resetBackup(crm);
+      const r = await securityAPI.resetBackup(crm, keep);
       const t = r.headers?.['x-reset-token'];
       const name = (r.headers?.['content-disposition'] || '').match(/filename="([^"]+)"/)?.[1] || 'fidclic-sauvegarde.json.gz';
       const url = URL.createObjectURL(r.data);
@@ -45,7 +46,7 @@ export default function PlatformResetCard() {
   const wipe = async () => {
     setBusy('reset'); setErr('');
     try {
-      const r = await securityAPI.reset({ token: token.value, confirm: phrase.trim(), include_crm: crm });
+      const r = await securityAPI.reset({ token: token.value, confirm: phrase.trim(), include_crm: crm, keep });
       setDone(r.data);
     } catch (e) {
       setErr(e?.response?.data?.detail || 'La remise à zéro a échoué. Rien n’a été supprimé.');
@@ -59,7 +60,7 @@ export default function PlatformResetCard() {
           <CheckCircle2 className="mt-0.5 text-[#16803C]" size={22} />
           <div>
             <p className="text-[15px] font-bold text-[#0B1C3F]">Plateforme remise à zéro — {fmt(done.total)} éléments supprimés.</p>
-            <p className="mt-1 text-[13px] text-[#475569]">Il ne reste que votre compte ({done.kept_login}) et les paramètres. Les nouveaux commerces s’inscrivent sur /register.</p>
+            <p className="mt-1 text-[13px] text-[#475569]">Comptes conservés : {(done.kept_logins || [done.kept_login]).join(', ')} — et les paramètres. Les nouveaux commerces s’inscrivent sur /register.</p>
             <button type="button" onClick={() => { window.location.href = '/admin'; }} className="mt-3 rounded-xl bg-[#2F6BFF] px-4 py-2 text-[13px] font-semibold text-white">Retour au tableau de bord</button>
           </div>
         </div>
@@ -84,13 +85,24 @@ export default function PlatformResetCard() {
                 <div key={l} className="rounded-xl bg-[#FDF3F2] px-4 py-3"><div className="text-[22px] font-bold" style={{ color: RED }}>{fmt(v)}</div><div className="text-[12.5px] text-[#475569]">{l}</div></div>
               ))}
             </div>
-            <p className="text-[#475569]">Au total <b>{fmt(pv.total)}</b> éléments. Conservé : votre compte <b>{pv.kept_login}</b> et les paramètres.{' '}
+            <p className="text-[#475569]">Au total <b>{fmt(pv.total)}</b> éléments. Conservés : <b>{(pv.kept_logins || [pv.kept_login]).join(', ')}</b> et les paramètres.{' '}
               <button type="button" onClick={() => setDetails((d) => !d)} className="font-semibold text-[#2F6BFF]">{details ? 'Masquer le détail' : 'Voir le détail'}</button></p>
             {details && (
               <div className="grid max-h-56 gap-x-6 gap-y-1 overflow-y-auto rounded-xl bg-[#F8FAFF] p-3 text-[12.5px] sm:grid-cols-3">
                 {Object.entries(pv.collections).map(([k, v]) => <div key={k} className="flex justify-between gap-2"><span className="truncate text-[#475569]">{k}</span><b>{fmt(v)}</b></div>)}
               </div>
             )}
+            <div className="rounded-xl border border-[#E6EEFB] p-3">
+              <p className="mb-1.5 font-semibold text-[#0B1C3F]">Comptes Super Admin à conserver</p>
+              {(pv.super_admins || []).map((a) => (
+                <label key={a.email} className="flex items-center gap-2.5 py-0.5">
+                  <input type="checkbox" className="accent-[#2F6BFF]" disabled={a.you} checked={a.you || keep.includes(a.email)}
+                         onChange={(e) => setKeep((k) => (e.target.checked ? [...k, a.email] : k.filter((x) => x !== a.email)))} />
+                  <span>{a.email}{a.you ? ' — vous (toujours conservé)' : ''}</span>
+                </label>
+              ))}
+              <p className="mt-1 text-[12px] text-[#64748B]">Tous les autres comptes (commerces, équipes, comptables, Super Admins non cochés) sont supprimés.</p>
+            </div>
             <label className="flex items-start gap-2.5">
               <input type="checkbox" className="mt-0.5 accent-[#C0392B]" checked={crm} onChange={(e) => setCrm(e.target.checked)} />
               <span>Supprimer aussi le <b>CRM de prospection</b> (prospects, séquences, appels, tâches){Object.keys(pv.crm || {}).length ? ` — ${fmt(Object.values(pv.crm).reduce((a, b) => a + b, 0))} éléments` : ''}.</span>

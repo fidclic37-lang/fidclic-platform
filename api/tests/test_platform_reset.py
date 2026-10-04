@@ -47,6 +47,7 @@ now = datetime.now(timezone.utc)
 db.users.insert_many([
     {"email": "boss@fidclic.com", "role": "super_admin", "tenant_id": None},
     {"email": "admin@fidelitour.com", "role": "super_admin"},
+    {"email": "demo.admin@fidelitour.com", "role": "super_admin"},
     {"email": "owner@cafelumiere.fr", "role": "business_owner", "tenant_id": "tenant-1"},
     {"email": "sales@fidclic.com", "role": "commercial"},
 ])
@@ -66,7 +67,13 @@ BOSS = SimpleNamespace(email="boss@fidclic.com", role="super_admin", tenant_id=N
 print("\nAperçu")
 pv = PR.preview(include_crm=True, token_data=BOSS)
 check("counts the businesses, customers and other logins", pv["businesses"] == 2 and pv["customers"] == 5
-      and pv["logins_deleted"] == 3 and pv["collections"]["visits"] == 7)
+      and pv["logins_deleted"] == 4 and pv["collections"]["visits"] == 7)
+KEEP = ["admin@fidelitour.com", "owner@cafelumiere.fr"]
+pk = PR.preview(include_crm=True, keep=KEEP, token_data=BOSS)
+check("the super admins are listed, you first-class", {x["email"] for x in pk["super_admins"]} ==
+      {"boss@fidclic.com", "admin@fidelitour.com", "demo.admin@fidelitour.com"})
+check("a ticked super admin is kept; a merchant login can never be", pk["kept_logins"] == ["admin@fidelitour.com", "boss@fidclic.com"]
+      and pk["logins_deleted"] == 3)
 check("settings are not in the list", "platform_settings" not in pv["collections"]
       and "plan_settings" not in pv["collections"] and "platform_roles" not in pv["collections"])
 check("the CRM is counted when ticked", pv["collections"].get("crm_prospects") == 1)
@@ -74,17 +81,19 @@ check("and left out when not", "crm_prospects" not in PR.preview(include_crm=Fal
 
 print("\nLes garde-fous")
 expect("no backup token → 400", 400, lambda: PR.reset(PR.ResetIn(token="nope", confirm="SUPPRIMER"), None, BOSS))
-resp = PR.backup(include_crm=True, token_data=BOSS)
+resp = PR.backup(include_crm=True, keep=KEEP, token_data=BOSS)
 token = resp.headers["x-reset-token"]
 raw = gzip.decompress(asyncio.run(body_of(resp)))
 from bson import json_util
 dump = json_util.loads(raw)
 check("the backup holds everything that will go", dump["meta"]["counts"]["visits"] == 7
       and dump["meta"]["counts"]["users"] == 3 and len(dump["collections"]["customers"]) == 5)
+expect("a different list of kept logins than the backup's → 400", 400,
+       lambda: PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER", keep=[]), None, BOSS))
 check("but not the super admin running it", all(u["email"] != "boss@fidclic.com" for u in dump["collections"]["users"]))
-expect("wrong phrase → 400", 400, lambda: PR.reset(PR.ResetIn(token=token, confirm="supprimer ?"), None, BOSS))
+expect("wrong phrase → 400", 400, lambda: PR.reset(PR.ResetIn(token=token, confirm="supprimer ?", keep=KEEP), None, BOSS))
 expect("backup taken for another scope → 400", 400,
-       lambda: PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER", include_crm=False), None, BOSS))
+       lambda: PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER", include_crm=False, keep=KEEP), None, BOSS))
 TEAM = SimpleNamespace(email="sales@fidclic.com", role="commercial", tenant_id=None)
 expect("a team member is refused (not super admin)", 403,
        lambda: PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER"), None,
@@ -94,17 +103,17 @@ db.platform_reset_tokens.update_one({"token": old}, {"$set": {"expires_at": now 
 expect("an expired backup token → 400", 400, lambda: PR.reset(PR.ResetIn(token=old, confirm="SUPPRIMER"), None, BOSS))
 
 print("\nRemise à zéro")
-out = PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER", include_crm=True), None, BOSS)
+out = PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER", include_crm=True, keep=KEEP), None, BOSS)
 check("reports what it deleted", out["ok"] and out["deleted"]["visits"] == 7 and out["deleted"]["tenants"] == 2)
 check("no business, customer, visit, campaign or pass left",
       sum(db[n].count_documents({}) for n in ("tenants", "customers", "visits", "campaigns", "pass_registrations", "crm_prospects")) == 0)
-check("only the super admin who ran it can still log in",
-      [u["email"] for u in db.users.find({})] == ["boss@fidclic.com"])
+check("only the kept super admins can still log in (demo.admin and the merchant are gone)",
+      sorted(u["email"] for u in db.users.find({})) == ["admin@fidelitour.com", "boss@fidclic.com"])
 check("and stays signed in (their session is kept, the others' are not)",
       [x["sid"] for x in db.user_sessions.find({})] == ["s-boss"])
 check("settings untouched", db.platform_settings.count_documents({}) == 1
       and db.plan_settings.count_documents({}) == 1 and db.platform_roles.count_documents({}) == 1)
-expect("the token works once", 400, lambda: PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER"), None, BOSS))
+expect("the token works once", 400, lambda: PR.reset(PR.ResetIn(token=token, confirm="SUPPRIMER", keep=KEEP), None, BOSS))
 check("the new journal starts with the reset", db.audit_logs.count_documents({"action": "platform.reset"}) +
       db.audit_log.count_documents({"action": "platform.reset"}) >= 1)
 
@@ -113,7 +122,7 @@ for name, docs in dump["collections"].items():
     if docs:
         db[name].insert_many(docs)
 check("restoring the file brings everything back", db.visits.count_documents({}) == 7
-      and db.customers.count_documents({}) == 5 and db.users.count_documents({}) == 4
+      and db.customers.count_documents({}) == 5 and db.users.count_documents({}) == 5
       and db.user_sessions.count_documents({}) == 2)
 
 _patch.stop()

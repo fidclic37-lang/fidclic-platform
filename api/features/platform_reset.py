@@ -5,7 +5,8 @@ Status: 🟢 Core (user, 2026-10-04: « sab saaf … brand new fresh start »).
 WHAT IT DOES
     Deletes every business and everything attached to it (customers, visits,
     campaigns, Wallet passes, invoices, tickets, logs…), every login except
-    the super admin running it, and — if ticked — FidClic's own prospecting
+    the super admin running it and the other super admins ticked to stay,
+    and — if ticked — FidClic's own prospecting
     CRM. Platform SETTINGS stay: plan prices and limits, roles, security
     settings, invoice issuer details, canned replies, email/task templates.
 
@@ -31,7 +32,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -75,23 +76,35 @@ def _scope(include_crm: bool) -> List[str]:
 OWN = {"users", "user_sessions"}
 
 
-def _filter(name: str, keep_email: str) -> Dict[str, Any]:
-    """Everything — except the super admin's own account and sessions."""
-    return {"email": {"$ne": keep_email}} if name in OWN else {}
+def _kept(runner: str, extra: List[str]) -> List[str]:
+    """The super admins who stay: the one running it, always, plus the other
+    super admin logins ticked in the tool (user, 2026-10-04: keep
+    akshanshshukla963@ and admin@fidelitour.com, delete demo.admin@). Only
+    existing super admin accounts can be kept — never a merchant login."""
+    extra = extra if isinstance(extra, (list, tuple)) else []      # direct calls get Query()'s default
+    supers = {u["email"] for u in _db.users.find({"role": "super_admin"}, {"email": 1})}
+    return sorted({runner} | {e.strip().lower() for e in (extra or []) if e.strip().lower() in supers})
 
 
-def _counts(include_crm: bool, keep_email: str) -> Dict[str, int]:
+def _filter(name: str, keep: List[str]) -> Dict[str, Any]:
+    """Everything — except the kept super admins' accounts and sessions."""
+    return {"email": {"$nin": keep}} if name in OWN else {}
+
+
+def _counts(include_crm: bool, keep: List[str]) -> Dict[str, int]:
     out = {}
     for n in _scope(include_crm):
-        c = _db[n].count_documents(_filter(n, keep_email))
+        c = _db[n].count_documents(_filter(n, keep))
         if c:
             out[n] = c
     return out
 
 
 @router.get("/api/admin/reset/preview")
-def preview(include_crm: bool = True, token_data: TokenData = Depends(require_super())):
-    counts = _counts(include_crm, token_data.email)
+def preview(include_crm: bool = True, keep: List[str] = Query(default=[]),
+            token_data: TokenData = Depends(require_super())):
+    kept = _kept(token_data.email, keep)
+    counts = _counts(include_crm, kept)
     return {
         "collections": counts,
         "total": sum(counts.values()),
@@ -99,6 +112,9 @@ def preview(include_crm: bool = True, token_data: TokenData = Depends(require_su
         "customers": _db.customers.count_documents({}),
         "logins_deleted": counts.get("users", 0),
         "kept_login": token_data.email,
+        "kept_logins": kept,
+        "super_admins": [{"email": u["email"], "you": u["email"] == token_data.email, "kept": u["email"] in kept}
+                         for u in _db.users.find({"role": "super_admin"}, {"email": 1}).sort("email", 1)],
         "kept_settings": sorted(KEEP - {"platform_reset_tokens", "commune_cache", "system_jobs"}),
         "crm_included": include_crm,
         "crm": {n: _db[n].count_documents({}) for n in sorted(CRM) if _db[n].count_documents({})},
@@ -107,21 +123,23 @@ def preview(include_crm: bool = True, token_data: TokenData = Depends(require_su
 
 
 @router.get("/api/admin/reset/backup")
-def backup(include_crm: bool = True, token_data: TokenData = Depends(require_super())):
+def backup(include_crm: bool = True, keep: List[str] = Query(default=[]),
+           token_data: TokenData = Depends(require_super())):
     """Everything the reset would delete, as gzip'd extended JSON (bson
     json_util: dates and ids round-trip). The response carries the one-time
     token the reset asks for."""
     from bson import json_util
-    data = {n: list(_db[n].find(_filter(n, token_data.email))) for n in _scope(include_crm)}
+    kept = _kept(token_data.email, keep)
+    data = {n: list(_db[n].find(_filter(n, kept))) for n in _scope(include_crm)}
     data = {k: v for k, v in data.items() if v}
-    meta = {"made_at": _now().isoformat(), "by": token_data.email, "include_crm": include_crm,
+    meta = {"made_at": _now().isoformat(), "by": token_data.email, "include_crm": include_crm, "kept": kept,
             "counts": {k: len(v) for k, v in data.items()}}
     raw = json_util.dumps({"meta": meta, "collections": data}, ensure_ascii=False).encode("utf-8")
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
         gz.write(raw)
     token = secrets.token_urlsafe(24)
-    _db.platform_reset_tokens.insert_one({"token": token, "email": token_data.email, "include_crm": include_crm,
+    _db.platform_reset_tokens.insert_one({"token": token, "email": token_data.email, "include_crm": include_crm, "kept": kept,
                                           "expires_at": _now() + TOKEN_TTL, "backup_bytes": buf.tell()})
     name = f"fidclic-sauvegarde-{_now().strftime('%Y%m%d-%H%M')}.json.gz"
     return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/gzip", headers={
@@ -134,6 +152,7 @@ class ResetIn(BaseModel):
     token: str
     confirm: str
     include_crm: bool = True
+    keep: List[str] = []
 
 
 @router.post("/api/admin/reset")
@@ -150,21 +169,23 @@ def reset(body: ResetIn, request: Request, token_data: TokenData = Depends(requi
         exp = exp.replace(tzinfo=timezone.utc)
     if not tok or tok.get("used_at") or not exp or exp < _now():
         raise HTTPException(status_code=400, detail="Téléchargez d'abord la sauvegarde (valable 30 minutes), puis recommencez.")
-    if bool(tok.get("include_crm")) != bool(body.include_crm):
+    kept = _kept(token_data.email, body.keep)
+    if bool(tok.get("include_crm")) != bool(body.include_crm) or sorted(tok.get("kept") or []) != kept:
         raise HTTPException(status_code=400, detail="La sauvegarde ne couvre pas le même périmètre : téléchargez-la à nouveau.")
     deleted: Dict[str, int] = {}
     for n in _scope(body.include_crm):
-        r = _db[n].delete_many(_filter(n, token_data.email))
+        r = _db[n].delete_many(_filter(n, kept))
         if r.deleted_count:
             deleted[n] = r.deleted_count
-    # The super admin who ran it keeps a clean account: no shop attached.
-    _db.users.update_one({"email": token_data.email}, {"$set": {"tenant_id": None}})
+    # The kept super admins keep clean accounts: no shop attached.
+    _db.users.update_many({"email": {"$in": kept}}, {"$set": {"tenant_id": None}})
     _db.platform_reset_tokens.update_one({"token": body.token}, {"$set": {"used_at": _now()}})
     # First line of the new journal: who wiped what, and when.
     try:
         import server as core
         core.log_audit("platform.reset", actor=token_data.email, actor_type="user", request=request,
-                       meta={"deleted": deleted, "include_crm": body.include_crm})
+                       meta={"deleted": deleted, "include_crm": body.include_crm, "kept": kept})
     except Exception:
         pass
-    return {"ok": True, "deleted": deleted, "total": sum(deleted.values()), "kept_login": token_data.email}
+    return {"ok": True, "deleted": deleted, "total": sum(deleted.values()), "kept_login": token_data.email,
+            "kept_logins": kept}
