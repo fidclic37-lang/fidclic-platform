@@ -8,11 +8,12 @@ import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
  * OnboardingShell — the frame around the signup steps, from the approved
  * mockups: marketing nav on top (links back to fidclic.com), the phone-in-hand
  * visual on the left (one image, identical on every step), and the white card
- * on the right with the 1-2-3 stepper above the step's content.
+ * on the right with the 1-2-3-4 stepper above the step's content.
  *
  *   step 1  /register               → RegisterPage           (vos informations)
  *   step 2  /onboarding/entreprise  → OnboardingCompanyPage  (votre établissement)
- *   step 3  /onboarding/carte       → OnboardingCardPage     (configuration carte)
+ *   step 3  /onboarding/formule     → OnboardingPlanPage     (votre formule — starts the trial)
+ *   step 4  /onboarding/carte       → OnboardingCardPage     (configuration carte, optional)
  *   done    /onboarding/termine     → OnboardingDonePage     (carte créée — QR à partager)
  */
 const SITE = (import.meta.env.VITE_LEGAL_BASE_URL || 'https://www.fidclic.com').replace(/\/$/, '');
@@ -64,18 +65,21 @@ export const StepButtons = ({ onBack, backLabel, nextLabel, loading, type = 'sub
 
 export const Stepper = ({ step }) => {
   const { t } = useTranslation();
-  const steps = [t('signup.step1'), t('signup.step2'), t('signup.step3')];
+  const steps = [t('signup.step1'), t('signup.step2'), t('signup.step3'), t('signup.step4')];
+  // Four steps don't fit on one line next to each other in the card: each
+  // label sits under its number, joined by a line between the circles.
   return (
-    <ol className="flex items-center justify-center gap-3 text-[13px]">
+    <ol className="grid grid-cols-4 text-[12.5px] sm:text-[13px]">
       {steps.map((label, i) => {
         const n = i + 1; const active = n === step; const done = n < step;
         return (
-          <li key={label} className="flex items-center gap-3">
-            <span className={`flex h-9 w-9 items-center justify-center rounded-full text-[14px] font-bold ${active || done ? 'bg-[#2F6BFF] text-white shadow-[0_6px_16px_-6px_rgba(47,107,255,.7)]' : 'bg-[#EEF2F9] text-[#64748B]'}`}>
+          <li key={label} className="relative flex flex-col items-center gap-2 text-center">
+            {n > 1 && <span aria-hidden="true" className={`absolute right-1/2 top-[18px] h-px w-[calc(100%-44px)] -translate-x-[22px] ${done || active ? 'bg-[#2F6BFF]/40' : 'bg-[#DCE3EF]'}`} />}
+            <span className={`relative flex h-9 w-9 items-center justify-center rounded-full text-[14px] font-bold ${active || done ? 'bg-[#2F6BFF] text-white shadow-[0_6px_16px_-6px_rgba(47,107,255,.7)]' : 'bg-[#EEF2F9] text-[#64748B]'}`}>
               {done ? <Check size={18} strokeWidth={3} /> : n}
             </span>
-            <span className={`whitespace-nowrap ${active ? 'font-semibold text-[#0B1C3F]' : 'text-[#64748B]'}`}>{label}</span>
-            {n < 3 && <span className="hidden h-px w-8 bg-[#DCE3EF] sm:block" />}
+            {/* On a phone only the current step is named; four labels don't fit. */}
+            <span className={`px-1 leading-tight ${active ? 'font-semibold text-[#0B1C3F]' : 'hidden text-[#64748B] sm:block'}`}>{label}</span>
           </li>
         );
       })}
@@ -83,12 +87,14 @@ export const Stepper = ({ step }) => {
   );
 };
 
-export default function OnboardingShell({ step, children, wide = false }) {
+// `full`: no visual on the left, a wider card — the plan step compares three
+// plans side by side and needs the room.
+export default function OnboardingShell({ step, children, wide = false, full = false }) {
   const { t } = useTranslation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // Steps 2 and 3 are reached WITH a session (step 1 or Google/Apple just
+  // Steps 2 to 4 are reached WITH a session (step 1 or Google/Apple just
   // created it). Offering "Se connecter" there sent the owner to /login, which
   // the onboarding guard bounced straight back here — a dead button. A signed-in
   // owner gets "Se déconnecter" instead, which actually leaves the flow.
@@ -125,19 +131,19 @@ export default function OnboardingShell({ step, children, wide = false }) {
         </div>
       </header>
 
-      <div className="grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+      <div className={`grid lg:min-h-0 lg:flex-1 ${full ? '' : 'lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]'}`}>
         {/* ── left: the mockup visual, identical on every step ── */}
         {/* The visual is a square with extra background on both sides, so
             object-cover only ever trims that background — phone, chips and
             badge stay in frame, edge to edge, no side bars, at any width. */}
-        <aside className="relative hidden overflow-hidden lg:block lg:h-full">
+        <aside className={`relative hidden overflow-hidden lg:h-full ${full ? '' : 'lg:block'}`}>
           <picture className="contents"><source srcSet={'/brand/onboarding-hero.webp'} type="image/webp" /><img src={HERO} alt="" className="absolute inset-0 h-full w-full object-cover object-center" /></picture>
         </aside>
 
         {/* ── right: step card ── */}
         <main className="flex items-start justify-center px-4 py-6 lg:h-full lg:overflow-y-auto lg:px-8">
-          <div className={`w-full ${wide ? 'max-w-[680px]' : 'max-w-[640px]'} rounded-[22px] border border-[#E6EEFB] bg-white px-6 py-8 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-9`}>
-            <Stepper step={step} />
+          <div className={`w-full ${full ? 'max-w-[1040px]' : wide ? 'max-w-[680px]' : 'max-w-[640px]'} rounded-[22px] border border-[#E6EEFB] bg-white px-6 py-8 shadow-[0_24px_60px_-30px_rgba(47,107,255,.25)] sm:px-9`}>
+            <div className={full ? 'mx-auto max-w-[640px]' : ''}><Stepper step={step} /></div>
             {children}
           </div>
         </main>

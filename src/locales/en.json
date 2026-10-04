@@ -81,7 +81,7 @@
     "sector": "Business sector",
     "owner_name": "Owner name",
     "postal_code": "Postal code",
-    "register_subtitle": "✨ 28-day free trial · No credit card · Set up in 2 minutes",
+    "register_subtitle": "✨ 30-day free trial · No credit card · Set up in 2 minutes",
     "your_company": "Your business",
     "your_account": "Your account",
     "business_name_placeholder": "Business name · e.g. Café Lumière",
@@ -436,7 +436,7 @@
     "back": "Back",
     "continue": "Continue",
     "failed": "Could not save. Please try again.",
-    "trial_note": "Your 28-day free trial starts now — no credit card required."
+    "trial_note": "Next: choose your plan — 30-day free trial, no credit card."
   },
   "login": {
     "welcome_line1": "Welcome to",
@@ -464,7 +464,7 @@
     "nav_faq": "FAQ",
     "step1": "Your details",
     "step2": "Your business",
-    "step3": "Card setup",
+    "step3": "Your plan",
     "chip_wallet": "Wallet loyalty cards",
     "chip_crm": "Customer CRM",
     "chip_push": "Push notifications",
@@ -489,7 +489,8 @@
     "continue": "Continue",
     "compatible": "Compatible with",
     "wallet_apple": "Apple Wallet",
-    "wallet_google": "Google Wallet"
+    "wallet_google": "Google Wallet",
+    "step4": "Card setup"
   },
   "card_step": {
     "title": "Set up your card",
@@ -513,7 +514,8 @@
     "banner_hint": "Wide photo (375 × 144 ratio)",
     "banner_add": "Add a banner",
     "banner_change": "Change banner",
-    "banner_remove": "Remove"
+    "banner_remove": "Remove",
+    "skip": "Skip this step — I'll set up my card later"
   },
   "done": {
     "title": "Your {{name}} card is ready!",
@@ -533,5 +535,35 @@
     "go_dashboard": "Go to my business space",
     "poster_line": "Scan to join our loyalty programme",
     "poster_wallets": "Works with Apple Wallet & Google Wallet"
+  },
+  "plan_step": {
+    "title": "Your plan",
+    "subtitle": "Compare our three plans. During the trial you get all of Pro AI, free.",
+    "trial_badge": "{{days}}-day free trial",
+    "per_month": "€ excl. VAT / month",
+    "today": "today",
+    "then": "then €{{price}} excl. VAT / month",
+    "in_trial": "Included in your trial",
+    "cta": "Start my {{days}}-day free trial",
+    "starting": "Starting…",
+    "note": "No credit card. When the trial ends, you pick the plan that suits you. Without a choice, paid features pause; your customers and data are kept.",
+    "unlimited": "Unlimited",
+    "f_customers": "{{n}} active customers",
+    "f_customers_unl": "Unlimited active customers",
+    "f_cards": "{{n}} new cards / month",
+    "f_push": "{{n}} notifications / month",
+    "f_establishments_one": "{{count}} location",
+    "f_establishments_other": "{{count}} locations",
+    "f_campaigns": "Push campaigns",
+    "f_automation": "Automations",
+    "f_segments": "Segmentation & advanced CRM",
+    "f_referral": "Referral",
+    "f_geo": "Geolocation",
+    "f_analytics": "Advanced analytics",
+    "f_ai_basic": "FidClic AI (essential)",
+    "f_ai_advanced": "Advanced FidClic AI + Autopilot",
+    "f_ai_none": "FidClic AI",
+    "f_api": "API & integrations",
+    "load_failed": "Could not load the plans. Reload the page."
   }
 }

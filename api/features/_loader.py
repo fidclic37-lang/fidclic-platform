@@ -164,7 +164,7 @@ MODULES = [
     "features.cron",
     # Password reset by email (magic link) — S3 finale.
     "features.auth_reset",
-    # Self-serve onboarding step 2 (company details) + 28-day trial lifecycle
+    # Self-serve onboarding step 2 (company details) + plan step + 30-day trial lifecycle
     # (day-27 reminder). Loads after auth_reset; needs nothing else.
     "features.onboarding",
     # Sign in with Google / Apple — ID-token verification, account linking.

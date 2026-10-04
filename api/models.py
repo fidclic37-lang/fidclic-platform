@@ -9,11 +9,12 @@ from uuid import uuid4
 # on any plan, live, without redeploying (see get_plan_features() in
 # api/server.py). PLAN_PRICES is the monthly euro price shown in the UI.
 #
-# Trial: every new tenant starts with `subscription_status="trialing"` and
-# trial_duration_days = the value in PLAN_TRIAL_DAYS below (28 days, no
-# card). On day 27 (TRIAL_REMINDER_DAYS_BEFORE = 1) the owner gets an
-# email + in-app banner asking them to pick a plan; on day 28 the trial
-# expires and paid features lock until they subscribe.
+# Trial: every new tenant starts with `subscription_status="trialing"` on
+# TRIAL_PLAN (Pro AI, every feature) for trial_duration_days = the value in
+# PLAN_TRIAL_DAYS below (30 days, no card). On day 29
+# (TRIAL_REMINDER_DAYS_BEFORE = 1) the owner gets an email + in-app banner
+# asking them to pick a plan; on day 30 the trial expires and paid features
+# lock until they subscribe.
 PLAN_FEATURES = {
     # Internal keys stay silver/gold/vip — every tenant row, Stripe price and
     # admin override already references them. PLAN_LABELS below carries the
@@ -174,15 +175,24 @@ ACTIVE_WINDOW_DAYS = 365
 ANNUAL_DISCOUNT = 0.20
 
 PLAN_TRIAL_DAYS = {
-    "silver": 28,
-    "gold": 28,
-    "vip": 28,
-    "franchise": 28,
+    "silver": 30,
+    "gold": 30,
+    "vip": 30,
+    "franchise": 30,
 }
+
+# The plan every free trial runs on (user, 2026-10-04): the sign-up shows the
+# three plans side by side, then every new business tries Pro AI — all of
+# it — and picks the plan it pays for when the trial ends.
+TRIAL_PLAN = "vip"
+
+# A sign-up that stops before the plan step is a hidden draft (never listed in
+# the super admin) and is deleted after this many days by the daily cron.
+DRAFT_SIGNUP_TTL_DAYS = 7
 
 # Number of days BEFORE trial_end that we surface the "your trial is ending
 # — pick a plan" reminder (email via the daily cron + dashboard banner).
-# 1 = the reminder lands on day 27 of a 28-day trial. Admin-overridable.
+# 1 = the reminder lands on day 29 of a 30-day trial. Admin-overridable.
 TRIAL_REMINDER_DAYS_BEFORE = 1
 
 class Token(BaseModel):
@@ -239,8 +249,10 @@ class TenantBase(BaseModel):
     city: Optional[str] = None
     # Self-serve onboarding progress. "company" = the owner created their
     # personal account (step 1) but has not filled the company details yet
-    # (step 2); the UI keeps them on /onboarding/entreprise until "done".
-    # Defaults to "done" so every legacy tenant is unaffected.
+    # (step 2); "plan" = company done, the plan step (3) is next. Until
+    # "done" the tenant is a hidden draft (is_active=False) that the UI parks
+    # on the right step. Defaults to "done" so every legacy tenant is
+    # unaffected.
     onboarding_status: str = "done"
     campaign_sender_name: Optional[str] = None  # custom "from" name for push notifications/emails
     # --- Facturation module (French e-invoicing). All optional / default-off so

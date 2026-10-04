@@ -312,7 +312,7 @@ function AddCommerceModal({ onClose, onDone }) {
         {inp('owner_first_name', 'Prénom du propriétaire', '')}{inp('owner_last_name', 'Nom du propriétaire', '')}
         {inp('owner_email', 'Email du propriétaire *', 'contact@commerce.fr', 'sm:col-span-2')}
       </div>
-      <p className="mt-2 text-[12px] text-[#64748B]">Le commerce démarre son essai gratuit de 28 jours. Un compte propriétaire est créé avec un mot de passe provisoire.</p>
+      <p className="mt-2 text-[12px] text-[#64748B]">Le commerce démarre son essai gratuit de 30 jours. Un compte propriétaire est créé avec un mot de passe provisoire.</p>
       {err && <p className="mt-2 text-[13px] text-[#C0392B]">{err}</p>}
       <button type="button" disabled={busy || !f.name.trim() || !f.owner_email.includes('@')} onClick={save} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-50" style={{ background: BLUE }}>{busy && <Loader2 size={15} className="animate-spin" />} Créer le commerce</button>
     </Modal>

@@ -87,7 +87,7 @@ def push_quota_state(tenant_id: str, plan: str) -> Dict[str, Any]:
 def public_plans():
     """The catalogue the marketing site renders. No auth: it is public pricing."""
     import server as core
-    from models import ANNUAL_DISCOUNT, PLAN_ORDER
+    from models import ANNUAL_DISCOUNT, PLAN_ORDER, TRIAL_PLAN
 
     plans = []
     for key in PLAN_ORDER:
@@ -125,7 +125,7 @@ def public_plans():
                 "csv_import": bool(f.get("csv_export")),
                 "multi_branch": bool(f.get("multi_branch")),
             },
-            "trial_days": f.get("trial_duration_days", 28),
+            "trial_days": f.get("trial_duration_days", 30),
         })
     fr = core.get_plan_features("franchise")
     return {
@@ -136,7 +136,9 @@ def public_plans():
         "currency": "EUR",
         "taxes": "HT",
         "annual_discount": ANNUAL_DISCOUNT,
-        "trial_days": plans[0]["trial_days"],
+        # Every trial runs on TRIAL_PLAN (Pro AI), so its length is the one shown.
+        "trial_days": int(core.get_plan_features(TRIAL_PLAN).get("trial_duration_days", 30)),
+        "trial_plan": TRIAL_PLAN,
         "trial_requires_card": False,
         "plans": plans,
     }

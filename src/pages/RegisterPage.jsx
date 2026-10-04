@@ -7,6 +7,7 @@ import { passwordRules, passwordValid } from '../lib/passwordPolicy';
 import OnboardingShell from '../components/OnboardingShell';
 import SocialAuthButtons from '../components/SocialAuthButtons';
 import { LEGAL_LINKS } from '../lib/legal';
+import { onboardingPath } from '../lib/onboarding';
 
 /**
  * RegisterPage — step 1 of 3 ("Vos informations"), from the approved mockup:
@@ -53,7 +54,7 @@ const RegisterPage = () => {
     try {
       const { prefix, phone, ...rest } = form;
       const session = await register({ ...rest, phone: `${prefix} ${phone.trim()}`, role: 'business_owner' });
-      navigate(session?.onboarding_status === 'company' ? '/onboarding/entreprise' : '/modules');
+      navigate(onboardingPath({ role: 'business_owner', ...session }) || '/modules');
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || t('auth.register_failed'));
     } finally { setLoading(false); }

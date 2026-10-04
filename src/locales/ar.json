@@ -81,7 +81,7 @@
     "sector": "قطاع النشاط",
     "owner_name": "اسم المالك",
     "postal_code": "الرمز البريدي",
-    "register_subtitle": "✨ تجربة مجانية 28 يومًا · بدون بطاقة بنكية · إعداد في دقيقتين",
+    "register_subtitle": "✨ تجربة مجانية 30 يومًا · بدون بطاقة بنكية · إعداد في دقيقتين",
     "your_company": "شركتك",
     "your_account": "حسابك",
     "business_name_placeholder": "اسم الشركة · مثال: Café Lumière",
@@ -436,7 +436,7 @@
     "back": "رجوع",
     "continue": "متابعة",
     "failed": "تعذّر الحفظ. حاول مجددًا.",
-    "trial_note": "تبدأ تجربتك المجانية لمدة 28 يومًا الآن — دون بطاقة بنكية."
+    "trial_note": "الخطوة التالية: اختر باقتك — تجربة مجانية لمدة 30 يومًا، دون بطاقة بنكية."
   },
   "login": {
     "welcome_line1": "مرحبًا بك في",
@@ -464,7 +464,7 @@
     "nav_faq": "الأسئلة الشائعة",
     "step1": "معلوماتك",
     "step2": "مؤسستك",
-    "step3": "إعداد البطاقة",
+    "step3": "باقتك",
     "chip_wallet": "بطاقات ولاء Wallet",
     "chip_crm": "إدارة العملاء",
     "chip_push": "إشعارات فورية",
@@ -489,7 +489,8 @@
     "continue": "متابعة",
     "compatible": "متوافق مع",
     "wallet_apple": "Apple Wallet",
-    "wallet_google": "Google Wallet"
+    "wallet_google": "Google Wallet",
+    "step4": "إعداد البطاقة"
   },
   "card_step": {
     "title": "إعداد بطاقتك",
@@ -513,7 +514,8 @@
     "banner_hint": "صورة عريضة (نسبة 375 × 144)",
     "banner_add": "إضافة بانر",
     "banner_change": "تغيير البانر",
-    "banner_remove": "إزالة"
+    "banner_remove": "إزالة",
+    "skip": "تخطَّ هذه الخطوة — سأعدّ بطاقتي لاحقًا"
   },
   "done": {
     "title": "تم إنشاء بطاقة {{name}} !",
@@ -533,5 +535,35 @@
     "go_dashboard": "الانتقال إلى مساحة منشأتي",
     "poster_line": "امسح للانضمام إلى برنامج الولاء",
     "poster_wallets": "متوافق مع Apple Wallet و Google Wallet"
+  },
+  "plan_step": {
+    "title": "باقتك",
+    "subtitle": "قارن بين باقاتنا الثلاث. خلال التجربة تستفيد من كل مزايا Pro AI مجانًا.",
+    "trial_badge": "تجربة مجانية {{days}} يومًا",
+    "per_month": "€ دون ضريبة / شهريًا",
+    "today": "اليوم",
+    "then": "ثم {{price}} € دون ضريبة / شهريًا",
+    "in_trial": "مشمولة في تجربتك",
+    "cta": "ابدأ تجربتي المجانية لمدة {{days}} يومًا",
+    "starting": "جارٍ التفعيل…",
+    "note": "دون بطاقة بنكية. في نهاية التجربة تختار الباقة المناسبة لك. بدون اختيار تتوقف الميزات المدفوعة مؤقتًا، وتبقى بيانات عملائك محفوظة.",
+    "unlimited": "غير محدود",
+    "f_customers": "{{n}} عميل نشط",
+    "f_customers_unl": "عملاء نشطون بلا حدود",
+    "f_cards": "{{n}} بطاقة جديدة / شهريًا",
+    "f_push": "{{n}} إشعار / شهريًا",
+    "f_establishments_one": "{{count}} مؤسسة",
+    "f_establishments_other": "{{count}} مؤسسات",
+    "f_campaigns": "حملات الإشعارات",
+    "f_automation": "الأتمتة",
+    "f_segments": "التقسيم وإدارة العملاء المتقدمة",
+    "f_referral": "الإحالة",
+    "f_geo": "تحديد الموقع",
+    "f_analytics": "تحليلات متقدمة",
+    "f_ai_basic": "FidClic IA (أساسي)",
+    "f_ai_advanced": "FidClic IA متقدم + Autopilot",
+    "f_ai_none": "FidClic IA",
+    "f_api": "API والتكاملات",
+    "load_failed": "تعذر تحميل الباقات. أعد تحميل الصفحة."
   }
 }

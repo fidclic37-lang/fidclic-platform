@@ -258,7 +258,8 @@ def _activity(names: Dict[str, str], limit: int = 30) -> List[Dict[str, Any]]:
     now = _now()
     since = now - timedelta(days=30)
     ev = []
-    for t in _db.tenants.find({"created_at": {"$gte": since}}, {"_id": 0, "id": 1, "name": 1, "created_at": 1}):
+    for t in _db.tenants.find({"created_at": {"$gte": since}, "onboarding_status": {"$nin": ["company", "plan"]}},
+                              {"_id": 0, "id": 1, "name": 1, "created_at": 1}):
         ev.append({"kind": "signup", "title": "Nouveau commerce inscrit", "sub": t.get("name"), "at": t["created_at"], "tenant_id": t["id"]})
     for c in _db.campaigns.find({"sent_at": {"$gte": since}}, {"_id": 0, "tenant_id": 1, "sent_at": 1, "name": 1}).sort("sent_at", -1).limit(40):
         ev.append({"kind": "campaign", "title": "Campagne envoyée", "sub": names.get(c.get("tenant_id"), "—"), "at": c["sent_at"],

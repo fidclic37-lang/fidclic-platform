@@ -166,7 +166,7 @@ KB: List[Dict[str, Any]] = [
         "keywords": ["abonnement", "plan", "formule", "facture", "facturation", "prix", "tarif", "coûte",
                      "coût", "essai", "gratuit", "paiement", "payer", "résilier", "limite", "engagement"],
         "body": (
-            "Vous démarrez avec 28 jours d'essai gratuit, sans carte bancaire. Ensuite, la formule se choisit "
+            "Vous démarrez avec 30 jours d'essai gratuit sur Pro AI, sans carte bancaire. Ensuite, la formule se choisit "
             "selon votre nombre de clients actifs — un client actif est venu au moins une fois dans l'année ; "
             "les clients dormants restent dans votre base sans compter. Vous changez de formule à tout moment, "
             "sans engagement, depuis **Paramètres › Abonnement**."

@@ -44,7 +44,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and by_key["gold"]["features"]["campaigns"] is True and by_key["vip"]["features"]["campaigns"] is True)
     check("AI only on Pro AI", [p["features"]["ai"] for p in cat["plans"]] == [False, True, True] or
           [p["features"]["ai"] for p in cat["plans"]] == [False, False, True] or True)
-    check("trial 28 days, no card", cat["trial_days"] == 28 and cat["trial_requires_card"] is False)
+    check("trial 30 days on Pro AI, no card", cat["trial_days"] == 30 and cat["trial_plan"] == "vip" and cat["trial_requires_card"] is False)
     check("annual discount 20 %", abs(cat["annual_discount"] - 0.20) < 1e-9)
     check("catalogue matches PLAN_FEATURES/PRICES/LABELS (one source of truth)",
           all(by_key[k]["price_monthly"] == PLAN_PRICES[k]

@@ -90,6 +90,9 @@ export const onboardingAPI = {
   saveCardTemplate: (data) => api.post('/owner/card-template', data),
   status: () => api.get('/onboarding/status'),
   company: (data) => api.post('/onboarding/company', data),
+  // Step 3: the plans shown side by side, then « Commencer l'essai ».
+  plans: () => api.get('/public/plans'),
+  startTrial: () => api.post('/onboarding/start-trial'),
 };
 
 // CRM de prospection — FidClic's own sales (super admin + commercials).

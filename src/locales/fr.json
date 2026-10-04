@@ -81,7 +81,7 @@
     "sector": "Secteur d'activité",
     "owner_name": "Nom du propriétaire",
     "postal_code": "Code postal",
-    "register_subtitle": "✨ Essai gratuit 28 jours · Aucune carte bancaire · Mise en place en 2 minutes",
+    "register_subtitle": "✨ Essai gratuit 30 jours · Aucune carte bancaire · Mise en place en 2 minutes",
     "your_company": "Votre entreprise",
     "your_account": "Votre compte",
     "business_name_placeholder": "Nom de l'entreprise · ex. Café Lumière",
@@ -436,7 +436,7 @@
     "back": "Retour",
     "continue": "Continuer",
     "failed": "Enregistrement impossible. Réessayez.",
-    "trial_note": "Votre essai gratuit de 28 jours démarre maintenant — aucune carte bancaire requise."
+    "trial_note": "Étape suivante : choisissez votre formule — 30 jours d'essai gratuit, sans carte bancaire."
   },
   "login": {
     "welcome_line1": "Bienvenue chez",
@@ -464,7 +464,7 @@
     "nav_faq": "FAQ",
     "step1": "Vos informations",
     "step2": "Votre établissement",
-    "step3": "Configuration carte",
+    "step3": "Votre formule",
     "chip_wallet": "Cartes de fidélité Wallet",
     "chip_crm": "CRM client",
     "chip_push": "Push notifications",
@@ -489,7 +489,8 @@
     "continue": "Continuer",
     "compatible": "Compatible",
     "wallet_apple": "Apple Wallet",
-    "wallet_google": "Google Wallet"
+    "wallet_google": "Google Wallet",
+    "step4": "Configuration carte"
   },
   "card_step": {
     "title": "Configuration de votre carte",
@@ -513,7 +514,8 @@
     "banner_hint": "Photo large (ratio 375 × 144)",
     "banner_add": "Ajouter une bannière",
     "banner_change": "Changer la bannière",
-    "banner_remove": "Retirer"
+    "banner_remove": "Retirer",
+    "skip": "Passer cette étape — je configurerai ma carte plus tard"
   },
   "done": {
     "title": "Votre carte {{name}} est créée !",
@@ -533,5 +535,35 @@
     "go_dashboard": "Accéder à mon espace établissement",
     "poster_line": "Scannez pour rejoindre notre programme de fidélité",
     "poster_wallets": "Compatible Apple Wallet & Google Wallet"
+  },
+  "plan_step": {
+    "title": "Votre formule",
+    "subtitle": "Comparez nos trois formules. Pendant l'essai, vous profitez de tout Pro AI, gratuitement.",
+    "trial_badge": "{{days}} jours d'essai gratuit",
+    "per_month": "€ HT / mois",
+    "today": "aujourd'hui",
+    "then": "puis {{price}} € HT / mois",
+    "in_trial": "Inclus dans votre essai",
+    "cta": "Commencer mon essai gratuit de {{days}} jours",
+    "starting": "Activation…",
+    "note": "Aucune carte bancaire. À la fin de l'essai, vous choisissez la formule qui vous convient. Sans choix, les fonctionnalités payantes se mettent en pause ; vos clients et vos données restent conservés.",
+    "unlimited": "Illimité",
+    "f_customers": "{{n}} clients actifs",
+    "f_customers_unl": "Clients actifs illimités",
+    "f_cards": "{{n}} nouvelles cartes / mois",
+    "f_push": "{{n}} notifications / mois",
+    "f_establishments_one": "{{count}} établissement",
+    "f_establishments_other": "{{count}} établissements",
+    "f_campaigns": "Campagnes push",
+    "f_automation": "Automatisations",
+    "f_segments": "Segmentation & CRM avancé",
+    "f_referral": "Parrainage",
+    "f_geo": "Géolocalisation",
+    "f_analytics": "Analyses avancées",
+    "f_ai_basic": "FidClic IA (essentielle)",
+    "f_ai_advanced": "FidClic IA avancée + Autopilot",
+    "f_ai_none": "FidClic IA",
+    "f_api": "API & intégrations",
+    "load_failed": "Impossible de charger les formules. Rechargez la page."
   }
 }

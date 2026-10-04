@@ -1,30 +1,43 @@
 """
-Self-serve onboarding — STEP 2 (company details) + trial lifecycle.
+Self-serve onboarding — STEPS 2 and 3 (company details, plan) + trial lifecycle.
 Status: 🟢 Core.
-Mounts at: /api/onboarding/status, /api/onboarding/company
-Cron hook: run_trial_reminders() — called by /api/cron/agent-daily.
+Mounts at: /api/onboarding/status, /api/onboarding/company, /api/onboarding/start-trial
+Cron hooks: run_trial_reminders(), purge_abandoned_signups() — called by
+/api/cron/agent-daily.
 
 THE FLOW (app.fidclic.com)
     1. /register (server.py)      → personal account: prénom, nom, email,
                                     téléphone, mot de passe, CGU/DPA accepted.
                                     Tenant stub with onboarding_status="company",
-                                    subscription_status="onboarding". No trial yet.
+                                    subscription_status="onboarding",
+                                    is_active=False. No trial yet.
        — or —  Google / Apple      → same stub, terms NOT yet accepted
                                     (features/oauth.py).
-    2. /onboarding/entreprise      → THIS module: raison sociale, secteur,
-                                    activité, SIRET, adresse. On success the
-                                    tenant becomes onboarding_status="done" and
-                                    the 28-day trial starts NOW.
-    3. Day 27                      → run_trial_reminders() emails the owner
+    2. /onboarding/entreprise      → raison sociale, secteur, activité, SIRET,
+                                    adresse. The tenant moves to
+                                    onboarding_status="plan". Still a draft.
+    3. /onboarding/formule         → the three plans side by side, real HT price
+                                    struck through, « 0 € », 30-day trial.
+                                    /api/onboarding/start-trial: the business
+                                    goes live (is_active=True, "done") and the
+                                    30-day trial starts on TRIAL_PLAN (Pro AI).
+    4. /onboarding/carte           → card design, optional (« Passer »).
+    Day 29                         → run_trial_reminders() emails the owner
                                     ("choisissez votre formule") once.
-    4. Day 28                      → trial expired: BillingBanner locks paid
+    Day 30                         → trial expired: BillingBanner locks paid
                                     features until Stripe checkout completes
                                     (features/billing.py flips status to active).
 
-WHY THE TRIAL STARTS AT STEP 2
+WHY A SIGN-UP IS A HIDDEN DRAFT UNTIL STEP 3 (user, 2026-10-04)
+    Someone who leaves after step 1 or 2 is not a business: the super admin
+    must not list or count it. The rows exist (the owner can log back in and
+    resume where they stopped), but is_active=False keeps them out of every
+    admin list, count and cron, and purge_abandoned_signups() deletes them
+    after DRAFT_SIGNUP_TTL_DAYS.
+
+WHY THE TRIAL STARTS AT STEP 3
     A trial that starts at step 1 burns days while the owner hasn't even
-    named their shop. Starting it when the company is set up means the 28
-    days are 28 days of actually using the product.
+    named their shop, and every trial day is a day of the real product.
 """
 from __future__ import annotations
 
@@ -62,6 +75,19 @@ def _site_url() -> str:
     return os.getenv("PUBLIC_SITE_URL", "https://app.fidclic.com")
 
 
+DRAFT_STATES = ("company", "plan")
+
+
+def _trial_plan() -> str:
+    from models import TRIAL_PLAN
+    return TRIAL_PLAN
+
+
+def _trial_days() -> int:
+    import server as core
+    return int(core.get_plan_features(_trial_plan()).get("trial_duration_days", 30))
+
+
 class CompanyDetails(BaseModel):
     legal_name: str                      # raison sociale (as on the Kbis)
     name: Optional[str] = None           # nom commercial shown to customers; defaults to legal_name
@@ -86,6 +112,8 @@ def onboarding_status(token_data: TokenData = Depends(require_role(["business_ow
         "terms_accepted": bool(user.get("terms_accepted_at")),
         "slug": tenant.get("slug"),
         "tenant_name": tenant.get("name"),
+        "trial_plan": _trial_plan(),
+        "trial_days": _trial_days(),
         "prefill": {
             "name": tenant.get("name"),
             "sector": tenant.get("sector"),
@@ -98,7 +126,8 @@ def onboarding_status(token_data: TokenData = Depends(require_role(["business_ow
 @router.post("/api/onboarding/company")
 def complete_company(body: CompanyDetails, request: Request,
                      token_data: TokenData = Depends(require_role(["business_owner"]))):
-    """Step 2. Idempotent: an already-onboarded tenant just gets its details
+    """Step 2. Moves a draft to the plan step; the trial starts there, not
+    here. Idempotent: an already-onboarded tenant just gets its details
     updated (Settings reuses this) and its trial is NOT restarted."""
     # server.py is the app module; importing lazily avoids a circular import
     # at feature-load time and keeps a single slug / trial implementation.
@@ -144,7 +173,6 @@ def complete_company(body: CompanyDetails, request: Request,
         "postal_code": body.postal_code.strip(),
         "city": body.city.strip(),
         "country": (body.country or "FR").strip().upper()[:2],
-        "onboarding_status": "done",
     }
     if siret:
         update["siret"] = siret
@@ -157,25 +185,86 @@ def complete_company(body: CompanyDetails, request: Request,
         # Slug was derived from "Prénom Nom" at step 1 — replace it with the
         # real shop name so /join/<slug> reads well on the customer side.
         update["slug"] = core._unique_slug(display_name)
-        trial: Dict[str, Any] = {}
-        core._start_trial(trial, tenant.get("plan") or "silver")
-        update.update(trial)
+    if tenant.get("onboarding_status") in DRAFT_STATES:
+        update["onboarding_status"] = "plan"       # step 3 next; still a draft
 
     _db.tenants.update_one({"id": tenant["id"]}, {"$set": update})
     core.log_audit("onboarding.company_completed", actor=token_data.email, actor_type="user",
                    tenant_id=tenant["id"], request=request,
                    meta={"first_completion": first_completion, "sector": body.sector})
     fresh = _db.tenants.find_one({"id": tenant["id"]}) or {}
+    status = fresh.get("onboarding_status", "done")
     return {
         "ok": True,
-        "onboarding_status": "done",
+        "onboarding_status": status,
         "slug": fresh.get("slug"),
+        "trial": core._compute_trial_state(fresh) if status == "done" else None,
+    }
+
+
+@router.post("/api/onboarding/start-trial")
+def start_trial(request: Request,
+                token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """Step 3, « Commencer l'essai gratuit ». The plan page only SHOWS the
+    plans (the owner picks one when the trial ends); every trial runs on
+    TRIAL_PLAN. This is the moment the business exists: it leaves draft
+    (is_active=True), appears in the super admin, and the trial starts.
+    Idempotent for a business that is already live."""
+    import server as core
+
+    tenant = _db.tenants.find_one({"id": token_data.tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    status = tenant.get("onboarding_status", "done")
+    if status == "company":
+        raise HTTPException(status_code=409, detail="Complétez d'abord votre établissement.")
+    if status == "plan":
+        plan = _trial_plan()
+        update: Dict[str, Any] = {
+            "onboarding_status": "done",
+            "is_active": True,
+            "plan": plan,
+            # "Inscrit le" in the super admin = the day the business went
+            # live, not the day a draft was started.
+            "created_at": _now(),
+        }
+        core._start_trial(update, plan)
+        _db.tenants.update_one({"id": tenant["id"]}, {"$set": update})
+        core.log_audit("onboarding.trial_started", actor=token_data.email, actor_type="user",
+                       tenant_id=tenant["id"], request=request,
+                       meta={"plan": plan, "trial_days": update.get("trial_duration_days")})
+    fresh = _db.tenants.find_one({"id": tenant["id"]}) or {}
+    return {
+        "ok": True,
+        "onboarding_status": fresh.get("onboarding_status", "done"),
+        "plan": fresh.get("plan"),
         "trial": core._compute_trial_state(fresh),
     }
 
 
+def purge_abandoned_signups(now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Daily cron. Sign-ups that stopped before the plan step:
+    - any still visible (made before drafts were hidden) are hidden now;
+    - the ones older than DRAFT_SIGNUP_TTL_DAYS are deleted with their owner
+      login and card template. A draft has no customers, visits or invoices:
+      the business never went live."""
+    from models import DRAFT_SIGNUP_TTL_DAYS
+
+    now = now or _now()
+    draft = {"onboarding_status": {"$in": list(DRAFT_STATES)}}
+    hidden = _db.tenants.update_many({**draft, "is_active": {"$ne": False}},
+                                     {"$set": {"is_active": False}}).modified_count
+    cutoff = now - timedelta(days=DRAFT_SIGNUP_TTL_DAYS)
+    ids = [t["id"] for t in _db.tenants.find({**draft, "created_at": {"$lt": cutoff}}, {"_id": 0, "id": 1})]
+    if ids:
+        _db.users.delete_many({"tenant_id": {"$in": ids}})
+        _db.card_templates.delete_many({"tenant_id": {"$in": ids}})
+        _db.tenants.delete_many({"id": {"$in": ids}})
+    return {"hidden": hidden, "deleted": len(ids)}
+
+
 # ---------------------------------------------------------------------------
-# Day-27 reminder — called by the daily cron. Pure function of the DB so it
+# Day-29 reminder — called by the daily cron. Pure function of the DB so it
 # is trivially unit-testable with mongomock.
 # ---------------------------------------------------------------------------
 def _owner_email(tenant_id: str) -> Optional[Dict[str, Any]]:
@@ -193,7 +282,7 @@ def _reminder_html(first_name: str, shop: str, days_left: int, ends_at: datetime
       <p>Pour continuer à fidéliser vos clients sans interruption, choisissez
          votre formule dès maintenant :</p>
       <p style="margin:24px 0">
-        <a href="{_site_url()}/dashboard/settings?tab=billing"
+        <a href="{_site_url()}/dashboard/parametres/abonnement"
            style="background:#B85C38;color:#fff;padding:12px 22px;border-radius:999px;
                   text-decoration:none;font-weight:600">Choisir ma formule</a>
       </p>
@@ -207,7 +296,7 @@ def _reminder_html(first_name: str, shop: str, days_left: int, ends_at: datetime
 
 def run_trial_reminders(now: Optional[datetime] = None) -> Dict[str, Any]:
     """Email every trialing tenant whose trial ends within
-    TRIAL_REMINDER_DAYS_BEFORE days (default 1 → day 27 of 28), once.
+    TRIAL_REMINDER_DAYS_BEFORE days (default 1 → day 29 of 30), once.
     Returns a summary for the cron response."""
     import server as core
     from models import TRIAL_REMINDER_DAYS_BEFORE
