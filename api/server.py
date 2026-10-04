@@ -535,13 +535,15 @@ def send_email_to_customer(to_email: str, from_name: str, subject: str, body_htm
 # triggered it. Every attempt lands in `delivery_log` so a merchant asking
 # "did my message go out?" has an auditable answer.
 # ════════════════════════════════════════════════════════════════════
-def refresh_wallet_pass(customer_id: str) -> None:
-    """Ask Apple to wake every device holding this customer's pass so the
-    stamps, points and status they see match what just happened at the
-    counter. Fire-and-forget: a push must never fail a scan."""
+def refresh_wallet_pass(customer_id: str, reward_earned: bool = False) -> None:
+    """Wake every Wallet card of this customer (Apple by push, Google by
+    sending it the new card) so the stamps, points and status match what just
+    happened at the counter. `reward_earned`: this scan completed a card —
+    Google then notifies the customer (Apple does it from the changed field).
+    Fire-and-forget: a push must never fail a scan."""
     try:
         from features.wallet_passes import notify_customer   # noqa: WPS433
-        notify_customer(customer_id)
+        notify_customer(customer_id, google_notify="reward" if reward_earned else None)
     except Exception as exc:
         print(f"refresh_wallet_pass: {exc}")
 
@@ -5041,7 +5043,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
 
     # The stamp just changed — wake every Wallet pass now, not on the
     # customer's next pull-to-refresh.
-    refresh_wallet_pass(cid)
+    # « Récompense débloquée » is the scan that fills the card (10/10); the
+    # card is banked and restarts on the NEXT visit (the loop above).
+    refresh_wallet_pass(cid, reward_earned=(cycles_completed == 0 and stamps_in_cycle == reward_threshold))
 
     notification_status = "subscribed"
     try:

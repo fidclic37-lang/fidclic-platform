@@ -463,7 +463,7 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
         try:
             from features.wallet_passes import notify_passes
             serials = [c.get("barcode_id") for c in people if c.get("barcode_id")]
-            woken = int((notify_passes(serials) or {}).get("sent") or 0)
+            woken = int((notify_passes(serials, google_notify="campaign") or {}).get("sent") or 0)
         except Exception as exc:
             print(f"campagnes: wallet wake-up failed: {exc}")
 

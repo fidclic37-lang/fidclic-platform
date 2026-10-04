@@ -156,9 +156,10 @@ def main():
     import features.wallet_passes as _WP
     seen = {}
     real_notify = _WP.notify_passes
-    def spy(serials):
+    def spy(serials, google_notify=None):
         c = db.campaigns.find_one({"name": "Wallet ordre"})
         seen["at_wake"] = (c or {}).get("status")
+        seen["google"] = google_notify
         return {"sent": 0}
     _WP.notify_passes = spy
     try:
@@ -166,6 +167,7 @@ def main():
     finally:
         _WP.notify_passes = real_notify
     check("when the passes are woken, the campaign is already saved as sent", seen.get("at_wake") == "sent")
+    check("and Google is asked to notify (a campaign is one of the two notifying events)", seen.get("google") == "campaign")
 
     chosen = compose(title="Pour vous", message="Une attention", customer_ids=["c1", "c2"])
     hand = db.campaigns.find_one({"id": chosen["id"]})
