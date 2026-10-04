@@ -436,7 +436,11 @@ def _deliver(tid: str, row: Dict[str, Any], items, at: datetime, result: Dict[st
             #    and the device is asked to come and fetch it.
             try:
                 from features.wallet_passes import notify_customer
-                notify_customer(cust["id"], message=body)
+                # Google Wallet notifies for a birthday (user, 2026-10-04);
+                # the other scenarios update the card silently there.
+                notify_customer(cust["id"], message=body,
+                                google_notify=({"kind": "birthday", "header": title, "body": body}
+                                               if row.get("builtin") == "birthday" else None))
             except Exception:
                 pass
             # 2. and the same message down the web-push / SMS rail, so a

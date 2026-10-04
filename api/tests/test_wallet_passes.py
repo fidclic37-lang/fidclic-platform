@@ -432,6 +432,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         quota["on"] = False
         db.campaigns.delete_one({"id": "gcamp"})
         check("automations' call with message= no longer raises", isinstance(WP.notify_customer("c1", message="Joyeux anniversaire"), dict))
+        gcalls.clear()
+        WP.notify_customer("c1", message="x", google_notify={"kind": "birthday", "header": "Joyeux anniversaire Marie !",
+                                                             "body": "Un dessert offert cette semaine"})
+        msg = [c[2]["message"] for c in gcalls if c[1].endswith("/addMessage")]
+        check("birthday → one notifying message with the scenario's own words", len(msg) == 1
+              and msg[0]["messageType"] == "TEXT_AND_NOTIFY" and msg[0]["header"] == "Joyeux anniversaire Marie !")
         class _OT3:
             email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
         g = WP.owner_wallet_stats(_OT3())["google"]

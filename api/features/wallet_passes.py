@@ -914,7 +914,7 @@ def _pkpass_response(barcode_id: str) -> Response:
                                      "Cache-Control": "no-store"})
 
 
-def notify_passes(serials: Iterable[str], google_notify: Optional[str] = None,
+def notify_passes(serials: Iterable[str], google_notify: Any = None,
                   design_changed: bool = False) -> Dict[str, Any]:
     """Tell every device holding these passes to refresh — Apple by push,
     Google by sending it the new card. Best effort — a scan must never fail
@@ -960,7 +960,7 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
 
 
 def notify_customer(customer_id: str, message: Optional[str] = None,
-                    google_notify: Optional[str] = None) -> Dict[str, Any]:
+                    google_notify: Any = None) -> Dict[str, Any]:
     """`message` is accepted for the automations' calls (push_wallet), which
     passed it while this function took no such argument — every scenario's
     wake-up raised a TypeError and was silently skipped. The message itself
@@ -1423,10 +1423,10 @@ def google_save_url(payload: Dict[str, Any]) -> str:
     return "https://pay.google.com/gp/v/save/" + jwt.encode(claims, sa["private_key"], algorithm="RS256")
 
 
-# Notifications on Google (user, 2026-10-04): only a campaign and a reward
-# unlock. Google allows 3 notifying messages per card per 24 h; past that the
-# message still lands in the card, silently.
-GOOGLE_NOTIFY = {"campaign", "reward"}
+# Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
+# the birthday message. Google allows 3 notifying messages per card per 24 h;
+# past that the message still lands in the card, silently.
+GOOGLE_NOTIFY = {"campaign", "reward", "birthday"}
 
 
 def _gw_reason(body: Dict[str, Any]) -> str:
@@ -1434,16 +1434,18 @@ def _gw_reason(body: Dict[str, Any]) -> str:
     return str(err.get("message") or err.get("status") or "")[:160]
 
 
-def google_sync(serials: Iterable[str], notify: Optional[str] = None, update_class: bool = False) -> Dict[str, Any]:
+def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool = False) -> Dict[str, Any]:
     """Push the current card to Google for every customer who added it.
 
     Apple pulls a changed pass after a push; Google does not — the server has
     to send the new object itself. Called wherever Apple passes are woken
     (scan, redemption, campaign, card design), so both wallets move together.
-    `notify` ("campaign" | "reward") adds a TEXT_AND_NOTIFY message; anything
+    `notify` ("campaign" | "reward" | {"kind": "birthday", "header", "body"})
+    adds a TEXT_AND_NOTIFY message; anything
     else updates the card without a notification. `update_class`: the design
     changed (colours, logo, name) — only then is the class sent again."""
     serials = [x for x in dict.fromkeys(serials) if x]
+    kind = notify.get("kind") if isinstance(notify, dict) else notify
     out: Dict[str, Any] = {"cards": 0, "synced": 0, "notified": 0, "errors": []}
     if not serials or not google_configured():
         return out
@@ -1470,10 +1472,14 @@ def google_sync(serials: Iterable[str], notify: Optional[str] = None, update_cla
                 classes_done.add(cls["id"])
             obj = _gw_object(payload)
             message = None
-            if notify == "campaign" and obj.get("messages"):
+            if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
                 obj["messages"] = []                   # sent below, with the notification
-            elif notify == "reward":
+            elif kind == "birthday":
+                head = (notify.get("header") or "Joyeux anniversaire !").strip()
+                message = {"id": f"birthday-{int(time.time())}", "header": head[:60],
+                           "body": ((notify.get("body") or "").strip() or head)[:300]}
+            elif kind == "reward":
                 reward = payload["card"].get("reward_description") or "Votre récompense"
                 message = {"id": f"reward-{int(time.time())}", "header": "Récompense débloquée !",
                            "body": f"{reward} — présentez votre carte en caisse."}
@@ -1482,7 +1488,7 @@ def google_sync(serials: Iterable[str], notify: Optional[str] = None, update_cla
                 result = f"HTTP {st} {_gw_reason(body)}".strip()
             else:
                 out["synced"] += 1
-                if message and notify in GOOGLE_NOTIFY:
+                if message and kind in GOOGLE_NOTIFY:
                     st2, body2 = _gw_call("POST", f"/loyaltyObject/{obj['id']}/addMessage",
                                           {"message": {**message, "messageType": "TEXT_AND_NOTIFY"}}, token)
                     if st2 == 200:

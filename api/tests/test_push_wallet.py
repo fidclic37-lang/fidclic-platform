@@ -110,6 +110,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     # ---- birthday ------------------------------------------------------------
     print("\nAnniversaire fires on the day, and only on it")
+    import features.wallet_passes as _WP
+    wake = []
+    _real_nc = _WP.notify_customer
+    _WP.notify_customer = lambda cid, message=None, google_notify=None: wake.append((cid, google_notify)) or {}
     res = fire("birthday")
     check("only today's birthday is reached", res["targeted"] == 1 and reached("birthday") == {"c1"})
     check("the message was actually dispatched", any(d[1] == "c1" for d in delivered))
@@ -117,10 +121,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           not any(d[1] == "x1" for d in delivered))
     check("the same client is not reached twice inside the cooldown",
           fire("birthday")["targeted"] == 0)
+    check("the birthday asks Google for a notification, with its own words",
+          wake and wake[0][0] == "c1" and (wake[0][1] or {}).get("kind") == "birthday" and wake[0][1].get("header"))
 
     # ---- inactivity ----------------------------------------------------------
     print("\nInactivité — the threshold is the setting, not a constant")
     res = fire("inactive")               # 30 days
+    check("other scenarios update Google silently", all(g is None for c, g in wake[1:]) and len(wake) > 1)
+    _WP.notify_customer = _real_nc
     check("only clients past 30 days are reached", reached("inactive") == {"c4", "c5"})
     res = fire("cart_recovery")          # 14 days
     check("a 14-day scenario reaches more of them",
