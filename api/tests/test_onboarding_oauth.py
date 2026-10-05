@@ -128,6 +128,8 @@ def test_step2(u):
     check("company done → plan step next", out["onboarding_status"] == "plan" and t["onboarding_status"] == "plan")
     check("still a hidden draft, no trial yet", t["is_active"] is False and "trial_ends_at" not in t
           and out["trial"] is None)
+    check("the card starts with the sector's reward (a café: « Un café offert »)",
+          (S.db.card_templates.find_one({"tenant_id": u["tenant_id"]}) or {}).get("reward_description") == "Un café offert")
     me = S.get_me(tok(u["email"], tenant_id=u["tenant_id"]))
     check("/me says plan (UI parks the owner on /onboarding/formule)", me["onboarding_status"] == "plan")
     st = OB.onboarding_status(tk)
