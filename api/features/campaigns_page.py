@@ -158,20 +158,13 @@ def segment_cards(tid: str) -> List[Dict[str, str]]:
 # ---------------------------------------------------------------------------
 # Rates
 # ---------------------------------------------------------------------------
-def _opened_ids(tid: str, recipients: List[str], sent_at: datetime) -> set:
-    """Recipients who opened their card inside OPEN_WINDOW_H of the send.
-
-    `card_opens` carries one row per customer per day, written when the card
-    is fetched. It is the only signal we have: a wallet push returns no read
-    receipt, so this is what "ouverture" can honestly mean here.
-    """
-    if not recipients or not sent_at:
-        return set()
-    rows = _db.card_opens.find(
-        {"tenant_id": tid, "customer_id": {"$in": recipients},
-         "at": {"$gte": sent_at, "$lte": sent_at + timedelta(hours=OPEN_WINDOW_H)}},
-        {"_id": 0, "customer_id": 1})
-    return {r["customer_id"] for r in rows}
+def _opened_ids(tid: str, recipients: List[str], sent_at: datetime,
+                campaign: Optional[Dict[str, Any]] = None) -> set:
+    """Recipients who opened: their card within OPEN_WINDOW_H of the send, the
+    campaign itself (offers feed, « Voir l'offre » in Wallet), or its link —
+    one definition with the Automatisations page (services/card_opens)."""
+    from services import card_opens
+    return card_opens.opened_ids(_db, tid, recipients, sent_at, campaign, OPEN_WINDOW_H)
 
 
 def _attributed_revenue(tid: str, recipients: List[str], sent_at: datetime,
@@ -217,7 +210,7 @@ def _totals(tid: str, rows: List[Dict[str, Any]], scope: Optional["S.Scope"] = N
         ids = list(c.get("recipient_ids") or [])
         at = _aware(c.get("sent_at"))
         reach += len(ids)
-        opened += len(_opened_ids(tid, ids, at))
+        opened += len(_opened_ids(tid, ids, at, c))
         clicks += int(c.get("offer_clicks") or 0)
         revenue += _attributed_revenue(tid, ids, at, scope)
     return {"campaigns": len(rows), "reach": reach, "opened": opened,
@@ -281,7 +274,7 @@ def page(request: Request = None,
             "audience": c.get("audience_label") or SEGMENT_LABELS.get(c.get("segment") or "", "Sélection"),
             "audience_count": len(ids) or int(c.get("targeted_count") or 0),
             "sent": int(c.get("delivered_count") or 0) or len(ids),
-            "open_rate": _pct(len(_opened_ids(tid, ids, sent_at)), len(ids)),
+            "open_rate": _pct(len(_opened_ids(tid, ids, sent_at, c)), len(ids)),
             "status": c.get("status") or "draft",
             "sent_at": sent_at.isoformat() if sent_at else None,
             "scheduled_for": (d.isoformat() if (d := _aware(c.get("scheduled_for"))) else None),
@@ -300,8 +293,10 @@ def page(request: Request = None,
         "segments": segments,
         "recent": recent,
         "limits": {"title": TITLE_MAX, "message": MESSAGE_MAX},
-        "open_note": f"Une ouverture = la carte ouverte dans les {OPEN_WINDOW_H} h suivant l'envoi. "
-                     "Une notification wallet ne renvoie pas d'accusé de lecture.",
+        "open_note": f"Une ouverture = la carte ouverte dans les {OPEN_WINDOW_H} h suivant l'envoi, l'offre "
+                     "ouverte (« Voir l'offre » dans le Wallet) ou son lien cliqué. Une notification wallet "
+                     "ne renvoie pas d'accusé de lecture : un client qui regarde seulement la carte dans "
+                     "Apple Wallet ou Google Wallet n'est pas compté.",
         "revenue_note": f"Le CA généré est la dépense des destinataires dans les "
                         f"{ATTRIBUTION_DAYS} jours suivant l'envoi.",
         "empty": not recent,

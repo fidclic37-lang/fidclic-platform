@@ -6540,21 +6540,13 @@ def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dic
 
 
 def _log_card_open(cust: dict) -> None:
-    """Record that this customer opened their card today.
-
-    One row per customer per day — the card is a PWA and gets reopened all day
-    long. It is what the Campagnes page counts as an "ouverture": a wallet push
-    returns no read receipt, so a card opened within 72 h of a send is the only
-    honest signal there is.
-    """
+    """Record that this customer opened their card — every opening, kept on
+    one row per customer per day (services/card_opens). It is what the
+    Campagnes and Automatisations pages count as an "ouverture": a wallet push
+    returns no read receipt."""
     try:
-        now = datetime.now(timezone.utc)
-        db.card_opens.update_one(
-            {"customer_id": cust["id"], "day": now.strftime("%Y-%m-%d")},
-            {"$setOnInsert": {"tenant_id": cust.get("tenant_id"), "customer_id": cust["id"],
-                              "day": now.strftime("%Y-%m-%d"), "at": now},
-             "$inc": {"opens": 1}},
-            upsert=True)
+        from services import card_opens
+        card_opens.log(db, cust)
     except Exception as exc:
         print(f"card open log failed (non-fatal): {exc}")
 
@@ -6592,13 +6584,8 @@ def get_wallet_card(barcode_id: str):
         raise HTTPException(status_code=404, detail="Card not found")
     payload = _serialize_card_payload(cust)
     _log_card_message_view(cust, payload)
-    try:
-        # The only observable "open" a wallet push has: the customer came and
-        # looked at their card. Push Wallet's open rate is measured against it.
-        db.customers.update_one({"id": cust["id"]},
-                                {"$set": {"last_card_open_at": datetime.now(timezone.utc)}})
-    except Exception:
-        pass
+    # The only observable "open" a wallet push has: the customer came and
+    # looked at their card (also sets customers.last_card_open_at).
     _log_card_open(cust)
     return payload
 

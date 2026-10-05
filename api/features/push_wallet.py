@@ -590,14 +590,15 @@ def _rates(tid: str, start: datetime, end: datetime, mine: Optional[set] = None)
     clicked = sum(1 for l in logs if l.get("clicked_at"))
     opened = 0
     if logs:
+        # Every card opening, not just the latest (services/card_opens): a
+        # customer who opened after the push, then again days later, counts.
+        from services import card_opens
         ids = list({l["customer_id"] for l in logs})
-        opens = {c["id"]: _aware(c.get("last_card_open_at"))
-                 for c in _db.customers.find({"id": {"$in": ids}},
-                                             {"_id": 0, "id": 1, "last_card_open_at": 1})}
+        times = card_opens.open_times(_db, tid, ids, start, end + timedelta(hours=OPEN_WINDOW_H))
         for l in logs:
-            at_open = opens.get(l["customer_id"])
             at_sent = _aware(l.get("sent_at"))
-            if at_open and at_sent and at_sent <= at_open <= at_sent + timedelta(hours=OPEN_WINDOW_H):
+            if at_sent and (l.get("clicked_at") or any(
+                    at_sent <= t <= at_sent + timedelta(hours=OPEN_WINDOW_H) for t in times.get(l["customer_id"], []))):
                 opened += 1
     return {"sent": sent, "clicked": clicked, "opened": opened}
 
@@ -714,7 +715,7 @@ def stats(
              "delta_pct": _delta(now["sent"], was["sent"])},
             {"key": "open_rate", "label": "Taux d'ouverture", "icon": "eye",
              "value": _pct(now["opened"], now["sent"]), "unit": "%",
-             "note": f"cartes ouvertes dans les {OPEN_WINDOW_H} h suivant un push",
+             "note": f"carte ouverte dans les {OPEN_WINDOW_H} h suivant un push, ou lien cliqué",
              "delta_pct": _delta(_pct(now["opened"], now["sent"]),
                                  _pct(was["opened"], was["sent"]))},
             {"key": "click_rate", "label": "Taux de clic", "icon": "chart",
