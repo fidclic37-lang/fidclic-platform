@@ -76,7 +76,6 @@ def _button(href: str, label: str) -> str:
 def welcome_html(tenant: Dict[str, Any], user: Dict[str, Any]) -> str:
     app, contact = _app(), _contact()
     first = _e(user.get("first_name")) or "Bonjour"
-    shop = _e(tenant.get("name") or "votre commerce")
     join = f"{app}/join/{tenant.get('slug')}" if tenant.get("slug") else ""
     steps = [
         ("Personnalisez votre carte de fidélité", "logo, couleurs, récompense : c'est la carte que vos clients ajouteront à Apple Wallet et Google Wallet.", f"{app}/dashboard/card"),
@@ -93,9 +92,9 @@ def welcome_html(tenant: Dict[str, Any], user: Dict[str, Any]) -> str:
     trial_end = _date_fr(tenant.get("trial_ends_at"))
     body = f"""
 <h1 style="font-size:22px;margin:0 0 12px">Bienvenue dans la famille FidClic, {first} !</h1>
-<p style="margin:0 0 14px">Toute l'équipe est ravie de vous compter parmi nous. <b>{shop}</b> est prêt à fidéliser
-ses clients : des cartes de fidélité directement dans leur téléphone, des offres qui les font revenir, et des
-chiffres clairs pour piloter votre commerce.</p>
+<p style="margin:0 0 14px">Toute l'équipe <b>FidClic</b> est ravie de vous compter parmi nous. Avec <b>FidClic</b>,
+vous avez désormais tout pour fidéliser vos clients : des cartes de fidélité directement dans leur téléphone,
+des offres qui les font revenir, et des chiffres clairs pour piloter votre commerce.</p>
 <div style="background:#E9F8EF;border-radius:12px;padding:14px 16px;margin:0 0 20px;color:#137A3E">
   <b>Votre essai gratuit est activé : 30 jours de Pro AI</b>, toutes les fonctionnalités, sans carte bancaire{f", jusqu'au <b>{trial_end}</b>" if trial_end else ""}.
   Vous choisirez ensuite la formule qui vous convient.
