@@ -231,12 +231,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     for log in logs[:2]:
         PW.register_click(log["id"])
     # three of them open their card afterwards — one of those too late to count
-    db.customers.update_one({"id": logs[0]["customer_id"]},
-                            {"$set": {"last_card_open_at": now + dt.timedelta(hours=1)}})
-    db.customers.update_one({"id": logs[1]["customer_id"]},
-                            {"$set": {"last_card_open_at": now + dt.timedelta(hours=10)}})
-    db.customers.update_one({"id": logs[2]["customer_id"]},
-                            {"$set": {"last_card_open_at": now + dt.timedelta(hours=200)}})
+    from services import card_opens as CO
+    db.card_opens.delete_many({})
+    for log, h in ((logs[0], 1), (logs[1], 10), (logs[2], 200)):
+        CO.log(db, {"id": log["customer_id"], "tenant_id": "t1"}, now=now + dt.timedelta(hours=h))
     s = PW.stats(token_data=TD())
     cards = {c["key"]: c for c in s["cards"]}
     check("the four cards of the design, in order",
@@ -248,7 +246,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a card opened long after the push does not count",
           cards["open_rate"]["value"] != 60.0)
     check("the open rate says what it really measures",
-          "cartes ouvertes" in cards["open_rate"]["note"])
+          "carte ouverte" in cards["open_rate"]["note"])
     check("the window is published rather than hidden", s["open_window_hours"] == 72)
     check("scénarios actifs counts the switched-on ones", cards["active"]["value"] == 6)
     check("a click is recorded once, not on every visit",

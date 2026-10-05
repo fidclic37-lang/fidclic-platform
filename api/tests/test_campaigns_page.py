@@ -219,9 +219,12 @@ def main():
     # c1 and c2 opened their card the day after the send; c3 opened it a month
     # later, which is outside the window and must not count.
     db.card_opens.insert_many([
-        {"tenant_id": "t1", "customer_id": "c1", "day": "d1", "at": recent + dt.timedelta(hours=10)},
-        {"tenant_id": "t1", "customer_id": "c2", "day": "d2", "at": recent + dt.timedelta(hours=40)},
-        {"tenant_id": "t1", "customer_id": "c3", "day": "d3", "at": recent + dt.timedelta(days=20)},
+        {"tenant_id": "t1", "customer_id": "c1", "day": (recent + dt.timedelta(hours=10)).strftime("%Y-%m-%d"),
+         "at": recent + dt.timedelta(hours=10)},
+        {"tenant_id": "t1", "customer_id": "c2", "day": (recent + dt.timedelta(hours=40)).strftime("%Y-%m-%d"),
+         "at": recent + dt.timedelta(hours=40)},
+        {"tenant_id": "t1", "customer_id": "c3", "day": (recent + dt.timedelta(days=20)).strftime("%Y-%m-%d"),
+         "at": recent + dt.timedelta(days=20)},
     ])
     db.visits.insert_many([
         {"tenant_id": "t1", "customer_id": "c1", "amount_paid": 12.5,
