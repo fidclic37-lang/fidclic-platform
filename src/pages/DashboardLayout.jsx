@@ -597,13 +597,19 @@ const DashboardLayout = () => {
 
       </aside>
 
-      {/* « Accéder au compte » from the super admin: read-only, and said so.
+      {/* « Accéder au compte » from the super admin: full access (every change
+          is audited under the admin's name), or read-only for a team member
+          who may only look — said either way.
           Floating, outside <main>: the pages style main's first child. */}
       {user?.view_as && (
         <div role="status" className="fixed bottom-4 left-1/2 z-[70] flex w-[min(760px,calc(100%-32px))] -translate-x-1/2 flex-wrap items-center gap-3 rounded-2xl px-4 py-3 text-[13px] shadow-[0_18px_50px_-18px_rgba(11,28,63,.7)]"
              style={{ background: '#0B1C3F', color: '#fff' }}>
           <Eye size={16} className="shrink-0" />
-          <span className="min-w-0 flex-1">Vue en <strong>lecture seule</strong> du compte de <strong>{user.tenant_name}</strong>, ouverte par {user.view_as.by}. Aucune modification n'est possible.</span>
+          {user.view_as.can_edit ? (
+            <span className="min-w-0 flex-1">Vous êtes dans le compte de <strong>{user.tenant_name}</strong> avec un <strong>accès complet</strong>, ouvert par {user.view_as.by}. Chaque modification est enregistrée à votre nom dans le journal.</span>
+          ) : (
+            <span className="min-w-0 flex-1">Vue en <strong>lecture seule</strong> du compte de <strong>{user.tenant_name}</strong>, ouverte par {user.view_as.by}. Aucune modification n'est possible.</span>
+          )}
           <button type="button" onClick={logout} className="rounded-lg px-3 py-1.5 font-medium" style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }}>Quitter la vue</button>
         </div>
       )}
@@ -700,7 +706,7 @@ const DashboardLayout = () => {
                 sidebar's establishment switcher; help has its own row at the
                 foot of the sidebar. */}
             <div className="absolute right-6 lg:right-8 flex items-center gap-3">
-              {!user?.view_as && (
+              {(!user?.view_as || user.view_as.can_edit) && (
                 <Link to="/dashboard/scan" title={t('nav.scan_visit')} aria-label={t('nav.scan_visit')}
                       className={`inline-flex h-9 items-center gap-2 rounded-full px-2.5 text-[13.5px] font-semibold text-white transition hover:-translate-y-px xl:px-4 ${
                         currentPath === '/dashboard/scan' ? 'bg-[#1E4FD8]' : 'bg-[#2F6BFF] hover:bg-[#2559DB]'}`}

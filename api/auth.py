@@ -53,6 +53,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
 
 _session_check = None
 _tenant_check = None
+_act_hook = None          # (admin_email, tenant_id, method, path) — set by server.py
 SUSPENDABLE = {"business_owner", "administrateur", "manager", "staff"}
 READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -62,6 +63,11 @@ def set_session_check(fn):
     _session_check = fn
 
 
+def set_act_hook(fn):
+    global _act_hook
+    _act_hook = fn
+
+
 def set_tenant_check(fn):
     """features/admin_commerces.py: is this business suspended?"""
     global _tenant_check
@@ -69,9 +75,10 @@ def set_tenant_check(fn):
 
 
 def _view_token(request: Request) -> Optional[str]:
-    """« Accéder au compte » runs in its own tab with a read-only token in the
-    Authorization header, while the super admin's own cookie still rides
-    along: that header must win, or the tab would act as the super admin."""
+    """« Accéder au compte » runs in its own tab with the account's token (full
+    access or read-only) in the Authorization header, while the super admin's
+    own cookie still rides along: that header must win, or the tab would act
+    as the super admin."""
     h = request.headers.get("authorization") or request.headers.get("Authorization") or ""
     if not h.startswith("Bearer "):
         return None
@@ -79,7 +86,7 @@ def _view_token(request: Request) -> Optional[str]:
         p = jwt.decode(h[7:], SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         return None
-    return h[7:] if p.get("view_only") else None
+    return h[7:] if (p.get("view_only") or p.get("act_by")) else None
 
 
 async def get_current_user_data(request: Request) -> TokenData:
@@ -120,14 +127,23 @@ async def get_current_user_data(request: Request) -> TokenData:
         # « Déconnecter » on Paramètres › Sécurité ends a device at once.
         if _session_check is not None and not _session_check(email, sid):
             raise HTTPException(status_code=401, detail="Session terminée. Reconnectez-vous.")
-        view_by = payload.get("view_by") if payload.get("view_only") else None
+        # « Accéder au compte »: `act_by` = a super admin working in the
+        # account with full access (user, 2026-10-05: « 100% access »);
+        # `view_only` = a team member who may only look.
+        view_by = payload.get("view_by") if (payload.get("view_only") or payload.get("act_by")) else None
         if payload.get("view_only") and request.method not in READ_METHODS:
             raise HTTPException(status_code=403, detail="Mode lecture seule : aucune modification possible depuis cette vue.")
+        if payload.get("act_by") and request.method not in READ_METHODS and _act_hook is not None:
+            try:            # every change made from the account is traced to the admin
+                _act_hook(payload["act_by"], tenant_id, request.method, request.url.path)
+            except Exception:
+                pass
         closed = (not view_by and role in SUSPENDABLE and tenant_id and _tenant_check is not None and _tenant_check(tenant_id))
         if closed:
             # Suspendu or résilié: the check says which (admin_commerces.is_suspended).
             raise HTTPException(status_code=403, detail=closed if isinstance(closed, str) else "Ce compte est suspendu. Contactez FidClic.")
-        return TokenData(email=email, role=role, tenant_id=tenant_id, sid=sid, view_by=view_by)
+        return TokenData(email=email, role=role, tenant_id=tenant_id, sid=sid, view_by=view_by,
+                         view_only=bool(payload.get("view_only")))
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Invalid or expired token: {str(e)[:80]}")
 

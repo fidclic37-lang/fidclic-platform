@@ -2642,7 +2642,8 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         "tenant_name": (tenant or {}).get("name"),
         "tenant_slug": (tenant or {}).get("slug"),
         # « Accéder au compte » from the super admin: a read-only view.
-        "view_as": {"by": token_data.view_by} if getattr(token_data, "view_by", None) else None,
+        "view_as": ({"by": token_data.view_by, "can_edit": not getattr(token_data, "view_only", False)}
+                    if getattr(token_data, "view_by", None) else None),
         # FidClic's own team: the role and what it may see / change.
         **_platform_identity(user),
         # Paramètres › Préférences: applied by the app as soon as it knows who
