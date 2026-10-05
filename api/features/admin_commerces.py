@@ -66,6 +66,24 @@ def init(db):
     _db = db
     import auth
     auth.set_tenant_check(is_suspended)
+    auth.set_act_hook(_log_act)
+
+
+def _log_act(admin: str, tid: Optional[str], method: str, path: str) -> None:
+    """A change made from « Accéder au compte »: the business's own records
+    show the owner's account, the audit says which admin really did it."""
+    import server as core
+    core.log_audit("admin.act_as.write", actor=admin, actor_type="user", target=tid, tenant_id=tid,
+                   meta={"method": method, "path": path[:200]})
+
+
+def _can_act(token_data: TokenData) -> bool:
+    """Full access to a business's account: the Super Admin, and a team member
+    allowed to « Modifier » Commerces. The others may only look."""
+    if token_data.role == "super_admin":
+        return True
+    from features.platform_access import perms_for
+    return bool(((perms_for(token_data.email) or {}).get("commerces") or {}).get("edit"))
 
 
 def _now() -> datetime:
@@ -524,11 +542,16 @@ def view_as(tid: str, request: Request = None, token_data: TokenData = Depends(r
     owner = _db.users.find_one({"tenant_id": tid, "role": "business_owner"}, {"_id": 0, "email": 1})
     if not owner:
         raise HTTPException(status_code=409, detail="Ce commerce n'a pas de compte propriétaire.")
-    token = create_access_token({"sub": owner["email"], "role": "business_owner", "tenant_id": tid,
-                                 "view_only": True, "view_by": token_data.email}, timedelta(minutes=VIEW_MINUTES))
+    # The Super Admin works in the account with full access (user,
+    # 2026-10-05: « it should not be view only … 100% access »); every change
+    # is audited (_log_act). A team member without « Modifier » only looks.
+    full = _can_act(token_data)
+    claims = {"sub": owner["email"], "role": "business_owner", "tenant_id": tid, "view_by": token_data.email}
+    claims.update({"act_by": token_data.email} if full else {"view_only": True})
+    token = create_access_token(claims, timedelta(minutes=VIEW_MINUTES))
     core.log_audit("admin.view_as", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid, request=request,
-                   meta={"as": owner["email"], "minutes": VIEW_MINUTES})
-    return {"token": token, "minutes": VIEW_MINUTES, "name": t.get("name")}
+                   meta={"as": owner["email"], "minutes": VIEW_MINUTES, "full_access": full})
+    return {"token": token, "minutes": VIEW_MINUTES, "name": t.get("name"), "full_access": full}
 
 
 # ---------------------------------------------------------------------------

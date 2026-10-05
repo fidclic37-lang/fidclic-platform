@@ -204,7 +204,8 @@ class TokenData(BaseModel):
     role: Optional[str] = None
     tenant_id: Optional[str] = None
     sid: Optional[str] = None          # the login session (features/security_page.py)
-    view_by: Optional[str] = None      # « Accéder au compte »: the super admin viewing, read-only
+    view_by: Optional[str] = None      # « Accéder au compte »: the super admin in this account
+    view_only: bool = False            # …read-only (a team member without « Modifier » on Commerces)
 
 class UserBase(BaseModel):
     email: str

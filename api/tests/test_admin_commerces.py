@@ -226,20 +226,44 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("annulée: works again", isinstance(who(req(bearer=staff_tok)), TokenData) and http("GET", "/api/card/FT-BUSY1").status_code != 410)
     check("audited", db.audit_logs.count_documents({"action": {"$in": ["admin.commerce_resilie", "admin.commerce_resiliation_annulee"]}}) == 2)
 
-    print("\nAccéder au compte (read-only)")
+    print("\nAccéder au compte — the Super Admin has full access (user, 2026-10-05)")
     v = A.view_as("busy", token_data=ADMIN)
+    check("the Super Admin gets full access", v["full_access"] is True)
     admin_cookie = auth.create_access_token({"sub": "boss@fidclic.com", "role": "super_admin"})
     me = who(req(bearer=v["token"], cookie=admin_cookie))
-    check("the view token wins over the super admin's cookie", isinstance(me, TokenData) and me.email == "o@busy.fr"
+    check("the account token wins over the super admin's cookie", isinstance(me, TokenData) and me.email == "o@busy.fr"
           and me.role == "business_owner" and me.view_by == "boss@fidclic.com")
     check("reads are allowed", isinstance(who(req("GET", bearer=v["token"])), TokenData))
-    check("any change is refused", who(req("POST", bearer=v["token"])) == 403 and who(req("DELETE", bearer=v["token"])) == 403)
-    check("/auth/me says it is a view", server.get_me(token_data=me)["view_as"] == {"by": "boss@fidclic.com"})
+    before = db.audit_logs.count_documents({"action": "admin.act_as.write"}) + db.audit_log.count_documents({"action": "admin.act_as.write"})
+    check("changes are allowed", isinstance(who(req("POST", bearer=v["token"])), TokenData)
+          and isinstance(who(req("DELETE", bearer=v["token"])), TokenData))
+    after = db.audit_logs.count_documents({"action": "admin.act_as.write"}) + db.audit_log.count_documents({"action": "admin.act_as.write"})
+    check("…and each one is audited under the admin's name", after - before == 2)
+    row = db.audit_logs.find_one({"action": "admin.act_as.write"}) or db.audit_log.find_one({"action": "admin.act_as.write"}) or {}
+    check("…with the business and what was done", "boss@fidclic.com" in str(row) and "busy" in str(row) and "POST" in str(row))
+    check("/auth/me says it is the admin, with full access",
+          server.get_me(token_data=me)["view_as"] == {"by": "boss@fidclic.com", "can_edit": True})
+    from features import audit as AU
+    AU.log("card.settings.updated", tenant_id="busy", actor=me, db=db)
+    hist = db.audit_log.find_one({"action": "card.settings.updated", "tenant_id": "busy"}) or {}
+    check("the business's Historique names the admin, on behalf of the owner",
+          hist.get("actor_email") == "boss@fidclic.com" and hist.get("on_behalf_of") == "o@busy.fr")
     check("a normal cookie login is unchanged", who(req(cookie=admin_cookie)).email == "boss@fidclic.com")
+
+    print("\nAccéder au compte — a team member who may only look stays read-only")
+    db.platform_roles.insert_one({"id": "lecteur", "perms": {"commerces": {"view": True, "edit": False}}})
+    db.users.insert_one({"email": "eve@fidclic.com", "role": "fidclic_team", "platform_role": "lecteur", "active": True})
+    EVE = TokenData(email="eve@fidclic.com", role="fidclic_team", tenant_id=None)
+    ve = A.view_as("busy", token_data=EVE)
+    check("no full access without « Modifier » on Commerces", ve["full_access"] is False)
+    check("reads allowed", isinstance(who(req("GET", bearer=ve["token"])), TokenData))
+    check("any change is refused", who(req("POST", bearer=ve["token"])) == 403 and who(req("DELETE", bearer=ve["token"])) == 403)
+    me_e = who(req(bearer=ve["token"], cookie=admin_cookie))
+    check("/auth/me says read-only", server.get_me(token_data=me_e)["view_as"] == {"by": "eve@fidclic.com", "can_edit": False})
     A.suspend("busy", A.SuspendIn(), token_data=ADMIN)
     check("a suspended business can still be viewed", isinstance(who(req(bearer=A.view_as("busy", token_data=ADMIN)["token"])), TokenData))
-    check("every opening audited", db.audit_logs.count_documents({"action": "admin.view_as"}) == 2
-          or db.audit_log.count_documents({"action": "admin.view_as"}) == 2)
+    check("every opening audited", db.audit_logs.count_documents({"action": "admin.view_as"}) == 3
+          or db.audit_log.count_documents({"action": "admin.view_as"}) == 3)
     check("a business with no owner cannot be viewed", refused(lambda: A.view_as("idle", token_data=ADMIN), 409))
 
     print(f"\n{passed} passed, {failed} failed")
