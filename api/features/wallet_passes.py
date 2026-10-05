@@ -1196,7 +1196,7 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
     return Response(status_code=200 if existing else 201)
 
 
-@router.get("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}")
+@router.api_route("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}", methods=["GET", "HEAD"])
 def serials_for_device(device_id: str, pass_type_id: str, passesUpdatedSince: Optional[str] = None):
     regs = list(_db.pass_registrations.find({"device_id": device_id, "pass_type_id": pass_type_id}))
     if not regs:
@@ -1232,7 +1232,9 @@ def unregister_device(device_id: str, pass_type_id: str, serial: str,
     return Response(status_code=200)
 
 
-@router.get("/api/passes/v1/passes/{pass_type_id}/{serial}")
+# HEAD too: Wallet may ask before it downloads; a 405 there left some
+# devices on the pass they already had.
+@router.api_route("/api/passes/v1/passes/{pass_type_id}/{serial}", methods=["GET", "HEAD"])
 def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
     _db.pass_registrations.update_many({"serial": serial}, {"$set": {"last_fetch_at": datetime.now(timezone.utc)}})
