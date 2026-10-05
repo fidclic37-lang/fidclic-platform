@@ -337,9 +337,21 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
         "new_delta": _delta(new_count, prev_new),
         "campaigns": campaigns, "products": products, "hours": hours,
         "status_mix": status_mix,
+        # « Choisissez votre récompense » until the merchant saved one.
+        "reward_setup": _reward_setup(tid, token_data),
         "recommendations": _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
                                             campaigns, products, goal),
     }
+
+
+def _reward_setup(tid: str, token_data: TokenData) -> Optional[Dict[str, Any]]:
+    if getattr(token_data, "role", None) != "business_owner":
+        return None                     # only the owner can change the card
+    try:
+        from services import sector_rewards
+        return sector_rewards.needs_choice(_db, tid)
+    except Exception:
+        return None
 
 
 def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],

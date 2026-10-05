@@ -452,7 +452,7 @@ class CardTemplate(BaseModel):
     points_mode: str = "per_visit"
     visits_per_stamp: int = 1
     reward_threshold_stamps: int = 10
-    reward_description: str = "Un café gratuit"
+    reward_description: str = "Une récompense offerte"   # replaced by the sector's (services/sector_rewards)
     notify_before_reward: int = 1
     bronze_design: TierDesign = Field(default_factory=TierDesign)
     silver_design: TierDesign = Field(default_factory=lambda: TierDesign(primary_color="#A0A0A0", accent_color="#C0C0C0"))

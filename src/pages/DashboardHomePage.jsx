@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, Users, Crown, ShoppingBag, Target, TrendingUp, Send,
   MousePointerClick, ShoppingCart, ChevronRight, ArrowRight,
-  Loader2, Mail, UserX, Star, FileDown, Info, Zap, Check, X,
+  Loader2, Mail, UserX, Star, FileDown, Info, Zap, Check, X, Gift,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -375,6 +375,26 @@ export default function DashboardHomePage() {
       </header>
 
       {error && <p className="mb-4 rounded-xl bg-[#FEECEC] px-4 py-2.5 text-[12.5px] text-[#C0392B]">{error}</p>}
+
+      {/* Until the owner saves a reward, the card shows its sector's default
+          (« Une séance offerte » for a gym…): ask them to make it theirs. */}
+      {d?.reward_setup && (
+        <div className="mb-4 flex flex-wrap items-center gap-3.5 rounded-2xl border border-[#FDE7B0] bg-[#FFF8E6] px-5 py-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFEDC2] text-[#B7791F]">
+            <Gift size={19} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14.5px] font-bold text-[#0B1C3F]">Choisissez votre récompense</p>
+            <p className="text-[13px] text-[#64748B]">
+              Votre carte propose pour l'instant « {d.reward_setup.reward} ». Gardez-la ou écrivez la vôtre : c'est ce que vos clients voient dans leur Wallet.
+            </p>
+          </div>
+          <button type="button" onClick={() => navigate('/dashboard/card')}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[#2F6BFF] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#1F57E0]">
+            Choisir ma récompense <ArrowRight size={14} />
+          </button>
+        </div>
+      )}
 
       {/* the four figures */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

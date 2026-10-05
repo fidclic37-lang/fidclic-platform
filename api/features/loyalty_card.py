@@ -223,6 +223,12 @@ class CardSettings(BaseModel):
     google_links: Optional[List[Dict[str, str]]] = None   # [{label, uri}]
 
 
+
+def _sector_reward(sector):
+    from services.sector_rewards import default_reward
+    return default_reward(sector)
+
+
 @router.get("/api/owner/card/settings")
 def get_card_settings(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
@@ -249,7 +255,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "points_per_visit": int(tpl.get("points_per_visit") or 10),
             "reward_threshold_stamps": int(tpl.get("reward_threshold_stamps") or 10),
             "reward_points": int(tpl.get("reward_points") or 100),
-            "reward_description": tpl.get("reward_description") or "Une boisson offerte",
+            "reward_description": tpl.get("reward_description") or _sector_reward(tenant.get("sector")),
         },
         "toggles": {
             "show_points": tpl.get("show_points") is not False,
@@ -382,6 +388,10 @@ def put_card_settings(body: CardSettings,
         _db.push_scenarios.update_one({"tenant_id": tid, "builtin": "birthday"},
                                       {"$set": {"enabled": bool(birthday), "updated_at": _now()}})
 
+    if (payload.get("reward_description") or "").strip():
+        # Saved from this page, where the merchant sees it: the reward is now
+        # theirs, never replaced by the sector's (services/sector_rewards).
+        payload["reward_chosen"] = True
     if payload:
         payload["tenant_id"] = tid
         payload["updated_at"] = _now()

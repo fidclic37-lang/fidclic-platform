@@ -3373,6 +3373,8 @@ def save_card_template_admin(
     old_tpl = db.card_templates.find_one({"tenant_id": tenant_id}) or {}
     old_threshold = int(old_tpl.get("reward_threshold_stamps", 10) or 10)
     old_notify = int(old_tpl.get("notify_before_reward", 1) or 1)
+    from services import sector_rewards
+    sector_rewards.on_full_save(db, tenant_id, payload, old_tpl)
 
     db.card_templates.update_one({"tenant_id": tenant_id}, {"$set": payload}, upsert=True)
 
@@ -5218,6 +5220,8 @@ def save_card_template(req: CardTemplate, token_data: TokenData = Depends(requir
     old_tpl = db.card_templates.find_one({"tenant_id": tid}) or {}
     old_threshold = int(old_tpl.get("reward_threshold_stamps", 10) or 10)
     old_notify = int(old_tpl.get("notify_before_reward", 1) or 1)
+    from services import sector_rewards
+    sector_rewards.on_full_save(db, tid, payload, old_tpl)
 
     db.card_templates.update_one({"tenant_id": tid}, {"$set": payload}, upsert=True)
 

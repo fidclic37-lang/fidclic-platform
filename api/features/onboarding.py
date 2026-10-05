@@ -65,6 +65,10 @@ def init(db):
         _db.tenants.create_index([("subscription_status", 1), ("trial_ends_at", 1)])
     except Exception:
         pass
+    # Shops still on the old one-size placeholder (« Un café gratuit » on a
+    # gym's card) get their sector's reward — once per process, cheap.
+    from services import sector_rewards
+    sector_rewards.sync_all(_db)
 
 
 def _now() -> datetime:
@@ -233,6 +237,9 @@ def complete_company(body: CompanyDetails, request: Request,
         update["onboarding_status"] = "plan"       # step 3 next; still a draft
 
     _db.tenants.update_one({"id": tenant["id"]}, {"$set": update})
+    # The card starts with this sector's reward, not « Un café gratuit » for all.
+    from services import sector_rewards
+    sector_rewards.apply(_db, tenant["id"], body.sector)
     core.log_audit("onboarding.company_completed", actor=token_data.email, actor_type="user",
                    tenant_id=tenant["id"], request=request,
                    meta={"first_completion": first_completion, "sector": body.sector})

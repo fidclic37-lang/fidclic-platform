@@ -299,6 +299,15 @@ def put_etablissement(body: EtablissementIn,
     if sets:
         sets["updated_at"] = _now()
         _db.tenants.update_one({"id": tid}, {"$set": sets})
+        if "sector" in sets:
+            # A card whose reward was never chosen follows the new sector.
+            try:
+                from services import sector_rewards
+                if sector_rewards.apply(_db, tid, sets["sector"]):
+                    from features.wallet_passes import notify_tenant
+                    notify_tenant(tid)
+            except Exception:
+                pass
         try:
             from server import log_audit
             log_audit("etablissement.updated", actor=getattr(token_data, "email", None), actor_type="user",
