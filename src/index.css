@@ -1972,9 +1972,13 @@ textarea::placeholder {
    ================================================================ */
 /* Ambient veil: one warm flame wash top-right, a faint plum low-left (v31 jour);
    nuit swaps in the gold veil. Sits on the layout root behind everything. */
-.flc{background:
-  linear-gradient(118deg,#FFDDC4 0%,#FFCBDA 32%,#EDD9FF 66%,#CFE4FF 100%);
-  background-attachment:fixed}
+/* The shell's canvas is the new theme's blue-grey, the same as every rebuilt
+   page (main:has(.lc)… below). It used to be the old peach → pink → lavender
+   veil: whatever the page had not painted yet — a section still downloading,
+   a page still loading its data — showed it, so every switch between
+   sections flashed pink (user, 2026-10-05: « makes us look unprofessional »). */
+.flc{background:#F4F7FC}
+.flc:not(.flc-nuit) main{background:#F4F7FC}
 .flc-nuit{background:
   radial-gradient(60% 45% at 72% 0%, rgba(212,175,110,.10), transparent 70%),
   radial-gradient(45% 40% at 8% 90%, rgba(212,175,110,.05), transparent 70%),
