@@ -133,8 +133,19 @@ def test_step2(u):
     st = OB.onboarding_status(tk)
     check("status exposes the trial plan + days", st["trial_plan"] == "vip" and st["trial_days"] == 30)
     S.db.tenants.update_one({"id": u["tenant_id"]}, {"$set": {"created_at": datetime.now(timezone.utc) - timedelta(days=3)}})
+    SENT.clear()
     out = OB.start_trial(None, tk)
     t = S.db.tenants.find_one({"id": u["tenant_id"]})
+    admin_mail = next((m for m in SENT if m["to"][0]["email"] == "fidclic37@gmail.com"), None)
+    welcome = next((m for m in SENT if m["to"][0]["email"] == "marie@cafe.fr"), None)
+    check("FidClic is told: « Nouveau commerce inscrit » with the details",
+          admin_mail and "Café Lumière" in admin_mail["subject"] and "marie@cafe.fr" in admin_mail["htmlContent"]
+          and "/admin/commerces/" in admin_mail["htmlContent"])
+    check("the owner gets the French welcome, with the trial, the steps, their link and how to reach us",
+          welcome and "Bienvenue dans la famille FidClic" in welcome["htmlContent"]
+          and "30 jours de Pro AI" in welcome["htmlContent"] and "/join/cafe-lumiere" in welcome["htmlContent"]
+          and "contact@fidclic.com" in welcome["htmlContent"] and welcome.get("replyTo", {}).get("email") == "contact@fidclic.com")
+    check("the owner's name is escaped, never raw HTML", "<script" not in welcome["htmlContent"])
     check("plan step → onboarding done, business live", out["onboarding_status"] == "done"
           and t["onboarding_status"] == "done" and t["is_active"] is True)
     check("trial runs on Pro AI (vip)", t["plan"] == "vip" and out["plan"] == "vip")
@@ -142,7 +153,9 @@ def test_step2(u):
           and t["trial_duration_days"] == 30 and out["trial"]["days_left"] in (29, 30))
     check("created_at = the day it went live", (datetime.now(timezone.utc) - (t["created_at"] if t["created_at"].tzinfo else t["created_at"].replace(tzinfo=timezone.utc))).total_seconds() < 60)
     ends0 = t["trial_ends_at"]
+    sent_before = len(SENT)
     OB.start_trial(None, tk)
+    check("a second click sends no second welcome", len(SENT) == sent_before)
     check("start-trial twice does NOT restart the trial", S.db.tenants.find_one({"id": u["tenant_id"]})["trial_ends_at"] == ends0)
     check("slug regenerated from the shop name", t["slug"] == "cafe-lumiere")
     check("legal identity stored (SIRET digits only, SIREN derived)",
@@ -158,6 +171,7 @@ def test_step2(u):
 
 def test_reminder(u):
     print("\nDay 29 — trial reminder via daily cron")
+    SENT.clear()                       # the welcome e-mails of step 3 are not reminders
     tid = u["tenant_id"]
     now = datetime.now(timezone.utc)
     # Day 10 of 30: nothing should go out.

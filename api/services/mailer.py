@@ -44,7 +44,8 @@ def _post(payload: Dict[str, Any], key: str) -> Dict[str, Any]:
 
 def send(to: str, subject: str, html: str,
          text: Optional[str] = None,
-         to_name: Optional[str] = None) -> Dict[str, Any]:
+         to_name: Optional[str] = None,
+         reply_to: Optional[str] = None) -> Dict[str, Any]:
     """Send one email. Never raises — a failed relance is a log line and a
     retry on the next agent run, not a crashed request."""
     key = _api_key()
@@ -56,6 +57,7 @@ def send(to: str, subject: str, html: str,
         "subject": subject,
         "htmlContent": html,
         **({"textContent": text} if text else {}),
+        **({"replyTo": {"email": reply_to}} if reply_to else {}),
     }
     try:
         res = _post(payload, key)
