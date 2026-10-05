@@ -196,6 +196,43 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"meter fills with progress (2 stamps: {f2} px < 9 stamps: {f9} px)", 0 < f2 < f9)
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
 
+    # ---- a wallet campaign with a photo (user, 2026-10-05) -----------------
+    # Wallet shows no image in a notification or on the back: the photo
+    # becomes the banner while the campaign is the offer, and the back links
+    # to the campaign on the web card.
+    _red = io.BytesIO()
+    _IM.new("RGB", (600, 300), (220, 20, 20)).save(_red, "PNG")
+    photo = "data:image/png;base64," + base64.b64encode(_red.getvalue()).decode()
+    db.campaigns.delete_many({})
+    db.campaigns.insert_one({"id": "camp-photo", "tenant_id": "t1", "name": "Séance offerte",
+                             "content": "Venez cette semaine", "status": "sent", "wallet_offer": True,
+                             "recipient_ids": ["c1"], "sent_at": dt.datetime.now(dt.timezone.utc), "image_url": photo})
+    pjc = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    backc = {f["key"]: f for f in pjc["storeCard"]["backFields"]}
+    check("campaign photo: the back links to the campaign on the web card",
+          backc.get("offer_link", {}).get("value", "").endswith("/card/FT-TEST0001?offre=camp-photo")
+          and 'href="' in backc["offer_link"].get("attributedValue", ""))
+    check("campaign photo: the link sits right under the offer",
+          [f["key"] for f in pjc["storeCard"]["backFields"]][:2] == ["offer", "offer_link"])
+    check("campaign photo: banner layout (nothing over the photo)", pjc["storeCard"]["primaryFields"] == [])
+    zc = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
+    top = _IM.open(io.BytesIO(zc.read("strip@3x.png"))).convert("RGB").getpixel((560, 60))
+    check(f"campaign photo: it is the strip (top pixel {top})", top[0] > 150 and top[1] < 90 and top[2] < 90)
+    gobj = WP._gw_object(WP._card_payload("FT-TEST0001"))
+    check("campaign photo: Google gets the link, not a raw URL in the details",
+          gobj["linksModuleData"]["uris"][0]["uri"].endswith("?offre=camp-photo")
+          and not any(t["id"] == "offer_link" for t in gobj["textModulesData"]))
+    check("campaign photo: Google's banner URL changes with the campaign",
+          gobj["heroImage"]["sourceUri"]["uri"].endswith("-camp-photo"))
+    db.campaigns.update_one({"id": "camp-photo"}, {"$set": {
+        "sent_at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=WP.CAMPAIGN_OFFER_DAYS + 1)}})
+    pje = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
+    check("campaign over: link gone", "offer_link" not in {f["key"] for f in pje["storeCard"]["backFields"]})
+    ze = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
+    tope = _IM.open(io.BytesIO(ze.read("strip@3x.png"))).convert("RGB").getpixel((560, 60))
+    check(f"campaign over: the photo leaves the strip ({tope})", not (tope[0] > 150 and tope[1] < 90))
+    db.campaigns.delete_many({})
+
     # ---- lifecycle: relevantDate / expirationDate / voided ---------------
     db.tenants.update_one({"id": "t1"}, {"$set": {"weekly_schedule": [
         {"day": d, "open_from": "09:00", "open_to": "19:00", "closed": False}
