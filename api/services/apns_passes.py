@@ -16,6 +16,8 @@ HOW (Apple's Wallet web-service contract)
       Apple account step.
     • payload    an empty JSON object. A pass push carries no alert: the alert
       the customer sees comes from `changeMessage` on a field inside the pass.
+    • headers    apns-push-type alert, apns-priority 10 — delivered now; a
+      background / 5 push is throttled by the device (see push_to_tokens).
     • topic      the pass type identifier.
     • tokens     stored per device in `pass_registrations` when Wallet
       registers (features/wallet_passes.py). 410 / BadDeviceToken means the
@@ -115,10 +117,18 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
         return out
 
     topic = _env("APPLE_PASS_TYPE_ID")
+    # alert + priority 10, not background + 5 (user, 2026-10-05: pushes
+    # « reçus » by Apple, yet some iPhones never updated, or only on
+    # pull-to-refresh, and the lock-screen alert came late or silently).
+    # Apple defines priority 5 as « send based on power considerations on the
+    # user's device » and throttles background pushes — a few test campaigns
+    # in an hour, or Low Power Mode, and the device simply stops coming. The
+    # payload stays the empty {} Wallet expects; the alert the customer sees
+    # is still the changeMessage of the field that changed in the pass.
     headers = {
         "apns-topic": topic,
-        "apns-push-type": "background",   # a pass update carries no alert of its own
-        "apns-priority": "5",
+        "apns-push-type": "alert",
+        "apns-priority": "10",
         "content-type": "application/json",
     }
     try:
