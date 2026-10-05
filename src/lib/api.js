@@ -75,6 +75,8 @@ export const authAPI = {
   login: (data) => api.post('/auth/login', data),
   login2fa: (challenge, code) => api.post('/auth/login/2fa', { challenge, code }),
   register: (data) => api.post('/auth/register', data),
+  // Live sign-up check: format, typo, throwaway, domain (services/email_check.py).
+  checkEmail: (email) => api.get('/auth/check-email', { params: { email } }),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
   // Social login — the browser gets a signed ID token from Google / Apple
@@ -93,6 +95,10 @@ export const onboardingAPI = {
   // Step 3: the plans shown side by side, then « Commencer l'essai ».
   plans: () => api.get('/public/plans'),
   startTrial: () => api.post('/onboarding/start-trial'),
+  // Step 1 bis: a code by e-mail or SMS (features/signup_verify.py).
+  verifyState: () => api.get('/onboarding/verify'),
+  verifySend: (channel) => api.post('/onboarding/verify/send', { channel }),
+  verifyCheck: (code) => api.post('/onboarding/verify/check', { code }),
   // Step 2: suggestions inside the selected country (services/addresses.py).
   addressSearch: (params) => api.get('/onboarding/address-search', { params }),
 };

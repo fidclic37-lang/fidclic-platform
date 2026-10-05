@@ -207,7 +207,7 @@ def sync_tenants() -> Dict[str, int]:
     out = {"created": 0, "updated": 0}
     linked = {p["tenant_id"]: p["id"] for p in _db.crm_prospects.find({"tenant_id": {"$ne": None}}, {"tenant_id": 1, "id": 1})}
     # A sign-up still in onboarding is a hidden draft, not a business yet.
-    for t in _db.tenants.find({"onboarding_status": {"$nin": ["company", "plan"]}}, {"_id": 0}):
+    for t in _db.tenants.find({"onboarding_status": {"$nin": ["verify", "company", "plan"]}}, {"_id": 0}):
         if not t.get("id"):
             continue
         pid = linked.get(t["id"]) or (_match({**_tenant_fields(t)}) or {}).get("id")
@@ -275,7 +275,7 @@ def _match_tenant(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if u and u.get("tenant_id"):
             return _db.tenants.find_one({"id": u["tenant_id"]}, {"_id": 0})
     ph, name = _digits(row.get("phone") or ""), _fold(row.get("name") or "")
-    for t in _db.tenants.find({"onboarding_status": {"$nin": ["company", "plan"]}}, {"_id": 0}):
+    for t in _db.tenants.find({"onboarding_status": {"$nin": ["verify", "company", "plan"]}}, {"_id": 0}):
         if ph and len(ph) >= 9 and _digits(t.get("phone") or "") == ph:
             return t
         if name and _fold(t.get("name") or "") == name and _same_place(row, t):

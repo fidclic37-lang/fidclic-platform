@@ -30,7 +30,8 @@ MODULES = [
     "features.security_page",
     "features.preferences",
     "features.platform_access",
-    "features.platform_reset",          # Super admin › remise à zéro (fresh start)
+    "features.platform_reset",
+    "features.signup_verify",            # sign-up code by e-mail or SMS          # Super admin › remise à zéro (fresh start)
     "features.platform_security",
     "features.crm",
     "features.crm_pilotage",

@@ -25,6 +25,14 @@ import features.onboarding as OB        # noqa: E402
 import features.oauth as OA             # noqa: E402
 from services import mailer             # noqa: E402
 from fastapi import Response            # noqa: E402
+import services.email_check as EC       # noqa: E402
+import features.signup_verify as SV     # noqa: E402
+SV.init(S.db)
+# No network in tests: the domain check answers « unknown » (fail-open), and
+# the older flows run without the code step (test_signup_verify turns it on).
+EC.domain_receives_mail = lambda d: None
+_real_required = SV.verification_required
+SV.verification_required = lambda: False
 
 PASS, FAIL = [], []
 SENT = []
@@ -261,6 +269,73 @@ def test_verified_address():
           and ADR.postcode_ok("CH", "1003") and ADR.postcode_ok("MC", "98000") and not ADR.postcode_ok("MC", "75000"))
 
 
+def test_signup_verify():
+    print("\nStep 1 — a real e-mail, then a code by e-mail (or SMS)")
+    reset()
+    expect_status("malformed e-mail refused at sign-up", 400,
+                  lambda: S.register({**STEP1, "email": "marie@gmail"}, Response()))
+    try:
+        S.register({**STEP1, "email": "marie@gmial.com"}, Response())
+        check("typo refused with the fix", False)
+    except Exception as e:
+        check("typo refused with the fix", getattr(e, "status_code", 0) == 400 and "gmail.com" in str(e.detail))
+    expect_status("throwaway address refused", 400, lambda: S.register({**STEP1, "email": "x@yopmail.com"}, Response()))
+    check("live check endpoint", SV.check_email("a@b") ["ok"] is False and SV.check_email("marie@cafe.fr")["ok"] is True)
+
+    SV.verification_required = _real_required          # Brevo key is set in this test env
+    try:
+        out = S.register(dict(STEP1), Response())
+        check("with a channel configured, sign-up starts at « verify »", out.get("onboarding_status") == "verify")
+        u = S.db.users.find_one({"email": "marie@cafe.fr"})
+        tk = tok(u["email"], tenant_id=u["tenant_id"])
+        expect_status("company step blocked until verified", 409,
+                      lambda: OB.complete_company(OB.CompanyDetails(**STEP2), None, tk))
+        st = SV.verify_state(tk)
+        check("channels: e-mail on (Brevo), SMS off (no Twilio)", st["channels"] == {"email": True, "sms": False})
+        expect_status("SMS not configured → 503", 503, lambda: SV.send_code(SV.SendIn(channel="sms"), tk))
+        r = SV.send_code(SV.SendIn(channel="email"), tk)
+        mail = SENT[-1]
+        code = mail["subject"].split(" ")[0]
+        check("a 6-digit code is e-mailed to the owner", r["ok"] and len(code) == 6 and code.isdigit()
+              and mail["to"][0]["email"] == "marie@cafe.fr")
+        check("the code is stored hashed, never in clear",
+              all(code not in str(v) for v in S.db.signup_codes.find_one({"email": "marie@cafe.fr"}).values()))
+        expect_status("resend within 60 s → 429", 429, lambda: SV.send_code(SV.SendIn(channel="email"), tk))
+        wrong = "000000" if code != "000000" else "111111"
+        expect_status("wrong code → 400", 400, lambda: SV.check_code(SV.CheckIn(code=wrong), tk))
+        out = SV.check_code(SV.CheckIn(code=f" {code[:3]} {code[3:]} "), tk)
+        u = S.db.users.find_one({"email": "marie@cafe.fr"})
+        check("right code (spaces ignored) → company step, e-mail marked verified",
+              out["onboarding_status"] == "company" and u.get("email_verified_at") is not None
+              and S.db.tenants.find_one({"id": u["tenant_id"]})["onboarding_status"] == "company")
+        expect_status("verifying twice → 409", 409, lambda: SV.check_code(SV.CheckIn(code=code), tk))
+        OB.complete_company(OB.CompanyDetails(**STEP2), None, tk)
+        check("then step 2 works as before", S.db.tenants.find_one({"id": u["tenant_id"]})["onboarding_status"] == "plan")
+
+        # tries and expiry
+        S.register({**STEP1, "email": "paul@cafe.fr"}, Response())
+        u2 = S.db.users.find_one({"email": "paul@cafe.fr"}); tk2 = tok(u2["email"], tenant_id=u2["tenant_id"])
+        SV.send_code(SV.SendIn(channel="email"), tk2)
+        good = SENT[-1]["subject"].split(" ")[0]
+        bad = "000000" if good != "000000" else "111111"
+        for _ in range(5):
+            try:
+                SV.check_code(SV.CheckIn(code=bad), tk2)
+            except Exception:
+                pass
+        expect_status("after 5 wrong tries even the right code is refused", 400,
+                      lambda: SV.check_code(SV.CheckIn(code=good), tk2))
+        S.db.signup_codes.update_many({"email": "paul@cafe.fr"}, {"$set": {"tries": 0,
+                                       "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)}})
+        expect_status("an expired code is refused", 400, lambda: SV.check_code(SV.CheckIn(code=good), tk2))
+        os.environ.pop("BREVO_API_KEY", None)
+        check("no e-mail and no SMS configured → nobody is stuck: sign-up skips the code",
+              S.register({**STEP1, "email": "lea@cafe.fr"}, Response())["onboarding_status"] == "company")
+        os.environ["BREVO_API_KEY"] = "test-key"
+    finally:
+        SV.verification_required = lambda: False
+
+
 def test_drafts():
     print("\nHidden drafts — never in the super admin, purged after 7 days")
     reset()
@@ -310,6 +385,7 @@ if __name__ == "__main__":
     test_legacy_register()
     test_oauth()
     test_verified_address()
+    test_signup_verify()
     test_drafts()
     _patch.stop()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

@@ -504,7 +504,9 @@
     "compatible": "Compatible",
     "wallet_apple": "Apple Wallet",
     "wallet_google": "Google Wallet",
-    "step4": "Configuration carte"
+    "step4": "Configuration carte",
+    "email_did_you_mean": "Vouliez-vous dire",
+    "phone_invalid": "Numéro de téléphone invalide."
   },
   "card_step": {
     "title": "Configuration de votre carte",
@@ -579,5 +581,21 @@
     "f_ai_none": "FidClic IA",
     "f_api": "API & intégrations",
     "load_failed": "Impossible de charger les formules. Rechargez la page."
+  },
+  "verify": {
+    "title": "Vérifiez votre compte",
+    "subtitle": "Recevez un code à 6 chiffres pour confirmer que cette adresse ou ce numéro vous appartient.",
+    "by_email": "Par e-mail",
+    "by_sms": "Par SMS",
+    "send": "Envoyer le code",
+    "sent_to": "Code envoyé à {{to}}",
+    "code_label": "Code reçu",
+    "check": "Vérifier",
+    "resend": "Renvoyer le code",
+    "resend_in": "Renvoyer dans {{s}} s",
+    "change": "Changer de mode",
+    "spam": "Pas reçu ? Regardez dans les spams, ou renvoyez le code.",
+    "none": "La vérification est momentanément indisponible. Réessayez dans un instant.",
+    "failed": "Une erreur est survenue. Réessayez."
   }
 }

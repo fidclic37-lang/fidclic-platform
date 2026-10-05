@@ -2393,6 +2393,14 @@ def _unique_slug(name: str) -> str:
     return slug
 
 
+def _signup_verification_required() -> bool:
+    try:
+        from features.signup_verify import verification_required
+        return verification_required()
+    except Exception:
+        return False
+
+
 def _start_trial(tenant_doc: Dict[str, Any], plan: str = "silver") -> None:
     """Stamp the trial fields on a tenant document (in place). Called when the
     sign-up reaches the plan step — that is the moment the 30 days start,
@@ -2430,6 +2438,13 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
     # bypassed, and this account will eventually hold financial data.
     from services import password_policy
     password_policy.assert_valid(password)
+    # A real address (user, 2026-10-05): shape, typos, throwaway domains and
+    # a domain that receives mail (services/email_check.py).
+    if role == "business_owner":
+        from services import email_check
+        verdict = email_check.check(email)
+        if not verdict["ok"]:
+            raise HTTPException(status_code=400, detail=verdict["reason"])
     existing = db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -2467,7 +2482,9 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
             sector=(payload.get("sector") or None),
             phone=(payload.get("phone") or ""),
             address="",
-            onboarding_status="done" if legacy else "company",
+            # "verify": the e-mail/SMS code comes first (features/signup_verify.py)
+            # — unless no channel is configured, then straight to the company step.
+            onboarding_status="done" if legacy else ("verify" if _signup_verification_required() else "company"),
         )
         tenant_doc = t.model_dump()
         if legacy:

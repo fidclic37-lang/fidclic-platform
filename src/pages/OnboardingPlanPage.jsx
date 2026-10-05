@@ -72,6 +72,7 @@ const OnboardingPlanPage = () => {
 
   // The company step comes first (the route skips the generic gate so an owner
   // at "plan" can reach this page).
+  if (user?.onboarding_status === 'verify') return <Navigate to="/onboarding/verification" replace />;
   if (user?.onboarding_status === 'company') return <Navigate to="/onboarding/entreprise" replace />;
 
   return (

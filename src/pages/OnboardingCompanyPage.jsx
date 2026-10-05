@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Building2, Store, Globe, ChevronDown } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,7 +43,7 @@ const Caret = () => <ChevronDown size={18} className="pointer-events-none mr-4 s
 
 const OnboardingCompanyPage = () => {
   const { t, i18n } = useTranslation();
-  const { checkAuth } = useAuth();
+  const { user, checkAuth } = useAuth();
   const countries = useMemo(() => countryOptions(i18n.language || 'fr'), [i18n.language]);
   const [place, setPlace] = useState(null);
   const navigate = useNavigate();
@@ -87,6 +87,9 @@ const OnboardingCompanyPage = () => {
       setLoading(false);
     }
   };
+
+  // The e-mail/SMS code comes first (the route skips the generic gate).
+  if (user?.onboarding_status === 'verify') return <Navigate to="/onboarding/verification" replace />;
 
   return (
     <OnboardingShell step={2}>
