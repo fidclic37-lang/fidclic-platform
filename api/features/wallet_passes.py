@@ -514,7 +514,7 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
         rows = _db.campaigns.find(
             {"tenant_id": cust.get("tenant_id"), "status": "sent",
              "wallet_offer": True, "recipient_ids": cust.get("id")},
-            {"_id": 0, "name": 1, "content": 1, "sent_at": 1})
+            {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1})
         newest, newest_at = None, None
         for c in rows:
             at = _parse_dt(c.get("sent_at"))
@@ -529,9 +529,31 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
                 title, sub = core.render_template(title, cust, tenant), core.render_template(sub, cust, tenant)
             except Exception:
                 pass
-            card["campaign_offer"] = {"title": title, "subtitle": sub}
+            card["campaign_offer"] = {"title": title, "subtitle": sub, "id": newest.get("id"),
+                                      "image_url": newest.get("image_url") or None}
     except Exception as exc:        # a missing offer must never cost the pass
         print(f"wallet: campaign offer lookup failed (non-fatal): {exc}")
+
+
+def _campaign_photo(card: Dict[str, Any]) -> Optional[str]:
+    """The photo attached to the live wallet campaign, if any (user, 2026-10-05:
+    « photo bhi attach ki thi, toh woh kidhar dikhegi »). Apple shows no image
+    in a notification or on the back of a pass — the strip is the only place a
+    picture can live — so while the campaign is the card's offer, its photo is
+    the banner. When the campaign expires the merchant's own banner returns."""
+    campaign = card.get("campaign_offer") if isinstance(card.get("campaign_offer"), dict) else {}
+    return campaign.get("image_url") or None
+
+
+def _hero_raw(card: Dict[str, Any]) -> Optional[bytes]:
+    """Bytes of the strip photo: the campaign's, else the merchant's banner."""
+    photo = _campaign_photo(card)
+    if photo:
+        raw = _fetch_image(photo)
+        if raw:
+            return raw
+    hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
+    return _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
 
 
 def _now() -> datetime:
@@ -670,7 +692,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # we therefore leave primaryFields empty (clean image, edge to edge) and
     # move the points up to the header, exactly like Apple's own sample passes.
     has_banner = (
-        ((card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")) in ("image", "composite")
+        bool(_campaign_photo(card))
+        or ((card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")) in ("image", "composite")
          and bool(card.get("hero_image_url")))
         # the meter is painted into a strip too, so the same layout applies
         or (card.get("show_meter") is not False and threshold > 0)
@@ -724,6 +747,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     ]
     if show_tier and not tier_front:
         back.insert(1, {"key": "tier_back", "label": "Statut", "value": tier_field["value"]})
+    # Tapping a Wallet notification only opens the pass, and the back of a pass
+    # holds text only: the link opens the campaign itself — photo, full text —
+    # on the web card (?offre= opens it straight away).
+    campaign_id = (card.get("campaign_offer") or {}).get("id") if isinstance(card.get("campaign_offer"), dict) else None
+    if campaign_id:
+        offer_url = f"{_site_url()}/card/{serial}?offre={urllib.parse.quote(str(campaign_id))}"
+        back.insert(1, {"key": "offer_link", "label": "Voir l'offre", "value": offer_url,
+                        "attributedValue": f'<a href="{offer_url}">Voir l\'offre en entier</a>'})
     if card.get("tagline"):
         back.append({"key": "tagline", "label": org, "value": card["tagline"]})
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
@@ -850,8 +881,7 @@ def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
     and the web preview cannot drift apart."""
     card = payload["card"]
     cust = payload["customer"]
-    hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
-    hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
+    hero_raw = _hero_raw(card)
     with_meter = card.get("show_meter") is not False and int(card.get("reward_threshold") or 0) > 0
     if not hero_raw and not with_meter:
         return None
@@ -885,8 +915,7 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         for suffix, png in _strip_variants(strip3x).items():
             files[f"strip{suffix}.png"] = png
     else:                                    # no Pillow → ship the photo as-is
-        hero_mode = card.get("hero_mode") or ("image" if card.get("hero_image_url") else "brand")
-        hero_raw = _fetch_image(card.get("hero_image_url")) if hero_mode in ("image", "composite") else None
+        hero_raw = _hero_raw(card)
         if hero_raw:
             for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
                 files[f"strip{suffix}.png"] = png
@@ -1381,11 +1410,14 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "alternateText": cust["barcode_id"]},
         # Google has no strip either: it gets the same painted banner, meter in.
         "heroImage": {"sourceUri": {"uri": f"{_site_url()}/api/card/{cust['barcode_id']}/wallet-strip.png"
-                                           f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"}},
+                                           f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"
+                                           f"-{(card.get('campaign_offer') or {}).get('id') or 0}"}},
         # Apple's back of the pass = Google's details: offer, reward, statut…
         "textModulesData": [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
-                            for f in sc.get("backFields", []) if f["key"] != "card"][:10],
-        "linksModuleData": {"uris": [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
+                            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link")][:10],
+        "linksModuleData": {"uris": [{"uri": f["value"], "description": "Voir l'offre en entier"}
+                                     for f in sc.get("backFields", []) if f["key"] == "offer_link"]
+                            + [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
     }

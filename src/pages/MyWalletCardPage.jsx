@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { cardUrl } from '../components/PremiumLoyaltyCard';
@@ -567,6 +567,25 @@ const MyWalletCardPage = () => {
     out.sort((a, b) => (b._ts || 0) - (a._ts || 0));
     return out;
   }, [data?.offers, data?.notifications]);
+
+  // « Voir l'offre » on the back of the Wallet pass lands here with
+  // ?offre=<campaign id>: open that campaign (photo + full text) right away,
+  // since Wallet itself can show neither.
+  const offerOpened = useRef(false);
+  useEffect(() => {
+    if (offerOpened.current || typeof window === 'undefined') return;
+    const wanted = new URLSearchParams(window.location.search).get('offre');
+    if (!wanted || !data?.customer?.id) return;
+    const item = mergedFeed.find((o) => o.kind === 'campaign' && String(o.id) === wanted);
+    if (!item) return;
+    offerOpened.current = true;
+    setTab('offers');
+    setOpenedNotification({
+      id: item.id, title: item.title, body: item.body || item.description || '',
+      image_url: item.image_url, link: item.link, sent_at: item.sent_at,
+    });
+    api.get(`/campaigns/${item.id}/pixel/${data.customer.id}.png`).catch(() => {});
+  }, [mergedFeed, data?.customer?.id]);
 
   if (loading) {
     return <div key="loading" className="min-h-screen bg-[#FAFAF8] flex items-center justify-center text-[#57504A]">Chargement de votre carte…</div>;
