@@ -77,8 +77,60 @@ def init(db):
     try:
         _db.pass_registrations.create_index([("device_id", 1), ("serial", 1)], unique=True)
         _db.pass_registrations.create_index([("serial", 1)])
+        _db.pass_push_log.create_index([("serial", 1), ("sent_at", -1)])
+        _db.pass_push_log.create_index([("device_id", 1), ("checked_at", 1)])
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Push history (user, 2026-10-05) — one row per push per device: Apple's
+# answer and receipt number (apns-id), then whether that device came back
+# for the pass. « Did it arrive? » is then read, not guessed.
+# ---------------------------------------------------------------------------
+PUSH_LOG_DAYS = 30
+PENDING = timedelta(minutes=2)       # a device usually comes back within seconds
+
+
+def _short(v: Optional[str], head: int = 6, tail: int = 4) -> Optional[str]:
+    """Device ids and push tokens, recognisable but never shown whole."""
+    if not v:
+        return None
+    v = str(v)
+    return v if len(v) <= head + tail + 1 else f"{v[:head]}…{v[-tail:]}"
+
+
+def _log_pushes(regs: List[Dict[str, Any]], results: List[Dict[str, Any]], at: datetime) -> None:
+    by_token = {r.get("token"): r for r in results or []}
+    rows = []
+    for reg in regs:
+        res = by_token.get(reg.get("push_token")) or {}
+        rows.append({"tenant_id": reg.get("tenant_id"), "serial": reg.get("serial"), "device_id": reg.get("device_id"),
+                     "token": _short(reg.get("push_token")), "sent_at": at,
+                     "status": res.get("status"), "reason": res.get("reason") or None, "apns_id": res.get("apns_id"),
+                     "checked_at": None, "fetched_at": None})
+    try:
+        if rows:
+            _db.pass_push_log.insert_many(rows)
+        _db.pass_push_log.delete_many({"sent_at": {"$lt": at - timedelta(days=PUSH_LOG_DAYS)}})
+    except Exception as exc:                       # noqa: BLE001 — a log never blocks a push
+        print(f"wallet: push history not written ({exc})")
+
+
+def _push_state(row: Dict[str, Any], now: datetime) -> str:
+    """What happened to one push, in the merchant's words."""
+    status = row.get("status")
+    if status is not None and status != 200:
+        return f"refusé par Apple ({row.get('reason') or status})"
+    if row.get("fetched_at"):
+        return "mis à jour"
+    sent = row.get("sent_at")
+    sent = sent if not isinstance(sent, datetime) or sent.tzinfo else sent.replace(tzinfo=timezone.utc)
+    if isinstance(sent, datetime) and now - sent < PENDING:
+        return "en attente"
+    if row.get("checked_at"):
+        return "demandé, pas téléchargé"
+    return "pas récupéré"
 
 
 # ---------------------------------------------------------------------------
@@ -969,10 +1021,13 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     # lock-screen notification — never came.
     _db.pass_registrations.update_many({"serial": {"$in": serials}},
                                        {"$set": {"pass_changed_at": datetime.now(timezone.utc)}})
-    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}}, {"push_token": 1, "device_id": 1}))
+    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
+                                            {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1}))
     if not regs:
         return {"devices": 0, "sent": 0}
+    sent_at = datetime.now(timezone.utc)
     res = apns_passes.push_to_tokens([r.get("push_token") for r in regs])
+    _log_pushes(regs, res.get("results") or [], sent_at)
     # What Apple answered, kept on the registrations: the owner's Wallet stats
     # show it, so « no notification » can be traced without server logs.
     outcome = "ok" if res.get("sent") else ("; ".join(res.get("errors", [])[:2]) or "not sent")
@@ -1020,11 +1075,22 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     """How the Wallet side of the programme is doing: how many customers carry
     a native pass, on how many devices, and when they were last refreshed."""
     tid = token_data.tenant_id
-    serials = [c["barcode_id"] for c in _db.customers.find(
-        {"tenant_id": tid, "barcode_id": {"$exists": True}}, {"barcode_id": 1}) if c.get("barcode_id")]
+    people = [c for c in _db.customers.find({"tenant_id": tid, "barcode_id": {"$exists": True}},
+                                             {"_id": 0, "barcode_id": 1, "name": 1, "created_at": 1})
+              if c.get("barcode_id")]
+    serials = [c["barcode_id"] for c in people]
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
-                                            {"serial": 1, "updated_at": 1, "created_at": 1, "last_push_at": 1,
+                                            {"serial": 1, "device_id": 1, "push_token": 1, "pass_type_id": 1,
+                                             "updated_at": 1, "created_at": 1, "last_push_at": 1,
                                              "last_push_result": 1, "last_check_at": 1, "last_fetch_at": 1}))
+    now = datetime.now(timezone.utc)
+    history: Dict[tuple, List[Dict[str, Any]]] = {}
+    for row in _db.pass_push_log.find({"serial": {"$in": serials}}, {"_id": 0}).sort("sent_at", -1).limit(500):
+        key = (row.get("device_id"), row.get("serial"))
+        if len(history.setdefault(key, [])) < 5:
+            history[key].append(row)
+    names = {c["barcode_id"]: c.get("name") for c in people}
+    with_pass = {r.get("serial") for r in regs}
     customers = len(serials)
     installed = len({r["serial"] for r in regs})
     last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
@@ -1044,11 +1110,28 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         "last_registration_at": last.isoformat() if last else None,
         # The update chain, newest device first: we push → the iPhone asks
         # what changed → it fetches the pass. A gap shows where it breaks.
+        # Per device, the whole chain Apple's guide describes:
+        # deviceLibraryIdentifier → pushToken → passTypeIdentifier → serialNumber,
+        # then the last pushes with Apple's answer, its apns-id and whether the
+        # device came back for the pass (« mis à jour » / « pas récupéré »).
         "devices_detail": [{
-            "card": r.get("serial"),
+            "card": r.get("serial"), "customer": names.get(r.get("serial")),
+            "device": _short(r.get("device_id")), "push_token": _short(r.get("push_token")),
+            "pass_type": r.get("pass_type_id"),
+            "registered_at": _iso_or_none(r.get("created_at")), "registration_updated_at": _iso_or_none(r.get("updated_at")),
             "last_push_at": _iso_or_none(r.get("last_push_at")), "last_push_result": r.get("last_push_result"),
             "last_check_at": _iso_or_none(r.get("last_check_at")), "last_fetch_at": _iso_or_none(r.get("last_fetch_at")),
-        } for r in sorted(regs, key=lambda r: _iso_or_none(r.get("updated_at") or r.get("created_at")) or "", reverse=True)[:10]],
+            "pushes": [{"sent_at": _iso_or_none(h.get("sent_at")), "apple": h.get("status"),
+                        "reason": h.get("reason"), "apns_id": h.get("apns_id"),
+                        "asked_at": _iso_or_none(h.get("checked_at")), "downloaded_at": _iso_or_none(h.get("fetched_at")),
+                        "state": _push_state(h, now)}
+                       for h in history.get((r.get("device_id"), r.get("serial")), [])],
+        } for r in sorted(regs, key=lambda r: _iso_or_none(r.get("updated_at") or r.get("created_at")) or "", reverse=True)[:30]],
+        # Customers whose card is on no device: never added to Wallet, removed,
+        # or added without the device registering (re-add it with internet on).
+        "cards_without_device": [{"card": c["barcode_id"], "customer": c.get("name"),
+                                  "joined_at": _iso_or_none(c.get("created_at"))}
+                                 for c in people if c["barcode_id"] not in with_pass][:30],
         # Only lines naming one of THIS shop's cards: the log is shared by every
         # device, and another shop's card numbers are not ours to show.
         "google": {
@@ -1202,6 +1285,11 @@ def serials_for_device(device_id: str, pass_type_id: str, passesUpdatedSince: Op
     if not regs:
         return Response(status_code=204)
     _db.pass_registrations.update_many({"device_id": device_id}, {"$set": {"last_check_at": datetime.now(timezone.utc)}})
+    try:        # push history: this device came back after its pushes
+        _db.pass_push_log.update_many({"device_id": device_id, "checked_at": None},
+                                      {"$set": {"checked_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
     serials = [r["serial"] for r in regs]
     since = None
     if passesUpdatedSince:
@@ -1238,6 +1326,11 @@ def unregister_device(device_id: str, pass_type_id: str, serial: str,
 def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
     _db.pass_registrations.update_many({"serial": serial}, {"$set": {"last_fetch_at": datetime.now(timezone.utc)}})
+    try:        # push history: downloaded by the devices that asked (the GET carries no device id)
+        _db.pass_push_log.update_many({"serial": serial, "checked_at": {"$ne": None}, "fetched_at": None},
+                                      {"$set": {"fetched_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
     return _pkpass_response(serial)
 
 
