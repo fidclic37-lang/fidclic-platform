@@ -96,9 +96,11 @@ def _cert_files() -> Optional[tuple]:
 
 def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
     """Send the empty pass-update push to each device token.
-    Returns {sent, gone, failed, errors[]} — `gone` tokens are dead and should
-    be deleted by the caller (it owns the registrations collection)."""
-    out: Dict[str, Any] = {"sent": 0, "gone": [], "failed": 0, "errors": []}
+    Returns {sent, gone, failed, errors[], results[]} — `gone` tokens are dead
+    and should be deleted by the caller (it owns the registrations
+    collection); `results` has one {token, status, reason, apns_id} per token:
+    Apple's answer and its receipt number, kept in the push history."""
+    out: Dict[str, Any] = {"sent": 0, "gone": [], "failed": 0, "errors": [], "results": []}
     tokens = [t for t in dict.fromkeys(tokens) if t]
     if not tokens:
         return out
@@ -136,6 +138,14 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
             for token in tokens:
                 try:
                     r = client.post(f"{APNS_HOST}/3/device/{token}", headers=headers, content=b"{}")
+                    why = ""
+                    if r.status_code != 200:
+                        try:
+                            why = (r.json() or {}).get("reason", "")
+                        except Exception:
+                            why = ""
+                    out["results"].append({"token": token, "status": r.status_code, "reason": why,
+                                           "apns_id": (getattr(r, "headers", None) or {}).get("apns-id")})
                     if r.status_code == 200:
                         out["sent"] += 1
                     elif r.status_code in (410, 400):
@@ -156,6 +166,7 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
                 except Exception as e:  # noqa: BLE001 — one bad token must not stop the rest
                     out["failed"] += 1
                     out["errors"].append(str(e)[:120])
+                    out["results"].append({"token": token, "status": 0, "reason": str(e)[:120], "apns_id": None})
     except Exception as e:  # noqa: BLE001 — TLS/handshake level
         out["errors"].append(str(e)[:200])
     return out
