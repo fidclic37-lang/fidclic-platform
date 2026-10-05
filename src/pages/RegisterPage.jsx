@@ -8,6 +8,7 @@ import OnboardingShell from '../components/OnboardingShell';
 import SocialAuthButtons from '../components/SocialAuthButtons';
 import { LEGAL_LINKS } from '../lib/legal';
 import { onboardingPath } from '../lib/onboarding';
+import { authAPI } from '../lib/api';
 
 /**
  * RegisterPage — step 1 of 3 ("Vos informations"), from the approved mockup:
@@ -37,7 +38,18 @@ const RegisterPage = () => {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  const [mailCheck, setMailCheck] = useState(null);      // {ok, reason, suggestion} from the server
+  const set = (k) => (e) => {
+    if (k === 'email') setMailCheck(null);
+    setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  };
+  // Checked when the field is left: shape, typo (« Vouliez-vous dire … »),
+  // throwaway domains and a domain that receives mail. The server checks again.
+  const checkEmail = async (value = form.email) => {
+    const v = value.trim();
+    if (!v) return null;
+    try { const r = await authAPI.checkEmail(v); setMailCheck(r.data); return r.data; } catch { return null; }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setError('');
@@ -45,6 +57,9 @@ const RegisterPage = () => {
     if (!form.first_name.trim()) return setError(t('auth.first_name_required'));
     if (!form.phone.trim())      return setError(t('signup.phone_required'));
     if (!form.email.trim())      return setError(t('auth.email_required'));
+    if (!/^[0-9 .-]{6,16}$/.test(form.phone.trim())) return setError(t('signup.phone_invalid'));
+    const mc = mailCheck || await checkEmail();
+    if (mc && !mc.ok) return setError(mc.reason);
     if (!passwordValid(form.password)) {
       const missing = passwordRules(form.password).filter((r) => !r.ok).map((r) => r.label);
       return setError(`${t('auth.password_weak')} ${missing.join(', ')}.`);
@@ -84,7 +99,15 @@ const RegisterPage = () => {
             <input required type="tel" autoComplete="tel-national" placeholder={t('signup.phone_placeholder')} className={INPUT} value={form.phone} onChange={set('phone')} />
           </Field></div>
         <div><Label>{t('auth.email')}</Label>
-          <Field icon={Mail}><input required type="email" autoComplete="email" placeholder="votre@email.com" className={INPUT} value={form.email} onChange={set('email')} /></Field></div>
+          <Field icon={Mail}><input required type="email" autoComplete="email" placeholder="votre@email.com" className={INPUT} value={form.email} onChange={set('email')} onBlur={() => checkEmail()} aria-invalid={mailCheck && !mailCheck.ok ? 'true' : undefined} /></Field>
+          {mailCheck && !mailCheck.ok && (
+            <p className="mt-1.5 text-[13px] text-red-700">
+              {mailCheck.suggestion ? (
+                <>{t('signup.email_did_you_mean')}{' '}
+                  <button type="button" className="font-semibold underline" onClick={() => { setForm((f) => ({ ...f, email: mailCheck.suggestion })); setMailCheck({ ok: true }); }}>{mailCheck.suggestion}</button> ?</>
+              ) : mailCheck.reason}
+            </p>
+          )}</div>
         <div><Label>{t('auth.password')}</Label>
           <Field icon={Lock} trailing={
             <button type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? t('auth.hide_password') : t('auth.show_password')} className="px-4 text-[#2F6BFF] hover:text-[#1D4ED8]">

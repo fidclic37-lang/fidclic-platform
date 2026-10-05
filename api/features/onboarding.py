@@ -75,7 +75,7 @@ def _site_url() -> str:
     return os.getenv("PUBLIC_SITE_URL", "https://app.fidclic.com")
 
 
-DRAFT_STATES = ("company", "plan")
+DRAFT_STATES = ("verify", "company", "plan")
 
 
 def _trial_plan() -> str:
@@ -178,6 +178,8 @@ def complete_company(body: CompanyDetails, request: Request,
     tenant = _db.tenants.find_one({"id": token_data.tenant_id})
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    if tenant.get("onboarding_status") == "verify":
+        raise HTTPException(status_code=409, detail="Vérifiez d'abord votre e-mail ou votre téléphone.")
     user = _db.users.find_one({"email": token_data.email}) or {}
 
     legal_name = body.legal_name.strip()
@@ -258,6 +260,8 @@ def start_trial(request: Request,
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     status = tenant.get("onboarding_status", "done")
+    if status == "verify":
+        raise HTTPException(status_code=409, detail="Vérifiez d'abord votre e-mail ou votre téléphone.")
     if status == "company":
         raise HTTPException(status_code=409, detail="Complétez d'abord votre établissement.")
     if status == "plan":

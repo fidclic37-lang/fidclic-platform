@@ -504,7 +504,9 @@
     "compatible": "Compatible with",
     "wallet_apple": "Apple Wallet",
     "wallet_google": "Google Wallet",
-    "step4": "Card setup"
+    "step4": "Card setup",
+    "email_did_you_mean": "Did you mean",
+    "phone_invalid": "Invalid phone number."
   },
   "card_step": {
     "title": "Set up your card",
@@ -579,5 +581,21 @@
     "f_ai_none": "FidClic AI",
     "f_api": "API & integrations",
     "load_failed": "Could not load the plans. Reload the page."
+  },
+  "verify": {
+    "title": "Verify your account",
+    "subtitle": "Get a 6-digit code to confirm this address or number is yours.",
+    "by_email": "By e-mail",
+    "by_sms": "By SMS",
+    "send": "Send the code",
+    "sent_to": "Code sent to {{to}}",
+    "code_label": "Code received",
+    "check": "Verify",
+    "resend": "Resend the code",
+    "resend_in": "Resend in {{s}} s",
+    "change": "Use another method",
+    "spam": "Nothing? Check your spam folder, or resend the code.",
+    "none": "Verification is temporarily unavailable. Try again in a moment.",
+    "failed": "Something went wrong. Try again."
   }
 }

@@ -74,6 +74,7 @@ const RegisterPage = lazyPage(() => import('./pages/RegisterPage'));
 import { onboardingPath } from './lib/onboarding';
 const OnboardingCompanyPage = lazyPage(() => import('./pages/OnboardingCompanyPage'));
 const OnboardingPlanPage = lazyPage(() => import('./pages/OnboardingPlanPage'));
+const OnboardingVerifyPage = lazyPage(() => import('./pages/OnboardingVerifyPage'));
 const OnboardingCardPage = lazyPage(() => import('./pages/OnboardingCardPage'));
 const OnboardingDonePage = lazyPage(() => import('./pages/OnboardingDonePage'));
 const DashboardLayout = lazyPage(() => import('./pages/DashboardLayout'));
@@ -303,6 +304,11 @@ function App() {
           <Route path="/onboarding/entreprise" element={
             <ProtectedRoute allowedRoles={['business_owner']} skipOnboardingGate>
               <OnboardingCompanyPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/onboarding/verification" element={
+            <ProtectedRoute allowedRoles={['business_owner']} skipOnboardingGate>
+              <OnboardingVerifyPage />
             </ProtectedRoute>
           } />
           <Route path="/onboarding/formule" element={
