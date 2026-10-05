@@ -280,6 +280,14 @@ def start_trial(request: Request,
                        tenant_id=tenant["id"], request=request,
                        meta={"plan": plan, "trial_days": update.get("trial_duration_days")})
     fresh = _db.tenants.find_one({"id": tenant["id"]}) or {}
+    if status == "plan":
+        # The business now exists (super admin lists it): tell FidClic, and
+        # welcome the owner — once, here, never on a later click.
+        try:
+            from services.signup_emails import send_signup_emails
+            send_signup_emails(fresh, _db.users.find_one({"email": token_data.email}) or {"email": token_data.email})
+        except Exception as exc:                     # noqa: BLE001 — a mail never blocks the trial
+            print(f"onboarding: signup e-mails failed: {exc}")
     return {
         "ok": True,
         "onboarding_status": fresh.get("onboarding_status", "done"),
