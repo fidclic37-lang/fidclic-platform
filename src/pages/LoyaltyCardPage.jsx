@@ -225,22 +225,43 @@ export default function LoyaltyCardPage() {
   const pdFolder = useRef(null);
   const pdFiles = useRef(null);
   useEffect(() => { ownerAPI.passDesigner().then((r) => setPd(r.data)).catch(() => setPd({ active: false })); }, []);
-  const importTemplate = async (fileList) => {
+  const importTemplate = async (fileList, folderName = '') => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
     setPdError(''); setPdBusy('import');
     try {
+      const zip = files.find((f) => /\.zip$/i.test(f.name));
+      if (zip) {
+        const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(zip); });
+        const r = await ownerAPI.importPassDesigner({ zip: b64 });
+        setPd(r.data); setPdVersion((v) => v + 1);
+        return;
+      }
       const passFile = files.find((f) => f.name === 'pass.json');
       if (!passFile) throw new Error('Le fichier pass.json du modèle est introuvable.');
       const readUrl = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
       const images = {};
       for (const f of files.filter((x) => /\.png$/i.test(x.name))) images[f.name] = await readUrl(f);
-      const folder = (files[0].webkitRelativePath || '').split('/')[0].replace(/\.pkpasstemplate$/i, '');
+      const folder = (folderName || (files[0].webkitRelativePath || '').split('/')[0]).replace(/\.pkpasstemplate$/i, '');
       const r = await ownerAPI.importPassDesigner({ name: folder || 'Modèle Pass Designer', pass_json: await passFile.text(), images });
       setPd(r.data); setPdVersion((v) => v + 1);
     } catch (e) {
       setPdError(e?.response?.data?.detail || e?.message || 'Import impossible.');
     } finally { setPdBusy(''); }
+  };
+  // Drag & drop from Finder: the .pkpasstemplate package arrives as a folder
+  // entry (a file picker cannot select a package), a .zip as a file.
+  const dropTemplate = async (e) => {
+    e.preventDefault();
+    const items = Array.from(e.dataTransfer?.items || []);
+    const entry = items.map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).find(Boolean);
+    if (entry && entry.isDirectory) {
+      const reader = entry.createReader();
+      const entries = await new Promise((res) => reader.readEntries(res, () => res([])));
+      const files = await Promise.all(entries.filter((x) => x.isFile).map((x) => new Promise((res) => x.file(res, () => res(null)))));
+      return importTemplate(files.filter(Boolean), entry.name);
+    }
+    return importTemplate(e.dataTransfer?.files);
   };
   const removeTemplate = async () => {
     setPdBusy('remove');
@@ -839,7 +860,8 @@ export default function LoyaltyCardPage() {
                 <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
               </div>
             )}
-            <div className="mt-4 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] p-3">
+            <div className="mt-4 rounded-xl border border-dashed border-[#B9CCF5] bg-[#F8FAFF] p-3"
+                 onDragOver={(e) => e.preventDefault()} onDrop={dropTemplate}>
               <p className="text-[12.5px] font-semibold text-[#334155]">Modèle Apple « Pass Designer »</p>
               {pd?.active ? (
                 <>
@@ -862,15 +884,15 @@ export default function LoyaltyCardPage() {
                       {pdBusy === 'import' ? 'Import…' : 'Importer le modèle (dossier)'}
                     </button>
                     <button type="button" onClick={() => pdFiles.current?.click()} disabled={!!pdBusy}
-                            className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF]">ou choisir ses fichiers</button>
+                            className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF]">ou choisir un .zip</button>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-[#94A3B8]">Fichiers : clic droit sur le modèle › « Afficher le contenu du paquet », puis sélectionnez pass.json et les images .png.</p>
+                  <p className="mt-1.5 text-[11px] text-[#94A3B8]">Le plus simple : glissez le modèle depuis le Finder dans ce cadre. Ou compressez-le (clic droit › Compresser) et choisissez le .zip.</p>
                 </>
               )}
               {pdError && <p className="mt-1.5 text-[12px] text-[#B91C1C]">⚠ {pdError}</p>}
               <input ref={pdFolder} type="file" className="hidden" webkitdirectory="" directory=""
                      onChange={(e) => { importTemplate(e.target.files); e.target.value = ''; }} />
-              <input ref={pdFiles} type="file" className="hidden" multiple accept=".json,.png,application/json,image/png"
+              <input ref={pdFiles} type="file" className="hidden" multiple accept=".zip,.json,.png,application/zip,application/json,image/png"
                      onChange={(e) => { importTemplate(e.target.files); e.target.value = ''; }} />
             </div>
 

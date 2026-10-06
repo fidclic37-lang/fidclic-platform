@@ -258,8 +258,38 @@ def best(imgs: Dict[str, bytes], base: str) -> Optional[bytes]:
 # ---------------------------------------------------------------------------
 class TemplateIn(BaseModel):
     name: Optional[str] = None
-    pass_json: str
+    pass_json: Optional[str] = None
     images: Dict[str, str] = {}
+    # or the template compressed in Finder (right click › Compress), base64:
+    # a .pkpasstemplate is a macOS package, which a browser cannot upload
+    zip: Optional[str] = None
+
+
+MAX_ZIP = 12_000_000
+
+
+def _from_zip(b64: str):
+    """pass.json + images out of a zipped .pkpasstemplate."""
+    import zipfile
+    try:
+        raw = base64.b64decode(b64.split(",", 1)[-1])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fichier .zip illisible.")
+    if len(raw) > MAX_ZIP:
+        raise HTTPException(status_code=400, detail="Le modèle compressé dépasse 12 Mo.")
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Ce n'est pas un fichier .zip valide.")
+    names = [n for n in z.namelist() if not n.startswith("__MACOSX/") and not n.endswith("/")]
+    pj = next((n for n in names if n.rsplit("/", 1)[-1] == "pass.json"), None)
+    if not pj:
+        raise HTTPException(status_code=400, detail="Le .zip ne contient pas de pass.json (modèle Pass Designer).")
+    imgs = {n.rsplit("/", 1)[-1]: "data:image/png;base64," + base64.b64encode(z.read(n)).decode()
+            for n in names if IMAGE_RE.match(n.rsplit("/", 1)[-1])}
+    folder = pj.rsplit("/", 1)[0] if "/" in pj else ""
+    name = folder.rsplit("/", 1)[-1].replace(".pkpasstemplate", "") if folder else None
+    return z.read(pj).decode("utf-8", "replace"), imgs, name
 
 
 @router.get("/api/owner/card/pass-designer")
@@ -274,6 +304,11 @@ def get_template(token_data: TokenData = Depends(require_role(["business_owner",
 
 @router.put("/api/owner/card/pass-designer")
 def put_template(body: TemplateIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+    if body.zip:
+        pass_json, zimgs, zname = _from_zip(body.zip)
+        body = TemplateIn(name=body.name or zname, pass_json=pass_json, images=zimgs)
+    if not body.pass_json:
+        raise HTTPException(status_code=400, detail="Choisissez le modèle (.pkpasstemplate ou .zip).")
     if len(body.pass_json) > MAX_PASS_JSON:
         raise HTTPException(status_code=400, detail="pass.json est trop volumineux.")
     try:

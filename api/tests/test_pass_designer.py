@@ -177,13 +177,25 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     man = _json.loads(z.read("manifest.json"))
     check("manifest covers every file", all(n in man for n in names - {"manifest.json", "signature"}))
 
+    print("\nA template compressed in Finder (.zip)")
+    zb = _io.BytesIO()
+    with _zip.ZipFile(zb, "w") as zz:
+        zz.writestr("SOE_ZIP.pkpasstemplate/pass.json", _json.dumps(template))
+        zz.writestr("SOE_ZIP.pkpasstemplate/background@2x.png", base64.b64decode(png_url(690, 1010, (10, 200, 90)).split(",")[1]))
+        zz.writestr("__MACOSX/SOE_ZIP.pkpasstemplate/._pass.json", b"junk")
+    r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={"zip": base64.b64encode(zb.getvalue()).decode()})
+    check(f"imported from the .zip, named after the template ({r.status_code})",
+          r.status_code == 200 and r.json().get("name") == "SOE_ZIP" and r.json().get("images") == ["background@2x.png"])
+    r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={"zip": base64.b64encode(b"not a zip").decode()})
+    check("a file that is not a zip is refused", r.status_code == 400)
+
     print("\nThe owner's preview and going back")
     pv = http("POST", "/api/owner/wallet/preview", headers=H, json={"card": {}}).json()
     check("the preview draws the template's poster",
           pv.get("poster") and pv["poster"]["primaryFields"][0]["key"] == "CUST_NAME"
           and pv["poster"]["background"].startswith("data:image/png") and pv["colors"]["backgroundColor"] == "rgb(0,229,136)")
     st = http("GET", "/api/owner/card/pass-designer", headers=H).json()
-    check("status says which template", st.get("active") is True and st.get("name") == "SOE_PASS")
+    check("status says which template", st.get("active") is True and st.get("name") == "SOE_ZIP")
     http("DELETE", "/api/owner/card/pass-designer", headers=H)
     p2 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     check("removing it brings the FidClic design back", "CUST_NAME" not in _json.dumps(p2))

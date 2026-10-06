@@ -21,67 +21,96 @@ import { ownerAPI } from '../lib/api';
  * name in bold, the progress, the footer, the tiles under the pass — with a
  * switch to see the card iOS 26 and earlier show instead.
  */
-function PosterPass({ p, s, width, bc, linear, colors = {} }) {
-  // Apple's iOS 27 poster (WWDC26 Museum sample, the user's iPhone): the
-  // background covers the WHOLE card, fields included; Wallet darkens its
-  // foot so the text reads. Labels and values in Wallet's monospace.
-  const h = width / 0.72;
+// Apple's own tiles under an iOS 27 pass: icon colour and wording per type
+const ACTION_LOOK = {
+  viewOffersRewards: ['#D946EF', '★', 'Voir les offres et récompenses', 'Ouvrir le lien'],
+  membershipBenefits: ['#D946EF', '★', 'Voir les avantages', 'Ouvrir le lien'],
+  viewMembership: ['#8B5CF6', '◆', 'Voir l\'adhésion', 'Ouvrir le lien'],
+  place: ['#3B82F6', '➤', 'Aller au lieu', 'Ouvrir dans Plans'],
+  bookAppointment: ['#EF4444', '▦', 'Prendre rendez-vous', 'Ouvrir le lien'],
+  order: ['#F97316', '◍', 'Commander', 'Ouvrir le lien'],
+  viewSchedule: ['#EF4444', '▦', 'Voir le programme', 'Ouvrir le lien'],
+};
+const WIDE_CODES = new Set(['PKBarcodeFormatPDF417', 'PKBarcodeFormatCode128', 'PKBarcodeFormatCode39',
+  'PKBarcodeFormatCodabar', 'PKBarcodeFormatITF', 'PKBarcodeFormatEAN13']);
+
+function PosterPass({ p, s, width, bc, colors = {} }) {
+  // What Wallet (and Pass Designer) draw for iOS 27 « Poster Generic »: the
+  // artwork full-bleed, a frosted band of its own colours at the foot where
+  // the fields sit, the barcode straddling the two, the logo tile top-left.
+  const h = width / 0.713;
   const header = (p.headerFields || [])[0];
   const fields = p.primaryFields || [];
   const footer = (p.footerFields || [])[0];
   const fg = colors.foregroundColor || 'rgb(255,255,255)';
-  const lab = colors.labelColor || 'rgba(255,255,255,.75)';
+  const lab = colors.labelColor || fg;
   const mono = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-  const shadow = '0 1px 2px rgba(0,0,0,.45)';
-  const big = fields.length && !fields[0].label;          // no label → Apple's bold title
+  const wide = WIDE_CODES.has(bc.format);
+  const [title, ...rest] = fields;
+  const titleBold = title && !title.label;
   return (
     <div>
-      <div className="relative overflow-hidden" style={{ width, height: h, borderRadius: 14 * s, color: fg,
-        boxShadow: '0 18px 40px -22px rgba(0,0,0,.55)', background: '#1C1D22',
+      <div className="relative overflow-hidden" style={{ width, height: h, borderRadius: 14 * s, color: fg, background: '#1C1D22',
+        boxShadow: '0 18px 40px -22px rgba(0,0,0,.55)',
         fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif' }}>
         {p.background && <img src={p.background} alt="" className="absolute inset-0 h-full w-full object-cover object-top" />}
-        <div className="absolute inset-x-0 bottom-0" style={{ height: '38%',
-          background: 'linear-gradient(to top, rgba(0,0,0,.62), rgba(0,0,0,.28) 60%, transparent)' }} />
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between" style={{ padding: `${12 * s}px ${14 * s}px` }}>
-          {p.logo ? <img src={p.logo} alt="" style={{ height: 32 * s, maxWidth: 160 * s, objectFit: 'contain' }} /> : <span />}
+        {/* the system material Wallet lays under the fields */}
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '24%', backdropFilter: 'blur(26px) saturate(1.6)',
+          WebkitBackdropFilter: 'blur(26px) saturate(1.6)', background: 'linear-gradient(to bottom, rgba(255,255,255,.08), rgba(0,0,0,.22))' }} />
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between" style={{ padding: `${10 * s}px ${12 * s}px` }}>
+          {p.logo ? <img src={p.logo} alt="" style={{ width: width * 0.105, height: width * 0.105, objectFit: 'cover', borderRadius: 2 * s }} /> : <span />}
           {header && (
-            <div className="text-right" style={{ textShadow: shadow }}>
-              <div className="uppercase" style={{ fontSize: 12 * s, fontWeight: 700, color: lab }}>{header.label}</div>
-              <div style={{ fontSize: 13 * s, fontFamily: mono }}>{String(header.value)}</div>
+            <div className="text-right">
+              <div className="uppercase" style={{ fontSize: 11 * s, fontWeight: 700, color: lab }}>{header.label}</div>
+              <div style={{ fontSize: 12.5 * s, fontFamily: mono, marginTop: 2 * s }}>{String(header.value)}</div>
             </div>
           )}
         </div>
-        <div className="absolute inset-x-0 flex justify-center" style={{ top: '45%' }}>
-          <div className="flex flex-col items-center bg-white" style={{ borderRadius: 6 * s, padding: `${7 * s}px ${8 * s}px ${4 * s}px` }}>
-            {linear
-              ? <Code128Barcode value={bc.altText || 'FT-EXEMPLE1'} height={44 * s} />
+        <div className="absolute inset-x-0 flex justify-center" style={{ top: wide ? '61%' : '44%' }}>
+          <div className="flex flex-col items-center bg-white" style={{ borderRadius: 7 * s, padding: `${8 * s}px ${12 * s}px`,
+            width: wide ? width * 0.77 : undefined }}>
+            {wide
+              ? <Code128Barcode value={bc.altText || 'FT-EXEMPLE1'} height={58 * s} />
               : <QRCodeSVG value={bc.message || 'FT-EXEMPLE1'} size={Math.round(100 * s)} level="M" />}
-            {bc.altText && <div style={{ fontSize: 10 * s, color: '#111', marginTop: 2 * s }}>{bc.altText}</div>}
           </div>
         </div>
-        <div className="absolute inset-x-0 bottom-0" style={{ padding: `0 ${14 * s}px ${12 * s}px`, textShadow: shadow }}>
+        <div className="absolute inset-x-0 bottom-0" style={{ padding: `0 ${12 * s}px ${12 * s}px` }}>
           <div className="flex items-end justify-between" style={{ gap: 10 * s }}>
-            {fields.slice(0, 4).map((f, i) => (
-              <div key={f.key} className="min-w-0" style={{ textAlign: i > 0 && i === fields.length - 1 ? 'right' : 'left' }}>
-                {f.label && <div style={{ fontSize: 11 * s, fontFamily: mono, color: lab }}>{f.label}</div>}
-                <div className="truncate" style={i === 0 && big
-                  ? { fontSize: 26 * s, fontWeight: 700, lineHeight: 1.1 }
-                  : { fontSize: 13.5 * s, fontFamily: mono }}>{String(f.value)}</div>
+            {title && (
+              <div className="min-w-0">
+                {!titleBold && <div style={{ fontSize: 10.5 * s, fontFamily: mono, color: lab }}>{title.label}</div>}
+                <div className="truncate" style={titleBold
+                  ? { fontSize: 19 * s, fontWeight: 700, lineHeight: 1.15 }
+                  : { fontSize: 13 * s, fontFamily: mono }}>{String(title.value)}</div>
               </div>
-            ))}
+            )}
+            {rest.length > 0 && (
+              <div className="flex shrink-0 text-right" style={{ gap: 12 * s }}>
+                {rest.slice(0, 3).map((f) => (
+                  <div key={f.key} className="min-w-0">
+                    {f.label && <div style={{ fontSize: 10.5 * s, color: lab, fontWeight: 600 }}>{f.label}</div>}
+                    <div className="truncate" style={{ fontSize: 13 * s, fontFamily: mono, maxWidth: 130 * s }}>{String(f.value)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          {footer && <div className="truncate" style={{ fontSize: 11 * s, fontFamily: mono, marginTop: 12 * s }}>{footer.value}</div>}
+          {footer && <div className="truncate uppercase" style={{ fontSize: 10 * s, fontFamily: mono, marginTop: 14 * s }}>{footer.value}</div>}
         </div>
       </div>
       {(p.actions || []).length > 0 && (
         <div className="mt-2 grid grid-cols-2" style={{ gap: 8 * s }}>
-          {p.actions.map((a) => (
-            <div key={a.type} className="rounded-xl border border-[#E6EEFB] bg-white text-left" style={{ padding: 10 * s }}>
-              <span className="mb-1 inline-block h-5 w-5 rounded-full bg-[#2F6BFF]/15" />
-              <div className="truncate text-[12px] font-semibold text-[#0B1C3F]">{a.label}</div>
-              <div className="text-[10.5px] text-[#94A3B8]">Ouvrir le site</div>
-            </div>
-          ))}
+          {p.actions.map((a) => {
+            const [col, icon, label, sub] = ACTION_LOOK[a.type] || ['#64748B', '•', a.label, 'Ouvrir le lien'];
+            return (
+              <div key={a.type} className="rounded-2xl text-left" style={{ padding: 10 * s, background: '#2C2C2E', color: '#F2F2F7' }}>
+                <span className="mb-2 flex items-center justify-center rounded-full text-white"
+                      style={{ width: 22 * s, height: 22 * s, background: col, fontSize: 11 * s }}>{icon}</span>
+                <div style={{ fontSize: 12 * s, fontWeight: 600, lineHeight: 1.25 }}>{label}</div>
+                <div style={{ fontSize: 11 * s, color: '#98989D', marginTop: 4 * s }}>{sub}</div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -138,7 +167,7 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
     return (
       <div translate="no" style={{ width }}>
         {osSwitch}
-        <PosterPass p={pass.poster} s={s} width={width} bc={bc} linear={linear} colors={pass.colors} />
+        <PosterPass p={pass.poster} s={s} width={width} bc={bc} colors={pass.colors} />
         <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
           Exemple : {pass.sample?.name}, {pass.sample?.visits} visites · nouvelle carte iOS 27
         </p>
