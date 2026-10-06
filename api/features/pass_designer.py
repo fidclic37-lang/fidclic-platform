@@ -196,14 +196,23 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
         if isinstance(t.get("generic"), dict):
             out["generic"] = {g: _fields(rows, values) for g, rows in t["generic"].items() if g in GROUPS}
             out["generic"]["backFields"] = block["backFields"]
+        elif isinstance(pj.get("storeCard"), dict):
+            # FidClic's own card, strip and colours as before (user, 2026-10-07:
+            # « pichla version toh rakho »), with the template's back rows too
+            out["storeCard"] = {**pj["storeCard"], "backFields": block["backFields"]}
         else:
             prim = block.get("primaryFields", [])
             out["generic"] = {"headerFields": block.get("headerFields", [])[:1], "primaryFields": prim[:1],
                               "secondaryFields": (prim[1:] + block.get("footerFields", []))[:4],
                               "backFields": block["backFields"]}
 
+    # The poster draws over its photo and never shows backgroundColor, so with
+    # our storeCard behind it the card keeps the shop's colour on iOS 26.
+    keep_bg = "storeCard" in out
     for k in ("backgroundColor", "foregroundColor", "labelColor", "footerBackgroundColor",
               "suppressHeaderDarkening", "useAutomaticColors", "logoText", "suppressStripShine"):
+        if keep_bg and k == "backgroundColor":
+            continue
         if k in t and t[k] not in (None, ""):
             out[k] = t[k]
 
@@ -330,7 +339,7 @@ def put_template(body: TemplateIn, token_data: TokenData = Depends(require_role(
            "imported_at": _now(), "imported_by": token_data.email}
     sets: Dict[str, Any] = {"tenant_id": tid, "pass_designer": doc, "poster_style": True, "updated_at": _now()}
     from features.wallet_passes import clean_featured
-    acts = clean_featured(actions_of(raw))
+    acts = clean_featured(actions_of(raw), keep_empty=True)
     if acts or raw.get("featuredActions") is not None:
         sets["featured_actions"] = acts
     _db.card_templates.update_one({"tenant_id": tid}, {"$set": sets}, upsert=True)

@@ -375,7 +375,7 @@ def put_card_settings(body: CardSettings,
     if payload.get("featured_actions") is not None:
         # Only what Wallet will draw: an unknown type would hide every tile.
         from features.wallet_passes import clean_featured
-        payload["featured_actions"] = clean_featured(payload["featured_actions"])
+        payload["featured_actions"] = clean_featured(payload["featured_actions"], keep_empty=True)
     if payload.get("back_fields") is not None:
         # Keep it to rows the customer can actually read on the back.
         payload["back_fields"] = [

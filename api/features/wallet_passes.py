@@ -54,6 +54,7 @@ import hmac
 import io
 import json
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -652,18 +653,35 @@ FEATURED_TYPES: Dict[str, Tuple[str, str]] = {
 MAX_FEATURED = 2
 
 
-def clean_featured(rows: Any) -> List[Dict[str, str]]:
+def site_link(website: Any) -> Optional[str]:
+    """The shop's website from Établissement, as an https link (or None)."""
+    w = (website or "").strip() if isinstance(website, str) else ""
+    if not w or " " in w:
+        return None
+    w = re.sub(r"^http://", "https://", w if "://" in w else f"https://{w}")
+    return w[:500] if re.match(r"^https://[^/]+\.[^/]+", w) else None
+
+
+def clean_featured(rows: Any, website: Optional[str] = None, keep_empty: bool = False) -> List[Dict[str, str]]:
     """What the merchant chose, kept only when Wallet will draw it: a known
-    type, at most two, each once, and an https link where one is needed."""
+    type, at most two, each once, and an https link where one is needed.
+    A button that needs a link and has none (Pass Designer leaves it at
+    "https://") opens the shop's website; with no website it is left off the
+    pass, but `keep_empty` keeps it in the settings so the owner can add one."""
     out: List[Dict[str, str]] = []
     for r in rows or []:
         t = (r or {}).get("type")
         if t not in FEATURED_TYPES or any(o["type"] == t for o in out):
             continue
         url = ((r or {}).get("url") or "").strip()
-        if FEATURED_TYPES[t][1] == "merchant" and not url.startswith("https://"):
-            continue
-        out.append({"type": t, **({"url": url[:500]} if FEATURED_TYPES[t][1] == "merchant" else {})})
+        if FEATURED_TYPES[t][1] == "merchant":
+            if not re.match(r"^https://[^/]+\.[^/]+", url):
+                url = "" if keep_empty else (website or "")
+                if not url and not keep_empty:
+                    continue
+            out.append({"type": t, "url": url[:500]})
+        else:
+            out.append({"type": t})
         if len(out) == MAX_FEATURED:
             break
     return out
@@ -1080,20 +1098,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                                        "relevantText": text} for la, lo in spots[:10]]
 
     # ---- iOS 27: Poster Generic + featured actions ---------------------------
-    # Apple's pairing, as in the WWDC26 session: `posterGeneric` for iOS 27 and
-    # `generic` for iOS 26 and earlier (user, 2026-10-06: « ios27 mein poster
-    # card hi dikhna chahiye »). The storeCard stays only when the merchant
-    # switches the poster off.
+    # The storeCard stays as the card for iOS 26 and earlier — banner strip,
+    # logo, colours, exactly as before (user, 2026-10-07: « ios26 mein image
+    # strip and logo gaayab… pichla version toh rakho »). Wallet on iOS 27
+    # draws `posterGeneric` instead; older iPhones skip the key they don't
+    # know and keep the storeCard (checked on iOS 26.6.2).
     if card.get("poster_style") is not False:
-        sc = pass_json.pop("storeCard")
-        member = next((f for f in secondary if f["key"] == "member"), None)
-        pass_json["generic"] = {
-            "headerFields": sc["headerFields"],
-            "primaryFields": [member] if member else sc["primaryFields"],
-            "secondaryFields": [f for f in secondary if f["key"] != "member"][:3],
-            "auxiliaryFields": sc["auxiliaryFields"],
-            "backFields": sc["backFields"],
-        }
         # Apple's sample (user, 2026-10-06): labelled fields — who, and how
         # far. The offer lives on the back, where its changeMessage still
         # raises the notification.
@@ -1114,7 +1124,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "backFields": back,
         }
         pass_json.pop("logoText", None)
-    actions = clean_featured(card.get("featured_actions"))
+    actions = clean_featured(card.get("featured_actions"), site_link(tenant.get("website")))
     if actions:
         # Through our redirect: the click is counted, then the customer lands.
         pass_json["featuredActions"] = [
@@ -1236,6 +1246,10 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         tpl = None
     if tpl:
         files.update(_template_files(tpl, card))
+        if "storeCard" in json.loads(files["pass.json"]):   # iOS 26: the card as before, strip in
+            strip3x = strip_png(payload)
+            for suffix, png in (_strip_variants(strip3x) if strip3x else {}).items():
+                files[f"strip{suffix}.png"] = png
     else:
         brand = _rgb(card.get("brand_color")) or (184, 92, 56)
         logo_raw = _fetch_image(card.get("logo_url"))
@@ -1250,11 +1264,11 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         # is on (show_meter, default true) — in that case the photo is replaced by a
         # quiet brand gradient, which still reads far better than a flat card.
         poster_on = card.get("poster_style") is not False
-        strip3x = None if poster_on else strip_png(payload)     # `generic` has no strip
+        strip3x = strip_png(payload)            # the iOS 26 storeCard keeps its strip
         if strip3x:
             for suffix, png in _strip_variants(strip3x).items():
                 files[f"strip{suffix}.png"] = png
-        elif not poster_on:                      # no Pillow → ship the photo as-is
+        else:                                    # no Pillow → ship the photo as-is
             hero_raw = _hero_raw(card)
             if hero_raw:
                 for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
@@ -1268,9 +1282,6 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
                     files[f"background{suffix}.png"] = png
             for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
                 files[f"primaryLogo{suffix}.png"] = png
-            # iOS 26 and earlier (`generic`): the shop's logo as the thumbnail
-            for suffix, png in _png_variants(logo_raw, (90, 90), cover=True, fallback_rgb=brand).items():
-                files[f"thumbnail{suffix}.png"] = png
 
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
@@ -1430,7 +1441,8 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         # iOS 27 tiles under the pass: what is on, and how often it is tapped.
         "featured_actions": {
             "active": [{"type": a["type"], "label": FEATURED_TYPES[a["type"]][0]}
-                       for a in clean_featured((_db.card_templates.find_one({"tenant_id": tid}) or {}).get("featured_actions"))],
+                       for a in clean_featured((_db.card_templates.find_one({"tenant_id": tid}) or {}).get("featured_actions"),
+                                               site_link((_db.tenants.find_one({"id": tid}, {"_id": 0, "website": 1}) or {}).get("website")))],
             "clicks_30d": {row["_id"]: row["n"] for row in _db.pass_action_clicks.aggregate([
                 {"$match": {"tenant_id": tid, "at": {"$gte": now - timedelta(days=30)}}},
                 {"$group": {"_id": "$type", "n": {"$sum": 1}}}])},
@@ -1548,7 +1560,8 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
     return {"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
             "footerFields": pg.get("footerFields", []), "background": _data_url(bg2x), "logo": _data_url(logo2x),
             "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}
-                        for a in clean_featured(payload["card"].get("featured_actions"))]}
+                        for a in clean_featured(payload["card"].get("featured_actions"),
+                                                site_link((payload.get("tenant") or {}).get("website")))]}
 
 
 @router.post("/api/owner/wallet/notify")
@@ -1679,10 +1692,11 @@ def featured_action_click(serial: str, identifier: str):
         return RedirectResponse(_site_url(), status_code=302)
     tpl = _db.card_templates.find_one({"tenant_id": cust.get("tenant_id")}, {"_id": 0, "featured_actions": 1}) or {}
     kind = identifier.split("-", 1)[1] if "-" in identifier else identifier
-    action = next((a for a in clean_featured(tpl.get("featured_actions")) if a["type"] == kind), None)
+    tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0}) or {}
+    action = next((a for a in clean_featured(tpl.get("featured_actions"), site_link(tenant.get("website")))
+                   if a["type"] == kind), None)
     if not action:
         return RedirectResponse(home, status_code=302)
-    tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0}) or {}
     try:
         _db.pass_action_clicks.insert_one({"tenant_id": cust.get("tenant_id"), "customer_id": cust.get("id"),
                                            "type": kind, "at": datetime.now(timezone.utc)})

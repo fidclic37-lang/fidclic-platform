@@ -927,6 +927,11 @@ export default function LoyaltyCardPage() {
                              className="min-w-[220px] flex-1"
                              onChange={(e) => setRow({ ...row, url: e.target.value })} />
                     )}
+                    {meta?.needs_url && !/^https:\/\/[^/]+\.[^/]+/.test((row.url || '').trim()) && (
+                      <p className="w-full text-[11.5px] text-[#B45309]">
+                        Sans lien, ce bouton ouvre le site web indiqué dans Établissement ; sans site web, il n'apparaît pas sur la carte.
+                      </p>
+                    )}
                   </div>
                 );
               })}

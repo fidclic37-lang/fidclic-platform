@@ -133,8 +133,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     tdoc = db.card_templates.find_one({"tenant_id": "t1"})
     check("only Wallet image names are kept",
           {i["name"] for i in tdoc["pass_designer"]["images"]} == {"background@2x.png", "primaryLogo@2x.png"})
-    check("its featured actions become the card's: a link-less booking is dropped",
-          [a["type"] for a in tdoc.get("featured_actions") or []] == ["viewOffersRewards"])
+    check("its featured actions become the card's, a link-less booking kept for the owner to fill",
+          [(a["type"], a.get("url")) for a in tdoc.get("featured_actions") or []] == [("viewOffersRewards", None), ("bookAppointment", "")])
     bad = http("PUT", "/api/owner/card/pass-designer", headers=H, json={"pass_json": "{not json"})
     check("an unreadable pass.json is refused", bad.status_code == 400)
 
@@ -142,7 +142,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     pg = p.get("posterGeneric") or {}
     flat = _json.dumps(p)
-    check("the template's style", bool(pg) and "storeCard" not in p)
+    check("the template's style, our storeCard behind it for iOS 26", bool(pg) and "storeCard" in p and "generic" not in p)
     check("no Pass Designer `_id` left", '"_id"' not in flat)
     head_f = pg["headerFields"][0]
     check("CUST_ID → the customer's card number", head_f["value"] == "FT-TEST0001" and head_f["label"] == "MEMBRE")
@@ -157,13 +157,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("POINTS → the balance, with a changeMessage (it notifies)", back["POINTS"]["value"] == 70 and "changeMessage" in back["POINTS"])
     check("our back follows: « Offre du moment » with its changeMessage (campaigns notify)",
           "offer" in back and back["offer"].get("changeMessage") == "%@" and "jhvkhv" not in back)
-    check("the designer's colours", p["backgroundColor"] == "rgb(0,229,136)" and p["labelColor"] == "rgb(0,220,255)")
+    check("the designer's text colours; the shop's background stays for the iOS 26 card",
+          p["labelColor"] == "rgb(0,220,255)" and p["backgroundColor"] != "rgb(0,229,136)")
     check("FidClic's identity and web service", p["serialNumber"] == "FT-TEST0001" and p["passTypeIdentifier"] == "pass.com.fidclic.test"
           and p["webServiceURL"].endswith("/api/passes") and len(p["authenticationToken"]) >= 16 and p["organizationName"])
     check("the template's barcode format, carrying the card's message",
           p["barcodes"][0]["format"] == "PKBarcodeFormatPDF417" and p["barcodes"][0]["message"].endswith("/card/FT-TEST0001"))
-    check("iOS 26 and earlier get a generic made from the poster",
-          p["generic"]["primaryFields"][0]["key"] == "CUST_NAME" and p["generic"]["backFields"] == pg["backFields"])
+    check("iOS 26 and earlier keep FidClic's card, with the same back",
+          any(f["key"] == "member" for f in p["storeCard"]["secondaryFields"]) and p["storeCard"]["backFields"] == pg["backFields"])
+    check("featured actions: the link-less booking is left off while the shop has no website",
+          [a["type"] for a in p["featuredActions"]] == ["viewOffersRewards"])
     check("featured actions wired to our counter",
           p["featuredActions"][0]["type"] == "viewOffersRewards" and "/api/card/FT-TEST0001/action/" in p["featuredActions"][0]["url"])
 
@@ -172,7 +175,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     names = set(z.namelist())
     check("the template's images, a 1x for each, and what Wallet requires",
           {"background@2x.png", "background.png", "primaryLogo@2x.png", "primaryLogo.png", "icon.png", "logo.png",
-           "thumbnail.png", "pass.json", "manifest.json", "signature"} <= names)
+           "strip.png", "pass.json", "manifest.json", "signature"} <= names)
     check("the designer's background as designed", _Img.open(_io.BytesIO(z.read("background@2x.png"))).getpixel((10, 10)) == (200, 120, 30))
     man = _json.loads(z.read("manifest.json"))
     check("manifest covers every file", all(n in man for n in names - {"manifest.json", "signature"}))
@@ -193,7 +196,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     pv = http("POST", "/api/owner/wallet/preview", headers=H, json={"card": {}}).json()
     check("the preview draws the template's poster",
           pv.get("poster") and pv["poster"]["primaryFields"][0]["key"] == "CUST_NAME"
-          and pv["poster"]["background"].startswith("data:image/png") and pv["colors"]["backgroundColor"] == "rgb(0,229,136)")
+          and pv["poster"]["background"].startswith("data:image/png") and pv["colors"]["labelColor"] == "rgb(0,220,255)")
+    check("…and the iOS 26 card as before: strip, shop colour", bool(pv.get("strip")) and pv["colors"]["backgroundColor"] != "rgb(0,229,136)")
     st = http("GET", "/api/owner/card/pass-designer", headers=H).json()
     check("status says which template", st.get("active") is True and st.get("name") == "SOE_ZIP")
     http("DELETE", "/api/owner/card/pass-designer", headers=H)
