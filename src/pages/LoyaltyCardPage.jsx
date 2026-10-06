@@ -781,10 +781,57 @@ export default function LoyaltyCardPage() {
             </div>
           </div>
 
+          {/* iOS 27 (WWDC26): the poster style and the two tiles under the pass */}
+          <div className="mt-5 border-t border-[#EEF2F9] pt-5">
+            <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">
+              Nouvelle carte Apple Wallet <span className="font-normal text-[#94A3B8]">— iPhone avec iOS 27 ; les iPhone plus anciens gardent la carte actuelle</span>
+            </p>
+            <Toggle icon={ImageIcon} label="Style « poster » : votre photo en plein écran" checked={advanced.poster_style !== false}
+                    onChange={(v) => setAdvanced({ ...advanced, poster_style: v })} />
+            <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">
+              Boutons sous la carte <span className="font-normal text-[#94A3B8]">— 2 au maximum, Apple choisit l'icône</span>
+            </p>
+            <div className="space-y-2">
+              {[0, 1].map((i) => {
+                const rows = advanced.featured_actions || [];
+                const row = rows[i] || {};
+                const types = advanced.featured_types || [];
+                const meta = types.find((t) => t.type === row.type);
+                const setRow = (next) => {
+                  const list = [...rows];
+                  list[i] = next;
+                  setAdvanced({ ...advanced, featured_actions: list.filter((r) => r && r.type) });
+                };
+                if (i === 1 && !rows[0]?.type) return null;
+                return (
+                  <div key={i} className="flex flex-wrap gap-2">
+                    <div className="w-56">
+                      <Select value={row.type || ''}
+                              onChange={(e) => setRow(e.target.value ? { type: e.target.value } : null)}>
+                        <option value="">{i === 0 ? 'Aucun bouton' : 'Pas de second bouton'}</option>
+                        {types.filter((t) => t.type === row.type || !rows.some((r) => r?.type === t.type)).map((t) => (
+                          <option key={t.type} value={t.type}>{t.label}</option>
+                        ))}
+                      </Select>
+                    </div>
+                    {meta?.needs_url && (
+                      <Input value={row.url || ''} placeholder="https://… (votre page de réservation, commande…)"
+                             className="min-w-[220px] flex-1"
+                             onChange={(e) => setRow({ ...row, url: e.target.value })} />
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-[11.5px] text-[#94A3B8]">
+                « Voir les offres », « Mes avantages » et « Ma carte en ligne » ouvrent la carte du client ; « Itinéraire » votre adresse. Chaque clic est compté.
+              </p>
+            </div>
+          </div>
+
           {/* third row — Google Wallet only */}
           <div className="mt-5 border-t border-[#EEF2F9] pt-5">
             <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">
-              Liens sur la carte <span className="font-normal text-[#94A3B8]">— Google Wallet uniquement (Apple n'affiche pas de boutons)</span>
+              Liens sur la carte <span className="font-normal text-[#94A3B8]">— Google Wallet uniquement (sur Apple, utilisez les boutons ci-dessus)</span>
             </p>
             <div className="space-y-2">
               {(advanced.google_links || []).map((row, i) => (

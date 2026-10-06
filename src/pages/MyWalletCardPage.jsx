@@ -165,7 +165,11 @@ const MyWalletCardPage = () => {
   // duplicate of offers — same backend campaigns shown under a different
   // name. Merged into a single "Offres & messages" feed on the offers
   // tab so customers (and merchants) don't see the same items twice.
-  const [tab, setTab] = useState('offers'); // offers | program
+  // ?onglet=offres|programme — where the iOS 27 tiles under the Wallet pass land.
+  const [tab, setTab] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('onglet') === 'programme' ? 'program' : 'offers'; }
+    catch (_e) { return 'offers'; }
+  }); // offers | program
   const [toast, setToast] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Forces the InstallPwaPrompt to ignore the "dismissed recently" memory.

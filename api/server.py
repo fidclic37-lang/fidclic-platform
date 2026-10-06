@@ -6456,6 +6456,9 @@ def _serialize_card_payload(cust: dict) -> dict:
             "google_links":          tpl.get("google_links"),
             "allow_sharing":         tpl.get("allow_sharing"),
             "strip_shine":           tpl.get("strip_shine"),
+            # iOS 27: the poster style (default on) and the two tiles under it.
+            "poster_style":          tpl.get("poster_style"),
+            "featured_actions":      tpl.get("featured_actions"),
             "offer_expires_at":      tpl.get("offer_expires_at"),
             # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
             # WalletCard / WalletPassPreview and the native pass builder.

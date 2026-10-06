@@ -513,6 +513,136 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
     return buf.getvalue()
 
 
+# ---------------------------------------------------------------------------
+# iOS 27 « Poster Generic » (WWDC26 « What's new in Wallet », user 2026-10-06)
+# ---------------------------------------------------------------------------
+# The pass carries `posterGeneric` (iOS 27 draws it: full-bleed artwork,
+# primary logo, header, up to 4 primary fields, one footer, the barcode) next
+# to the classic `storeCard`, which iOS 26 and earlier keep reading — so an
+# older iPhone shows the card exactly as before.
+POSTER_W, POSTER_H = 1035, 1515       # 345 × 505 pt at 3×
+
+
+def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
+                   with_meter: bool) -> Optional[bytes]:
+    """The poster's background: the merchant's photo (or the brand gradient),
+    a soft scrim at the top so the logo and the header read on any photo, and
+    the progress meter painted under them (user, 2026-10-05: « meter photo
+    mein + text »). PNG at 3×, None without Pillow."""
+    try:
+        from PIL import Image, ImageDraw, ImageFilter
+    except ImportError:
+        return None
+    surface = _rgb(theme.get("surface_hex")) or (28, 29, 34)
+    brand = _rgb(theme.get("brand_hex")) or (184, 92, 56)
+    base = None
+    if raw:
+        try:
+            base = Image.open(io.BytesIO(raw)).convert("RGB")
+        except Exception:
+            base = None
+    if base is not None:
+        scale = max(POSTER_W / base.width, POSTER_H / base.height)
+        base = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.LANCZOS)
+        left, top = (base.width - POSTER_W) // 2, (base.height - POSTER_H) // 2
+        img = base.crop((left, top, left + POSTER_W, top + POSTER_H))
+    else:
+        def mix(a, b, t):
+            return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+        img = Image.new("RGB", (POSTER_W, POSTER_H), surface)
+        sheen = Image.new("RGB", (POSTER_W, POSTER_H), mix(surface, brand, 0.6))
+        diag = Image.linear_gradient("L").resize((POSTER_H * 2, POSTER_H * 2)).rotate(-30, resample=Image.BICUBIC)
+        diag = diag.crop(((diag.width - POSTER_W) // 2, (diag.height - POSTER_H) // 2,
+                          (diag.width + POSTER_W) // 2, (diag.height + POSTER_H) // 2))
+        img = Image.composite(sheen, img, diag.point(lambda v: 255 - v)).filter(ImageFilter.GaussianBlur(18))
+
+    light = raw is None and _lum(surface) > 0.45
+    scrim = (255, 255, 255) if light else (0, 0, 0)
+    d = ImageDraw.Draw(img, "RGBA")
+    band = int(POSTER_H * 0.30)
+    for i in range(band):                          # top scrim: logo + header + meter
+        a = int((120 if light else 150) * (1 - i / band) ** 1.4)
+        d.line([(0, i), (POSTER_W, i)], fill=scrim + (a,))
+    if with_meter and threshold > 0:
+        pad, bar_h, gap = 60, 24, 10
+        y0 = int(POSTER_H * 0.205)
+        inner = POSTER_W - 2 * pad
+        seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
+        done = max(0, min(threshold, stamps))
+        empty_fill = (0, 0, 0, 38) if light else (255, 255, 255, 52)
+        empty_line = (0, 0, 0, 64) if light else (255, 255, 255, 90)
+        for i in range(threshold):
+            x0 = pad + i * (seg + gap)
+            box = [x0, y0, x0 + seg, y0 + bar_h]
+            if i < done:
+                d.rounded_rectangle(box, radius=bar_h // 2, fill=brand + (255,))
+            else:
+                d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
+                d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
+    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _poster_variants(png3x: bytes) -> Dict[str, bytes]:
+    from PIL import Image
+    big = Image.open(io.BytesIO(png3x))
+    out: Dict[str, bytes] = {}
+    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
+        im = big if k == 3 else big.resize((345 * k, 505 * k), Image.LANCZOS)
+        b = io.BytesIO(); im.save(b, "PNG", optimize=True); out[suffix] = b.getvalue()
+    return out
+
+
+# Featured actions — the two tiles iOS 27 draws under the pass. Only types
+# Apple has published: one unknown type and Wallet hides EVERY tile.
+# type → (label in our UI, where it leads)
+FEATURED_TYPES: Dict[str, Tuple[str, str]] = {
+    "viewOffersRewards": ("Voir les offres", "card_offers"),
+    "membershipBenefits": ("Mes avantages", "card_program"),
+    "viewMembership": ("Ma carte en ligne", "card"),
+    "place": ("Itinéraire", "maps"),
+    "bookAppointment": ("Prendre rendez-vous", "merchant"),
+    "order": ("Commander", "merchant"),
+    "viewSchedule": ("Voir le planning", "merchant"),
+}
+MAX_FEATURED = 2
+
+
+def clean_featured(rows: Any) -> List[Dict[str, str]]:
+    """What the merchant chose, kept only when Wallet will draw it: a known
+    type, at most two, each once, and an https link where one is needed."""
+    out: List[Dict[str, str]] = []
+    for r in rows or []:
+        t = (r or {}).get("type")
+        if t not in FEATURED_TYPES or any(o["type"] == t for o in out):
+            continue
+        url = ((r or {}).get("url") or "").strip()
+        if FEATURED_TYPES[t][1] == "merchant" and not url.startswith("https://"):
+            continue
+        out.append({"type": t, **({"url": url[:500]} if FEATURED_TYPES[t][1] == "merchant" else {})})
+        if len(out) == MAX_FEATURED:
+            break
+    return out
+
+
+def featured_target(action: Dict[str, str], serial: str, tenant: Dict[str, Any]) -> Optional[str]:
+    kind = FEATURED_TYPES.get(action.get("type") or "", ("", ""))[1]
+    card_url = f"{_site_url()}/card/{serial}"
+    if kind == "card_offers":
+        return f"{card_url}?onglet=offres"
+    if kind == "card_program":
+        return f"{card_url}?onglet=programme"
+    if kind == "card":
+        return card_url
+    if kind == "maps":
+        lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
+        q = urllib.parse.quote(tenant.get("address") or tenant.get("name") or "")
+        return f"https://maps.apple.com/?q={q}" + (f"&ll={lat},{lng}" if lat and lng else "")
+    if kind == "merchant":
+        return action.get("url") or None
+    return None
+
+
 def _strip_variants(png3x: bytes) -> Dict[str, bytes]:
     """3× master → the @2x and 1× Wallet also asks for."""
     try:
@@ -904,6 +1034,32 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         if spots:
             pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": radius,
                                        "relevantText": text} for la, lo in spots[:10]]
+
+    # ---- iOS 27: Poster Generic + featured actions (storeCard stays for ≤ 26)
+    if card.get("poster_style") is not False:
+        progress = next((f for f in secondary if f["key"] in ("stamps", "reward")), None)
+        primary: List[Dict[str, Any]] = [{"key": "member", "value": first_name}]   # no label → the bold title
+        if progress:
+            primary.append(progress)
+        if offer_title:
+            primary.append({"key": "offer_title", "label": "OFFRE", "value": offer_title})
+        elif show_tier:
+            primary.append(tier_field)
+        header = ([points_field] if show("show_points")
+                  else ([tier_field] if show_tier and not offer_title else []))
+        pass_json["posterGeneric"] = {
+            "headerFields": header[:1],
+            "primaryFields": primary[:4],
+            "footerFields": [{"key": "footer", "value": (card.get("tagline") or org)[:60]}],
+            "backFields": back,
+        }
+    actions = clean_featured(card.get("featured_actions"))
+    if actions:
+        # Through our redirect: the click is counted, then the customer lands.
+        pass_json["featuredActions"] = [
+            {"identifier": f"fa{i + 1}-{a['type']}", "type": a["type"],
+             "url": f"{_site_url()}/api/card/{serial}/action/fa{i + 1}-{a['type']}"}
+            for i, a in enumerate(actions)]
     return pass_json
 
 
@@ -946,6 +1102,18 @@ def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
                          title=title, subtitle=sub)
 
 
+def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
+    """The iOS 27 poster background (1035×1515): same photo as the strip — the
+    live campaign's, else the merchant's banner, else the brand gradient."""
+    card, cust = payload["card"], payload["customer"]
+    threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
+    visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
+    stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
+                 else int(cust.get("visits") or 0) // visits_per_stamp)
+    with_meter = card.get("show_meter") is not False
+    return compose_poster(_hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
+
+
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
     card = payload["card"]
     files: Dict[str, bytes] = {"pass.json": json.dumps(build_pass_json(payload), ensure_ascii=False).encode("utf-8")}
@@ -971,6 +1139,15 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
         if hero_raw:
             for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
                 files[f"strip{suffix}.png"] = png
+
+    # ---- iOS 27 poster: full-bleed background + primary logo ---------------
+    if card.get("poster_style") is not False:
+        poster3x = poster_png(payload)
+        if poster3x:
+            for suffix, png in _poster_variants(poster3x).items():
+                files[f"background{suffix}.png"] = png
+        for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
+            files[f"primaryLogo{suffix}.png"] = png
 
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
@@ -1127,6 +1304,14 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
                         "state": _push_state(h, now)}
                        for h in history.get((r.get("device_id"), r.get("serial")), [])],
         } for r in sorted(regs, key=lambda r: _iso_or_none(r.get("updated_at") or r.get("created_at")) or "", reverse=True)[:30]],
+        # iOS 27 tiles under the pass: what is on, and how often it is tapped.
+        "featured_actions": {
+            "active": [{"type": a["type"], "label": FEATURED_TYPES[a["type"]][0]}
+                       for a in clean_featured((_db.card_templates.find_one({"tenant_id": tid}) or {}).get("featured_actions"))],
+            "clicks_30d": {row["_id"]: row["n"] for row in _db.pass_action_clicks.aggregate([
+                {"$match": {"tenant_id": tid, "at": {"$gte": now - timedelta(days=30)}}},
+                {"$group": {"_id": "$type", "n": {"$sum": 1}}}])},
+        },
         # Customers whose card is on no device: never added to Wallet, removed,
         # or added without the device registering (re-add it with internet on).
         "cards_without_device": [{"card": c["barcode_id"], "customer": c.get("name"),
@@ -1332,6 +1517,29 @@ def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = H
     except Exception:
         pass
     return _pkpass_response(serial)
+
+
+@router.get("/api/card/{serial}/action/{identifier}")
+def featured_action_click(serial: str, identifier: str):
+    """A tile under the iOS 27 pass was tapped: count it, then send the
+    customer where the merchant chose. Public — Wallet opens it like a link."""
+    from fastapi.responses import RedirectResponse
+    home = f"{_site_url()}/card/{serial}"
+    cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1})
+    if not cust:
+        return RedirectResponse(_site_url(), status_code=302)
+    tpl = _db.card_templates.find_one({"tenant_id": cust.get("tenant_id")}, {"_id": 0, "featured_actions": 1}) or {}
+    kind = identifier.split("-", 1)[1] if "-" in identifier else identifier
+    action = next((a for a in clean_featured(tpl.get("featured_actions")) if a["type"] == kind), None)
+    if not action:
+        return RedirectResponse(home, status_code=302)
+    tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0}) or {}
+    try:
+        _db.pass_action_clicks.insert_one({"tenant_id": cust.get("tenant_id"), "customer_id": cust.get("id"),
+                                           "type": kind, "at": datetime.now(timezone.utc)})
+    except Exception:
+        pass
+    return RedirectResponse(featured_target(action, serial, tenant) or home, status_code=302)
 
 
 @router.post("/api/passes/v1/log")
