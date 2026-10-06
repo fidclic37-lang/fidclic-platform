@@ -15,7 +15,80 @@ import { ownerAPI } from '../lib/api';
  * fonts, spacing) is drawn here, after Apple's storeCard layout.
  *
  * Props: card (the designer's current fields), width (px for a 375-pt pass).
+ *
+ * iOS 27 (WWDC26): when the pass carries the « poster » style, the preview
+ * opens on it — full-bleed background, primary logo, header, the member's
+ * name in bold, the progress, the footer, the tiles under the pass — with a
+ * switch to see the card iOS 26 and earlier show instead.
  */
+function PosterPass({ p, s, width, bc, linear }) {
+  const h = width * (505 / 345);
+  const [title, ...rest] = p.primaryFields || [];
+  const header = (p.headerFields || [])[0];
+  const footer = (p.footerFields || [])[0];
+  const shadow = '0 1px 3px rgba(0,0,0,.55)';
+  return (
+    <div>
+      <div className="relative overflow-hidden text-white" style={{ width, height: h, borderRadius: 14 * s,
+        boxShadow: '0 18px 40px -22px rgba(0,0,0,.55)', background: '#1C1D22',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif' }}>
+        {p.background && <img src={p.background} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between" style={{ padding: 14 * s }}>
+          {p.logo ? <img src={p.logo} alt="" style={{ height: 34 * s, maxWidth: 150 * s, objectFit: 'contain' }} /> : <span />}
+          {header && (
+            <div className="text-right" style={{ textShadow: shadow }}>
+              <div className="uppercase" style={{ fontSize: 10.5 * s, fontWeight: 600, opacity: 0.9 }}>{header.label}</div>
+              <div style={{ fontSize: 19 * s, lineHeight: 1.1 }}>{String(header.value)}</div>
+            </div>
+          )}
+        </div>
+        <div className="absolute inset-x-0 flex justify-center" style={{ bottom: 128 * s }}>
+          <div className="flex flex-col items-center bg-white" style={{ borderRadius: 6 * s, padding: `${8 * s}px ${10 * s}px ${5 * s}px` }}>
+            {linear
+              ? <Code128Barcode value={bc.altText || 'FT-EXEMPLE1'} height={44 * s} />
+              : <QRCodeSVG value={bc.message || 'FT-EXEMPLE1'} size={Math.round(104 * s)} level="M" />}
+            {bc.altText && <div style={{ fontSize: 11 * s, color: '#111', marginTop: 3 * s }}>{bc.altText}</div>}
+          </div>
+        </div>
+        <div className="absolute inset-x-0 bottom-0" style={{ padding: `${40 * s}px ${14 * s}px ${12 * s}px`,
+          background: 'linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,.45) 70%, transparent)', textShadow: shadow }}>
+          <div className="flex items-end justify-between" style={{ gap: 10 * s }}>
+            {title && <div className="min-w-0 truncate" style={{ fontSize: 26 * s, fontWeight: 700, lineHeight: 1.1 }}>{String(title.value)}</div>}
+            {rest.slice(-1).map((f) => (
+              <div key={f.key} className="min-w-0 shrink-0 text-right">
+                <div className="uppercase" style={{ fontSize: 10 * s, fontWeight: 600, opacity: 0.85 }}>{f.label}</div>
+                <div className="truncate" style={{ fontSize: 14 * s, maxWidth: 150 * s }}>{String(f.value)}</div>
+              </div>
+            ))}
+          </div>
+          {rest.length > 1 && (
+            <div className="flex" style={{ gap: 14 * s, marginTop: 6 * s }}>
+              {rest.slice(0, -1).map((f) => (
+                <div key={f.key} className="min-w-0">
+                  <div className="uppercase" style={{ fontSize: 10 * s, fontWeight: 600, opacity: 0.85 }}>{f.label}</div>
+                  <div className="truncate" style={{ fontSize: 14 * s }}>{String(f.value)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {footer && <div className="truncate" style={{ fontSize: 11 * s, marginTop: 8 * s, opacity: 0.9 }}>{footer.value}</div>}
+        </div>
+      </div>
+      {(p.actions || []).length > 0 && (
+        <div className="mt-2 grid grid-cols-2" style={{ gap: 8 * s }}>
+          {p.actions.map((a) => (
+            <div key={a.type} className="rounded-xl border border-[#E6EEFB] bg-white text-left" style={{ padding: 10 * s }}>
+              <span className="mb-1 inline-block h-5 w-5 rounded-full bg-[#2F6BFF]/15" />
+              <div className="truncate text-[12px] font-semibold text-[#0B1C3F]">{a.label}</div>
+              <div className="text-[10.5px] text-[#94A3B8]">Ouvrir le site</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Field({ f, s, align = 'left', big = false, labelColor, color }) {
   const val = f.value === undefined || f.value === null ? '' : String(f.value);
   return (
@@ -42,6 +115,7 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
   const [pass, setPass] = useState(null);
   const [error, setError] = useState(false);
   const [back, setBack] = useState(false);
+  const [classic, setClassic] = useState(false);     // iOS 26 view of a poster pass
   const seq = useRef(0);
   const key = JSON.stringify(card);
 
@@ -72,11 +146,34 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
   const front = [...(pass.secondaryFields || []), ...(pass.auxiliaryFields || [])];
   const bc = pass.barcode || {};
   const linear = bc.format === 'PKBarcodeFormatCode128';
+  const poster = pass.poster && !classic;
+  const osSwitch = pass.poster && (
+    <div className="mb-2 flex justify-center gap-1 text-[11px] font-semibold">
+      {[['iOS 27', false], ['iOS 26 et avant', true]].map(([label, v]) => (
+        <button key={label} type="button" onClick={() => setClassic(v)}
+                className={`rounded-full px-2.5 py-1 ${classic === v ? 'bg-[#2F6BFF] text-white' : 'bg-[#EEF3FB] text-[#475569]'}`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+  if (poster) {
+    return (
+      <div translate="no" style={{ width }}>
+        {osSwitch}
+        <PosterPass p={pass.poster} s={s} width={width} bc={bc} linear={linear} />
+        <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
+          Exemple : {pass.sample?.name}, {pass.sample?.visits} visites · nouvelle carte iOS 27
+        </p>
+      </div>
+    );
+  }
 
   return (
     // translate="no": a browser translation turned the sample « Marie » into
     // « Married » — the pass itself is never translated.
     <div translate="no" style={{ width }}>
+      {osSwitch}
       <div className="overflow-hidden" style={{ background: bg, color: fg, borderRadius: 12 * s,
         boxShadow: '0 18px 40px -22px rgba(0,0,0,.55)', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif' }}>
         {/* header: logo · logoText · header field */}

@@ -107,7 +107,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = pj()
     pg = p.get("posterGeneric") or {}
     check("posterGeneric is in pass.json", bool(pg))
-    check("…next to the classic storeCard, which iOS 26 and earlier read", "storeCard" in p)
+    check("…next to `generic`, Apple's pairing for iOS 26 and earlier (no storeCard)",
+          "generic" in p and "storeCard" not in p)
+    check("iOS 26 shows the member as the big field, the progress and offer under it",
+          p["generic"]["primaryFields"][0]["key"] == "member"
+          and any(f["key"] in ("stamps", "reward") for f in p["generic"]["secondaryFields"]))
     check("first primary field has no label → the bold member name", pg["primaryFields"][0] == {"key": "member", "value": "Marie"})
     check("at most 4 primary fields, 1 header, 1 footer",
           len(pg["primaryFields"]) <= 4 and len(pg["headerFields"]) <= 1 and len(pg["footerFields"]) == 1)
@@ -115,11 +119,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           any(f["key"] == "stamps" and "changeMessage" in f for f in pg["primaryFields"]))
     check("the footer is the shop's line", pg["footerFields"][0]["value"] == "Coupe • Barbe • Soin")
     check("the back is the same back (offer with changeMessage, links…)",
-          [f["key"] for f in pg["backFields"]] == [f["key"] for f in p["storeCard"]["backFields"]])
+          [f["key"] for f in pg["backFields"]] == [f["key"] for f in p["generic"]["backFields"]])
     z = bundle()
     names = set(z.namelist())
-    check("background.png at 1x/2x/3x + primaryLogo", {"background.png", "background@2x.png", "background@3x.png",
-                                                        "primaryLogo.png"} <= names)
+    check("background.png at 1x/2x/3x + primaryLogo + thumbnail (iOS 26)",
+          {"background.png", "background@2x.png", "background@3x.png", "primaryLogo.png", "thumbnail.png"} <= names)
+    check("no strip: `generic` does not draw one", "strip.png" not in names)
     check("background is Apple's 345×505 pt (1035×1515 at 3x)",
           _Img.open(_io.BytesIO(z.read("background@3x.png"))).size == (1035, 1515)
           and _Img.open(_io.BytesIO(z.read("background.png"))).size == (345, 505))
@@ -138,9 +143,26 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_style": False}})
     p2 = pj()
-    check("the merchant can switch the poster off → classic card only",
-          "posterGeneric" not in p2 and "background.png" not in bundle().namelist())
+    check("the merchant can switch the poster off → the classic storeCard, strip included",
+          "posterGeneric" not in p2 and "storeCard" in p2 and "generic" not in p2
+          and "background.png" not in bundle().namelist() and "strip.png" in bundle().namelist())
     db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"poster_style": ""}})
+
+    print("\nThe test link (Vercel preview)")
+    os.environ.update({"VERCEL_ENV": "preview", "VERCEL_BRANCH_URL": "fidclic-platform-git-feat-x.vercel.app"})
+    check("a pass from a preview deployment talks to that deployment, not production",
+          pj()["webServiceURL"] == "https://fidclic-platform-git-feat-x.vercel.app/api/passes")
+    os.environ.pop("VERCEL_ENV"); os.environ.pop("VERCEL_BRANCH_URL")
+    check("production keeps its own address", not pj()["webServiceURL"].startswith("https://fidclic-platform-git"))
+
+    print("\nThe owner's preview draws the poster")
+    import auth as _auth
+    _tk = _auth.create_access_token({"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})
+    pv = http("POST", "/api/owner/wallet/preview", headers={"Authorization": "Bearer " + _tk}, json={"card": {}}).json()
+    check("preview has the poster: fields, background, logo",
+          bool(pv.get("poster")) and pv["poster"]["background"].startswith("data:image/png")
+          and pv["poster"]["primaryFields"][0]["key"] == "member")
+    check("…and still the classic card for iOS 26 (no strip)", pv.get("strip") is None and bool(pv.get("primaryFields")))
 
     print("\nFeatured actions — none by default")
     check("no tiles until the merchant chooses", "featuredActions" not in pj())

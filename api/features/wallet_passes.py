@@ -177,6 +177,14 @@ def google_configured() -> bool:
 
 
 def _site_url() -> str:
+    # A Vercel preview deployment speaks for itself: a pass added from the
+    # preview link must register with, and be updated by, THAT deployment —
+    # otherwise production answers its first update with production's design
+    # (user, 2026-10-06: test the new card on a preview link before production).
+    if os.getenv("VERCEL_ENV") == "preview":
+        host = os.getenv("VERCEL_BRANCH_URL") or os.getenv("VERCEL_URL")
+        if host:
+            return f"https://{host}".rstrip("/")
     return (os.getenv("PUBLIC_APP_URL") or os.getenv("PUBLIC_SITE_URL") or "https://app.fidclic.com").rstrip("/")
 
 
@@ -518,8 +526,8 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
 # ---------------------------------------------------------------------------
 # The pass carries `posterGeneric` (iOS 27 draws it: full-bleed artwork,
 # primary logo, header, up to 4 primary fields, one footer, the barcode) next
-# to the classic `storeCard`, which iOS 26 and earlier keep reading — so an
-# older iPhone shows the card exactly as before.
+# to `generic`, which iOS 26 and earlier read — Apple's documented pairing.
+# With the poster switched off the card is the classic storeCard.
 POSTER_W, POSTER_H = 1035, 1515       # 345 × 505 pt at 3×
 
 
@@ -1035,8 +1043,21 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": radius,
                                        "relevantText": text} for la, lo in spots[:10]]
 
-    # ---- iOS 27: Poster Generic + featured actions (storeCard stays for ≤ 26)
+    # ---- iOS 27: Poster Generic + featured actions ---------------------------
+    # Apple's pairing, as in the WWDC26 session: `posterGeneric` for iOS 27 and
+    # `generic` for iOS 26 and earlier (user, 2026-10-06: « ios27 mein poster
+    # card hi dikhna chahiye »). The storeCard stays only when the merchant
+    # switches the poster off.
     if card.get("poster_style") is not False:
+        sc = pass_json.pop("storeCard")
+        member = next((f for f in secondary if f["key"] == "member"), None)
+        pass_json["generic"] = {
+            "headerFields": sc["headerFields"],
+            "primaryFields": [member] if member else sc["primaryFields"],
+            "secondaryFields": [f for f in secondary if f["key"] != "member"][:3],
+            "auxiliaryFields": sc["auxiliaryFields"],
+            "backFields": sc["backFields"],
+        }
         progress = next((f for f in secondary if f["key"] in ("stamps", "reward")), None)
         primary: List[Dict[str, Any]] = [{"key": "member", "value": first_name}]   # no label → the bold title
         if progress:
@@ -1130,11 +1151,12 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     # A strip is produced when the merchant uploaded a banner OR when the meter
     # is on (show_meter, default true) — in that case the photo is replaced by a
     # quiet brand gradient, which still reads far better than a flat card.
-    strip3x = strip_png(payload)
+    poster_on = card.get("poster_style") is not False
+    strip3x = None if poster_on else strip_png(payload)     # `generic` has no strip
     if strip3x:
         for suffix, png in _strip_variants(strip3x).items():
             files[f"strip{suffix}.png"] = png
-    else:                                    # no Pillow → ship the photo as-is
+    elif not poster_on:                      # no Pillow → ship the photo as-is
         hero_raw = _hero_raw(card)
         if hero_raw:
             for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
@@ -1148,6 +1170,9 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
                 files[f"background{suffix}.png"] = png
         for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
             files[f"primaryLogo{suffix}.png"] = png
+        # iOS 26 and earlier (`generic`): the shop's logo as the thumbnail
+        for suffix, png in _png_variants(logo_raw, (90, 90), cover=True, fallback_rgb=brand).items():
+            files[f"thumbnail{suffix}.png"] = png
 
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
@@ -1347,6 +1372,7 @@ _PREVIEW_KEYS = {
     "use_full_name", "greeting_label", "points_label", "visits_label", "stamps_label",
     "reward_threshold_stamps", "reward_description", "points_per_visit", "visits_per_stamp",
     "header_field", "strip_shine", "back_fields", "allow_sharing",
+    "poster_style", "featured_actions",
 }
 
 
@@ -1388,7 +1414,7 @@ def owner_wallet_preview(body: PassPreviewIn,
             logo_w = round(Image.open(io.BytesIO(logo2x)).width / 2)
     except Exception:
         pass
-    sc = pj.get("storeCard", {})
+    sc = (pj.get("storeCard") or pj.get("generic") or {})
     bc = (pj.get("barcodes") or [{}])[0]
     return {
         "logoText": pj.get("logoText"),
@@ -1397,9 +1423,24 @@ def owner_wallet_preview(body: PassPreviewIn,
         "secondaryFields": sc.get("secondaryFields", []), "auxiliaryFields": sc.get("auxiliaryFields", []),
         "backFields": sc.get("backFields", []),
         "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
-        "strip": _data_url(strip2x), "logo": _data_url(logo2x), "logo_width": logo_w,
+        "strip": _data_url(strip2x) if "storeCard" in pj else None,
+        "logo": _data_url(logo2x), "logo_width": logo_w,
         "sample": {"name": sample["name"], "visits": visits},
+        # iOS 27 « poster » — the same fields and background the pass ships
+        "poster": _poster_preview(pj, payload, logo2x),
     }
+
+
+def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes]) -> Optional[Dict[str, Any]]:
+    pg = pj.get("posterGeneric")
+    if not pg:
+        return None
+    bg3x = poster_png(payload)
+    bg2x = _poster_variants(bg3x).get("@2x") if bg3x else None
+    return {"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
+            "footerFields": pg.get("footerFields", []), "background": _data_url(bg2x), "logo": _data_url(logo2x),
+            "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}
+                        for a in clean_featured(payload["card"].get("featured_actions"))]}
 
 
 @router.post("/api/owner/wallet/notify")
@@ -1699,7 +1740,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     the member, the progress and the offer say the same thing on both phones."""
     cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
     pj = build_pass_json(payload)
-    sc = pj.get("storeCard", {})
+    sc = (pj.get("storeCard") or pj.get("generic") or {})
     by_key = {f["key"]: f for grp in ("headerFields", "primaryFields", "secondaryFields", "auxiliaryFields")
               for f in sc.get(grp, [])}
     class_id, object_id = _gw_ids(tenant["id"], cust["barcode_id"])

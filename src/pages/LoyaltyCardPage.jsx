@@ -317,6 +317,9 @@ export default function LoyaltyCardPage() {
     reward_threshold_stamps: programme?.reward_threshold_stamps,
     reward_description: programme?.reward_description,
     points_per_visit: programme?.points_per_visit,
+    // iOS 27: the poster and its tiles, previewed as they are chosen
+    poster_style: advanced ? advanced.poster_style !== false : undefined,
+    featured_actions: advanced?.featured_actions,
   }), [design, programme, toggles, advanced]);
 
   const previewCustomer = useMemo(() => ({

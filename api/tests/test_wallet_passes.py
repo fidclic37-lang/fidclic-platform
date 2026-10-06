@@ -69,6 +69,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         "card_name": "ROYAL TRIM", "tagline": "Coupe • Barbe • Soin", "logo_url": "data:image/png;base64," + logo_png,
         "reward_threshold_stamps": 10, "reward_description": "Une coupe offerte", "hero_mode": "none",
         "brand_fields": {"card_name": "ROYAL TRIM"},
+        # this suite is the classic storeCard; the iOS 27 poster has test_wallet_poster
+        "poster_style": False,
     })
     db.customers.insert_one({"id": "c1", "tenant_id": "t1", "barcode_id": "FT-TEST0001", "name": "Marie Dupont",
                              "visits": 7, "points": 70, "tier": "gold", "created_at": dt.datetime.now(dt.timezone.utc)})
