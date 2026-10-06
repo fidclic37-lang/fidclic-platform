@@ -21,6 +21,28 @@ import { ownerAPI } from '../lib/api';
  * name in bold, the progress, the footer, the tiles under the pass — with a
  * switch to see the card iOS 26 and earlier show instead.
  */
+function Field({ f, s, align = 'left', big = false, labelColor, color }) {
+  const val = f.value === undefined || f.value === null ? '' : String(f.value);
+  return (
+    <div className="min-w-0" style={{ textAlign: align }}>
+      <div className="truncate uppercase" style={{ fontSize: 11 * s, letterSpacing: 0.2 * s, color: labelColor, fontWeight: 600 }}>{f.label}</div>
+      <div className="truncate" style={{ fontSize: (big ? 36 : 20) * s, lineHeight: 1.15, color, fontWeight: big ? 300 : 400 }}>{val}</div>
+    </div>
+  );
+}
+
+function Row({ fields, s, labelColor, color }) {
+  if (!fields.length) return null;
+  return (
+    <div className="flex justify-between" style={{ gap: 12 * s, padding: `${10 * s}px ${16 * s}px 0` }}>
+      {fields.map((f, i) => (
+        <Field key={f.key} f={f} s={s} labelColor={labelColor} color={color}
+               align={fields.length > 1 && i === fields.length - 1 ? 'right' : 'left'} />
+      ))}
+    </div>
+  );
+}
+
 // Apple's own tiles under an iOS 27 pass: icon colour and wording per type
 const ACTION_LOOK = {
   viewOffersRewards: ['#D946EF', '★', 'Voir les offres et récompenses', 'Ouvrir le lien'],
