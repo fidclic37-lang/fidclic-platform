@@ -88,6 +88,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
 
     import io as _io, json as _json, zipfile as _zip, asyncio, httpx
+    import auth as _auth
     from PIL import Image as _Img
     from models import TokenData
 
@@ -140,6 +141,27 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     g2, g8 = gold_pixels(2), gold_pixels(8)
     check(f"the meter is painted in the poster and fills with progress ({g2} < {g8})", 0 < g2 < g8)
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
+
+    print("\nThe poster photo stays sharp")
+    def png_data(w, h, rgb):
+        b = _io.BytesIO(); _Img.new("RGB", (w, h), rgb).save(b, "PNG")
+        return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
+    # a landscape banner: blurred behind, the whole photo sharp in the middle band
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": png_data(1125, 432, (20, 120, 220)),
+                                                               "hero_mode": "image"}})
+    im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
+    band = im.getpixel((517, int(1515 * 0.265) + 200))
+    check(f"a landscape banner is shown whole, sharp, in the middle band ({band})", band == (20, 120, 220))
+    # the portrait « Image poster » wins and fills the card
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_image_url": png_data(1035, 1515, (200, 40, 40))}})
+    im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
+    check("the portrait poster image fills the card edge to edge",
+          im.getpixel((517, 1400)) == (200, 40, 40) and im.getpixel((5, 900)) == (200, 40, 40))
+    r = http("PUT", "/api/owner/card/settings", headers={"Authorization": "Bearer " + _auth.create_access_token(
+        {"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})}, json={"poster_image_url": "javascript:alert(1)"})
+    check("anything but an image is refused", r.status_code == 400)
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"poster_image_url": "", "hero_image_url": ""},
+                                                      "$set": {"hero_mode": "none"}})
 
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_style": False}})
     p2 = pj()

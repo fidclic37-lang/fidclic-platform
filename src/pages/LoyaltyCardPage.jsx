@@ -182,6 +182,8 @@ const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, rejec
 });
 const readLogo = downscaleTo(320, 320, false);
 const readBanner = downscaleTo(1125, 432, true);
+// iOS 27 poster: Apple's 345 × 505 pt at 3×, portrait
+const readPoster = downscaleTo(1035, 1515, true);
 
 const PROGRAMME_HINT = {
   points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
@@ -319,6 +321,7 @@ export default function LoyaltyCardPage() {
     points_per_visit: programme?.points_per_visit,
     // iOS 27: the poster and its tiles, previewed as they are chosen
     poster_style: advanced ? advanced.poster_style !== false : undefined,
+    poster_image_url: advanced?.poster_image_url,
     featured_actions: advanced?.featured_actions,
   }), [design, programme, toggles, advanced]);
 
@@ -791,6 +794,14 @@ export default function LoyaltyCardPage() {
             </p>
             <Toggle icon={ImageIcon} label="Style « poster » : votre photo en plein écran" checked={advanced.poster_style !== false}
                     onChange={(v) => setAdvanced({ ...advanced, poster_style: v })} />
+            {advanced.poster_style !== false && (
+              <div className="mt-2 max-w-[220px]">
+                <ImageField label="Image poster (verticale, recommandée)" value={advanced.poster_image_url} aspect="345 / 505"
+                            downscale={readPoster}
+                            onChange={(v) => setAdvanced({ ...advanced, poster_image_url: v })} />
+                <p className="mt-1 text-[11px] text-[#94A3B8]">Une photo verticale reste nette. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
+              </div>
+            )}
             <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">
               Boutons sous la carte <span className="font-normal text-[#94A3B8]">— 2 au maximum, Apple choisit l'icône</span>
             </p>

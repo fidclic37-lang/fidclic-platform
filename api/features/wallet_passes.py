@@ -549,11 +549,25 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
             base = Image.open(io.BytesIO(raw)).convert("RGB")
         except Exception:
             base = None
-    if base is not None:
+    if base is not None and base.width / max(1, base.height) <= 0.9:
+        # a portrait photo (the « Image poster »): fills the card edge to edge
         scale = max(POSTER_W / base.width, POSTER_H / base.height)
         base = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.LANCZOS)
         left, top = (base.width - POSTER_W) // 2, (base.height - POSTER_H) // 2
         img = base.crop((left, top, left + POSTER_W, top + POSTER_H))
+    elif base is not None:
+        # A landscape photo (the banner, a campaign photo) filling a portrait
+        # card is zoomed ~3.5× and turns to pixels (user's iPhone, 2026-10-06).
+        # Instead: the same photo blurred behind, and the whole photo sharp in
+        # the band between the meter and the barcode.
+        scale = max(POSTER_W / base.width, POSTER_H / base.height)
+        back = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.BILINEAR)
+        left, top = (back.width - POSTER_W) // 2, (back.height - POSTER_H) // 2
+        img = back.crop((left, top, left + POSTER_W, top + POSTER_H)).filter(ImageFilter.GaussianBlur(28))
+        img = Image.blend(img, Image.new("RGB", img.size, (0, 0, 0)), 0.25)
+        fit_h = round(base.height * POSTER_W / base.width)
+        sharp = base.resize((POSTER_W, fit_h), Image.LANCZOS)
+        img.paste(sharp, (0, int(POSTER_H * 0.265)))
     else:
         def mix(a, b, t):
             return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
@@ -1132,7 +1146,10 @@ def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
     stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
                  else int(cust.get("visits") or 0) // visits_per_stamp)
     with_meter = card.get("show_meter") is not False
-    return compose_poster(_hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
+    raw = None
+    if not _campaign_photo(card) and card.get("poster_image_url"):
+        raw = _fetch_image(card.get("poster_image_url"))     # the portrait made for the poster
+    return compose_poster(raw or _hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
 
 
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
@@ -1372,7 +1389,7 @@ _PREVIEW_KEYS = {
     "use_full_name", "greeting_label", "points_label", "visits_label", "stamps_label",
     "reward_threshold_stamps", "reward_description", "points_per_visit", "visits_per_stamp",
     "header_field", "strip_shine", "back_fields", "allow_sharing",
-    "poster_style", "featured_actions",
+    "poster_style", "featured_actions", "poster_image_url",
 }
 
 

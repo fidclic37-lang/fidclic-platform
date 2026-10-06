@@ -223,6 +223,7 @@ class CardSettings(BaseModel):
     google_links: Optional[List[Dict[str, str]]] = None   # [{label, uri}]
     # iOS 27 (WWDC26): the poster style, and up to two tiles under the pass
     poster_style: Optional[bool] = None
+    poster_image_url: Optional[str] = None                    # portrait photo for the poster
     featured_actions: Optional[List[Dict[str, str]]] = None   # [{type, url?}]
 
 
@@ -304,6 +305,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "stamps_change_message": tpl.get("stamps_change_message") or "",
             "google_links": tpl.get("google_links") or [],
             "poster_style": tpl.get("poster_style") is not False,
+            "poster_image_url": tpl.get("poster_image_url") or "",
             "featured_actions": tpl.get("featured_actions") or [],
             "featured_types": [{"type": k, "label": v[0], "needs_url": v[1] == "merchant"}
                                for k, v in _featured_types().items()],
@@ -364,6 +366,12 @@ def put_card_settings(body: CardSettings,
             for r in payload["google_links"][:3]
             if (r.get("uri") or "").strip().startswith(("http://", "https://", "tel:", "mailto:"))
         ]
+    if payload.get("poster_image_url"):
+        v = payload["poster_image_url"]
+        if not (v.startswith("data:image/") or v.startswith("https://")):
+            raise HTTPException(status_code=400, detail="Image poster invalide.")
+        if len(v) > 3_500_000:
+            raise HTTPException(status_code=400, detail="L'image poster dépasse 2,5 Mo.")
     if payload.get("featured_actions") is not None:
         # Only what Wallet will draw: an unknown type would hide every tile.
         from features.wallet_passes import clean_featured
