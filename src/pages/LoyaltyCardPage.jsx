@@ -158,7 +158,9 @@ const Stat = ({ icon: Icon, tone, value, label, delta, hint, help }) => {
 };
 
 /* ── image helpers ────────────────────────────────────────────────────── */
-const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, reject) => {
+// `jpeg` with cover=false: the WHOLE photo, only made smaller — never cropped
+// (user, 2026-10-06: « puri photo dikhe, kati hui nhi »).
+const downscaleTo = (maxW, maxH, cover, jpeg = false) => (file) => new Promise((resolve, reject) => {
   const img = new Image();
   const url = URL.createObjectURL(file);
   img.onload = () => {
@@ -170,20 +172,21 @@ const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, rejec
       const w = img.width * k; const h = img.height * k;
       ctx.drawImage(img, (maxW - w) / 2, (maxH - h) / 2, w, h);
     } else {
-      const k = Math.min(1, maxW / Math.max(img.width, img.height));
+      const k = Math.min(1, maxW / img.width, maxH / img.height);
       c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
       ctx.drawImage(img, 0, 0, c.width, c.height);
     }
     URL.revokeObjectURL(url);
-    resolve(c.toDataURL(cover ? 'image/jpeg' : 'image/png', 0.85));
+    resolve(c.toDataURL(cover || jpeg ? 'image/jpeg' : 'image/png', 0.85));
   };
   img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
   img.src = url;
 });
 const readLogo = downscaleTo(320, 320, false);
-const readBanner = downscaleTo(1125, 432, true);
-// iOS 27 poster: Apple's 345 × 505 pt at 3×, portrait
-const readPoster = downscaleTo(1035, 1515, true);
+// Whole photos, never cropped at upload: the classic strip and the iOS 27
+// poster each frame it themselves, server side.
+const readBanner = downscaleTo(1600, 1600, false, true);
+const readPoster = downscaleTo(1600, 1600, false, true);
 
 const PROGRAMME_HINT = {
   points_euro: 'Le client cumule des points proportionnels au montant dépensé.',

@@ -113,12 +113,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("iOS 26 shows the member as the big field, the progress and offer under it",
           p["generic"]["primaryFields"][0]["key"] == "member"
           and any(f["key"] in ("stamps", "reward") for f in p["generic"]["secondaryFields"]))
-    check("first primary field has no label → the bold member name", pg["primaryFields"][0] == {"key": "member", "value": "Marie"})
+    check("labelled like Apple's sample: MEMBRE / Marie first", pg["primaryFields"][0]["key"] == "member"
+          and pg["primaryFields"][0]["value"] == "Marie" and bool(pg["primaryFields"][0].get("label")))
+    check("only the logo on top: no logoText, the shop's name is the footer",
+          "logoText" not in p and pg["footerFields"][0]["value"] == "ROYAL TRIM")
+    check("the offer is not on the poster's face (it stays on the back)",
+          all(f["key"] != "offer_title" for f in pg["primaryFields"]))
     check("at most 4 primary fields, 1 header, 1 footer",
           len(pg["primaryFields"]) <= 4 and len(pg["headerFields"]) <= 1 and len(pg["footerFields"]) == 1)
     check("progress in the primary fields, with its changeMessage (notifications)",
           any(f["key"] == "stamps" and "changeMessage" in f for f in pg["primaryFields"]))
-    check("the footer is the shop's line", pg["footerFields"][0]["value"] == "Coupe • Barbe • Soin")
     check("the back is the same back (offer with changeMessage, links…)",
           [f["key"] for f in pg["backFields"]] == [f["key"] for f in p["generic"]["backFields"]])
     z = bundle()
@@ -152,11 +156,26 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
     band = im.getpixel((517, int(1515 * 0.265) + 200))
     check(f"a landscape banner is shown whole, sharp, in the middle band ({band})", band == (20, 120, 220))
-    # the portrait « Image poster » wins and fills the card
+    # the « Image poster » wins; at the poster's shape it fills the card
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_image_url": png_data(1035, 1515, (200, 40, 40))}})
     im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
-    check("the portrait poster image fills the card edge to edge",
+    check("a poster-shaped image fills the card edge to edge",
           im.getpixel((517, 1400)) == (200, 40, 40) and im.getpixel((5, 900)) == (200, 40, 40))
+    # any other shape is shown whole, never cropped: a square photo keeps its 4 corners
+    sq = _Img.new("RGB", (800, 800), (30, 160, 60))
+    for (cx, cy) in ((0, 0), (799, 0), (0, 799), (799, 799)):
+        for dx in range(-40, 41):
+            for dy in range(-40, 41):
+                if 0 <= cx + dx < 800 and 0 <= cy + dy < 800:
+                    sq.putpixel((cx + dx, cy + dy), (250, 250, 0))
+    b = _io.BytesIO(); sq.save(b, "PNG")
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_image_url":
+                                 "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()}})
+    im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
+    top_y = (1515 - 1035) // 2 + 36           # the square sits centred, 1035 wide; corner ≈ 52 px
+    centre, corner = im.getpixel((517, 757)), im.getpixel((30, top_y))
+    check(f"a square photo is shown whole: centre green {centre}, its yellow corner kept {corner}",
+          centre == (30, 160, 60) and corner[0] > 180 and corner[1] > 180 and corner[2] < 90)
     r = http("PUT", "/api/owner/card/settings", headers={"Authorization": "Bearer " + _auth.create_access_token(
         {"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})}, json={"poster_image_url": "javascript:alert(1)"})
     check("anything but an image is refused", r.status_code == 400)

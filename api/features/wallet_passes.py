@@ -549,25 +549,47 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
             base = Image.open(io.BytesIO(raw)).convert("RGB")
         except Exception:
             base = None
-    if base is not None and base.width / max(1, base.height) <= 0.9:
-        # a portrait photo (the « Image poster »): fills the card edge to edge
-        scale = max(POSTER_W / base.width, POSTER_H / base.height)
-        base = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.LANCZOS)
-        left, top = (base.width - POSTER_W) // 2, (base.height - POSTER_H) // 2
-        img = base.crop((left, top, left + POSTER_W, top + POSTER_H))
+    poster_ratio = POSTER_W / POSTER_H
+    if base is not None and abs(base.width / max(1, base.height) - poster_ratio) / poster_ratio < 0.04:
+        # already the poster's shape: fills the card
+        img = base.resize((POSTER_W, POSTER_H), Image.LANCZOS)
     elif base is not None:
-        # A landscape photo (the banner, a campaign photo) filling a portrait
-        # card is zoomed ~3.5× and turns to pixels (user's iPhone, 2026-10-06).
-        # Instead: the same photo blurred behind, and the whole photo sharp in
-        # the band between the meter and the barcode.
+        # Any other shape is shown WHOLE, resized, never cropped (user,
+        # 2026-10-06: « puri photo dikhe, kati hui nhi »), over the same photo
+        # blurred and dimmed behind. Filling the card instead zoomed a banner
+        # ~3.5× and turned it to pixels.
         scale = max(POSTER_W / base.width, POSTER_H / base.height)
         back = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.BILINEAR)
         left, top = (back.width - POSTER_W) // 2, (back.height - POSTER_H) // 2
         img = back.crop((left, top, left + POSTER_W, top + POSTER_H)).filter(ImageFilter.GaussianBlur(28))
         img = Image.blend(img, Image.new("RGB", img.size, (0, 0, 0)), 0.25)
-        fit_h = round(base.height * POSTER_W / base.width)
-        sharp = base.resize((POSTER_W, fit_h), Image.LANCZOS)
-        img.paste(sharp, (0, int(POSTER_H * 0.265)))
+        if base.width / base.height >= 1.2:
+            # wide: full width, in the band between the meter and the barcode
+            fw, fh = POSTER_W, round(base.height * POSTER_W / base.width)
+            x, y = 0, int(POSTER_H * 0.265)
+            fh = min(fh, POSTER_H - y)
+        else:
+            k = min(POSTER_W / base.width, POSTER_H / base.height)
+            fw, fh = round(base.width * k), round(base.height * k)
+            x, y = (POSTER_W - fw) // 2, (POSTER_H - fh) // 2
+        sharp = base.resize((fw, fh), Image.LANCZOS)
+        # soft edges wherever the photo meets its blur
+        mask = Image.new("L", (fw, fh), 255)
+        md = ImageDraw.Draw(mask)
+        # thin, so the photo's own edges stay visible (« puri photo dikhe »)
+        fy, fx = max(1, min(24, fh // 8)), max(1, min(24, fw // 8))
+        for i in range(fy):
+            a = int(255 * (i / fy) ** 1.2)
+            if y > 0:
+                md.line([(0, i), (fw, i)], fill=a)
+            if y + fh < POSTER_H:
+                md.line([(0, fh - 1 - i), (fw, fh - 1 - i)], fill=a)
+        for i in range(fx):
+            if x > 0:
+                a = int(255 * (i / fx) ** 1.2)
+                md.line([(i, 0), (i, fh)], fill=min(a, 255))
+                md.line([(fw - 1 - i, 0), (fw - 1 - i, fh)], fill=min(a, 255))
+        img.paste(sharp, (x, y), mask)
     else:
         def mix(a, b, t):
             return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
@@ -1072,22 +1094,26 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "auxiliaryFields": sc["auxiliaryFields"],
             "backFields": sc["backFields"],
         }
+        # Apple's sample (user, 2026-10-06): labelled fields — who, and how
+        # far. The offer lives on the back, where its changeMessage still
+        # raises the notification.
         progress = next((f for f in secondary if f["key"] in ("stamps", "reward")), None)
-        primary: List[Dict[str, Any]] = [{"key": "member", "value": first_name}]   # no label → the bold title
+        member_field = next((f for f in secondary if f["key"] == "member"),
+                            {"key": "member", "label": "MEMBRE", "value": first_name})
+        primary: List[Dict[str, Any]] = [member_field]
         if progress:
             primary.append(progress)
-        if offer_title:
-            primary.append({"key": "offer_title", "label": "OFFRE", "value": offer_title})
         elif show_tier:
             primary.append(tier_field)
-        header = ([points_field] if show("show_points")
-                  else ([tier_field] if show_tier and not offer_title else []))
+        header = ([points_field] if show("show_points") else ([tier_field] if show_tier else []))
         pass_json["posterGeneric"] = {
             "headerFields": header[:1],
             "primaryFields": primary[:4],
-            "footerFields": [{"key": "footer", "value": (card.get("tagline") or org)[:60]}],
+            # Only the logo on top, like Apple's poster: the shop's name is the footer.
+            "footerFields": [{"key": "footer", "value": org[:60]}],
             "backFields": back,
         }
+        pass_json.pop("logoText", None)
     actions = clean_featured(card.get("featured_actions"))
     if actions:
         # Through our redirect: the click is counted, then the customer lands.
