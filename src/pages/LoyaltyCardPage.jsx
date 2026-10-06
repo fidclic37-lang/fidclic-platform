@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import WalletPassLive from '../components/WalletPassLive';
 import WalletCard from '../components/WalletCard';
 import InfoTip from '../components/InfoTip';
+import PosterCropper from '../components/PosterCropper';
 
 /**
  * Carte de fidélité — the one page where a merchant designs their card, sets
@@ -186,7 +187,7 @@ const readLogo = downscaleTo(320, 320, false);
 // Whole photos, never cropped at upload: the classic strip and the iOS 27
 // poster each frame it themselves, server side.
 const readBanner = downscaleTo(1600, 1600, false, true);
-const readPoster = downscaleTo(1600, 1600, false, true);
+// (the « Image poster » goes through PosterCropper instead: framed, full card)
 
 const PROGRAMME_HINT = {
   points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
@@ -213,6 +214,9 @@ export default function LoyaltyCardPage() {
   const [toggles, setToggles] = useState(null);
   const [tiers, setTiers] = useState([]);
   const [advanced, setAdvanced] = useState(null);
+  // « Image poster »: the photo is framed by the owner, then fills the card
+  const [cropReq, setCropReq] = useState(null);
+  const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customerPreview, setCustomerPreview] = useState(false);
   const [stats, setStats] = useState(null);
@@ -799,10 +803,10 @@ export default function LoyaltyCardPage() {
                     onChange={(v) => setAdvanced({ ...advanced, poster_style: v })} />
             {advanced.poster_style !== false && (
               <div className="mt-2 max-w-[220px]">
-                <ImageField label="Image poster (verticale, recommandée)" value={advanced.poster_image_url} aspect="345 / 505"
+                <ImageField label="Image poster (recommandée)" value={advanced.poster_image_url} aspect="345 / 505"
                             downscale={readPoster}
                             onChange={(v) => setAdvanced({ ...advanced, poster_image_url: v })} />
-                <p className="mt-1 text-[11px] text-[#94A3B8]">Une photo verticale reste nette. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
+                <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
               </div>
             )}
             <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">
@@ -1041,6 +1045,11 @@ export default function LoyaltyCardPage() {
             )}
           </div>
         </div>
+      )}
+      {cropReq && (
+        <PosterCropper file={cropReq.file}
+                       onDone={(d) => { cropReq.resolve(d); setCropReq(null); }}
+                       onCancel={() => { cropReq.resolve(advanced?.poster_image_url || ''); setCropReq(null); }} />
       )}
     </div>
   );

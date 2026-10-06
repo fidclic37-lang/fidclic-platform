@@ -21,57 +21,56 @@ import { ownerAPI } from '../lib/api';
  * name in bold, the progress, the footer, the tiles under the pass — with a
  * switch to see the card iOS 26 and earlier show instead.
  */
-function PosterPass({ p, s, width, bc, linear }) {
-  const h = width * (505 / 345);
-  const [title, ...rest] = p.primaryFields || [];
+function PosterPass({ p, s, width, bc, linear, colors = {} }) {
+  // Apple's iOS 27 poster (WWDC26 Museum sample, the user's iPhone): the
+  // background covers the WHOLE card, fields included; Wallet darkens its
+  // foot so the text reads. Labels and values in Wallet's monospace.
+  const h = width / 0.72;
   const header = (p.headerFields || [])[0];
+  const fields = p.primaryFields || [];
   const footer = (p.footerFields || [])[0];
-  const shadow = '0 1px 3px rgba(0,0,0,.55)';
+  const fg = colors.foregroundColor || 'rgb(255,255,255)';
+  const lab = colors.labelColor || 'rgba(255,255,255,.75)';
+  const mono = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+  const shadow = '0 1px 2px rgba(0,0,0,.45)';
+  const big = fields.length && !fields[0].label;          // no label → Apple's bold title
   return (
     <div>
-      <div className="relative overflow-hidden text-white" style={{ width, height: h, borderRadius: 14 * s,
+      <div className="relative overflow-hidden" style={{ width, height: h, borderRadius: 14 * s, color: fg,
         boxShadow: '0 18px 40px -22px rgba(0,0,0,.55)', background: '#1C1D22',
         fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif' }}>
-        {p.background && <img src={p.background} alt="" className="absolute inset-0 h-full w-full object-cover" />}
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between" style={{ padding: 14 * s }}>
-          {p.logo ? <img src={p.logo} alt="" style={{ height: 34 * s, maxWidth: 150 * s, objectFit: 'contain' }} /> : <span />}
+        {p.background && <img src={p.background} alt="" className="absolute inset-0 h-full w-full object-cover object-top" />}
+        <div className="absolute inset-x-0 bottom-0" style={{ height: '38%',
+          background: 'linear-gradient(to top, rgba(0,0,0,.62), rgba(0,0,0,.28) 60%, transparent)' }} />
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between" style={{ padding: `${12 * s}px ${14 * s}px` }}>
+          {p.logo ? <img src={p.logo} alt="" style={{ height: 32 * s, maxWidth: 160 * s, objectFit: 'contain' }} /> : <span />}
           {header && (
             <div className="text-right" style={{ textShadow: shadow }}>
-              <div className="uppercase" style={{ fontSize: 10.5 * s, fontWeight: 600, opacity: 0.9 }}>{header.label}</div>
-              <div style={{ fontSize: 19 * s, lineHeight: 1.1 }}>{String(header.value)}</div>
+              <div className="uppercase" style={{ fontSize: 12 * s, fontWeight: 700, color: lab }}>{header.label}</div>
+              <div style={{ fontSize: 13 * s, fontFamily: mono }}>{String(header.value)}</div>
             </div>
           )}
         </div>
-        <div className="absolute inset-x-0 flex justify-center" style={{ bottom: 128 * s }}>
-          <div className="flex flex-col items-center bg-white" style={{ borderRadius: 6 * s, padding: `${8 * s}px ${10 * s}px ${5 * s}px` }}>
+        <div className="absolute inset-x-0 flex justify-center" style={{ top: '45%' }}>
+          <div className="flex flex-col items-center bg-white" style={{ borderRadius: 6 * s, padding: `${7 * s}px ${8 * s}px ${4 * s}px` }}>
             {linear
               ? <Code128Barcode value={bc.altText || 'FT-EXEMPLE1'} height={44 * s} />
-              : <QRCodeSVG value={bc.message || 'FT-EXEMPLE1'} size={Math.round(104 * s)} level="M" />}
-            {bc.altText && <div style={{ fontSize: 11 * s, color: '#111', marginTop: 3 * s }}>{bc.altText}</div>}
+              : <QRCodeSVG value={bc.message || 'FT-EXEMPLE1'} size={Math.round(100 * s)} level="M" />}
+            {bc.altText && <div style={{ fontSize: 10 * s, color: '#111', marginTop: 2 * s }}>{bc.altText}</div>}
           </div>
         </div>
-        <div className="absolute inset-x-0 bottom-0" style={{ padding: `${40 * s}px ${14 * s}px ${12 * s}px`,
-          background: 'linear-gradient(to top, rgba(0,0,0,.72), rgba(0,0,0,.45) 70%, transparent)', textShadow: shadow }}>
+        <div className="absolute inset-x-0 bottom-0" style={{ padding: `0 ${14 * s}px ${12 * s}px`, textShadow: shadow }}>
           <div className="flex items-end justify-between" style={{ gap: 10 * s }}>
-            {title && <div className="min-w-0 truncate" style={{ fontSize: 26 * s, fontWeight: 700, lineHeight: 1.1 }}>{String(title.value)}</div>}
-            {rest.slice(-1).map((f) => (
-              <div key={f.key} className="min-w-0 shrink-0 text-right">
-                <div className="uppercase" style={{ fontSize: 10 * s, fontWeight: 600, opacity: 0.85 }}>{f.label}</div>
-                <div className="truncate" style={{ fontSize: 14 * s, maxWidth: 150 * s }}>{String(f.value)}</div>
+            {fields.slice(0, 4).map((f, i) => (
+              <div key={f.key} className="min-w-0" style={{ textAlign: i > 0 && i === fields.length - 1 ? 'right' : 'left' }}>
+                {f.label && <div style={{ fontSize: 11 * s, fontFamily: mono, color: lab }}>{f.label}</div>}
+                <div className="truncate" style={i === 0 && big
+                  ? { fontSize: 26 * s, fontWeight: 700, lineHeight: 1.1 }
+                  : { fontSize: 13.5 * s, fontFamily: mono }}>{String(f.value)}</div>
               </div>
             ))}
           </div>
-          {rest.length > 1 && (
-            <div className="flex" style={{ gap: 14 * s, marginTop: 6 * s }}>
-              {rest.slice(0, -1).map((f) => (
-                <div key={f.key} className="min-w-0">
-                  <div className="uppercase" style={{ fontSize: 10 * s, fontWeight: 600, opacity: 0.85 }}>{f.label}</div>
-                  <div className="truncate" style={{ fontSize: 14 * s }}>{String(f.value)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          {footer && <div className="truncate" style={{ fontSize: 11 * s, marginTop: 8 * s, opacity: 0.9 }}>{footer.value}</div>}
+          {footer && <div className="truncate" style={{ fontSize: 11 * s, fontFamily: mono, marginTop: 12 * s }}>{footer.value}</div>}
         </div>
       </div>
       {(p.actions || []).length > 0 && (
@@ -85,28 +84,6 @@ function PosterPass({ p, s, width, bc, linear }) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function Field({ f, s, align = 'left', big = false, labelColor, color }) {
-  const val = f.value === undefined || f.value === null ? '' : String(f.value);
-  return (
-    <div className="min-w-0" style={{ textAlign: align }}>
-      <div className="truncate uppercase" style={{ fontSize: 11 * s, letterSpacing: 0.2 * s, color: labelColor, fontWeight: 600 }}>{f.label}</div>
-      <div className="truncate" style={{ fontSize: (big ? 36 : 20) * s, lineHeight: 1.15, color, fontWeight: big ? 300 : 400 }}>{val}</div>
-    </div>
-  );
-}
-
-function Row({ fields, s, labelColor, color }) {
-  if (!fields.length) return null;
-  return (
-    <div className="flex justify-between" style={{ gap: 12 * s, padding: `${10 * s}px ${16 * s}px 0` }}>
-      {fields.map((f, i) => (
-        <Field key={f.key} f={f} s={s} labelColor={labelColor} color={color}
-               align={fields.length > 1 && i === fields.length - 1 ? 'right' : 'left'} />
-      ))}
     </div>
   );
 }
@@ -161,7 +138,7 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
     return (
       <div translate="no" style={{ width }}>
         {osSwitch}
-        <PosterPass p={pass.poster} s={s} width={width} bc={bc} linear={linear} />
+        <PosterPass p={pass.poster} s={s} width={width} bc={bc} linear={linear} colors={pass.colors} />
         <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
           Exemple : {pass.sample?.name}, {pass.sample?.visits} visites · nouvelle carte iOS 27
         </p>
