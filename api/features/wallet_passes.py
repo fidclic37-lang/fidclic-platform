@@ -1121,6 +1121,24 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             {"identifier": f"fa{i + 1}-{a['type']}", "type": a["type"],
              "url": f"{_site_url()}/api/card/{serial}/action/fa{i + 1}-{a['type']}"}
             for i, a in enumerate(actions)]
+
+    # ---- an Apple Pass Designer template is the design (features/pass_designer)
+    try:
+        from features import pass_designer as PD
+        tpl = PD.load(tenant.get("id") or cust.get("tenant_id"))
+    except Exception:
+        tpl = None
+    if tpl:
+        since = cust.get("created_at")
+        values = {
+            "name": full_name if card.get("use_full_name") is not False else first_name,
+            "first_name": full_name.split(" ")[0], "card": serial, "points": points,
+            "stamps": f"{stamps} / {threshold}", "tier": tier_field["value"],
+            "reward": ("Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} avant : {reward}"),
+            "offer": offer_full, "visits": visits, "shop": org,
+            "member_since": since.strftime("%d/%m/%Y") if isinstance(since, datetime) else "",
+        }
+        pass_json = PD.apply(pass_json, tpl, values)
     return pass_json
 
 
@@ -1178,44 +1196,81 @@ def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
     return compose_poster(raw or _hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
 
 
+def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, bytes]:
+    """A Pass Designer template's images, plus what Wallet needs that the
+    template may lack: icon.png, a 1x of every @2x, and the logo / thumbnail
+    the iOS 26 `generic` fallback draws."""
+    from features import pass_designer as PD
+    imgs = dict(PD.images(tpl))
+    brand = _rgb(card.get("brand_color")) or (184, 92, 56)
+    logo_raw = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or _fetch_image(card.get("logo_url"))
+    try:
+        from PIL import Image
+        for name in list(imgs):
+            if name.endswith("@2x.png") and name.replace("@2x", "") not in imgs:
+                im = Image.open(io.BytesIO(imgs[name]))
+                b = io.BytesIO(); im.resize((max(1, im.width // 2), max(1, im.height // 2)), Image.LANCZOS).save(b, "PNG")
+                imgs[name.replace("@2x", "")] = b.getvalue()
+    except Exception:
+        pass
+    if not any(n.startswith("icon") for n in imgs):
+        for suffix, png in _png_variants(logo_raw, (29, 29), cover=True, fallback_rgb=brand).items():
+            imgs[f"icon{suffix}.png"] = png
+    if not any(n.startswith("logo") for n in imgs):
+        for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
+            imgs[f"logo{suffix}.png"] = png
+    if not any(n.startswith("thumbnail") for n in imgs):
+        for suffix, png in _png_variants(logo_raw, (90, 90), cover=True, fallback_rgb=brand).items():
+            imgs[f"thumbnail{suffix}.png"] = png
+    return imgs
+
+
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
     card = payload["card"]
     files: Dict[str, bytes] = {"pass.json": json.dumps(build_pass_json(payload), ensure_ascii=False).encode("utf-8")}
 
-    brand = _rgb(card.get("brand_color")) or (184, 92, 56)
-    logo_raw = _fetch_image(card.get("logo_url"))
-    for suffix, png in _png_variants(logo_raw, (29, 29), cover=True, fallback_rgb=brand).items():
-        files[f"icon{suffix}.png"] = png
-    # The logo sits left of the shop name: at most 50 pt square-ish, never
-    # wider than it needs, so the name is written out in full.
-    for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
-        files[f"logo{suffix}.png"] = png
-    # ---- strip: banner photo and/or the progress meter ---------------------
-    # A strip is produced when the merchant uploaded a banner OR when the meter
-    # is on (show_meter, default true) — in that case the photo is replaced by a
-    # quiet brand gradient, which still reads far better than a flat card.
-    poster_on = card.get("poster_style") is not False
-    strip3x = None if poster_on else strip_png(payload)     # `generic` has no strip
-    if strip3x:
-        for suffix, png in _strip_variants(strip3x).items():
-            files[f"strip{suffix}.png"] = png
-    elif not poster_on:                      # no Pillow → ship the photo as-is
-        hero_raw = _hero_raw(card)
-        if hero_raw:
-            for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
-                files[f"strip{suffix}.png"] = png
-
-    # ---- iOS 27 poster: full-bleed background + primary logo ---------------
-    if card.get("poster_style") is not False:
-        poster3x = poster_png(payload)
-        if poster3x:
-            for suffix, png in _poster_variants(poster3x).items():
-                files[f"background{suffix}.png"] = png
+    try:
+        from features import pass_designer as PD
+        tpl = PD.load((payload.get("tenant") or {}).get("id") or (payload.get("customer") or {}).get("tenant_id"))
+    except Exception:
+        tpl = None
+    if tpl:
+        files.update(_template_files(tpl, card))
+    else:
+        brand = _rgb(card.get("brand_color")) or (184, 92, 56)
+        logo_raw = _fetch_image(card.get("logo_url"))
+        for suffix, png in _png_variants(logo_raw, (29, 29), cover=True, fallback_rgb=brand).items():
+            files[f"icon{suffix}.png"] = png
+        # The logo sits left of the shop name: at most 50 pt square-ish, never
+        # wider than it needs, so the name is written out in full.
         for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
-            files[f"primaryLogo{suffix}.png"] = png
-        # iOS 26 and earlier (`generic`): the shop's logo as the thumbnail
-        for suffix, png in _png_variants(logo_raw, (90, 90), cover=True, fallback_rgb=brand).items():
-            files[f"thumbnail{suffix}.png"] = png
+            files[f"logo{suffix}.png"] = png
+        # ---- strip: banner photo and/or the progress meter ---------------------
+        # A strip is produced when the merchant uploaded a banner OR when the meter
+        # is on (show_meter, default true) — in that case the photo is replaced by a
+        # quiet brand gradient, which still reads far better than a flat card.
+        poster_on = card.get("poster_style") is not False
+        strip3x = None if poster_on else strip_png(payload)     # `generic` has no strip
+        if strip3x:
+            for suffix, png in _strip_variants(strip3x).items():
+                files[f"strip{suffix}.png"] = png
+        elif not poster_on:                      # no Pillow → ship the photo as-is
+            hero_raw = _hero_raw(card)
+            if hero_raw:
+                for suffix, png in _png_variants(hero_raw, (375, 144), cover=True).items():
+                    files[f"strip{suffix}.png"] = png
+
+        # ---- iOS 27 poster: full-bleed background + primary logo ---------------
+        if card.get("poster_style") is not False:
+            poster3x = poster_png(payload)
+            if poster3x:
+                for suffix, png in _poster_variants(poster3x).items():
+                    files[f"background{suffix}.png"] = png
+            for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
+                files[f"primaryLogo{suffix}.png"] = png
+            # iOS 26 and earlier (`generic`): the shop's logo as the thumbnail
+            for suffix, png in _png_variants(logo_raw, (90, 90), cover=True, fallback_rgb=brand).items():
+                files[f"thumbnail{suffix}.png"] = png
 
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
@@ -1478,8 +1533,18 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
     pg = pj.get("posterGeneric")
     if not pg:
         return None
-    bg3x = poster_png(payload)
-    bg2x = _poster_variants(bg3x).get("@2x") if bg3x else None
+    try:
+        from features import pass_designer as PD
+        tpl = PD.load((payload.get("tenant") or {}).get("id"))
+    except Exception:
+        tpl = None
+    if tpl:                                   # a Pass Designer template: its own images
+        imgs = PD.images(tpl)
+        bg2x = PD.best(imgs, "background")
+        logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
+    else:
+        bg3x = poster_png(payload)
+        bg2x = _poster_variants(bg3x).get("@2x") if bg3x else None
     return {"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
             "footerFields": pg.get("footerFields", []), "background": _data_url(bg2x), "logo": _data_url(logo2x),
             "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}

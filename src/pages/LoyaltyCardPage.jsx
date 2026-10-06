@@ -217,6 +217,35 @@ export default function LoyaltyCardPage() {
   // « Image poster »: the photo is framed by the owner, then fills the card
   const [cropReq, setCropReq] = useState(null);
   const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
+  // Apple Pass Designer template (the .pkpasstemplate the Mac app saves)
+  const [pd, setPd] = useState(null);
+  const [pdBusy, setPdBusy] = useState('');
+  const [pdError, setPdError] = useState('');
+  const [pdVersion, setPdVersion] = useState(0);
+  const pdFolder = useRef(null);
+  const pdFiles = useRef(null);
+  useEffect(() => { ownerAPI.passDesigner().then((r) => setPd(r.data)).catch(() => setPd({ active: false })); }, []);
+  const importTemplate = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setPdError(''); setPdBusy('import');
+    try {
+      const passFile = files.find((f) => f.name === 'pass.json');
+      if (!passFile) throw new Error('Le fichier pass.json du modèle est introuvable.');
+      const readUrl = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      const images = {};
+      for (const f of files.filter((x) => /\.png$/i.test(x.name))) images[f.name] = await readUrl(f);
+      const folder = (files[0].webkitRelativePath || '').split('/')[0].replace(/\.pkpasstemplate$/i, '');
+      const r = await ownerAPI.importPassDesigner({ name: folder || 'Modèle Pass Designer', pass_json: await passFile.text(), images });
+      setPd(r.data); setPdVersion((v) => v + 1);
+    } catch (e) {
+      setPdError(e?.response?.data?.detail || e?.message || 'Import impossible.');
+    } finally { setPdBusy(''); }
+  };
+  const removeTemplate = async () => {
+    setPdBusy('remove');
+    try { await ownerAPI.removePassDesigner(); setPd({ active: false }); setPdVersion((v) => v + 1); } finally { setPdBusy(''); }
+  };
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customerPreview, setCustomerPreview] = useState(false);
   const [stats, setStats] = useState(null);
@@ -329,8 +358,9 @@ export default function LoyaltyCardPage() {
     // iOS 27: the poster and its tiles, previewed as they are chosen
     poster_style: advanced ? advanced.poster_style !== false : undefined,
     poster_image_url: advanced?.poster_image_url,
+    pd_version: pdVersion,                      // refetch the preview after an import
     featured_actions: advanced?.featured_actions,
-  }), [design, programme, toggles, advanced]);
+  }), [design, programme, toggles, advanced, pdVersion]);
 
   const previewCustomer = useMemo(() => ({
     name: 'Marie Love', first_name: 'Marie', tier: 'silver',
@@ -809,6 +839,41 @@ export default function LoyaltyCardPage() {
                 <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
               </div>
             )}
+            <div className="mt-4 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] p-3">
+              <p className="text-[12.5px] font-semibold text-[#334155]">Modèle Apple « Pass Designer »</p>
+              {pd?.active ? (
+                <>
+                  <p className="mt-1 text-[12.5px] text-[#475569]">
+                    Votre carte utilise le modèle <b>{pd.name}</b> ({pd.style}). Les champs CUST_NAME, CUST_ID, POINTS… et les {'{prenom}'}, {'{points}'}… sont remplis pour chaque client.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => pdFolder.current?.click()} disabled={!!pdBusy}
+                            className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF]">Remplacer le modèle</button>
+                    <button type="button" onClick={removeTemplate} disabled={!!pdBusy}
+                            className="rounded-lg border border-[#E1E8F5] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B]">Revenir au design FidClic</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-1 text-[12px] text-[#64748B]">Créez la carte dans l'app Pass Designer (Mac), puis importez le modèle .pkpasstemplate : FidClic le remplit pour chaque client et l'envoie dans Wallet.</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => pdFolder.current?.click()} disabled={!!pdBusy}
+                            className="rounded-lg bg-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-white">
+                      {pdBusy === 'import' ? 'Import…' : 'Importer le modèle (dossier)'}
+                    </button>
+                    <button type="button" onClick={() => pdFiles.current?.click()} disabled={!!pdBusy}
+                            className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF]">ou choisir ses fichiers</button>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-[#94A3B8]">Fichiers : clic droit sur le modèle › « Afficher le contenu du paquet », puis sélectionnez pass.json et les images .png.</p>
+                </>
+              )}
+              {pdError && <p className="mt-1.5 text-[12px] text-[#B91C1C]">⚠ {pdError}</p>}
+              <input ref={pdFolder} type="file" className="hidden" webkitdirectory="" directory=""
+                     onChange={(e) => { importTemplate(e.target.files); e.target.value = ''; }} />
+              <input ref={pdFiles} type="file" className="hidden" multiple accept=".json,.png,application/json,image/png"
+                     onChange={(e) => { importTemplate(e.target.files); e.target.value = ''; }} />
+            </div>
+
             <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">
               Boutons sous la carte <span className="font-normal text-[#94A3B8]">— 2 au maximum, Apple choisit l'icône</span>
             </p>
