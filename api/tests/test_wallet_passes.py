@@ -69,6 +69,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         "card_name": "ROYAL TRIM", "tagline": "Coupe • Barbe • Soin", "logo_url": "data:image/png;base64," + logo_png,
         "reward_threshold_stamps": 10, "reward_description": "Une coupe offerte", "hero_mode": "none",
         "brand_fields": {"card_name": "ROYAL TRIM"},
+        # this suite is the classic storeCard; the iOS 27 poster has test_wallet_poster
+        "poster_style": False,
     })
     db.customers.insert_one({"id": "c1", "tenant_id": "t1", "barcode_id": "FT-TEST0001", "name": "Marie Dupont",
                              "visits": 7, "points": 70, "tier": "gold", "created_at": dt.datetime.now(dt.timezone.utc)})
@@ -338,7 +340,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 100)
     check("preview: the offer is on the back, like the pass", any(f["key"] == "offer" for f in pv["backFields"]))
     check("preview: a sample customer, never a real one", pv["sample"]["name"] == "Marie Dupont"
-          and pv["barcode"]["altText"] == "FT-EXEMPLE1")
+          and pv["barcode"]["altText"] == "FT-5A3C91E2")
 
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""

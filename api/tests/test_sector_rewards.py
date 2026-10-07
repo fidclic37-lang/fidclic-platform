@@ -70,7 +70,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the card payload says « Une séance offerte »", payload["card"]["reward_description"] == "Une séance offerte")
     from features import wallet_passes as W
     W._db = db
-    back = {f["key"]: f["value"] for f in W.build_pass_json(payload)["storeCard"]["backFields"]}
+    _pj = W.build_pass_json(payload)
+    back = {f["key"]: f["value"] for f in (_pj.get("storeCard") or _pj.get("generic"))["backFields"]}
     check("Wallet's « Prochaine récompense » no longer mentions coffee",
           "séance" in back["next_reward"] and "café" not in back["next_reward"], back["next_reward"])
     check("…nor « Programme de fidélité »", back["program"].startswith("Une séance offerte"), back["program"])

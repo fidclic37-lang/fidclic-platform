@@ -157,6 +157,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                              "visits": 3, "points": 30, "tier": "bronze",
                              "created_at": dt.datetime.now(dt.timezone.utc)})
     os.environ.update({"APPLE_PASS_TYPE_ID": "pass.test", "APPLE_TEAM_ID": "TEAM"})
+    # these knobs are the classic storeCard's (the iOS 27 poster has its own test)
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_style": False}})
     pj = WP.build_pass_json(WP._card_payload("FT-ADV1"))
     check("code type reaches the pass", pj["barcodes"][0]["format"] == "PKBarcodeFormatCode128")
     check("card number hidden when asked", "altText" not in pj["barcodes"][0])
@@ -182,7 +184,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                              "created_at": dt.datetime.now(dt.timezone.utc)})
     pj2 = WP.build_pass_json(WP._card_payload("FT-ADV2"))
     check("header shows the chosen value", pj2["storeCard"]["headerFields"][0]["value"] == 6)
-    check("code encodes the card link", pj2["barcodes"][0]["message"].endswith("/card/FT-ADV2"))
+    check("a Code 128 carries the card number (a link is too dense for a 1D code)",
+          pj2["barcodes"][0]["format"] == "PKBarcodeFormatCode128" and pj2["barcodes"][0]["message"] == "FT-ADV2")
     check("statut hidden when asked",
           all(f["key"] != "tier" for grp in pj2["storeCard"].values() for f in grp))
     check("custom update wording on the pass", any(

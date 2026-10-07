@@ -9,6 +9,9 @@ import { useAuth } from '../contexts/AuthContext';
 import WalletPassLive from '../components/WalletPassLive';
 import WalletCard from '../components/WalletCard';
 import InfoTip from '../components/InfoTip';
+import PosterCropper from '../components/PosterCropper';
+import CardDesigner from '../components/wallet/CardDesigner';
+import FeaturedActionsEditor from '../components/wallet/FeaturedActionsEditor';
 
 /**
  * Carte de fidélité — the one page where a merchant designs their card, sets
@@ -158,7 +161,9 @@ const Stat = ({ icon: Icon, tone, value, label, delta, hint, help }) => {
 };
 
 /* ── image helpers ────────────────────────────────────────────────────── */
-const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, reject) => {
+// `jpeg` with cover=false: the WHOLE photo, only made smaller — never cropped
+// (user, 2026-10-06: « puri photo dikhe, kati hui nhi »).
+const downscaleTo = (maxW, maxH, cover, jpeg = false) => (file) => new Promise((resolve, reject) => {
   const img = new Image();
   const url = URL.createObjectURL(file);
   img.onload = () => {
@@ -170,18 +175,21 @@ const downscaleTo = (maxW, maxH, cover) => (file) => new Promise((resolve, rejec
       const w = img.width * k; const h = img.height * k;
       ctx.drawImage(img, (maxW - w) / 2, (maxH - h) / 2, w, h);
     } else {
-      const k = Math.min(1, maxW / Math.max(img.width, img.height));
+      const k = Math.min(1, maxW / img.width, maxH / img.height);
       c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
       ctx.drawImage(img, 0, 0, c.width, c.height);
     }
     URL.revokeObjectURL(url);
-    resolve(c.toDataURL(cover ? 'image/jpeg' : 'image/png', 0.85));
+    resolve(c.toDataURL(cover || jpeg ? 'image/jpeg' : 'image/png', 0.85));
   };
   img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
   img.src = url;
 });
 const readLogo = downscaleTo(320, 320, false);
-const readBanner = downscaleTo(1125, 432, true);
+// Whole photos, never cropped at upload: the classic strip and the iOS 27
+// poster each frame it themselves, server side.
+const readBanner = downscaleTo(1600, 1600, false, true);
+// (the « Image poster » goes through PosterCropper instead: framed, full card)
 
 const PROGRAMME_HINT = {
   points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
@@ -208,6 +216,11 @@ export default function LoyaltyCardPage() {
   const [toggles, setToggles] = useState(null);
   const [tiers, setTiers] = useState([]);
   const [advanced, setAdvanced] = useState(null);
+  // « Image poster »: the photo is framed by the owner, then fills the card
+  const [cropReq, setCropReq] = useState(null);
+  const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
+  // bumped when the card editor saves: the « Vue wallet » preview refetches
+  const [pdVersion, setPdVersion] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customerPreview, setCustomerPreview] = useState(false);
   const [stats, setStats] = useState(null);
@@ -317,7 +330,12 @@ export default function LoyaltyCardPage() {
     reward_threshold_stamps: programme?.reward_threshold_stamps,
     reward_description: programme?.reward_description,
     points_per_visit: programme?.points_per_visit,
-  }), [design, programme, toggles, advanced]);
+    // iOS 27: the poster and its tiles, previewed as they are chosen
+    poster_style: advanced ? advanced.poster_style !== false : undefined,
+    poster_image_url: advanced?.poster_image_url,
+    pd_version: pdVersion,                      // refetch the preview after an import
+    featured_actions: advanced?.featured_actions,
+  }), [design, programme, toggles, advanced, pdVersion]);
 
   const previewCustomer = useMemo(() => ({
     name: 'Marie Love', first_name: 'Marie', tier: 'silver',
@@ -594,6 +612,18 @@ export default function LoyaltyCardPage() {
         </Card>
       </div>
 
+      {/* ── the card editor — Apple's Pass Designer, in FidClic (user, 2026-10-07) ── */}
+      <Card id="design-wallet" icon={Sliders} title="Design Apple Wallet"
+            subtitle="Style, couleurs, images, code-barres, boutons et champs — avec l’aperçu iOS 27 et iOS 26 en direct.">
+        {advanced ? (
+          <CardDesigner edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
+                        initialActions={advanced.featured_actions || []}
+                        onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
+        ) : (
+          <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
+        )}
+      </Card>
+
       {/* ── options avancées — the knobs Apple and Google really expose ── */}
       {showAdvanced && advanced && (
         <div ref={advancedRef} id="options-avancees" className="scroll-mt-24">
@@ -615,6 +645,18 @@ export default function LoyaltyCardPage() {
                   <option value="barcode">Code-barres (Code 128)</option>
                   <option value="pdf417">PDF417</option>
                   <option value="aztec">Aztec</option>
+                  {(advanced.barcode_formats || []).filter((f) => f.ios27_only).map((f) => (
+                    <option key={f.format} value={f.format}>{f.label} — iOS 27</option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label hint="ce que lisent les iPhone sans iOS 27">Code de secours</Label>
+                <Select value={advanced.code_fallback || ''} onChange={(e) => setAdvanced({ ...advanced, code_fallback: e.target.value })}>
+                  <option value="">Automatique (QR code si besoin)</option>
+                  {(advanced.barcode_formats || []).filter((f) => !f.ios27_only).map((f) => (
+                    <option key={f.format} value={f.format}>{f.label}</option>
+                  ))}
                 </Select>
               </div>
               <div className="-mx-2">
@@ -781,10 +823,37 @@ export default function LoyaltyCardPage() {
             </div>
           </div>
 
+          {/* iOS 27 (WWDC26): the poster style and the two tiles under the pass */}
+          <div className="mt-5 border-t border-[#EEF2F9] pt-5">
+            <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">
+              Nouvelle carte Apple Wallet <span className="font-normal text-[#94A3B8]">— iPhone avec iOS 27 ; les iPhone plus anciens gardent la carte actuelle</span>
+            </p>
+            <Toggle icon={ImageIcon} label="Style « poster » : votre photo en plein écran" checked={advanced.poster_style !== false}
+                    onChange={(v) => setAdvanced({ ...advanced, poster_style: v })} />
+            {advanced.poster_style !== false && (
+              <div className="mt-2 max-w-[220px]">
+                <ImageField label="Image poster (recommandée)" value={advanced.poster_image_url} aspect="345 / 505"
+                            downscale={readPoster}
+                            onChange={(v) => setAdvanced({ ...advanced, poster_image_url: v })} />
+                <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
+              </div>
+            )}
+            <p className="mt-3 text-[12px] text-[#64748B]">
+              Pour tout régler comme dans Pass Designer (style, champs, couleurs, code-barres, import d’un modèle) :{' '}
+              <a href="#design-wallet" className="font-semibold text-[#2F6BFF]">Design Apple Wallet</a>, plus bas.
+            </p>
+
+            <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">
+              Boutons sous la carte <span className="font-normal text-[#94A3B8]">— 2 au maximum, Apple choisit l'icône</span>
+            </p>
+            <FeaturedActionsEditor types={advanced.featured_types || []} value={advanced.featured_actions || []}
+                                   onChange={(rows) => setAdvanced({ ...advanced, featured_actions: rows })} />
+          </div>
+
           {/* third row — Google Wallet only */}
           <div className="mt-5 border-t border-[#EEF2F9] pt-5">
             <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">
-              Liens sur la carte <span className="font-normal text-[#94A3B8]">— Google Wallet uniquement (Apple n'affiche pas de boutons)</span>
+              Liens sur la carte <span className="font-normal text-[#94A3B8]">— Google Wallet uniquement (sur Apple, utilisez les boutons ci-dessus)</span>
             </p>
             <div className="space-y-2">
               {(advanced.google_links || []).map((row, i) => (
@@ -977,6 +1046,11 @@ export default function LoyaltyCardPage() {
             )}
           </div>
         </div>
+      )}
+      {cropReq && (
+        <PosterCropper file={cropReq.file}
+                       onDone={(d) => { cropReq.resolve(d); setCropReq(null); }}
+                       onCancel={() => { cropReq.resolve(advanced?.poster_image_url || ''); setCropReq(null); }} />
       )}
     </div>
   );

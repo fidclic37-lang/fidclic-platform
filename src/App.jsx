@@ -94,6 +94,7 @@ const ParametresPage = lazyPage(() => import('./pages/ParametresPage'));
 const CataloguePage = lazyPage(() => import('./pages/CataloguePage'));
 const JoinPage = lazyPage(() => import('./pages/JoinPage'));
 const MyWalletCardPage = lazyPage(() => import('./pages/MyWalletCardPage'));
+const CardOffersPage = lazyPage(() => import('./pages/CardOffersPage'));
 const HistoryPage = lazyPage(() => import('./pages/HistoryPage'));
 
 const AdminDashboard = lazyPage(() => import('./pages/AdminDashboard')); // eslint-disable-line no-unused-vars -- superseded by admin/AdminDashboardPage, kept for rollback
@@ -330,6 +331,7 @@ function App() {
           <Route path="/join/:slug" element={<JoinPage />} />
           {/* The French address the Paramètres page hands out; /join stays for every QR already printed. */}
           <Route path="/inscription/:slug" element={<JoinPage />} />
+          <Route path="/card/:barcodeId/offres" element={<CardOffersPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
 
           {/* Public product pages. Deliberately NOT wrapped in PublicRoute: a
