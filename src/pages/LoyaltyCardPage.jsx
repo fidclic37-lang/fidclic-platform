@@ -10,6 +10,8 @@ import WalletPassLive from '../components/WalletPassLive';
 import WalletCard from '../components/WalletCard';
 import InfoTip from '../components/InfoTip';
 import PosterCropper from '../components/PosterCropper';
+import CardDesigner from '../components/wallet/CardDesigner';
+import FeaturedActionsEditor from '../components/wallet/FeaturedActionsEditor';
 
 /**
  * Carte de fidélité — the one page where a merchant designs their card, sets
@@ -217,56 +219,8 @@ export default function LoyaltyCardPage() {
   // « Image poster »: the photo is framed by the owner, then fills the card
   const [cropReq, setCropReq] = useState(null);
   const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
-  // Apple Pass Designer template (the .pkpasstemplate the Mac app saves)
-  const [pd, setPd] = useState(null);
-  const [pdBusy, setPdBusy] = useState('');
-  const [pdError, setPdError] = useState('');
+  // bumped when the card editor saves: the « Vue wallet » preview refetches
   const [pdVersion, setPdVersion] = useState(0);
-  const pdFolder = useRef(null);
-  const pdFiles = useRef(null);
-  useEffect(() => { ownerAPI.passDesigner().then((r) => setPd(r.data)).catch(() => setPd({ active: false })); }, []);
-  const importTemplate = async (fileList, folderName = '') => {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-    setPdError(''); setPdBusy('import');
-    try {
-      const zip = files.find((f) => /\.zip$/i.test(f.name));
-      if (zip) {
-        const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(zip); });
-        const r = await ownerAPI.importPassDesigner({ zip: b64 });
-        setPd(r.data); setPdVersion((v) => v + 1);
-        return;
-      }
-      const passFile = files.find((f) => f.name === 'pass.json');
-      if (!passFile) throw new Error('Le fichier pass.json du modèle est introuvable.');
-      const readUrl = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
-      const images = {};
-      for (const f of files.filter((x) => /\.png$/i.test(x.name))) images[f.name] = await readUrl(f);
-      const folder = (folderName || (files[0].webkitRelativePath || '').split('/')[0]).replace(/\.pkpasstemplate$/i, '');
-      const r = await ownerAPI.importPassDesigner({ name: folder || 'Modèle Pass Designer', pass_json: await passFile.text(), images });
-      setPd(r.data); setPdVersion((v) => v + 1);
-    } catch (e) {
-      setPdError(e?.response?.data?.detail || e?.message || 'Import impossible.');
-    } finally { setPdBusy(''); }
-  };
-  // Drag & drop from Finder: the .pkpasstemplate package arrives as a folder
-  // entry (a file picker cannot select a package), a .zip as a file.
-  const dropTemplate = async (e) => {
-    e.preventDefault();
-    const items = Array.from(e.dataTransfer?.items || []);
-    const entry = items.map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).find(Boolean);
-    if (entry && entry.isDirectory) {
-      const reader = entry.createReader();
-      const entries = await new Promise((res) => reader.readEntries(res, () => res([])));
-      const files = await Promise.all(entries.filter((x) => x.isFile).map((x) => new Promise((res) => x.file(res, () => res(null)))));
-      return importTemplate(files.filter(Boolean), entry.name);
-    }
-    return importTemplate(e.dataTransfer?.files);
-  };
-  const removeTemplate = async () => {
-    setPdBusy('remove');
-    try { await ownerAPI.removePassDesigner(); setPd({ active: false }); setPdVersion((v) => v + 1); } finally { setPdBusy(''); }
-  };
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customerPreview, setCustomerPreview] = useState(false);
   const [stats, setStats] = useState(null);
@@ -658,6 +612,18 @@ export default function LoyaltyCardPage() {
         </Card>
       </div>
 
+      {/* ── the card editor — Apple's Pass Designer, in FidClic (user, 2026-10-07) ── */}
+      <Card id="design-wallet" icon={Sliders} title="Design Apple Wallet"
+            subtitle="Style, couleurs, images, code-barres, boutons et champs — avec l’aperçu iOS 27 et iOS 26 en direct.">
+        {advanced ? (
+          <CardDesigner edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
+                        initialActions={advanced.featured_actions || []}
+                        onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
+        ) : (
+          <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
+        )}
+      </Card>
+
       {/* ── options avancées — the knobs Apple and Google really expose ── */}
       {showAdvanced && advanced && (
         <div ref={advancedRef} id="options-avancees" className="scroll-mt-24">
@@ -679,6 +645,18 @@ export default function LoyaltyCardPage() {
                   <option value="barcode">Code-barres (Code 128)</option>
                   <option value="pdf417">PDF417</option>
                   <option value="aztec">Aztec</option>
+                  {(advanced.barcode_formats || []).filter((f) => f.ios27_only).map((f) => (
+                    <option key={f.format} value={f.format}>{f.label} — iOS 27</option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label hint="ce que lisent les iPhone sans iOS 27">Code de secours</Label>
+                <Select value={advanced.code_fallback || ''} onChange={(e) => setAdvanced({ ...advanced, code_fallback: e.target.value })}>
+                  <option value="">Automatique (QR code si besoin)</option>
+                  {(advanced.barcode_formats || []).filter((f) => !f.ios27_only).map((f) => (
+                    <option key={f.format} value={f.format}>{f.label}</option>
+                  ))}
                 </Select>
               </div>
               <div className="-mx-2">
@@ -860,85 +838,16 @@ export default function LoyaltyCardPage() {
                 <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
               </div>
             )}
-            <div className="mt-4 rounded-xl border border-dashed border-[#B9CCF5] bg-[#F8FAFF] p-3"
-                 onDragOver={(e) => e.preventDefault()} onDrop={dropTemplate}>
-              <p className="text-[12.5px] font-semibold text-[#334155]">Modèle Apple « Pass Designer »</p>
-              {pd?.active ? (
-                <>
-                  <p className="mt-1 text-[12.5px] text-[#475569]">
-                    Votre carte utilise le modèle <b>{pd.name}</b> ({pd.style}). Les champs CUST_NAME, CUST_ID, POINTS… et les {'{prenom}'}, {'{points}'}… sont remplis pour chaque client.
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => pdFolder.current?.click()} disabled={!!pdBusy}
-                            className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF]">Remplacer le modèle</button>
-                    <button type="button" onClick={removeTemplate} disabled={!!pdBusy}
-                            className="rounded-lg border border-[#E1E8F5] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B]">Revenir au design FidClic</button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="mt-1 text-[12px] text-[#64748B]">Créez la carte dans l'app Pass Designer (Mac), puis importez le modèle .pkpasstemplate : FidClic le remplit pour chaque client et l'envoie dans Wallet.</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => pdFolder.current?.click()} disabled={!!pdBusy}
-                            className="rounded-lg bg-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-white">
-                      {pdBusy === 'import' ? 'Import…' : 'Importer le modèle (dossier)'}
-                    </button>
-                    <button type="button" onClick={() => pdFiles.current?.click()} disabled={!!pdBusy}
-                            className="rounded-lg border border-[#2F6BFF] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF]">ou choisir un .zip</button>
-                  </div>
-                  <p className="mt-1.5 text-[11px] text-[#94A3B8]">Le plus simple : glissez le modèle depuis le Finder dans ce cadre. Ou compressez-le (clic droit › Compresser) et choisissez le .zip.</p>
-                </>
-              )}
-              {pdError && <p className="mt-1.5 text-[12px] text-[#B91C1C]">⚠ {pdError}</p>}
-              <input ref={pdFolder} type="file" className="hidden" webkitdirectory="" directory=""
-                     onChange={(e) => { importTemplate(e.target.files); e.target.value = ''; }} />
-              <input ref={pdFiles} type="file" className="hidden" multiple accept=".zip,.json,.png,application/zip,application/json,image/png"
-                     onChange={(e) => { importTemplate(e.target.files); e.target.value = ''; }} />
-            </div>
+            <p className="mt-3 text-[12px] text-[#64748B]">
+              Pour tout régler comme dans Pass Designer (style, champs, couleurs, code-barres, import d’un modèle) :{' '}
+              <a href="#design-wallet" className="font-semibold text-[#2F6BFF]">Design Apple Wallet</a>, plus bas.
+            </p>
 
             <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">
               Boutons sous la carte <span className="font-normal text-[#94A3B8]">— 2 au maximum, Apple choisit l'icône</span>
             </p>
-            <div className="space-y-2">
-              {[0, 1].map((i) => {
-                const rows = advanced.featured_actions || [];
-                const row = rows[i] || {};
-                const types = advanced.featured_types || [];
-                const meta = types.find((t) => t.type === row.type);
-                const setRow = (next) => {
-                  const list = [...rows];
-                  list[i] = next;
-                  setAdvanced({ ...advanced, featured_actions: list.filter((r) => r && r.type) });
-                };
-                if (i === 1 && !rows[0]?.type) return null;
-                return (
-                  <div key={i} className="flex flex-wrap gap-2">
-                    <div className="w-56">
-                      <Select value={row.type || ''}
-                              onChange={(e) => setRow(e.target.value ? { type: e.target.value } : null)}>
-                        <option value="">{i === 0 ? 'Aucun bouton' : 'Pas de second bouton'}</option>
-                        {types.filter((t) => t.type === row.type || !rows.some((r) => r?.type === t.type)).map((t) => (
-                          <option key={t.type} value={t.type}>{t.label}</option>
-                        ))}
-                      </Select>
-                    </div>
-                    {meta?.needs_url && (
-                      <Input value={row.url || ''} placeholder="https://… (votre page de réservation, commande…)"
-                             className="min-w-[220px] flex-1"
-                             onChange={(e) => setRow({ ...row, url: e.target.value })} />
-                    )}
-                    {meta?.needs_url && !/^https:\/\/[^/]+\.[^/]+/.test((row.url || '').trim()) && (
-                      <p className="w-full text-[11.5px] text-[#B45309]">
-                        Sans lien, ce bouton ouvre le site web indiqué dans Établissement ; sans site web, il n'apparaît pas sur la carte.
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-              <p className="text-[11.5px] text-[#94A3B8]">
-                « Voir les offres », « Mes avantages » et « Ma carte en ligne » ouvrent la carte du client ; « Itinéraire » votre adresse. Chaque clic est compté.
-              </p>
-            </div>
+            <FeaturedActionsEditor types={advanced.featured_types || []} value={advanced.featured_actions || []}
+                                   onChange={(rows) => setAdvanced({ ...advanced, featured_actions: rows })} />
           </div>
 
           {/* third row — Google Wallet only */}

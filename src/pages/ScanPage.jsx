@@ -40,6 +40,12 @@ const barcodeFrom = (scanned) => {
   if (!raw) return '';
   const found = raw.match(/FT-[A-Z0-9]+/i);
   if (found) return found[0].toUpperCase();
+  // EAN-13 / ITF / Codabar cards carry digits: « 20 » + the hex id in decimal
+  const digits = raw.replace(/\s/g, '').match(/^[A-D]?(20\d{10})\d?[A-D]?$/i);
+  if (digits) {
+    const n = Number(digits[1].slice(2));
+    if (n <= 0xFFFFFFFF) return `FT-${n.toString(16).toUpperCase().padStart(8, '0')}`;
+  }
   return raw.replace(/\/+$/, '').split('/').pop().split('?')[0].trim().toUpperCase();
 };
 
@@ -212,7 +218,8 @@ const ScanPage = () => {
     if ('BarcodeDetector' in window) {
       try {
         detectorRef.current = new window.BarcodeDetector({
-          formats: ['code_128', 'ean_13', 'ean_8', 'code_39', 'upca'],
+          // every 1D format a FidClic card can carry (iOS 27 adds Codabar and ITF)
+          formats: ['code_128', 'ean_13', 'ean_8', 'code_39', 'upca', 'codabar', 'itf', 'pdf417', 'aztec'],
         });
       } catch (error) {
         console.warn('BarcodeDetector not fully supported:', error);

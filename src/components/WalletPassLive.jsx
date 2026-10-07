@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { ChevronDown } from 'lucide-react';
-import Code128Barcode from './Code128Barcode';
 import { ownerAPI } from '../lib/api';
+import BarcodeSvg, { SQUARE_CODES } from './wallet/BarcodeSvg';
+import { ActionTile } from './wallet/walletLook';
 
 /**
  * WalletPassLive — the Apple Wallet pass as the SERVER builds it.
@@ -43,19 +43,6 @@ function Row({ fields, s, labelColor, color }) {
   );
 }
 
-// Apple's own tiles under an iOS 27 pass: icon colour and wording per type
-const ACTION_LOOK = {
-  viewOffersRewards: ['#D946EF', '★', 'Voir les offres et récompenses', 'Ouvrir le lien'],
-  membershipBenefits: ['#D946EF', '★', 'Voir les avantages', 'Ouvrir le lien'],
-  viewMembership: ['#8B5CF6', '◆', 'Voir l\'adhésion', 'Ouvrir le lien'],
-  place: ['#3B82F6', '➤', 'Aller au lieu', 'Ouvrir dans Plans'],
-  bookAppointment: ['#EF4444', '▦', 'Prendre rendez-vous', 'Ouvrir le lien'],
-  order: ['#F97316', '◍', 'Commander', 'Ouvrir le lien'],
-  viewSchedule: ['#EF4444', '▦', 'Voir le programme', 'Ouvrir le lien'],
-};
-const WIDE_CODES = new Set(['PKBarcodeFormatPDF417', 'PKBarcodeFormatCode128', 'PKBarcodeFormatCode39',
-  'PKBarcodeFormatCodabar', 'PKBarcodeFormatITF', 'PKBarcodeFormatEAN13']);
-
 function PosterPass({ p, s, width, bc, colors = {} }) {
   // What Wallet (and Pass Designer) draw for iOS 27 « Poster Generic »: the
   // artwork full-bleed, a frosted band of its own colours at the foot where
@@ -67,7 +54,7 @@ function PosterPass({ p, s, width, bc, colors = {} }) {
   const fg = colors.foregroundColor || 'rgb(255,255,255)';
   const lab = colors.labelColor || fg;
   const mono = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-  const wide = WIDE_CODES.has(bc.format);
+  const wide = !SQUARE_CODES.has(bc.format || 'PKBarcodeFormatQR');
   const [title, ...rest] = fields;
   const titleBold = title && !title.label;
   return (
@@ -92,8 +79,8 @@ function PosterPass({ p, s, width, bc, colors = {} }) {
           <div className="flex flex-col items-center bg-white" style={{ borderRadius: 7 * s, padding: `${8 * s}px ${12 * s}px`,
             width: wide ? width * 0.77 : undefined }}>
             {wide
-              ? <Code128Barcode value={bc.altText || 'FT-EXEMPLE1'} height={58 * s} />
-              : <QRCodeSVG value={bc.message || 'FT-EXEMPLE1'} size={Math.round(100 * s)} level="M" />}
+              ? <BarcodeSvg format={bc.format} message={bc.message} width={width * 0.68} height={58 * s} />
+              : <BarcodeSvg format={bc.format} message={bc.message} width={100 * s} height={100 * s} />}
           </div>
         </div>
         <div className="absolute inset-x-0 bottom-0" style={{ padding: `0 ${12 * s}px ${12 * s}px` }}>
@@ -122,17 +109,7 @@ function PosterPass({ p, s, width, bc, colors = {} }) {
       </div>
       {(p.actions || []).length > 0 && (
         <div className="mt-2 grid grid-cols-2" style={{ gap: 8 * s }}>
-          {p.actions.map((a) => {
-            const [col, icon, label, sub] = ACTION_LOOK[a.type] || ['#64748B', '•', a.label, 'Ouvrir le lien'];
-            return (
-              <div key={a.type} className="rounded-2xl text-left" style={{ padding: 10 * s, background: '#2C2C2E', color: '#F2F2F7' }}>
-                <span className="mb-2 flex items-center justify-center rounded-full text-white"
-                      style={{ width: 22 * s, height: 22 * s, background: col, fontSize: 11 * s }}>{icon}</span>
-                <div style={{ fontSize: 12 * s, fontWeight: 600, lineHeight: 1.25 }}>{label}</div>
-                <div style={{ fontSize: 11 * s, color: '#98989D', marginTop: 4 * s }}>{sub}</div>
-              </div>
-            );
-          })}
+          {p.actions.map((a) => <ActionTile key={a.type} type={a.type} label={a.label} s={s} />)}
         </div>
       )}
     </div>
@@ -173,7 +150,7 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
   const strip = !!pass.strip;
   const front = [...(pass.secondaryFields || []), ...(pass.auxiliaryFields || [])];
   const bc = pass.barcode || {};
-  const linear = bc.format === 'PKBarcodeFormatCode128';
+  const linear = !SQUARE_CODES.has(bc.format || 'PKBarcodeFormatQR');
   const poster = pass.poster && !classic;
   const osSwitch = pass.poster && (
     <div className="mb-2 flex justify-center gap-1 text-[11px] font-semibold">
@@ -227,8 +204,8 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
         <div className="flex justify-center" style={{ padding: `${26 * s}px 0 ${18 * s}px` }}>
           <div className="flex flex-col items-center bg-white" style={{ borderRadius: 6 * s, padding: `${10 * s}px ${12 * s}px ${6 * s}px` }}>
             {linear
-              ? <Code128Barcode value={bc.altText || 'FT-EXEMPLE1'} height={56 * s} />
-              : <QRCodeSVG value={bc.message || 'FT-EXEMPLE1'} size={Math.round(140 * s)} level="M" />}
+              ? <BarcodeSvg format={bc.format} message={bc.message} width={width * 0.74} height={56 * s} />
+              : <BarcodeSvg format={bc.format} message={bc.message} width={140 * s} height={140 * s} />}
             {bc.altText && <div style={{ fontSize: 13 * s, color: '#111', marginTop: 4 * s }}>{bc.altText}</div>}
           </div>
         </div>

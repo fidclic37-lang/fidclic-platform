@@ -115,8 +115,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and any(f["key"] in ("stamps", "reward") for f in p["storeCard"]["secondaryFields"]))
     check("labelled like Apple's sample: MEMBRE / Marie first", pg["primaryFields"][0]["key"] == "member"
           and pg["primaryFields"][0]["value"] == "Marie" and bool(pg["primaryFields"][0].get("label")))
-    check("only the logo on top: no logoText, the shop's name is the footer",
-          "logoText" not in p and pg["footerFields"][0]["value"] == "ROYAL TRIM")
+    check("the shop's name is the poster's footer, and stays next to the logo on the iOS 26 card",
+          p.get("logoText") == "ROYAL TRIM" and pg["footerFields"][0]["value"] == "ROYAL TRIM")
     check("the offer is not on the poster's face (it stays on the back)",
           all(f["key"] != "offer_title" for f in pg["primaryFields"]))
     check("at most 4 primary fields, 1 header, 1 footer",
@@ -218,12 +218,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("saved: at most two, in the merchant's order", r.status_code == 200 and [a["type"] for a in saved] ==
           ["viewOffersRewards", "bookAppointment"])
     r = http("PUT", "/api/owner/card/settings", headers={"Authorization": "Bearer " + tok}, json={"featured_actions": [
-        {"type": "unknownThing"}, {"type": "order", "url": "http://not-https"}, {"type": "place"}]})
+        {"type": "unknownThing"}, {"type": "order", "url": "http://not-https"},
+        {"type": "place", "place": "https://maps.apple.com/place?place-id=I6F2B8B3D6C3E7A3&address=Tours"}]})
     saved = (db.card_templates.find_one({"tenant_id": "t1"}) or {}).get("featured_actions")
     check("an unknown type (would hide every tile) is dropped; a link-less button is kept for the owner to fill",
           [a["type"] for a in saved] == ["order", "place"] and saved[0]["url"] == "")
     check("…and left off the pass while it has no link and the shop no website",
           [a["type"] for a in pj().get("featuredActions") or []] == ["place"])
+    check("« Itinéraire » opens Plans on the shop's Place ID, read out of the share link",
+          (pj().get("featuredActions") or [{}])[0].get("placeIdentifier") == "I6F2B8B3D6C3E7A3"
+          and "url" not in pj()["featuredActions"][0])
     db.tenants.update_one({"id": "t1"}, {"$set": {"website": "www.royal-trim.fr"}})
     check("…or opens the shop's website from Établissement",
           [a["type"] for a in pj().get("featuredActions") or []] == ["order", "place"])
@@ -242,7 +246,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"redirects to the merchant's booking page ({r.status_code})",
           r.status_code == 302 and r.headers["location"] == "https://planity.com/royal-trim")
     r = http("GET", "/api/card/FT-TEST0001/action/fa1-viewOffersRewards", follow_redirects=False)
-    check("« Voir les offres » opens the card's offers", r.status_code == 302 and r.headers["location"].endswith("/card/FT-TEST0001?onglet=offres"))
+    check("« Voir les offres » opens the offers page", r.status_code == 302 and r.headers["location"].endswith("/card/FT-TEST0001/offres"))
     check("each tap is counted", db.pass_action_clicks.count_documents({"tenant_id": "t1"}) == 2)
     r = http("GET", "/api/card/FT-TEST0001/action/fa9-order", follow_redirects=False)
     check("a tile the merchant removed lands on the card, uncounted",

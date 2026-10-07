@@ -4284,6 +4284,13 @@ def barcode_from(scanned: object) -> str:
     found = _BARCODE_RE.search(raw)
     if found:
         return found.group(1).upper()
+    # EAN-13 / ITF / Codabar carry digits only: « 20 » + the hex id in decimal
+    # (+ EAN's check digit, Codabar's A…A guards) — wallet_passes.numeric_code
+    digits = re.fullmatch(r"[A-Da-d]?(20\d{10})\d?[A-Da-d]?", raw.replace(" ", ""))
+    if digits:
+        n = int(digits.group(1)[2:])
+        if n <= 0xFFFFFFFF:
+            return f"FT-{n:08X}"
     return raw.rstrip("/").rsplit("/", 1)[-1].split("?")[0].strip().upper()
 
 
@@ -6468,6 +6475,7 @@ def _serialize_card_payload(cust: dict) -> dict:
             "surface":              tpl.get("surface"),
             "surface_color":        tpl.get("surface_color"),
             "code_type":            tpl.get("code_type"),
+            "code_fallback":        tpl.get("code_fallback"),
             "hero_mode":            tpl.get("hero_mode"),
             "visits_label":         tpl.get("visits_label"),
             "stamps_label":         tpl.get("stamps_label"),

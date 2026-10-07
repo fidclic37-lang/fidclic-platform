@@ -134,7 +134,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("only Wallet image names are kept",
           {i["name"] for i in tdoc["pass_designer"]["images"]} == {"background@2x.png", "primaryLogo@2x.png"})
     check("its featured actions become the card's, a link-less booking kept for the owner to fill",
-          [(a["type"], a.get("url")) for a in tdoc.get("featured_actions") or []] == [("viewOffersRewards", None), ("bookAppointment", "")])
+          [(a["type"], a.get("url")) for a in tdoc.get("featured_actions") or []] == [("viewOffersRewards", ""), ("bookAppointment", "")])
     bad = http("PUT", "/api/owner/card/pass-designer", headers=H, json={"pass_json": "{not json"})
     check("an unreadable pass.json is refused", bad.status_code == 400)
 

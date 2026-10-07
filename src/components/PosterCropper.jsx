@@ -8,14 +8,14 @@ import { X, ZoomIn } from 'lucide-react';
  * owner drags it and zooms to pick what shows, and gets Apple's 345 × 505 pt
  * at 3× (1035 × 1515) as a JPEG.
  *
- * Props: file (a File), onDone(dataUrl), onCancel().
+ * Props: file (a File), onDone(dataUrl), onCancel(); outW / outH and title
+ * frame any other Wallet image the same way (the card editor's banner…).
  */
-const OUT_W = 1035;
-const OUT_H = 1515;
-const FRAME_W = 280;
-const FRAME_H = Math.round(FRAME_W * (OUT_H / OUT_W));
-
-export default function PosterCropper({ file, onDone, onCancel }) {
+export default function PosterCropper({ file, onDone, onCancel, outW = 1035, outH = 1515, title = "Cadrer l'image poster", guides = true }) {
+  const OUT_W = outW;
+  const OUT_H = outH;
+  const FRAME_W = OUT_W >= OUT_H ? 300 : 280;
+  const FRAME_H = Math.round(FRAME_W * (OUT_H / OUT_W));
   const [img, setImg] = useState(null);
   const [zoom, setZoom] = useState(1);            // 1 = just covers the frame
   const [pos, setPos] = useState({ x: 0, y: 0 }); // image top-left, frame px
@@ -77,7 +77,7 @@ export default function PosterCropper({ file, onDone, onCancel }) {
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#0B1C3F]/55 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-[360px] rounded-2xl bg-white p-5 shadow-[0_24px_60px_-20px_rgba(11,28,63,.6)]">
         <div className="mb-3 flex items-center justify-between">
-          <p className="text-[15px] font-bold text-[#0B1C3F]">Cadrer l'image poster</p>
+          <p className="text-[15px] font-bold text-[#0B1C3F]">{title}</p>
           <button type="button" onClick={onCancel} aria-label="Fermer" className="rounded-lg p-1 text-[#64748B] hover:bg-[#F4F7FC]"><X size={18} /></button>
         </div>
         <p className="mb-3 text-[12.5px] text-[#64748B]">Glissez la photo et zoomez : ce cadre est exactement la carte Apple Wallet.</p>
@@ -87,9 +87,11 @@ export default function PosterCropper({ file, onDone, onCancel }) {
           <img src={url.current} alt="" draggable={false}
                style={{ position: 'absolute', left: pos.x, top: pos.y, width: w, height: h, maxWidth: 'none' }} />
           {/* where Wallet draws over the photo: logo + header, barcode, fields */}
+          {guides && <>
           <div className="pointer-events-none absolute inset-x-0 top-0 h-[12%] bg-gradient-to-b from-black/35 to-transparent" />
           <div className="pointer-events-none absolute left-1/2 top-[47%] h-[25%] w-[38%] -translate-x-1/2 rounded-md border border-dashed border-white/70" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[22%] bg-gradient-to-t from-black/45 to-transparent" />
+          </>}
         </div>
         <label className="mt-4 flex items-center gap-2 text-[12.5px] text-[#475569]">
           <ZoomIn size={15} />

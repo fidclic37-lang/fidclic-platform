@@ -196,7 +196,8 @@ class CardSettings(BaseModel):
     wallet_enabled: Optional[bool] = None
     birthday_notification: Optional[bool] = None
     # ── advanced: the knobs Apple and Google actually expose ──────────────
-    code_type: Optional[str] = None              # qr | barcode | pdf417 | aztec
+    code_type: Optional[str] = None              # qr | barcode | pdf417 | aztec | any PKBarcodeFormat…
+    code_fallback: Optional[str] = None          # the format iOS 26 and earlier read
     show_card_number: Optional[bool] = None
     use_full_name: Optional[bool] = None
     greeting_label: Optional[str] = None
@@ -226,6 +227,11 @@ class CardSettings(BaseModel):
     poster_image_url: Optional[str] = None                    # portrait photo for the poster
     featured_actions: Optional[List[Dict[str, str]]] = None   # [{type, url?}]
 
+
+
+def _barcode_formats():
+    from features.wallet_passes import BARCODE_FORMATS, NEW_BARCODES
+    return [{"format": k, "label": v, "ios27_only": k in NEW_BARCODES} for k, v in BARCODE_FORMATS.items()]
 
 
 def _featured_types():
@@ -278,6 +284,8 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
         },
         "advanced": {
             "code_type": tpl.get("code_type") or "qr",
+            "code_fallback": tpl.get("code_fallback") or "",
+            "barcode_formats": _barcode_formats(),
             "show_card_number": tpl.get("show_card_number") is not False,
             "use_full_name": bool(tpl.get("use_full_name")),
             "greeting_label": tpl.get("greeting_label") or "Membre",
@@ -307,7 +315,11 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "poster_style": tpl.get("poster_style") is not False,
             "poster_image_url": tpl.get("poster_image_url") or "",
             "featured_actions": tpl.get("featured_actions") or [],
-            "featured_types": [{"type": k, "label": v[0], "needs_url": v[1] == "merchant"}
+            # needs: what the owner types for that button — link (required),
+            # link_optional (FidClic's page otherwise), phone, place
+            "featured_types": [{"type": k, "label": v[0],
+                                "needs": {"url": "link", "offers": "link_optional", "program": "link_optional",
+                                          "call": "phone", "place": "place"}[v[1]]}
                                for k, v in _featured_types().items()],
             "allow_sharing": bool(tpl.get("allow_sharing")),
             "strip_shine": bool(tpl.get("strip_shine")),
@@ -342,8 +354,11 @@ def put_card_settings(body: CardSettings,
     if payload.get("cashback_rate") is not None:
         payload["cashback_rate"] = max(0.5, min(50, float(payload["cashback_rate"])))
 
-    if payload.get("code_type") is not None and payload["code_type"] not in ("qr", "barcode", "pdf417", "aztec"):
+    from features.wallet_passes import BARCODE_FORMATS
+    if payload.get("code_type") is not None and payload["code_type"] not in ("qr", "barcode", "pdf417", "aztec", *BARCODE_FORMATS):
         raise HTTPException(status_code=400, detail="Type de code inconnu")
+    if payload.get("code_fallback") is not None and payload["code_fallback"] not in ("", *BARCODE_FORMATS):
+        raise HTTPException(status_code=400, detail="Code de secours inconnu")
     if payload.get("header_field") is not None and payload["header_field"] not in ("auto", "tier", "points", "visits", "none"):
         raise HTTPException(status_code=400, detail="Champ d'en-tête inconnu")
     if payload.get("hero_mode") is not None and payload["hero_mode"] not in ("image", "brand", "none"):

@@ -638,19 +638,33 @@ def _poster_variants(png3x: bytes) -> Dict[str, bytes]:
     return out
 
 
-# Featured actions — the two tiles iOS 27 draws under the pass. Only types
-# Apple has published: one unknown type and Wallet hides EVERY tile.
-# type → (label in our UI, where it leads)
+# Featured actions — the two tiles iOS 27 draws under the pass. Apple's list
+# (WWDC26, « Defining the metadata of your Wallet Pass »), all 14, in the
+# order a loyalty programme reaches for them. One unknown type and Wallet
+# hides EVERY tile.
+# type → (label in our UI, what it needs)
+#   offers / program → FidClic's own page, unless the owner gives a link
+#   call             → a phone number (tel://), the shop's by default
+#   place            → an Apple Maps Place ID (Plans › Partager › Copier le lien)
+#   url              → the owner's https link (the shop's website if none)
 FEATURED_TYPES: Dict[str, Tuple[str, str]] = {
-    "viewOffersRewards": ("Voir les offres", "card_offers"),
-    "membershipBenefits": ("Mes avantages", "card_program"),
-    "viewMembership": ("Ma carte en ligne", "card"),
-    "place": ("Itinéraire", "maps"),
-    "bookAppointment": ("Prendre rendez-vous", "merchant"),
-    "order": ("Commander", "merchant"),
-    "viewSchedule": ("Voir le planning", "merchant"),
+    "viewOffersRewards": ("Voir les offres et récompenses", "offers"),
+    "membershipBenefits": ("Voir les avantages membres", "program"),
+    "bookAppointment": ("Prendre rendez-vous", "url"),
+    "order": ("Commander (livraison ou retrait)", "url"),
+    "shop": ("Boutique en ligne", "url"),
+    "addToBalance": ("Recharger le solde", "url"),
+    "call": ("Appeler", "call"),
+    "place": ("Itinéraire (Plans)", "place"),
+    "viewSchedule": ("Voir le planning", "url"),
+    "bookStay": ("Réserver un séjour", "url"),
+    "bookCar": ("Louer une voiture", "url"),
+    "bookFlight": ("Réserver un vol", "url"),
+    "watchTrailer": ("Voir la bande-annonce", "url"),
+    "listenToMusic": ("Écouter la musique", "url"),
 }
 MAX_FEATURED = 2
+_HTTPS = re.compile(r"^https://[^/\s]+\.[^/\s]+")
 
 
 def site_link(website: Any) -> Optional[str]:
@@ -659,50 +673,151 @@ def site_link(website: Any) -> Optional[str]:
     if not w or " " in w:
         return None
     w = re.sub(r"^http://", "https://", w if "://" in w else f"https://{w}")
-    return w[:500] if re.match(r"^https://[^/]+\.[^/]+", w) else None
+    return w[:500] if _HTTPS.match(w) else None
 
 
-def clean_featured(rows: Any, website: Optional[str] = None, keep_empty: bool = False) -> List[Dict[str, str]]:
-    """What the merchant chose, kept only when Wallet will draw it: a known
-    type, at most two, each once, and an https link where one is needed.
-    A button that needs a link and has none (Pass Designer leaves it at
-    "https://") opens the shop's website; with no website it is left off the
-    pass, but `keep_empty` keeps it in the settings so the owner can add one."""
+def phone_link(phone: Any) -> Optional[str]:
+    """A phone number as Wallet's call action wants it: tel://+33…"""
+    p = re.sub(r"[^\d+]", "", str(phone or "").replace("tel://", "").replace("tel:", ""))
+    if re.fullmatch(r"0\d{9}", p):                      # French national → +33
+        p = "+33" + p[1:]
+    return f"tel://{p}" if re.fullmatch(r"\+?\d{6,15}", p) else None
+
+
+def place_id_of(v: Any) -> Optional[str]:
+    """An Apple Maps Place ID, typed as is or inside a Plans share link
+    (https://maps.apple.com/place?place-id=I…)."""
+    v = str(v or "").strip()
+    m = re.search(r"[?&]place-id=([A-Za-z0-9._-]{4,80})", v)
+    if m:
+        return m.group(1)
+    return v if re.fullmatch(r"I[A-Za-z0-9._-]{5,80}", v) else None
+
+
+def clean_featured(rows: Any, tenant: Optional[Dict[str, Any]] = None, keep_empty: bool = False) -> List[Dict[str, str]]:
+    """What the merchant chose, kept only when Wallet will draw it: one of
+    Apple's types, at most two, each once, with what that type needs.
+    A link-only button with no link (Pass Designer leaves it at "https://")
+    opens the shop's website; a call, the shop's phone. When nothing can
+    stand in, the button is left off the pass — but `keep_empty` keeps it in
+    the settings so the owner can fill it in."""
+    tenant = tenant or {}
     out: List[Dict[str, str]] = []
     for r in rows or []:
-        t = (r or {}).get("type")
+        r = r or {}
+        t = r.get("type")
         if t not in FEATURED_TYPES or any(o["type"] == t for o in out):
             continue
-        url = ((r or {}).get("url") or "").strip()
-        if FEATURED_TYPES[t][1] == "merchant":
-            if not re.match(r"^https://[^/]+\.[^/]+", url):
-                url = "" if keep_empty else (website or "")
-                if not url and not keep_empty:
-                    continue
-            out.append({"type": t, "url": url[:500]})
-        else:
-            out.append({"type": t})
+        kind = FEATURED_TYPES[t][1]
+        url = str(r.get("url") or "").strip()
+        row: Optional[Dict[str, str]] = None
+        if kind in ("offers", "program"):
+            row = {"type": t, "url": url[:500] if _HTTPS.match(url) else ""}
+        elif kind == "url":
+            link = url if _HTTPS.match(url) else ("" if keep_empty else (site_link(tenant.get("website")) or ""))
+            row = {"type": t, "url": link[:500]} if (link or keep_empty) else None
+        elif kind == "call":
+            tel = phone_link(r.get("phone") or (url if url.startswith("tel") else ""))
+            if not tel and not keep_empty:
+                tel = phone_link(tenant.get("phone"))
+            row = {"type": t, "phone": tel or ""} if (tel or keep_empty) else None
+        elif kind == "place":
+            pid = place_id_of(r.get("place") or r.get("placeIdentifier") or url)
+            row = {"type": t, "place": pid or ""} if (pid or keep_empty) else None
+        if row:
+            out.append(row)
         if len(out) == MAX_FEATURED:
             break
+    return out
+
+
+def featured_json(actions: List[Dict[str, str]], serial: str) -> List[Dict[str, str]]:
+    """pass.json featuredActions: links go through our counter, a call and a
+    place go straight to the phone and to Plans (nothing to count there)."""
+    out = []
+    for i, a in enumerate(actions):
+        ident = f"fa{i + 1}-{a['type']}"
+        kind = FEATURED_TYPES[a["type"]][1]
+        if kind == "call":
+            if a.get("phone"):
+                out.append({"identifier": ident, "type": a["type"], "url": a["phone"]})
+        elif kind == "place":
+            if a.get("place"):
+                out.append({"identifier": ident, "type": a["type"], "placeIdentifier": a["place"]})
+        else:
+            out.append({"identifier": ident, "type": a["type"], "url": f"{_site_url()}/api/card/{serial}/action/{ident}"})
     return out
 
 
 def featured_target(action: Dict[str, str], serial: str, tenant: Dict[str, Any]) -> Optional[str]:
     kind = FEATURED_TYPES.get(action.get("type") or "", ("", ""))[1]
     card_url = f"{_site_url()}/card/{serial}"
-    if kind == "card_offers":
-        return f"{card_url}?onglet=offres"
-    if kind == "card_program":
-        return f"{card_url}?onglet=programme"
-    if kind == "card":
-        return card_url
-    if kind == "maps":
-        lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
-        q = urllib.parse.quote(tenant.get("address") or tenant.get("name") or "")
-        return f"https://maps.apple.com/?q={q}" + (f"&ll={lat},{lng}" if lat and lng else "")
-    if kind == "merchant":
+    if kind == "offers":                        # user, 2026-10-07: offers only, not the whole card
+        return action.get("url") or f"{card_url}/offres"
+    if kind == "program":
+        return action.get("url") or f"{card_url}?onglet=programme"
+    if kind == "url":
         return action.get("url") or None
     return None
+
+
+# ---------------------------------------------------------------------------
+# Barcodes — Wallet's eight formats (iOS 27 adds Code 39, Codabar, EAN-13 and
+# ITF). What each one can carry decides the message:
+#   QR / PDF417 / Aztec → the card's URL (a phone camera opens it: the card
+#                         invites, and the till reads the id out of it)
+#   Code128 / Code 39   → the card number, FT-XXXXXXXX
+#   EAN-13 / ITF / Codabar → digits only: « 20 » + the card's hex id in
+#                         decimal (server.barcode_from reads it back)
+# ---------------------------------------------------------------------------
+BARCODE_FORMATS = {
+    "PKBarcodeFormatQR": "QR code", "PKBarcodeFormatPDF417": "PDF417", "PKBarcodeFormatAztec": "Aztec",
+    "PKBarcodeFormatCode128": "Code 128", "PKBarcodeFormatCode39": "Code 39",
+    "PKBarcodeFormatCodabar": "Codabar", "PKBarcodeFormatEAN13": "EAN-13", "PKBarcodeFormatI2of5": "ITF (2 parmi 5)",
+}
+NEW_BARCODES = {"PKBarcodeFormatCode39", "PKBarcodeFormatCodabar", "PKBarcodeFormatEAN13", "PKBarcodeFormatI2of5"}
+_LINK_CODES = {"PKBarcodeFormatQR", "PKBarcodeFormatPDF417", "PKBarcodeFormatAztec"}
+_DIGIT_CODES = {"PKBarcodeFormatCodabar", "PKBarcodeFormatEAN13", "PKBarcodeFormatI2of5"}
+
+
+def numeric_code(serial: str) -> Optional[str]:
+    """FT-C945EB3C → 203376802620 (12 digits). Only the 8-hex ids every real
+    card has; None for anything else."""
+    m = re.fullmatch(r"FT-([0-9A-F]{8})", (serial or "").upper())
+    return f"20{int(m.group(1), 16):010d}" if m else None
+
+
+def _ean13(d12: str) -> str:
+    s = sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(d12))
+    return d12 + str((10 - s % 10) % 10)
+
+
+def barcode_message(fmt: str, serial: str) -> Optional[str]:
+    if fmt in _LINK_CODES:
+        return f"{_site_url()}/card/{serial}"
+    if fmt in ("PKBarcodeFormatCode128", "PKBarcodeFormatCode39"):
+        return serial.upper()
+    digits = numeric_code(serial)
+    if not digits:
+        return None
+    return _ean13(digits) if fmt == "PKBarcodeFormatEAN13" else digits
+
+
+def build_barcodes(fmt: str, fallback: Optional[str], serial: str, alt: Optional[str]) -> List[Dict[str, str]]:
+    """The pass's barcodes: the chosen format, then the fallback iOS 26 and
+    earlier read (Wallet shows the first format it supports). A format the
+    card cannot carry, or an iOS 27-only one with no fallback, gets a QR."""
+    out: List[Dict[str, str]] = []
+    for f in (fmt, fallback):
+        if f in BARCODE_FORMATS and not any(b["format"] == f for b in out):
+            msg = barcode_message(f, serial)
+            if msg:
+                out.append({"format": f, "message": msg, "messageEncoding": "iso-8859-1",
+                            **({"altText": alt} if alt else {})})
+    if not out or all(b["format"] in NEW_BARCODES for b in out):
+        out.append({"format": "PKBarcodeFormatQR", "message": barcode_message("PKBarcodeFormatQR", serial),
+                    "messageEncoding": "iso-8859-1", **({"altText": alt} if alt else {})})
+    return out
 
 
 def _strip_variants(png3x: bytes) -> Dict[str, bytes]:
@@ -1023,21 +1138,16 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "sharingProhibited": not bool(card.get("allow_sharing")),
         "suppressStripShine": not bool(card.get("strip_shine")),
         **{k: v for k, v in colors.items() if k.endswith("Color")},
-        "barcodes": [{
-            "format": {
-                "barcode": "PKBarcodeFormatCode128",
-                "pdf417": "PKBarcodeFormatPDF417",
-                "aztec": "PKBarcodeFormatAztec",
-            }.get(card.get("code_type"), "PKBarcodeFormatQR"),
-            # Always the card URL, never the bare id: the same QR has to work
-            # for the till AND for a stranger's camera, which is what makes a
-            # customer's own card an invitation. The till pulls the id back
-            # out of the URL (server.barcode_from).
-            "message": f"{_site_url()}/card/{serial}",
-            "messageEncoding": "iso-8859-1",
-            # The human-readable line under the code is the merchant's call.
-            **({"altText": serial} if card.get("show_card_number") is not False else {}),
-        }],
+        # QR / PDF417 / Aztec carry the card URL, never the bare id: the same
+        # code has to work for the till AND for a stranger's camera, which is
+        # what makes a customer's own card an invitation. The till pulls the
+        # id back out of it (server.barcode_from). The line under the code is
+        # the merchant's call.
+        "barcodes": build_barcodes(
+            {"barcode": "PKBarcodeFormatCode128", "pdf417": "PKBarcodeFormatPDF417",
+             "aztec": "PKBarcodeFormatAztec"}.get(card.get("code_type"), card.get("code_type")
+                                                  if card.get("code_type") in BARCODE_FORMATS else "PKBarcodeFormatQR"),
+            card.get("code_fallback"), serial, serial if card.get("show_card_number") is not False else None),
         "storeCard": {
             # With a banner: points in the header, nothing over the image.
             # Without: the classic big number, statut in the header. The
@@ -1119,18 +1229,18 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         pass_json["posterGeneric"] = {
             "headerFields": header[:1],
             "primaryFields": primary[:4],
-            # Only the logo on top, like Apple's poster: the shop's name is the footer.
-            "footerFields": [{"key": "footer", "value": org[:60]}],
+            # Only the logo on top, like Apple's poster: the shop's name is the
+            # footer, and the running campaign's offer next to it — a campaign
+            # changes the card itself, not just its back (user, 2026-10-07).
+            "footerFields": [{"key": "footer", "value": org[:60]}]
+            + ([{"key": "offer_front", "label": "OFFRE", "value": offer_title}] if offer_title else []),
             "backFields": back,
         }
-        pass_json.pop("logoText", None)
-    actions = clean_featured(card.get("featured_actions"), site_link(tenant.get("website")))
-    if actions:
-        # Through our redirect: the click is counted, then the customer lands.
-        pass_json["featuredActions"] = [
-            {"identifier": f"fa{i + 1}-{a['type']}", "type": a["type"],
-             "url": f"{_site_url()}/api/card/{serial}/action/fa{i + 1}-{a['type']}"}
-            for i, a in enumerate(actions)]
+        # logoText stays: it is the iOS 26 card's shop name next to the logo
+        # (the poster draws its primaryLogo only).
+    fa = featured_json(clean_featured(card.get("featured_actions"), tenant), serial)
+    if fa:
+        pass_json["featuredActions"] = fa
 
     # ---- an Apple Pass Designer template is the design (features/pass_designer)
     try:
@@ -1145,7 +1255,9 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "first_name": full_name.split(" ")[0], "card": serial, "points": points,
             "stamps": f"{stamps} / {threshold}", "tier": tier_field["value"],
             "reward": ("Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} avant : {reward}"),
-            "offer": offer_full, "visits": visits, "shop": org,
+            # the running campaign's offer, short, or nothing (a front field
+            # holding only {offre} then disappears)
+            "offer": offer_title or "", "visits": visits, "shop": org,
             "member_since": since.strftime("%d/%m/%Y") if isinstance(since, datetime) else "",
         }
         pass_json = PD.apply(pass_json, tpl, values)
@@ -1207,20 +1319,30 @@ def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
 
 
 def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, bytes]:
-    """A Pass Designer template's images, plus what Wallet needs that the
-    template may lack: icon.png, a 1x of every @2x, and the logo / thumbnail
-    the iOS 26 `generic` fallback draws."""
+    """A design's images (Pass Designer template or the editor), plus what
+    Wallet needs that it may lack: icon.png and the logo, and the @2x / 1x of
+    an image given at @3x (or the 1x of an @2x). Nothing else is added — a
+    thumbnail appears only when the owner gave one, as in Pass Designer."""
     from features import pass_designer as PD
     imgs = dict(PD.images(tpl))
     brand = _rgb(card.get("brand_color")) or (184, 92, 56)
-    logo_raw = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or _fetch_image(card.get("logo_url"))
+    logo_raw = PD.best(imgs, "logo") or PD.best(imgs, "primaryLogo") or _fetch_image(card.get("logo_url"))
     try:
         from PIL import Image
+
+        def scaled(data: bytes, k: float) -> bytes:
+            im = Image.open(io.BytesIO(data))
+            b = io.BytesIO()
+            im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS).save(b, "PNG")
+            return b.getvalue()
+        for name in list(imgs):
+            if name.endswith("@3x.png"):
+                for suffix, k in (("@2x", 2 / 3), ("", 1 / 3)):
+                    if name.replace("@3x", suffix) not in imgs:
+                        imgs[name.replace("@3x", suffix)] = scaled(imgs[name], k)
         for name in list(imgs):
             if name.endswith("@2x.png") and name.replace("@2x", "") not in imgs:
-                im = Image.open(io.BytesIO(imgs[name]))
-                b = io.BytesIO(); im.resize((max(1, im.width // 2), max(1, im.height // 2)), Image.LANCZOS).save(b, "PNG")
-                imgs[name.replace("@2x", "")] = b.getvalue()
+                imgs[name.replace("@2x", "")] = scaled(imgs[name], 0.5)
     except Exception:
         pass
     if not any(n.startswith("icon") for n in imgs):
@@ -1229,13 +1351,12 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
     if not any(n.startswith("logo") for n in imgs):
         for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
             imgs[f"logo{suffix}.png"] = png
-    if not any(n.startswith("thumbnail") for n in imgs):
-        for suffix, png in _png_variants(logo_raw, (90, 90), cover=True, fallback_rgb=brand).items():
-            imgs[f"thumbnail{suffix}.png"] = png
     return imgs
 
 
-def build_pkpass(payload: Dict[str, Any]) -> bytes:
+def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
+    """Every file of the pass but the manifest and signature — what the
+    owner's preview shows and what build_pkpass signs."""
     card = payload["card"]
     files: Dict[str, bytes] = {"pass.json": json.dumps(build_pass_json(payload), ensure_ascii=False).encode("utf-8")}
 
@@ -1282,7 +1403,11 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
                     files[f"background{suffix}.png"] = png
             for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
                 files[f"primaryLogo{suffix}.png"] = png
+    return files
 
+
+def build_pkpass(payload: Dict[str, Any]) -> bytes:
+    files = pass_files(payload)
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
     files["signature"] = _sign_manifest(manifest)
@@ -1442,7 +1567,7 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         "featured_actions": {
             "active": [{"type": a["type"], "label": FEATURED_TYPES[a["type"]][0]}
                        for a in clean_featured((_db.card_templates.find_one({"tenant_id": tid}) or {}).get("featured_actions"),
-                                               site_link((_db.tenants.find_one({"id": tid}, {"_id": 0, "website": 1}) or {}).get("website")))],
+                                               _db.tenants.find_one({"id": tid}, {"_id": 0}) or {})],
             "clicks_30d": {row["_id"]: row["n"] for row in _db.pass_action_clicks.aggregate([
                 {"$match": {"tenant_id": tid, "at": {"$gte": now - timedelta(days=30)}}},
                 {"$group": {"_id": "$type", "n": {"$sum": 1}}}])},
@@ -1471,6 +1596,9 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
 class PassPreviewIn(BaseModel):
     card: Dict[str, Any] = {}          # the designer's unsaved fields, if any
     visits: int = 3
+    # the card editor's unsaved design ({pass, images, options}); images the
+    # page already holds come as "saved"
+    design: Optional[Dict[str, Any]] = None
 
 
 # Keys a draft may change on the preview — the designer's own fields, nothing
@@ -1501,7 +1629,9 @@ def owner_wallet_preview(body: PassPreviewIn,
     import server as core
     tid = token_data.tenant_id
     visits = max(0, min(int(body.visits or 0), 500))
-    sample = {"id": "preview-sample", "tenant_id": tid, "barcode_id": "FT-EXEMPLE1",
+    # a real-shaped card id (8 hex): every barcode format can carry it, EAN-13
+    # and ITF included, so the preview shows the code the customer will get
+    sample = {"id": "preview-sample", "tenant_id": tid, "barcode_id": "FT-5A3C91E2",
               "name": "Marie Dupont", "visits": visits, "tier": "bronze", "points": 0}
     payload = core._serialize_card_payload(sample)
     card = payload["card"]
@@ -1511,6 +1641,11 @@ def owner_wallet_preview(body: PassPreviewIn,
     card.pop("stamps_earned", None)            # recomputed from the sample's visits
     sample["points"] = visits * int(card.get("points_per_visit") or 10)
     payload["customer"] = {**payload.get("customer", {}), **sample}
+
+    if body.design is not None:
+        from features import pass_designer as PD
+        with PD.preview_design(tid, PD.design_from_body(tid, body.design)):
+            return _design_preview(payload, sample, visits)
 
     pj = build_pass_json(payload)
     strip3x = strip_png(payload)
@@ -1541,6 +1676,42 @@ def owner_wallet_preview(body: PassPreviewIn,
     }
 
 
+def _preview_image(name: str, png: bytes) -> Optional[str]:
+    """A file of the pass for the page: photos as JPEG (a poster PNG is a
+    megabyte), artwork with transparency as PNG."""
+    if name.split("@")[0].split(".")[0] in ("background", "strip"):
+        try:
+            from PIL import Image
+            b = io.BytesIO()
+            Image.open(io.BytesIO(png)).convert("RGB").save(b, "JPEG", quality=82)
+            return "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
+        except Exception:
+            pass
+    return _data_url(png)
+
+
+def _design_preview(payload: Dict[str, Any], sample: Dict[str, Any], visits: int) -> Dict[str, Any]:
+    """The card editor's preview: the whole pass.json the customer's iPhone
+    gets — every style it carries — and its images (@2x), from the very
+    files build_pkpass signs."""
+    files = pass_files(payload)
+    pj = json.loads(files["pass.json"])
+    images: Dict[str, str] = {}
+    for base in ("background", "primaryLogo", "logo", "icon", "strip", "thumbnail", "footer"):
+        png = files.get(f"{base}@2x.png") or files.get(f"{base}.png")
+        if png:
+            images[base] = _preview_image(base, png)
+    return {
+        "pass_json": pj,
+        "styles": [st for st in ("posterGeneric", "generic", "storeCard", "coupon", "eventTicket", "boardingPass") if st in pj],
+        "images": images,
+        "actions": [{"type": a["type"], "label": FEATURED_TYPES[a["type"]][0]}
+                    for a in clean_featured(payload["card"].get("featured_actions"), payload.get("tenant"))
+                    if any(f["type"] == a["type"] for f in pj.get("featuredActions") or [])],
+        "sample": {"name": sample["name"], "visits": visits},
+    }
+
+
 def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes]) -> Optional[Dict[str, Any]]:
     pg = pj.get("posterGeneric")
     if not pg:
@@ -1560,8 +1731,7 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
     return {"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
             "footerFields": pg.get("footerFields", []), "background": _data_url(bg2x), "logo": _data_url(logo2x),
             "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}
-                        for a in clean_featured(payload["card"].get("featured_actions"),
-                                                site_link((payload.get("tenant") or {}).get("website")))]}
+                        for a in clean_featured(payload["card"].get("featured_actions"), payload.get("tenant"))]}
 
 
 @router.post("/api/owner/wallet/notify")
@@ -1693,8 +1863,7 @@ def featured_action_click(serial: str, identifier: str):
     tpl = _db.card_templates.find_one({"tenant_id": cust.get("tenant_id")}, {"_id": 0, "featured_actions": 1}) or {}
     kind = identifier.split("-", 1)[1] if "-" in identifier else identifier
     tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0}) or {}
-    action = next((a for a in clean_featured(tpl.get("featured_actions"), site_link(tenant.get("website")))
-                   if a["type"] == kind), None)
+    action = next((a for a in clean_featured(tpl.get("featured_actions"), tenant) if a["type"] == kind), None)
     if not action:
         return RedirectResponse(home, status_code=302)
     try:

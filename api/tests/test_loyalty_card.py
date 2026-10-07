@@ -184,7 +184,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                              "created_at": dt.datetime.now(dt.timezone.utc)})
     pj2 = WP.build_pass_json(WP._card_payload("FT-ADV2"))
     check("header shows the chosen value", pj2["storeCard"]["headerFields"][0]["value"] == 6)
-    check("code encodes the card link", pj2["barcodes"][0]["message"].endswith("/card/FT-ADV2"))
+    check("a Code 128 carries the card number (a link is too dense for a 1D code)",
+          pj2["barcodes"][0]["format"] == "PKBarcodeFormatCode128" and pj2["barcodes"][0]["message"] == "FT-ADV2")
     check("statut hidden when asked",
           all(f["key"] != "tier" for grp in pj2["storeCard"].values() for f in grp))
     check("custom update wording on the pass", any(

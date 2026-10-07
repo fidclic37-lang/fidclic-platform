@@ -340,7 +340,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 100)
     check("preview: the offer is on the back, like the pass", any(f["key"] == "offer" for f in pv["backFields"]))
     check("preview: a sample customer, never a real one", pv["sample"]["name"] == "Marie Dupont"
-          and pv["barcode"]["altText"] == "FT-EXEMPLE1")
+          and pv["barcode"]["altText"] == "FT-5A3C91E2")
 
     # ---- unconfigured is a clean 503, never a 500 ------------------------
     os.environ["APPLE_PASS_KEY_B64"] = ""

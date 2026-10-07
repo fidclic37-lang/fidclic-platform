@@ -369,6 +369,8 @@ export const ownerAPI = {
   saveCardSettings: (data) => api.put('/owner/card/settings', data),
   // Apple Pass Designer template as the card's design (features/pass_designer.py)
   passDesigner: () => api.get('/owner/card/pass-designer'),
+  passDesignerFull: () => api.get('/owner/card/pass-designer', { params: { full: 1 } }),
+  passDesignerStarter: () => api.get('/owner/card/pass-designer/starter'),
   importPassDesigner: (body) => api.put('/owner/card/pass-designer', body),
   removePassDesigner: () => api.delete('/owner/card/pass-designer'),
   cardStats: (days) => api.get('/owner/card/stats', { params: { days } }),
