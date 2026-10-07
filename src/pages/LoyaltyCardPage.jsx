@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import WalletPassLive from '../components/WalletPassLive';
 import WalletCard from '../components/WalletCard';
 import InfoTip from '../components/InfoTip';
 import PosterCropper from '../components/PosterCropper';
@@ -225,7 +224,6 @@ export default function LoyaltyCardPage() {
   const [customerPreview, setCustomerPreview] = useState(false);
   const [stats, setStats] = useState(null);
   const [days, setDays] = useState(30);
-  const [view, setView] = useState('client');      // client | wallet
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   // The save bar shows only when there is something to save — and for a few
@@ -268,7 +266,11 @@ export default function LoyaltyCardPage() {
   useEffect(() => { load(); }, [load]);
 
   // Unsaved changes: the save bar says so, and leaving the page asks first.
-  const dirty = Boolean(snapshot) && JSON.stringify([design, programme, toggles, advanced]) !== snapshot;
+  const settingsDirty = Boolean(snapshot) && JSON.stringify([design, programme, toggles, advanced]) !== snapshot;
+  // the card editor's own design (pass.json template) has its own save
+  const designerRef = useRef(null);
+  const [designerDirty, setDesignerDirty] = useState(false);
+  const dirty = settingsDirty || designerDirty;
   useEffect(() => {
     if (!dirty) return undefined;
     const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
@@ -276,8 +278,11 @@ export default function LoyaltyCardPage() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   const discard = () => {
-    const [d, p, t, a] = JSON.parse(snapshot);
-    setDesign(d); setProgramme(p); setToggles(t); setAdvanced(a);
+    if (settingsDirty) {
+      const [d, p, t, a] = JSON.parse(snapshot);
+      setDesign(d); setProgramme(p); setToggles(t); setAdvanced(a);
+    }
+    if (designerDirty) designerRef.current?.reset();
   };
 
   // « Options avancées » opens the panel and brings it on screen — it sat
@@ -344,9 +349,58 @@ export default function LoyaltyCardPage() {
     reward_threshold: programme?.reward_threshold_stamps || 10,
   }), [isPoints, programme]);
 
+  // The card's identity — the old « Personnalisation de la carte » card — now
+  // the editor's first tab.
+  const identityPanel = design && (
+    <fieldset disabled={!edit} className="m-0 min-w-0 border-0 p-0">
+      <div className="space-y-3.5">
+        <div>
+          <Label>Nom de la carte</Label>
+          <Input value={design.card_name} maxLength={40}
+                 onChange={(e) => setDesign({ ...design, card_name: e.target.value })} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Couleur principale</Label>
+            <ColorField value={design.surface_color} onChange={(v) => setDesign({ ...design, surface_color: v })} />
+          </div>
+          <div>
+            <Label>Couleur secondaire</Label>
+            <ColorField value={design.brand_color} onChange={(v) => setDesign({ ...design, brand_color: v })} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <ImageField label="Logo de l'établissement" value={design.logo_url} aspect="16 / 10" downscale={readLogo}
+                      onChange={(v) => setDesign({ ...design, logo_url: v })} />
+          {/* Uploading a banner IS the choice to use it. Without this the
+              advanced "Style de bannière" select — which reads "brand" for
+              any shop that never had a photo — silently outranked the image
+              the owner had just added, on the preview and on the real card
+              alike. Removing the photo hands the banner back to the brand
+              colour. */}
+          <ImageField label="Image de fond (optionnelle)" value={design.hero_image_url} aspect="16 / 10" downscale={readBanner}
+                      onChange={(v) => {
+                        setDesign({ ...design, hero_image_url: v });
+                        setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
+                      }} />
+        </div>
+        <div>
+          <Label>Texte d'accueil sur la carte</Label>
+          <textarea rows={3} maxLength={100} value={design.welcome_text}
+                    onChange={(e) => setDesign({ ...design, welcome_text: e.target.value })}
+                    className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
+          <div className="mt-1 text-right text-[11px] text-[#94A3B8]">{(design.welcome_text || '').length}/100</div>
+        </div>
+      </div>
+    </fieldset>
+  );
+
+  // One save for the page and the card editor's design.
   const save = async () => {
     setSaving(true); setError('');
     try {
+      let wallet = 0;
+      if (settingsDirty) {
       const r = await ownerAPI.saveCardSettings({
         ...design,
         programme: programme.type,
@@ -360,7 +414,10 @@ export default function LoyaltyCardPage() {
         show_qr: true, wallet_enabled: true,
         ...(advanced || {}),
       });
-      setSavedAt({ at: Date.now(), wallet: r.data?.wallet_passes_updated || 0 });
+      wallet = r.data?.wallet_passes_updated || 0;
+      }
+      if (designerDirty) await designerRef.current?.save();
+      setSavedAt({ at: Date.now(), wallet });
       load();
     } catch (e) {
       setError(e?.response?.data?.detail || 'Enregistrement impossible.');
@@ -429,7 +486,7 @@ export default function LoyaltyCardPage() {
         <div className="min-w-0 flex-1">
           <p className="text-[13.5px] font-bold text-[#0B1C3F]">Créez, personnalisez et gérez votre carte de fidélité digitale.</p>
         </div>
-        <button type="button" onClick={() => setView(view === 'client' ? 'wallet' : 'client')}
+        <button type="button" onClick={() => document.getElementById('design-wallet')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                 className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
           <Eye size={14} /> Voir un exemple
         </button>
@@ -444,91 +501,29 @@ export default function LoyaltyCardPage() {
         </div>
       )}
 
-      {/* ── three columns ── */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {/* 1. design */}
-        <Card icon={Plus} title="Personnalisation de la carte" subtitle="Personnalisez l'apparence de votre carte de fidélité." locked={!edit}>
-          <div className="space-y-3.5">
-            <div>
-              <Label>Nom de la carte</Label>
-              <Input value={design.card_name} maxLength={40}
-                     onChange={(e) => setDesign({ ...design, card_name: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Couleur principale</Label>
-                <ColorField value={design.surface_color} onChange={(v) => setDesign({ ...design, surface_color: v })} />
-              </div>
-              <div>
-                <Label>Couleur secondaire</Label>
-                <ColorField value={design.brand_color} onChange={(v) => setDesign({ ...design, brand_color: v })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <ImageField label="Logo de l'établissement" value={design.logo_url} aspect="16 / 10" downscale={readLogo}
-                          onChange={(v) => setDesign({ ...design, logo_url: v })} />
-              {/* Uploading a banner IS the choice to use it. Without this the
-                  advanced "Style de bannière" select — which reads "brand" for
-                  any shop that never had a photo — silently outranked the image
-                  the owner had just added, on the preview and on the real card
-                  alike. Removing the photo hands the banner back to the brand
-                  colour. */}
-              <ImageField label="Image de fond (optionnelle)" value={design.hero_image_url} aspect="16 / 10" downscale={readBanner}
-                          onChange={(v) => {
-                            setDesign({ ...design, hero_image_url: v });
-                            setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
-                          }} />
-            </div>
-            <div>
-              <Label>Texte d'accueil sur la carte</Label>
-              <textarea rows={3} maxLength={100} value={design.welcome_text}
-                        onChange={(e) => setDesign({ ...design, welcome_text: e.target.value })}
-                        className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
-              <div className="mt-1 text-right text-[11px] text-[#94A3B8]">{(design.welcome_text || '').length}/100</div>
-            </div>
-            {edit && <button type="button" onClick={save} disabled={saving}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-60"
-                    style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
-              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer les modifications
-            </button>}
-            {savedAt && (
-              <p className="flex items-center justify-center gap-1.5 text-[12px] text-[#15803D]">
-                <Check size={13} /> Enregistré{savedAt.wallet > 0 && ` · ${savedAt.wallet} carte${savedAt.wallet > 1 ? 's' : ''} Wallet mise${savedAt.wallet > 1 ? 's' : ''} à jour`}
-              </p>
-            )}
-          </div>
-        </Card>
+      {/* ── the card, in one place (user, 2026-10-07): the old « Personnalisation de la
+          carte » fields are the editor's « Identité » tab, and its preview shows
+          iOS 27, iOS 26 and the customer's web card together ── */}
+      <Card id="design-wallet" icon={Sliders} title="Design de la carte"
+            subtitle="Identité, style, images, code-barres, boutons et champs — l’aperçu iOS 27, iOS 26 et web suit chaque modification.">
+        {advanced ? (
+          <CardDesigner ref={designerRef} edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
+                        actions={advanced.featured_actions || []}
+                        onActionsChange={(rows) => setAdvanced((a) => ({ ...a, featured_actions: rows }))}
+                        identityPanel={identityPanel} previewCard={cardForPreview}
+                        clientPreview={<WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />}
+                        externalDirty={settingsDirty} onSaveAll={save} onDirtyChange={setDesignerDirty}
+                        onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
+        ) : (
+          <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
+        )}
+      </Card>
 
-        {/* 2. preview */}
-        <Card icon={Gift} title="Aperçu de la carte" subtitle="Voici un aperçu de votre carte de fidélité.">
-          <div className="mb-3 inline-flex rounded-xl bg-[#F1F5F9] p-1">
-            {[['client', 'Vue client'], ['wallet', 'Vue wallet']].map(([k, label]) => (
-              <button key={k} type="button" onClick={() => setView(k)}
-                      className={`rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition ${view === k ? 'bg-[#2F6BFF] text-white shadow-[0_6px_14px_-8px_rgba(47,107,255,.9)]' : 'text-[#64748B]'}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="flex justify-center rounded-2xl bg-[#F7FAFF] p-3">
-            {/* Same card in both tabs — it is the customer's single card.
-                "Vue client" shows it as the web page renders it, "Vue wallet"
-                inside Apple's pass frame. */}
-            {view === 'wallet' ? (
-              <WalletPassLive card={cardForPreview} width={250} />
-            ) : (
-              <div style={{ width: 250 }}>
-                <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />
-              </div>
-            )}
-          </div>
-          <p className="mt-2 text-center text-[11.5px] text-[#94A3B8]">
-            {view === 'wallet' ? 'Construit par le serveur, exactement comme le pass Apple Wallet.' : 'Rendu identique à la carte ouverte par le client.'}
-          </p>
-        </Card>
-
+      <div className="grid grid-cols-1 gap-4">
         {/* 3. programme */}
         <Card icon={Settings2} title="Paramètres de la carte" subtitle="Configurez le fonctionnement de votre programme." locked={!edit}>
-          <div className="space-y-3.5">
+          {/* full width now: two columns on a wide screen */}
+          <div className="grid grid-cols-1 items-start gap-x-8 gap-y-3.5 lg:grid-cols-2">
             <div>
               <Label>Type de programme</Label>
               <Select value={programme.type} onChange={(e) => setProgramme({ ...programme, type: e.target.value })}>
@@ -611,18 +606,6 @@ export default function LoyaltyCardPage() {
           </div>
         </Card>
       </div>
-
-      {/* ── the card editor — Apple's Pass Designer, in FidClic (user, 2026-10-07) ── */}
-      <Card id="design-wallet" icon={Sliders} title="Design Apple Wallet"
-            subtitle="Style, couleurs, images, code-barres, boutons et champs — avec l’aperçu iOS 27 et iOS 26 en direct.">
-        {advanced ? (
-          <CardDesigner edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
-                        initialActions={advanced.featured_actions || []}
-                        onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
-        ) : (
-          <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
-        )}
-      </Card>
 
       {/* ── options avancées — the knobs Apple and Google really expose ── */}
       {showAdvanced && advanced && (
@@ -840,7 +823,7 @@ export default function LoyaltyCardPage() {
             )}
             <p className="mt-3 text-[12px] text-[#64748B]">
               Pour tout régler comme dans Pass Designer (style, champs, couleurs, code-barres, import d’un modèle) :{' '}
-              <a href="#design-wallet" className="font-semibold text-[#2F6BFF]">Design Apple Wallet</a>, plus bas.
+              <a href="#design-wallet" className="font-semibold text-[#2F6BFF]">Design de la carte</a>, plus haut.
             </p>
 
             <p className="mb-2 mt-4 text-[12.5px] font-semibold text-[#334155]">

@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
   Palette, Image as ImageIcon, Barcode, MousePointerClick, ListTree, Upload, RotateCcw, Save, Loader2,
-  Plus, Trash2, ArrowUp, ArrowDown, Check, ChevronDown, Smartphone, LayoutTemplate,
+  Plus, Trash2, ArrowUp, ArrowDown, Check, ChevronDown, Smartphone, LayoutTemplate, Fingerprint,
 } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
 import PassPreview, { PassBack, NEW_CODES } from './PassPreview';
@@ -19,8 +19,17 @@ import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHe
  * (api/features/pass_designer); the preview is that server's output for a
  * sample customer, so what is drawn here is what lands in Wallet.
  *
+ * One place for the whole card (user, 2026-10-07): the « Identité » tab
+ * holds the shop's name, colours, logo, banner and welcome text (the iOS 26
+ * card, the customer's web page, Google Wallet), and the preview shows iOS 27,
+ * iOS 26 and the customer's web card side by side, live.
+ *
  * Props: edit (owner), types (featured action types), formats (barcodes),
- * initialActions (the card's buttons), onSaved().
+ * actions + onActionsChange (the card's buttons, kept by the page),
+ * identityPanel (the page's identity fields), previewCard (the page's unsaved
+ * card fields, for the preview), clientPreview (the web card, drawn by the
+ * page), externalDirty + onSaveAll (one save for the page and the design),
+ * onDirtyChange(bool), onSaved(). The ref exposes save() and reset().
  */
 const STYLE_KEYS = STYLES.map((s) => s.key);
 const styleOf = (p) => STYLE_KEYS.find((k) => p && typeof p[k] === 'object');
@@ -175,12 +184,14 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
   );
 }
 
-export default function CardDesigner({ edit = true, types = [], formats = [], initialActions = [], onSaved }) {
+const CardDesigner = forwardRef(function CardDesigner({
+  edit = true, types = [], formats = [], actions = [], onActionsChange, onSaved,
+  identityPanel = null, previewCard = {}, clientPreview = null, externalDirty = false, onSaveAll, onDirtyChange,
+}, ref) {
   const [status, setStatus] = useState('loading');      // loading | empty | ready
   const [d, setD] = useState(null);                       // { name, pass, options, images, shown, source }
-  const [actions, setActions] = useState(initialActions || []);
   const [dirty, setDirty] = useState(false);
-  const [tab, setTab] = useState('style');
+  const [tab, setTab] = useState('identite');
   const [preview, setPreview] = useState(null);
   const [pvState, setPvState] = useState('');
   const [busy, setBusy] = useState('');
@@ -202,18 +213,20 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
     .then((r) => (r.data?.active ? init(r.data, true) : setStatus('empty')))
     .catch(() => setStatus('empty'));
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setActions(initialActions || []); }, [JSON.stringify(initialActions)]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onDirtyChange && onDirtyChange(dirty); }, [dirty]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // live preview: the server builds the pass from the unsaved design
-  const pvKey = d ? JSON.stringify({ p: d.pass, o: d.options, a: actions,
-    i: Object.entries(d.images).map(([n, v]) => [n, v === 'saved' ? 's' : v.length]) }) : '';
+  // live preview: the server builds the pass from the unsaved design and the
+  // page's unsaved card fields (no design yet: FidClic's own card)
+  const ready = status === 'ready' && d;
+  const pvKey = status === 'loading' ? '' : JSON.stringify({ c: previewCard, a: actions, ...(ready ? { p: d.pass, o: d.options,
+    i: Object.entries(d.images).map(([n, v]) => [n, v === 'saved' ? 's' : v.length]) } : {}) });
   useEffect(() => {
-    if (!d) return undefined;
+    if (!pvKey) return undefined;
     const my = ++seq.current;
     setPvState('loading');
     const t = setTimeout(() => {
-      ownerAPI.walletPreview({ card: { featured_actions: actions }, visits: 3,
-        design: { pass: d.pass, images: d.images, options: d.options } })
+      ownerAPI.walletPreview({ card: { ...previewCard, featured_actions: actions }, visits: 3,
+        design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
         .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); } })
         .catch(() => { if (my === seq.current) setPvState('error'); });
     }, 450);
@@ -259,6 +272,7 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
     try { const r = await ownerAPI.passDesignerStarter(); init(r.data, false); setDirty(true); } finally { setBusy(''); }
   };
   const save = async () => {
+    if (!d || !dirty) return;
     setBusy('save'); setMsg(null);
     try {
       await ownerAPI.importPassDesigner({ name: d.name, pass_json: JSON.stringify(d.pass), images: d.images,
@@ -269,8 +283,10 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
       onSaved && onSaved();
     } catch (e) {
       setMsg({ ok: false, text: e?.response?.data?.detail || 'Enregistrement impossible.' });
+      throw e;
     } finally { setBusy(''); }
   };
+  useImperativeHandle(ref, () => ({ save, reset: () => { setDirty(false); return load(); } }));
   const remove = async () => {
     if (!window.confirm('Revenir au design FidClic ? Ce design sera retiré des cartes de vos clients.')) return;
     setBusy('remove');
@@ -331,46 +347,45 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
   if (status === 'loading') {
     return <div className="flex items-center gap-2 py-8 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement du design…</div>;
   }
-  if (status === 'empty') {
-    return (
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-[#E6EEFB] bg-[#FAFCFF] p-4">
-          <p className="text-[13.5px] font-bold text-[#0B1C3F]">Concevez votre carte comme dans Pass Designer</p>
-          <p className="mt-1 text-[12.5px] text-[#64748B]">
-            Style, couleurs, images, code-barres, boutons et champs, avec l’aperçu iOS 27 et iOS 26 en direct.
-            Les données de chaque client (prénom, points, tampons, offre…) se remplissent toutes seules.
-          </p>
-          <Btn primary className="mt-3" disabled={!edit || !!busy} onClick={start}>
-            {busy === 'start' ? <Loader2 size={14} className="animate-spin" /> : <LayoutTemplate size={14} />} Créer mon design à partir de ma carte actuelle
-          </Btn>
-        </div>
-        {importBox}
-        {msg && <p className={`text-[12.5px] md:col-span-2 ${msg.ok ? 'text-[#15803D]' : 'text-[#B91C1C]'}`}>{msg.ok ? '✓' : '⚠'} {msg.text}</p>}
+  const startBox = (
+    <div className="grid gap-3">
+      <div className="rounded-xl border border-[#E6EEFB] bg-[#FAFCFF] p-4">
+        <p className="text-[13.5px] font-bold text-[#0B1C3F]">Concevez votre carte comme dans Pass Designer</p>
+        <p className="mt-1 text-[12.5px] text-[#64748B]">
+          Style, couleurs, images, code-barres, boutons et champs, avec l’aperçu iOS 27 et iOS 26 en direct.
+          Les données de chaque client (prénom, points, tampons, offre…) se remplissent toutes seules.
+        </p>
+        <Btn primary className="mt-3" disabled={!edit || !!busy} onClick={start}>
+          {busy === 'start' ? <Loader2 size={14} className="animate-spin" /> : <LayoutTemplate size={14} />} Créer mon design à partir de ma carte actuelle
+        </Btn>
       </div>
-    );
-  }
+      {importBox}
+    </div>
+  );
 
   const groups = GROUPS[style] || [];
-  const imgs = [...(IMAGES[style] || []), ...(style === 'posterGeneric' && d.options.fallback !== 'fidclic'
+  const imgs = !ready ? [] : [...(IMAGES[style] || []), ...(style === 'posterGeneric' && d.options.fallback !== 'fidclic'
     ? [d.options.fallback === 'storeCard' || d.options.fallback === 'coupon' ? ['strip', 'Bannière (iOS 26)', '375 × 144 pt'] : ['thumbnail', 'Vignette (iOS 26)', '90 × 90 pt'], ['logo', 'Logo (iOS 26)', '160 × 50 pt max']]
     : style === 'posterGeneric' ? [['logo', 'Logo (iOS 26, à côté du nom)', '160 × 50 pt max']] : []), ICON_IMAGE]
     .filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i);
-  const bc = (d.pass.barcodes || [])[0] || { format: 'PKBarcodeFormatQR' };
+  const bc = (ready && (d.pass.barcodes || [])[0]) || { format: 'PKBarcodeFormatQR' };
   const ios27Only = (f) => formats.find((x) => x.format === f)?.ios27_only;
   const styles = preview?.styles || [];
   const fbStyle = styles.find((s2) => s2 !== 'posterGeneric');
-  const TABS = [['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
+  const TABS = [['identite', 'Identité', Fingerprint], ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
     ['boutons', 'Boutons', MousePointerClick], ['champs', 'Champs', ListTree]];
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
       {/* ── the inspector ── */}
       <div className="min-w-0">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <input className={`${inputCls} max-w-[240px] font-semibold`} value={d.name} disabled={!edit}
-                 onChange={(e) => change((cur) => ({ ...cur, name: e.target.value }))} aria-label="Nom du design" />
-          {dirty && <span className="rounded-full bg-[#FFF7E6] px-2 py-0.5 text-[11px] font-semibold text-[#B45309]">Non enregistré</span>}
-        </div>
+        {ready && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <input className={`${inputCls} max-w-[240px] font-semibold`} value={d.name} disabled={!edit}
+                   onChange={(e) => change((cur) => ({ ...cur, name: e.target.value }))} aria-label="Nom du design" />
+            {dirty && <span className="rounded-full bg-[#FFF7E6] px-2 py-0.5 text-[11px] font-semibold text-[#B45309]">Non enregistré</span>}
+          </div>
+        )}
         <div className="mb-3 flex flex-wrap gap-1 rounded-xl bg-[#F1F5F9] p-1">
           {TABS.map(([k, label, Icon]) => (
             <button key={k} type="button" onClick={() => setTab(k)}
@@ -379,6 +394,17 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
             </button>
           ))}
         </div>
+        {tab === 'identite' && (
+          <div>
+            <p className="mb-3 text-[12px] text-[#64748B]">
+              Le nom, les couleurs, le logo et la bannière de votre carte : ceux de la carte iOS 26 et avant,
+              de la page web de vos clients et de Google Wallet.
+            </p>
+            {identityPanel}
+          </div>
+        )}
+        {tab !== 'identite' && !ready && startBox}
+        {ready && (
         <fieldset disabled={!edit} className="m-0 min-w-0 border-0 p-0">
           {tab === 'style' && (
             <div className="space-y-4">
@@ -504,7 +530,7 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
             <div>
               <p className="mb-2 text-[12px] text-[#64748B]">Sous la carte, sur iOS 27. Chaque clic est compté dans vos statistiques Wallet.</p>
               <FeaturedActionsEditor types={types} value={actions} disabled={!edit}
-                                     onChange={(rows) => { setActions(rows); setDirty(true); setMsg(null); }} />
+                                     onChange={(rows) => { onActionsChange && onActionsChange(rows); setMsg(null); }} />
             </div>
           )}
 
@@ -546,15 +572,16 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
             </div>
           )}
         </fieldset>
+        )}
 
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[#EEF2F9] pt-4">
-          <Btn primary disabled={!edit || !!busy || !dirty} onClick={save}>
-            {busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Enregistrer le design
+          <Btn primary disabled={!edit || !!busy || !(dirty || externalDirty)} onClick={() => (onSaveAll ? onSaveAll() : save())}>
+            {busy === 'save' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Enregistrer
           </Btn>
-          <Btn disabled={!edit || !!busy} onClick={remove}><RotateCcw size={13} /> Revenir au design FidClic</Btn>
+          {ready && <Btn disabled={!edit || !!busy} onClick={remove}><RotateCcw size={13} /> Revenir au design FidClic</Btn>}
           {msg && <span className={`text-[12px] ${msg.ok ? 'text-[#15803D]' : 'text-[#B91C1C]'}`}>{msg.ok ? <Check size={13} className="mr-1 inline" /> : '⚠ '}{msg.text}</span>}
         </div>
-        <div className="mt-4">{importBox}</div>
+        {ready && <div className="mt-4">{importBox}</div>}
       </div>
 
       {/* ── the live preview ── */}
@@ -606,6 +633,12 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
             <p className="mt-2 text-center text-[11px] text-[#94A3B8]">
               Exemple : {preview.sample?.name}, {preview.sample?.visits} visites — construit par le serveur, comme le vrai pass.
             </p>
+            {clientPreview && (
+              <div className="mt-5 border-t border-[#E6EEFB] pt-4">
+                <p className="mb-2 text-center text-[11px] font-semibold text-[#64748B]">Page web du client (lien de la carte, Google Wallet)</p>
+                <div className="mx-auto" style={{ width: 260 }}>{clientPreview}</div>
+              </div>
+            )}
           </>
         ) : (
           <div className="flex h-64 items-center justify-center text-[12.5px] text-[#94A3B8]">Chargement de l’aperçu…</div>
@@ -620,4 +653,6 @@ export default function CardDesigner({ edit = true, types = [], formats = [], in
       )}
     </div>
   );
-}
+});
+
+export default CardDesigner;
