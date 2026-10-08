@@ -29,6 +29,8 @@ EVERY FIGURE IS REAL
 """
 from __future__ import annotations
 
+import re
+
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -198,6 +200,12 @@ class CardSettings(BaseModel):
     # ── advanced: the knobs Apple and Google actually expose ──────────────
     code_type: Optional[str] = None              # qr | barcode | pdf417 | aztec | any PKBarcodeFormat…
     code_fallback: Optional[str] = None          # the format iOS 26 and earlier read
+    # « Logo rond » (user, 2026-10-08): the logo cut to a disc, optional ring
+    logo_round: Optional[bool] = None
+    logo_ring: Optional[bool] = None
+    logo_ring_color: Optional[str] = None
+    # the Google Wallet card's own design (wallet_passes.clean_google_design)
+    google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None
     use_full_name: Optional[bool] = None
     greeting_label: Optional[str] = None
@@ -227,6 +235,11 @@ class CardSettings(BaseModel):
     poster_image_url: Optional[str] = None                    # portrait photo for the poster
     featured_actions: Optional[List[Dict[str, str]]] = None   # [{type, url?}]
 
+
+
+def _google_design(d):
+    from features.wallet_passes import clean_google_design
+    return clean_google_design(d)
 
 
 def _barcode_formats():
@@ -285,6 +298,10 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
         "advanced": {
             "code_type": tpl.get("code_type") or "qr",
             "code_fallback": tpl.get("code_fallback") or "",
+            "logo_round": bool(tpl.get("logo_round")),
+            "logo_ring": bool(tpl.get("logo_ring")),
+            "logo_ring_color": tpl.get("logo_ring_color") or "",
+            "google_design": _google_design(tpl.get("google_design")),
             "barcode_formats": _barcode_formats(),
             "show_card_number": tpl.get("show_card_number") is not False,
             "use_full_name": bool(tpl.get("use_full_name")),
@@ -359,6 +376,10 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Type de code inconnu")
     if payload.get("code_fallback") is not None and payload["code_fallback"] not in ("", *BARCODE_FORMATS):
         raise HTTPException(status_code=400, detail="Code de secours inconnu")
+    if payload.get("logo_ring_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_ring_color"]):
+        raise HTTPException(status_code=400, detail="Couleur de bordure invalide.")
+    if payload.get("google_design") is not None:
+        payload["google_design"] = _google_design(payload["google_design"])
     if payload.get("header_field") is not None and payload["header_field"] not in ("auto", "tier", "points", "visits", "none"):
         raise HTTPException(status_code=400, detail="Champ d'en-tête inconnu")
     if payload.get("hero_mode") is not None and payload["hero_mode"] not in ("image", "brand", "none"):
