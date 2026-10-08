@@ -38,6 +38,7 @@ MODULES = [
     ("insights", "Insights"), ("notifications", "Notifications"), ("abonnements", "Abonnements"),
     ("plan_limits", "Plan Limits"), ("ai", "FIDCLIC AI"), ("crm", "CRM de prospection"),
     ("facturation", "Facturation"), ("support", "Support"), ("securite", "Admin"), ("parametres", "Paramètres"),
+    ("equipe", "Suivi d'équipe"),        # FidClic's team tasks (features/team_tasks.py)
 ]
 MODULE_KEYS = [k for k, _ in MODULES]
 # Managing users, roles and security settings stays with the super admin,

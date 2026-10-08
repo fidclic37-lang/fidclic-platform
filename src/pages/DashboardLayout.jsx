@@ -14,7 +14,7 @@ import {
   Home, Users, QrCode, LogOut, BarChart3, Settings2,
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Headphones, PieChart, Share2, Zap, ShoppingBag,
-  UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown,
+  UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown, ClipboardCheck,
   Receipt, Eye, ShieldCheck, Lock,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
@@ -558,6 +558,7 @@ const DashboardLayout = () => {
               {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Admin" currentPath={currentPath} role={role} collapsed={collapsed} />}
               {can(user, 'support') && <NavLink to="/admin/support" icon={Headphones} label="Centre de support" currentPath={currentPath} role={role} collapsed={collapsed} badge={supportUnread || null} />}
+              {can(user, 'equipe') && <NavLink to="/admin/equipe" icon={ClipboardCheck} label="Suivi d'équipe" currentPath={currentPath} role={role} collapsed={collapsed} />}
               <SignOutNavItem onClick={logout} collapsed={collapsed} />
             </>
           )}
