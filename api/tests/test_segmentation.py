@@ -93,10 +93,22 @@ def main():
           S.FIELD_BY_KEY["distance"]["ops"][0]["label"] == "est inférieure à"
           and S.FIELD_BY_KEY["spend"]["ops"][0]["label"] == "est inférieur à")
 
+    # QA F04 (2026-10-08): one definition of inactive — a client who never
+    # came is aged from their sign-up, as on Clients, Dashboard, Campagnes.
     check("dernière visite : il y a plus de 30 jours",
-          ids([{"field": "last_visit", "op": "gt", "value": 30}]) == {"reg2", "old1", "old2", "zero"})
-    check("a client who never came counts as 'plus de 30 jours'",
-          "zero" in ids([{"field": "last_visit", "op": "gt", "value": 30}]))
+          ids([{"field": "last_visit", "op": "gt", "value": 30}]) == {"reg2", "old1", "old2"})
+    check("a client who joined 5 days ago and never came is not 'plus de 30 jours'",
+          "zero" not in ids([{"field": "last_visit", "op": "gt", "value": 30}]))
+    rule30 = {"field": "last_visit", "op": "gt", "value": 30}
+    check("…but one who joined 40 days ago and never came is",
+          S._matches({"created_at": now - dt.timedelta(days=40), "visits": 0}, rule30, now, None))
+    check("whole days, as the Clients page counts: 30 days and a half is not 'plus de 30'",
+          not S._matches({"last_visit_date": now - dt.timedelta(days=30.5), "visits": 3}, rule30, now, None)
+          and S._matches({"last_visit_date": now - dt.timedelta(days=31.2), "visits": 3}, rule30, now, None))
+    from features import clients_page as CPg
+    people = list(db.customers.find({"tenant_id": "t1"}, {"_id": 0}))
+    check("Segmentation's « inactifs » = the Clients page's inactive clients",
+          ids(S._models("t1")[0]["rules"]) == {c["id"] for c in people if CPg.is_inactive(c, now)})
     check("but never as 'moins de 30 jours'",
           "zero" not in ids([{"field": "last_visit", "op": "lt", "value": 30}]))
 
@@ -106,8 +118,10 @@ def main():
 
     check("montant dépensé is the AVERAGE basket, as the mockup words it",
           ids([{"field": "spend", "op": "gt", "value": 20}]) == {"vip1", "vip2", "old1"})
-    check("someone who spent nothing is below any threshold",
-          "zero" in ids([{"field": "spend", "op": "lt", "value": 20}]))
+    # QA (2026-10-08): « Petits paniers (< 8 €) » held every client who never came
+    check("someone who never bought has no basket — neither small nor big",
+          "zero" not in ids([{"field": "spend", "op": "lt", "value": 20}])
+          and "zero" not in ids([{"field": "spend", "op": "gt", "value": 20}]))
 
     check("statut fidélité : VIP", ids([{"field": "tier", "op": "eq", "value": "vip"}]) == {"vip1", "vip2"})
     check("'Non membre' means nobody has ever bought, not a tier name",
@@ -183,8 +197,8 @@ def main():
     dormant = S.evaluate("t1", S._clean_rules([{"field": "last_visit", "op": "gt", "value": 90}]), at=now)
     check("a dormant segment is valued at the dormant rate",
           S.potential(dormant, shop_avg, now)["amount"] == expect([c["id"] for c in dormant]))
-    check("and that segment is the two dormant clients plus the one who never came",
-          {c["id"] for c in dormant} == {"old1", "old2", "zero"})
+    check("and that segment is the two dormant clients (the one who joined 5 days ago is not dormant)",
+          {c["id"] for c in dormant} == {"old1", "old2"})
     check("a client who never bought is valued at the shop's average basket",
           S.potential([next(c for c in db.customers.find({"id": "zero"}))], shop_avg, now)["amount"]
           == round(shop_avg * 0.08 + 1e-9, 2))
@@ -245,7 +259,7 @@ def main():
 
     # ---- the builder ---------------------------------------------------------------------------
     print("\nLe constructeur")
-    pv = S.preview(S.Preview(rules=[{"field": "last_visit", "op": "gt", "value": 30},
+    pv = S.preview(S.Preview(rules=[{"field": "joined", "op": "lt", "value": 30},
                                     {"field": "visits", "op": "eq", "value": 0}]),
                    token_data=TD())
     check("the preview counts what the rules match", pv["count"] == 1 and pv["total"] == len(CAST))
@@ -258,7 +272,7 @@ def main():
           S.preview(S.Preview(rules=[]), token_data=TD())["count"] == len(CAST))
 
     made = S.create(S.SegmentIn(name="Clients à réactiver",
-                                rules=[{"field": "last_visit", "op": "gt", "value": 30},
+                                rules=[{"field": "joined", "op": "lt", "value": 30},
                                        {"field": "visits", "op": "eq", "value": 0}]),
                     token_data=TD())
     check("a segment is created with its count", made["count"] == 1)

@@ -180,6 +180,24 @@ MODELS: List[Dict[str, Any]] = [
      "description": "Panier moyen inférieur à 8 €.",
      "rules": [{"field": "spend", "op": "lt", "value": 8}]},
 ]
+def _models(tid: Optional[str]) -> List[Dict[str, Any]]:
+    """The models for this shop: « Clients inactifs » follows the shop's own
+    « Client actif » window (Règles clients), as the Clients page, the
+    Dashboard and Campagnes do — one definition of inactive everywhere."""
+    try:
+        from features import customer_rules as R
+        days = R.active_days(R.load(tid)) if tid else 30
+    except Exception:
+        days = 30
+    out = []
+    for m in MODELS:
+        if m["key"] == "inactifs":
+            m = {**m, "description": f"Ne sont pas venus depuis plus de {days} jours.",
+                 "rules": [{"field": "last_visit", "op": "gt", "value": days}]}
+        out.append(m)
+    return out
+
+
 # The five the table always shows, as in the design.
 TABLE_MODELS = ("inactifs", "fideles", "nouveaux", "gros_paniers", "locaux")
 SHOWN_MODELS = 5
@@ -306,13 +324,23 @@ def _matches(cust: Dict[str, Any], rule: Dict[str, Any], at: datetime,
     field, op, value = rule["field"], rule["op"], rule["value"]
 
     if field in ("last_visit", "joined"):
-        source = cust.get("last_visit_date") if field == "last_visit" else cust.get("created_at")
+        if field == "last_visit" and op == "gt":
+            # « Pas venu depuis plus de N jours » counts like every other page
+            # (QA F04, 2026-10-08: Segmentation said 98 inactive, Clients 0):
+            # a client who never came is aged from their sign-up, so someone
+            # who joined today is not « inactive » (clients_page.last_contact).
+            from features.clients_page import last_contact
+            source = last_contact(cust)
+        else:
+            source = cust.get("last_visit_date") if field == "last_visit" else cust.get("created_at")
         days = _days_since(source, at)
         if days is None:
-            # Never came / no signup date. "More than N days ago" is true of
-            # someone who never came at all; "less than N" cannot be.
+            # No date at all: « more than N days » is true of someone with no
+            # trace; « less than N » (a recent visit, a recent sign-up) cannot be.
             return op == "gt"
-        return days > value if op == "gt" else days < value
+        # whole days, as the Clients page counts them (30.5 days is « 30 »)
+        whole = math.floor(days)
+        return whole > value if op == "gt" else whole < value
 
     if field == "visits":
         n = _num(cust.get("visits"))
@@ -323,7 +351,9 @@ def _matches(cust: Dict[str, Any], rule: Dict[str, Any], at: datetime,
         # is the average basket, not the lifetime total.
         basket = _avg_basket(cust)
         if basket is None:
-            return op == "lt"          # spent nothing is below any threshold
+            # Never bought: no basket at all, small or big (QA, 2026-10-08:
+            # « Petits paniers (< 8 €) » held all 100 clients who never came).
+            return False
         return basket == value if op == "eq" else (basket > value if op == "gt" else basket < value)
 
     if field == "distance":
@@ -487,7 +517,7 @@ def _model_rows(tid: str) -> List[Dict[str, Any]]:
     return [{"id": f"model:{m['key']}", "name": m["name"], "description": m["description"],
              "icon": m["icon"], "tone": m["tone"], "rules": m["rules"],
              "builtin": True, "created_at": None, "last_used_at": None}
-            for m in MODELS if m["key"] in TABLE_MODELS and m["key"] not in adopted]
+            for m in _models(tid) if m["key"] in TABLE_MODELS and m["key"] not in adopted]
 
 
 def _segment_rows(tid: str, at: datetime) -> List[Dict[str, Any]]:
@@ -613,7 +643,7 @@ def _recommended_models(tid, people, at, distances) -> List[Dict[str, Any]]:
     """
     adopted = _adopted(tid)
     out = []
-    for m in MODELS:
+    for m in _models(tid):
         if m["key"] in adopted:
             continue
         n = len(evaluate(tid, m["rules"], people, at, distances))
@@ -736,7 +766,7 @@ def create(req: SegmentIn, request: Request = None,
     icon, tone, description = req.icon, req.tone, req.description
 
     if req.model:
-        model = next((m for m in MODELS if m["key"] == req.model), None)
+        model = next((m for m in _models(tid) if m["key"] == req.model), None)
         if not model:
             raise HTTPException(status_code=404, detail="Modèle inconnu")
         rules = rules or _clean_rules(model["rules"])
@@ -808,7 +838,7 @@ def members(segment_id: str, request: Request = None,
     tid = token_data.tenant_id
     at = _now()
     if segment_id.startswith("model:"):
-        model = next((m for m in MODELS if m["key"] == segment_id.split(":", 1)[1]), None)
+        model = next((m for m in _models(tid) if m["key"] == segment_id.split(":", 1)[1]), None)
         if not model:
             raise HTTPException(status_code=404, detail="Segment introuvable")
         name, rules = model["name"], _clean_rules(model["rules"])

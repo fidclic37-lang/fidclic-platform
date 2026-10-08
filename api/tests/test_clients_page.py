@@ -232,7 +232,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     lines = [l for l in body.splitlines() if l.strip()]
     check("it opens in French Excel", body.startswith("﻿Client;"))
     check("the header names the table's columns",
-          "Statut;Segment;Visites;Total dépensé (€)" in lines[0])
+          "Statut;Segment;Source;Visites;Total dépensé (€)" in lines[0])   # Source since #151
     check("every client is exported, not just the page", len(lines) == 11)
     check("a filtered export exports only that filter",
           len([l for l in CP.export_clients(segment="vip", token_data=TD()).body.decode().splitlines()
@@ -280,8 +280,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                             "src", "pages", "ClientsPage.jsx")).read()
     check("saved segments are loaded, applied and deleted",
           all(x in src for x in ("listSavedSegments", "applySaved", "deleteSavedSegment")))
+    # the segment key travels inside the filters (QA F01, #153: as its own
+    # field it was refused with a 422 that crashed the page)
     check("saving stores the whole current filter, not just the segment",
-          "createSavedSegment({ name, segment, filters: currentFilters })" in src)
+          "createSavedSegment({ name, filters: currentFilters })" in src)
     check("the compose button counts the filter when nothing is picked",
           "picked.length || feed.total" in src)
     check("and it sends to the ids the server resolved",

@@ -608,10 +608,13 @@ def _tab_comportement(r: Reader) -> Dict[str, Any]:
     spend = [float(c.get("total_amount_paid") or 0) for c in people]
     ltv, avg_visits, avg_life = life["ltv"], life["avg_visits"], life["avg_life"]
 
+    from features import clients_page as CP
     # Frequency buckets, as the design's "segmentation comportementale" shows.
     buckets = {"reguliers": 0, "occasionnels": 0, "nouveaux": 0, "inactifs": 0}
     for c in people:
-        last, created = _aware(c.get("last_visit_date")), _aware(c.get("created_at"))
+        # never came: aged from the sign-up, like everywhere else (QA F04) —
+        # a client who joined this week is « nouveau », not « inactif »
+        last, created = CP.last_contact(c), _aware(c.get("created_at"))
         if not last or (r.at - last).days >= INACTIVE_DAYS * 3:
             buckets["inactifs"] += 1
         elif created and (r.at - created).days <= NEW_DAYS:

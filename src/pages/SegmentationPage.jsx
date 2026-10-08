@@ -6,6 +6,7 @@ import {
   BarChart3, ChevronDown, Check,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { confirmImportant } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 
@@ -450,6 +451,9 @@ export default function SegmentationPage() {
 
   const remove = async (row) => {
     setMenuFor(null);
+    // Paramètres › Préférences › Confirmation des actions importantes (QA F07:
+    // a segment was deleted at once, the setting ignored)
+    if (!confirmImportant(`Supprimer le segment « ${row.name} » ? Cette action est définitive.`)) return;
     try { await ownerAPI.deleteSegment(row.id); setFlash(`« ${row.name} » supprimé.`); load(); }
     catch (e) { setError(e?.response?.data?.detail || 'Suppression impossible.'); }
   };
