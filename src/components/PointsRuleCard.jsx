@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Coins, ShieldCheck } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { C } from './PageShell';
+import DecimalInput from './DecimalInput';
 
 /**
  * PointsRuleCard — owner control for the points-per-euro rule.
@@ -141,12 +142,9 @@ const PointsRuleCard = ({ id }) => {
             Points par euro dépensé {mode === 'per_euro' ? '(actif)' : '(inactif)'}
           </span>
           <div className="flex items-center gap-2 mt-1">
-            <input
-              type="number"
-              min="0"
-              step="0.5"
+            <DecimalInput
               value={rate}
-              onChange={(e) => setRate(e.target.value)}
+              onChange={setRate}
               className="w-32 px-3 py-2 rounded-lg border text-base font-bold"
               style={{ borderColor: C.hairline, color: C.inkDeep }}
             />
