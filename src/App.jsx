@@ -331,8 +331,11 @@ function App() {
           } />
           <Route path="/voir-compte" element={<ViewAsEntry />} />
           <Route path="/join/:slug" element={<JoinPage />} />
+          {/* one link per channel (Paramètres › Lien d'inscription): /join/<slug>/insta, /wa… */}
+          <Route path="/join/:slug/:channel" element={<JoinPage />} />
           {/* The French address the Paramètres page hands out; /join stays for every QR already printed. */}
           <Route path="/inscription/:slug" element={<JoinPage />} />
+          <Route path="/inscription/:slug/:channel" element={<JoinPage />} />
           <Route path="/card/:barcodeId/offres" element={<CardOffersPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
 

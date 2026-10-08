@@ -232,6 +232,8 @@ const Modal = ({ title, onClose, children, footer }) => {
   );
 };
 
+const ordinal = (n) => (Number(n) <= 1 ? '1re' : `${n}e`);
+
 const NumberField = ({ label, hint, value, onChange, min = 0, max = 10000 }) => (
   <label className="block">
     <span className="mb-1.5 block text-[12.5px] font-semibold text-[#334155]">{label}</span>
@@ -256,6 +258,9 @@ const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
         referrer_reward_points: form.referrer_reward_points,
         referee_reward_points: form.referee_reward_points,
         minimum_visits_to_earn: form.minimum_visits_to_earn,
+        reward_mode: form.reward_mode || 'once',
+        referrer_reward_points_next: form.referrer_reward_points_next || 0,
+        referee_reward_points_next: form.referee_reward_points_next || 0,
       });
       onSaved();
     } catch (e) {
@@ -285,19 +290,47 @@ const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${form.enabled ? 'left-[22px]' : 'left-0.5'}`} />
         </span>
       </button>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <NumberField label="Points pour le parrain" value={form.referrer_reward_points}
-                     hint="Crédités une fois le parrainage validé."
-                     onChange={(v) => setForm((f) => ({ ...f, referrer_reward_points: v }))} />
-        <NumberField label="Points pour le filleul" value={form.referee_reward_points}
-                     hint="Crédités dès l'inscription."
-                     onChange={(v) => setForm((f) => ({ ...f, referee_reward_points: v }))} />
-      </div>
-      <div className="mt-4">
+      <div>
         <NumberField label="Visites du filleul avant validation" min={1} max={20}
                      value={form.minimum_visits_to_earn}
-                     hint="En dessous de ce nombre, le parrainage reste « En attente » et le parrain n'est pas encore crédité."
+                     hint="Personne n'est crédité à l'inscription : le parrainage reste « En attente » jusqu'à cette visite du filleul."
                      onChange={(v) => setForm((f) => ({ ...f, minimum_visits_to_earn: v }))} />
+      </div>
+      {/* « Quand créditer » (user, 2026-10-08): once, every visit, or a first
+          amount then another at each later visit — the owner's choice */}
+      <p className="mb-1.5 mt-4 text-[12.5px] font-semibold text-[#334155]">Quand créditer parrain et filleul ?</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {[
+          ['once', 'Une seule fois', `À la ${ordinal(form.minimum_visits_to_earn)} visite du filleul`],
+          ['every', 'À chaque visite', `À partir de la ${ordinal(form.minimum_visits_to_earn)} visite`],
+          ['first_then', 'Bonus puis récurrent', 'Un montant à la validation, un autre à chaque visite suivante'],
+        ].map(([k, label, sub]) => (
+          <button key={k} type="button" onClick={() => setForm((f) => ({ ...f, reward_mode: k }))}
+                  className={`rounded-xl border p-3 text-left ${(form.reward_mode || 'once') === k ? 'border-[#2F6BFF] bg-[#EAF1FF]' : 'border-[#E6EEFB] bg-white hover:border-[#BFD3FF]'}`}>
+            <span className={`block text-[13px] font-semibold ${(form.reward_mode || 'once') === k ? 'text-[#2F6BFF]' : 'text-[#0B1C3F]'}`}>{label}</span>
+            <span className="mt-0.5 block text-[11.5px] leading-snug text-[#64748B]">{sub}</span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <NumberField label={form.reward_mode === 'first_then' ? 'Points pour le parrain — à la validation' : form.reward_mode === 'every' ? 'Points pour le parrain — à chaque visite' : 'Points pour le parrain'}
+                     value={form.referrer_reward_points}
+                     hint={`Crédités à la ${ordinal(form.minimum_visits_to_earn)} visite du filleul${form.reward_mode === 'every' ? ', puis à chaque visite suivante' : ''}.`}
+                     onChange={(v) => setForm((f) => ({ ...f, referrer_reward_points: v }))} />
+        <NumberField label={form.reward_mode === 'first_then' ? 'Points pour le filleul — à la validation' : form.reward_mode === 'every' ? 'Points pour le filleul — à chaque visite' : 'Points pour le filleul'}
+                     value={form.referee_reward_points}
+                     hint={`Crédités à sa ${ordinal(form.minimum_visits_to_earn)} visite${form.reward_mode === 'every' ? ', puis à chaque visite suivante' : ''} — pas à l'inscription.`}
+                     onChange={(v) => setForm((f) => ({ ...f, referee_reward_points: v }))} />
+        {form.reward_mode === 'first_then' && (
+          <>
+            <NumberField label="Points pour le parrain — visites suivantes" value={form.referrer_reward_points_next || 0}
+                         hint="À chaque visite du filleul après la validation."
+                         onChange={(v) => setForm((f) => ({ ...f, referrer_reward_points_next: v }))} />
+            <NumberField label="Points pour le filleul — visites suivantes" value={form.referee_reward_points_next || 0}
+                         hint="À chacune de ses visites après la validation."
+                         onChange={(v) => setForm((f) => ({ ...f, referee_reward_points_next: v }))} />
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -319,7 +352,7 @@ const HowModal = ({ onClose }) => (
         ["Un client montre sa carte", "Son QR code est celui qu'il utilise déjà en caisse."],
         ["Un proche le scanne", "Son téléphone ouvre le formulaire d'inscription, qui affiche le prénom du parrain."],
         ["Il crée sa carte", "Le parrainage est enregistré. Aucun point n'est encore versé."],
-        ["Il vient une première fois", "Parrain et filleul sont crédités, une seule fois — une visite, ça ne se falsifie pas."],
+        ["Il vient en magasin", "À la visite que vous avez choisie, parrain et filleul sont crédités — une fois, ou à chaque visite selon vos réglages. Une visite, ça ne se falsifie pas."],
       ].map(([title, sub], i) => (
         <li key={title} className="flex gap-3">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EAF1FF] text-[12px] font-bold text-[#2F6BFF]">
@@ -355,7 +388,8 @@ const EXAMPLE = (() => {
   return {
     example: true,
     enabled: true,
-    config: { referrer_reward_points: 50, referee_reward_points: 25, minimum_visits_to_earn: 2 },
+    config: { referrer_reward_points: 50, referee_reward_points: 25, minimum_visits_to_earn: 2, reward_mode: 'once',
+              referrer_reward_points_next: 0, referee_reward_points_next: 0 },
     cards: [
       { key: 'referrals', label: 'Parrainages réalisés', icon: 'users', tone: 'teal', value: 56, delta_pct: 42 },
       { key: 'active', label: 'Parrains actifs', icon: 'user', tone: 'blue', value: 28, delta_pct: 35 },

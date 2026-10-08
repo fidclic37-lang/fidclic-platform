@@ -13,8 +13,11 @@ THE ONLY WAY IN IS AN EXISTING CUSTOMER'S OWN CARD
       2. The QR is that card's public URL, so the phone opens it.
       3. The phone has no card of its own → it is sent to the signup form,
          which says who invited them.
-      4. They sign up. The referral is recorded, PENDING — no points yet.
-      5. On their FIRST visit, parrain and filleul are both credited, once.
+      4. They sign up. The referral is recorded, PENDING — no points yet, and
+         the new client's source is « Parrainage ».
+      5. From the visit the owner chose (the 1st by default), parrain and
+         filleul are credited — once, at every visit, or a first amount then
+         another at each later visit (« Quand créditer », user 2026-10-08).
 
     Nothing to print, nothing to copy, nothing to explain to a customer.
 
@@ -63,6 +66,9 @@ def init(db):
         pass
 
 
+REWARD_MODES = ("once", "every", "first_then")
+
+
 # ---------- Models ----------
 class ReferralConfig(BaseModel):
     tenant_id: Optional[str] = None
@@ -70,6 +76,13 @@ class ReferralConfig(BaseModel):
     referrer_reward_points: int = 50
     referee_reward_points: int = 25
     minimum_visits_to_earn: int = 1   # referee must reach this many visits before referrer is credited
+    # When both are credited (user, 2026-10-08), from that visit on:
+    #   once        — once, at that visit
+    #   every       — at that visit and every visit after it
+    #   first_then  — the points above at that visit, then *_next at each later one
+    reward_mode: str = "once"
+    referrer_reward_points_next: int = 0
+    referee_reward_points_next: int = 0
     referrer_message: str = "Thanks for sharing! You earned {points} points."
     referee_message: str = "Welcome via a friend! Here are {points} points to start."
 
@@ -91,6 +104,12 @@ def update_config(
     token_data: TokenData = Depends(require_role(["business_owner"])),
 ):
     config.tenant_id = token_data.tenant_id
+    if config.reward_mode not in REWARD_MODES:
+        raise HTTPException(status_code=400, detail="Mode de crédit inconnu.")
+    for f in ("referrer_reward_points", "referee_reward_points",
+              "referrer_reward_points_next", "referee_reward_points_next"):
+        setattr(config, f, max(0, min(10000, int(getattr(config, f) or 0))))
+    config.minimum_visits_to_earn = max(1, min(20, int(config.minimum_visits_to_earn or 1)))
     payload = config.model_dump()
     _db.referral_config.update_one(
         {"tenant_id": token_data.tenant_id},
@@ -170,38 +189,70 @@ def record(tenant_id: str, parrain_barcode: str, filleul: Dict[str, Any]) -> Opt
 
 
 def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
-    """Pay both sides, once, when the filleul has actually come.
+    """Pay parrain and filleul when the filleul has actually come.
 
-    Called after a visit is recorded. Until this runs, a referral has promised
-    points and paid none — which is the whole point: a signup is free to fake,
-    a visit is not.
+    Called after every visit is recorded. Until the filleul reaches the
+    owner's visit (« Visites du filleul avant validation »), a referral has
+    promised points and paid none — a signup is free to fake, a visit is not.
+    From that visit on, the programme's « Quand créditer » decides:
+      once        the first payment only
+      every       the same points at every later visit too
+      first_then  the first payment, then the *_next points at each later visit
+    Each visit is paid at most once, however many tills scan it.
     """
-    row = _db.referral_redemptions.find_one(
-        {"tenant_id": tenant_id, "referee_customer_id": filleul_id, "referrer_pending": True})
+    row = _db.referral_redemptions.find_one({"tenant_id": tenant_id, "referee_customer_id": filleul_id})
     if not row:
         return None
     cfg = _db.referral_config.find_one({"tenant_id": tenant_id}) or {}
     filleul = _db.customers.find_one({"id": filleul_id})
-    if not filleul or int(filleul.get("visits") or 0) < int(cfg.get("minimum_visits_to_earn", 1)):
+    need = max(1, int(cfg.get("minimum_visits_to_earn", 1) or 1))
+    visits = int((filleul or {}).get("visits") or 0)
+    if not filleul or visits < need:
         return None
+    now = datetime.now(timezone.utc)
+    mode = cfg.get("reward_mode") if cfg.get("reward_mode") in REWARD_MODES else "once"
 
-    # Claim it first: two tills scanning the same card at once must not pay twice.
-    claimed = _db.referral_redemptions.update_one(
-        {"_id": row["_id"], "referrer_pending": True},
-        {"$set": {"referrer_pending": False,
-                  "referrer_points": int(row.get("referrer_points_promised") or 0),
-                  "referee_points": int(row.get("referee_points_promised") or row.get("referee_points") or 0),
-                  "settled_at": datetime.now(timezone.utc)}})
+    if row.get("referrer_pending", True):
+        # The first payment — what was promised at signup. Claimed first: two
+        # tills scanning the same card at once must not pay twice.
+        parrain_pts = int(row.get("referrer_points_promised") or 0)
+        filleul_pts = int(row.get("referee_points_promised") or row.get("referee_points") or 0)
+        claimed = _db.referral_redemptions.update_one(
+            {"_id": row["_id"], "referrer_pending": True},
+            {"$set": {"referrer_pending": False, "referrer_points": parrain_pts, "referee_points": filleul_pts,
+                      "settled_at": now, "rewarded_visits": 1, "last_rewarded_visit": visits}})
+        kind = "first"
+    else:
+        if mode == "once":
+            return None
+        last = int(row.get("last_rewarded_visit") or need)
+        if visits <= last:
+            return None                                    # this visit is already paid
+        if mode == "every":
+            parrain_pts = int(cfg.get("referrer_reward_points", 50) or 0)
+            filleul_pts = int(cfg.get("referee_reward_points", 25) or 0)
+        else:
+            parrain_pts = int(cfg.get("referrer_reward_points_next", 0) or 0)
+            filleul_pts = int(cfg.get("referee_reward_points_next", 0) or 0)
+        claimed = _db.referral_redemptions.update_one(
+            {"_id": row["_id"], "$or": [{"last_rewarded_visit": {"$lt": visits}},
+                                        {"last_rewarded_visit": {"$exists": False}}]},
+            {"$set": {"last_rewarded_visit": visits, "last_rewarded_at": now},
+             "$inc": {"referrer_points": parrain_pts, "referee_points": filleul_pts, "rewarded_visits": 1}})
+        kind = "next"
     if not getattr(claimed, "modified_count", 1):
         return None
 
-    parrain_pts = int(row.get("referrer_points_promised") or 0)
-    filleul_pts = int(row.get("referee_points_promised") or row.get("referee_points") or 0)
     if parrain_pts:
         _db.customers.update_one({"id": row["referrer_customer_id"]}, {"$inc": {"points": parrain_pts}})
+        try:                                   # the parrain was not scanned: wake their card
+            from features.wallet_passes import notify_customer
+            notify_customer(row["referrer_customer_id"])
+        except Exception:
+            pass
     if filleul_pts:
         _db.customers.update_one({"id": filleul_id}, {"$inc": {"points": filleul_pts}})
-    return {"referrer_customer_id": row["referrer_customer_id"],
+    return {"referrer_customer_id": row["referrer_customer_id"], "kind": kind,
             "referrer_points": parrain_pts, "referee_points": filleul_pts}
 
 
@@ -227,6 +278,9 @@ def inviter(barcode_id: str):
         "business_name": tenant.get("name"),
         "referee_points": int(cfg.get("referee_reward_points", 25)),
         "referrer_points": int(cfg.get("referrer_reward_points", 50)),
+        # when they are paid, so the signup form says it right
+        "minimum_visits": max(1, int(cfg.get("minimum_visits_to_earn", 1) or 1)),
+        "reward_mode": cfg.get("reward_mode") if cfg.get("reward_mode") in REWARD_MODES else "once",
     }
 
 
@@ -486,7 +540,10 @@ def overview(
         "enabled": bool(config.get("enabled")),
         "config": {"referrer_reward_points": int(config.get("referrer_reward_points") or 50),
                    "referee_reward_points": int(config.get("referee_reward_points") or 25),
-                   "minimum_visits_to_earn": int(config.get("minimum_visits_to_earn") or 1)},
+                   "minimum_visits_to_earn": int(config.get("minimum_visits_to_earn") or 1),
+                   "reward_mode": config.get("reward_mode") if config.get("reward_mode") in REWARD_MODES else "once",
+                   "referrer_reward_points_next": int(config.get("referrer_reward_points_next") or 0),
+                   "referee_reward_points_next": int(config.get("referee_reward_points_next") or 0)},
         "cards": cards,
         "series": series,
         "breakdown": {"total": total_seg, "segments": breakdown},

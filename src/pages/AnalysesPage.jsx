@@ -230,8 +230,10 @@ const Bars = ({ items, money: isMoney }) => {
       {items.map((i, n) => {
         const v = i.value ?? i.count ?? 0;
         return (
-          <li key={i.label || i.name} className="flex items-center gap-3 text-[12.5px]">
-            <span className="w-24 shrink-0 truncate text-[#475569] sm:w-40" title={i.label || i.name}>{i.label || i.name}</span>
+          <li key={i.label || i.name} className={`flex items-center gap-3 text-[12.5px] ${i.onClick ? 'cursor-pointer rounded-lg hover:bg-[#F6F9FF]' : ''}`}
+              {...(i.onClick ? { onClick: i.onClick, role: 'button', tabIndex: 0, title: i.title || 'Voir ces clients',
+                                 onKeyDown: (e) => { if (e.key === 'Enter') i.onClick(); } } : {})}>
+            <span className={`w-24 shrink-0 truncate sm:w-40 ${i.onClick ? 'text-[#2F6BFF] underline-offset-2 hover:underline' : 'text-[#475569]'}`} title={i.label || i.name}>{i.label || i.name}</span>
             <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-[#EEF3FB]">
               <span className="block h-full rounded-full"
                     style={{ width: `${(v / max) * 100}%`, background: TONES[TONE_ORDER[n % 6]].dot }} />
@@ -593,12 +595,19 @@ const TabProduits = ({ d }) => d.empty ? <Empty message={d.message} /> : (
   </>
 );
 
-const TabAcquisition = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+const TabAcquisition = ({ d }) => {
+  // each source opens its clients on the Clients page — filter set, ready to
+  // contact (user, 2026-10-08)
+  const navigate = useNavigate();
+  return d.empty ? <Empty message={d.message} /> : (
   <>
     <Strip items={d.strip} />
     <div className="mb-4 grid gap-4 lg:grid-cols-2">
       <Panel title="Origine des nouveaux clients" note={d.window_note}>
-        <Bars items={d.sources.map((s) => ({ label: s.name, value: s.count }))} />
+        <Bars items={d.sources.map((s) => ({ label: s.name, value: s.count,
+                                             ...(s.key ? { onClick: () => navigate(`/dashboard/customers?source=${s.key}`),
+                                                           title: `Voir les clients venus par ${s.name}` } : {}) }))} />
+        <p className="mt-2 text-[11.5px] text-[#94A3B8]">Cliquez une source pour voir ses clients et les contacter.</p>
       </Panel>
       <Panel title="Données géographiques">
         <Bars items={d.places.map((p) => ({ label: p.name, value: p.count }))} />
@@ -607,6 +616,7 @@ const TabAcquisition = ({ d }) => d.empty ? <Empty message={d.message} /> : (
     <Panel title="Acquisition de nouveaux clients"><Line series={d.new_series} /></Panel>
   </>
 );
+};
 
 const TabComportement = ({ d }) => d.empty ? <Empty message={d.message} /> : (
   <>

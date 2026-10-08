@@ -260,7 +260,8 @@ const MyWalletCardPage = () => {
       .then(({ data }) => {
         if (!alive || !data?.enabled || !data?.slug) return;
         setInvited(data);
-        window.location.replace(`/join/${data.slug}?p=${encodeURIComponent(barcodeId)}&src=qr`);
+        // a friend's card: the server files them as « Parrainage », never « QR en magasin »
+        window.location.replace(`/join/${data.slug}?p=${encodeURIComponent(barcodeId)}`);
       })
       .catch(() => {});      // programme off, or unknown card — show the card
     return () => { alive = false; };

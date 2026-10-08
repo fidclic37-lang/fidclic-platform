@@ -265,8 +265,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     by = {s["name"]: s["count"] for s in acq["sources"]}
     raw_slugs = {"qr_store", "instagram", "facebook", "tiktok", "website"}
     check("no raw slug ever reaches the page", not (set(by) & raw_slugs))
+    from services import sources as SRC
     check("every label is one the page can show",
-          set(by) <= set(A.SOURCE_LABELS.values()) | {"Autres", "Non renseigné"})
+          set(by) <= set(SRC.SOURCES.values()) | {SRC.UNKNOWN_LABEL})
+    check("each bar carries its source key, so it opens its clients",
+          all(s.get("key") for s in acq["sources"]))
     # A year's window, and only the clients who joined inside it — derived from
     # the cast so the expectation cannot drift from the fixture.
     year = {s["name"]: s["count"] for s in
@@ -274,12 +277,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     joined_in_year = [c for c in CAST if c[4] <= 365]
     expect = {}
     for c in joined_in_year:
-        expect[A.SOURCE_LABELS.get(c[6], "Autres" if c[6] else "Non renseigné")] = \
-            expect.get(A.SOURCE_LABELS.get(c[6], "Autres" if c[6] else "Non renseigné"), 0) + 1
-    check("a slug is translated — qr_store reads 'Passage en magasin'",
-          year.get("Passage en magasin") == expect.get("Passage en magasin"))
-    check("the social networks are grouped under one label",
-          year.get("Réseaux sociaux") == expect.get("Réseaux sociaux"))
+        lbl = SRC.label(SRC.key_of({"acquisition_source": c[6]}))
+        expect[lbl] = expect.get(lbl, 0) + 1
+    check("a slug is translated — qr_store reads 'QR code en magasin'",
+          year.get("QR code en magasin") == expect.get("QR code en magasin"))
+    check("each social network is its own bar, never grouped (user, 2026-10-08)",
+          "Réseaux sociaux" not in year and year.get("Instagram") == expect.get("Instagram"))
     check("a client with no source is not silently dropped",
           year.get("Non renseigné") == expect.get("Non renseigné"))
     check("the counts are of the clients who joined inside the window",

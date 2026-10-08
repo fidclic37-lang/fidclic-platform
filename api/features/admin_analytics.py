@@ -39,7 +39,8 @@ GRAINS = ("day", "week", "month")
 MAX_POINTS = {"day": 120, "week": 104}
 CACHE_SECONDS = 60
 _cache: Dict[Any, Any] = {}
-SOURCES = {"qr_store": "QR Store", "instagram": "Instagram", "facebook": "Facebook", "website": "Site web", "tiktok": "TikTok"}
+from services.sources import SOURCES as _ALL_SOURCES, UNKNOWN_LABEL as _UNKNOWN  # one list (services/sources)
+SOURCES = dict(_ALL_SOURCES)
 PLAN_COLORS = {"silver": "#2F6BFF", "gold": "#10B981", "vip": "#8B5CF6", "franchise": "#F59E0B"}
 
 
@@ -153,9 +154,10 @@ def sources(start: datetime, end: datetime) -> List[Dict[str, Any]]:
     period. Shared with the Dashboard."""
     src: Dict[str, int] = defaultdict(int)
     for c in _db.customers.find({**LIVE, "created_at": {"$gte": start, "$lt": end}}, {"_id": 0, "acquisition_source": 1}):
-        k = (c.get("acquisition_source") or "").strip().lower()
-        src[SOURCES.get(k, "Autres")] += 1
-    order = list(SOURCES.values()) + ["Autres"]
+        from services.sources import key_of
+        k = key_of(c)
+        src[SOURCES.get(k, _UNKNOWN)] += 1
+    order = list(SOURCES.values()) + [_UNKNOWN]
     return sorted(({"label": k, "count": v} for k, v in src.items() if v), key=lambda r: (-r["count"], order.index(r["label"])))
 
 

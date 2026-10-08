@@ -146,7 +146,8 @@ const JoinQRPoster = ({ joinUrl, businessName }) => {
           <p className="text-xs font-bold mb-1" style={{ color: '#171412' }}>{businessName || 'Notre boutique'}</p>
           <p className="text-[9px] uppercase tracking-widest mb-2" style={{ color: '#B85C38' }}>Rejoignez notre programme</p>
           <div ref={svgRef} id="poster-qr" className="bg-white p-2 rounded inline-block">
-            <QRCodeSVG value={joinUrl} size={140} level="M" />
+            {/* the shop's QR opens /…/qr: its signups count as « QR code en magasin » */}
+            <QRCodeSVG value={`${String(joinUrl || '').replace(/\/$/, '')}/qr`} size={140} level="M" />
           </div>
           <p className="text-[10px] mt-2" style={{ color: '#8D857D' }}>Scannez avec votre téléphone</p>
         </div>
