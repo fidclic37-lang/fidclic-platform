@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { onboardingPath } from '../lib/onboarding';
 import { authAPI } from '../lib/api';
+import { OWNER_HOME } from '../lib/modules';
 
 /**
  * SocialAuthButtons — "Continuer avec Google" / "Continuer avec Apple",
@@ -39,7 +40,7 @@ export function routeAfterAuth(navigate, session) {
   if (session?.role === 'super_admin' || session?.role === 'fidclic_team') return navigate('/admin');
   if (session?.role === 'commercial') return navigate('/admin/crm');
   if (session?.role === 'staff') return navigate('/dashboard/scan');
-  if (session?.role === 'business_owner') return navigate('/modules');
+  if (session?.role === 'business_owner') return navigate(OWNER_HOME);
   if (session?.role === 'comptable') return navigate('/cabinet');
   // Paramètres › Préférences › Page par défaut.
   return navigate(session?.default_page || '/dashboard');

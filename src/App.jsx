@@ -162,6 +162,7 @@ const CabinetTeam = lazyPage(() => import('./pages/CabinetTeam'));
 const CabinetCases = lazyPage(() => import('./pages/CabinetCases'));
 const CabinetReview = lazyPage(() => import('./pages/CabinetReview'));
 import CabinetPasswordGate from './components/CabinetPasswordGate';
+import { EINVOICING_VISIBLE, OWNER_HOME } from './lib/modules';
 const CabinetSignup = lazyPage(() => import('./pages/CabinetSignup'));
 const ResetPasswordPage = lazyPage(() => import('./pages/ResetPasswordPage'));
 // Public marketing pages — one per product line, so each audience gets a whole
@@ -241,9 +242,10 @@ const PublicRoute = ({ children }) => {
     if (needsOnboarding(user)) return <Navigate to={onboardingPath(user)} replace />;
     if (['super_admin', 'fidclic_team'].includes(user.role)) return <Navigate to="/admin" replace />;
     if (user.role === 'commercial') return <Navigate to="/admin/crm" replace />;
-    // Owners land on the module chooser (CRM+Fidélité vs Facturation).
+    // Owners land on the module chooser (CRM+Fidélité vs Facturation) — or,
+    // while e-invoicing is hidden (lib/modules), straight on the dashboard.
     // Handles already-logged-in sessions too (not just fresh logins).
-    if (user.role === 'business_owner') return <Navigate to="/modules" replace />;
+    if (user.role === 'business_owner') return <Navigate to={OWNER_HOME} replace />;
     if (user.role === 'comptable') return <Navigate to="/cabinet" replace />;
     return <Navigate to="/dashboard" replace />;
   }
@@ -338,26 +340,28 @@ function App() {
               logged-in owner or accountant must still be able to read about the
               other module (and share the link) without being bounced to their
               dashboard. */}
-          <Route path="/facturation-electronique" element={<FacturationLanding />} />
-          <Route path="/experts-comptables" element={<CabinetLanding />} />
+          {/* E-invoicing is hidden for now (lib/modules): its pages send
+              visitors to the site and owners to their dashboard. */}
+          <Route path="/facturation-electronique" element={EINVOICING_VISIBLE ? <FacturationLanding /> : <Navigate to="/" replace />} />
+          <Route path="/experts-comptables" element={EINVOICING_VISIBLE ? <CabinetLanding /> : <Navigate to="/" replace />} />
 
           {/* Facturation module — post-login chooser (Option A) + home.
               Owner/manager only; loyalty-only tenants see the "activate" prompt. */}
-          <Route path="/modules" element={
+          <Route path="/modules" element={EINVOICING_VISIBLE ? (
             <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
               <ModuleChooserPage />
             </ProtectedRoute>
-          } />
-          <Route path="/facturation" element={
+          ) : <Navigate to="/dashboard" replace />} />
+          <Route path="/facturation" element={EINVOICING_VISIBLE ? (
             <ProtectedRoute allowedRoles={['business_owner', 'manager']}>
               <FacturationHome />
             </ProtectedRoute>
-          } />
+          ) : <Navigate to="/dashboard" replace />} />
           {/* Accountant (comptable) control tower over all their linked clients. */}
           <Route path="/reinitialiser" element={<ResetPasswordPage />} />
-          <Route path="/cabinet/inscription" element={
+          <Route path="/cabinet/inscription" element={EINVOICING_VISIBLE ? (
             <PublicRoute><CabinetSignup /></PublicRoute>
-          } />
+          ) : <Navigate to="/" replace />} />
           <Route path="/cabinet" element={
             <ProtectedRoute allowedRoles={['comptable']}>
               <CabinetPasswordGate><CabinetDashboard /></CabinetPasswordGate>
