@@ -340,6 +340,12 @@ export default function LoyaltyCardPage() {
     poster_image_url: advanced?.poster_image_url,
     pd_version: pdVersion,                      // refetch the preview after an import
     featured_actions: advanced?.featured_actions,
+    // « Logo rond » and the Google Wallet design, previewed as they are chosen
+    logo_round: Boolean(advanced?.logo_round),
+    logo_ring: Boolean(advanced?.logo_ring),
+    logo_ring_color: advanced?.logo_ring_color || undefined,
+    google_design: advanced?.google_design,
+    google_links: advanced?.google_links,
   }), [design, programme, toggles, advanced, pdVersion]);
 
   const previewCustomer = useMemo(() => ({
@@ -384,6 +390,27 @@ export default function LoyaltyCardPage() {
                         setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
                       }} />
         </div>
+        {/* « Logo rond » (user, 2026-10-08): cut to a disc on Apple and Google
+            alike, with an optional ring — the preview shows it at once */}
+        {advanced && (
+          <div className="-mx-2 space-y-0.5 rounded-xl border border-[#E6EEFB] py-1">
+            <Toggle icon={ImageIcon} label="Logo rond" checked={Boolean(advanced.logo_round)}
+                    onChange={(v) => setAdvanced({ ...advanced, logo_round: v })} />
+            {advanced.logo_round && (
+              <Toggle icon={ImageIcon} label="Bordure autour du logo" checked={Boolean(advanced.logo_ring)}
+                      onChange={(v) => setAdvanced({ ...advanced, logo_ring: v })} />
+            )}
+            {advanced.logo_round && advanced.logo_ring && (
+              <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+                <span className="text-[13px] text-[#334155]">Couleur de la bordure</span>
+                <div className="w-40">
+                  <ColorField value={advanced.logo_ring_color || design.brand_color || '#D4AF37'}
+                              onChange={(v) => setAdvanced({ ...advanced, logo_ring_color: v })} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <Label>Texte d'accueil sur la carte</Label>
           <textarea rows={3} maxLength={100} value={design.welcome_text}
@@ -513,6 +540,10 @@ export default function LoyaltyCardPage() {
                         identityPanel={identityPanel} previewCard={cardForPreview}
                         clientPreview={<WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />}
                         externalDirty={settingsDirty} onSaveAll={save} onDirtyChange={setDesignerDirty}
+                        googleDesign={advanced.google_design || {}}
+                        onGoogleChange={(patch) => setAdvanced((a) => ({ ...a, google_design: { ...(a.google_design || {}), ...patch } }))}
+                        googleLinks={advanced.google_links || []}
+                        onGoogleLinksChange={(rows) => setAdvanced((a) => ({ ...a, google_links: rows }))}
                         onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
         ) : (
           <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>

@@ -1318,6 +1318,60 @@ def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
     return compose_poster(raw or _hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
 
 
+def round_logo(raw: Optional[bytes], ring: Optional[str] = None, size: int = 600) -> Optional[bytes]:
+    """The shop's logo as a disc (user, 2026-10-08: « logo gol »). Wallet draws
+    a logo as it gets it, so the corners are made transparent here.
+    - A logo with its own transparency sits on a white disc, with a margin.
+    - A full picture is cropped to fill the circle.
+    - `ring` (#rrggbb) adds a thin border, readable on a dark photo.
+    Drawn 4× and scaled down, so the edge is smooth."""
+    if not raw:
+        return raw
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return raw
+    try:
+        im = Image.open(io.BytesIO(raw)).convert("RGBA")
+    except Exception:
+        return raw
+    big = size * 4
+    im.thumbnail((big, big), Image.LANCZOS)
+    hist = im.getchannel("A").histogram()
+    see_through = sum(hist[:250]) > 0.05 * im.width * im.height
+    canvas = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    ring_w = int(big * 0.055) if ring else 0
+    inner = big - 2 * ring_w
+    if see_through:                                   # a drawn logo: on a white disc
+        disc = Image.new("RGBA", (inner, inner), (255, 255, 255, 255))
+        fit = int(inner * 0.74)
+        k = min(fit / im.width, fit / im.height)
+        logo = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+        disc.alpha_composite(logo, ((inner - logo.width) // 2, (inner - logo.height) // 2))
+    else:                                             # a picture: it fills the circle
+        k = max(inner / im.width, inner / im.height)
+        pic = im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
+        left, top = (pic.width - inner) // 2, (pic.height - inner) // 2
+        disc = pic.crop((left, top, left + inner, top + inner))
+    mask = Image.new("L", (inner, inner), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, inner - 1, inner - 1), fill=255)
+    if ring:
+        rgb = _rgb(ring) or (212, 175, 55)
+        ImageDraw.Draw(canvas).ellipse((0, 0, big - 1, big - 1), fill=rgb + (255,))
+    canvas.paste(disc, (ring_w, ring_w), mask)
+    out = io.BytesIO()
+    canvas.resize((size, size), Image.LANCZOS).save(out, "PNG", optimize=True)
+    return out.getvalue()
+
+
+def _logo_look(card: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """(round?, ring colour) — the « Logo rond » and « Bordure » toggles."""
+    if not card.get("logo_round"):
+        return False, None
+    ring = (card.get("logo_ring_color") or card.get("brand_color") or "#D4AF37") if card.get("logo_ring") else None
+    return True, ring
+
+
 def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, bytes]:
     """A design's images (Pass Designer template or the editor), plus what
     Wallet needs that it may lack: icon.png and the logo, and the @2x / 1x of
@@ -1351,6 +1405,13 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
     if not any(n.startswith("logo") for n in imgs):
         for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
             imgs[f"logo{suffix}.png"] = png
+    is_round, ring = _logo_look(card)
+    if is_round:                                      # « Logo rond »: both logos, every size
+        for base in ("logo", "primaryLogo"):
+            src = PD.best(imgs, base)
+            if src:
+                for suffix, png in _png_variants(round_logo(src, ring), (50, 50), tight=True).items():
+                    imgs[f"{base}{suffix}.png"] = png
     return imgs
 
 
@@ -1373,8 +1434,10 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
                 files[f"strip{suffix}.png"] = png
     else:
         brand = _rgb(card.get("brand_color")) or (184, 92, 56)
-        logo_raw = _fetch_image(card.get("logo_url"))
-        for suffix, png in _png_variants(logo_raw, (29, 29), cover=True, fallback_rgb=brand).items():
+        icon_raw = _fetch_image(card.get("logo_url"))
+        is_round, ring = _logo_look(card)
+        logo_raw = round_logo(icon_raw, ring) if is_round else icon_raw
+        for suffix, png in _png_variants(icon_raw, (29, 29), cover=True, fallback_rgb=brand).items():
             files[f"icon{suffix}.png"] = png
         # The logo sits left of the shop name: at most 50 pt square-ish, never
         # wider than it needs, so the name is written out in full.
@@ -1611,11 +1674,31 @@ _PREVIEW_KEYS = {
     "reward_threshold_stamps", "reward_description", "points_per_visit", "visits_per_stamp",
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
+    "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
 }
 
 
 def _data_url(png: Optional[bytes]) -> Optional[str]:
     return "data:image/png;base64," + base64.b64encode(png).decode() if png else None
+
+
+def _preview_payload(tid: str, body: "PassPreviewIn"):
+    """A sample customer's card payload with the page's unsaved fields."""
+    import server as core
+    visits = max(0, min(int(body.visits or 0), 500))
+    # a real-shaped card id (8 hex): every barcode format can carry it, EAN-13
+    # and ITF included, so the preview shows the code the customer will get
+    sample = {"id": "preview-sample", "tenant_id": tid, "barcode_id": "FT-5A3C91E2",
+              "name": "Marie Dupont", "visits": visits, "tier": "bronze", "points": 0}
+    payload = core._serialize_card_payload(sample)
+    card = payload["card"]
+    card.update({k: v for k, v in (body.card or {}).items() if k in _PREVIEW_KEYS and v is not None})
+    if (body.card or {}).get("reward_threshold_stamps"):
+        card["reward_threshold"] = body.card["reward_threshold_stamps"]
+    card.pop("stamps_earned", None)            # recomputed from the sample's visits
+    sample["points"] = visits * int(card.get("points_per_visit") or 10)
+    payload["customer"] = {**payload.get("customer", {}), **sample}
+    return payload, sample, visits
 
 
 @router.post("/api/owner/wallet/preview")
@@ -1626,21 +1709,9 @@ def owner_wallet_preview(body: PassPreviewIn,
     with the designer's unsaved fields applied. The page draws THIS, so the
     preview cannot drift from the real pass again (user, 2026-10-04: the
     preview still showed the old layout after the pass changed)."""
-    import server as core
     tid = token_data.tenant_id
-    visits = max(0, min(int(body.visits or 0), 500))
-    # a real-shaped card id (8 hex): every barcode format can carry it, EAN-13
-    # and ITF included, so the preview shows the code the customer will get
-    sample = {"id": "preview-sample", "tenant_id": tid, "barcode_id": "FT-5A3C91E2",
-              "name": "Marie Dupont", "visits": visits, "tier": "bronze", "points": 0}
-    payload = core._serialize_card_payload(sample)
+    payload, sample, visits = _preview_payload(tid, body)
     card = payload["card"]
-    card.update({k: v for k, v in (body.card or {}).items() if k in _PREVIEW_KEYS and v is not None})
-    if body.card.get("reward_threshold_stamps"):
-        card["reward_threshold"] = body.card["reward_threshold_stamps"]
-    card.pop("stamps_earned", None)            # recomputed from the sample's visits
-    sample["points"] = visits * int(card.get("points_per_visit") or 10)
-    payload["customer"] = {**payload.get("customer", {}), **sample}
 
     if body.design is not None:
         from features import pass_designer as PD
@@ -2011,19 +2082,119 @@ def _gw_ids(tenant_id: str, serial: str) -> Tuple[str, str]:
             f"{issuer}.{serial}".replace("-", "_"))
 
 
+# ---------------------------------------------------------------------------
+# Google Wallet design (Carte de fidélité › Design de la carte › Google Wallet,
+# user 2026-10-08). Google builds its card differently from Apple: one
+# background colour (Google picks the text colour), a round logo (or a wide
+# one), a hero banner at the foot, up to three rows of values, the barcode,
+# and a « Détails » screen with text and links. No tiles: links take their
+# place. Stored as card_templates.google_design.
+# ---------------------------------------------------------------------------
+# what a row can show → (label in our UI, Google fieldPath)
+GOOGLE_ROW_FIELDS: Dict[str, Tuple[str, str]] = {
+    "name": ("Nom du client", "object.accountName"),
+    "card": ("N° de carte", "object.accountId"),
+    "points": ("Points", "object.textModulesData['points']"),
+    "stamps": ("Tampons", "object.textModulesData['stamps']"),
+    "reward": ("Prochaine récompense", "object.textModulesData['next_reward']"),
+    "tier": ("Statut", "object.textModulesData['tier']"),
+    "offer": ("Offre du moment", "object.textModulesData['offer']"),
+    "visits": ("Visites", "object.textModulesData['visits']"),
+}
+# Google's barcode types → the Apple format whose message they carry
+GOOGLE_CODES: Dict[str, Tuple[str, str]] = {
+    "QR_CODE": ("QR code", "PKBarcodeFormatQR"), "AZTEC": ("Aztec", "PKBarcodeFormatAztec"),
+    "PDF_417": ("PDF417", "PKBarcodeFormatPDF417"), "DATA_MATRIX": ("Data Matrix", "PKBarcodeFormatQR"),
+    "CODE_128": ("Code 128", "PKBarcodeFormatCode128"), "CODE_39": ("Code 39", "PKBarcodeFormatCode39"),
+    "EAN_13": ("EAN-13", "PKBarcodeFormatEAN13"), "CODABAR": ("Codabar", "PKBarcodeFormatCodabar"),
+}
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _img_ok(v: Any, limit: int = 3_500_000) -> bool:
+    return isinstance(v, str) and (v.startswith("data:image/") or v.startswith("https://")) and len(v) <= limit
+
+
+def clean_google_design(d: Any) -> Dict[str, Any]:
+    d = d if isinstance(d, dict) else {}
+    out: Dict[str, Any] = {}
+    if _HEX.match(str(d.get("bg_color") or "")):
+        out["bg_color"] = d["bg_color"]
+    if isinstance(d.get("program_name"), str) and d["program_name"].strip():
+        out["program_name"] = d["program_name"].strip()[:40]
+    out["logo"] = "wide" if d.get("logo") == "wide" and _img_ok(d.get("wide_logo")) else "round"
+    if _img_ok(d.get("wide_logo"), 2_000_000):
+        out["wide_logo"] = d["wide_logo"]
+    out["hero"] = d.get("hero") if d.get("hero") in ("fidclic", "photo", "none") else "fidclic"
+    if _img_ok(d.get("hero_image")):
+        out["hero_image"] = d["hero_image"]
+    if out["hero"] == "photo" and "hero_image" not in out:
+        out["hero"] = "fidclic"
+    rows = []
+    for row in (d.get("rows") or [])[:3]:
+        keys = [k for k in (row or [])[:3] if k in GOOGLE_ROW_FIELDS]
+        if keys:
+            rows.append(keys)
+    out["rows"] = rows
+    out["barcode"] = d.get("barcode") if d.get("barcode") in GOOGLE_CODES else "QR_CODE"
+    out["alt_text"] = "none" if d.get("alt_text") == "none" else "card"
+    out["details"] = [{"label": str(r.get("label") or "").strip()[:40], "value": str(r.get("value") or "").strip()[:500]}
+                      for r in (d.get("details") or [])[:6]
+                      if isinstance(r, dict) and str(r.get("label") or "").strip() and str(r.get("value") or "").strip()]
+    n = d.get("notify") if isinstance(d.get("notify"), dict) else {}
+    out["notify"] = {k: n.get(k) is not False for k in ("campaign", "reward", "birthday")}
+    return out
+
+
+def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
+    # the version changes with the image, so Google fetches the new one
+    src = {"logo": card.get("logo_url"), "wide": (card.get("google_design") or {}).get("wide_logo"),
+           "hero": (card.get("google_design") or {}).get("hero_image")}[what] or ""
+    look = f"{bool(card.get('logo_round'))}{bool(card.get('logo_ring'))}{card.get('logo_ring_color') or ''}"
+    v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
+    return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}"
+
+
 def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
     tenant, card = payload["tenant"], payload["card"]
+    gd = clean_google_design(card.get("google_design"))
     org = card.get("card_name") or tenant.get("name") or "FidClic"
     class_id, _ = _gw_ids(tenant["id"], payload["customer"]["barcode_id"])
     cls: Dict[str, Any] = {
-        "id": class_id, "issuerName": tenant.get("name") or org, "programName": org,
-        "reviewStatus": "UNDER_REVIEW", "hexBackgroundColor": _hex6(derive_colors(card)["backgroundColor"]),
+        "id": class_id, "issuerName": tenant.get("name") or org, "programName": gd.get("program_name") or org,
+        "reviewStatus": "UNDER_REVIEW",
+        "hexBackgroundColor": gd.get("bg_color") or _hex6(derive_colors(card)["backgroundColor"]),
         "countryCode": "FR",
     }
-    logo = card.get("logo_url") if (card.get("logo_url") or "").startswith("http") else None
-    if logo:
-        cls["programLogo"] = {"sourceUri": {"uri": logo}}
+    # a data: URL logo (most uploads) is served by us: Google needs a public link
+    if card.get("logo_url"):
+        cls["programLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "logo", card)}}
+    if gd["logo"] == "wide":
+        cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "wide", card)}}
+    if gd["rows"]:
+        def item(key: str) -> Dict[str, Any]:
+            return {"firstValue": {"fields": [{"fieldPath": GOOGLE_ROW_FIELDS[key][1]}]}}
+        infos = []
+        for keys in gd["rows"]:
+            if len(keys) == 1:
+                infos.append({"oneItem": {"item": item(keys[0])}})
+            elif len(keys) == 2:
+                infos.append({"twoItems": {"startItem": item(keys[0]), "endItem": item(keys[1])}})
+            else:
+                infos.append({"threeItems": {"startItem": item(keys[0]), "middleItem": item(keys[1]),
+                                             "endItem": item(keys[2])}})
+        cls["classTemplateInfo"] = {"cardTemplateOverride": {"cardRowTemplateInfos": infos}}
     return cls
+
+
+def _fill_vars(text: str, cust: Dict[str, Any], card: Dict[str, Any]) -> str:
+    """{prenom}, {points}… in the owner's own detail rows, like the Apple fields."""
+    full = (cust.get("name") or "Client").strip()
+    values = {"prenom": full.split(" ")[0], "first_name": full.split(" ")[0], "nom": full, "name": full,
+              "carte": cust.get("barcode_id"), "card": cust.get("barcode_id"), "points": cust.get("points") or 0,
+              "visites": cust.get("visits") or 0, "visits": cust.get("visits") or 0,
+              "commerce": card.get("card_name") or "", "shop": card.get("card_name") or ""}
+    return re.sub(r"\{([a-z_]{2,20})\}", lambda m: str(values.get(m.group(1), m.group(0))), text or "")
 
 
 def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2035,21 +2206,44 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     by_key = {f["key"]: f for grp in ("headerFields", "primaryFields", "secondaryFields", "auxiliaryFields")
               for f in sc.get(grp, [])}
     class_id, object_id = _gw_ids(tenant["id"], cust["barcode_id"])
+    gd = clean_google_design(card.get("google_design"))
     member = by_key.get("member", {}).get("value") or cust.get("name") or "Client"
     points = by_key.get("points")
     progress = by_key.get("stamps") or by_key.get("reward")
+    serial = cust["barcode_id"]
+    code_fmt = GOOGLE_CODES[gd["barcode"]][1]
+    code_value = barcode_message(code_fmt, serial)
+    code_type = gd["barcode"] if code_value else "QR_CODE"       # a code the card id cannot fill → QR
+    # Apple's back of the pass = Google's details: offer, reward, statut…
+    back = [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
+            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link")]
+    # the values a row of the card can show (classTemplateInfo), as modules
+    tier_v = next((f["value"] for f in sc.get("backFields", []) if f["key"] == "tier_back"), None) \
+        or by_key.get("tier", {}).get("value")
+    extra = {"points": ("Points", cust.get("points") or 0), "tier": ("Statut", tier_v),
+             "visits": ("Visites", cust.get("visits") or 0),
+             "stamps": (str((progress or {}).get("label") or "Tampons").title(), (progress or {}).get("value"))}
+    wanted = {k for row in gd["rows"] for k in row}
+    front = [{"id": k, "header": lbl, "body": str(v)} for k, (lbl, v) in extra.items()
+             if k in wanted and v not in (None, "")]
+    owner_rows = [{"id": f"detail{i}", "header": r["label"], "body": _fill_vars(r["value"], cust, card)}
+                  for i, r in enumerate(gd["details"])]
+    modules = front + owner_rows + [m for m in back if m["id"] not in {x["id"] for x in front}]
+    if gd["hero"] == "none":
+        hero = None
+    elif gd["hero"] == "photo":
+        hero = _gw_image_url(tenant["id"], "hero", card)
+    else:   # Google has no strip either: it gets the same painted banner, meter in.
+        hero = (f"{_site_url()}/api/card/{serial}/wallet-strip.png"
+                f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"
+                f"-{(card.get('campaign_offer') or {}).get('id') or 0}")
     obj: Dict[str, Any] = {
         "id": object_id, "classId": class_id, "state": "INACTIVE" if pj.get("voided") else "ACTIVE",
-        "accountId": cust["barcode_id"], "accountName": str(member),
-        "barcode": {"type": "QR_CODE", "value": f"{_site_url()}/card/{cust['barcode_id']}",
-                    "alternateText": cust["barcode_id"]},
-        # Google has no strip either: it gets the same painted banner, meter in.
-        "heroImage": {"sourceUri": {"uri": f"{_site_url()}/api/card/{cust['barcode_id']}/wallet-strip.png"
-                                           f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"
-                                           f"-{(card.get('campaign_offer') or {}).get('id') or 0}"}},
-        # Apple's back of the pass = Google's details: offer, reward, statut…
-        "textModulesData": [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
-                            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link")][:10],
+        "accountId": serial, "accountName": str(member),
+        "barcode": {"type": code_type, "value": code_value or barcode_message("PKBarcodeFormatQR", serial),
+                    **({"alternateText": serial} if gd["alt_text"] == "card" else {})},
+        **({"heroImage": {"sourceUri": {"uri": hero}}} if hero else {}),
+        "textModulesData": modules[:10],
         "linksModuleData": {"uris": [{"uri": f["value"], "description": "Voir l'offre en entier"}
                                      for f in sc.get("backFields", []) if f["key"] == "offer_link"]
                             + [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
@@ -2155,7 +2349,14 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
                 result = f"HTTP {st} {_gw_reason(body)}".strip()
             else:
                 out["synced"] += 1
-                if message and kind in GOOGLE_NOTIFY:
+                # « Notifications » in the Google design: off → the message
+                # still lands in the card, without the buzz
+                allowed = clean_google_design(payload["card"].get("google_design"))["notify"].get(kind, True)
+                if message and kind in GOOGLE_NOTIFY and not allowed:
+                    _gw_call("POST", f"/loyaltyObject/{obj['id']}/addMessage",
+                             {"message": {**message, "messageType": "TEXT"}}, token)
+                    result = "ok · message sans notification (désactivée)"
+                elif message and kind in GOOGLE_NOTIFY:
                     st2, body2 = _gw_call("POST", f"/loyaltyObject/{obj['id']}/addMessage",
                                           {"message": {**message, "messageType": "TEXT_AND_NOTIFY"}}, token)
                     if st2 == 200:
@@ -2174,6 +2375,60 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             "last_sync_at": datetime.now(timezone.utc), "last_sync_result": result[:200]}})
     out["errors"] = out["errors"][:3]
     return out
+
+
+def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
+    """The images Google fetches: the logo (always a disc — Google draws it
+    round; ours keeps the white disc and the ring of « Logo rond »), the wide
+    logo, the hero banner (1032 × 336)."""
+    gd = card.get("google_design") or {}
+    if what == "logo":
+        _, ring = _logo_look(card)
+        return round_logo(_fetch_image(card.get("logo_url")), ring, size=660)
+    if what == "wide":
+        return _png_variants(_fetch_image(gd.get("wide_logo")), (640, 200), tight=True).get("@2x")
+    if what == "hero":
+        return _png_variants(_fetch_image(gd.get("hero_image")), (516, 168), cover=True).get("@2x")
+    return None
+
+
+@router.get("/api/wallet/google/{tenant_id}/{what}.png")
+def google_image(tenant_id: str, what: str):
+    """Public: Google's servers fetch these when they draw the card."""
+    if what not in ("logo", "wide", "hero"):
+        raise HTTPException(status_code=404, detail="Image inconnue")
+    tpl = _db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
+    card = {**(tpl.get("brand_fields") or {}), **tpl}
+    png = _gw_image(card, what)
+    if not png:
+        raise HTTPException(status_code=404, detail="Image absente")
+    return Response(content=png, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.post("/api/owner/wallet/google-preview")
+def owner_google_preview(body: PassPreviewIn,
+                         token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"]))):
+    """The Google Wallet card as google_save_url() would send it, for a sample
+    customer, with the page's unsaved fields (google_design…): the class, the
+    object, and their images as data URLs (Google's links point at the site)."""
+    payload, sample, visits = _preview_payload(token_data.tenant_id, body)
+    card = payload["card"]
+    cls, obj = _gw_class(payload), _gw_object(payload)
+    gd = clean_google_design(card.get("google_design"))
+    hero = None
+    if gd["hero"] == "photo":
+        hero = _gw_image(card, "hero")
+    elif gd["hero"] == "fidclic":
+        hero = strip_png(payload)
+    return {
+        "class": cls, "object": obj,
+        "images": {"logo": _data_url(_gw_image(card, "logo")), "wide": _data_url(_gw_image(card, "wide")) if gd["logo"] == "wide" else None,
+                   "hero": _preview_image("strip", hero) if hero else None},
+        "row_fields": {k: v[0] for k, v in GOOGLE_ROW_FIELDS.items()},
+        "codes": {k: v[0] for k, v in GOOGLE_CODES.items()},
+        "configured": google_configured(),
+        "sample": {"name": sample["name"], "visits": visits},
+    }
 
 
 @router.get("/api/card/{barcode_id}/google-wallet")

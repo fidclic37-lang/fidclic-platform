@@ -354,6 +354,7 @@ export const ownerAPI = {
   getCardTemplate: () => api.get('/owner/card-template'),
   // The Apple Wallet pass as the server builds it, for a sample customer (features/wallet_passes.py).
   walletPreview: (body) => api.post('/owner/wallet/preview', body),
+  googlePreview: (body) => api.post('/owner/wallet/google-preview', body),
   saveCardTemplate: (data) => api.post('/owner/card-template', data),
   getCampaigns: () => api.get('/owner/campaigns'),
   createCampaign: (data) => api.post('/owner/campaigns', data),

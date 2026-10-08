@@ -2,10 +2,13 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import {
   Palette, Image as ImageIcon, Barcode, MousePointerClick, ListTree, Upload, RotateCcw, Save, Loader2,
   Plus, Trash2, ArrowUp, ArrowDown, Check, ChevronDown, Smartphone, LayoutTemplate, Fingerprint,
+  Copy, Bell, Rows3, ImagePlus,
 } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
 import PassPreview, { PassBack, NEW_CODES } from './PassPreview';
 import FeaturedActionsEditor from './FeaturedActionsEditor';
+import GoogleDesignEditor from './GoogleDesignEditor';
+import GoogleWalletPreview from './GoogleWalletPreview';
 import PosterCropper from '../PosterCropper';
 import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHex, hexToRgb } from './walletLook';
 
@@ -187,7 +190,14 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
 const CardDesigner = forwardRef(function CardDesigner({
   edit = true, types = [], formats = [], actions = [], onActionsChange, onSaved,
   identityPanel = null, previewCard = {}, clientPreview = null, externalDirty = false, onSaveAll, onDirtyChange,
+  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange,
 }, ref) {
+  // Apple and Google build their cards differently: one switch, two editors
+  // (user, 2026-10-08), the identity tab and the save shared
+  const [wallet, setWallet] = useState('apple');
+  const [gPreview, setGPreview] = useState(null);
+  const [gState, setGState] = useState('');
+  const gSeq = useRef(0);
   const [status, setStatus] = useState('loading');      // loading | empty | ready
   const [d, setD] = useState(null);                       // { name, pass, options, images, shown, source }
   const [dirty, setDirty] = useState(false);
@@ -232,6 +242,49 @@ const CardDesigner = forwardRef(function CardDesigner({
     }, 450);
     return () => clearTimeout(t);
   }, [pvKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Google's live preview: the class + object the server would send
+  const gKey = wallet === 'google' ? JSON.stringify(previewCard) : '';
+  useEffect(() => {
+    if (!gKey) return undefined;
+    const my = ++gSeq.current;
+    setGState('loading');
+    const t = setTimeout(() => {
+      ownerAPI.googlePreview({ card: previewCard, visits: 3 })
+        .then((r) => { if (my === gSeq.current) { setGPreview(r.data); setGState(''); } })
+        .catch(() => { if (my === gSeq.current) setGState('error'); });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [gKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // « Copier depuis Apple »: the Apple design's colour, code, values and back
+  // rows as the Google card's starting point
+  const copyFromApple = () => {
+    const pj = preview?.pass_json || {};
+    const VAR = { '{prenom}': 'name', '{nom}': 'name', '{tampons}': 'stamps', '{points}': 'points', '{statut}': 'tier',
+      '{offre}': 'offer', '{recompense}': 'reward', '{visites}': 'visits', '{carte}': 'card' };
+    const blk = ready ? (d.pass[styleOf(d.pass)] || {}) : {};
+    const keys = [];
+    ['headerFields', 'primaryFields', 'secondaryFields', 'auxiliaryFields', 'footerFields'].forEach((g) => (blk[g] || []).forEach((f) => {
+      const k = VAR[String(f.value || '').trim()];
+      if (k && !keys.includes(k)) keys.push(k);
+    }));
+    const pick = keys.length ? keys : ['stamps', 'points', 'tier'];
+    const rows = [];
+    for (let i = 0; i < pick.length && rows.length < 3; i += 2) rows.push(pick.slice(i, i + 2));
+    const CODE = { PKBarcodeFormatQR: 'QR_CODE', PKBarcodeFormatAztec: 'AZTEC', PKBarcodeFormatPDF417: 'PDF_417',
+      PKBarcodeFormatCode128: 'CODE_128', PKBarcodeFormatCode39: 'CODE_39', PKBarcodeFormatEAN13: 'EAN_13', PKBarcodeFormatCodabar: 'CODABAR' };
+    onGoogleChange && onGoogleChange({
+      bg_color: pj.backgroundColor ? rgbToHex(pj.backgroundColor) : undefined,
+      barcode: CODE[(pj.barcodes || [])[0]?.format] || 'QR_CODE',
+      rows, hero: 'fidclic', logo: 'round',
+      details: (blk.backFields || []).filter((f) => f.label && f.value).slice(0, 6).map((f) => ({ label: String(f.label), value: String(f.value) })),
+    });
+    const withUrl = (actions || []).filter((a) => /^https:\/\//.test(a.url || ''));
+    if (withUrl.length && onGoogleLinksChange) {
+      onGoogleLinksChange(withUrl.slice(0, 3).map((a) => ({ label: types.find((t) => t.type === a.type)?.label || a.type, uri: a.url })));
+    }
+  };
 
   const change = (fn) => { setD((cur) => fn(cur)); setDirty(true); setMsg(null); };
   const style = d ? styleOf(d.pass) : null;
@@ -372,14 +425,24 @@ const CardDesigner = forwardRef(function CardDesigner({
   const ios27Only = (f) => formats.find((x) => x.format === f)?.ios27_only;
   const styles = preview?.styles || [];
   const fbStyle = styles.find((s2) => s2 !== 'posterGeneric');
-  const TABS = [['identite', 'Identité', Fingerprint], ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
+  const G_TABS = [['identite', 'Identité', Fingerprint], ['g_couleur', 'Couleur et logo', Palette], ['g_banniere', 'Bannière', ImagePlus],
+    ['g_lignes', 'Lignes', Rows3], ['g_code', 'Code-barres', Barcode], ['g_details', 'Détails et liens', ListTree], ['g_notif', 'Notifications', Bell]];
+  const TABS = wallet === 'google' ? G_TABS : [['identite', 'Identité', Fingerprint], ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
     ['boutons', 'Boutons', MousePointerClick], ['champs', 'Champs', ListTree]];
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
       {/* ── the inspector ── */}
       <div className="min-w-0">
-        {ready && (
+        <div className="mb-3 inline-flex rounded-xl bg-[#F1F5F9] p-1">
+          {[['apple', 'Apple Wallet'], ['google', 'Google Wallet']].map(([k, label]) => (
+            <button key={k} type="button" onClick={() => { setWallet(k); setTab('identite'); }}
+                    className={`rounded-lg px-4 py-1.5 text-[12.5px] font-semibold transition ${wallet === k ? 'bg-[#2F6BFF] text-white shadow-[0_6px_14px_-8px_rgba(47,107,255,.9)]' : 'text-[#64748B]'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {wallet === 'apple' && ready && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <input className={`${inputCls} max-w-[240px] font-semibold`} value={d.name} disabled={!edit}
                    onChange={(e) => change((cur) => ({ ...cur, name: e.target.value }))} aria-label="Nom du design" />
@@ -403,8 +466,17 @@ const CardDesigner = forwardRef(function CardDesigner({
             {identityPanel}
           </div>
         )}
-        {tab !== 'identite' && !ready && startBox}
-        {ready && (
+        {wallet === 'google' && tab !== 'identite' && (
+          <>
+            <GoogleDesignEditor tab={tab} value={googleDesign} disabled={!edit}
+                                onChange={(patch) => onGoogleChange && onGoogleChange(patch)}
+                                links={googleLinks} onLinksChange={(rows) => onGoogleLinksChange && onGoogleLinksChange(rows)}
+                                rowFields={gPreview?.row_fields || {}} codes={gPreview?.codes || {}} />
+            <Btn className="mt-4" disabled={!edit} onClick={copyFromApple}><Copy size={13} /> Copier depuis le design Apple</Btn>
+          </>
+        )}
+        {wallet === 'apple' && tab !== 'identite' && !ready && startBox}
+        {wallet === 'apple' && ready && (
         <fieldset disabled={!edit} className="m-0 min-w-0 border-0 p-0">
           {tab === 'style' && (
             <div className="space-y-4">
@@ -588,10 +660,26 @@ const CardDesigner = forwardRef(function CardDesigner({
       <div className="min-w-0 rounded-2xl bg-[#F7FAFF] p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[#0B1C3F]"><Smartphone size={14} /> Aperçu en direct</p>
-          {pvState === 'loading' && <Loader2 size={14} className="animate-spin text-[#94A3B8]" />}
-          {pvState === 'error' && <span className="text-[11.5px] text-[#B91C1C]">Aperçu indisponible</span>}
+          {(wallet === 'google' ? gState : pvState) === 'loading' && <Loader2 size={14} className="animate-spin text-[#94A3B8]" />}
+          {(wallet === 'google' ? gState : pvState) === 'error' && <span className="text-[11.5px] text-[#B91C1C]">Aperçu indisponible</span>}
         </div>
-        {preview ? (
+        {wallet === 'google' ? (
+          gPreview ? (
+            <>
+              <GoogleWalletPreview data={gPreview} width={240} />
+              {!gPreview.configured && (
+                <p className="mt-3 text-center text-[11.5px] text-[#B45309]">
+                  Les clients pourront ajouter cette carte dès que l’accès émetteur Google Wallet sera validé.
+                </p>
+              )}
+              <p className="mt-2 text-center text-[11px] text-[#94A3B8]">
+                Exemple : {gPreview.sample?.name} — construit par le serveur, comme la vraie carte Google.
+              </p>
+            </>
+          ) : (
+            <div className="flex h-64 items-center justify-center text-[12.5px] text-[#94A3B8]">{gState === 'error' ? 'Aperçu indisponible' : 'Chargement de l’aperçu…'}</div>
+          )
+        ) : preview ? (
           <>
             <div className="flex flex-wrap justify-center gap-5">
               {styles.includes('posterGeneric') ? (
