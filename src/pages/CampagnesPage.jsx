@@ -95,6 +95,21 @@ const Stat = ({ s, i }) => {
 };
 
 /* ── page ─────────────────────────────────────────────────────────────── */
+// « Ajouter un lien » (QA UX09): a web address, said at once when it is not
+// one. « monsite.fr » gets its https:// — the server applies the same rule
+// (campaigns_page.clean_link) and the customer's card only opens http(s).
+const LINK_RE = /^https?:\/\/[^\s/?#]+\.[^\s/?#]{2,}(?:[/?#]\S*)?$/i;
+function fullLink(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  return /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s.replace(/^\/+/, '')}`;
+}
+function linkProblem(raw) {
+  const s = fullLink(raw);
+  if (!s) return '';
+  return LINK_RE.test(s) && s.length <= 500 ? '' : 'Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.';
+}
+
 export default function CampagnesPage() {
   const navigate = useNavigate();
   const fileRef = useRef(null);
@@ -128,6 +143,9 @@ export default function CampagnesPage() {
   const [busy, setBusy] = useState('');
   const [objective, setObjective] = useState('');
   const [aiError, setAiError] = useState('');
+  // The draft open in the composer (« Reprendre », QA F02): saving or
+  // sending it replaces it instead of adding a second campaign.
+  const [draftId, setDraftId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -177,7 +195,8 @@ export default function CampagnesPage() {
   const chosen = useMemo(() => (custom
     ? { key: 'custom', label: custom.label, count: custom.ids.length }
     : segments.find((s) => s.key === segment)), [segments, segment, custom]);
-  const ready = title.trim() && message.trim();
+  const linkError = linkProblem(link);
+  const ready = title.trim() && message.trim() && !linkError;
 
   const scheduleAt = () => {
     if (!later || !date) return null;
@@ -202,9 +221,10 @@ export default function CampagnesPage() {
         ...(custom ? { customer_ids: custom.ids } : {}),
         ...(exclude.length ? { exclude_ids: exclude } : {}),
         ...(fromTemplate ? { template: fromTemplate } : {}),
-        image_url: image || null, link_url: link.trim() || null,
+        image_url: image || null, link_url: fullLink(link) || null,
         schedule_at: mode === 'draft' ? null : scheduleAt(),
         push, wallet, draft: mode === 'draft',
+        ...(draftId ? { draft_id: draftId } : {}),
       });
       setFlash(
         res.status === 'draft' ? 'Brouillon enregistré.'
@@ -212,11 +232,53 @@ export default function CampagnesPage() {
             ? `Planifiée pour ${dayLabel(res.scheduled_for)} · ${nf(res.audience)} destinataires.`
             : `Envoyée à ${nf(res.audience)} client${res.audience > 1 ? 's' : ''}.`);
       setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
-      setLater(false); setDate(''); setStep(1); setCustom(null); setFromTemplate(null);
+      setLater(false); setDate(''); setStep(1); setCustom(null); setFromTemplate(null); setDraftId(null);
       load();
     } catch (e) {
       setError(e?.response?.data?.detail || "L'envoi n'a pas abouti.");
     } finally { setBusy(''); }
+  };
+
+  // « Reprendre » a draft: back into the composer, as it was saved.
+  const resumeDraft = async (id) => {
+    setError('');
+    try {
+      const { data: d } = await ownerAPI.campaignDraft(id);
+      setTitle(d.title || ''); setMessage(d.message || ''); setImage(d.image_url || '');
+      setLink(d.link_url || ''); setShowLink(!!d.link_url);
+      setSegment(d.segment || 'all');
+      setCustom(d.audience?.ids?.length ? { ...d.audience, source: 'liste du brouillon' } : null);
+      setPush(d.push !== false); setWallet(d.wallet !== false);
+      setFromTemplate(d.template || null);
+      setLater(false); setDate('');
+      setDraftId(d.id); setStep(2);
+      setFlash('Brouillon repris : modifiez-le, puis enregistrez ou envoyez.');
+      setTimeout(() => document.getElementById('cg-composer')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    } catch (e) {
+      setError(e?.response?.data?.detail || "Ce brouillon n'a pas pu être ouvert.");
+      load();
+    }
+  };
+
+  const deleteDraft = async (r) => {
+    if (!confirmImportant(`Supprimer le brouillon « ${r.name} » ?`)) return;
+    setError('');
+    try {
+      await ownerAPI.deleteCampaignDraft(r.id);
+      if (draftId === r.id) {
+        setDraftId(null); setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
+        setStep(1); setCustom(null); setFromTemplate(null);
+      }
+      setFlash('Brouillon supprimé.');
+      load();
+    } catch (e) {
+      setError(e?.response?.data?.detail || "Le brouillon n'a pas pu être supprimé.");
+    }
+  };
+
+  const leaveDraft = () => {
+    setDraftId(null); setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
+    setStep(1); setCustom(null); setFromTemplate(null); setLater(false); setDate('');
   };
 
   const generate = async () => {
@@ -307,7 +369,15 @@ export default function CampagnesPage() {
       {/* composer */}
       <Panel className="mb-4 p-5" >
         <div id="cg-composer" className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[17px] font-bold text-[#0B1C3F]">Nouvelle notification</h2>
+          <h2 className="flex flex-wrap items-center gap-2 text-[17px] font-bold text-[#0B1C3F]">
+            {draftId ? 'Brouillon' : 'Nouvelle notification'}
+            {draftId && (
+              <button type="button" onClick={leaveDraft}
+                      className="rounded-md bg-[#EEF2F8] px-2 py-0.5 text-[11px] font-semibold text-[#475569] hover:bg-[#E2E8F0]">
+                Fermer le brouillon
+              </button>
+            )}
+          </h2>
           <ol className="flex items-center gap-2">
             {['Destinataires', 'Message', 'Envoyer'].map((s, i) => {
               const n = i + 1, on = step === n, done = step > n;
@@ -441,8 +511,14 @@ export default function CampagnesPage() {
               </button>
             </div>
             {showLink && (
-              <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…"
-                     className="mb-3 w-full rounded-xl border border-[#E6EEFB] bg-white px-3 py-2.5 text-[13px] outline-none focus:border-[#2F6BFF]" />
+              <div className="mb-3">
+                <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://monsite.fr/offre"
+                       inputMode="url" autoComplete="url" aria-invalid={!!linkError}
+                       onBlur={() => { if (!linkProblem(link)) setLink(fullLink(link)); }}
+                       className={`w-full rounded-xl border bg-white px-3 py-2.5 text-[13px] outline-none ${
+                         linkError ? 'border-[#E5484D] focus:border-[#E5484D]' : 'border-[#E6EEFB] focus:border-[#2F6BFF]'}`} />
+                {linkError && <p className="mt-1 text-[11.5px] text-[#C0392B]">{linkError}</p>}
+              </div>
             )}
 
             <div className="rounded-xl border border-[#E6EEFB] p-3">
@@ -553,7 +629,12 @@ export default function CampagnesPage() {
                                 ? <img src={r.image_url} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
                                 : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#EAF1FF] text-[#2F6BFF]"><Bell size={14} /></span>}
                               <span className="min-w-0">
-                                <span className="block truncate text-[12.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
+                                {r.status === 'draft' ? (
+                                  <button type="button" onClick={() => resumeDraft(r.id)} title="Reprendre ce brouillon"
+                                          className="block max-w-full truncate text-left text-[12.5px] font-semibold text-[#0B1C3F] hover:text-[#2F6BFF] hover:underline">
+                                    {r.name}
+                                  </button>
+                                ) : <span className="block truncate text-[12.5px] font-semibold text-[#0B1C3F]">{r.name}</span>}
                                 <span className="block truncate text-[10.5px] text-[#94A3B8]">{r.subtitle}</span>
                               </span>
                             </span>
@@ -562,8 +643,9 @@ export default function CampagnesPage() {
                             <span className="block text-[12px] text-[#475569]">{r.audience}</span>
                             <span className="block text-[10.5px] text-[#94A3B8]">{nf(r.audience_count)} clients</span>
                           </td>
-                          <td className="px-2 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(r.sent)}</td>
-                          <td className="px-2 py-3 text-right text-[12.5px] font-semibold tabular-nums text-[#0B1C3F]">{r.open_rate}%</td>
+                          {/* nothing sent yet (draft, scheduled): no count, no rate (QA F03) */}
+                          <td className="px-2 py-3 text-right text-[12.5px] tabular-nums text-[#475569]">{r.sent == null ? '—' : nf(r.sent)}</td>
+                          <td className="px-2 py-3 text-right text-[12.5px] font-semibold tabular-nums text-[#0B1C3F]">{r.open_rate == null ? '—' : `${r.open_rate}%`}</td>
                           <td className="px-2 py-3"><ResultChip result={r.result} /></td>
                           <td className="px-2 py-3">
                             <span className="rounded-md px-2 py-0.5 text-[11px] font-semibold"
@@ -575,6 +657,17 @@ export default function CampagnesPage() {
                                       className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF] hover:underline">
                                 Voir les résultats <ChevronRight size={13} />
                               </button>
+                            ) : r.status === 'draft' ? (
+                              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                <button type="button" onClick={() => resumeDraft(r.id)}
+                                        className="text-[12px] font-semibold text-[#2F6BFF] hover:underline">
+                                  Reprendre
+                                </button>
+                                <button type="button" onClick={() => deleteDraft(r)}
+                                        className="text-[12px] font-semibold text-[#C0392B] hover:underline">
+                                  Supprimer
+                                </button>
+                              </span>
                             ) : <span className="text-[11.5px] text-[#94A3B8]">—</span>}
                           </td>
                         </tr>

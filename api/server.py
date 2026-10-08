@@ -4162,6 +4162,11 @@ def send_campaign(
     campaign_dict = db.campaigns.find_one({"id": campaign_id, "tenant_id": token_data.tenant_id})
     if not campaign_dict:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    # A campaign written by Campagnes (compose) has its audience in
+    # recipient_ids and no filters: sent from here it would reach EVERY
+    # customer. It is sent from Campagnes only.
+    if campaign_dict.get("channels") is not None or campaign_dict.get("audience_label"):
+        raise HTTPException(status_code=409, detail="Cette campagne s'envoie depuis la page Campagnes.")
 
     campaign = Campaign(**campaign_dict)
 
@@ -6281,7 +6286,9 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
             # New fields surfaced for the detail modal.
             "body": c.get("content", ""),
             "image_url": c.get("image_url"),
-            "link": c.get("link"),
+            # Campagnes saves « link_url »; older senders « link » (the
+            # composer's link never reached the card before, QA 2026-10-08)
+            "link": _campaign_link(c),
             "sent_at": c.get("sent_at").isoformat() if c.get("sent_at") else None,
             "kind": "campaign",
             "valid_until": (c.get("sent_at") + timedelta(days=30)).isoformat() if c.get("sent_at") else None,
@@ -6543,6 +6550,12 @@ def _serialize_card_payload(cust: dict) -> dict:
     }
 
 
+def _campaign_link(c: dict) -> Optional[str]:
+    """The campaign's link for the customer's card: http(s) only."""
+    from features.campaigns_page import safe_link
+    return safe_link(c.get("link_url") or c.get("link"))
+
+
 def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dict]:
     # Use sent campaigns as synthetic push log + one "welcome" synthetic entry
     cutoff = datetime.now(timezone.utc) - timedelta(days=45)
@@ -6557,7 +6570,7 @@ def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dic
             # these were dropped and the image at compose time was
             # effectively invisible to customers.
             "image_url": c.get("image_url"),
-            "link": c.get("link"),
+            "link": _campaign_link(c),
             "sent_at": c.get("sent_at").isoformat() if c.get("sent_at") else None,
             "kind": "campaign",
         })

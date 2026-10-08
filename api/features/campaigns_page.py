@@ -273,8 +273,10 @@ def page(request: Request = None,
             "image_url": c.get("image_url"),
             "audience": c.get("audience_label") or SEGMENT_LABELS.get(c.get("segment") or "", "Sélection"),
             "audience_count": len(ids) or int(c.get("targeted_count") or 0),
-            "sent": int(c.get("delivered_count") or 0) or len(ids),
-            "open_rate": _pct(len(_opened_ids(tid, ids, sent_at, c)), len(ids)),
+            # Only a sent campaign has been sent or opened (QA F03: a draft
+            # showed « Envoyées 3 » and « 0 % » — its audience, not a send).
+            "sent": (int(c.get("delivered_count") or 0) or len(ids)) if c.get("status") == "sent" else None,
+            "open_rate": _pct(len(_opened_ids(tid, ids, sent_at, c)), len(ids)) if c.get("status") == "sent" else None,
             "status": c.get("status") or "draft",
             "sent_at": sent_at.isoformat() if sent_at else None,
             "scheduled_for": (d.isoformat() if (d := _aware(c.get("scheduled_for"))) else None),
@@ -321,6 +323,9 @@ class Compose(BaseModel):
     push: bool = True
     wallet: bool = True
     draft: bool = False
+    # Reprendre un brouillon (QA F02): the draft this save / send replaces —
+    # saved again, scheduled or sent, it stays one campaign.
+    draft_id: Optional[str] = None
     # Which recommendation this campaign came from (Insights, Segmentation,
     # FidClic IA). Recorded so the recommendation can step aside once it has
     # been used, and something new can take its place.
@@ -329,6 +334,67 @@ class Compose(BaseModel):
 
 def _clean(text: str, limit: int) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())[:limit]
+
+
+_LINK = re.compile(r"^https?://[^\s/?#]+\.[^\s/?#]{2,}(?:[/?#]\S*)?$", re.I)
+
+
+def clean_link(raw: Optional[str]) -> Optional[str]:
+    """The campaign's « Ajouter un lien » (QA UX09: « not-a-url » was saved).
+
+    A web address or nothing: « monsite.fr/menu » gets its https://, anything
+    else — a sentence, javascript:, a phone number — is refused with a
+    sentence the owner understands. The customer's card opens this link, so
+    only http(s) ever reaches it."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if not re.match(r"^[a-z][a-z0-9+.-]*:", s, re.I):
+        s = "https://" + s.lstrip("/")
+    if not _LINK.match(s) or len(s) > 500:
+        raise HTTPException(status_code=400, detail="Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.")
+    return s
+
+
+def safe_link(raw: Optional[str]) -> Optional[str]:
+    """A stored link the customer's card may open: http(s) only, else none."""
+    s = (raw or "").strip()
+    return s if _LINK.match(s) else None
+
+
+def _own_draft(tid: str, draft_id: str) -> Dict[str, Any]:
+    doc = _db.campaigns.find_one({"id": draft_id, "tenant_id": tid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Brouillon introuvable.")
+    if doc.get("status") != "draft":
+        raise HTTPException(status_code=409, detail="Cette campagne n'est plus un brouillon.")
+    return doc
+
+
+@router.get("/api/owner/campaigns/drafts/{draft_id}")
+def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """« Reprendre » (QA F02): what the composer needs to open the draft."""
+    d = _own_draft(token_data.tenant_id, draft_id)
+    custom = d.get("segment") == "custom"
+    return {
+        "id": d["id"], "title": d.get("name") or "", "message": d.get("content") or "",
+        "segment": "all" if custom else (d.get("segment") or "all"),
+        # a hand-picked list (Clients, Insights) stays that list
+        "audience": {"label": d.get("audience_label") or "Sélection", "ids": list(d.get("recipient_ids") or [])}
+        if custom else None,
+        "image_url": d.get("image_url") or "", "link_url": d.get("link_url") or "",
+        "push": bool((d.get("channels") or {}).get("push", True)),
+        "wallet": bool((d.get("channels") or {}).get("wallet", True)),
+        "template": d.get("template"),
+    }
+
+
+@router.delete("/api/owner/campaigns/drafts/{draft_id}")
+def delete_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """« Supprimer » a draft (QA F02). Only drafts: what was sent is history."""
+    _own_draft(token_data.tenant_id, draft_id)
+    _db.campaigns.delete_one({"id": draft_id, "tenant_id": token_data.tenant_id, "status": "draft"})
+    return {"deleted": True}
 
 
 @router.post("/api/owner/campaigns/compose")
@@ -346,6 +412,8 @@ def compose(req: Compose, request: Request = None,
         raise HTTPException(status_code=400, detail="Un titre et un message sont nécessaires.")
     if not req.push and not req.wallet and not req.draft:
         raise HTTPException(status_code=400, detail="Choisissez au moins un canal.")
+    link = clean_link(req.link_url)
+    previous = _own_draft(tid, req.draft_id) if req.draft_id else None
 
     at = _now()
     scope = S.resolve(token_data, request)
@@ -377,7 +445,7 @@ def compose(req: Compose, request: Request = None,
         "segment": req.segment if not req.customer_ids else "custom",
         "audience_label": label,
         "image_url": req.image_url or None,
-        "link_url": req.link_url or None,
+        "link_url": link,
         "channels": {"push": bool(req.push), "wallet": bool(req.wallet)},
         "recipient_ids": [c["id"] for c in people],
         "targeted_count": len(people),
@@ -397,8 +465,18 @@ def compose(req: Compose, request: Request = None,
         "sent_by": getattr(token_data, "email", None),
     }
 
+    if previous:                                   # the draft becomes this campaign
+        doc["id"] = previous["id"]
+        doc["created_at"] = previous.get("created_at") or at
+
+    def save():
+        if previous:
+            _db.campaigns.replace_one({"id": doc["id"], "tenant_id": tid}, dict(doc))
+        else:
+            _db.campaigns.insert_one(dict(doc))
+
     if status != "sent":
-        _db.campaigns.insert_one(dict(doc))
+        save()
         return {"id": doc["id"], "status": status, "audience": len(people),
                 "scheduled_for": when.isoformat() if when else None}
 
@@ -408,7 +486,7 @@ def compose(req: Compose, request: Request = None,
     # after, the pass came back unchanged and Wallet raised no notification
     # (user, 2026-10-04 — the offer only appeared later, silently).
     doc["sent_at"] = at
-    _db.campaigns.insert_one(dict(doc))
+    save()
     result = _deliver(tid, doc, people)
     _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": result["delivered"]}})
     return {"id": doc["id"], "status": "sent", "audience": len(people), **result}
