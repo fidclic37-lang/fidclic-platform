@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
 import WalletPassLive from '../components/WalletPassLive';
 import OnboardingShell from '../components/OnboardingShell';
+import { OWNER_HOME } from '../lib/modules';
 
 /**
  * OnboardingDonePage — after step 4: "Votre carte est créée !" (approved mockup).
@@ -122,7 +123,7 @@ const OnboardingDonePage = () => {
         </div>
       </div>
 
-      <button type="button" onClick={() => navigate('/modules', { replace: true })}
+      <button type="button" onClick={() => navigate(OWNER_HOME, { replace: true })}
               className="mt-5 inline-flex w-full items-center justify-center gap-3 rounded-2xl py-4 text-[17px] font-semibold text-white transition hover:-translate-y-0.5"
               style={{ background: '#0A6CFF', boxShadow: '0 12px 28px -12px rgba(10,108,255,.6)' }}>
         {t('done.go_dashboard')} <ArrowRight size={20} />

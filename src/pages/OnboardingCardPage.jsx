@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { onboardingAPI } from '../lib/api';
 import WalletPassLive from '../components/WalletPassLive';
 import OnboardingShell, { Field, FieldLabel, INPUT, StepButtons } from '../components/OnboardingShell';
+import { OWNER_HOME } from '../lib/modules';
 
 /**
  * OnboardingCardPage — STEP 4 of 4, optional: "Configuration de votre carte" (approved mockup).
@@ -262,7 +263,7 @@ const OnboardingCardPage = () => {
                        nextLabel={saving ? t('auth.creating') : t('card_step.finish')} loading={saving} />
           {/* Optional step (user, 2026-10-04): the card can be designed later
               from Carte de fidélité; the trial is already running. */}
-          <button type="button" onClick={() => navigate('/modules', { replace: true })}
+          <button type="button" onClick={() => navigate(OWNER_HOME, { replace: true })}
                   className="mx-auto mt-4 block text-[14px] font-semibold text-[#2F6BFF] hover:underline">
             {t('card_step.skip')}
           </button>

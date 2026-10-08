@@ -9,6 +9,7 @@ import SocialAuthButtons from '../components/SocialAuthButtons';
 import { LEGAL_LINKS } from '../lib/legal';
 import { onboardingPath } from '../lib/onboarding';
 import { authAPI } from '../lib/api';
+import { OWNER_HOME } from '../lib/modules';
 
 /**
  * RegisterPage — step 1 of 3 ("Vos informations"), from the approved mockup:
@@ -69,7 +70,7 @@ const RegisterPage = () => {
     try {
       const { prefix, phone, ...rest } = form;
       const session = await register({ ...rest, phone: `${prefix} ${phone.trim()}`, role: 'business_owner' });
-      navigate(onboardingPath({ role: 'business_owner', ...session }) || '/modules');
+      navigate(onboardingPath({ role: 'business_owner', ...session }) || OWNER_HOME);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || t('auth.register_failed'));
     } finally { setLoading(false); }
