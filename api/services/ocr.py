@@ -44,7 +44,7 @@ _force_extract = None
 
 _ENDPOINTS = {
     "anthropic": ("https://api.anthropic.com/v1/messages",
-                  "ANTHROPIC_API_KEY", "claude-sonnet-5"),
+                  "ANTHROPIC_API_KEY", "claude-sonnet-5-5"),
     "groq": ("https://api.groq.com/openai/v1/chat/completions",
              "GROQ_API_KEY", "meta-llama/llama-4-scout-17b-16e-instruct"),
     "nvidia": ("https://integrate.api.nvidia.com/v1/chat/completions",

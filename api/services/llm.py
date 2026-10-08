@@ -12,7 +12,9 @@ CONFIG
                    otherwise "groq" — so dropping the key in is enough to put
                    every agent on Claude without touching another variable.
     ANTHROPIC_API_KEY / GROQ_API_KEY / NVIDIA_API_KEY
-    LLM_MODEL      optional override
+    LLM_MODEL      optional override (the first provider's model)
+    A provider that fails hands over to the next one with a key, in the
+    order groq → nvidia → anthropic (after the chosen one).
 
 SEAM
     _force_complete = callable(system, user) -> str   for deterministic tests.
@@ -31,7 +33,7 @@ _force_complete = None
 
 _ENDPOINTS = {
     "anthropic": ("https://api.anthropic.com/v1/messages",
-                  "ANTHROPIC_API_KEY", "claude-sonnet-5"),
+                  "ANTHROPIC_API_KEY", "claude-sonnet-5-5"),
     "groq": ("https://api.groq.com/openai/v1/chat/completions",
              "GROQ_API_KEY", "llama-3.3-70b-versatile"),
     "nvidia": ("https://integrate.api.nvidia.com/v1/chat/completions",
@@ -53,27 +55,64 @@ def _provider() -> tuple:
     return _ENDPOINTS[_provider_name()]
 
 
+# When the first provider fails (no key, quota, timeout), the next one with a
+# key answers (QA F05, 2026-10-08: Groq failed and FidClic IA fell back to a
+# canned reply although an NVIDIA key was there).
+FALLBACK_ORDER = ("groq", "nvidia", "anthropic")
+
+
+def _chain() -> list:
+    first = _provider_name()
+    return [first] + [p for p in FALLBACK_ORDER if p != first]
+
+
+def _has_key(name: str) -> bool:
+    return bool(os.environ.get(_ENDPOINTS[name][1], "").strip())
+
+
 def is_configured() -> bool:
-    _url, key_env, _model = _provider()
-    return bool(os.environ.get(key_env, "").strip())
+    """Any provider with a key can answer."""
+    return any(_has_key(p) for p in _ENDPOINTS)
 
 
 def complete(system: str, user: str, *, max_tokens: int = 400,
              temperature: float = 0.4) -> Optional[str]:
-    """Return the model's text, or None if unavailable (caller falls back)."""
+    """Return the model's text, or None if no provider answered (caller falls back)."""
     if _force_complete is not None:
         return _force_complete(system, user)
-    if not is_configured():
-        return None
-    url, key_env, default_model = _provider()
+    for i, name in enumerate(_chain()):
+        if not _has_key(name):
+            continue
+        default = _ENDPOINTS[name][2]
+        chosen = _model_for(name) if i == 0 else default
+        for model in dict.fromkeys((chosen, default)):     # the chosen model, then the default once
+            txt = _call(name, model, system, user, max_tokens, temperature)
+            if txt:
+                return txt
+            logger.warning("LLM %s / %s gave no answer", name, model)
+    return None
+
+
+def _model_for(name: str) -> str:
+    """LLM_MODEL, when it belongs to this provider — a Groq model name left in
+    LLM_MODEL must not be sent to Claude (and the other way round)."""
+    m = os.environ.get("LLM_MODEL", "").strip()
+    if not m:
+        return _ENDPOINTS[name][2]
+    is_claude = m.lower().startswith("claude")
+    return m if (name == "anthropic") == is_claude else _ENDPOINTS[name][2]
+
+
+def _call(name: str, model: str, system: str, user: str, max_tokens: int,
+          temperature: float) -> Optional[str]:
+    url, key_env, _default = _ENDPOINTS[name]
     key = os.environ.get(key_env, "").strip()
-    model = os.environ.get("LLM_MODEL", "").strip() or default_model
 
     # Anthropic speaks its own dialect: x-api-key instead of a bearer token, a
     # mandatory version header, `system` hoisted out of the message list, and a
     # content-block array coming back. Same contract out (text or None), so
     # every caller is unaffected.
-    if _provider_name() == "anthropic":
+    if name == "anthropic":
         body = {
             "model": model, "max_tokens": max_tokens, "temperature": temperature,
             "messages": [{"role": "user", "content": user}],
@@ -112,5 +151,5 @@ def complete(system: str, user: str, *, max_tokens: int = 400,
         txt = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content")
         return (txt or "").strip() or None
     except Exception as exc:  # noqa: BLE001
-        logger.exception("LLM completion failed: %s", exc)
+        logger.exception("LLM completion failed (%s): %s", name, exc)
         return None

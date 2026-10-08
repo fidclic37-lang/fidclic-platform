@@ -185,7 +185,7 @@ SENDGRID_FROM_EMAIL = "noreply@fidelitour.com"
 # judging quality, you want the model you would actually ship on.
 #
 #   ANTHROPIC_API_KEY     from console.anthropic.com
-#   ANTHROPIC_MODEL       default claude-sonnet-5
+#   ANTHROPIC_MODEL       default claude-sonnet-5-5
 #   ANTHROPIC_VISION_MODEL  defaults to ANTHROPIC_MODEL (all Claude models see)
 #
 # Cost, Aug 2026: sonnet-5 $2/$10 per Mtok (intro pricing to 31 Aug 2026,
@@ -193,7 +193,7 @@ SENDGRID_FROM_EMAIL = "noreply@fidelitour.com"
 # tokens, so $5 of credit is thousands of calls on Sonnet. Set
 # ANTHROPIC_MODEL=claude-haiku-4-5 for bulk/cheap paths.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 ANTHROPIC_VISION_MODEL = os.environ.get("ANTHROPIC_VISION_MODEL", "") or ANTHROPIC_MODEL
 ANTHROPIC_VERSION = "2023-06-01"
 
@@ -2744,7 +2744,7 @@ def admin_env_status(token_data: TokenData = Depends(require_admin("parametres")
                 "Falls through to the free tiers (NVIDIA/Groq/OpenRouter/Gemini). "
                 "Those prove a feature is wired up but not that its output is "
                 "shippable. Set ANTHROPIC_MODEL to claude-haiku-4-5 for cheap "
-                "bulk paths, claude-sonnet-5 (default) for quality judgement."
+                "bulk paths, claude-sonnet-5-5 (default) for quality judgement."
             ),
         },
         {
