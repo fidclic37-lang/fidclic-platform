@@ -5,6 +5,7 @@ import api, { publicAPI } from '../lib/api';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from '../components/Code128Barcode';
 import { SIGNUP_SOURCES, normalizeSource, sourceLabel } from '../lib/sources';
+import { addMine, ownerLink } from '../lib/myCards';
 
 // Where they came from (lib/sources, user 2026-10-08): the channel of the link —
 // /inscription/<slug>/insta, /wa, /qr… or the older ?src=ig / ?utm_source=fb.
@@ -282,6 +283,8 @@ const JoinPage = () => {
       setJoinError(null);
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);  // chain has been persisted server-side, no need to keep it here
+      // this phone now holds the card: a friend's QR scanned later opens it (lib/myCards)
+      addMine(res.data?.barcode_id, res.data?.card_key);
       setSuccess(res.data);
     } catch (err) {
       // Plan-cap hit: the backend returns 403 with a structured detail.
@@ -354,12 +357,12 @@ const JoinPage = () => {
             {/* QR only — the Code 128 1D barcode below was removed per
                 owner spec. Modern POS phones/tablets scan QR reliably. */}
             <div className="p-4 bg-white rounded-xl border border-[#E7E5E4] flex justify-center">
-              <QRCodeSVG value={`${window.location.origin}/card/${success.barcode_id}`} size={200} level="M" />
+              <QRCodeSVG value={`${window.location.origin}${ownerLink(success.barcode_id, success.card_key)}`} size={200} level="M" />
             </div>
             <p className="font-mono bg-gray-100 p-2 rounded">{success.barcode_id}</p>
             <div className="space-y-3">
               <Link
-                to={`/card/${success.barcode_id}`}
+                to={ownerLink(success.barcode_id, success.card_key)}
                 className="block text-center w-full bg-[#B85C38] text-white py-3 rounded-xl font-medium hover:bg-[#9C4E2F] transition-colors"
               >
                 {t('join.open_card')} →

@@ -212,7 +212,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     pjc = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     backc = {f["key"]: f for f in pjc["storeCard"]["backFields"]}
     check("campaign photo: the back links to the campaign on the web card",
-          backc.get("offer_link", {}).get("value", "").endswith("/card/FT-TEST0001?offre=camp-photo")
+          backc.get("offer_link", {}).get("value", "").startswith(f"{WP._site_url()}/card/FT-TEST0001?offre=camp-photo&k=")
           and 'href="' in backc["offer_link"].get("attributedValue", ""))
     check("campaign photo: the link sits right under the offer",
           [f["key"] for f in pjc["storeCard"]["backFields"]][:2] == ["offer", "offer_link"])
@@ -222,7 +222,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"campaign photo: it is the strip (top pixel {top})", top[0] > 150 and top[1] < 90 and top[2] < 90)
     gobj = WP._gw_object(WP._card_payload("FT-TEST0001"))
     check("campaign photo: Google gets the link, not a raw URL in the details",
-          gobj["linksModuleData"]["uris"][0]["uri"].endswith("?offre=camp-photo")
+          "?offre=camp-photo&k=" in gobj["linksModuleData"]["uris"][0]["uri"]
           and not any(t["id"] == "offer_link" for t in gobj["textModulesData"]))
     check("campaign photo: Google's banner URL changes with the campaign",
           gobj["heroImage"]["sourceUri"]["uri"].endswith("-camp-photo"))

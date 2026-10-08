@@ -106,21 +106,17 @@
           if (m) {
             var bc = m[1].toUpperCase();
             note('on /card/ page, barcode = ' + bc);
-            addManifest('/api/manifest/' + bc);
-            note('manifest link injected → /api/manifest/' + bc);
+            // The owner key (the link's ?k=, or the one this phone keeps for
+            // this card — src/lib/myCards.js) goes to the manifest, so an
+            // app installed from here opens on the owner's link. This script
+            // no longer claims the card for the phone: the card page asks the
+            // server whose it is (a friend's scanned QR is not this phone's).
+            var key = (location.search.match(/[?&]k=([0-9a-f]+)/i) || [])[1] || '';
             try {
-              // What this phone carried BEFORE we claim the card for it.
-              // Parrainage depends on this: a phone that has never carried
-              // this card is a stranger who just scanned somebody else's,
-              // and belongs on the signup form, not on their card. This
-              // script runs before React, so without the snapshot React
-              // would only ever see the card this very script just wrote.
-              window.__fidclicPrevCard = localStorage.getItem('fidelitour:last_card');
-              localStorage.setItem('fidelitour:last_card', bc);
-              note('wrote localStorage[fidelitour:last_card] = ' + bc);
-            } catch (e) {
-              note('localStorage.setItem failed: ' + (e.message || e));
-            }
+              if (!key) key = (JSON.parse(localStorage.getItem('fidclic:my_cards') || '{}') || {})[bc] || '';
+            } catch (e) { key = ''; }
+            addManifest('/api/manifest/' + bc + (key ? '?k=' + encodeURIComponent(key) : ''));
+            note('manifest link injected → /api/manifest/' + bc + (key ? ' (owner)' : ''));
             showHud();
             return; // we're already on the right URL, nothing to redirect
           }

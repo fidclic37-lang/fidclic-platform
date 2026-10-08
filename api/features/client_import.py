@@ -50,6 +50,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from services import card_owner as CO
+
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -300,7 +302,7 @@ def _base() -> str:
 
 def _email(cust: Dict[str, Any], shop: str, relance: bool) -> Dict[str, Any]:
     first = (cust.get("name") or "").split(" ")[0] or "Bonjour"
-    card = f"{_base()}/card/{cust['barcode_id']}?src=invite"
+    card = CO.owner_url(_base(), cust["barcode_id"], query={"src": "invite"})
     stop = f"{_base()}/api/public/email/unsubscribe/{cust['email_token']}"
     shop_h, first_h = html.escape(shop), html.escape(first)
     if relance:

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Gift, Sparkles, ChevronRight, X, ExternalLink, Loader2 } from 'lucide-react';
 import api from '../lib/api';
+import { ownerLink } from '../lib/myCards';
 
 /**
  * Offres — where « Voir les offres et récompenses » under the Wallet pass
@@ -142,7 +143,8 @@ export default function CardOffersPage() {
           </div>
         )}
 
-        <Link to={`/card/${barcodeId}`} className="mt-6 block text-center text-[13px] font-semibold text-[#2F6BFF]">Voir ma carte complète</Link>
+        {/* the Wallet tile's owner key goes on to the card (lib/myCards) */}
+        <Link to={ownerLink(barcodeId, new URLSearchParams(window.location.search).get('k'))} className="mt-6 block text-center text-[13px] font-semibold text-[#2F6BFF]">Voir ma carte complète</Link>
       </div>
       {open && <OfferSheet item={open} customer={customer} onClose={() => setOpen(null)} />}
     </div>

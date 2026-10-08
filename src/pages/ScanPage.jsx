@@ -50,13 +50,15 @@ const barcodeFrom = (scanned) => {
   return raw.replace(/\/+$/, '').split('/').pop().split('?')[0].trim().toUpperCase();
 };
 
-function NotificationEnablePrompt({ customerName, barcodeId }) {
+function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
   const [showQR, setShowQR] = useState(false);
   const firstName = (customerName || '').split(' ')[0] || 'votre client';
   // Public URL that opens the wallet card with the notification prompt
   // auto-trigger. MyWalletCardPage reads ?notify=1 and shows the prompt
   // banner the moment the page loads.
-  const cardUrl = `${window.location.origin}/card/${(barcodeId || '').toUpperCase()}?notify=1`;
+  // The customer opens it with their own phone: it carries the card's owner
+  // key, so it opens their card, not the signup form (lib/myCards).
+  const cardUrl = `${window.location.origin}/card/${(barcodeId || '').toUpperCase()}?notify=1${cardKey ? `&k=${encodeURIComponent(cardKey)}` : ''}`;
 
   return (
     <div
@@ -1071,6 +1073,7 @@ const ScanPage = () => {
                   <NotificationEnablePrompt
                     customerName={scanResult.customer_name}
                     barcodeId={scanResult.barcode_id}
+                    cardKey={scanResult.card_key}
                   />
                 )}
 

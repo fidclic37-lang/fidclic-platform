@@ -960,5 +960,6 @@ def register_click(log_id: str):
             pass
         cust = _db.customers.find_one({"id": row.get("customer_id")}, {"_id": 0, "barcode_id": 1})
         if cust and cust.get("barcode_id"):
-            target = f"/card/{cust['barcode_id']}"
+            from services import card_owner as CO
+            target = CO.owner_url("", cust["barcode_id"])     # the customer's own push: the owner's link
     return RedirectResponse(url=target, status_code=302)

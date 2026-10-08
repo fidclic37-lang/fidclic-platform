@@ -151,7 +151,8 @@ def _threshold(tenant_id: str) -> int:
 def _card_url(barcode: str) -> str:
     import os
     base = (os.environ.get("PUBLIC_APP_URL") or "https://app.fidclic.com").rstrip("/")
-    return f"{base}/card/{barcode}"
+    from services import card_owner as CO
+    return CO.owner_url(base, barcode)       # sent to the customer: the owner's link
 
 
 def customer_out(c: Dict[str, Any], threshold: Optional[int] = None) -> Dict[str, Any]:

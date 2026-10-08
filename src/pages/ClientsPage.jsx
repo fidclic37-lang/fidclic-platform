@@ -750,7 +750,7 @@ export default function ClientsPage() {
                             <span onClick={(e) => e.stopPropagation()}
                                   className="absolute right-0 top-full z-20 mt-1 flex w-[200px] flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
                               {r.barcode_id && (
-                                <a href={`/card/${r.barcode_id}`} target="_blank" rel="noreferrer"
+                                <a href={`/card/${r.barcode_id}?vue=commerce`} target="_blank" rel="noreferrer"
                                    className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                   Voir sa carte
                                 </a>
