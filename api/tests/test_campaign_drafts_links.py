@@ -97,6 +97,39 @@ def main():
     check("« Supprimer » deletes the draft", http("DELETE", f"/api/owner/campaigns/drafts/{other}").json()["deleted"]
           and not db.campaigns.find_one({"id": other}))
 
+    print("\nCampagne planifiée : modifier, annuler")
+    later = (now + dt.timedelta(days=2)).isoformat()
+    pid = compose(title="Brunch", schedule_at=later).json()["id"]
+    check("a planned campaign shows no count either", row(pid)["sent"] is None and row(pid)["status"] == "scheduled")
+    g = http("GET", f"/api/owner/campaigns/drafts/{pid}").json()
+    check("« Modifier » opens it with its day and hour", g["status"] == "scheduled" and g["scheduled_for"]
+          and g["title"] == "Brunch")
+    later2 = (now + dt.timedelta(days=3)).isoformat()
+    r = compose(draft_id=pid, title="Brunch du dimanche", schedule_at=later2)
+    d = db.campaigns.find_one({"id": pid})
+    check("changed and planned again: the same campaign, the new text and day",
+          r.json()["status"] == "scheduled" and d["name"] == "Brunch du dimanche"
+          and abs((d["scheduled_for"].replace(tzinfo=dt.timezone.utc) if d["scheduled_for"].tzinfo is None else d["scheduled_for"])
+                  - dt.datetime.fromisoformat(later2)).total_seconds() < 2
+          and db.campaigns.count_documents({"name": {"$regex": "^Brunch"}}) == 1)
+    check("a planned campaign is not deleted directly", http("DELETE", f"/api/owner/campaigns/drafts/{pid}").status_code == 409)
+    check("another shop cannot cancel it",
+          http("POST", f"/api/owner/campaigns/drafts/{pid}/cancel-schedule", headers=H2).status_code == 404)
+    r = http("POST", f"/api/owner/campaigns/drafts/{pid}/cancel-schedule")
+    d = db.campaigns.find_one({"id": pid})
+    check("« Annuler l'envoi »: it stays, as a draft, with no day", r.json()["status"] == "draft"
+          and d["status"] == "draft" and d["scheduled_for"] is None and d["name"] == "Brunch du dimanche")
+    import features.campaigns_page as CPG
+    CPG.run_due(now + dt.timedelta(days=4))
+    check("…and the scheduler never sends it", db.campaigns.find_one({"id": pid})["status"] == "draft"
+          and not db.push_notifications.count_documents({"campaign_id": pid}))
+    check("cancelling a draft is refused", http("POST", f"/api/owner/campaigns/drafts/{pid}/cancel-schedule").status_code == 409)
+    pid2 = compose(title="Goûter", schedule_at=later).json()["id"]
+    CPG.run_due(now + dt.timedelta(days=4))
+    check("once the scheduler sent it, it can no longer be changed or cancelled",
+          compose(draft_id=pid2, title="x").status_code == 409
+          and http("POST", f"/api/owner/campaigns/drafts/{pid2}/cancel-schedule").status_code == 409)
+
     print("\nLe lien arrive sur la carte")
     card = http("GET", "/api/card/FT-00000000", headers={}).json()
     feed = (card.get("offers") or []) + (card.get("notifications") or [])

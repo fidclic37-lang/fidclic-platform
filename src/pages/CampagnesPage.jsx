@@ -146,6 +146,7 @@ export default function CampagnesPage() {
   // The draft open in the composer (« Reprendre », QA F02): saving or
   // sending it replaces it instead of adding a second campaign.
   const [draftId, setDraftId] = useState(null);
+  const [editKind, setEditKind] = useState('draft');    // 'draft' · 'scheduled' (« Modifier » a planned one)
 
   const load = useCallback(() => {
     setLoading(true);
@@ -232,7 +233,7 @@ export default function CampagnesPage() {
             ? `Planifiée pour ${dayLabel(res.scheduled_for)} · ${nf(res.audience)} destinataires.`
             : `Envoyée à ${nf(res.audience)} client${res.audience > 1 ? 's' : ''}.`);
       setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
-      setLater(false); setDate(''); setStep(1); setCustom(null); setFromTemplate(null); setDraftId(null);
+      setLater(false); setDate(''); setStep(1); setCustom(null); setFromTemplate(null); setDraftId(null); setEditKind('draft');
       load();
     } catch (e) {
       setError(e?.response?.data?.detail || "L'envoi n'a pas abouti.");
@@ -250,9 +251,21 @@ export default function CampagnesPage() {
       setCustom(d.audience?.ids?.length ? { ...d.audience, source: 'liste du brouillon' } : null);
       setPush(d.push !== false); setWallet(d.wallet !== false);
       setFromTemplate(d.template || null);
-      setLater(false); setDate('');
+      if (d.status === 'scheduled' && d.scheduled_for) {
+        // the planned day and hour, in the owner's time
+        const w = new Date(d.scheduled_for);
+        const p2 = (n) => String(n).padStart(2, '0');
+        setLater(true);
+        setDate(`${w.getFullYear()}-${p2(w.getMonth() + 1)}-${p2(w.getDate())}`);
+        setTime(`${p2(w.getHours())}:${p2(w.getMinutes())}`);
+      } else {
+        setLater(false); setDate('');
+      }
+      setEditKind(d.status === 'scheduled' ? 'scheduled' : 'draft');
       setDraftId(d.id); setStep(2);
-      setFlash('Brouillon repris : modifiez-le, puis enregistrez ou envoyez.');
+      setFlash(d.status === 'scheduled'
+        ? 'Campagne planifiée ouverte : modifiez-la, puis cliquez sur « Planifier » (ou « Envoyer » pour l\'envoyer tout de suite).'
+        : 'Brouillon repris : modifiez-le, puis enregistrez ou envoyez.');
       setTimeout(() => document.getElementById('cg-composer')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } catch (e) {
       setError(e?.response?.data?.detail || "Ce brouillon n'a pas pu être ouvert.");
@@ -266,7 +279,7 @@ export default function CampagnesPage() {
     try {
       await ownerAPI.deleteCampaignDraft(r.id);
       if (draftId === r.id) {
-        setDraftId(null); setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
+        setDraftId(null); setEditKind('draft'); setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
         setStep(1); setCustom(null); setFromTemplate(null);
       }
       setFlash('Brouillon supprimé.');
@@ -276,8 +289,23 @@ export default function CampagnesPage() {
     }
   };
 
+  // « Annuler l'envoi »: it does not leave; it goes back to the drafts.
+  const cancelSchedule = async (r) => {
+    if (!confirmImportant(`Annuler l'envoi planifié de « ${r.name} » ? Elle restera dans vos brouillons.`)) return;
+    setError('');
+    try {
+      await ownerAPI.cancelCampaignSchedule(r.id);
+      if (draftId === r.id) { setEditKind('draft'); setLater(false); setDate(''); }
+      setFlash('Envoi annulé : la campagne est dans vos brouillons.');
+      load();
+    } catch (e) {
+      setError(e?.response?.data?.detail || "L'envoi n'a pas pu être annulé.");
+      load();
+    }
+  };
+
   const leaveDraft = () => {
-    setDraftId(null); setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
+    setDraftId(null); setEditKind('draft'); setTitle(''); setMessage(''); setImage(''); setLink(''); setShowLink(false);
     setStep(1); setCustom(null); setFromTemplate(null); setLater(false); setDate('');
   };
 
@@ -370,11 +398,11 @@ export default function CampagnesPage() {
       <Panel className="mb-4 p-5" >
         <div id="cg-composer" className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <h2 className="flex flex-wrap items-center gap-2 text-[17px] font-bold text-[#0B1C3F]">
-            {draftId ? 'Brouillon' : 'Nouvelle notification'}
+            {!draftId ? 'Nouvelle notification' : editKind === 'scheduled' ? 'Campagne planifiée' : 'Brouillon'}
             {draftId && (
               <button type="button" onClick={leaveDraft}
                       className="rounded-md bg-[#EEF2F8] px-2 py-0.5 text-[11px] font-semibold text-[#475569] hover:bg-[#E2E8F0]">
-                Fermer le brouillon
+                {editKind === 'scheduled' ? 'Fermer sans modifier' : 'Fermer le brouillon'}
               </button>
             )}
           </h2>
@@ -629,8 +657,9 @@ export default function CampagnesPage() {
                                 ? <img src={r.image_url} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
                                 : <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#EAF1FF] text-[#2F6BFF]"><Bell size={14} /></span>}
                               <span className="min-w-0">
-                                {r.status === 'draft' ? (
-                                  <button type="button" onClick={() => resumeDraft(r.id)} title="Reprendre ce brouillon"
+                                {r.status === 'draft' || r.status === 'scheduled' ? (
+                                  <button type="button" onClick={() => resumeDraft(r.id)}
+                                          title={r.status === 'draft' ? 'Reprendre ce brouillon' : 'Modifier cette campagne planifiée'}
                                           className="block max-w-full truncate text-left text-[12.5px] font-semibold text-[#0B1C3F] hover:text-[#2F6BFF] hover:underline">
                                     {r.name}
                                   </button>
@@ -666,6 +695,17 @@ export default function CampagnesPage() {
                                 <button type="button" onClick={() => deleteDraft(r)}
                                         className="text-[12px] font-semibold text-[#C0392B] hover:underline">
                                   Supprimer
+                                </button>
+                              </span>
+                            ) : r.status === 'scheduled' ? (
+                              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                <button type="button" onClick={() => resumeDraft(r.id)}
+                                        className="text-[12px] font-semibold text-[#2F6BFF] hover:underline">
+                                  Modifier
+                                </button>
+                                <button type="button" onClick={() => cancelSchedule(r)}
+                                        className="text-[12px] font-semibold text-[#C0392B] hover:underline">
+                                  Annuler l'envoi
                                 </button>
                               </span>
                             ) : <span className="text-[11.5px] text-[#94A3B8]">—</span>}

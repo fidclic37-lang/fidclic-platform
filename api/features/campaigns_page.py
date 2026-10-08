@@ -362,19 +362,27 @@ def safe_link(raw: Optional[str]) -> Optional[str]:
     return s if _LINK.match(s) else None
 
 
-def _own_draft(tid: str, draft_id: str) -> Dict[str, Any]:
+# What can still be changed: a draft, and a planned campaign not yet sent
+# (user, 2026-10-08: « planifiée ko cancel ya edit karne ka button »).
+EDITABLE = ("draft", "scheduled")
+
+
+def _own_draft(tid: str, draft_id: str, allow: Tuple[str, ...] = EDITABLE) -> Dict[str, Any]:
     doc = _db.campaigns.find_one({"id": draft_id, "tenant_id": tid}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Brouillon introuvable.")
-    if doc.get("status") != "draft":
-        raise HTTPException(status_code=409, detail="Cette campagne n'est plus un brouillon.")
+    if doc.get("status") not in allow:
+        raise HTTPException(status_code=409, detail="Cette campagne est déjà partie : elle ne peut plus être modifiée."
+                            if doc.get("status") in ("sent", "sending") else "Cette campagne n'est plus un brouillon.")
     return doc
 
 
 @router.get("/api/owner/campaigns/drafts/{draft_id}")
 def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
-    """« Reprendre » (QA F02): what the composer needs to open the draft."""
+    """« Reprendre » a draft (QA F02) or « Modifier » a planned campaign:
+    what the composer needs to open it."""
     d = _own_draft(token_data.tenant_id, draft_id)
+    when = _aware(d.get("scheduled_for")) if d.get("status") == "scheduled" else None
     custom = d.get("segment") == "custom"
     return {
         "id": d["id"], "title": d.get("name") or "", "message": d.get("content") or "",
@@ -386,13 +394,28 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "push": bool((d.get("channels") or {}).get("push", True)),
         "wallet": bool((d.get("channels") or {}).get("wallet", True)),
         "template": d.get("template"),
+        "status": d.get("status"),
+        "scheduled_for": when.isoformat() if when else None,
     }
+
+
+@router.post("/api/owner/campaigns/drafts/{draft_id}/cancel-schedule")
+def cancel_schedule(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """« Annuler l'envoi »: the planned campaign does not leave and goes back
+    to the drafts, its message kept (delete it from there if unwanted)."""
+    _own_draft(token_data.tenant_id, draft_id, allow=("scheduled",))
+    done = _db.campaigns.update_one({"id": draft_id, "tenant_id": token_data.tenant_id, "status": "scheduled"},
+                                    {"$set": {"status": "draft", "scheduled_for": None}})
+    if not getattr(done, "modified_count", 0):                 # the cron took it in between
+        raise HTTPException(status_code=409, detail="Cette campagne est déjà partie : elle ne peut plus être annulée.")
+    return {"id": draft_id, "status": "draft"}
 
 
 @router.delete("/api/owner/campaigns/drafts/{draft_id}")
 def delete_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
-    """« Supprimer » a draft (QA F02). Only drafts: what was sent is history."""
-    _own_draft(token_data.tenant_id, draft_id)
+    """« Supprimer » a draft (QA F02). Only drafts: what was sent is history,
+    and a planned one is cancelled first (« Annuler l'envoi »)."""
+    _own_draft(token_data.tenant_id, draft_id, allow=("draft",))
     _db.campaigns.delete_one({"id": draft_id, "tenant_id": token_data.tenant_id, "status": "draft"})
     return {"deleted": True}
 
@@ -471,7 +494,11 @@ def compose(req: Compose, request: Request = None,
 
     def save():
         if previous:
-            _db.campaigns.replace_one({"id": doc["id"], "tenant_id": tid}, dict(doc))
+            # only while still a draft / planned: the cron may have sent it meanwhile
+            done = _db.campaigns.replace_one({"id": doc["id"], "tenant_id": tid, "status": {"$in": list(EDITABLE)}},
+                                             dict(doc))
+            if not getattr(done, "matched_count", 1):
+                raise HTTPException(status_code=409, detail="Cette campagne est déjà partie : elle ne peut plus être modifiée.")
         else:
             _db.campaigns.insert_one(dict(doc))
 
