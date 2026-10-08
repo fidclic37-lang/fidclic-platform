@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus, MoreHorizontal, Home, Store, User, BarChart3, Sparkles, Megaphone, Bell, CreditCard, Shield, BrainCircuit,
-  UsersRound, Receipt, LifeBuoy, ShieldCheck, Settings2, Trash2, CheckCircle2, Eye, Pencil, Loader2, Lock, UserPlus, XCircle,
+  UsersRound, Receipt, LifeBuoy, ShieldCheck, Settings2, Trash2, CheckCircle2, Eye, Pencil, Loader2, Lock, UserPlus, XCircle, ClipboardCheck,
 } from 'lucide-react';
 import { securityAPI } from '../../../lib/api';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -14,7 +14,7 @@ import { TONES, RoleIcon, ROLE_ICONS, UserModal, PasswordOnce, SecuTabs } from '
 
 const MOD_ICON = { dashboard: Home, commerces: Store, clients: User, analytics: BarChart3, insights: Sparkles, campagnes: Megaphone,
   notifications: Bell, abonnements: CreditCard, plan_limits: Shield, ai: BrainCircuit, crm: UsersRound,
-  facturation: Receipt, support: LifeBuoy, securite: ShieldCheck, parametres: Settings2 };
+  facturation: Receipt, support: LifeBuoy, securite: ShieldCheck, parametres: Settings2, equipe: ClipboardCheck };
 
 function Switch({ on, onChange, disabled, label, title }) {
   return (

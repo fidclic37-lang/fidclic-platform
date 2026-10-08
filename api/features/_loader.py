@@ -45,6 +45,9 @@ MODULES = [
     "features.analytics_usage",
     "features.analytics_deep",
     "features.support_center",
+    # Super admin › Suivi d'équipe — FidClic's own team tasks (week board,
+    # history, repeats, comments, bell). Rights: the « equipe » module.
+    "features.team_tasks",
     "features.admin_ai",
     "features.plan_limits",
     "features.merchant_api",

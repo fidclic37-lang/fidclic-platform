@@ -214,6 +214,30 @@ export const securityAPI = {
   alerts: () => api.get('/admin/security/alerts'),
 };
 
+// Super admin › Suivi d'équipe — FidClic's team tasks (features/team_tasks.py).
+export const teamAPI = {
+  board: (week) => api.get('/admin/equipe/board', { params: week ? { week } : {} }),
+  create: (body) => api.post('/admin/equipe/tasks', body),
+  task: (id) => api.get(`/admin/equipe/tasks/${id}`),
+  edit: (id, body) => api.put(`/admin/equipe/tasks/${id}`, body),
+  complete: (id, done) => api.post(`/admin/equipe/tasks/${id}/complete`, { done }),
+  remove: (id, scope = 'this') => api.delete(`/admin/equipe/tasks/${id}`, { params: { scope } }),
+  stopSeries: (id) => api.post(`/admin/equipe/tasks/${id}/stop-series`),
+  comment: (id, text) => api.post(`/admin/equipe/tasks/${id}/comments`, { text }),
+  deleteComment: (cid) => api.delete(`/admin/equipe/comments/${cid}`),
+  history: (params) => api.get('/admin/equipe/history', { params }),
+  historyExport: (params) => api.get('/admin/equipe/history/export', { params, responseType: 'blob' }),
+  candidates: () => api.get('/admin/equipe/members/candidates'),
+  addMember: (body) => api.post('/admin/equipe/members', body),
+  editMember: (email, body) => api.put(`/admin/equipe/members/${encodeURIComponent(email)}`, body),
+  removeMember: (email) => api.delete(`/admin/equipe/members/${encodeURIComponent(email)}`),
+  breakdown: (email, params) => api.get(`/admin/equipe/members/${encodeURIComponent(email)}/breakdown`, { params }),
+  addType: (body) => api.post('/admin/equipe/types', body),
+  editType: (id, body) => api.put(`/admin/equipe/types/${id}`, body),
+  deleteType: (id) => api.delete(`/admin/equipe/types/${id}`),
+  alerts: () => api.get('/admin/equipe/alerts'),
+};
+
 // Super admin › Centre de support, and the merchant's « Mes demandes »
 // (features/support_center.py).
 const upload = (url, file, onProgress) => { const f = new FormData(); f.append('file', file); return api.post(url, f, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress: onProgress }); };

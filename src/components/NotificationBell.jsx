@@ -24,7 +24,7 @@ import {
   AlertTriangle, BarChart3, Bell, CalendarClock, ChevronDown, ChevronRight, Check, Crown, FileText,
   Inbox, Info, ListChecks, MessageSquare, Send, Settings, ShieldAlert, Store, TrendingDown, TrendingUp, Users, X,
 } from 'lucide-react';
-import api, { ownerAPI, securityAPI, supportAPI, mySupportAPI } from '../lib/api';
+import api, { ownerAPI, securityAPI, supportAPI, mySupportAPI, teamAPI } from '../lib/api';
 import { can } from '../lib/perms';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -132,10 +132,14 @@ export function useNotifications({ platformAdmin = false } = {}) {
       try {
         let main; let support;
         if (platformAdmin) {
-          [main, support] = await Promise.allSettled([
+          let tasks;
+          [main, support, tasks] = await Promise.allSettled([
             user?.role === 'super_admin' ? securityAPI.alerts() : Promise.reject(new Error('not super')),
             can(user, 'support') ? supportAPI.alerts() : Promise.reject(new Error('no support')),
+            // Suivi d'équipe: a task given to me, its deadline in an hour, late
+            can(user, 'equipe') ? teamAPI.alerts() : Promise.reject(new Error('no equipe')),
           ]);
+          support = { status: 'fulfilled', value: { data: { alerts: [...list(tasks), ...list(support)] } } };
         } else {
           [main, support] = await Promise.allSettled([
             api.get('/owner/insights/alerts/multi-store').catch(() => ownerAPI.getProactiveAlerts({})),

@@ -16,6 +16,7 @@ export const ADMIN_ROUTES = [
   ['/admin', 'dashboard'], ['/admin/commerces', 'commerces'], ['/admin/analytics', 'analytics'], ['/admin/insights', 'insights'],
   ['/admin/plans', 'plan_limits'], ['/admin/facturation', 'facturation'],
   ['/admin/crm', 'crm'], ['/admin/ai', 'ai'], ['/admin/securite', 'securite'], ['/admin/support', 'support'],
+  ['/admin/equipe', 'equipe'],
 ];
 
 export function moduleOfPath(path) {
