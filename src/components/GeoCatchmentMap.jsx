@@ -23,6 +23,7 @@ const TONE_HEX = {
   amber:  '#F59E0B',
   blue:   '#3B82F6',
   violet: '#8B5CF6',
+  slate:  '#64748B',       // « Au-delà »: past the last ring / band (wider scopes)
 };
 const MODE_ICON = { car: Car, bike: Bike, walk: Footprints };
 
@@ -86,7 +87,7 @@ export default function GeoCatchmentMap({
 
     // Rings are drawn largest first so the smaller, hotter ones stay on top.
     if (showCatchment) {
-      [...zones].reverse().forEach((z) => {
+      [...zones].filter((z) => !z.far).reverse().forEach((z) => {
         L.circle([lat, lng], {
           radius: z.to_km * 1000,
           color: TONE_HEX[z.tone], weight: 1.5, opacity: 0.55,
@@ -95,7 +96,7 @@ export default function GeoCatchmentMap({
       });
     }
     if (showIsochrones) {
-      [...bands].reverse().forEach((b) => {
+      [...bands].filter((b) => !b.far).reverse().forEach((b) => {
         L.circle([lat, lng], {
           radius: b.radius_km * 1000,
           color: TONE_HEX[b.tone], weight: 2, opacity: 0.9,
@@ -148,12 +149,17 @@ export default function GeoCatchmentMap({
     // to be on a map before getBounds() can project it, and asking it cold
     // crashes the page.
     const outer = Math.max(
-      showCatchment ? Math.max(...zones.map((z) => z.to_km), 0) : 0,
-      showIsochrones ? Math.max(...bands.map((b) => b.radius_km), 0) : 0,
+      showCatchment ? Math.max(...zones.filter((z) => !z.far).map((z) => z.to_km), 0) : 0,
+      showIsochrones ? Math.max(...bands.filter((b) => !b.far).map((b) => b.radius_km), 0) : 0,
     ) || 5;
     const box = map.getContainer();
     if (box.clientWidth && box.clientHeight) {
-      map.fitBounds(L.latLng(lat, lng).toBounds(outer * 2200), { padding: [20, 20] });
+      let bounds = L.latLng(lat, lng).toBounds(outer * 2200);
+      // clients past the rings (« Toute la région / la France »): show them too
+      const far = (data.points || []).filter((p) => p.zone === 'far' || p.band === 'far');
+      far.forEach((p) => { bounds = bounds.extend([p.lat, p.lng]); });
+      // instant: an animated zoom this large was cut short by the redraw and stayed on the town
+      map.fitBounds(bounds, { padding: [20, 20], animate: false });
     }
   }, [data, showCatchment, showIsochrones]);
 
@@ -163,7 +169,7 @@ export default function GeoCatchmentMap({
     legendRows.push({
       title: 'Zone de chalandise (clients)',
       items: (data?.catchment?.zones || []).map((z) => ({
-        tone: z.tone, label: z.label, dashed: false,
+        tone: z.tone, label: z.far ? `Au-delà de ${z.from_km} km` : z.label, dashed: false,
       })),
     });
   }
@@ -171,7 +177,7 @@ export default function GeoCatchmentMap({
     legendRows.push({
       title: 'Isochrones (temps de trajet estimé)',
       items: (data?.isochrones?.bands || []).map((b) => ({
-        tone: b.tone, label: `${b.minutes} minutes`, dashed: showCatchment,
+        tone: b.tone, label: b.far ? `plus de ${b.after} minutes` : `${b.minutes} minutes`, dashed: showCatchment && !b.far,
       })),
     });
   }
