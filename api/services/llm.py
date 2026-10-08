@@ -33,7 +33,7 @@ _force_complete = None
 
 _ENDPOINTS = {
     "anthropic": ("https://api.anthropic.com/v1/messages",
-                  "ANTHROPIC_API_KEY", "claude-sonnet-5"),
+                  "ANTHROPIC_API_KEY", "claude-sonnet-5-5"),
     "groq": ("https://api.groq.com/openai/v1/chat/completions",
              "GROQ_API_KEY", "llama-3.3-70b-versatile"),
     "nvidia": ("https://integrate.api.nvidia.com/v1/chat/completions",
@@ -83,13 +83,24 @@ def complete(system: str, user: str, *, max_tokens: int = 400,
     for i, name in enumerate(_chain()):
         if not _has_key(name):
             continue
-        # LLM_MODEL names the first provider's model; the others use their own
-        model = (os.environ.get("LLM_MODEL", "").strip() if i == 0 else "") or _ENDPOINTS[name][2]
-        txt = _call(name, model, system, user, max_tokens, temperature)
-        if txt:
-            return txt
-        logger.warning("LLM provider %s gave no answer; trying the next one", name)
+        default = _ENDPOINTS[name][2]
+        chosen = _model_for(name) if i == 0 else default
+        for model in dict.fromkeys((chosen, default)):     # the chosen model, then the default once
+            txt = _call(name, model, system, user, max_tokens, temperature)
+            if txt:
+                return txt
+            logger.warning("LLM %s / %s gave no answer", name, model)
     return None
+
+
+def _model_for(name: str) -> str:
+    """LLM_MODEL, when it belongs to this provider — a Groq model name left in
+    LLM_MODEL must not be sent to Claude (and the other way round)."""
+    m = os.environ.get("LLM_MODEL", "").strip()
+    if not m:
+        return _ENDPOINTS[name][2]
+    is_claude = m.lower().startswith("claude")
+    return m if (name == "anthropic") == is_claude else _ENDPOINTS[name][2]
 
 
 def _call(name: str, model: str, system: str, user: str, max_tokens: int,

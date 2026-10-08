@@ -121,6 +121,27 @@ def main():
     check("any key counts as configured", llm.is_configured())
     os.environ.pop("GROQ_API_KEY")
     check("no key at all: not configured", not llm.is_configured())
+    os.environ["ANTHROPIC_API_KEY"], os.environ["LLM_MODEL"] = "z", "meta-llama/llama-4-scout-17b-16e-instruct"
+    calls.clear()
+    seen_models = []
+
+    def fake2(name, model, system, user, max_tokens, temperature):
+        seen_models.append((name, model))
+        return "ok"
+    llm._call = fake2
+    llm.complete("s", "u")
+    check("a Groq model left in LLM_MODEL is not sent to Claude", seen_models == [("anthropic", "claude-sonnet-5-5")])
+    seen_models.clear()
+    os.environ["LLM_MODEL"] = "claude-old-name"
+
+    def fake3(name, model, system, user, max_tokens, temperature):
+        seen_models.append(model)
+        return None if model == "claude-old-name" else "ok"
+    llm._call = fake3
+    check("a chosen model that fails is retried once with the default",
+          llm.complete("s", "u") == "ok" and seen_models == ["claude-old-name", "claude-sonnet-5-5"])
+    for k in ("ANTHROPIC_API_KEY", "LLM_MODEL"):
+        os.environ.pop(k, None)
     llm._call = real
 
     print(f"\n{passed} passed, {failed} failed")
