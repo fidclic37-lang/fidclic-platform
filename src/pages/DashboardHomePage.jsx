@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import InfoTip from '../components/InfoTip';
 import DecimalInput from '../components/DecimalInput';
+import { eur } from '../lib/money';
 
 /**
  * Tableau de bord — the home page, built to the approved design.
@@ -37,7 +38,8 @@ const TONES = {
 
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
-const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
+// 93,10 € — cents keep two digits (lib/money)
+const money = eur;
 const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
 // A point of a series: a day, or an hour for « Aujourd'hui » (it carries its label).
 const pointLabel = (q) => q.label || dayLabel(q.date);

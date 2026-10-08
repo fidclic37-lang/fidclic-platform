@@ -236,6 +236,13 @@ def _days_since(value: Any, at: datetime) -> Optional[float]:
     return None if not d else (at - d).total_seconds() / 86400.0
 
 
+def _eur(n: float) -> str:
+    """145,33 € — a French amount (QA: the chip read « 145.33 € »)."""
+    n = round(float(n or 0) + 1e-9, 2)
+    s = f"{n:,.0f}" if n == int(n) else f"{n:,.2f}"
+    return s.replace(",", " ").replace(".", ",") + " €"
+
+
 def _num(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -612,7 +619,7 @@ def page(request: Request = None, token_data: TokenData = Depends(require_role(R
          "hint": "de CA sur ces campagnes"},
         {"key": "best", "label": "Meilleur segment", "icon": "target",
          "text": best["name"] if best else "—",
-         "chip": f"{_money(best['potential']['amount'])} € de potentiel" if best else "—",
+         "chip": f"{_eur(best['potential']['amount'])} de potentiel" if best else "—",
          "hint": "ce mois-ci"},
     ]
 

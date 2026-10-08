@@ -150,8 +150,10 @@ def main():
     check("the body states that count", opp["inactifs"]["body"].startswith("4 clients"))
 
     lo = hi = 0.0
-    baskets = [c[2] / c[1] for c in CAST if c[1]]
-    shop_avg = sum(baskets) / len(baskets)
+    # the shop's basket: spent ÷ visits over the last 30 days, as Analyses (QA F15)
+    month = [v for v in shop.visits if v["visit_time"].replace(tzinfo=dt.timezone.utc) >= now - dt.timedelta(days=30)]
+    shop_avg = sum(v.get("amount_paid") or 0 for v in month) / len(month)
+    check("the shop's basket is spent ÷ visits, not an average of averages (QA F15)", abs(shop.shop_avg - shop_avg) < 1e-6)
     for c in dormant:
         basket = (c["total_amount_paid"] / c["visits"]) if c["visits"] else shop_avg
         days = None if not c.get("last_visit_date") else (now - c["last_visit_date"]).days

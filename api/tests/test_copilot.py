@@ -130,8 +130,8 @@ def main():
 
     def worth(people):
         v = e = 0.0
-        baskets = [c[2] / c[1] for c in CAST if c[1]]
-        avg = sum(baskets) / len(baskets)
+        # the shop's basket: spent ÷ visits, as Analyses counts it (QA F15)
+        avg = shop.shop_avg
         for c in people:
             lo, hi = E._p_range(c, now)
             p = (lo + hi) / 2

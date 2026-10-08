@@ -11,6 +11,7 @@ import { useResendCheck } from '../components/ResendCheck';
 import InfoTip from '../components/InfoTip';
 import PushPreview from '../components/PushPreview';
 import { ResultChip, ResultModal, ComposerTips, LearningPanel } from '../components/CampaignLearning';
+import { eur } from '../lib/money';
 
 /**
  * Campagnes — the composer, built to the approved design.
@@ -36,7 +37,8 @@ const TONES = [
 ];
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
-const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
+// 93,10 € — cents keep two digits (lib/money)
+const money = eur;
 const dayLabel = (iso) => {
   if (!iso) return '—';
   const d = new Date(iso);
