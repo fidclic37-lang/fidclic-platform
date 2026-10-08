@@ -49,7 +49,8 @@ RESERVED = {
     "static", "assets", "public", "modules", "onboarding", "cabinet", "facturation",
 }
 QR_SOURCE = "qr_store"
-KNOWN_SOURCES = {"qr_store", "instagram", "facebook", "tiktok", "website"}
+from services.sources import SIGNUP_SOURCES as _SIGNUP  # one list (services/sources)
+KNOWN_SOURCES = set(_SIGNUP)
 
 DEFAULT_PAGE = {
     "title": "Rejoignez notre programme de fidélité !",
@@ -204,9 +205,29 @@ def _brand(tid: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # owner endpoints
 # ---------------------------------------------------------------------------
+def channels(tid: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """One link per channel (user, 2026-10-08: the owner copies the
+    Instagram link into the Instagram bio, nothing to type): its word, and how
+    many clients each one brought — over the window and in all."""
+    from services import sources as SRC
+    at = at or _now()
+    start = at - timedelta(days=WINDOW_DAYS)
+    total: Dict[str, int] = {}
+    recent: Dict[str, int] = {}
+    for c in _db.customers.find({"tenant_id": tid}, {"_id": 0, "acquisition_source": 1, "created_at": 1}):
+        k = SRC.key_of(c)
+        total[k] = total.get(k, 0) + 1
+        d = _aware(c.get("created_at"))
+        if d and d >= start:
+            recent[k] = recent.get(k, 0) + 1
+    return [{"key": k, "label": SRC.label(k), "word": w, "total": total.get(k, 0), "recent": recent.get(k, 0)}
+            for k, w in SRC.CHANNEL_WORDS.items()]
+
+
 def _payload(tid: str) -> Dict[str, Any]:
     t = _db.tenants.find_one({"id": tid}) or {}
     return {
+        "channels": channels(tid),
         "shop": {"name": t.get("name") or "", "city": t.get("city") or "",
                  "slug": t.get("slug") or "", **_brand(tid)},
         "stats": stats(tid),
@@ -300,7 +321,8 @@ def record_view(slug: str, body: ViewIn):
     visitor = re.sub(r"[^A-Za-z0-9_-]", "", body.visitor or "")[:64]
     if not t or len(visitor) < 8:
         return {"ok": False}
-    src = (body.src or "").strip().lower()
+    from services.sources import normalize
+    src = normalize(body.src) or ""
     at = _now()
     try:
         _db.join_views.update_one(

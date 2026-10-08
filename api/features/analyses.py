@@ -68,12 +68,6 @@ TABS = [
     {"key": "acquisition",  "label": "Acquisition"},
 ]
 
-SOURCE_LABELS = {
-    "qr_store": "Passage en magasin", "instagram": "Réseaux sociaux",
-    "facebook": "Réseaux sociaux", "tiktok": "Réseaux sociaux",
-    "website": "Site web", "google": "Google", "referral": "Parrainage",
-    "import": "Import de fichier",
-}
 TIER_LABELS = {"bronze": "Bronze", "silver": "Argent", "gold": "Or", "vip": "VIP"}
 
 
@@ -564,10 +558,12 @@ def _tab_acquisition(r: Reader) -> Dict[str, Any]:
                  if r.start <= (_aware(c.get("created_at")) or r.at) <= r.end]
     if not people:
         return {"empty": True, "message": "Aucun client pour l'instant."}
+    # One bar per source — Instagram, WhatsApp… each its own, never lumped as
+    # « Réseaux sociaux » — with its key, so a bar opens its clients.
+    from services import sources as _src
     by_source: Dict[str, int] = defaultdict(int)
     for c in in_window or people:
-        raw = (c.get("acquisition_source") or "").lower()
-        by_source[SOURCE_LABELS.get(raw, "Autres" if raw else "Non renseigné")] += 1
+        by_source[_src.key_of(c)] += 1
     base = len(in_window or people)
     by_place = _by_place(people)
     return {
@@ -576,8 +572,9 @@ def _tab_acquisition(r: Reader) -> Dict[str, Any]:
             {"key": "total", "label": "Clients au total", "value": len(people), "icon": "users"},
         ],
         "new_series": _new_series(people, r),
-        "sources": [{"name": n, "count": c, "pct": _pct(c, base)}
-                    for n, c in sorted(by_source.items(), key=lambda kv: -kv[1])],
+        "sources": [{"key": r["key"], "name": r["label"], "count": r["count"], "pct": _pct(r["count"], base)}
+                    for r in sorted(_src.ordered(by_source), key=lambda r: -r["count"])],
+        "sources_in_window": bool(in_window),
         "places": [{"name": n, "count": c, "pct": _pct(c, len(people))}
                    for n, c in sorted(by_place.items(), key=lambda kv: -kv[1])[:8]],
         "window_note": "Répartition des clients inscrits sur la période."

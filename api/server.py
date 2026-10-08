@@ -3313,13 +3313,12 @@ def admin_get_tenant_analytics(
         {"_id": 0, "id": 1, "name": 1, "email": 1, "tier": 1, "total_amount_paid": 1, "visits": 1}
     ).sort("visits", -1).limit(5))
 
-    # Acquisition-source breakdown — only 4 permitted sources, no friend/other
-    ALLOWED_SOURCES = {"qr_store", "instagram", "facebook", "tiktok", "website"}
-    acq_pipeline = [
-        {"$match": {"tenant_id": tenant_id, "acquisition_source": {"$in": list(ALLOWED_SOURCES)}}},
-        {"$group": {"_id": "$acquisition_source", "count": {"$sum": 1}}}
-    ]
-    acq_breakdown = {r["_id"]: r["count"] for r in db.customers.aggregate(acq_pipeline)}
+    # Acquisition-source breakdown — every source, as services/sources names it
+    from services import sources as _src
+    acq_breakdown: Dict[str, int] = {}
+    for _c in db.customers.find({"tenant_id": tenant_id}, {"_id": 0, "acquisition_source": 1}):
+        _k = _src.key_of(_c)
+        acq_breakdown[_k] = acq_breakdown.get(_k, 0) + 1
 
     # Visits per day over the period
     visits_by_day = {}
@@ -3534,16 +3533,14 @@ def get_admin_detailed_analytics(token_data: TokenData = Depends(require_admin("
         {"name": "Gold",   "value": tier_counts["gold"]},
     ]
 
-    # --- Acquisition sources across platform ---
-    # Only the 4 permitted sources — no 'friend', no 'other' bucket.
-    ALLOWED_SOURCES = {"qr_store", "instagram", "facebook", "tiktok", "website"}
-    acq_counts = {}
+    # --- Acquisition sources across platform (services/sources) ---
+    from services import sources as _src
+    acq_counts: Dict[str, int] = {}
     for c in all_customers:
-        src = c.get("acquisition_source")
-        if src in ALLOWED_SOURCES:
-            acq_counts[src] = acq_counts.get(src, 0) + 1
+        k = _src.key_of(c)
+        acq_counts[k] = acq_counts.get(k, 0) + 1
     acquisition_sources = [
-        {"name": k.replace("_", " ").title(), "value": v, "raw": k}
+        {"name": _src.label(k), "value": v, "raw": k}
         for k, v in sorted(acq_counts.items(), key=lambda kv: kv[1], reverse=True)
     ]
 
@@ -5965,7 +5962,8 @@ def get_join_info(slug: str):
         pass
     return t
 
-ALLOWED_ACQUISITION_SOURCES = {"instagram", "facebook", "tiktok", "qr_store", "website"}
+# kept for older imports; the list itself lives in services/sources.py
+ALLOWED_ACQUISITION_SOURCES = {"instagram", "facebook", "whatsapp", "tiktok", "google", "qr_store", "website", "autre"}
 
 class JoinRequest(BaseModel):
     name: str
@@ -6006,20 +6004,13 @@ class JoinRequest(BaseModel):
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
-    # Normalize acquisition_source to exactly the 5 allowed values
-    if req.acquisition_source:
-        src = (req.acquisition_source or "").strip().lower().replace(" ", "_")
-        # Map common variants to canonical values
-        alias = {
-            "qr": "qr_store", "qr_code": "qr_store", "qrcode": "qr_store",
-            "qr_code_in_store": "qr_store", "in_store": "qr_store", "store": "qr_store",
-            "insta": "instagram", "ig": "instagram",
-            "fb": "facebook",
-            "tik_tok": "tiktok",
-            "site": "website", "web": "website", "site_web": "website",
-        }
-        src = alias.get(src, src)
-        req.acquisition_source = src if src in ALLOWED_ACQUISITION_SOURCES else "qr_store"
+    # Where they came from (services/sources): the channel of the link they
+    # opened, or their own answer — never a guess. An unknown word used to be
+    # filed as « QR code en magasin », so a WhatsApp signup read as an in-store
+    # one (user, 2026-10-08). Unknown now stays unknown.
+    from services import sources as _src
+    src_key = _src.normalize(req.acquisition_source)
+    req.acquisition_source = src_key if src_key in _src.SIGNUP_SOURCES else None
     t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
@@ -6154,6 +6145,12 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    # Brought by a friend's card: « Parrainage », whatever link or answer came
+    # with it — « QR code en magasin » is only for customers who came on their
+    # own, so the two never overlap (user, 2026-10-08).
+    if req.parrain_barcode and db.customers.find_one(
+            {"tenant_id": tid, "barcode_id": str(req.parrain_barcode).strip().upper()}, {"_id": 1}):
+        cust_doc["acquisition_source"] = "referral"
     # Signed up through the page itself — what "Taux de conversion" on
     # Paramètres › Lien d'inscription compares with the page's visits.
     cust_doc["signup_channel"] = "join_page"
@@ -6181,9 +6178,9 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         for tp in req.touchpoints_history:
             if not isinstance(tp, dict):
                 continue
-            src = (tp.get("source") or "").strip().lower()
+            src = _src.normalize(tp.get("source"))
             ts = tp.get("ts")
-            if src and src in ALLOWED_ACQUISITION_SOURCES:
+            if src and src in _src.SIGNUP_SOURCES:
                 key = f"{src}|{ts or ''}"
                 if key not in seen:
                     seen.add(key)

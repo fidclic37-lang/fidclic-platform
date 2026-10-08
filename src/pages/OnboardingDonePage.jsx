@@ -44,6 +44,8 @@ const OnboardingDonePage = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const joinUrl = useMemo(() => `${window.location.origin}/join/${slug || ''}`, [slug]);
+  // printed in the shop: its signups count as « QR code en magasin » (lib/sources)
+  const qrUrl = `${joinUrl}/qr`;
   const shopName = card?.card_name || user?.tenant_name || '';
   const tenant = { name: user?.tenant_name || '' };
   const fileStem = (shopName || 'fidclic').replace(/[^\w-]+/g, '-');
@@ -90,7 +92,7 @@ const OnboardingDonePage = () => {
           <p className="mt-1 text-[13px] leading-snug text-[#4B5C7A]">{t('done.qr_help')}</p>
           <div className="mt-4 flex items-center gap-4">
             <div ref={qrRef} className="flex-1 rounded-xl bg-white p-4 shadow-[0_8px_24px_-16px_rgba(11,28,63,.35)]">
-              <div className="mx-auto w-fit"><QRCodeCanvas value={joinUrl} size={132} level="M" includeMargin={false} /></div>
+              <div className="mx-auto w-fit"><QRCodeCanvas value={qrUrl} size={132} level="M" includeMargin={false} /></div>
             </div>
             <button type="button" onClick={downloadQr} aria-label={t('done.download')}
                     className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-[#2F6BFF] shadow-[0_8px_24px_-16px_rgba(11,28,63,.35)] hover:bg-[#EEF4FF]">
@@ -152,7 +154,7 @@ const OnboardingDonePage = () => {
         {card?.logo_url ? <img src={card.logo_url} alt="" style={{ maxHeight: 140, maxWidth: 260, objectFit: 'contain' }} /> : null}
         <div style={{ fontSize: 40, fontWeight: 800 }}>{shopName}</div>
         <div style={{ fontSize: 22 }}>{t('done.poster_line')}</div>
-        <QRCodeSVG value={joinUrl} size={320} level="M" />
+        <QRCodeSVG value={qrUrl} size={320} level="M" />
         <div style={{ fontSize: 16, color: '#4B5C7A' }}>{joinUrl}</div>
         <div style={{ fontSize: 14, color: '#94A3B8' }}>FidClic — {t('done.poster_wallets')}</div>
       </div>

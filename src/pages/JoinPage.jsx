@@ -4,28 +4,15 @@ import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'reac
 import api, { publicAPI } from '../lib/api';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from '../components/Code128Barcode';
+import { SIGNUP_SOURCES, normalizeSource, sourceLabel } from '../lib/sources';
 
-const ALLOWED_SOURCES = ['qr_store', 'instagram', 'facebook', 'tiktok'];
-
-// Accept common synonyms so a marketer can write `?src=ig` or `?utm_source=fb` etc.
-const SOURCE_ALIASES = {
-  qr: 'qr_store', qr_store: 'qr_store', store: 'qr_store', instore: 'qr_store', in_store: 'qr_store',
-  ig: 'instagram', insta: 'instagram', instagram: 'instagram',
-  fb: 'facebook', facebook: 'facebook', meta: 'facebook',
-  tt: 'tiktok', tik: 'tiktok', tiktok: 'tiktok',
-};
-
-function resolveSourceFromUrl(searchParams) {
-  // Accept ?src=, ?source=, ?utm_source= — first one wins
-  const raw = (
-    searchParams.get('src') ||
-    searchParams.get('source') ||
-    searchParams.get('utm_source') ||
-    ''
-  ).trim().toLowerCase().replace(/[^a-z_]/g, '');
-  if (!raw) return null;
-  const resolved = SOURCE_ALIASES[raw] || raw;
-  return ALLOWED_SOURCES.includes(resolved) ? resolved : null;
+// Where they came from (lib/sources, user 2026-10-08): the channel of the link —
+// /inscription/<slug>/insta, /wa, /qr… or the older ?src=ig / ?utm_source=fb.
+// An unknown word is no source at all, never a guess.
+function resolveSourceFromUrl(searchParams, channel) {
+  const raw = channel || searchParams.get('src') || searchParams.get('source') || searchParams.get('utm_source') || '';
+  const key = normalizeSource(raw);
+  return key && SIGNUP_SOURCES.includes(key) ? key : null;
 }
 
 // Multi-touch attribution. Every time the visitor lands on /join/<slug>
@@ -63,9 +50,9 @@ const clearTouchpoints = (slug) => {
 
 const JoinPage = () => {
   const { t } = useTranslation();
-  const { slug } = useParams();
+  const { slug, channel } = useParams();
   const [searchParams] = useSearchParams();
-  const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams), [searchParams]);
+  const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams, channel), [searchParams, channel]);
   // ?p=FT-XXXX — the card whose QR brought this visitor here. There is no
   // referral link and no second QR: an existing customer's own card is the
   // invitation, so the form says who invited them and the signup records it.
@@ -87,7 +74,8 @@ const JoinPage = () => {
     phone: '',
     postal_code: '',
     birthday: '',
-    acquisition_source: lockedSource || 'qr_store',
+    // no channel in the link → the customer answers, or it stays « Non renseigné »
+    acquisition_source: lockedSource || '',
   });
   const [geoStatus, setGeoStatus] = useState('idle'); // idle | requesting | granted | denied | unsupported
   const [geoCoords, setGeoCoords] = useState(null);
@@ -391,8 +379,9 @@ const JoinPage = () => {
                 <p className="text-[13px] leading-snug text-[#0B1C3F]">
                   Vous êtes invité par <strong>{inviter.first_name || 'un client'}</strong>.
                   {inviter.referee_points > 0 && (
-                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_points} points</strong> dès
-                    votre première visite — {inviter.first_name || 'votre parrain'} aussi.</>
+                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_points} points</strong> à
+                    votre {Number(inviter.minimum_visits || 1) <= 1 ? 'première' : `${inviter.minimum_visits}e`} visite
+                    {inviter.reward_mode === 'every' ? ', puis à chaque visite' : ''} — {inviter.first_name || 'votre parrain'} aussi.</>
                   )}
                 </p>
               </div>
@@ -423,19 +412,17 @@ const JoinPage = () => {
                 <input required type="text" placeholder="MM-DD" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.birthday} onChange={e => setFormData({...formData, birthday: e.target.value})} />
               </div>
             </div>
-            {lockedSource ? (
-              // Source was deterministically tagged by the landing URL
-              // (e.g. /join/<slug>?src=instagram). We hide the picker
-              // entirely so it can't be changed — attribution stays clean.
+            {lockedSource || parrainBarcode ? (
+              // The link says where they came from (or a friend's card: the
+              // server files it as « Parrainage »): nothing to ask, nothing to
+              // change — the attribution stays exact.
               <input type="hidden" value={formData.acquisition_source} readOnly />
             ) : (
               <div>
-                <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.how_heard')}</label>
+                <label className="block text-sm font-medium mb-1 text-[#57534E]">Comment nous avez-vous connu ? <span className="font-normal text-[#A8A29E]">(facultatif)</span></label>
                 <select className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.acquisition_source} onChange={e => setFormData({...formData, acquisition_source: e.target.value})}>
-                  <option value="qr_store">📱 QR code in the store</option>
-                  <option value="instagram">📸 Instagram</option>
-                  <option value="facebook">👥 Facebook</option>
-                  <option value="tiktok">🎵 TikTok</option>
+                  <option value="">Choisir…</option>
+                  {SIGNUP_SOURCES.map((k) => <option key={k} value={k}>{sourceLabel(k)}</option>)}
                 </select>
               </div>
             )}

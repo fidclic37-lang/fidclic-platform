@@ -230,8 +230,11 @@ def _sources(tid: str, start: datetime, end: datetime,
 
 
 def _source_suffix(customer: Dict[str, Any]) -> str:
-    src = (customer.get("acquisition_source") or "").strip()
-    return f" · {src}" if src else ""
+    from services import sources as _src
+    raw = (customer.get("acquisition_source") or "").strip()
+    key = _src.normalize(raw)
+    # a known source by its label; an older free-text one (« Sur place ») as written
+    return f" · {_src.label(key) if key else raw}" if raw else ""
 
 
 _FIELD_LABELS = {

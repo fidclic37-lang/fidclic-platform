@@ -311,7 +311,7 @@ def status_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = 
 FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visits": 1,
           "points": 1, "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
           "birthday": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
-          "latitude": 1, "longitude": 1, "is_student": 1}
+          "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1}
 
 
 # Owner, administrateur and manager read the Clients page; each sees the
@@ -356,7 +356,18 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         "last_visit": last.isoformat() if last else None,
         "joined": joined.isoformat() if joined else None,
         "city": cust.get("city") or "",
+        "source": _source_key(cust), "source_label": _source_label(cust),
     }
+
+
+def _source_key(cust: Dict[str, Any]) -> str:
+    from services import sources as SRC
+    return SRC.key_of(cust)
+
+
+def _source_label(cust: Dict[str, Any]) -> str:
+    from services import sources as SRC
+    return SRC.label(SRC.key_of(cust))
 
 
 SORTS: Dict[str, Tuple[Callable[[Dict[str, Any]], Any], bool]] = {
@@ -385,11 +396,17 @@ JOINED_BANDS = {"30d": 30, "90d": 90, "1y": 365}
 
 def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_ids: set,
               segment: str, status: str, spend: str, joined: str, search: str,
-              rules: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+              rules: Optional[List[Dict[str, Any]]] = None, source: str = "") -> List[Dict[str, Any]]:
     rules = rules if rules is not None else R.defaults()
     out = []
     needle = (search or "").strip().lower()
+    # « Source » (services/sources): the clients who came by one channel —
+    # Analyses and the Tableau de bord open their bars here.
+    from services import sources as SRC
+    want_source = source if source in SRC.SOURCES or source == SRC.UNKNOWN else ""
     for c in rows:
+        if want_source and SRC.key_of(c) != want_source:
+            continue
         if segment and segment != "all" and not _matches_segment(segment, c, at, shop_avg, local_ids, rules):
             continue
         if status and status_of(c, at, rules) != status:
@@ -420,6 +437,15 @@ def _delta(now_value: float, was_value: float) -> Optional[int]:
 # ---------------------------------------------------------------------------
 # endpoints
 # ---------------------------------------------------------------------------
+def _sources_of(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from services import sources as SRC
+    counts: Dict[str, int] = {}
+    for c in rows:
+        k = SRC.key_of(c)
+        counts[k] = counts.get(k, 0) + 1
+    return SRC.ordered(counts)
+
+
 @router.get("/api/owner/clients/overview")
 def overview(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
@@ -467,6 +493,8 @@ def overview(request: Request = None, token_data: TokenData = Depends(require_ro
                                         if _matches_segment(s["key"], c, at, shop_avg, local, rules))}
                      for s in SEGMENTS],
         "sorts": SORT_LABELS,
+        # the filter « Source » — every channel this shop's clients came by
+        "sources": _sources_of(rows),
         "home_segments": [{"key": k, "label": v} for k, v in HOME_SEGMENTS.items()],
         "statuses": R.statuses(rules),
         "shop_average_ticket": round(shop_avg, 2),
@@ -484,6 +512,7 @@ def list_ids(
     spend: str = "",
     joined: str = "",
     search: str = "",
+    source: str = "",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
@@ -498,7 +527,7 @@ def list_ids(
     at = _now()
     rows = _load(tid, _scope(token_data, request))
     rows = _filtered(rows, at, _shop_average_ticket(rows), _local_ids(tid, rows),
-                     segment, status, spend, joined, search, R.load(tid))
+                     segment, status, spend, joined, search, R.load(tid), source=source)
     return {"ids": [c["id"] for c in rows], "total": len(rows)}
 
 
@@ -509,6 +538,7 @@ def list_page(
     spend: str = "",
     joined: str = "",
     search: str = "",
+    source: str = "",
     sort: str = "recent",
     page: int = 1,
     per_page: int = 10,
@@ -531,7 +561,7 @@ def list_page(
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
-    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules)
+    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source)
 
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
@@ -548,7 +578,7 @@ def list_page(
 @router.get("/api/owner/clients/export")
 def export_clients(
     segment: str = "all", status: str = "", spend: str = "", joined: str = "",
-    search: str = "", sort: str = "recent",
+    search: str = "", sort: str = "recent", source: str = "",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
@@ -559,18 +589,18 @@ def export_clients(
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
-    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules)
+    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source)
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
 
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Visites",
+    w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Source", "Visites",
                 "Total dépensé (€)", "Dernière visite", "Inscription", "Ville"])
     for c in rows:
         p = _public(c, at, shop_avg, local, rules)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
-                    p["visits"], f"{p['spent']:.2f}".replace(".", ","),
+                    p["source_label"], p["visits"], f"{p['spent']:.2f}".replace(".", ","),
                     (p["last_visit"] or "")[:10], (p["joined"] or "")[:10], p["city"]])
     data = "﻿" + buf.getvalue()
     return Response(content=data, media_type="text/csv; charset=utf-8",

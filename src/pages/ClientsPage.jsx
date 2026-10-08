@@ -7,6 +7,7 @@ import {
   Bookmark, BookmarkPlus, Check, Send as SendIcon,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { sourceLabel } from '../lib/sources';
 import { perPage as prefPerPage } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranch } from '../contexts/BranchContext';
@@ -243,6 +244,16 @@ export default function ClientsPage() {
     }
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [status, setStatus] = useState('');
+  // « Source » (lib/sources): Analyses' and the dashboard's source bars open
+  // their clients here with ?source=instagram (user, 2026-10-08)
+  const [source, setSource] = useState(() => urlParams.get('source') || '');
+  useEffect(() => {
+    const k = urlParams.get('source');
+    if (k && k !== source) {
+      setSource(k); setPage(1);
+      setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    }
+  }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [spend, setSpend] = useState('');
   const [joined, setJoined] = useState('');
   const [typed, setTyped] = useState('');
@@ -282,8 +293,8 @@ export default function ClientsPage() {
   // What the current filter is, in one place: saved as-is, and applied back
   // as-is, so a reloaded segment shows exactly the rows it showed when it was
   // saved.
-  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort }),
-                                 [segment, status, spend, joined, search, sort]);
+  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source }),
+                                 [segment, status, spend, joined, search, sort, source]);
 
   const saveCurrent = async () => {
     const name = segName.trim();
@@ -298,7 +309,7 @@ export default function ClientsPage() {
   const applySaved = (row) => {
     const f = row.filters || {};
     setSegment(f.segment || row.segment || 'all');
-    setStatus(f.status || ''); setSpend(f.spend || ''); setJoined(f.joined || '');
+    setStatus(f.status || ''); setSpend(f.spend || ''); setJoined(f.joined || ''); setSource(f.source || '');
     setTyped(f.search || ''); setSearch(f.search || '');
     setSort(f.sort || 'recent');
     setPage(1); setPicked([]);
@@ -317,7 +328,7 @@ export default function ClientsPage() {
       return;
     }
     try {
-      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, ...(store ? { store } : {}) });
+      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, source, ...(store ? { store } : {}) });
       if (!data.ids?.length) { setError('Aucun client ne correspond à ce filtre.'); return; }
       setCompose({ ids: data.ids, label: activeSegment?.label || 'ce filtre' });
     } catch (e) { setError(e?.response?.data?.detail || 'Impossible de constituer la liste.'); }
@@ -343,8 +354,8 @@ export default function ClientsPage() {
   }, [typed]);
 
   const params = useMemo(() => ({
-    segment, status, spend, joined, search, sort, page, per_page: perPage, ...(store ? { store } : {}),
-  }), [segment, status, spend, joined, search, sort, page, perPage, store]);
+    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...(store ? { store } : {}),
+  }), [segment, status, spend, joined, search, source, sort, page, perPage, store]);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -367,7 +378,7 @@ export default function ClientsPage() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, sort, ...(store ? { store } : {}) });
+      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...(store ? { store } : {}) });
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-clients-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -542,7 +553,7 @@ export default function ClientsPage() {
         <p className="mb-3 flex items-center gap-1.5 text-[12.5px] font-semibold text-[#475569]">
           <Filter size={14} /> Filtres
         </p>
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto] md:items-end">
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] md:items-end">
           <Select label="Segment" value={segment}
                   onChange={needCrm((v) => { setSegment(v); setPage(1); })}
                   options={segments.map((s) => ({ key: s.key, label: s.key === 'all' ? 'Tous' : s.label }))} />
@@ -554,6 +565,14 @@ export default function ClientsPage() {
                   onChange={needCrm((v) => { setSpend(v); setPage(1); })} options={SPEND_BANDS} />
           <Select label="Date d'inscription" value={joined}
                   onChange={needCrm((v) => { setJoined(v); setPage(1); })} options={JOINED_BANDS} />
+          <Select label="Source" value={source}
+                  onChange={(v) => {
+                    setSource(v); setPage(1);
+                    if (urlParams.get('source')) setUrlParams((p) => { p.delete('source'); return p; }, { replace: true });
+                  }}
+                  options={[{ key: '', label: 'Toutes' },
+                            ...(meta?.sources || []).map((x) => ({ key: x.key, label: `${x.label} (${x.count})` })),
+                            ...(source && !(meta?.sources || []).some((x) => x.key === source) ? [{ key: source, label: sourceLabel(source) }] : [])]} />
           <button type="button" onClick={needCrm(() => setMore((v) => !v))}
                   className="inline-flex h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#E6EEFB] px-4 text-[13px] font-semibold text-[#475569] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <SlidersHorizontal size={14} /> Plus de filtres
@@ -571,7 +590,7 @@ export default function ClientsPage() {
               <em> client local</em> habite à moins de {meta.definitions.local_km} km.
             </p>
             <button type="button"
-                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setTyped(''); setPage(1); }}
+                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setTyped(''); setPage(1); }}
                     className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#E6EEFB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
               <X size={12} /> Réinitialiser les filtres
             </button>
@@ -637,7 +656,7 @@ export default function ClientsPage() {
                 <tr><td colSpan={7} className="px-4 py-14 text-center">
                   <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Aucun client ici</p>
                   <p className="mt-1 text-[12.5px] text-[#64748B]">
-                    {search || status || spend || joined || segment !== 'all'
+                    {search || status || spend || joined || source || segment !== 'all'
                       ? 'Retirez un filtre pour en voir plus.'
                       : 'Vos clients apparaîtront dès la première inscription.'}
                   </p>
@@ -658,7 +677,9 @@ export default function ClientsPage() {
                         <Avatar initials={r.initials} tier={r.tier} />
                         <span className="min-w-0">
                           <span className="block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
-                          <span className="block truncate text-[11.5px] text-[#94A3B8]">{r.email || r.phone || '—'}</span>
+                          <span className="block truncate text-[11.5px] text-[#94A3B8]">
+                            {r.email || r.phone || '—'}{r.source && r.source !== 'none' ? ` · via ${r.source_label}` : ''}
+                          </span>
                         </span>
                       </span>
                     </td>

@@ -3,9 +3,10 @@ import { QRCodeCanvas } from 'qrcode.react';
 import {
   Users, Link2, QrCode, Share2, Copy, Info, Download, Printer, Store, Settings, CheckCircle2,
   XCircle, Loader2, Mail, MessageSquare, MoreHorizontal, Eye, Pencil, ExternalLink, Gift,
-  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw,
+  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { CHANNEL_WORDS } from '../lib/sources';
 
 /* Paramètres › Lien d'inscription & QR — the shop's signup link, its QR code,
    what they bring in, and the page a client lands on.
@@ -224,7 +225,10 @@ export default function LienInscriptionPage() {
   const host = typeof window !== 'undefined' ? window.location.host : 'app.fidclic.com';
   const slug = d?.shop.slug || '';
   const url = `${origin}/inscription/${slug}`;
-  const tagged = (src) => `${url}?src=${src}`;
+  // One link per channel (user, 2026-10-08): /inscription/<slug>/insta, /wa…
+  // The owner copies the Instagram one into the Instagram bio; every signup
+  // through it is « Instagram » — nothing to add, nothing to explain.
+  const tagged = (src) => `${url}/${CHANNEL_WORDS[src] || src}`;
   const qrUrl = tagged('qr_store');
   const shopName = d?.shop.name || 'Votre commerce';
   const message = `Rejoignez le programme de fidélité de ${shopName} : `;
@@ -260,6 +264,22 @@ export default function LienInscriptionPage() {
     } finally { setSavingSlug(false); }
   };
 
+  // a channel's own QR (e.g. a flyer for Instagram followers): rendered off
+  // screen at full size, then saved
+  const chanQr = useRef(null);
+  const [qrFor, setQrFor] = useState(null);
+  useEffect(() => {
+    if (!qrFor) return;
+    const data = chanQr.current?.toDataURL('image/png');
+    if (data) {
+      const a = document.createElement('a');
+      a.href = data; a.download = `qr-${slug}-${CHANNEL_WORDS[qrFor] || qrFor}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      say('QR code téléchargé');
+    }
+    setQrFor(null);
+  }, [qrFor]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const qrDataUrl = () => bigQr.current?.toDataURL('image/png');
   const downloadQr = () => {
     const data = qrDataUrl();
@@ -288,10 +308,10 @@ export default function LienInscriptionPage() {
   };
 
   const share = async (kind) => {
-    const plain = message + url;
-    if (kind === 'whatsapp') window.open(`https://wa.me/?text=${encodeURIComponent(plain)}`, '_blank', 'noopener');
-    if (kind === 'email') window.location.href = `mailto:?subject=${encodeURIComponent(`Programme de fidélité — ${shopName}`)}&body=${encodeURIComponent(plain)}`;
-    if (kind === 'sms') window.location.href = `sms:?&body=${encodeURIComponent(plain)}`;
+    // every share carries its channel's link, so its signups are counted there
+    if (kind === 'whatsapp') window.open(`https://wa.me/?text=${encodeURIComponent(message + tagged('whatsapp'))}`, '_blank', 'noopener');
+    if (kind === 'email') window.location.href = `mailto:?subject=${encodeURIComponent(`Programme de fidélité — ${shopName}`)}&body=${encodeURIComponent(message + tagged('email'))}`;
+    if (kind === 'sms') window.location.href = `sms:?&body=${encodeURIComponent(message + tagged('sms'))}`;
     if (kind === 'facebook') window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(tagged('facebook'))}`, '_blank', 'noopener');
     if (kind === 'instagram') copy(tagged('instagram'), 'Lien copié — collez-le dans votre bio ou vos stories Instagram.');
     if (kind === 'copy') copy(url);
@@ -484,6 +504,43 @@ export default function LienInscriptionPage() {
           </div>
         </section>
       </div>
+
+      {/* Un lien par canal — each channel's signups counted apart */}
+      <section className={`${cardCls} mt-4`}>
+        <CardHead icon={Link2} title="Un lien par canal"
+                  subtitle="Mettez le lien Instagram dans votre bio Instagram, le lien WhatsApp dans vos messages… Chaque inscription est comptée dans son canal, sans rien demander au client." />
+        <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+          {(d.channels || []).map((c) => {
+            const link = tagged(c.key);
+            const icon = { instagram: <InstagramIcon />, facebook: <FacebookIcon />, whatsapp: <WhatsAppIcon />,
+              qr_store: <QrCode size={20} className="text-[#0B1C3F]" />, tiktok: <Music2 size={19} className="text-[#0B1C3F]" />,
+              google: <MapPin size={19} className="text-[#EA4335]" />, website: <Globe size={19} className="text-[#2F6BFF]" />,
+              email: <Mail size={19} className="text-[#2F6BFF]" />, sms: <MessageSquare size={19} className="text-[#2F6BFF]" /> }[c.key];
+            return (
+              <div key={c.key} className="flex items-center gap-3 rounded-xl border border-[#E6EEFB] p-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#F6F9FF]">{icon}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="text-[13px] font-semibold text-[#0B1C3F]">{c.label}</span>
+                    <span className="shrink-0 text-[11.5px] text-[#64748B]" title={`${c.recent} sur ${s.window_days} jours`}>
+                      {c.total} inscrit{c.total > 1 ? 's' : ''}
+                    </span>
+                  </span>
+                  <span className="block truncate text-[11.5px] text-[#64748B]">{link.replace(/^https?:\/\//, '')}</span>
+                </span>
+                <button type="button" onClick={() => copy(link, `Lien ${c.label} copié`)} aria-label={`Copier le lien ${c.label}`}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#2F6BFF] hover:bg-[#F6F9FF]"><Copy size={15} /></button>
+                <button type="button" onClick={() => setQrFor(c.key)} aria-label={`QR code ${c.label}`}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#2F6BFF] hover:bg-[#F6F9FF]"><QrCode size={15} /></button>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-[11.5px] text-[#94A3B8]">
+          Le lien simple (sans canal) demande au client comment il vous a connu. Un client venu par la carte d’un ami est compté en « Parrainage ».
+        </p>
+        {qrFor && <div className="hidden"><QRCodeCanvas ref={chanQr} value={tagged(qrFor)} size={1024} level="M" marginSize={2} /></div>}
+      </section>
 
       {/* Aperçu de la page d'inscription */}
       <section className="relative mt-4 overflow-hidden rounded-2xl border border-[#E6EEFB] bg-white">

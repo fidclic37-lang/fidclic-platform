@@ -80,7 +80,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("revenue per plan: amounts, no percentage", [(x["label"], x["amount"]) for x in r["revenue"]["rows"]] == [("Pro", 40.0), ("Pro AI", 51.0)]
           and "pct" not in r["revenue"]["rows"][0] and r["revenue"]["total"] == 91.0)
     check("sources of the customers who joined in the period", [(s["label"], s["count"]) for s in r["sources"]]
-          == [("Instagram", 3), ("QR Store", 1), ("Autres", 1)])
+          == [("Instagram", 3), ("QR code en magasin", 1), ("Non renseigné", 1)])
     print("\nActivity")
     kinds = {a["kind"] for a in AN.activity(token_data=ADMIN)["rows"]}
     check("six kinds: commerce, abonnement, avis, marketing, paiement, mise à jour", kinds == {"commerce", "abonnement", "avis", "marketing", "paiement", "maj"})
