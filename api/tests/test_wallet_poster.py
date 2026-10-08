@@ -236,7 +236,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"type": "viewOffersRewards"}, {"type": "bookAppointment", "url": "https://planity.com/royal-trim"}]})
     fa = pj().get("featuredActions") or []
     check("pass.json: identifier, type, url for each", len(fa) == 2 and all(set(a) == {"identifier", "type", "url"} for a in fa))
-    check("the url goes through our counter", fa[0]["url"].endswith("/api/card/FT-TEST0001/action/fa1-viewOffersRewards"))
+    check("the url goes through our counter", "/api/card/FT-TEST0001/action/fa1-viewOffersRewards?k=" in fa[0]["url"])
     s = http("GET", "/api/owner/card/settings", headers={"Authorization": "Bearer " + tok}).json()
     check("the settings page offers only Apple's published types",
           {t["type"] for t in s["advanced"]["featured_types"]} <= set(WP.FEATURED_TYPES) and s["advanced"]["poster_style"] is True)

@@ -208,18 +208,15 @@ def main():
           "searchParams.get('p')" in join_src and "payload.parrain_barcode" in join_src)
     my_src = open(os.path.join(os.path.dirname(__file__), "..", "..",
                                "src", "pages", "MyWalletCardPage.jsx")).read()
+    # Whose phone the card is on is decided by the server since 2026-10-08
+    # (services/card_owner, tests/test_card_owner.py): the page asks first.
     check("a phone with no card of its own is sent to the signup form",
-          "fidelitour:last_card" in my_src and "/join/${data.slug}?p=" in my_src)
-    check("ownership is read before the page claims the card for itself",
-          "const [wasMine] = useState(() => {" in my_src
-          and "if (wasMine === barcodeId) return;" in my_src)
-    check("and it reads the snapshot index.html takes before React boots",
-          "__fidclicPrevCard" in my_src)
+          "/card/${bc}/whose" in my_src and "/join/${data.slug}?p=" in my_src)
+    check("nothing of the card loads before the answer",
+          "if (view === 'card') return <CardView />;" in my_src)
     html = open(os.path.join(os.path.dirname(__file__), "..", "..", "index.html")).read()
-    check("index.html snapshots the previous card before claiming this one",
-          "window.__fidclicPrevCard = localStorage.getItem('fidelitour:last_card');" in html
-          and html.index("window.__fidclicPrevCard")
-              < html.index("localStorage.setItem('fidelitour:last_card', bc);"))
+    check("index.html no longer claims a scanned card for the phone",
+          "localStorage.setItem('fidelitour:last_card', bc);" not in html)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

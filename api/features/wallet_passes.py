@@ -62,6 +62,8 @@ import zipfile
 from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from services import card_owner as CO
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -745,17 +747,22 @@ def featured_json(actions: List[Dict[str, str]], serial: str) -> List[Dict[str, 
             if a.get("place"):
                 out.append({"identifier": ident, "type": a["type"], "placeIdentifier": a["place"]})
         else:
-            out.append({"identifier": ident, "type": a["type"], "url": f"{_site_url()}/api/card/{serial}/action/{ident}"})
+            # the owner key rides along, so the tile lands on the owner's card (services/card_owner)
+            out.append({"identifier": ident, "type": a["type"],
+                        "url": f"{_site_url()}/api/card/{serial}/action/{ident}?k={CO.key_for(serial)}"})
     return out
 
 
-def featured_target(action: Dict[str, str], serial: str, tenant: Dict[str, Any]) -> Optional[str]:
+def featured_target(action: Dict[str, str], serial: str, tenant: Dict[str, Any], owner: bool = False) -> Optional[str]:
+    """Where a tile sends the customer. `owner`: the tap carried the card's
+    owner key, so the card links carry it on (services/card_owner)."""
     kind = FEATURED_TYPES.get(action.get("type") or "", ("", ""))[1]
     card_url = f"{_site_url()}/card/{serial}"
     if kind == "offers":                        # user, 2026-10-07: offers only, not the whole card
-        return action.get("url") or f"{card_url}/offres"
+        return action.get("url") or (CO.owner_url(_site_url(), serial, "/offres") if owner else f"{card_url}/offres")
     if kind == "program":
-        return action.get("url") or f"{card_url}?onglet=programme"
+        return action.get("url") or (CO.owner_url(_site_url(), serial, query={"onglet": "programme"}) if owner
+                                     else f"{card_url}?onglet=programme")
     if kind == "url":
         return action.get("url") or None
     return None
@@ -1102,7 +1109,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
          "value": "Récompense débloquée : présentez votre carte !" if remaining <= 0
          else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}"},
         {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
-        {"key": "card", "label": "Ma carte en ligne", "value": f"{_site_url()}/card/{serial}"},
+        {"key": "card", "label": "Ma carte en ligne", "value": CO.owner_url(_site_url(), serial)},
     ]
     if show_tier and not tier_front:
         back.insert(1, {"key": "tier_back", "label": "Statut", "value": tier_field["value"]})
@@ -1111,7 +1118,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # on the web card (?offre= opens it straight away).
     campaign_id = (card.get("campaign_offer") or {}).get("id") if isinstance(card.get("campaign_offer"), dict) else None
     if campaign_id:
-        offer_url = f"{_site_url()}/card/{serial}?offre={urllib.parse.quote(str(campaign_id))}"
+        offer_url = CO.owner_url(_site_url(), serial, query={"offre": str(campaign_id)})
         back.insert(1, {"key": "offer_link", "label": "Voir l'offre", "value": offer_url,
                         "attributedValue": f'<a href="{offer_url}">Voir l\'offre en entier</a>'})
     if card.get("tagline"):
@@ -1905,6 +1912,10 @@ def unregister_device(device_id: str, pass_type_id: str, serial: str,
                       authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
     _db.pass_registrations.delete_one({"device_id": device_id, "serial": serial})
+    # removed from the last Wallet that had it: the card no longer counts as
+    # on the phone until its owner opens it again (services/card_owner.held)
+    if not _db.pass_registrations.count_documents({"serial": serial}, limit=1):
+        _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_removed_at": datetime.now(timezone.utc)}})
     return Response(status_code=200)
 
 
@@ -1923,11 +1934,14 @@ def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = H
 
 
 @router.get("/api/card/{serial}/action/{identifier}")
-def featured_action_click(serial: str, identifier: str):
+def featured_action_click(serial: str, identifier: str, k: Optional[str] = None):
     """A tile under the iOS 27 pass was tapped: count it, then send the
-    customer where the merchant chose. Public — Wallet opens it like a link."""
+    customer where the merchant chose. Public — Wallet opens it like a link,
+    with the card's owner key; without it (an old pass, a guessed link) the
+    card links stay bare and the card page decides (services/card_owner)."""
     from fastapi.responses import RedirectResponse
-    home = f"{_site_url()}/card/{serial}"
+    owner = CO.valid(serial, k)
+    home = CO.owner_url(_site_url(), serial) if owner else f"{_site_url()}/card/{serial}"
     cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1})
     if not cust:
         return RedirectResponse(_site_url(), status_code=302)
@@ -1942,7 +1956,7 @@ def featured_action_click(serial: str, identifier: str):
                                            "type": kind, "at": datetime.now(timezone.utc)})
     except Exception:
         pass
-    return RedirectResponse(featured_target(action, serial, tenant) or home, status_code=302)
+    return RedirectResponse(featured_target(action, serial, tenant, owner) or home, status_code=302)
 
 
 @router.post("/api/passes/v1/log")
@@ -2246,7 +2260,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
         "textModulesData": modules[:10],
         "linksModuleData": {"uris": [{"uri": f["value"], "description": "Voir l'offre en entier"}
                                      for f in sc.get("backFields", []) if f["key"] == "offer_link"]
-                            + [{"uri": f"{_site_url()}/card/{cust['barcode_id']}", "description": "Ma carte en ligne"}]
+                            + [{"uri": CO.owner_url(_site_url(), cust["barcode_id"]), "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
     }

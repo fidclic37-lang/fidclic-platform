@@ -93,7 +93,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("customer without consent refused", r.status_code == 400 and r.json()["detail"]["code"] == "consent_required")
     r = http("POST", "/api/v1/customers", key=KEY, json={"name": "Inès Fontaine", "phone": "06 12 34 56 78", "email": "ines@ex.fr", "consent": True})
     c = r.json()
-    check("customer created with a card number and card link", r.status_code == 201 and c["card_number"].startswith("FT-") and c["card_url"].endswith(c["card_number"]))
+    check("customer created with a card number and card link", r.status_code == 201 and c["card_number"].startswith("FT-") and f"/card/{c['card_number']}?k=" in c["card_url"])   # the owner's link (services/card_owner)
     check("same phone again → the same card", http("POST", "/api/v1/customers", key=KEY, json={"name": "Inès F.", "phone": "0612345678", "consent": True}).json()["id"] == c["id"])
     check("read-only key cannot write", http("POST", "/api/v1/customers", key=RO, json={"name": "X", "phone": "0600000000", "consent": True}).status_code == 403)
     check("find by phone in any format", http("GET", "/api/v1/customers/+33612345678", key=RO).json()["id"] == c["id"])

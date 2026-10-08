@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import { readMine, addMine, forgetMine, keyOf } from '../lib/myCards';
 import { QRCodeSVG } from 'qrcode.react';
 import { cardUrl } from '../components/PremiumLoyaltyCard';
 import Code128Barcode from '../components/Code128Barcode';
@@ -151,7 +152,7 @@ class WalletCardErrorBoundary extends React.Component {
   }
 }
 
-const MyWalletCardPage = () => {
+const CardView = () => {
   const { barcodeId } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -222,50 +223,20 @@ const MyWalletCardPage = () => {
     const link = document.querySelector('link[rel="manifest"]');
     if (link) {
       const original = link.getAttribute('href');
-      link.setAttribute('href', `/api/manifest/${barcodeId}`);
-      // Remember which card the customer is using on this device.
-      // App boot (main.jsx) reads this key to deep-link standalone PWA
-      // launches that landed on "/" back to /card/<barcodeId>.
-      try { localStorage.setItem('fidelitour:last_card', barcodeId); } catch (_e) {}
+      // With the owner key, the installed app opens on the owner's link (an
+      // iPhone home-screen app has its own storage: lib/myCards). The card is
+      // remembered for main.jsx's failsafe by lib/myCards, for this phone's
+      // own cards only.
+      const k = keyOf(barcodeId);
+      link.setAttribute('href', `/api/manifest/${barcodeId}${k ? `?k=${encodeURIComponent(k)}` : ''}`);
       return () => {
         if (original) link.setAttribute('href', original);
       };
     }
   }, [barcodeId]);
 
-  // A phone that has never carried this card is not its owner: it is someone
-  // who just scanned it. Send them to the signup form, attributed to the card
-  // they scanned — that is the whole referral programme, and it also means a
-  // stranger never sees somebody else's points.
-  //
-  // The parrain's own phone keeps the card in storage, so it stays here. On a
-  // new phone they land on the signup form instead, where the same phone
-  // number returns their existing card rather than creating a second one.
-  // What this phone carried BEFORE this page claimed the card for it. The
-  // inline script in index.html writes `fidelitour:last_card` before React
-  // boots — and the manifest effect above writes it again — so reading the key
-  // itself would always say "yours" and no stranger would ever be redirected.
-  // The inline script snapshots the previous value for exactly this.
-  const [wasMine] = useState(() => {
-    if (typeof window !== 'undefined' && '__fidclicPrevCard' in window) {
-      return window.__fidclicPrevCard;
-    }
-    try { return localStorage.getItem('fidelitour:last_card'); } catch (_e) { return null; }
-  });
-  const [invited, setInvited] = useState(null);
-  useEffect(() => {
-    if (wasMine === barcodeId) return;
-    let alive = true;
-    api.get(`/card/${barcodeId}/inviter`)
-      .then(({ data }) => {
-        if (!alive || !data?.enabled || !data?.slug) return;
-        setInvited(data);
-        // a friend's card: the server files them as « Parrainage », never « QR en magasin »
-        window.location.replace(`/join/${data.slug}?p=${encodeURIComponent(barcodeId)}`);
-      })
-      .catch(() => {});      // programme off, or unknown card — show the card
-    return () => { alive = false; };
-  }, [barcodeId, wasMine]);
+  // Whose card this is on this phone is decided before this view renders:
+  // see CardOwnerGate at the bottom (a friend's scanned QR never shows here).
 
   useEffect(() => {
     (async () => {
@@ -481,6 +452,7 @@ const MyWalletCardPage = () => {
     if (!window.confirm('Supprimer cette carte du wallet ? Vos visites restent enregistrées côté commerçant.')) return;
     try {
       await api.delete(`/card/${barcodeId}`);
+      forgetMine([barcodeId]);             // no longer this phone's card (lib/myCards)
       setDeleted(true);
     } catch (e) {
       showToast('Impossible de supprimer la carte');
@@ -1650,4 +1622,72 @@ const TabBtn = ({ active, onClick, label, count }) => (
   </button>
 );
 
-export default MyWalletCardPage;
+
+/**
+ * Whose card is this, on this phone? (user, 2026-10-08: scanning a friend's
+ * QR opened the friend's card — it must open mine, or the signup form when I
+ * have no card at that shop, or no longer have it in Wallet.)
+ *
+ * The server decides (api/services/card_owner.py) from the owner key in the
+ * link and the cards this phone holds (lib/myCards). Nothing of the card is
+ * loaded before it answers « card ».
+ */
+const CardOwnerGate = () => {
+  const { barcodeId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [view, setView] = useState(null);       // null: asking · 'card' · 'retry'
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const bc = String(barcodeId || '').toUpperCase();
+    const params = new URLSearchParams(location.search);
+    const k = params.get('k') || '';
+    setView(null);
+    // ?vue=commerce: opened from the dashboard (« Voir sa carte »), the shop's
+    // team sees the card; a camera scan never asks for that view
+    api.post(`/card/${bc}/whose`, { k: k || null, mine: readMine(), shop: params.get('vue') === 'commerce' })
+      .then(({ data }) => {
+        if (!alive) return;
+        forgetMine(data?.drop || []);
+        if (data?.key) addMine(bc, data.key);
+        if (k) {                               // the key is kept on the phone, not in the address bar
+          params.delete('k');
+          const q = params.toString();
+          navigate({ pathname: location.pathname, search: q ? `?${q}` : '', hash: location.hash }, { replace: true });
+        }
+        if (data?.view === 'own' && data.barcode_id) {
+          window.location.replace(`/card/${data.barcode_id}`);
+        } else if (data?.view === 'join' && data.slug) {
+          // a friend's card: the signup form, filed as « Parrainage », never « QR en magasin »
+          window.location.replace(`/join/${data.slug}?p=${encodeURIComponent(data.parrain || bc)}`);
+        } else {
+          setView('card');
+        }
+      })
+      .catch((e) => {
+        if (!alive) return;
+        // an unknown card: the view says « Carte introuvable »; otherwise only
+        // this phone's own card opens without the server's answer
+        setView(e?.response?.status === 404 || keyOf(bc) || k ? 'card' : 'retry');
+      });
+    return () => { alive = false; };
+  }, [barcodeId, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (view === 'card') return <CardView />;
+  if (view === 'retry') {
+    return (
+      <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl p-8 border border-[#E9E5E0] max-w-md text-center">
+          <p className="text-[#171412] font-semibold mb-2">Connexion impossible</p>
+          <p className="text-[#57504A] text-sm">Vérifiez votre connexion internet, puis réessayez.</p>
+          <button type="button" onClick={() => setAttempt((n) => n + 1)}
+                  className="mt-5 rounded-xl bg-[#171412] px-5 py-2.5 text-sm font-semibold text-white">Réessayer</button>
+        </div>
+      </div>
+    );
+  }
+  return <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center text-[#57504A]">Chargement de votre carte…</div>;
+};
+
+export default CardOwnerGate;

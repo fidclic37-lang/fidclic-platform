@@ -284,6 +284,33 @@ def inviter(barcode_id: str):
     }
 
 
+class WhoseRequest(BaseModel):
+    k: Optional[str] = None          # the owner key, when the link carried one
+    mine: object = None              # the cards this phone holds: {card: key}
+    shop: bool = False               # opened from the dashboard (?vue=commerce)
+
+
+@router.post("/api/card/{barcode_id}/whose")
+async def card_whose(barcode_id: str, body: WhoseRequest, request: Request):
+    """What /card/{id} shows on this phone — the card, the phone's own card
+    for that shop, or the signup form (services/card_owner)."""
+    from services import card_owner as CO
+    from auth import get_current_user_data
+    viewer = None
+    # Only a dashboard link asks for the shop's view: an owner signed in on
+    # their own phone who scans a customer's QR is a customer like any other.
+    if body.shop and (request.headers.get("authorization") or request.cookies.get("access_token")):
+        try:
+            td = await get_current_user_data(request)
+            viewer = {"role": td.role, "tenant_id": td.tenant_id}
+        except Exception:
+            viewer = None
+    out = CO.whose(_db, barcode_id, body.k, CO.owned_from(body.mine), viewer)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Carte inconnue")
+    return out
+
+
 # ===========================================================================
 # The Parrainage page — one payload behind the whole dashboard.
 #

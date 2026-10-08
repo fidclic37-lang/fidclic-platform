@@ -984,7 +984,7 @@ export default function CustomersPage() {
                   style={{ color: 'var(--ink-soft)', fontSize: 12 }}
                 >
                   <a
-                    href={`/card/${customer.barcode_id}`}
+                    href={`/card/${customer.barcode_id}?vue=commerce`}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}

@@ -59,6 +59,7 @@ def plan_label(plan: str) -> str:
     if c:
         return c.get("label") or plan
     return PLAN_LABELS.get(plan, plan.title())
+from services import card_owner as _card_owner   # whose phone a card is on (QR scans)
 from auth import (
     hash_password, verify_password, create_access_token, get_current_user_data,
     require_role, check_plan_feature, TokenData, ACCESS_TOKEN_EXPIRE_MINUTES
@@ -2279,7 +2280,7 @@ def send_re_enablement_sms(
         if not phone:
             skipped_no_phone += 1
             continue
-        link = f"{base}/card/{c.get('barcode_id', '').upper()}?notify=1"
+        link = _card_owner.owner_url(base, c.get('barcode_id', ''), query={"notify": 1})
         body = f"{body_prefix} {link}"
         result = send_sms(phone, body)
         if result.get("sent"):
@@ -5102,6 +5103,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "cycle_restarted": cycles_completed > 0,
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
+        # the « activer les notifications » QR the till shows is opened by the
+        # customer's own phone: it carries the owner key (services/card_owner)
+        "card_key": _card_owner.key_for(cust.get("barcode_id", "")),
     }
 
 
@@ -5893,8 +5897,12 @@ def ai_query(
 # browser as normal.
 # ============================================================
 @app.get("/api/manifest/{barcode_id}")
-def per_card_manifest(barcode_id: str):
+def per_card_manifest(barcode_id: str, k: Optional[str] = None):
     bc = (barcode_id or "").strip().upper()
+    # The installed app opens on the owner's link only when the page that
+    # installed it had the owner key (an iPhone home-screen app keeps its own
+    # storage, so the key has to travel in start_url — services/card_owner).
+    start_url = f"/card/{bc}?k={k.strip().lower()}" if _card_owner.valid(bc, k) else f"/card/{bc}"
     # Best-effort enrichment: look up the customer + tenant so we can
     # personalise the PWA name to the business. If the customer doesn't
     # exist we still return a valid manifest — just with generic labels.
@@ -5914,7 +5922,7 @@ def per_card_manifest(barcode_id: str):
         "name": name,
         "short_name": short_name,
         "description": "Votre carte de fidélité.",
-        "start_url": f"/card/{bc}",
+        "start_url": start_url,
         "scope": "/card/",
         "display": "standalone",
         "orientation": "portrait",
@@ -6054,7 +6062,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
                 {"_id": existing["_id"]},
                 {"$set": {"latitude": req.latitude, "longitude": req.longitude}}
             )
-        return {"barcode_id": existing["barcode_id"], "message": "Already joined"}
+        return {"barcode_id": existing["barcode_id"], "message": "Already joined",
+                "card_key": _card_owner.key_for(existing["barcode_id"])}
 
     # ─── Plan cap enforcement ───────────────────────────────────────────
     # Block new customer creation once the tenant reaches the cap defined
@@ -6227,6 +6236,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     except Exception as _e:
         print(f"join: webhook not sent (non-fatal): {_e}")
     return {"barcode_id": barcode_id, "message": "Welcome!",
+            # this phone now holds the card (services/card_owner)
+            "card_key": _card_owner.key_for(barcode_id),
             "parrainage": bool(parrainage), "welcome": welcome}
 
 # ========================
