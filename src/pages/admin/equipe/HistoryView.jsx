@@ -60,7 +60,8 @@ export default function HistoryView({ onOpenTask, refreshKey }) {
           <option value="toutes">Toutes, supprimées comprises</option>
         </select>
         <select value={f.priority} onChange={set('priority')} className={sel} aria-label="Priorité">
-          <option value="">Toutes priorités</option><option value="haute">Haute</option><option value="moyenne">Moyenne</option><option value="basse">Basse</option>
+          <option value="">Toutes priorités</option>
+          {(d?.priorities || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <label className="relative min-w-[200px] flex-1">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
@@ -104,7 +105,7 @@ export default function HistoryView({ onOpenTask, refreshKey }) {
                 <td className="whitespace-nowrap px-2 py-2.5 text-[12.5px] text-[#334155]">{frDateTime(t.due_at)}</td>
                 <td className="px-2 py-2.5"><StatusBadge s={t.status} late={t.status === 'en_retard' || t.status === 'terminee_retard' ? t.late_by_minutes : 0} /></td>
                 <td className="whitespace-nowrap px-2 py-2.5 text-[12.5px] text-[#334155]">{t.completed_at ? `${frDateTime(t.completed_at)}${t.completed_by ? ` · ${t.completed_by.name}` : ''}` : '—'}</td>
-                <td className="px-2 py-2.5"><PriorityPill p={t.priority} /></td>
+                <td className="px-2 py-2.5"><PriorityPill label={t.priority_label} color={t.priority_color} /></td>
               </tr>
             ))}
           </tbody>

@@ -5,8 +5,11 @@ import {
 import { teamAPI } from '../../../lib/api';
 import {
   Avatar, TypeChip, PriorityPill, StatusBadge, PeoplePicker, field, frDateTime, lateText, todayParis, nowTimeParis,
-  DAYS_SHORT, STATUS, PRIORITY,
+  DAYS_SHORT, STATUS, Shell,
 } from './shared';
+import { ListPicker } from './Lists';
+
+export { Shell };
 
 /* Super admin › Suivi d'équipe — the windows: a task (details, Terminée,
    Modifier, Supprimer, comments, its history), a new task with every option
@@ -14,40 +17,15 @@ import {
 
 const err = (e, fallback) => e?.response?.data?.detail || fallback;
 
-export function Shell({ title, onClose, children, wide, side }) {
-  useEffect(() => {
-    const k = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [onClose]);
-  return (
-    <div className={`fixed inset-0 z-50 flex bg-[#0B1C3F]/30 ${side ? 'justify-end' : 'items-end justify-center sm:items-center sm:p-6'}`}
-         onClick={onClose} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}>
-      <div onClick={(e) => e.stopPropagation()}
-           className={side
-             ? 'flex h-full w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl'
-             : `max-h-[92vh] w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl`}>
-        {!side && (
-          <header className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="text-[16px] font-bold text-[#0B1C3F]">{title}</h3>
-            <button type="button" onClick={onClose} aria-label="Fermer" className="text-[#94A3B8] hover:text-[#0B1C3F]"><X size={18} /></button>
-          </header>
-        )}
-        {children}
-      </div>
-    </div>
-  );
-}
-
 const Label = ({ children }) => <span className="mb-1 block text-[12px] font-semibold text-[#475569]">{children}</span>;
 
 /* ── the form: a new task, or a change to one ─────────────────────────── */
-export function TaskForm({ initial, board, onDone, onClose, editing }) {
+export function TaskForm({ initial, board, onDone, onClose, editing, onRefresh, onManage, onAddMember }) {
   const t = initial || {};
   const [title, setTitle] = useState(t.title || '');
   const [description, setDescription] = useState(t.description || '');
   const [typeId, setTypeId] = useState(t.type?.id || t.type_id || '');
-  const [priority, setPriority] = useState(t.priority || 'moyenne');
+  const [priority, setPriority] = useState(t.priority || (board.priorities.find((p) => p.default) || board.priorities[0] || {}).id || '');
   const [assignees, setAssignees] = useState((t.assignees || []).map((a) => (typeof a === 'string' ? a : a.email)));
   const [day, setDay] = useState(t.due_date || todayParis());
   const [hour, setHour] = useState(t.due_time || nowTimeParis());
@@ -67,7 +45,7 @@ export function TaskForm({ initial, board, onDone, onClose, editing }) {
     if (!title.trim()) { setMsg('Donnez un titre à la tâche.'); return; }
     if (!assignees.length) { setMsg('Assignez la tâche à au moins une personne.'); return; }
     if (!day || !hour) { setMsg("La date et l'heure sont obligatoires."); return; }
-    const body = { title: title.trim(), description, type_id: typeId || '', priority, assignees, due_date: day, due_time: hour };
+    const body = { title: title.trim(), description, type_id: typeId || '', priority: priority || null, assignees, due_date: day, due_time: hour };
     setBusy(true);
     try {
       if (editing) {
@@ -99,24 +77,16 @@ export function TaskForm({ initial, board, onDone, onClose, editing }) {
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={5000} rows={4}
                     className={`${field} h-auto py-2.5`} placeholder="Détails, liens, étapes…" />
         </label>
-        <div><Label>Assigner à</Label><PeoplePicker members={board.members} value={assignees} onChange={setAssignees} /></div>
-        <label><Label>Type</Label>
-          <select value={typeId} onChange={(e) => setTypeId(e.target.value)} className={field}>
-            <option value="">Sans type</option>
-            {board.types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-          </select>
-        </label>
+        <div><Label>Assigner à</Label><PeoplePicker members={board.members} value={assignees} onChange={setAssignees} onAddMember={onAddMember} /></div>
+        <div><Label>Type</Label>
+          <ListPicker kind="types" items={board.types} value={typeId} onChange={setTypeId} placeholder="Sans type" canEdit
+                      onAdded={onRefresh} onManage={onManage && (() => onManage('types'))} />
+        </div>
         <label><Label>Échéance — date</Label><input type="date" required value={day} onChange={(e) => setDay(e.target.value)} className={field} /></label>
         <label><Label>Échéance — heure</Label><input type="time" required value={hour} onChange={(e) => setHour(e.target.value)} className={field} /></label>
         <div className="sm:col-span-2"><Label>Priorité</Label>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(PRIORITY).map(([k, p]) => (
-              <button key={k} type="button" onClick={() => setPriority(k)} aria-pressed={priority === k}
-                      className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12.5px] font-medium ${priority === k ? 'border-[#2F6BFF] bg-[#EAF1FF] text-[#0B1C3F]' : 'border-[#E3E9F3] text-[#475569]'}`}>
-                <span className="h-2 w-2 rounded-full" style={{ background: p.dot }} />{p.label}
-              </button>
-            ))}
-          </div>
+          <ListPicker kind="priorities" items={board.priorities} value={priority} onChange={(v) => setPriority(v || priority)} canEdit
+                      onAdded={onRefresh} onManage={onManage && (() => onManage('priorities'))} className="sm:max-w-[50%]" />
         </div>
 
         {!editing && (
@@ -184,7 +154,7 @@ export function TaskForm({ initial, board, onDone, onClose, editing }) {
 }
 
 /* ── one task ─────────────────────────────────────────────────────────── */
-export function TaskDrawer({ taskId, board, canEdit, onClose, onChanged, say }) {
+export function TaskDrawer({ taskId, board, canEdit, onClose, onChanged, say, onManage, onAddMember }) {
   const [d, setD] = useState(null);
   const [tab, setTab] = useState('comments');
   const [text, setText] = useState('');
@@ -207,7 +177,7 @@ export function TaskDrawer({ taskId, board, canEdit, onClose, onChanged, say }) 
   const deleted = t?.status === 'supprimee';
 
   if (editing && t) {
-    return <TaskForm initial={t} board={board} editing onClose={() => setEditing(false)}
+    return <TaskForm initial={t} board={board} editing onClose={() => setEditing(false)} onRefresh={onChanged} onManage={onManage} onAddMember={onAddMember}
                      onDone={(m) => { say(m); setEditing(false); load(); onChanged(); }} />;
   }
   return (
@@ -222,7 +192,7 @@ export function TaskDrawer({ taskId, board, canEdit, onClose, onChanged, say }) 
         ) : <span className="mt-0.5 h-6 w-6" />}
         <div className="min-w-0 flex-1">
           <h3 className={`text-[17px] font-bold leading-snug text-[#0B1C3F] ${done ? 'line-through decoration-[#94A3B8]' : ''}`}>{t?.title || 'Chargement…'}</h3>
-          {t && <div className="mt-1.5 flex flex-wrap items-center gap-1.5"><StatusBadge s={t.status} late={t.late_by_minutes} /><TypeChip type={t.type} /><PriorityPill p={t.priority} /></div>}
+          {t && <div className="mt-1.5 flex flex-wrap items-center gap-1.5"><StatusBadge s={t.status} late={t.late_by_minutes} /><TypeChip type={t.type} /><PriorityPill label={t.priority_label} color={t.priority_color} /></div>}
         </div>
         <button type="button" onClick={onClose} aria-label="Fermer" className="text-[#94A3B8] hover:text-[#0B1C3F]"><X size={20} /></button>
       </header>
@@ -384,96 +354,3 @@ export function MemberBreakdown({ member, week, onClose, onOpenTask }) {
   );
 }
 
-/* ── « + Ajouter » a member of FidClic's team ─────────────────────────── */
-export function AddMember({ onClose, onDone }) {
-  const [rows, setRows] = useState(null);
-  const [pick, setPick] = useState('');
-  const [fonction, setFonction] = useState('');
-  const [msg, setMsg] = useState('');
-  useEffect(() => { teamAPI.candidates().then(({ data }) => setRows(data.rows)).catch(() => setRows([])); }, []);
-  const chosen = rows?.find((r) => r.email === pick);
-  const save = async () => {
-    try { await teamAPI.addMember({ email: pick, fonction }); onDone(`${chosen?.name || 'Membre'} ajouté à l'équipe.`); } catch (e) { setMsg(err(e, 'Ajout impossible.')); }
-  };
-  return (
-    <Shell title="Ajouter à l'équipe" onClose={onClose}>
-      <p className="mb-3 text-[12.5px] text-[#64748B]">Les membres viennent de l'équipe FidClic (Admin › Utilisateurs). Leur accès se règle dans Admin › Rôles (« Suivi d'équipe »).</p>
-      {!rows ? <Loader2 size={16} className="animate-spin text-[#64748B]" /> : !rows.length
-        ? <p className="text-[13px] text-[#64748B]">Tous les utilisateurs de l'équipe sont déjà là.</p>
-        : (
-          <ul className="max-h-72 space-y-1 overflow-y-auto">
-            {rows.map((r) => (
-              <li key={r.email}>
-                <button type="button" onClick={() => setPick(r.email)}
-                        className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left ${pick === r.email ? 'border-[#2F6BFF] bg-[#F4F8FF]' : 'border-transparent hover:bg-[#F8FAFD]'}`}>
-                  <Avatar name={r.name} size={32} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-semibold text-[#0B1C3F]">{r.name}</span>
-                    <span className="block truncate text-[11.5px] text-[#64748B]">{r.email}{r.role ? ` · ${r.role}` : ''}</span>
-                  </span>
-                  {!r.access && <span className="rounded-md bg-[#FFF6DE] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#B7791F]">Sans accès</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      {chosen && (
-        <label className="mt-3 block"><Label>Fonction (affichée sous le nom)</Label>
-          <input value={fonction} onChange={(e) => setFonction(e.target.value)} maxLength={60} placeholder={chosen.role || 'Responsable, Commercial…'} className={field} />
-        </label>
-      )}
-      {chosen && !chosen.access && (
-        <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-[#FFF8E6] px-3 py-2 text-[12px] text-[#92400E]"><User size={14} className="mt-0.5 shrink-0" />
-          Son rôle ne donne pas accès à Suivi d'équipe : il ne verra pas ses tâches tant que l'accès n'est pas donné dans Admin › Rôles.</p>
-      )}
-      {msg && <p className="mt-3 rounded-lg bg-[#FEF2F2] px-3 py-2 text-[12.5px] text-[#B91C1C]">{msg}</p>}
-      <div className="mt-4 flex justify-end gap-2">
-        <button type="button" onClick={onClose} className="h-10 rounded-xl border border-[#E3E9F3] px-4 text-[13px] font-semibold text-[#475569]">Annuler</button>
-        <button type="button" disabled={!pick} onClick={save} className="h-10 rounded-xl bg-[#2F6BFF] px-5 text-[13px] font-semibold text-white disabled:opacity-50">Ajouter</button>
-      </div>
-    </Shell>
-  );
-}
-
-/* ── the team's own list of types ─────────────────────────────────────── */
-const SWATCHES = ['#2F6BFF', '#0EA5E9', '#14B8A6', '#22C55E', '#6366F1', '#A855F7', '#EC4899', '#F59E0B', '#EF4444', '#64748B'];
-export function TypesManager({ types, onClose, onChanged }) {
-  const [rows, setRows] = useState(types.map((t) => ({ ...t })));
-  const [name, setName] = useState('');
-  const [color, setColor] = useState(SWATCHES[0]);
-  const [msg, setMsg] = useState('');
-  useEffect(() => { setRows(types.map((t) => ({ ...t }))); }, [types]);
-  const run = async (fn) => { setMsg(''); try { await fn(); onChanged(); } catch (e) { setMsg(err(e, 'Action impossible.')); } };
-  return (
-    <Shell title="Types de tâches" onClose={onClose}>
-      <ul className="space-y-2">
-        {rows.map((t, i) => (
-          <li key={t.id} className="flex items-center gap-2">
-            <input type="color" value={t.color} aria-label={`Couleur de ${t.name}`} onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, color: e.target.value } : r)))}
-                   className="h-9 w-9 shrink-0 cursor-pointer rounded-lg border border-[#E3E9F3] bg-white p-1" />
-            <input value={t.name} maxLength={40} onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))} className={`${field} h-9`} />
-            {(t.name !== types[i]?.name || t.color !== types[i]?.color) && (
-              <button type="button" onClick={() => run(() => teamAPI.editType(t.id, { name: t.name, color: t.color }))}
-                      className="h-9 shrink-0 rounded-lg bg-[#2F6BFF] px-3 text-[12px] font-semibold text-white">OK</button>
-            )}
-            <button type="button" aria-label={`Supprimer ${t.name}`}
-                    onClick={() => window.confirm(`Supprimer le type « ${t.name} » ? Ses tâches resteront, « Sans type ».`) && run(() => teamAPI.deleteType(t.id))}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#94A3B8] hover:bg-[#FEF2F2] hover:text-[#DC2626]"><Trash2 size={15} /></button>
-          </li>
-        ))}
-      </ul>
-      <div className="mt-4 rounded-xl border border-dashed border-[#CBD5E1] p-3">
-        <p className="mb-2 text-[12.5px] font-semibold text-[#0B1C3F]">Nouveau type</p>
-        <div className="flex gap-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="Ex. Produit" className={`${field} h-9`} />
-          <button type="button" disabled={!name.trim()} onClick={() => run(async () => { await teamAPI.addType({ name: name.trim(), color }); setName(''); })}
-                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg bg-[#2F6BFF] px-3 text-[12.5px] font-semibold text-white disabled:opacity-50"><Plus size={14} /> Ajouter</button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {SWATCHES.map((c) => <button key={c} type="button" aria-label={`Couleur ${c}`} onClick={() => setColor(c)} className={`h-6 w-6 rounded-full ${color === c ? 'ring-2 ring-[#0B1C3F] ring-offset-2' : ''}`} style={{ background: c }} />)}
-        </div>
-      </div>
-      {msg && <p className="mt-3 rounded-lg bg-[#FEF2F2] px-3 py-2 text-[12.5px] text-[#B91C1C]">{msg}</p>}
-    </Shell>
-  );
-}

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, User } from 'lucide-react';
+import { Check, ChevronDown, User, X, UserPlus } from 'lucide-react';
 
 /* Super admin › Suivi d'équipe — the pieces the board, the history and the
    task window share (features/team_tasks.py). Colours from the approved
@@ -8,11 +8,6 @@ import { Check, ChevronDown, User } from 'lucide-react';
 export const INK = '#0B1C3F';
 export const BLUE = '#2F6BFF';
 
-export const PRIORITY = {
-  haute: { label: 'Haute', dot: '#EF4444', bg: '#FEECEC', fg: '#DC2626' },
-  moyenne: { label: 'Moyenne', dot: '#F5B70B', bg: '#FFF6DE', fg: '#B7791F' },
-  basse: { label: 'Basse', dot: '#22C55E', bg: '#E8F8EE', fg: '#15803D' },
-};
 
 export const STATUS = {
   a_faire: { label: 'À faire', dot: '#F5B70B', bg: '#FFF6DE', fg: '#B7791F' },
@@ -61,13 +56,23 @@ export function TypeChip({ type }) {
   );
 }
 
-export function PriorityPill({ p }) {
-  const s = PRIORITY[p] || PRIORITY.moyenne;
+/* A priority is the team's own (name, colour): the pill tints itself from it. */
+export function PriorityPill({ label, color }) {
+  const c = color || '#94A3B8';
   return (
-    <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[11px] font-medium" style={{ background: s.bg, color: s.fg }}>
-      <span className="h-[7px] w-[7px] rounded-full" style={{ background: s.dot }} />{s.label}
+    <span className="inline-flex max-w-full items-center gap-1 truncate rounded-md px-1.5 py-[2px] text-[11px] font-medium" style={{ background: `${c}1F`, color: shade(c) }}>
+      <span className="h-[7px] w-[7px] shrink-0 rounded-full" style={{ background: c }} />{label || '—'}
     </span>
   );
+}
+
+/* a darker tone of a colour, for text on its own light tint */
+export function shade(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return '#475569';
+  const v = parseInt(m[1], 16);
+  const f = (x) => Math.round(x * 0.72).toString(16).padStart(2, '0');
+  return `#${f((v >> 16) & 255)}${f((v >> 8) & 255)}${f(v & 255)}`;
 }
 
 export function StatusBadge({ s, late }) {
@@ -95,7 +100,7 @@ export function Ring({ pct = 0, color, size = 46, stroke = 6 }) {
 export const field = 'h-11 w-full rounded-xl border border-[#E3E9F3] bg-white px-3 text-[13.5px] text-[#0B1C3F] outline-none transition placeholder:text-[#94A3B8] focus:border-[#2F6BFF]';
 
 /* « Assigner à »: one or more people of the team. */
-export function PeoplePicker({ members, value, onChange, placeholder = 'Assigner à', className = '' }) {
+export function PeoplePicker({ members, value, onChange, placeholder = 'Assigner à', className = '', onAddMember }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
   useEffect(() => {
@@ -133,8 +138,41 @@ export function PeoplePicker({ members, value, onChange, placeholder = 'Assigner
               </button>
             );
           })}
+          {onAddMember && (
+            <button type="button" onClick={() => { setOpen(false); onAddMember(); }}
+                    className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-[#EEF2F8] px-2.5 py-2 text-left text-[12.5px] font-semibold text-[#2F6BFF] hover:bg-[#F4F8FF]">
+              <UserPlus size={14} /> Ajouter un membre à l'équipe
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+/* A window: centred, or a drawer on the right (side). */
+export function Shell({ title, onClose, children, wide, side }) {
+  useEffect(() => {
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [onClose]);
+  return (
+    <div className={`fixed inset-0 z-50 flex bg-[#0B1C3F]/30 ${side ? 'justify-end' : 'items-end justify-center sm:items-center sm:p-6'}`}
+         onClick={onClose} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}>
+      <div onClick={(e) => e.stopPropagation()}
+           className={side
+             ? 'flex h-full w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl'
+             : `max-h-[92vh] w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} overflow-y-auto rounded-t-2xl bg-white p-5 shadow-2xl sm:rounded-2xl`}>
+        {!side && (
+          <header className="mb-4 flex items-center justify-between gap-3">
+            <h3 className="text-[16px] font-bold text-[#0B1C3F]">{title}</h3>
+            <button type="button" onClick={onClose} aria-label="Fermer" className="text-[#94A3B8] hover:text-[#0B1C3F]"><X size={18} /></button>
+          </header>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
+
