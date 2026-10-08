@@ -230,11 +230,17 @@ export const teamAPI = {
   candidates: () => api.get('/admin/equipe/members/candidates'),
   addMember: (body) => api.post('/admin/equipe/members', body),
   editMember: (email, body) => api.put(`/admin/equipe/members/${encodeURIComponent(email)}`, body),
-  removeMember: (email) => api.delete(`/admin/equipe/members/${encodeURIComponent(email)}`),
+  memberUsage: (email) => api.get(`/admin/equipe/members/${encodeURIComponent(email)}/usage`),
+  // « Retirer de l'équipe »: their open tasks handed over (to, moves)
+  removeMember: (email, body) => api.post(`/admin/equipe/members/${encodeURIComponent(email)}/remove`, body),
+  orderMembers: (ids) => api.put('/admin/equipe/members/order', { ids }),
   breakdown: (email, params) => api.get(`/admin/equipe/members/${encodeURIComponent(email)}/breakdown`, { params }),
-  addType: (body) => api.post('/admin/equipe/types', body),
-  editType: (id, body) => api.put(`/admin/equipe/types/${id}`, body),
-  deleteType: (id) => api.delete(`/admin/equipe/types/${id}`),
+  // the team's own lists — kind: 'types' | 'priorities' | 'fonctions'
+  listAdd: (kind, body) => api.post(`/admin/equipe/lists/${kind}`, body),
+  listEdit: (kind, id, body) => api.put(`/admin/equipe/lists/${kind}/${id}`, body),
+  listOrder: (kind, ids) => api.put(`/admin/equipe/lists/${kind}/order`, { ids }),
+  listUsage: (kind, id) => api.get(`/admin/equipe/lists/${kind}/${id}/usage`),
+  listDelete: (kind, id, body) => api.post(`/admin/equipe/lists/${kind}/${id}/delete`, body),
   alerts: () => api.get('/admin/equipe/alerts'),
 };
 

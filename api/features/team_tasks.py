@@ -49,7 +49,10 @@ _db = None
 PARIS = ZoneInfo("Europe/Paris")
 MODULE = "equipe"
 
-PRIORITIES = {"haute": "Haute", "moyenne": "Moyenne", "basse": "Basse"}
+# The three to start with; the team adds, renames, recolours, orders and
+# deletes its own (user, 2026-10-08: « sab mein customize »).
+DEFAULT_PRIORITIES = [("haute", "Haute", "#EF4444"), ("moyenne", "Moyenne", "#F5B70B"), ("basse", "Basse", "#22C55E")]
+DEFAULT_FONCTIONS = ["Responsable", "Commercial", "Support client", "Marketing", "Développement", "Administratif"]
 STATUS_LABELS = {"a_faire": "À faire", "en_retard": "En retard", "terminee": "Terminée",
                  "terminee_retard": "Terminée en retard", "supprimee": "Supprimée"}
 DEFAULT_TYPES = [("marketing", "Marketing", "#2F6BFF"), ("operations", "Opérations", "#0EA5E9"),
@@ -82,6 +85,25 @@ def init(db):
         for i, (tid, name, color) in enumerate(DEFAULT_TYPES):
             db.team_task_types.insert_one({"id": tid, "name": name, "color": color, "order": i,
                                            "created_at": _now()})
+    if not db.team_task_priorities.count_documents({}):
+        for i, (pid, name, color) in enumerate(DEFAULT_PRIORITIES):
+            db.team_task_priorities.insert_one({"id": pid, "name": name, "color": color, "order": i,
+                                                "default": pid == "moyenne", "created_at": _now()})
+    if not db.team_fonctions.count_documents({}):
+        for i, name in enumerate(DEFAULT_FONCTIONS):
+            db.team_fonctions.insert_one({"id": _slug(name), "name": name, "order": i, "created_at": _now()})
+    # members from before the list: their free-text fonction joins it
+    for m in list(db.team_board_members.find({"fonction_id": None, "fonction": {"$nin": [None, ""]}}, {"_id": 0})):
+        f = db.team_fonctions.find_one({"name": {"$regex": f"^{re.escape(m['fonction'])}$", "$options": "i"}})
+        if not f:
+            f = {"id": _slug(m["fonction"]), "name": m["fonction"], "order": db.team_fonctions.count_documents({}),
+                 "created_at": _now()}
+            db.team_fonctions.insert_one(dict(f))
+        db.team_board_members.update_one({"email": m["email"]}, {"$set": {"fonction_id": f["id"]}})
+
+
+def _slug(name: str) -> str:
+    return (re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] or "item") + "-" + uuid.uuid4().hex[:4]
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +236,22 @@ def _person(email: str, users: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
 def _types() -> List[Dict[str, Any]]:
     return [{"id": t["id"], "name": t["name"], "color": t.get("color") or "#64748B"}
             for t in _db.team_task_types.find({}, {"_id": 0}).sort("order", 1)]
+
+
+def _priorities() -> List[Dict[str, Any]]:
+    rows = [{"id": t["id"], "name": t["name"], "color": t.get("color") or "#64748B", "default": bool(t.get("default"))}
+            for t in _db.team_task_priorities.find({}, {"_id": 0}).sort("order", 1)]
+    if rows and not any(r["default"] for r in rows):
+        rows[len(rows) // 2]["default"] = True
+    return rows
+
+
+def _default_priority() -> Optional[str]:
+    return next((p["id"] for p in _priorities() if p["default"]), None)
+
+
+def _fonctions() -> List[Dict[str, Any]]:
+    return [{"id": f["id"], "name": f["name"]} for f in _db.team_fonctions.find({}, {"_id": 0}).sort("order", 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +387,13 @@ def _view(t: Dict[str, Any], users: Dict[str, Dict[str, Any]], types: Dict[str, 
     ty = types.get(t.get("type_id") or "")
     st = status_of(t, now)
     s = (series or {}).get(t.get("series_id") or "")
+    prios = types.get("__prio__") or _prio_cache()          # read once per request by _ctx
     return {
         "id": t["id"], "title": t.get("title") or "", "description": t.get("description") or "",
         "type": {"id": ty["id"], "name": ty["name"], "color": ty["color"]} if ty else None,
-        "priority": t.get("priority") or "moyenne", "priority_label": PRIORITIES.get(t.get("priority") or "moyenne"),
+        "priority": t.get("priority"),
+        "priority_label": (prios.get(t.get("priority") or "") or {}).get("name") or "—",
+        "priority_color": (prios.get(t.get("priority") or "") or {}).get("color") or "#94A3B8",
         "assignees": [_person(e, users) for e in t.get("assignees") or []],
         "due_at": _iso(due), "due_date": p.date().isoformat() if p else None,
         "due_time": f"{p.hour:02d}:{p.minute:02d}" if p else None,
@@ -370,6 +411,10 @@ def _view(t: Dict[str, Any], users: Dict[str, Dict[str, Any]], types: Dict[str, 
     }
 
 
+def _prio_cache() -> Dict[str, Dict[str, Any]]:
+    return {p["id"]: p for p in _priorities()}
+
+
 def _ctx(tasks: List[Dict[str, Any]]):
     emails: Set[str] = set()
     for t in tasks:
@@ -378,7 +423,8 @@ def _ctx(tasks: List[Dict[str, Any]]):
             if t.get(k):
                 emails.add(t[k])
     users = _users_by_email(emails)
-    types = {x["id"]: x for x in _types()}
+    types: Dict[str, Any] = {x["id"]: x for x in _types()}
+    types["__prio__"] = _prio_cache()
     sids = {t["series_id"] for t in tasks if t.get("series_id")}
     series = {s["id"]: s for s in _db.team_task_series.find({"id": {"$in": list(sids)}}, {"_id": 0})} if sids else {}
     return users, types, series
@@ -434,13 +480,15 @@ def _pct(a: int, b: int) -> int:
 def _member_rows(tasks: List[Dict[str, Any]], users: Dict[str, Dict[str, Any]], now: datetime) -> List[Dict[str, Any]]:
     members = list(_db.team_board_members.find({}, {"_id": 0}).sort("order", 1))
     allu = _users_by_email([m["email"] for m in members])
+    fon = {f["id"]: f["name"] for f in _fonctions()}
     out = []
     for m in members:
         mine = [t for t in tasks if m["email"] in (t.get("assignees") or [])]
         c = _counts(mine, now)
         u = allu.get(m["email"])
         out.append({"email": m["email"], "name": _name(u, m["email"]),
-                    "fonction": m.get("fonction") or (_role_name(u) if u else ""),
+                    "fonction_id": m.get("fonction_id"),
+                    "fonction": fon.get(m.get("fonction_id") or "") or m.get("fonction") or (_role_name(u) if u else ""),
                     "assigned": c["total"], "done": c["done"], "pct": _pct(c["done"], c["total"]),
                     "late": c["en_retard"], "access": _has_access(u), "active": bool(u) and u.get("active") is not False})
     return out
@@ -457,7 +505,8 @@ def board(week: Optional[str] = None, token_data: TokenData = Depends(require_ad
     users, types, series = _ctx(tasks)
     c = _counts(tasks, now)
     views = [_view(t, users, types, now, series) for t in tasks]
-    pr_rank = {"haute": 0, "moyenne": 1, "basse": 2}
+    prios = _priorities()
+    pr_rank = {p["id"]: i for i, p in enumerate(prios)}
     views.sort(key=lambda v: (v["due_at"] or "", pr_rank.get(v["priority"], 1), v["title"].lower()))
     days = []
     for i in range(7):
@@ -468,7 +517,7 @@ def board(week: Optional[str] = None, token_data: TokenData = Depends(require_ad
                      "short": f"{d.day} {['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'][d.month - 1]}",
                      "today": d == _today(), "tasks": rows, "total": len(rows), "done": done, "pct": _pct(done, len(rows))})
     status_counts = {k: sum(1 for v in views if k in _filter_keys(v["status"])) for k in ("a_faire", "terminee", "en_retard")}
-    prio_counts = {k: sum(1 for v in views if v["priority"] == k) for k in PRIORITIES}
+    prio_counts = {p["id"]: sum(1 for v in views if v["priority"] == p["id"]) for p in prios}
     type_counts = {}
     for v in views:
         key = v["type"]["id"] if v["type"] else ""
@@ -489,7 +538,9 @@ def board(week: Optional[str] = None, token_data: TokenData = Depends(require_ad
         "days": days,
         "members": _member_rows(tasks, users, now),
         "types": _types(),
-        "priorities": [{"id": k, "name": v} for k, v in PRIORITIES.items()],
+        "priorities": prios,
+        "fonctions": _fonctions(),
+        "can_create_users": token_data.role == "super_admin",
         "freqs": [{"id": k, "name": v} for k, v in FREQS.items()],
         "counts": {"status": status_counts, "priority": prio_counts, "type": type_counts},
         "now": now.isoformat(),
@@ -511,7 +562,7 @@ class TaskIn(BaseModel):
     title: str = Field(..., max_length=200)
     description: Optional[str] = Field("", max_length=5000)
     type_id: Optional[str] = None
-    priority: str = "moyenne"
+    priority: Optional[str] = None          # none: the team's default priority
     assignees: List[str]
     due_date: str
     due_time: str
@@ -532,9 +583,11 @@ def _clean_fields(b: Any, partial: bool = False) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail="Type de tâche inconnu.")
         out["type_id"] = b.type_id or None
     if not partial or b.priority is not None:
-        if b.priority not in PRIORITIES:
+        pid = b.priority or (None if partial else _default_priority())
+        if pid and not _db.team_task_priorities.find_one({"id": pid}):
             raise HTTPException(status_code=400, detail="Priorité inconnue.")
-        out["priority"] = b.priority
+        if pid:
+            out["priority"] = pid
     if not partial or b.assignees is not None:
         people = list(dict.fromkeys(e.strip().lower() for e in (b.assignees or []) if e and e.strip()))
         if not people:
@@ -606,7 +659,7 @@ def _describe_changes(old: Dict[str, Any], new: Dict[str, Any], users: Dict[str,
     if "type_id" in new and new["type_id"] != old.get("type_id"):
         out.append(f"type : {types.get(new['type_id'], 'Sans type')}")
     if new.get("priority") and new["priority"] != old.get("priority"):
-        out.append(f"priorité : {PRIORITIES[new['priority']]}")
+        out.append(f"priorité : {(_prio_cache().get(new['priority']) or {}).get('name', new['priority'])}")
     if new.get("assignees") is not None and set(new["assignees"]) != set(old.get("assignees") or []):
         out.append("assignée à " + ", ".join(_name(users.get(e), e) for e in new["assignees"]))
     if new.get("due_at") and _aware(new["due_at"]) != _aware(old.get("due_at")):
@@ -818,7 +871,7 @@ def history(date_from: Optional[str] = None, date_to: Optional[str] = None, memb
             "pages": pages, "per_page": per_page, "summary": c,
             "members": [{"email": e, "name": _name(u, e)} for e, u in
                         ((e, _users_by_email([e]).get(e)) for e in _history_people())],
-            "types": _types()}
+            "types": _types(), "priorities": _priorities()}
 
 
 def _history_people() -> List[str]:
@@ -874,7 +927,13 @@ def candidates(token_data: TokenData = Depends(require_admin(MODULE))):
 
 class MemberIn(BaseModel):
     email: str
-    fonction: Optional[str] = Field("", max_length=60)
+    fonction_id: Optional[str] = None
+
+
+def _check_fonction(fid: Optional[str]) -> Optional[str]:
+    if fid and not _db.team_fonctions.find_one({"id": fid}):
+        raise HTTPException(status_code=400, detail="Fonction inconnue.")
+    return fid or None
 
 
 @router.post("/api/admin/equipe/members")
@@ -886,26 +945,96 @@ def add_member(body: MemberIn, token_data: TokenData = Depends(require_admin(MOD
     if _db.team_board_members.find_one({"email": email}):
         raise HTTPException(status_code=409, detail="Déjà dans l'équipe.")
     order = _db.team_board_members.count_documents({})
-    _db.team_board_members.insert_one({"email": email, "fonction": (body.fonction or "").strip()[:60], "order": order,
+    _db.team_board_members.insert_one({"email": email, "fonction_id": _check_fonction(body.fonction_id), "order": order,
                                        "added_at": _now(), "added_by": token_data.email})
     return {"email": email, "access": _has_access(u)}
 
 
+class OrderIn(BaseModel):
+    ids: List[str]
+
+
+@router.put("/api/admin/equipe/members/order")
+def order_members(body: OrderIn, token_data: TokenData = Depends(require_admin(MODULE))):
+    for i, e in enumerate(body.ids or []):
+        _db.team_board_members.update_one({"email": (e or "").lower()}, {"$set": {"order": i}})
+    return {"ok": True}
+
+
 @router.put("/api/admin/equipe/members/{email}")
 def edit_member(email: str, body: MemberIn, token_data: TokenData = Depends(require_admin(MODULE))):
-    r = _db.team_board_members.update_one({"email": email.lower()}, {"$set": {"fonction": (body.fonction or "").strip()[:60]}})
+    r = _db.team_board_members.update_one({"email": email.lower()}, {"$set": {"fonction_id": _check_fonction(body.fonction_id)}})
     if not r.matched_count:
         raise HTTPException(status_code=404, detail="Membre introuvable.")
     return {"email": email.lower()}
 
 
-@router.delete("/api/admin/equipe/members/{email}")
-def remove_member(email: str, token_data: TokenData = Depends(require_admin(MODULE))):
-    """Off the board; their tasks and history stay as they are."""
+def _open_tasks_of(email: str) -> List[Dict[str, Any]]:
+    return list(_db.team_tasks.find({"assignees": email, "deleted_at": None, "completed_at": None}, {"_id": 0}).sort("due_at", 1))
+
+
+@router.get("/api/admin/equipe/members/{email}/usage")
+def member_usage(email: str, token_data: TokenData = Depends(require_admin(MODULE))):
+    """Before « Retirer de l'équipe »: their open tasks — the ones only they
+    hold must go to someone else (user, 2026-10-08: compulsory)."""
     email = email.lower()
-    open_tasks = _db.team_tasks.count_documents({"assignees": email, "deleted_at": None, "completed_at": None})
+    rows = _open_tasks_of(email)
+    users, types, series = _ctx(rows)
+    now = _now()
+    out = [{**_view(t, users, types, now, series), "sole": len(t.get("assignees") or []) == 1} for t in rows]
+    # repeating tasks only they hold: the next ones need someone
+    n_series = sum(1 for x in _db.team_task_series.find({"active": {"$ne": False}, "template.assignees": email}, {"_id": 0})
+                   if (x["template"].get("assignees") or []) == [email])
+    return {"tasks": out, "sole": sum(1 for r in out if r["sole"]), "shared": sum(1 for r in out if not r["sole"]),
+            "series": n_series}
+
+
+class RemoveIn(BaseModel):
+    to: Optional[List[str]] = None                     # who takes everything not chosen task by task
+    moves: Optional[Dict[str, List[str]]] = None       # task id → its new people
+
+
+@router.post("/api/admin/equipe/members/{email}/remove")
+def remove_member(email: str, body: RemoveIn, token_data: TokenData = Depends(require_admin(MODULE))):
+    """Off the board. Their open tasks are handed over — compulsory for the
+    ones only they held; on shared ones they simply step out. Finished tasks
+    and the history keep their name."""
+    email = email.lower()
+    actor = token_data.email
+    if not _db.team_board_members.find_one({"email": email}):
+        raise HTTPException(status_code=404, detail="Membre introuvable.")
+    others = set(_board_emails()) - {email}
+
+    def clean(people: Optional[List[str]]) -> List[str]:
+        got = list(dict.fromkeys((p or "").strip().lower() for p in (people or []) if p))
+        if any(p not in others for p in got):
+            raise HTTPException(status_code=400, detail="Choisissez des membres restant dans l'équipe.")
+        return got
+    to = clean(body.to)
+    moves = {k: clean(v) for k, v in (body.moves or {}).items()}
+    tasks = _open_tasks_of(email)
+    needs_series = _db.team_task_series.find({"active": {"$ne": False}, "template.assignees": email}, {"_id": 0})
+    needs_series = [x for x in needs_series if (x["template"].get("assignees") or []) == [email]]
+    missing = [t["title"] for t in tasks if (t.get("assignees") or []) == [email] and not (moves.get(t["id"]) or to)]
+    if missing or (needs_series and not to):
+        raise HTTPException(status_code=400, detail="Attribuez d'abord ses tâches à un autre membre "
+                                                    f"({len(missing) or len(needs_series)} à attribuer).")
+    users = _users_by_email(list(others | {email}))
+    for t in tasks:
+        rest = [p for p in t.get("assignees") or [] if p != email]
+        new = list(dict.fromkeys(rest + (moves.get(t["id"]) or ([] if rest else to))))
+        _db.team_tasks.update_one({"id": t["id"]}, {"$set": {"assignees": new, "updated_at": _now()}})
+        _event(t["id"], actor, "updated", f"{_name(users.get(email), email)} retiré(e) de l'équipe · assignée à "
+               + ", ".join(_name(users.get(p), p) for p in new))
+        added = set(new) - set(t.get("assignees") or [])
+        if added:
+            _alert(added, "assigned", t, f"Nouvelle tâche pour vous : « {t['title']} » (échéance {_due_text(_aware(t['due_at']))})",
+                   skip=actor)
+    for sr in _db.team_task_series.find({"active": {"$ne": False}, "template.assignees": email}, {"_id": 0}):
+        rest = [p for p in sr["template"].get("assignees") or [] if p != email]
+        _db.team_task_series.update_one({"id": sr["id"]}, {"$set": {"template.assignees": rest or to}})
     _db.team_board_members.delete_one({"email": email})
-    return {"removed": True, "open_tasks": open_tasks}
+    return {"removed": True, "moved": len(tasks)}
 
 
 @router.get("/api/admin/equipe/members/{email}/breakdown")
@@ -934,53 +1063,161 @@ def member_breakdown(email: str, week: Optional[str] = None, scope: str = "week"
 
 
 # ---------------------------------------------------------------------------
-# Types de tâches — the team's own list
+# The team's own lists — types, priorities, fonctions (user, 2026-10-08:
+# « sab mein customize », the same list wherever it is picked). Add, rename,
+# recolour, order, delete; deleting one that is used asks where its tasks
+# (or members) go — compulsory, one choice for all or task by task.
 # ---------------------------------------------------------------------------
-class TypeIn(BaseModel):
+LISTS = {
+    "types": {"coll": "team_task_types", "field": "type_id", "noun": "type", "color": True},
+    "priorities": {"coll": "team_task_priorities", "field": "priority", "noun": "priorité", "color": True},
+    "fonctions": {"coll": "team_fonctions", "field": None, "noun": "fonction", "color": False},
+}
+
+
+def _list(kind: str) -> Dict[str, Any]:
+    cfg = LISTS.get(kind)
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Liste inconnue.")
+    return cfg
+
+
+class ItemIn(BaseModel):
     name: str = Field(..., max_length=40)
-    color: Optional[str] = "#64748B"
+    color: Optional[str] = None
+    default: Optional[bool] = None          # priorities: the one a task gets when none is chosen
 
 
 def _color(c: Optional[str]) -> str:
     return c if c and re.fullmatch(r"#[0-9A-Fa-f]{6}", c) else "#64748B"
 
 
-@router.post("/api/admin/equipe/types")
-def add_type(body: TypeIn, token_data: TokenData = Depends(require_admin(MODULE))):
-    name = (body.name or "").strip()
+def _clash(coll, name: str, but: Optional[str] = None) -> bool:
+    q: Dict[str, Any] = {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+    if but:
+        q["id"] = {"$ne": but}
+    return bool(coll.find_one(q))
+
+
+@router.post("/api/admin/equipe/lists/{kind}")
+def add_item(kind: str, body: ItemIn, token_data: TokenData = Depends(require_admin(MODULE))):
+    cfg = _list(kind)
+    coll = _db[cfg["coll"]]
+    name = re.sub(r"\s+", " ", (body.name or "").strip())
     if not name:
-        raise HTTPException(status_code=400, detail="Donnez un nom au type.")
-    if _db.team_task_types.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}):
-        raise HTTPException(status_code=409, detail="Ce type existe déjà.")
-    tid = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] + "-" + uuid.uuid4().hex[:4]
-    _db.team_task_types.insert_one({"id": tid, "name": name, "color": _color(body.color),
-                                    "order": _db.team_task_types.count_documents({}), "created_at": _now()})
-    return {"id": tid}
+        raise HTTPException(status_code=400, detail=f"Donnez un nom à la {cfg['noun']}." if cfg["noun"] != "type" else "Donnez un nom au type.")
+    if _clash(coll, name):
+        raise HTTPException(status_code=409, detail=f"« {name} » existe déjà.")
+    iid = _slug(name)
+    doc = {"id": iid, "name": name, "order": coll.count_documents({}), "created_at": _now()}
+    if cfg["color"]:
+        doc["color"] = _color(body.color)
+    coll.insert_one(doc)
+    if kind == "priorities" and body.default:
+        coll.update_many({}, {"$set": {"default": False}})
+        coll.update_one({"id": iid}, {"$set": {"default": True}})
+    return {"id": iid, "name": name}
 
 
-@router.put("/api/admin/equipe/types/{type_id}")
-def edit_type(type_id: str, body: TypeIn, token_data: TokenData = Depends(require_admin(MODULE))):
-    name = (body.name or "").strip()
+@router.put("/api/admin/equipe/lists/{kind}/order")
+def order_items(kind: str, body: OrderIn, token_data: TokenData = Depends(require_admin(MODULE))):
+    coll = _db[_list(kind)["coll"]]
+    for i, iid in enumerate(body.ids or []):
+        coll.update_one({"id": iid}, {"$set": {"order": i}})
+    return {"ok": True}
+
+
+@router.put("/api/admin/equipe/lists/{kind}/{item_id}")
+def edit_item(kind: str, item_id: str, body: ItemIn, token_data: TokenData = Depends(require_admin(MODULE))):
+    cfg = _list(kind)
+    coll = _db[cfg["coll"]]
+    if not coll.find_one({"id": item_id}):
+        raise HTTPException(status_code=404, detail="Élément introuvable.")
+    name = re.sub(r"\s+", " ", (body.name or "").strip())
     if not name:
-        raise HTTPException(status_code=400, detail="Donnez un nom au type.")
-    clash = _db.team_task_types.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "id": {"$ne": type_id}})
-    if clash:
-        raise HTTPException(status_code=409, detail="Ce type existe déjà.")
-    r = _db.team_task_types.update_one({"id": type_id}, {"$set": {"name": name, "color": _color(body.color)}})
-    if not r.matched_count:
-        raise HTTPException(status_code=404, detail="Type introuvable.")
-    return {"id": type_id}
+        raise HTTPException(status_code=400, detail="Le nom est vide.")
+    if _clash(coll, name, item_id):
+        raise HTTPException(status_code=409, detail=f"« {name} » existe déjà.")
+    upd: Dict[str, Any] = {"name": name}
+    if cfg["color"] and body.color:
+        upd["color"] = _color(body.color)
+    coll.update_one({"id": item_id}, {"$set": upd})
+    if kind == "priorities" and body.default:
+        coll.update_many({}, {"$set": {"default": False}})
+        coll.update_one({"id": item_id}, {"$set": {"default": True}})
+    return {"id": item_id}
 
 
-@router.delete("/api/admin/equipe/types/{type_id}")
-def delete_type(type_id: str, token_data: TokenData = Depends(require_admin(MODULE))):
-    """Its tasks stay, « Sans type »."""
-    if not _db.team_task_types.find_one({"id": type_id}):
-        raise HTTPException(status_code=404, detail="Type introuvable.")
-    moved = _db.team_tasks.update_many({"type_id": type_id}, {"$set": {"type_id": None}}).modified_count
-    _db.team_task_series.update_many({"template.type_id": type_id}, {"$set": {"template.type_id": None}})
-    _db.team_task_types.delete_one({"id": type_id})
-    return {"deleted": True, "tasks": moved}
+def _usage(kind: str, item_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    """What uses it: (open-or-not tasks shown, all tasks incl. deleted) — or
+    the members for a fonction."""
+    cfg = _list(kind)
+    if kind == "fonctions":
+        rows = list(_db.team_board_members.find({"fonction_id": item_id}, {"_id": 0}))
+        return rows, len(rows)
+    q = {cfg["field"]: item_id}
+    shown = list(_db.team_tasks.find({**q, "deleted_at": None}, {"_id": 0}).sort("due_at", -1))
+    return shown, _db.team_tasks.count_documents(q) + _db.team_task_series.count_documents({f"template.{cfg['field']}": item_id})
+
+
+@router.get("/api/admin/equipe/lists/{kind}/{item_id}/usage")
+def item_usage(kind: str, item_id: str, token_data: TokenData = Depends(require_admin(MODULE))):
+    rows, total = _usage(kind, item_id)
+    if kind == "fonctions":
+        users = _users_by_email([m["email"] for m in rows])
+        return {"total": total, "members": [{"email": m["email"], "name": _name(users.get(m["email"]), m["email"])} for m in rows]}
+    users, types, series = _ctx(rows)
+    now = _now()
+    return {"total": total, "tasks": [_view(t, users, types, now, series) for t in rows]}
+
+
+class DeleteItemIn(BaseModel):
+    to: Optional[str] = None                     # where everything not chosen one by one goes
+    moves: Optional[Dict[str, str]] = None       # task id (or member e-mail) → item id
+
+
+@router.post("/api/admin/equipe/lists/{kind}/{item_id}/delete")
+def delete_item(kind: str, item_id: str, body: DeleteItemIn, token_data: TokenData = Depends(require_admin(MODULE))):
+    cfg = _list(kind)
+    coll = _db[cfg["coll"]]
+    item = coll.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Élément introuvable.")
+    if kind == "priorities" and coll.count_documents({}) <= 1:
+        raise HTTPException(status_code=400, detail="Il faut garder au moins une priorité.")
+    valid = {x["id"] for x in coll.find({"id": {"$ne": item_id}}, {"_id": 0, "id": 1})}
+    to = body.to or None
+    moves = {k: v for k, v in (body.moves or {}).items() if v}
+    if (to and to not in valid) or any(v not in valid for v in moves.values()):
+        raise HTTPException(status_code=400, detail=f"Choisissez une autre {cfg['noun']} existante." if cfg["noun"] != "type"
+                            else "Choisissez un autre type existant.")
+    rows, total = _usage(kind, item_id)
+    actor = token_data.email
+    if kind == "fonctions":
+        for m in rows:
+            dest = moves.get(m["email"]) or to
+            if not dest:
+                raise HTTPException(status_code=400, detail="Choisissez la nouvelle fonction de chaque membre.")
+        for m in rows:
+            _db.team_board_members.update_one({"email": m["email"]}, {"$set": {"fonction_id": moves.get(m["email"]) or to}})
+    else:
+        field = cfg["field"]
+        uncovered = [t for t in rows if not (moves.get(t["id"]) or to)]
+        if uncovered or (total > len(rows) and not to):
+            raise HTTPException(status_code=400, detail=f"Choisissez où vont les {total} tâche(s) de « {item['name']} ».")
+        names = {x["id"]: x["name"] for x in coll.find({}, {"_id": 0, "id": 1, "name": 1})}
+        for t in rows:
+            dest = moves.get(t["id"]) or to
+            _db.team_tasks.update_one({"id": t["id"]}, {"$set": {field: dest, "updated_at": _now()}})
+            _event(t["id"], actor, "updated", f"{cfg['noun'].capitalize()} : {item['name']} → {names.get(dest, dest)} "
+                                              f"(« {item['name']} » supprimé{'e' if cfg['noun'] != 'type' else ''})")
+        if to:
+            _db.team_tasks.update_many({field: item_id}, {"$set": {field: to}})        # deleted ones, for the history
+            _db.team_task_series.update_many({f"template.{field}": item_id}, {"$set": {f"template.{field}": to}})
+    coll.delete_one({"id": item_id})
+    if kind == "priorities" and item.get("default"):
+        coll.update_one({"id": to or next(iter(valid))}, {"$set": {"default": True}})
+    return {"deleted": True, "moved": len(rows)}
 
 
 # ---------------------------------------------------------------------------

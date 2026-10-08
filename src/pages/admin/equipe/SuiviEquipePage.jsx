@@ -9,9 +9,11 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { can } from '../../../lib/perms';
 import { useToast } from '../../crm/ui';
 import {
-  Avatar, TypeChip, PriorityPill, Ring, PeoplePicker, field, todayParis, nowTimeParis, PRIORITY, STATUS, lateText,
+  Avatar, TypeChip, PriorityPill, Ring, PeoplePicker, field, todayParis, nowTimeParis, STATUS, lateText,
 } from './shared';
-import { TaskForm, TaskDrawer, MemberBreakdown, AddMember, TypesManager } from './TaskModals';
+import { TaskForm, TaskDrawer, MemberBreakdown } from './TaskModals';
+import { ListPicker, ListManager } from './Lists';
+import { AddMember, FonctionModal, RemoveMember } from './Members';
 import HistoryView from './HistoryView';
 import NotificationBell from '../../../components/NotificationBell';
 
@@ -82,7 +84,7 @@ function TaskItem({ t, today, canEdit, onToggle, onOpen }) {
         </span>
         <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <span className="max-w-full truncate text-[11.5px] text-[#475569]">{t.assignees.map((a) => a.name.split(' ')[0]).join(', ')}</span>
-          <PriorityPill p={t.priority} />
+          <PriorityPill label={t.priority_label} color={t.priority_color} />
         </span>
         <span className="mt-1 flex flex-wrap items-center gap-1 text-[10.5px] text-[#94A3B8]">
           <Clock3 size={11} />{t.due_time}
@@ -139,7 +141,7 @@ function CheckRow({ on, onChange, dot, label, count }) {
   );
 }
 
-function MemberMenu({ m, onDetail, onRename, onRemove }) {
+function MemberMenu({ m, onDetail, onRename, onUp, onDown, onRemove }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
   useEffect(() => {
@@ -153,7 +155,7 @@ function MemberMenu({ m, onDetail, onRename, onRemove }) {
       <button type="button" onClick={() => setOpen((o) => !o)} aria-label={`Actions pour ${m.name}`} className="flex h-8 w-6 items-center justify-center text-[#475569] hover:text-[#0B1C3F]"><MoreVertical size={17} /></button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-[#E3E9F3] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.35)]">
-          {[['Voir le détail', onDetail], ['Modifier la fonction', onRename], ["Retirer de l'équipe", onRemove]].filter(([, fn]) => fn).map(([l, fn]) => (
+          {[['Voir le détail', onDetail], ['Changer la fonction', onRename], ['Monter', onUp], ['Descendre', onDown], ["Retirer de l'équipe", onRemove]].filter(([, fn]) => fn).map(([l, fn]) => (
             <button key={l} type="button" onClick={() => { setOpen(false); fn(); }}
                     className={`block w-full px-3 py-2 text-left text-[12.5px] hover:bg-[#F4F7FC] ${l.startsWith('Retirer') ? 'text-[#DC2626]' : 'text-[#334155]'}`}>{l}</button>
           ))}
@@ -190,11 +192,11 @@ export default function SuiviEquipePage() {
   const [qType, setQType] = useState('');
   const [qBusy, setQBusy] = useState(false);
 
-  const load = useCallback((w = week) => {
+  const load = useCallback((w = week) => (
     teamAPI.board(w || undefined)
       .then(({ data }) => { setD(data); setError(''); })
-      .catch((e) => setError(e?.response?.data?.detail || "Le suivi d'équipe n'a pas pu être chargé."));
-  }, [week]);
+      .catch((e) => setError(e?.response?.data?.detail || "Le suivi d'équipe n'a pas pu être chargé."))
+  ), [week]);
   useEffect(() => { load(); }, [load]);
   // the bell: ?tache=<id> opens that task
   useEffect(() => {
@@ -206,7 +208,16 @@ export default function SuiviEquipePage() {
   // the clock moves statuses on its own: read again every minute
   useEffect(() => { const id = setInterval(() => load(), 60 * 1000); return () => clearInterval(id); }, [load]);
 
-  const refresh = () => { load(); setHistoryKey((k) => k + 1); };
+  const refresh = () => { setHistoryKey((k) => k + 1); return load(); };
+  const [manage, setManage] = useState('');          // 'types' | 'priorities' | 'fonctions'
+  const [memberModal, setMemberModal] = useState(null);   // { kind: 'fonction' | 'remove', m }
+  const moveMember = async (i, dir) => {
+    const list = d.members.map((x) => x.email);
+    const j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    try { await teamAPI.orderMembers(list); refresh(); } catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); }
+  };
   const toggle = async (t) => {
     const done = t.status === 'terminee' || t.status === 'terminee_retard';
     try { await teamAPI.complete(t.id, !done); say(done ? 'Tâche remise à faire.' : 'Tâche terminée.'); refresh(); } catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); }
@@ -217,7 +228,7 @@ export default function SuiviEquipePage() {
     if (!qDay || !qHour) { say("La date et l'heure sont obligatoires."); return; }
     setQBusy(true);
     try {
-      await teamAPI.create({ title: qTitle.trim(), assignees: qPeople, due_date: qDay, due_time: qHour, priority: qPrio || 'moyenne', type_id: qType || null });
+      await teamAPI.create({ title: qTitle.trim(), assignees: qPeople, due_date: qDay, due_time: qHour, priority: qPrio || null, type_id: qType || null });
       say('Tâche ajoutée.'); setQTitle('');
       if (d && (qDay < d.week.start || qDay > d.week.end)) setWeek(qDay); else refresh();
     } catch (e) { say(e?.response?.data?.detail || "La tâche n'a pas pu être ajoutée."); } finally { setQBusy(false); }
@@ -320,15 +331,14 @@ export default function SuiviEquipePage() {
                     <CircleDashed size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
                     <input value={qTitle} onChange={(e) => setQTitle(e.target.value)} maxLength={200} placeholder="Nouvelle tâche…" className={`${field} pl-9`} aria-label="Nouvelle tâche" />
                   </label>
-                  <PeoplePicker members={d.members} value={qPeople} onChange={setQPeople} className="min-w-[150px] flex-[1_1_160px]" />
+                  <PeoplePicker members={d.members} value={qPeople} onChange={setQPeople} className="min-w-[150px] flex-[1_1_160px]" onAddMember={() => setModal('member')} />
                   <input type="date" required value={qDay} onChange={(e) => setQDay(e.target.value)} className={`${fixed} w-[150px] flex-none`} aria-label="Date d'échéance" />
                   <input type="time" required value={qHour} onChange={(e) => setQHour(e.target.value)} className={`${fixed} w-[112px] flex-none`} aria-label="Heure d'échéance" />
-                  <select value={qPrio} onChange={(e) => setQPrio(e.target.value)} className={`${fixed} w-[128px] flex-none ${qPrio ? '' : 'text-[#64748B]'}`} aria-label="Priorité">
-                    <option value="">Priorité</option>{Object.entries(PRIORITY).map(([key, p]) => <option key={key} value={key}>{p.label}</option>)}
-                  </select>
-                  <select value={qType} onChange={(e) => setQType(e.target.value)} className={`${fixed} w-[140px] flex-none ${qType ? '' : 'text-[#64748B]'}`} aria-label="Type">
-                    <option value="">Type</option>{d.types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-                  </select>
+                  {/* the same lists as the filters and the task window: pick, add, manage */}
+                  <ListPicker kind="priorities" items={d.priorities} value={qPrio} onChange={setQPrio} placeholder="Priorité" ariaLabel="Priorité"
+                              canEdit onAdded={refresh} onManage={() => setManage('priorities')} className="w-[140px] flex-none" />
+                  <ListPicker kind="types" items={d.types} value={qType} onChange={setQType} placeholder="Type" ariaLabel="Type"
+                              canEdit onAdded={refresh} onManage={() => setManage('types')} className="w-[150px] flex-none" />
                   <button type="submit" disabled={qBusy}
                           className="inline-flex h-11 flex-none items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-[#2F6BFF] px-5 text-[13.5px] font-semibold text-white shadow-[0_8px_18px_-10px_rgba(47,107,255,.8)] hover:bg-[#2559DB] disabled:opacity-60">
                     {qBusy && <Loader2 size={15} className="animate-spin" />}Ajouter la tâche
@@ -357,13 +367,16 @@ export default function SuiviEquipePage() {
                   <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-[#F1F5F9] px-2 text-[12px] font-semibold">{d.members.length}</span>
                 </p>
                 {canEdit && (
+                  <span className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => setManage('fonctions')} aria-label="Gérer les fonctions" title="Gérer les fonctions" className="flex h-9 w-9 items-center justify-center rounded-lg text-[#64748B] hover:bg-[#F4F7FC] hover:text-[#2F6BFF]"><Settings2 size={16} /></button>
                   <button type="button" onClick={() => setModal('member')}
                           className="inline-flex h-9 items-center gap-1 rounded-lg bg-[#EAF1FF] px-3 text-[13px] font-semibold text-[#2F6BFF] hover:bg-[#DCE8FF]"><Plus size={15} /> Ajouter</button>
+                  </span>
                 )}
               </div>
               {!d.members.length && <p className="py-4 text-center text-[12.5px] text-[#64748B]">Ajoutez les membres de l'équipe FidClic pour leur assigner des tâches.</p>}
               <ul className="space-y-1">
-                {d.members.map((m) => {
+                {d.members.map((m, mi) => {
                   const bar = m.late ? '#EF4444' : m.pct >= 60 ? '#22C55E' : '#2F6BFF';
                   return (
                     <li key={m.email} className="flex items-center gap-2.5 rounded-xl py-2">
@@ -382,15 +395,10 @@ export default function SuiviEquipePage() {
                         </span>
                       </button>
                       <MemberMenu m={m} onDetail={() => setMember(m)}
-                                  onRename={canEdit ? async () => {
-                                    const f = window.prompt(`Fonction de ${m.name}`, m.fonction || '');
-                                    if (f == null) return;
-                                    try { await teamAPI.editMember(m.email, { email: m.email, fonction: f }); refresh(); } catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); }
-                                  } : null}
-                                  onRemove={canEdit ? async () => {
-                                    if (!window.confirm(`Retirer ${m.name} de l'équipe ? Ses tâches et leur historique restent.`)) return;
-                                    try { await teamAPI.removeMember(m.email); say(`${m.name} retiré de l'équipe.`); refresh(); } catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); }
-                                  } : null} />
+                                  onRename={canEdit ? () => setMemberModal({ kind: 'fonction', m }) : null}
+                                  onUp={canEdit && mi > 0 ? () => moveMember(mi, -1) : null}
+                                  onDown={canEdit && mi < d.members.length - 1 ? () => moveMember(mi, 1) : null}
+                                  onRemove={canEdit ? () => setMemberModal({ kind: 'remove', m }) : null} />
                     </li>
                   );
                 })}
@@ -400,13 +408,10 @@ export default function SuiviEquipePage() {
             <div className={`${card} p-4`}>
               <div className="mb-2.5 flex items-center justify-between">
                 <p className="text-[15px] font-bold text-[#0B1C3F]">Type de tâches</p>
-                {canEdit && <button type="button" onClick={() => setModal('types')} aria-label="Gérer les types" title="Gérer les types" className="text-[#64748B] hover:text-[#2F6BFF]"><Settings2 size={16} /></button>}
+                {canEdit && <button type="button" onClick={() => setManage('types')} aria-label="Gérer les types" title="Gérer les types" className="text-[#64748B] hover:text-[#2F6BFF]"><Settings2 size={16} /></button>}
               </div>
-              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={field} aria-label="Type de tâches">
-                <option value="">Tous les types</option>
-                {d.types.map((x) => <option key={x.id} value={x.id}>{x.name} ({d.counts.type[x.id] || 0})</option>)}
-                {d.counts.type[''] ? <option value="none">Sans type ({d.counts.type['']})</option> : null}
-              </select>
+              <ListPicker kind="types" items={d.types} value={typeFilter} onChange={setTypeFilter} allLabel="Tous les types" counts={d.counts.type}
+                          canEdit={canEdit} onAdded={refresh} onManage={canEdit ? () => setManage('types') : null} ariaLabel="Type de tâches" />
             </div>
 
             <div className={`${card} p-4`}>
@@ -414,9 +419,11 @@ export default function SuiviEquipePage() {
               {[['a_faire', 'À faire'], ['terminee', 'Terminée'], ['en_retard', 'En retard']].map(([key, l]) => (
                 <CheckRow key={key} on={statusF.includes(key)} onChange={(on) => flip(statusF, setStatusF, key, on)} dot={STATUS[key].dot} label={l} count={d.counts.status[key]} />
               ))}
-              <p className="mb-1.5 mt-4 text-[15px] font-bold text-[#0B1C3F]">Priorité</p>
-              {Object.entries(PRIORITY).map(([key, p]) => (
-                <CheckRow key={key} on={prioF.includes(key)} onChange={(on) => flip(prioF, setPrioF, key, on)} dot={p.dot} label={p.label} count={d.counts.priority[key]} />
+              <p className="mb-1.5 mt-4 flex items-center justify-between text-[15px] font-bold text-[#0B1C3F]">Priorité
+                {canEdit && <button type="button" onClick={() => setManage('priorities')} aria-label="Gérer les priorités" title="Gérer les priorités" className="text-[#64748B] hover:text-[#2F6BFF]"><Settings2 size={16} /></button>}
+              </p>
+              {d.priorities.map((p) => (
+                <CheckRow key={p.id} on={prioF.includes(p.id)} onChange={(on) => flip(prioF, setPrioF, p.id, on)} dot={p.color} label={p.name} count={d.counts.priority[p.id] || 0} />
               ))}
               {(statusF.length || prioF.length || typeFilter) ? (
                 <button type="button" onClick={() => { setStatusF([]); setPrioF([]); setTypeFilter(''); }}
@@ -427,12 +434,20 @@ export default function SuiviEquipePage() {
         </div>
       )}
 
-      {openTask && <TaskDrawer taskId={openTask} board={d} canEdit={canEdit} say={say} onClose={() => setOpenTask(null)} onChanged={refresh} />}
+      {openTask && <TaskDrawer taskId={openTask} board={d} canEdit={canEdit} say={say} onClose={() => setOpenTask(null)} onChanged={refresh}
+                               onManage={setManage} onAddMember={() => setModal('member')} />}
       {form && <TaskForm initial={{ due_date: form.due_date }} board={d} onClose={() => setForm(null)}
+                         onRefresh={refresh} onManage={setManage} onAddMember={() => setModal('member')}
                          onDone={(m, day) => { say(m); setForm(null); if (day < d.week.start || day > d.week.end) setWeek(day); else refresh(); }} />}
       {member && <MemberBreakdown member={member} week={d.week.start} onClose={() => setMember(null)} onOpenTask={(id) => { setMember(null); setOpenTask(id); }} />}
-      {modal === 'member' && <AddMember onClose={() => setModal('')} onDone={(m) => { say(m); setModal(''); refresh(); }} />}
-      {modal === 'types' && <TypesManager types={d.types} onClose={() => setModal('')} onChanged={refresh} />}
+      {modal === 'member' && <AddMember board={d} onClose={() => setModal('')} onDone={(m) => { say(m); setModal(''); refresh(); }}
+                                        onRefresh={refresh} onManage={setManage} />}
+      {memberModal?.kind === 'fonction' && <FonctionModal member={memberModal.m} board={d} onClose={() => setMemberModal(null)}
+                                                          onDone={(m) => { say(m); setMemberModal(null); refresh(); }} onRefresh={refresh} onManage={setManage} />}
+      {memberModal?.kind === 'remove' && <RemoveMember member={memberModal.m} board={d} onClose={() => setMemberModal(null)}
+                                                        onDone={(m) => { say(m); setMemberModal(null); refresh(); }} />}
+      {/* last, so it opens above the window that asked for it */}
+      {manage && <ListManager kind={manage} items={d[manage]} say={say} onClose={() => setManage('')} onChanged={refresh} />}
       {toast}
     </div>
   );

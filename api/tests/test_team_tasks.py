@@ -79,8 +79,11 @@ def main():
     cands = http("GET", "/api/admin/equipe/members/candidates").json()["rows"]
     check("candidates are FidClic's team users", {c["email"] for c in cands} >= {"mahdi@fidclic.com", "meriem@fidclic.com", "sam@fidclic.com"})
     check("…and say who has no access", next(c for c in cands if c["email"] == "sam@fidclic.com")["access"] is False)
-    for e, f in (("mahdi@fidclic.com", "Responsable"), ("meriem@fidclic.com", "Administratrice"), ("boss@fidclic.com", "")):
-        http("POST", "/api/admin/equipe/members", json={"email": e, "fonction": f})
+    for e in ("mahdi@fidclic.com", "meriem@fidclic.com", "boss@fidclic.com"):
+        http("POST", "/api/admin/equipe/members", json={"email": e})
+    # a member from before the fonction list, with a free-text fonction
+    db.team_board_members.update_one({"email": "meriem@fidclic.com"}, {"$set": {"fonction": "Administratrice"}})
+    T.init(db)
     check("a non-team e-mail cannot join", http("POST", "/api/admin/equipe/members", json={"email": "x@y.fr"}).status_code == 400)
     check("a task goes only to the team", new("x", 2, who=("sam@fidclic.com",)).status_code == 400)
     check("a deadline needs an hour", http("POST", "/api/admin/equipe/tasks", json={"title": "x", "assignees": ["mahdi@fidclic.com"],
@@ -195,14 +198,79 @@ def main():
           and {g["key"] for g in bk["groups"]} == {"en_retard", "a_faire", "terminee_retard", "terminee"})
     check("all time too", http("GET", "/api/admin/equipe/members/mahdi@fidclic.com/breakdown?scope=all").json()["counts"]["total"] >= bk["counts"]["total"] - 40)
 
-    print("\nTypes")
-    tid = http("POST", "/api/admin/equipe/types", json={"name": "Produit", "color": "#E11D48"}).json()["id"]
+    print("\nListes personnalisables (types, priorités, fonctions)")
+    L = "/api/admin/equipe/lists"
+    tid = http("POST", f"{L}/types", json={"name": "Produit", "color": "#E11D48"}).json()["id"]
     x = new("Typée", 5, type_id=tid).json()["id"]
     check("a new type is usable", http("GET", f"/api/admin/equipe/tasks/{x}").json()["task"]["type"]["name"] == "Produit")
-    check("no two types with one name", http("POST", "/api/admin/equipe/types", json={"name": "produit"}).status_code == 409)
-    http("DELETE", f"/api/admin/equipe/types/{tid}")
-    check("a deleted type leaves its tasks « Sans type »", http("GET", f"/api/admin/equipe/tasks/{x}").json()["task"]["type"] is None)
-    check("seven types to start with", len([t for t in http("GET", "/api/admin/equipe/board").json()["types"]]) == 7)
+    check("no two types with one name", http("POST", f"{L}/types", json={"name": "produit"}).status_code == 409)
+    check("a type can be renamed and recoloured", http("PUT", f"{L}/types/{tid}", json={"name": "Produit & app", "color": "#0EA5E9"}).status_code == 200
+          and http("GET", f"/api/admin/equipe/tasks/{x}").json()["task"]["type"]["color"] == "#0EA5E9")
+    ids = [t["id"] for t in http("GET", "/api/admin/equipe/board").json()["types"]]
+    http("PUT", f"{L}/types/order", json={"ids": [tid] + [i for i in ids if i != tid]})
+    check("…and put first", http("GET", "/api/admin/equipe/board").json()["types"][0]["id"] == tid)
+    use = http("GET", f"{L}/types/{tid}/usage").json()
+    check("its tasks are listed before deleting", any(t["id"] == x for t in use["tasks"]))
+    check("deleting a used type without saying where its tasks go is refused",
+          http("POST", f"{L}/types/{tid}/delete", json={}).status_code == 400)
+    check("…and to a type that does not exist too", http("POST", f"{L}/types/{tid}/delete", json={"to": "nope"}).status_code == 400)
+    y = new("Typée 2", 6, type_id=tid).json()["id"]
+    r = http("POST", f"{L}/types/{tid}/delete", json={"to": "marketing", "moves": {y: "stock"}})
+    check("divided: each task where it was sent", r.status_code == 200
+          and http("GET", f"/api/admin/equipe/tasks/{x}").json()["task"]["type"]["id"] == "marketing"
+          and http("GET", f"/api/admin/equipe/tasks/{y}").json()["task"]["type"]["id"] == "stock")
+    check("…and the task's history says so", any("Produit" in e["text"] and "supprimé" in e["text"]
+                                                for e in http("GET", f"/api/admin/equipe/tasks/{x}").json()["events"]))
+    check("seven types again", len(http("GET", "/api/admin/equipe/board").json()["types"]) == 7)
+
+    bd = http("GET", "/api/admin/equipe/board").json()
+    check("three priorities to start, Moyenne the default", [p["id"] for p in bd["priorities"]] == ["haute", "moyenne", "basse"]
+          and next(p for p in bd["priorities"] if p["default"])["id"] == "moyenne")
+    urg = http("POST", f"{L}/priorities", json={"name": "Urgente", "color": "#7C3AED"}).json()["id"]
+    z = new("Urgent", 7, priority=urg).json()["id"]
+    zt = http("GET", f"/api/admin/equipe/tasks/{z}").json()["task"]
+    check("a custom priority, with its colour", zt["priority_label"] == "Urgente" and zt["priority_color"] == "#7C3AED")
+    nd = http("POST", "/api/admin/equipe/tasks", json={"title": "Sans priorité choisie", "assignees": ["mahdi@fidclic.com"],
+                                                       "due_date": today.isoformat(), "due_time": "23:59"}).json()["id"]
+    check("no priority chosen → the default", http("GET", f"/api/admin/equipe/tasks/{nd}").json()["task"]["priority"] == "moyenne")
+    http("PUT", f"{L}/priorities/{urg}", json={"name": "Urgente", "default": True})
+    check("the default can change", next(p for p in http("GET", "/api/admin/equipe/board").json()["priorities"] if p["default"])["id"] == urg)
+    check("the board counts the custom priority", http("GET", "/api/admin/equipe/board").json()["counts"]["priority"].get(urg) == 1)
+    check("deleting it needs a destination", http("POST", f"{L}/priorities/{urg}/delete", json={}).status_code == 400)
+    http("POST", f"{L}/priorities/{urg}/delete", json={"to": "haute"})
+    check("…its task moved, and the default passed on", http("GET", f"/api/admin/equipe/tasks/{z}").json()["task"]["priority"] == "haute"
+          and next(p for p in http("GET", "/api/admin/equipe/board").json()["priorities"] if p["default"])["id"] == "haute")
+
+    fon = {f["name"]: f["id"] for f in bd["fonctions"]}
+    check("fonctions: a list to pick from (old free text joined it)", "Responsable" in fon and "Administratrice" in fon)
+    cm = http("POST", f"{L}/fonctions", json={"name": "Community manager"}).json()["id"]
+    http("PUT", "/api/admin/equipe/members/meriem@fidclic.com", json={"email": "meriem@fidclic.com", "fonction_id": cm})
+    row = lambda e: next(m for m in http("GET", "/api/admin/equipe/board").json()["members"] if m["email"] == e)   # noqa: E731
+    check("a member takes a fonction from the list", row("meriem@fidclic.com")["fonction"] == "Community manager")
+    http("PUT", f"{L}/fonctions/{cm}", json={"name": "Community manager senior"})
+    check("renaming a fonction renames it on every member", row("meriem@fidclic.com")["fonction"] == "Community manager senior")
+    check("deleting a fonction someone holds needs a replacement", http("POST", f"{L}/fonctions/{cm}/delete", json={}).status_code == 400)
+    http("POST", f"{L}/fonctions/{cm}/delete", json={"to": fon["Marketing"]})
+    check("…then they take it", row("meriem@fidclic.com")["fonction"] == "Marketing")
+
+    print("\nÉquipe : ordre, retrait avec reprise des tâches")
+    http("PUT", "/api/admin/equipe/members/order", json={"ids": ["meriem@fidclic.com", "mahdi@fidclic.com", "boss@fidclic.com"]})
+    check("members can be reordered", [m["email"] for m in http("GET", "/api/admin/equipe/board").json()["members"]][0] == "meriem@fidclic.com")
+    solo = new("À reprendre", 30, who=("meriem@fidclic.com",)).json()["id"]
+    fin = new("Déjà finie", 31, who=("meriem@fidclic.com",)).json()["id"]
+    http("POST", f"/api/admin/equipe/tasks/{fin}/complete", json={"done": True})
+    duo = new("À deux", 30, who=("meriem@fidclic.com", "mahdi@fidclic.com")).json()["id"]
+    u = http("GET", "/api/admin/equipe/members/meriem@fidclic.com/usage").json()
+    check("before removing: what only they hold, and what they share", u["sole"] >= 1 and u["shared"] >= 1)
+    check("removing without handing over is refused", http("POST", "/api/admin/equipe/members/meriem@fidclic.com/remove", json={}).status_code == 400)
+    r = http("POST", "/api/admin/equipe/members/meriem@fidclic.com/remove", json={"to": ["boss@fidclic.com"], "moves": {solo: ["mahdi@fidclic.com"]}})
+    check("handed over task by task; on a shared task she just steps out", r.status_code == 200
+          and [a["email"] for a in http("GET", f"/api/admin/equipe/tasks/{solo}").json()["task"]["assignees"]] == ["mahdi@fidclic.com"]
+          and [a["email"] for a in http("GET", f"/api/admin/equipe/tasks/{duo}").json()["task"]["assignees"]] == ["mahdi@fidclic.com"])
+    check("she is off the board, her finished tasks keep her name",
+          "meriem@fidclic.com" not in {m["email"] for m in http("GET", "/api/admin/equipe/board").json()["members"]}
+          and "meriem@fidclic.com" in [a["email"] for a in http("GET", f"/api/admin/equipe/tasks/{fin}").json()["task"]["assignees"]])
+    check("the new holder is told", any("À reprendre" in a["title"] for a in http("GET", "/api/admin/equipe/alerts", MAHDI).json()["alerts"]))
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
