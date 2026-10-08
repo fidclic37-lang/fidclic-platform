@@ -56,6 +56,7 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -123,6 +124,93 @@ def _fold(s: str) -> str:
 
 def _eur(n: float) -> str:
     return f"{round(n):,}".replace(",", " ") + " €"
+
+
+def _eur_exact(n: float) -> str:
+    """12,50 € — the chat says the real amount (QA F05: 12,50 € read « 12 € »)."""
+    txt = f"{_money(n):,.2f}".replace(",", " ").replace(".", ",")
+    return f"{txt} €"
+
+
+def _pl(n: int, one: str, many: str) -> str:
+    """« 1 visite », « 2 visites » (QA F05: « 1 visites »)."""
+    return f"{n} {one if abs(n) <= 1 else many}"
+
+
+# ---------------------------------------------------------------------------
+# The period a question is about (QA F05, 2026-10-08: « aujourd'hui ? » and
+# « les 7 derniers jours ? » were both answered « Sur 30 jours »).
+# ---------------------------------------------------------------------------
+PARIS = ZoneInfo("Europe/Paris")
+_UNITS = {"jour": 1, "jours": 1, "j": 1, "semaine": 7, "semaines": 7, "mois": 30, "an": 365, "ans": 365,
+          "annee": 365, "annees": 365}
+
+
+def period_of(message: str, at: datetime) -> Dict[str, Any]:
+    """{label, start, end, prev_start, prev_end, explicit}: the window the
+    merchant asked about, and the same length just before it to compare."""
+    m = _fold(message)
+    local = at.astimezone(PARIS)
+    midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def out(label, start, end, prev_start=None, prev_end=None, explicit=True):
+        span = end - start
+        return {"label": label, "start": start.astimezone(timezone.utc), "end": end.astimezone(timezone.utc),
+                "prev_start": (prev_start or (start - span)).astimezone(timezone.utc),
+                "prev_end": (prev_end or start).astimezone(timezone.utc), "explicit": explicit}
+
+    if re.search(r"aujourd|\bce jour\b|\btoday\b|\bce matin\b|\bce soir\b", m):
+        # today so far, against yesterday at the same hour
+        return out("aujourd'hui", midnight, local, midnight - timedelta(days=1), local - timedelta(days=1))
+    if re.search(r"avant[- ]hier", m):
+        d = midnight - timedelta(days=2)
+        return out("avant-hier", d, d + timedelta(days=1))
+    if re.search(r"\bhier\b", m):
+        return out("hier", midnight - timedelta(days=1), midnight)
+    hit = re.search(r"(\d{1,3})\s*(?:(?:derniers?|dernieres?|passes?|precedents?)\s+)?(jours?|j|semaines?|mois|ans?|annees?)\b", m)
+    if hit:
+        n = max(1, int(hit.group(1)))
+        days = min(365 * 2, n * _UNITS[hit.group(2)])
+        unit = {"j": "jour", "jours": "jour", "semaines": "semaine", "ans": "an", "annees": "an", "annee": "an"}.get(hit.group(2), hit.group(2))
+        word = {"jour": ("jour", "jours"), "semaine": ("semaine", "semaines"), "mois": ("mois", "mois"),
+                "an": ("an", "ans")}[unit]
+        label = f"les {n} derniers {word[1]}" if n > 1 else f"le dernier {word[0]}"
+        if unit == "semaine":
+            label = f"les {n} dernières semaines" if n > 1 else "la dernière semaine"
+        return out(label, local - timedelta(days=days), local)
+    if re.search(r"semaine (derniere|passee|precedente)", m):
+        mon = midnight - timedelta(days=local.weekday())
+        return out("la semaine dernière", mon - timedelta(days=7), mon)
+    if re.search(r"cette semaine|la semaine en cours", m):
+        mon = midnight - timedelta(days=local.weekday())
+        return out("cette semaine", mon, local, mon - timedelta(days=7), local - timedelta(days=7))
+    if re.search(r"mois (dernier|passe|precedent)", m):
+        first = midnight.replace(day=1)
+        prev_first = (first - timedelta(days=1)).replace(day=1)
+        before = (prev_first - timedelta(days=1)).replace(day=1)
+        return out("le mois dernier", prev_first, first, before, prev_first)
+    if re.search(r"ce mois|mois en cours", m):
+        # this month so far, against the same days of last month
+        first = midnight.replace(day=1)
+        prev_first = (first - timedelta(days=1)).replace(day=1)
+        return out("ce mois-ci", first, local, prev_first, min(prev_first + (local - first), first))
+    if re.search(r"\bsemaine\b", m):
+        return out("les 7 derniers jours", local - timedelta(days=7), local)
+    if re.search(r"\bannee\b|\b12 mois\b", m):
+        return out("les 12 derniers mois", local - timedelta(days=365), local)
+    return out("les 30 derniers jours", local - timedelta(days=30), local, explicit=False)
+
+
+def period_figures(tid: str, per: Dict[str, Any], scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
+    def figs(rows):
+        rev = sum(_num(v.get("amount_paid")) for v in rows)
+        return {"visits": len(rows), "revenue": _money(rev),
+                "clients": len({v.get("customer_id") for v in rows if v.get("customer_id")}),
+                "basket": _money(rev / len(rows)) if rows else 0.0}
+    a = figs(_visits_between(tid, per["start"], per["end"], scope))
+    b = figs(_visits_between(tid, per["prev_start"], per["prev_end"], scope))
+    delta = lambda k: round((a[k] - b[k]) / b[k] * 100) if b[k] else None    # noqa: E731
+    return {**a, "delta_visits": delta("visits"), "delta_revenue": delta("revenue"), "previous": b}
 
 
 def _p_mid(c: Dict[str, Any], at: datetime) -> float:
@@ -1135,7 +1223,8 @@ def _intents(message: str) -> List[str]:
     return [key for key, words in INTENTS if any(w in m for w in words)]
 
 
-def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any]) -> Dict[str, Any]:
+def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any],
+           per: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     E = _engine()
     act = activity(shop.tid, 30, shop.at, getattr(shop, "scope", None))
     cards = {c["key"]: c for c in act["cards"]}
@@ -1160,12 +1249,26 @@ def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any]) -> Dict[str, An
                                 else None),
         "recommandations": [{"cle": r["key"], "titre": r["title"], "clients": r.get("audience"),
                              "impact": [m["label"] for m in r["metrics"]]} for r in recs[:6]],
+        **({"periode_demandee": _period_facts(shop, per)} if per else {}),
     }
+
+
+def _period_facts(shop, per: Dict[str, Any]) -> Dict[str, Any]:
+    f = period_figures(shop.tid, per, getattr(shop, "scope", None))
+    loc = lambda d: d.astimezone(PARIS).strftime("%d/%m/%Y %H:%M")   # noqa: E731
+    return {"libelle": per["label"], "du": loc(per["start"]), "au": loc(per["end"]),
+            "visites": f["visits"], "chiffre_affaires_eur": f["revenue"], "panier_moyen_eur": f["basket"],
+            "clients_venus": f["clients"], "evolution_visites_pct": f["delta_visits"],
+            "evolution_ca_pct": f["delta_revenue"],
+            "periode_precedente": {"visites": f["previous"]["visits"], "chiffre_affaires_eur": f["previous"]["revenue"]}}
 
 
 _SYSTEM = (
     "Tu es FidClic IA Copilote, l'assistant stratégique d'un commerçant français. "
     "Réponds en français, en 120 mots maximum, de façon concrète et chaleureuse. "
+    "La question porte sur la période de « periode_demandee » (aujourd'hui, 7 jours, ce mois…) : donne "
+    "ses chiffres à elle et nomme-la ; les champs « _30j » ne servent que de contexte. Écris les montants "
+    "au centime près à la française (12,50 €) et accorde les pluriels (1 visite, 2 visites). "
     "Appuie-toi UNIQUEMENT sur les données JSON fournies : n'invente aucun chiffre, aucun client, "
     "aucun produit. Si une donnée manque, dis-le simplement. Ne promets jamais un résultat : parle "
     "d'estimations. Ne dis jamais que tu as envoyé ou créé quelque chose : le commerçant agit lui-même "
@@ -1179,10 +1282,15 @@ def _fallback(intents: List[str], facts: Dict[str, Any], recs_by_key: Dict[str, 
     for key in intents:
         r = recs_by_key.get(key)
         if key == "resultats":
-            ev = facts.get("evolution_ca_pct")
-            parts.append(f"Sur 30 jours : {facts['visites_30j']} visites et {_eur(facts['ca_30j_eur'])} de "
-                         f"chiffre d'affaires" + (f" ({'+' if ev >= 0 else ''}{ev} % vs la période "
-                                                  "précédente)." if ev is not None else "."))
+            p = facts.get("periode_demandee") or {}
+            label = p.get("libelle") or "les 30 derniers jours"
+            n = int(p.get("visites", facts.get("visites_30j") or 0))
+            ca = p.get("chiffre_affaires_eur", facts.get("ca_30j_eur") or 0)
+            ev = p.get("evolution_ca_pct") if p else facts.get("evolution_ca_pct")
+            line = f"{label[0].upper()}{label[1:]} : {_pl(n, 'visite', 'visites')} et {_eur_exact(ca)} de chiffre d'affaires"
+            if n:
+                line += f", panier moyen {_eur_exact(p.get('panier_moyen_eur', facts.get('panier_moyen_eur') or 0))}"
+            parts.append(line + (f" ({'+' if ev >= 0 else ''}{ev} % vs la période précédente)." if ev is not None else "."))
         elif r:
             parts.append(f"{r['title']} : impact estimé {', '.join(m['label'] for m in r['metrics'])}.")
     if not parts:
@@ -1244,13 +1352,17 @@ def chat(body: ChatIn, request: Request = None,
     # shelves step aside; the chat does not refuse.
     by_key = {r["key"]: r for r in _for(token_data, _library(shop))}
     fc = forecast_week(shop)
-    facts = _facts(shop, recs, fc)
+    per = period_of(message, shop.at)
+    facts = _facts(shop, recs, fc, per)
     used = shop.used
     if scope.ids is not None:
         facts["etablissements"] = scope.describe()["label"]
     facts["campagnes_recentes"] = [{"modele": k, "le": v["at"].date().isoformat(), "statut": v["status"]}
                                    for k, v in used.items()]
     intents = _intents(message)
+    # « et aujourd'hui ? » asks for the figures even without « chiffres »
+    if per["explicit"] and "resultats" not in intents:
+        intents.insert(0, "resultats")
 
     reply, source = None, "model"
     if _llm_ready():

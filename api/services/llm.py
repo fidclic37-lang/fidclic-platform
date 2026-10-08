@@ -12,7 +12,9 @@ CONFIG
                    otherwise "groq" — so dropping the key in is enough to put
                    every agent on Claude without touching another variable.
     ANTHROPIC_API_KEY / GROQ_API_KEY / NVIDIA_API_KEY
-    LLM_MODEL      optional override
+    LLM_MODEL      optional override (the first provider's model)
+    A provider that fails hands over to the next one with a key, in the
+    order groq → nvidia → anthropic (after the chosen one).
 
 SEAM
     _force_complete = callable(system, user) -> str   for deterministic tests.
@@ -53,27 +55,53 @@ def _provider() -> tuple:
     return _ENDPOINTS[_provider_name()]
 
 
+# When the first provider fails (no key, quota, timeout), the next one with a
+# key answers (QA F05, 2026-10-08: Groq failed and FidClic IA fell back to a
+# canned reply although an NVIDIA key was there).
+FALLBACK_ORDER = ("groq", "nvidia", "anthropic")
+
+
+def _chain() -> list:
+    first = _provider_name()
+    return [first] + [p for p in FALLBACK_ORDER if p != first]
+
+
+def _has_key(name: str) -> bool:
+    return bool(os.environ.get(_ENDPOINTS[name][1], "").strip())
+
+
 def is_configured() -> bool:
-    _url, key_env, _model = _provider()
-    return bool(os.environ.get(key_env, "").strip())
+    """Any provider with a key can answer."""
+    return any(_has_key(p) for p in _ENDPOINTS)
 
 
 def complete(system: str, user: str, *, max_tokens: int = 400,
              temperature: float = 0.4) -> Optional[str]:
-    """Return the model's text, or None if unavailable (caller falls back)."""
+    """Return the model's text, or None if no provider answered (caller falls back)."""
     if _force_complete is not None:
         return _force_complete(system, user)
-    if not is_configured():
-        return None
-    url, key_env, default_model = _provider()
+    for i, name in enumerate(_chain()):
+        if not _has_key(name):
+            continue
+        # LLM_MODEL names the first provider's model; the others use their own
+        model = (os.environ.get("LLM_MODEL", "").strip() if i == 0 else "") or _ENDPOINTS[name][2]
+        txt = _call(name, model, system, user, max_tokens, temperature)
+        if txt:
+            return txt
+        logger.warning("LLM provider %s gave no answer; trying the next one", name)
+    return None
+
+
+def _call(name: str, model: str, system: str, user: str, max_tokens: int,
+          temperature: float) -> Optional[str]:
+    url, key_env, _default = _ENDPOINTS[name]
     key = os.environ.get(key_env, "").strip()
-    model = os.environ.get("LLM_MODEL", "").strip() or default_model
 
     # Anthropic speaks its own dialect: x-api-key instead of a bearer token, a
     # mandatory version header, `system` hoisted out of the message list, and a
     # content-block array coming back. Same contract out (text or None), so
     # every caller is unaffected.
-    if _provider_name() == "anthropic":
+    if name == "anthropic":
         body = {
             "model": model, "max_tokens": max_tokens, "temperature": temperature,
             "messages": [{"role": "user", "content": user}],
@@ -112,5 +140,5 @@ def complete(system: str, user: str, *, max_tokens: int = 400,
         txt = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content")
         return (txt or "").strip() or None
     except Exception as exc:  # noqa: BLE001
-        logger.exception("LLM completion failed: %s", exc)
+        logger.exception("LLM completion failed (%s): %s", name, exc)
         return None
