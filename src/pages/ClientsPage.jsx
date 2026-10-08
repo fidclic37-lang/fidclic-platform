@@ -256,8 +256,21 @@ export default function ClientsPage() {
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [spend, setSpend] = useState('');
   const [joined, setJoined] = useState('');
-  const [typed, setTyped] = useState('');
-  const [search, setSearch] = useState('');
+  // ?q= (the header search, a client's link from Historique) and
+  // ?barcode_id= fill the search (QA F06: the URL was ignored, all clients showed)
+  const urlSearch = () => (urlParams.get('q') || urlParams.get('barcode_id') || '').trim();
+  const [typed, setTyped] = useState(urlSearch);
+  const [search, setSearch] = useState(urlSearch);
+  const searchOpened = useRef(false);
+  useEffect(() => {
+    const q = urlSearch();
+    const first = !searchOpened.current;
+    searchOpened.current = true;
+    if (q && (q !== search || first)) {
+      setTyped(q); setSearch(q); setPage(1);
+      setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    }
+  }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   // ?sort=spend / ?sort=visits: the LTV and « Visites par client » figures of
   // Analyses open the list ordered by what they measure.
   const [sort, setSort] = useState(() => (['spend', 'visits'].includes(urlParams.get('sort')) ? urlParams.get('sort') : 'recent'));
@@ -300,7 +313,9 @@ export default function ClientsPage() {
     const name = segName.trim();
     if (!name) return;
     try {
-      await ownerAPI.createSavedSegment({ name, segment, filters: currentFilters });
+      // `segment` travels inside `filters` (the server's own `segment` field is
+      // a rule object — sending the key there was refused, QA F01)
+      await ownerAPI.createSavedSegment({ name, filters: currentFilters });
       setSegName(''); setNaming(false); loadSaved();
       setFlash(`Segment « ${name} » enregistré.`);
     } catch (e) { setError(e?.response?.data?.detail || "Le segment n'a pas pu être enregistré."); }
@@ -387,7 +402,17 @@ export default function ClientsPage() {
     finally { setExporting(false); }
   };
 
-  const allPicked = feed.rows.length > 0 && picked.length === feed.rows.length;
+  // The header box is about the rows on screen (QA F10: it stayed ticked on
+  // page 2 because it only compared counts). A selection made on another
+  // page is kept — « Contacter (N) » counts it — and the box says so.
+  const pageIds = feed.rows.map((r) => r.id);
+  const pickedHere = pageIds.filter((id) => picked.includes(id)).length;
+  const allPicked = pageIds.length > 0 && pickedHere === pageIds.length;
+  const somePicked = pickedHere > 0 && !allPicked;
+  const pickedElsewhere = picked.length - pickedHere;
+  const togglePage = () => setPicked((p) => (allPicked
+    ? p.filter((id) => !pageIds.includes(id))
+    : [...p, ...pageIds.filter((id) => !p.includes(id))]));
   const togglePick = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   const pageNumbers = useMemo(() => {
@@ -616,6 +641,12 @@ export default function ClientsPage() {
                     className="inline-flex items-center gap-1.5 rounded-xl bg-[#2F6BFF] px-3 py-2 text-[12.5px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-50">
               <Mail size={13} /> Contacter ({nf(picked.length || feed.total)})
             </button>
+            {picked.length > 0 && (
+              <button type="button" onClick={() => setPicked([])}
+                      className="rounded-xl border border-[#E6EEFB] px-3 py-2 text-[12px] font-semibold text-[#64748B] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                {nf(picked.length)} sélectionné{picked.length > 1 ? 's' : ''} · Tout désélectionner
+              </button>
+            )}
             <div className="relative">
               <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}
                       className="appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2 pl-3 pr-8 text-[12.5px] font-medium text-[#334155] outline-none focus:border-[#2F6BFF]">
@@ -635,8 +666,10 @@ export default function ClientsPage() {
             <thead>
               <tr className="border-y border-[#EEF3FB] bg-[#FAFCFF] text-left">
                 <th className="w-10 px-4 py-3">
-                  <input type="checkbox" checked={allPicked} aria-label="Tout sélectionner"
-                         onChange={() => setPicked(allPicked ? [] : feed.rows.map((r) => r.id))}
+                  <input type="checkbox" checked={allPicked} aria-label="Tout sélectionner sur cette page"
+                         ref={(el) => { if (el) el.indeterminate = somePicked; }}
+                         title={pickedElsewhere > 0 ? `${pickedElsewhere} autre${pickedElsewhere > 1 ? 's' : ''} client${pickedElsewhere > 1 ? 's' : ''} sélectionné${pickedElsewhere > 1 ? 's' : ''} sur d'autres pages` : undefined}
+                         onChange={togglePage}
                          className="h-4 w-4 accent-[#2F6BFF]" />
                 </th>
                 {['Client', 'Statut', 'Segment', 'Dernière visite', 'Total dépensé', 'Actions'].map((h, i) => (

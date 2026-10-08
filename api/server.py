@@ -4,7 +4,7 @@ import contextvars
 import random
 import re
 import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10620,7 +10620,10 @@ class SavedSegmentRequest(BaseModel):
     name: str
     description: Optional[str] = None
     filters: Dict[str, Any]                 # UI-shape filters dict
-    segment: Optional[Dict[str, Any]] = None  # alt type-based segment
+    # alt type-based segment. The Clients page used to send its segment KEY
+    # here (« loyal »): refused with a 422 that crashed the page (QA F01). A
+    # key is now accepted and kept where the filters keep it.
+    segment: Optional[Union[Dict[str, Any], str]] = None
 
 
 @app.get("/api/owner/segments")
@@ -10638,13 +10641,15 @@ def create_saved_segment(
     # keep its own; the owner may remove any, others only their own.
     token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True)),
 ):
+    if isinstance(req.segment, str) and req.segment and not (req.filters or {}).get("segment"):
+        req.filters = {**(req.filters or {}), "segment": req.segment}
     doc = {
         "id": str(uuid.uuid4()),
         "tenant_id": token_data.tenant_id,
         "name": req.name.strip()[:120] or "Unnamed segment",
         "description": (req.description or "").strip()[:500],
         "filters": req.filters or {},
-        "segment": req.segment or None,
+        "segment": req.segment if isinstance(req.segment, dict) else None,
         "created_at": datetime.now(timezone.utc),
         "created_by": token_data.email,
     }

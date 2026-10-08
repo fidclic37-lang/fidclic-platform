@@ -67,6 +67,23 @@ api.interceptors.response.use(settingsSaved, async (error) => {
         error.response.data = { detail: detail.message || 'Fonctionnalité non incluse dans votre offre.', plan: detail };
       }
     }
+    // Every page shows `detail` as text. A validation error (422) is a list of
+    // objects, and any other object would crash the page that renders it
+    // (React #31 — QA F01: « Enregistrer ce filtre » replaced the whole Clients
+    // page with the error screen; ~140 places render `detail` this way). One
+    // sentence, here, for all of them.
+    const d = error?.response?.data;
+    if (d && typeof d === 'object' && !(d instanceof Blob) && d.detail && typeof d.detail !== 'string') {
+      const det = d.detail;
+      let text;
+      if (Array.isArray(det)) {
+        const fields = [...new Set(det.map((x) => (x?.loc || []).filter((k) => k !== 'body' && typeof k === 'string').join(' › ')).filter(Boolean))];
+        text = fields.length ? `Données invalides : ${fields.join(', ')}.` : 'Données invalides.';
+      } else {
+        text = det.message || det.msg || 'La demande a été refusée.';
+      }
+      error.response.data = { ...d, detail: text, detail_raw: det };
+    }
   } catch (_e) { /* never break the caller */ }
   return Promise.reject(error);
 });
