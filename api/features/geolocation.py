@@ -80,10 +80,24 @@ MODES: Dict[str, Dict[str, Any]] = {
 }
 
 SCOPES = {
-    "local":  {"label": "Tours et alentours", "max_km": 35.0},
+    # « local » is named after the shop's own town (QA UX07: every shop read
+    # « Tours et alentours »)
+    "local":  {"label": "Autour de votre commerce", "max_km": 35.0},
     "region": {"label": "Toute la région",    "max_km": 120.0},
     "france": {"label": "Toute la France",    "max_km": None},
 }
+
+# Beyond the last ring / band, for the wider scopes (QA F11: « Toute la
+# France » still dropped every client further than 30 km).
+FAR_ZONE = {"key": "far", "label": "Au-delà", "from_km": 30.0, "to_km": None, "tone": "slate", "far": True}
+FAR_BAND = "far"
+
+# Positions looked up per request at most (BAN, cached for good once found):
+# the rest use their department until the next load.
+POSTAL_FETCH_MAX = 12
+
+# « Clients » shown: those who came or joined in the period (default), or all.
+POPULATIONS = {"periode": "Clients de la période", "tous": "Tous les clients"}
 
 
 def init(db):
@@ -124,6 +138,9 @@ def _shop_position(tenant: Dict[str, Any]) -> Tuple[Optional[float], Optional[fl
             return float(lat), float(lng), "gps"
     postal = _postal_from(tenant)
     if postal:
+        pos = _postal_position(postal, tenant.get("city"))
+        if pos:
+            return pos[0], pos[1], "postal"
         from server import get_postal_coords
         lat, lng = get_postal_coords(postal)
         return lat, lng, "postal"
@@ -153,20 +170,53 @@ def _postal_from(tenant: Dict[str, Any]) -> str:
     return ""
 
 
-def _client_position(cust: Dict[str, Any]) -> Tuple[Optional[float], Optional[float], str]:
+def _postal_position(postal: str, city: Any = "", fetch: bool = True) -> Optional[Tuple[float, float]]:
+    """The centre of the postal code (BAN, cached), or None."""
+    from server import POSTAL_CODE_OVERRIDES
+    if postal in POSTAL_CODE_OVERRIDES:
+        return POSTAL_CODE_OVERRIDES[postal]
+    try:
+        from services import communes
+        return communes.position_for(postal, city, fetch=fetch)
+    except Exception:
+        return None
+
+
+def _resolve_postals(clients: List[Dict[str, Any]]) -> Dict[str, Optional[Tuple[float, float]]]:
+    """Every postal code of the clients without GPS → its centre (QA F11: a
+    code unknown to the small built-in table fell back to its DEPARTMENT's
+    centre — a client of La Colle-sur-Loup landed 28 km off in the hills and
+    left the map). Known ones come from the cache; a few unknown ones are
+    looked up now, in parallel; the rest use the department until next time."""
+    codes = sorted({str(c.get("postal_code") or "").strip() for c in clients
+                    if c.get("latitude") is None and str(c.get("postal_code") or "").strip()})
+    out = {c: _postal_position(c, fetch=False) for c in codes}
+    missing = [c for c in codes if out[c] is None][:POSTAL_FETCH_MAX]
+    if missing:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                for code, pos in zip(missing, pool.map(lambda c: _postal_position(c, fetch=True), missing)):
+                    out[code] = pos
+        except Exception:
+            pass
+    return out
+
+
+def _client_position(cust: Dict[str, Any], known: Optional[Dict[str, Any]] = None) -> Tuple[Optional[float], Optional[float], str]:
     lat, lng = cust.get("latitude"), cust.get("longitude")
     if lat is not None and lng is not None:
         return float(lat), float(lng), "gps"
     postal = str(cust.get("postal_code") or "").strip()
     if postal:
+        dlat, dlng = _jitter(cust.get("id", ""))
+        pos = (known or {}).get(postal) if known is not None else _postal_position(postal, fetch=False)
+        if pos:
+            return pos[0] + dlat, pos[1] + dlng, "postal"
+        # not found yet: the department's centre, far coarser — and said so
         from server import get_postal_coords
         base_lat, base_lng = get_postal_coords(postal)
-        dlat, dlng = _jitter(cust.get("id", ""))
-        # An exact override means the postal code itself is mapped; anything
-        # else fell back to the department centroid, which is far coarser.
-        from server import POSTAL_CODE_OVERRIDES
-        how = "postal" if postal in POSTAL_CODE_OVERRIDES else "department"
-        return base_lat + dlat, base_lng + dlng, how
+        return base_lat + dlat, base_lng + dlng, "department"
     return None, None, "unknown"
 
 
@@ -237,19 +287,38 @@ def _window(date_from: Optional[str], date_to: Optional[str]) -> Tuple[datetime,
 
 
 def _clients_in_period(tid: str, start: datetime, end: datetime,
-                       store_scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
+                       store_scope: Optional["S.Scope"] = None, population: str = "periode") -> List[Dict[str, Any]]:
     """The clients who actually came during the period — that is what makes the
     date range mean something on a catchment map. A shop with no visits logged
     in the window falls back to everyone on the books, so a new merchant sees
     their base rather than an empty map.
     """
     tills = S.visit_filter(store_scope) if store_scope else {}
-    ids = _db.visits.distinct("customer_id", {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end}, **tills})
     base = S.customer_filter(store_scope) if store_scope else {"tenant_id": tid}
-    query = {"tenant_id": tid, "id": {"$in": list(ids)}} if ids else base
     fields = {"_id": 0, "id": 1, "name": 1, "city": 1, "postal_code": 1,
               "latitude": 1, "longitude": 1, "tier": 1, "visits": 1}
+    if population == "tous":
+        return list(_db.customers.find(base, fields))
+    ids = set(_db.visits.distinct("customer_id", {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end}, **tills}))
+    # …and those who joined in the period (QA F11: 100 imported clients never
+    # showed, the map only counted visits)
+    ids |= {c["id"] for c in _db.customers.find({**base, "created_at": {"$gte": start, "$lte": end}}, {"_id": 0, "id": 1})}
+    query = {"tenant_id": tid, "id": {"$in": list(ids)}} if ids else base
     return list(_db.customers.find(query, fields))
+
+
+def _local_label(tenant: Dict[str, Any]) -> str:
+    """« Nice et alentours » — the shop's own town."""
+    city = str(tenant.get("city") or tenant.get("ville") or "").strip()
+    if not city:
+        postal = _postal_from(tenant)
+        if postal:
+            try:
+                from services import communes
+                city = communes.city_for(postal) or ""
+            except Exception:
+                city = ""
+    return f"{city} et alentours" if city else SCOPES["local"]["label"]
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +350,7 @@ def _pct(part: int, whole: int) -> int:
 
 
 def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
-            store_scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
+            store_scope: Optional["S.Scope"] = None, population: str = "periode") -> Dict[str, Any]:
     tenant = (_db.tenants.find_one({"id": tid}) or {}) if _db is not None else {}
     shop_lat, shop_lng, shop_src = _shop_position(tenant)
     # One establishment chosen: the map is centred on it, when its address is known.
@@ -293,8 +362,10 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
             shop_lat, shop_lng, shop_src = blat, blng, bsrc
     speed = MODES.get(mode, MODES["car"])["speed_kmh"]
     max_km = SCOPES.get(scope, SCOPES["local"])["max_km"]
+    wide = scope in ("region", "france")          # beyond the rings is counted, not dropped
+    zones_used = ZONES + ([FAR_ZONE] if wide else [])
+    population = population if population in POPULATIONS else "periode"
 
-    empty_counts = {z["key"]: 0 for z in ZONES}
     result: Dict[str, Any] = {
         "shop": {"name": tenant.get("name") or "Votre établissement",
                  "city": tenant.get("city") or "", "lat": shop_lat, "lng": shop_lng,
@@ -302,6 +373,8 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
         "mode": mode if mode in MODES else "car",
         "speed_kmh": speed,
         "scope": scope if scope in SCOPES else "local",
+        "population": population,
+        "local_label": _local_label(tenant),
         "from": start.isoformat(), "to": end.isoformat(),
     }
     if shop_lat is None:
@@ -317,11 +390,13 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
         })
         return result
 
-    clients = _clients_in_period(tid, start, end, store_scope)
-    zone_counts = dict(empty_counts)
-    band_counts = {m: 0 for m in BANDS_MIN}
-    zone_communes: Dict[str, Dict[str, int]] = {z["key"]: {} for z in ZONES}
-    band_communes: Dict[int, Dict[str, int]] = {m: {} for m in BANDS_MIN}
+    clients = _clients_in_period(tid, start, end, store_scope, population)
+    known = _resolve_postals(clients)
+    band_keys: List[Any] = BANDS_MIN + ([FAR_BAND] if wide else [])
+    zone_counts = {z["key"]: 0 for z in zones_used}
+    band_counts = {m: 0 for m in band_keys}
+    zone_communes: Dict[str, Dict[str, int]] = {z["key"]: {} for z in zones_used}
+    band_communes: Dict[Any, Dict[str, int]] = {m: {} for m in band_keys}
     all_communes: Dict[str, int] = {}
     # A commune's point on the map is the average of its own clients' points —
     # no gazetteer needed, and it lands where the clients actually are.
@@ -335,7 +410,7 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
     out_of_range = 0
 
     for cust in clients:
-        lat, lng, how = _client_position(cust)
+        lat, lng, how = _client_position(cust, known)
         precision[how] = precision.get(how, 0) + 1
         if lat is None:
             continue
@@ -346,6 +421,9 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
 
         zone = _zone_of(km)
         band = _band_of(km, speed)
+        if wide:
+            zone = zone or "far"
+            band = band or FAR_BAND
         if zone is None and band is None:
             out_of_range += 1
             continue
@@ -382,12 +460,12 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
             "zones": [{
                 "key": z["key"], "label": z["label"], "tone": z["tone"],
                 "from_km": z["from_km"], "to_km": z["to_km"],
-                "radius_km": z["to_km"],
+                "radius_km": z["to_km"], "far": bool(z.get("far")),
                 # The same ring, read as a travel time for the chosen mode.
-                "minutes_to": round(z["to_km"] / speed * 60),
+                "minutes_to": round(z["to_km"] / speed * 60) if z["to_km"] else None,
                 "clients": zone_counts[z["key"]],
                 "pct": _pct(zone_counts[z["key"]], in_zone),
-            } for z in ZONES],
+            } for z in zones_used],
         },
         "isochrones": {
             "total": in_band,
@@ -397,7 +475,10 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
                 "radius_km": round(speed * m / 60, 2),
                 "clients": band_counts[m],
                 "pct": _pct(band_counts[m], in_band),
-            } for m in BANDS_MIN],
+            } for m in BANDS_MIN] + ([{
+                "minutes": FAR_BAND, "far": True, "after": BANDS_MIN[-1], "tone": "slate", "radius_km": None,
+                "clients": band_counts[FAR_BAND], "pct": _pct(band_counts[FAR_BAND], in_band),
+            }] if wide else []),
         },
         "communes": {
             "zones": {k: _top(v, display) for k, v in zone_communes.items()},
@@ -426,13 +507,16 @@ def catchment(
     date_to: Optional[str] = Query(None, alias="to"),
     mode: str = "car",
     scope: str = "local",
+    population: str = "periode",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     start, end = _window(date_from, date_to)
-    data = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request))
+    data = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request), population)
     data["modes"] = [{"key": k, "label": v["label"], "speed_kmh": v["speed_kmh"]} for k, v in MODES.items()]
-    data["scopes"] = [{"key": k, "label": v["label"], "max_km": v["max_km"]} for k, v in SCOPES.items()]
+    data["scopes"] = [{"key": k, "label": data.get("local_label") if k == "local" else v["label"], "max_km": v["max_km"]}
+                      for k, v in SCOPES.items()]
+    data["populations"] = [{"key": k, "label": v} for k, v in POPULATIONS.items()]
     return data
 
 
@@ -442,27 +526,30 @@ def export_csv(
     date_to: Optional[str] = Query(None, alias="to"),
     mode: str = "car",
     scope: str = "local",
+    population: str = "periode",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     """The breakdown behind the map — zones, bands and communes — as one CSV."""
     start, end = _window(date_from, date_to)
-    d = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request))
+    d = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request), population)
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["Section", "Libellé", "Détail", "Clients", "Part (%)"])
     for z in d["catchment"]["zones"]:
         w.writerow(["Zone de chalandise", z["label"],
-                    f"{z['from_km']:.0f}–{z['to_km']:.0f} km", z["clients"], z["pct"]])
+                    f"plus de {z['from_km']:.0f} km" if z.get("far") else f"{z['from_km']:.0f}–{z['to_km']:.0f} km",
+                    z["clients"], z["pct"]])
     for b in d["isochrones"]["bands"]:
-        w.writerow(["Isochrone (estimation)", f"{b['minutes']} min",
-                    f"≈ {b['radius_km']:.1f} km", b["clients"], b["pct"]])
-    for z in ZONES:
+        w.writerow(["Isochrone (estimation)", f"plus de {b['after']} min" if b.get("far") else f"{b['minutes']} min",
+                    "" if b.get("far") else f"≈ {b['radius_km']:.1f} km", b["clients"], b["pct"]])
+    for z in d["catchment"]["zones"]:
         for row in d["communes"]["zones"].get(z["key"], []):
             w.writerow([f"Communes · {z['label']}", row["name"], "", row["clients"], ""])
-    for m in BANDS_MIN:
-        for row in d["communes"]["bands"].get(str(m), []):
-            w.writerow([f"Communes · {m} min", row["name"], "", row["clients"], ""])
+    for b in d["isochrones"]["bands"]:
+        for row in d["communes"]["bands"].get(str(b["minutes"]), []):
+            lab = f"plus de {b['after']} min" if b.get("far") else f"{b['minutes']} min"
+            w.writerow([f"Communes · {lab}", row["name"], "", row["clients"], ""])
     data = "﻿" + buf.getvalue()
     name = f"fidclic-geolocalisation-{start:%Y%m%d}-{end:%Y%m%d}.csv"
     return Response(content=data, media_type="text/csv; charset=utf-8",

@@ -57,7 +57,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     ]
     db.customers.insert_many([
         {"id": cid, "tenant_id": "t1", "name": name, "city": city,
-         "latitude": north(km), "longitude": TOURS[1], "created_at": now}
+         "latitude": north(km), "longitude": TOURS[1], "created_at": now - dt.timedelta(days=400)}
         for cid, name, km, city in PEOPLE
     ])
     # Everyone visited inside the window except Théo, who is out of range anyway.
@@ -66,7 +66,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         for i, (cid, *_rest) in enumerate(PEOPLE)
     ])
 
-    def run(mode="car", scope="france", days=20):
+    def run(mode="car", scope="local", days=20):
         start = (now - dt.timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
         end = now.replace(hour=23, minute=59, second=59)
         return GEO.compute("t1", start, end, mode, scope)
@@ -139,9 +139,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("'Tours et alentours' drops what is past 35 km", local["out_of_range"] >= 1)
     check("and the 80 km client is gone either way",
           all(p["lat"] < north(40) for p in local["points"]))
+    check("the local scope is named after the shop's town (not « Tours » for everyone)", local["local_label"] == "Tours et alentours")
     france = run(scope="france")
-    check("'Toute la France' keeps everyone the rings can hold",
-          france["catchment"]["total"] == 7)
+    fz = {z["key"]: z for z in france["catchment"]["zones"]}
+    # QA F11 (2026-10-08): « Toute la France » dropped every client past 30 km
+    check("'Toute la France' keeps everyone: the 80 km client is « Au-delà »",
+          france["catchment"]["total"] == 8 and fz["far"]["clients"] == 1 and fz["far"]["far"])
+    fb = {b["minutes"]: b for b in france["isochrones"]["bands"]}
+    check("…and past the last band too (28 km and 80 km by car)", fb["far"]["clients"] == 2 and france["isochrones"]["total"] == 8)
+    check("the local scope has no « Au-delà »", "far" not in {z["key"] for z in local["catchment"]["zones"]})
 
     # ---- period -------------------------------------------------------------
     print("\nPériode")
@@ -153,6 +159,17 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         for cid in ("c4", "c5", "c6", "c7")
     ])
     check("and they come back when they do", run()["catchment"]["total"] == 7)
+    # QA F11: imported / new clients who have not come yet were never mapped
+    db.customers.insert_one({"id": "n1", "tenant_id": "t1", "name": "Nouvelle", "city": "Tours",
+                             "latitude": north(2.0), "longitude": TOURS[1], "created_at": now - dt.timedelta(days=1)})
+    check("a client who joined in the window is mapped too, before any visit", run()["catchment"]["total"] == 8)
+    db.customers.insert_one({"id": "o1", "tenant_id": "t1", "name": "Ancienne", "city": "Tours",
+                             "latitude": north(2.5), "longitude": TOURS[1], "created_at": now - dt.timedelta(days=500)})
+    check("an old client with no visit in the window is not", run()["catchment"]["total"] == 8)
+    start = (now - dt.timedelta(days=20)).replace(hour=0, minute=0, second=0, microsecond=0)
+    check("« Tous les clients » maps the whole base",
+          GEO.compute("t1", start, now, "car", "local", None, "tous")["catchment"]["total"] == 9)
+    db.customers.delete_many({"id": {"$in": ["n1", "o1"]}})
 
     # ---- position precision --------------------------------------------------
     print("\nHow precisely each client is placed")
@@ -163,6 +180,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = run()["precision"]
     check("GPS clients are counted as exact", p["gps"] == 8)
     check("a postal-code client is reported as such", p["postal"] == 1)
+    # a code the small built-in table does not know: its real centre (BAN,
+    # cached), not its department's (QA F11: La Colle-sur-Loup → the hills)
+    db.commune_cache.insert_one({"postal_code": "06480", "lat": 43.6862, "lng": 7.1036})
+    db.customers.insert_one({"id": "c10", "tenant_id": "t1", "name": "Colle", "postal_code": "06480", "created_at": now})
+    lat, lng, how = GEO._client_position({"id": "c10", "postal_code": "06480"}, GEO._resolve_postals([{"postal_code": "06480"}]))
+    check("an unlisted postal code lands on its own centre", how == "postal" and abs(lat - 43.6862) < 0.02 and abs(lng - 7.1036) < 0.02)
+    lat, lng, how = GEO._client_position({"id": "c11", "postal_code": "06999"}, {})
+    check("one still unknown says « department »", how == "department")
+    db.customers.delete_one({"id": "c10"})
     check("the two clients in one postal code do not stack",
           GEO._jitter("a") != GEO._jitter("b"))
     check("but one client always lands in the same place",

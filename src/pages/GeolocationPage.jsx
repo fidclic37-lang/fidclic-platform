@@ -26,7 +26,11 @@ const TONE = {
   amber:  { bg: '#FFF7ED', fg: '#C2410C', dot: '#F59E0B', soft: '#FFEDD5' },
   blue:   { bg: '#EFF6FF', fg: '#1D4ED8', dot: '#3B82F6', soft: '#DBEAFE' },
   violet: { bg: '#F5F3FF', fg: '#6D28D9', dot: '#8B5CF6', soft: '#EDE9FE' },
+  slate:  { bg: '#F1F5F9', fg: '#475569', dot: '#64748B', soft: '#E2E8F0' },   // « Au-delà »
 };
+// a band's name: « 15 min », or « + de 35 min » past the last one
+const bandLabel = (b) => (b.far ? `+ de ${b.after} min` : `${b.minutes} min`);
+const zoneLabel = (z) => (z.far ? `Au-delà de ${z.from_km} km` : z.label);
 const MODE_ICONS = { car: Car, bike: Bike, walk: Footprints };
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -280,6 +284,8 @@ export default function GeolocationPage() {
   const [to, setTo] = useState(todayISO);
   const [mode, setMode] = useState('car');
   const [scope, setScope] = useState('local');
+  // QA F11: the clients who came OR joined in the period (default), or all of them
+  const [population, setPopulation] = useState('periode');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -288,12 +294,12 @@ export default function GeolocationPage() {
   useEffect(() => {
     let alive = true;
     setLoading(true); setError('');
-    ownerAPI.geoCatchment({ from, to, mode, scope })
+    ownerAPI.geoCatchment({ from, to, mode, scope, population })
       .then(({ data: d }) => { if (alive) setData(d); })
       .catch((e) => { if (alive) setError(e?.response?.data?.detail || 'Impossible de charger la carte.'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [from, to, mode, scope]);
+  }, [from, to, mode, scope, population]);
 
   // Both off leaves nothing to read, so switching one off switches the other on.
   const toggleCatch = (next) => { setCatchOn(next); if (!next && !isoOn) setIsoOn(true); };
@@ -313,7 +319,7 @@ export default function GeolocationPage() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.geoExport({ from, to, mode, scope });
+      const { data: blob } = await ownerAPI.geoExport({ from, to, mode, scope, population });
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-geolocalisation-${from}-${to}.csv`;
@@ -393,7 +399,7 @@ export default function GeolocationPage() {
       </div>
 
       {/* filters */}
-      <div className="mb-4 grid gap-4 lg:grid-cols-[1fr_1.2fr_1.4fr]">
+      <div className="mb-4 grid gap-4 lg:grid-cols-[1fr_1.2fr_1fr_1fr]">
         <label className="block">
           <span className="mb-1.5 block text-[12px] font-semibold text-[#475569]">Période</span>
           <PeriodPicker from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
@@ -410,8 +416,21 @@ export default function GeolocationPage() {
           <div className="relative">
             <select value={scope} onChange={(e) => setScope(e.target.value)}
                     className="w-full appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2.5 pl-3 pr-9 text-[13px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]">
-              {(data?.scopes || [{ key: 'local', label: 'Tours et alentours' }]).map((s) => (
+              {(data?.scopes || [{ key: 'local', label: 'Autour de votre commerce' }]).map((s) => (
                 <option key={s.key} value={s.key}>{s.label}</option>
+              ))}
+            </select>
+            <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          </div>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-[12px] font-semibold text-[#475569]">Clients</span>
+          <div className="relative">
+            <select value={population} onChange={(e) => setPopulation(e.target.value)}
+                    title="Clients de la période : venus ou inscrits pendant la période."
+                    className="w-full appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2.5 pl-3 pr-9 text-[13px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]">
+              {(data?.populations || [{ key: 'periode', label: 'Clients de la période' }, { key: 'tous', label: 'Tous les clients' }]).map((x) => (
+                <option key={x.key} value={x.key}>{x.label}</option>
               ))}
             </select>
             <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
@@ -451,19 +470,19 @@ export default function GeolocationPage() {
                      action={<SeeMore onClick={() => setView('list')} />}>
                 {both && <p className="mb-2 text-[12px] font-semibold text-[#64748B]">Par zone de chalandise</p>}
                 {catchOn && (
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className={`grid gap-2.5 ${zones.length > 3 ? 'grid-cols-2 2xl:grid-cols-4' : 'grid-cols-3'}`}>
                     {zones.map((z) => (
-                      <CountCard key={z.key} tone={z.tone} heading={z.label}
-                                 sub={both ? null : `${z.from_km}–${z.to_km} km`} clients={z.clients} />
+                      <CountCard key={z.key} tone={z.tone} heading={z.far ? 'Au-delà' : z.label}
+                                 sub={both ? null : z.far ? `> ${z.from_km} km` : `${z.from_km}–${z.to_km} km`} clients={z.clients} />
                     ))}
                   </div>
                 )}
                 {both && <p className="mb-2 mt-4 text-[12px] font-semibold text-[#64748B]">Par temps de trajet (isochrones)</p>}
                 {isoOn && (
-                  <div className={`grid gap-2.5 ${both ? 'grid-cols-4' : 'grid-cols-4'}`}>
+                  <div className={`grid gap-2.5 ${bands.length > 4 ? 'grid-cols-3 2xl:grid-cols-5' : 'grid-cols-4'}`}>
                     {bands.map((b) => (
-                      <CountCard key={b.minutes} tone={b.tone} heading={`${b.minutes} min`}
-                                 sub={both ? null : `≈ ${b.radius_km} km`} clients={b.clients} />
+                      <CountCard key={b.minutes} tone={b.tone} heading={bandLabel(b)}
+                                 sub={both || b.far ? null : `≈ ${b.radius_km} km`} clients={b.clients} />
                     ))}
                   </div>
                 )}
@@ -478,10 +497,10 @@ export default function GeolocationPage() {
                         both={data.combined.both} />
                 ) : catchOn ? (
                   <Donut total={data.catchment.total} caption="Répartition par zone"
-                         slices={zones.map((z) => ({ key: z.key, tone: z.tone, label: z.label, value: z.clients }))} />
+                         slices={zones.map((z) => ({ key: z.key, tone: z.tone, label: zoneLabel(z), value: z.clients }))} />
                 ) : (
                   <Donut total={data.isochrones.total} caption="Répartition par temps de trajet"
-                         slices={bands.map((b) => ({ key: b.minutes, tone: b.tone, label: `${b.minutes} min`, value: b.clients }))} />
+                         slices={bands.map((b) => ({ key: b.minutes, tone: b.tone, label: bandLabel(b), value: b.clients }))} />
                 )}
               </Panel>
             </div>
@@ -514,16 +533,16 @@ export default function GeolocationPage() {
                   )}
                 </div>
               ) : catchOn ? (
-                <div className="grid gap-x-5 sm:grid-cols-3">
+                <div className={`grid gap-x-5 ${zones.length > 3 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
                   {zones.map((z) => (
-                    <CommuneColumn key={z.key} tone={z.tone} title={z.label}
+                    <CommuneColumn key={z.key} tone={z.tone} title={zoneLabel(z)}
                                    rows={communes.zones?.[z.key] || []} />
                   ))}
                 </div>
               ) : (
-                <div className="grid gap-x-5 sm:grid-cols-4">
+                <div className={`grid gap-x-5 ${bands.length > 4 ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
                   {bands.map((b) => (
-                    <CommuneColumn key={b.minutes} tone={b.tone} title={`${b.minutes} min`}
+                    <CommuneColumn key={b.minutes} tone={b.tone} title={bandLabel(b)}
                                    rows={communes.bands?.[String(b.minutes)] || []} />
                   ))}
                 </div>
