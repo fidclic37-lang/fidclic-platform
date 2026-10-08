@@ -10,6 +10,7 @@ const C_SCAN = {
   ochre: '#2F6BFF', amber: '#4F7BFF', terracotta: '#7C3AED',
 };
 import { useBranch } from '../contexts/BranchContext';
+import DecimalInput from '../components/DecimalInput';
 
 const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
 
@@ -443,11 +444,6 @@ const ScanPage = () => {
     return pointsPerVisit; // per_visit mode → always flat
   };
 
-  const handleAmountPaidChange = (e) => {
-    const value = e.target.value;
-    setAmountPaid(value);
-
-  };
 
   // Derived: which catalog items currently have a positive qty? + the
   // total (computed client-side for display; the server recomputes its
@@ -727,13 +723,9 @@ const ScanPage = () => {
               </div>
               <div className="relative">
                 <Euro className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  inputMode="decimal"
+                <DecimalInput
                   value={amountPaid}
-                  onChange={handleAmountPaidChange}
+                  onChange={setAmountPaid}
                   placeholder="0,00"
                   className="w-full pl-14 pr-4 py-3 rounded-lg border-2 outline-none text-lg font-bold font-['Inter'] transition-colors"
                   style={{ borderColor: '#E6EEFB', background: '#FFFFFF' }}
@@ -917,13 +909,11 @@ const ScanPage = () => {
               </label>
               <div className="relative">
                 <Euro className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                {/* « 1,25 » is 1,25 € — never 125 (QA F12): a decimal text field */}
+                <DecimalInput
                   value={amountPaid}
-                  onChange={handleAmountPaidChange}
-                  placeholder="0.00"
+                  onChange={setAmountPaid}
+                  placeholder="0,00"
                   className={`w-full pl-14 pr-4 py-4 rounded-xl border-2 focus:ring-0 outline-none text-lg font-bold font-['Inter'] transition-colors ${
                     pickedItems.length > 0
                       ? 'border-[#E3A869] bg-[#F6F9FF] focus:border-[#E3A869]'

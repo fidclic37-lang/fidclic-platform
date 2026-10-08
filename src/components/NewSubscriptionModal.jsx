@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Repeat } from 'lucide-react';
 import { cabinetOsAPI } from '../lib/api';
+import DecimalInput from './DecimalInput';
 
 /**
  * NewSubscriptionModal — write a standing instruction (S13).
@@ -99,8 +100,8 @@ export default function NewSubscriptionModal({ tenantId, onClose, onCreated }) {
           <div className="grid grid-cols-3 gap-2.5">
             <label className="block">
               <span className="lbl">Montant HT (€) *</span>
-              <input className="fld" type="number" value={form.unit_price}
-                     onChange={set('unit_price')} placeholder="450" />
+              <DecimalInput className="fld" value={form.unit_price}
+                     onChange={(v) => setForm((f) => ({ ...f, unit_price: v }))} placeholder="450" />
             </label>
             <label className="block">
               <span className="lbl">TVA</span>

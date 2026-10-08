@@ -8,6 +8,7 @@ import { PageHeader, C as C_PS } from '../components/PageShell';
 import CampaignAudienceBuilder from '../components/CampaignAudienceBuilder';
 import PhonePushPreview from '../components/PhonePushPreview';
 import { renderTokens, SAMPLE_CUSTOMER, TOKEN_HELP } from '../lib/tokens';
+import DecimalInput from '../components/DecimalInput';
 
 /**
  * ReEnableNotificationsButton — Strategy 2 (SMS re-enablement campaign).
@@ -2029,8 +2030,8 @@ function CardOverlayPanel() {
               <input type="number" min="0" placeholder="Min visites" value={minVisits}
                      onChange={(e) => setMinVisits(e.target.value)}
                      className="px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
-              <input type="number" min="0" placeholder="Min € payés" value={minAmount}
-                     onChange={(e) => setMinAmount(e.target.value)}
+              <DecimalInput placeholder="Min € payés" value={minAmount}
+                     onChange={setMinAmount}
                      className="px-3 py-2 rounded-lg border border-[#E9E5E0] text-sm" />
               <input type="number" min="0" placeholder="Inactifs depuis (j)" value={inactiveMin}
                      onChange={(e) => setInactiveMin(e.target.value)}

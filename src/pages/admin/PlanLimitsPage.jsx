@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Loading, Breadcrumb, Modal, useToast, nf, BLUE, inputCls } from '../crm/ui';
+import DecimalInput from '../../components/DecimalInput';
 
 /* Super admin › Plan Limits — built to the approved mockup. Every limit and
    switch here is enforced for the businesses (features/plan_limits.py):
@@ -292,7 +293,7 @@ function PlanModal({ plan, plans, onClose, onDone }) {
           <input className={inputCls} value={f.tagline} maxLength={120} onChange={(e) => setF({ ...f, tagline: e.target.value })} placeholder="Ex. Pour les restaurants en croissance" /></label>
         {!(edit && plan.on_quote) && (
           <label className="block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Prix (€ HT / mois)</span>
-            <input type="number" min={0} className={inputCls} value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} /></label>
+            <DecimalInput className={inputCls} value={f.price} onChange={(v) => setF({ ...f, price: v })} /></label>
         )}
         {(!edit || plan.custom) && (
           <div><span className="mb-1 block text-[11.5px] text-[#64748B]">Couleur</span>

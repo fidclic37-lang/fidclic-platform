@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import DecimalInput from '../components/DecimalInput';
 
 /**
  * Segmentation — built to the approved mockups.
@@ -234,8 +235,8 @@ const Builder = ({ fields, total, onClose, onCreated }) => {
                               options={f.choices.map((c) => ({ value: c.key, label: c.label }))} />
                     ) : (
                       <span className="flex min-w-[130px] flex-1 items-center gap-1.5">
-                        <input type="number" min="0" value={r.value}
-                               onChange={(e) => setRule(i, { value: e.target.value })}
+                        <DecimalInput value={r.value}
+                               onChange={(v) => setRule(i, { value: v })}
                                className="w-full rounded-xl border border-[#E6EEFB] px-3 py-2.5 text-[13px] tabular-nums outline-none focus:border-[#2F6BFF]" />
                         {f.unit && (
                           <span className="shrink-0 rounded-xl border border-[#E6EEFB] px-2.5 py-2.5 text-[12.5px] text-[#64748B]">

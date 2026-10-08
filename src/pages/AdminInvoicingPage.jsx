@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Receipt, Check, Loader2, Download, AlertTriangle, BadgeCheck } from 'lucide-react';
 import { adminAPI } from '../lib/api';
+import DecimalInput from '../components/DecimalInput';
 
 /* Super-admin › Facturation — who issues FidClic's invoices. Decided with the
    user: the seller's legal details are entered here; until they are
@@ -85,7 +86,7 @@ export default function AdminInvoicingPage() {
           </label>
           {s.vat_applicable && (
             <label className="block"><span className="mb-1 block text-[12.5px] text-[#334155]">Taux de TVA (%)</span>
-              <input type="number" className={inputCls} value={s.vat_rate} onChange={(e) => setS({ ...s, vat_rate: e.target.value })} /></label>
+              <DecimalInput className={inputCls} value={s.vat_rate} onChange={(v) => setS({ ...s, vat_rate: v })} /></label>
           )}
         </div>
         <button type="button" onClick={save} disabled={busy}

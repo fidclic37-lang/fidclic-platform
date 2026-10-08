@@ -9,6 +9,7 @@ import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import InfoTip from '../components/InfoTip';
+import DecimalInput from '../components/DecimalInput';
 
 /**
  * Tableau de bord — the home page, built to the approved design.
@@ -265,8 +266,8 @@ const GoalModal = ({ current, onClose, onSaved }) => {
             <span className="mb-1.5 block text-[12.5px] font-semibold text-[#334155]">
               Objectif de chiffre d'affaires mensuel (€)
             </span>
-            <input type="number" min={0} step={50} value={value} placeholder="Ex. 5000" autoFocus
-                   onChange={(e) => setValue(e.target.value.replace(/^0+(?=\d)/, '').replace(/^-/, ''))}
+            <DecimalInput value={value} placeholder="Ex. 5000" autoFocus
+                   onChange={(v) => setValue(v.replace(/^0+(?=\d)/, ''))}
                    className="w-full rounded-xl border border-[#E6EEFB] px-3 py-2.5 text-[13px] outline-none focus:border-[#2F6BFF]" />
           </label>
           <p className="mt-2 text-[11.5px] leading-snug text-[#94A3B8]">

@@ -6,6 +6,7 @@ import {
   ShoppingBag, TrendingUp, Loader2, Check, RotateCcw,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import DecimalInput from '../components/DecimalInput';
 
 /* Paramètres › Règles clients — how FidClic sorts the shop's clients.
 
@@ -64,8 +65,8 @@ function NumberField({ value, unit, onChange, invalid, label }) {
   return (
     <div className="flex h-11 w-full max-w-[190px] overflow-hidden rounded-lg border bg-white"
       style={{ borderColor: invalid ? '#F87171' : '#E2E8F0' }}>
-      <input type="number" inputMode="decimal" aria-label={label} value={value}
-        onChange={(e) => onChange(e.target.value)}
+      <DecimalInput aria-label={label} value={value}
+        onChange={onChange}
         className="min-w-0 flex-1 border-0 bg-transparent px-3 text-[14.5px] text-[#0B1C3F] outline-none" />
       <span className="flex min-w-[70px] items-center justify-center bg-[#F1F5F9] px-2.5 text-[13.5px] text-[#64748B]">
         {unit}

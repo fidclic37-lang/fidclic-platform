@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api, { ownerAPI } from '../lib/api';
 import { Search, X, Filter, Users, Eye, ChevronDown, ChevronUp } from 'lucide-react';
 import { C as C_PS } from './PageShell';
+import DecimalInput from './DecimalInput';
 
 /**
  * Unified Campaign Audience Builder.
@@ -427,15 +428,15 @@ const RangePair = ({ minVal, maxVal, onMinChange, onMaxChange, unit, step, minLa
   <div className="flex items-center gap-2 flex-wrap">
     <div className="flex items-center gap-1">
       <span className="text-[10px] uppercase font-bold tracking-widest" style={{ color: C_PS.inkMute }}>{minLabel}</span>
-      <input type="number" min={0} step={step} value={minVal}
-        onChange={(e) => onMinChange(e.target.value === '' ? null : parseFloat(e.target.value))}
+      <DecimalInput value={minVal ?? ''}
+        onChange={(v) => onMinChange(v === '' ? null : parseFloat(v))}
         className="w-24 border rounded-lg px-2 py-1.5 text-sm bg-white" style={{ borderColor: '#E9E5E0' }} />
     </div>
     <span style={{ color: C_PS.inkMute }}>–</span>
     <div className="flex items-center gap-1">
       <span className="text-[10px] uppercase font-bold tracking-widest" style={{ color: C_PS.inkMute }}>{maxLabel}</span>
-      <input type="number" min={0} step={step} value={maxVal}
-        onChange={(e) => onMaxChange(e.target.value === '' ? null : parseFloat(e.target.value))}
+      <DecimalInput value={maxVal ?? ''}
+        onChange={(v) => onMaxChange(v === '' ? null : parseFloat(v))}
         className="w-24 border rounded-lg px-2 py-1.5 text-sm bg-white" style={{ borderColor: '#E9E5E0' }} />
     </div>
     <span className="text-xs" style={{ color: C_PS.inkMute }}>{unit}</span>
