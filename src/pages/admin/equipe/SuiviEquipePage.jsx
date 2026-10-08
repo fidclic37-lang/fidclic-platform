@@ -97,10 +97,10 @@ function TaskItem({ t, today, canEdit, onToggle, onOpen }) {
 function DayColumn({ day, canEdit, onToggle, onOpen, onAdd }) {
   const today = day.today;
   return (
-    <section className={`flex min-w-[168px] flex-1 basis-0 flex-col rounded-2xl border bg-white p-3 ${today ? 'border-[#2F6BFF] shadow-[0_0_0_1px_#2F6BFF,0_12px_30px_-20px_rgba(47,107,255,.6)]' : 'border-[#E8EEF7] shadow-[0_1px_2px_rgba(11,28,63,.03)]'}`}>
+    <section className={`flex min-w-0 flex-col rounded-2xl border bg-white p-2 2xl:p-3 ${today ? 'border-[#2F6BFF] shadow-[0_0_0_1px_#2F6BFF,0_12px_30px_-20px_rgba(47,107,255,.6)]' : 'border-[#E8EEF7] shadow-[0_1px_2px_rgba(11,28,63,.03)]'}`}>
       <header className="flex items-start justify-between">
         <div>
-          <h3 className={`text-[15px] font-bold ${today ? 'text-[#2F6BFF]' : 'text-[#0B1C3F]'}`}>{day.name}</h3>
+          <h3 className={`truncate text-[14px] font-bold 2xl:text-[15px] ${today ? 'text-[#2F6BFF]' : 'text-[#0B1C3F]'}`}>{day.name}</h3>
           <p className={`text-[12px] ${today ? 'text-[#2F6BFF]' : 'text-[#64748B]'}`}>{day.short}</p>
         </div>
         <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-[#F1F5F9] px-2 text-[12px] font-semibold text-[#0B1C3F]">{day.total}</span>
@@ -118,7 +118,7 @@ function DayColumn({ day, canEdit, onToggle, onOpen, onAdd }) {
       {canEdit && (
         <button type="button" onClick={() => onAdd(day.date)}
                 className={`mt-3 flex h-10 items-center justify-center gap-1.5 rounded-xl text-[13px] font-medium transition ${today ? 'bg-[#2F6BFF] text-white hover:bg-[#2559DB]' : 'border border-[#E3E9F3] text-[#334155] hover:border-[#2F6BFF]'}`}>
-          <Plus size={15} /> Ajouter une tâche
+          <Plus size={15} className="shrink-0" /> Ajouter<span className="hidden min-[1600px]:inline">&nbsp;une tâche</span>
         </button>
       )}
     </section>
@@ -339,7 +339,9 @@ export default function SuiviEquipePage() {
 
             {/* the week */}
             <div className="-mx-1 overflow-x-auto px-1 pb-2">
-              <div className="flex gap-3">
+              {/* all seven days side by side, Sunday included (user, 2026-10-08); a
+                  narrow screen scrolls instead of squeezing them */}
+              <div className="grid min-w-[790px] grid-cols-7 gap-2 2xl:gap-3">
                 {days.map((day) => (
                   <DayColumn key={day.date} day={day} canEdit={canEdit} onToggle={toggle} onOpen={setOpenTask} onAdd={(date) => setForm({ due_date: date })} />
                 ))}
