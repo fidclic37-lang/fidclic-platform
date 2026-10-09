@@ -205,7 +205,7 @@ def main():
     join_src = open(os.path.join(os.path.dirname(__file__), "..", "..",
                                  "src", "pages", "JoinPage.jsx")).read()
     check("the signup form reads ?p= and sends it",
-          "searchParams.get('p')" in join_src and "payload.parrain_barcode" in join_src)
+          "searchParams.get('p')" in join_src and "parrain_barcode: parrainBarcode" in join_src)
     my_src = open(os.path.join(os.path.dirname(__file__), "..", "..",
                                "src", "pages", "MyWalletCardPage.jsx")).read()
     # Whose phone the card is on is decided by the server since 2026-10-08

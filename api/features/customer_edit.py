@@ -33,6 +33,7 @@ _db = None
 EDITORS = ["business_owner", "administrateur", "manager"]
 
 FIELD_LABELS = {"name": "nom", "phone": "téléphone", "email": "e-mail", "birthday": "anniversaire",
+                "birth_date": "date de naissance",
                 "postal_code": "code postal", "is_student": "étudiant", "acquisition_source": "source"}
 
 
@@ -83,6 +84,7 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": c["id"], "name": c.get("name") or "", "phone": c.get("phone") or "", "email": c.get("email") or "",
         "birthday": c.get("birthday") or "", "postal_code": c.get("postal_code") or "",
+        "birth_date": c.get("birth_date") or "", "age": CF.age_of(c.get("birth_date")),
         "is_student": bool(c.get("is_student")), "acquisition_source": c.get("acquisition_source") or "",
         "barcode_id": c.get("barcode_id"), "points": int(c.get("points") or 0), "visits": visits,
         "stamps_in_cycle": max(0, visits - int(c.get("visits_at_last_redemption") or 0)),
@@ -128,7 +130,11 @@ def save_fiche(customer_id: str, body: FicheIn, request: Request = None,
     if body.email is not None:
         new["email"] = CF.email(body.email).lower()
     if body.birthday is not None:
-        new["birthday"] = CF.birthday(body.birthday)
+        # « 25/12/1990 » keeps the year (the age in Clients); « 25/12 » only the day
+        b = CF.birth(body.birthday)
+        new["birthday"] = b["birthday"]
+        if b["birth_date"]:
+            new["birth_date"] = b["birth_date"]
     if body.postal_code is not None:
         new["postal_code"] = CF.postal_code(body.postal_code)
     if body.is_student is not None:

@@ -35,11 +35,13 @@ async function signup(page, { name, tel, path = `/join/${SLUG}` }) {
   await form.locator('input[type="text"]').first().fill(name);
   await page.locator('#join-phone').fill(tel);
   await page.locator('input[name="postal-code"]').fill('37000');
-  await page.locator('select[aria-label="Jour de naissance"]').selectOption('01');
-  await page.locator('select[aria-label="Mois de naissance"]').selectOption('02');
+  await page.locator('input[name="bday"]').fill('01021990');               // typed as digits, masked JJ/MM/AAAA
+  await expect(page.locator('input[name="bday"]')).toHaveValue('01/02/1990');
   await form.locator('input[type="checkbox"][required]').check();
-  await page.getByRole('button', { name: 'Rejoindre le programme' }).click();
-  await expect(page.getByText('Bienvenue', { exact: false }).first()).toBeVisible();
+  await page.getByRole('button', { name: /Rejoindre le programme/ }).click();
+  // « Félicitations ! » with the shop's own card (2026-10-09 redesign)
+  await expect(page.getByText('Félicitations', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('Votre carte de fidélité est prête')).toBeVisible();
   await page.getByRole('link', { name: /Ouvrir ma carte de fidélité/ }).click();
   await expect(page).toHaveURL(/\/card\/FT-[A-Z0-9]+/);
   await expect(page.locator('body')).toContainText(name.split(' ')[0]);
@@ -56,6 +58,27 @@ test.describe.serial('a customer, end to end', () => {
     const w = watch(page);
     me = { name: 'Camille Parcours', ...(await signup(page, { name: 'Camille Parcours', tel: phone() })) };
     await w.clean('card after signup');
+  });
+
+  test('the signup refuses an impossible date of birth, plainly', async ({ page }) => {
+    await page.goto(`/join/${SLUG}`);
+    await page.locator('#join-form input[type="text"]').first().fill('Date Fausse');
+    await page.locator('#join-phone').fill(phone());
+    await page.locator('input[name="postal-code"]').fill('37000');
+    await page.locator('input[name="bday"]').fill('31041990');
+    await page.locator('#join-form input[type="checkbox"][required]').check();
+    await page.getByRole('button', { name: /Rejoindre le programme/ }).click();
+    await expect(page.locator('#join-birth-error')).toContainText('n’existe pas');
+  });
+
+  test("the owner sees the customer's age in Clients", async ({ request }) => {
+    const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+    const list = await (await request.get(`/api/owner/clients/list?search=${me.barcode}`,
+      { headers: { Authorization: `Bearer ${login.access_token}` } })).json();
+    const row = list.rows.find((r) => r.barcode_id === me.barcode);
+    const today = new Date();
+    const age = today.getFullYear() - 1990 - ((today.getMonth() + 1 < 2 || (today.getMonth() + 1 === 2 && today.getDate() < 1)) ? 1 : 0);
+    expect(row.age).toBe(age);
   });
 
   test('the Wallet tiles open on a phone that never stored the key (Safari)', async ({ browser }) => {

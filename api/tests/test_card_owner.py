@@ -86,7 +86,7 @@ def main():
     check("pass deleted → a friend's QR opens the signup form, and the phone forgets my card",
           r["view"] == "join" and ME in r["drop"])
     j = http("POST", "/api/join/cafe", json={"name": "Me", "phone": "0611111111", "postal_code": "37000",
-                                             "birthday": "01-02", "consent_marketing": True, "accept_terms": True}).json()
+                                             "birthday": "1990-01-02", "consent_marketing": True, "accept_terms": True}).json()
     # (user, 2026-10-09) typing a number never hands over its card: the owner
     # finds it in Wallet or at the counter — a stranger with the number gets nothing
     det = j.get("detail") or {}

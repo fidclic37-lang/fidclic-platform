@@ -310,7 +310,7 @@ def status_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = 
 
 FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visits": 1,
           "points": 1, "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
-          "birthday": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
+          "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
           "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
           "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1}
@@ -358,10 +358,18 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         "last_visit": last.isoformat() if last else None,
         "joined": joined.isoformat() if joined else None,
         "city": cust.get("city") or "",
+        # from the full date of birth (user, 2026-10-09); None for clients who
+        # gave day and month only
+        "age": _age(cust),
         "source": _source_key(cust), "source_label": _source_label(cust),
         # « Active », « Supprimée », « Retirée d'Apple Wallet » (user, 2026-10-09)
         "card": _card_state(cust),
     }
+
+
+def _age(cust: Dict[str, Any]) -> Optional[int]:
+    from services import customer_fields as CF
+    return CF.age_of(cust.get("birth_date"))
 
 
 def _card_state(cust: Dict[str, Any]) -> Dict[str, Any]:
@@ -703,13 +711,14 @@ def export_clients(
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Source", "Visites",
-                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte"])
+                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte", "Âge"])
     for c in rows:
         p = _public(c, at, shop_avg, local, rules)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
                     p["source_label"], p["visits"], f"{p['spent']:.2f}".replace(".", ","),
                     _paris_day(p["last_visit"]), _paris_day(p["joined"]), p["city"],
-                    p["card"]["label"] + (f" ({_paris_day(p['card']['at'])})" if p["card"]["at"] else "")])
+                    p["card"]["label"] + (f" ({_paris_day(p['card']['at'])})" if p["card"]["at"] else ""),
+                    p["age"] if p["age"] is not None else ""])
     data = "﻿" + buf.getvalue()
     return Response(content=data, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition":

@@ -50,9 +50,11 @@ _db = None
 READERS = ["business_owner", "administrateur", "manager"]
 INACTIVE_YEARS = (1, 2, 3, 5)
 TRANSACTION_YEARS = (5, 6, 10)
-DEFAULT_CONSENT = ("J'accepte que {business_name} utilise mes données (nom, contact, visites) pour gérer ma "
-                   "carte de fidélité et m'envoyer des offres. Je peux à tout moment télécharger ou supprimer "
-                   "mes données depuis ma carte, conformément au RGPD.")
+# Both names (user, 2026-10-09: « data ka maalik dono hai »); the join page
+# adds « Je peux retirer mon consentement à tout moment. » under it.
+DEFAULT_CONSENT = ("J'accepte que {business_name} et FidClic utilisent mes données personnelles pour gérer ma "
+                   "carte de fidélité, mon compte et m'envoyer des offres personnalisées, y compris des offres "
+                   "pertinentes à proximité si j'autorise ma position.")
 SECTIONS = ("identity", "loyalty", "purchases", "consents", "visits")
 
 
