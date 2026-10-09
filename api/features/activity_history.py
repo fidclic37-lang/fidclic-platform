@@ -166,7 +166,8 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "customer_id": d.get("customer_id"),
                 "detail": "Scan de la carte en magasin",
                 "points": int(d.get("points_awarded") or 0),
-                "amount": float(d.get("amount_paid") or 0) or None,
+                # a 0 € visit is 0 €, not blank (QA F14); no amount at all stays blank
+                "amount": None if d.get("amount_paid") is None else float(d.get("amount_paid") or 0),
             },
         },
         "reward": {

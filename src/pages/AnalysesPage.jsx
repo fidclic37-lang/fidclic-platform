@@ -9,6 +9,7 @@ import { ownerAPI } from '../lib/api';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
+import { eur } from '../lib/money';
 
 /**
  * Analyses — eight tabs over one window, built to the approved design.
@@ -39,7 +40,8 @@ const TONE_ORDER = ['blue', 'green', 'amber', 'violet', 'rose', 'slate'];
 
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
-const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
+// 93,10 € — cents keep two digits (lib/money)
+const money = eur;
 const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
 // A point of a series: a day, or an hour for « Aujourd'hui » (it carries its label).
 const pointLabel = (q) => q.label || dayLabel(q.date);

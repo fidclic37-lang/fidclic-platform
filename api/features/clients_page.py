@@ -575,6 +575,20 @@ def list_page(
     }
 
 
+def _paris_day(iso: Optional[str]) -> str:
+    """The day in France, as Excel reads it (QA F13: the UTC date was cut off,
+    so a 00:30 visit showed the day before)."""
+    if not iso:
+        return ""
+    try:
+        from zoneinfo import ZoneInfo
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        d = d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        return d.astimezone(ZoneInfo("Europe/Paris")).strftime("%d/%m/%Y")
+    except ValueError:
+        return str(iso)[:10]
+
+
 @router.get("/api/owner/clients/export")
 def export_clients(
     segment: str = "all", status: str = "", spend: str = "", joined: str = "",
@@ -601,7 +615,7 @@ def export_clients(
         p = _public(c, at, shop_avg, local, rules)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
                     p["source_label"], p["visits"], f"{p['spent']:.2f}".replace(".", ","),
-                    (p["last_visit"] or "")[:10], (p["joined"] or "")[:10], p["city"]])
+                    _paris_day(p["last_visit"]), _paris_day(p["joined"]), p["city"]])
     data = "﻿" + buf.getvalue()
     return Response(content=data, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition":

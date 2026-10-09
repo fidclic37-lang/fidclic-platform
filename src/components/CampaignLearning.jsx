@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import InfoTip from './InfoTip';
+import { eur } from '../lib/money';
 
 /**
  * « Ce qui marche chez vous » — what FidClic learnt from the campaigns this
@@ -15,7 +16,8 @@ import InfoTip from './InfoTip';
  *   ComposerTips   advice on the message being written
  *   LearningPanel  the learnings, in plain French
  */
-const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €`;
+// 93,10 € — cents keep two digits (lib/money)
+const money = eur;
 
 export function ResultChip({ result, windowDays = 15 }) {
   if (!result) return <span className="text-[11.5px] text-[#94A3B8]">—</span>;

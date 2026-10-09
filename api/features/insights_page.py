@@ -143,6 +143,13 @@ def _fr(n: float, digits: int = 1) -> str:
     return s.replace(".", ",")
 
 
+def _eur_cents(n: float) -> str:
+    """15,50 € — money keeps its cents (QA: « 15,5 € »); a whole amount has none."""
+    n = round(float(n or 0) + 1e-9, 2)
+    s = f"{n:,.0f}" if n == int(n) else f"{n:,.2f}"
+    return s.replace(",", " ").replace(".", ",") + " €"
+
+
 def _category(key: str) -> Dict[str, str]:
     return {"key": key, **CATEGORIES[key]}
 
@@ -304,8 +311,17 @@ class Shop:
             {"tenant_id": tid, "visit_time": {"$gte": since - timedelta(days=62)},
              **(S.visit_filter(scope) if scope else {})},
             {"_id": 0, "amount_paid": 1, "visit_time": 1, "items": 1, "customer_id": 1}))
-        baskets = [b for b in (_avg_basket(c) for c in self.people) if b is not None]
-        self.shop_avg = sum(baskets) / len(baskets) if baskets else 0.0
+        # « Panier moyen » = what was spent ÷ the visits, as on Analyses (QA
+        # F15: an average of each client's average said 15,56 € where
+        # Analyses said 13,30 €): the last 30 days, else the whole history.
+        month = [v for v in self.visits if (t := _aware(v.get("visit_time"))) and t >= at - timedelta(days=30)]
+        if month:
+            self.shop_avg = sum(_num(v.get("amount_paid")) for v in month) / len(month)
+            self.shop_avg_window = 30
+        else:
+            n = sum(int(_num(c.get("visits"))) for c in self.people)
+            self.shop_avg = (sum(_num(c.get("total_amount_paid")) for c in self.people) / n) if n else 0.0
+            self.shop_avg_window = None
         self.monthly = sum(_num(v.get("amount_paid")) for v in self.visits
                            if (t := _aware(v.get("visit_time"))) and t >= at - timedelta(days=30))
         self.reviews = [r for r in _db.reviews.find({"tenant_id": tid}, {"_id": 0, "rating": 1,
@@ -627,7 +643,8 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
                 "En proposant des formules ou prestations complémentaires, vous pouvez augmenter "
                 "votre panier moyen.")
     elif shop.shop_avg > 0:
-        body = (f"Votre panier moyen est de {_fr(shop.shop_avg, 2)} €. En proposant des "
+        body = (f"{'Sur les 30 derniers jours, votre' if shop.shop_avg_window else 'Votre'} panier moyen est de "
+                f"{_eur_cents(shop.shop_avg)}. En proposant des "
                 f"{'menus ou produits' if shop.food else 'formules ou prestations'} "
                 "complémentaires, vous pouvez l'augmenter.")
     else:
