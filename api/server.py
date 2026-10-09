@@ -5143,6 +5143,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "visits_at_last_redemption": last_red_visits,
         # How many completed cards are waiting to be claimed at the counter.
         "rewards_pending": pending_rewards,
+        # the card still on the phone? (features/card_status) — the receipt
+        # offers to give it back when it is not
+        "card_state": _card_state_of(cid),
         "cycle_restarted": cycles_completed > 0,
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
@@ -5150,6 +5153,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # customer's own phone: it carries the owner key (services/card_owner)
         "card_key": _card_owner.key_for(cust.get("barcode_id", "")),
     }
+
+
+def _card_state_of(customer_id: str) -> Dict[str, Any]:
+    try:
+        from features import card_status as CS
+        return CS.state_of(db.customers.find_one({"id": customer_id}, {"_id": 0, **CS.FIELDS}) or {})
+    except Exception:
+        return {"state": "active", "label": "Active", "at": None}
 
 
 def _rewards_pending(customer_id: str) -> int:
@@ -9723,6 +9734,14 @@ def get_proactive_alerts_multi_store(
                 "scope": "branch" if _sid else "shop"})
     except Exception as _e:
         print(f"alerts: automations hook failed (non-fatal): {_e}")
+
+    # A client deleted their card, or removed it from Apple Wallet (2026-10-09):
+    # said once for the shop, newest first (features/card_status).
+    try:
+        from features import card_status as _CS
+        alerts_combined.extend(_CS.bell_alerts(tid, ids=_S.customer_ids(scope)))
+    except Exception as _e:
+        print(f"alerts: card status hook failed (non-fatal): {_e}")
 
     # Sort by severity only.
     severity_order = {"critical": 0, "warning": 1, "win": 2, "info": 3}
