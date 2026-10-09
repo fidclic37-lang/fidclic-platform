@@ -1911,6 +1911,9 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
                   "updated_at": datetime.now(timezone.utc)},
          "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
         upsert=True)
+    if not existing:
+        # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
+        _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
     return Response(status_code=200 if existing else 201)
 
 

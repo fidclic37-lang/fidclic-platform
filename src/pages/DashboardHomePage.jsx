@@ -399,8 +399,9 @@ export default function DashboardHomePage() {
         </div>
       )}
 
-      {/* Cards that left their client's phone in the last 30 days — a loss
-          the owner must see (user, 2026-10-09); opens them in Clients. */}
+      {/* Cards that left their client's phone in the LAST 24 HOURS — a loss
+          the owner must see (user, 2026-10-09), never older than a day
+          (2026-10-10); opens exactly those clients in Clients. */}
       {d?.cards_lost?.count > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-3.5 rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] px-5 py-4">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FEE2E2] text-[#B91C1C]">
@@ -408,7 +409,7 @@ export default function DashboardHomePage() {
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-[14.5px] font-bold text-[#0B1C3F]">
-              {d.cards_lost.count} carte{d.cards_lost.count > 1 ? 's' : ''} supprimée{d.cards_lost.count > 1 ? 's' : ''} sur {d.cards_lost.days} jours
+              {d.cards_lost.count} carte{d.cards_lost.count > 1 ? 's' : ''} supprimée{d.cards_lost.count > 1 ? 's' : ''} ces dernières 24 h
             </p>
             <p className="text-[13px] text-[#64748B]">
               Ces clients n'ont plus leur carte sur leur téléphone. Proposez-leur de la récupérer : un QR en caisse ou un lien par e-mail.
