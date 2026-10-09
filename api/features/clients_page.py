@@ -394,11 +394,59 @@ SPEND_BANDS = {
 JOINED_BANDS = {"30d": 30, "90d": 90, "1y": 365}
 
 
+# « Plus de filtres » (user, 2026-10-08: the old Clients page's filters,
+# back in the new design): palier, visits, total spent, average basket,
+# postal code, notifications.
+EXTRA_KEYS = ("tier", "visits_min", "visits_max", "spent_min", "spent_max", "basket_min", "postal", "notif")
+
+
+def _num_or_none(v: Any) -> Optional[float]:
+    try:
+        s = str(v).strip().replace(",", ".")
+        return float(s) if s != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extra(tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
+           basket_min: str = "", postal: str = "", notif: str = "") -> Dict[str, Any]:
+    return {"tier": (tier or "").strip().lower(), "visits_min": _num_or_none(visits_min),
+            "visits_max": _num_or_none(visits_max), "spent_min": _num_or_none(spent_min),
+            "spent_max": _num_or_none(spent_max), "basket_min": _num_or_none(basket_min),
+            "postal": "".join(ch for ch in (postal or "") if ch.isdigit())[:5], "notif": (notif or "").strip()}
+
+
+def _extra_if_allowed(tid: str, *args) -> Optional[Dict[str, Any]]:
+    """« Plus de filtres » is CRM avancé, like the other refinements."""
+    try:
+        from features import plan_limits
+        if not plan_limits.allows_tenant(tid, "crm_advanced"):
+            return None
+    except Exception:
+        pass
+    x = _extra(*args)
+    if not any(v not in (None, "") for v in x.values()):
+        return None
+    if x.get("notif") in ("oui", "non"):
+        x["_subscribed"] = _subscribed_ids(tid)
+    return x
+
+
+def _subscribed_ids(tid: str) -> set:
+    try:
+        return {s.get("customer_id") for s in _db.push_subscriptions.find({"tenant_id": tid}, {"_id": 0, "customer_id": 1})}
+    except Exception:
+        return set()
+
+
 def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_ids: set,
               segment: str, status: str, spend: str, joined: str, search: str,
-              rules: Optional[List[Dict[str, Any]]] = None, source: str = "") -> List[Dict[str, Any]]:
+              rules: Optional[List[Dict[str, Any]]] = None, source: str = "",
+              extra: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     rules = rules if rules is not None else R.defaults()
     out = []
+    x = extra or {}
+    subscribed = x.get("_subscribed") if x.get("notif") in ("oui", "non") else None
     needle = (search or "").strip().lower()
     # « Source » (services/sources): the clients who came by one channel —
     # Analyses and the Tableau de bord open their bars here.
@@ -423,6 +471,25 @@ def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_i
         if needle:
             hay = f"{c.get('name') or ''} {c.get('email') or ''} {c.get('phone') or ''} {c.get('barcode_id') or ''}".lower()
             if needle not in hay:
+                continue
+        if x:
+            visits = int(c.get("visits") or 0)
+            spent = float(c.get("total_amount_paid") or 0)
+            if x.get("tier") and (c.get("tier") or "bronze").lower() != x["tier"]:
+                continue
+            if x.get("visits_min") is not None and visits < x["visits_min"]:
+                continue
+            if x.get("visits_max") is not None and visits > x["visits_max"]:
+                continue
+            if x.get("spent_min") is not None and spent < x["spent_min"]:
+                continue
+            if x.get("spent_max") is not None and spent > x["spent_max"]:
+                continue
+            if x.get("basket_min") is not None and (not visits or spent / visits < x["basket_min"]):
+                continue
+            if x.get("postal") and not str(c.get("postal_code") or "").startswith(x["postal"]):
+                continue
+            if subscribed is not None and ((c.get("id") in subscribed) != (x["notif"] == "oui")):
                 continue
         out.append(c)
     return out
@@ -513,6 +580,8 @@ def list_ids(
     joined: str = "",
     search: str = "",
     source: str = "",
+    tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
+    basket_min: str = "", postal: str = "", notif: str = "",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
@@ -527,7 +596,8 @@ def list_ids(
     at = _now()
     rows = _load(tid, _scope(token_data, request))
     rows = _filtered(rows, at, _shop_average_ticket(rows), _local_ids(tid, rows),
-                     segment, status, spend, joined, search, R.load(tid), source=source)
+                     segment, status, spend, joined, search, R.load(tid), source=source,
+                     extra=_extra_if_allowed(tid, tier, visits_min, visits_max, spent_min, spent_max, basket_min, postal, notif))
     return {"ids": [c["id"] for c in rows], "total": len(rows)}
 
 
@@ -539,6 +609,8 @@ def list_page(
     joined: str = "",
     search: str = "",
     source: str = "",
+    tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
+    basket_min: str = "", postal: str = "", notif: str = "",
     sort: str = "recent",
     page: int = 1,
     per_page: int = 10,
@@ -561,7 +633,8 @@ def list_page(
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
-    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source)
+    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source,
+                     extra=_extra_if_allowed(tid, tier, visits_min, visits_max, spent_min, spent_max, basket_min, postal, notif))
 
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
@@ -593,6 +666,8 @@ def _paris_day(iso: Optional[str]) -> str:
 def export_clients(
     segment: str = "all", status: str = "", spend: str = "", joined: str = "",
     search: str = "", sort: str = "recent", source: str = "",
+    tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
+    basket_min: str = "", postal: str = "", notif: str = "",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
@@ -603,7 +678,8 @@ def export_clients(
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
-    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source)
+    rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source,
+                     extra=_extra_if_allowed(tid, tier, visits_min, visits_max, spent_min, spent_max, basket_min, postal, notif))
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
 
