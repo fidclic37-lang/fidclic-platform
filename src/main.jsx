@@ -10,7 +10,14 @@ import App from './App.jsx';
 // state in step.
 if (typeof document !== 'undefined' && typeof HTMLInputElement === 'function') {
   const nativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
-  const numeric = (el) => el instanceof HTMLInputElement
+  // Codes are not quantities (2026-10-09): a postal code (06000 Nice), a
+  // one-time code (012345), a SIRET or a phone number keeps its zeros. They
+  // are recognised by their autocomplete, a fixed length (maxlength), or an
+  // explicit data-keep-zeros.
+  const KEEP = ['one-time-code', 'postal-code', 'tel', 'tel-national'];
+  const isCode = (el) => el.hasAttribute('data-keep-zeros') || el.maxLength > 0
+    || KEEP.includes((el.getAttribute('autocomplete') || '').toLowerCase());
+  const numeric = (el) => el instanceof HTMLInputElement && !isCode(el)
     && (el.type === 'number' || ['numeric', 'decimal'].includes((el.getAttribute('inputmode') || '').toLowerCase()));
   document.addEventListener('input', (e) => {
     const el = e.target;

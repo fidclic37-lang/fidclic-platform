@@ -10,6 +10,7 @@ import { LEGAL_LINKS } from '../lib/legal';
 import { onboardingPath } from '../lib/onboarding';
 import { authAPI } from '../lib/api';
 import { OWNER_HOME } from '../lib/modules';
+import PhoneField, { phoneValueError } from '../components/PhoneField';
 
 /**
  * RegisterPage — step 1 of 3 ("Vos informations"), from the approved mockup:
@@ -29,13 +30,12 @@ const Field = ({ icon: Icon, children, trailing }) => (
 );
 const INPUT = 'w-full bg-transparent px-4 py-3 text-[15px] text-[#0F172A] outline-none placeholder:text-[#94A3B8]';
 const Label = ({ children }) => <label className="mb-1.5 block text-[14px] font-semibold text-[#0B1C3F]">{children} *</label>;
-const PREFIXES = [['+33', '🇫🇷'], ['+32', '🇧🇪'], ['+41', '🇨🇭'], ['+352', '🇱🇺'], ['+1', '🇨🇦']];
 
 const RegisterPage = () => {
   const { t } = useTranslation();
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ last_name: '', first_name: '', prefix: '+33', phone: '', email: '', password: '', accepted_terms: false });
+  const [form, setForm] = useState({ last_name: '', first_name: '', phone: '', email: '', password: '', accepted_terms: false });
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -58,7 +58,9 @@ const RegisterPage = () => {
     if (!form.first_name.trim()) return setError(t('auth.first_name_required'));
     if (!form.phone.trim())      return setError(t('signup.phone_required'));
     if (!form.email.trim())      return setError(t('auth.email_required'));
-    if (!/^[0-9 .-]{6,16}$/.test(form.phone.trim())) return setError(t('signup.phone_invalid'));
+    // digits only; France 0 + 9 digits; abroad a country from the list (user, 2026-10-09)
+    const phoneErr = phoneValueError(form.phone);
+    if (phoneErr) return setError(phoneErr);
     const mc = mailCheck || await checkEmail();
     if (mc && !mc.ok) return setError(mc.reason);
     if (!passwordValid(form.password)) {
@@ -68,8 +70,7 @@ const RegisterPage = () => {
     if (!form.accepted_terms) return setError(t('auth.terms_required'));
     setLoading(true);
     try {
-      const { prefix, phone, ...rest } = form;
-      const session = await register({ ...rest, phone: `${prefix} ${phone.trim()}`, role: 'business_owner' });
+      const session = await register({ ...form, role: 'business_owner' });
       navigate(onboardingPath({ role: 'business_owner', ...session }) || OWNER_HOME);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || t('auth.register_failed'));
@@ -93,11 +94,9 @@ const RegisterPage = () => {
         </div>
         <div><Label>{t('auth.phone')}</Label>
           <Field icon={Phone}>
-            <select value={form.prefix} onChange={set('prefix')} aria-label="Indicatif"
-                    className="shrink-0 cursor-pointer border-r border-[#EEF2F9] bg-transparent px-3 text-[14px] font-semibold text-[#0B1C3F] outline-none">
-              {PREFIXES.map(([p, f]) => <option key={p} value={p}>{f} {p}</option>)}
-            </select>
-            <input required type="tel" autoComplete="tel-national" placeholder={t('signup.phone_placeholder')} className={INPUT} value={form.phone} onChange={set('phone')} />
+            <PhoneField required value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: v }))}
+                        selectClassName="shrink-0 cursor-pointer border-r border-[#EEF2F9] bg-transparent px-2 text-[14px] font-semibold text-[#0B1C3F] outline-none"
+                        inputClassName={INPUT} />
           </Field></div>
         <div><Label>{t('auth.email')}</Label>
           <Field icon={Mail}><input required type="email" autoComplete="email" placeholder="votre@email.com" className={INPUT} value={form.email} onChange={set('email')} onBlur={() => checkEmail()} aria-invalid={mailCheck && !mailCheck.ok ? 'true' : undefined} /></Field>

@@ -332,7 +332,7 @@ export default function SecuritePage() {
           <p className="mb-3 text-[13.5px] text-[#475569]">Pour la désactiver, confirmez avec votre mot de passe et un code de votre application (ou un code de secours).</p>
           <div className="space-y-3">
             {d.me.has_password && <label className="block text-[13px]">Mot de passe<input type="password" className={inputCls} value={form.pw || ''} onChange={(e) => setForm({ ...form, pw: e.target.value })} /></label>}
-            <label className="block text-[13px]">Code<input inputMode="numeric" className={inputCls} value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} /></label>
+            <label className="block text-[13px]">Code<input inputMode="numeric" data-keep-zeros="" className={inputCls} value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value })} /></label>
             {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
             <button type="button" disabled={busy === 'disable'} onClick={() => run('disable', () => ownerAPI.totpDisable(form.pw || '', form.code || ''), 'Double authentification désactivée.')}
                     className="w-full rounded-xl border border-[#E11D48] py-2.5 text-[14px] font-medium text-[#E11D48]">Désactiver la double authentification</button>
