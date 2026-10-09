@@ -709,7 +709,7 @@ export default function ClientsPage() {
                       <span className="flex items-center gap-3">
                         <Avatar initials={r.initials} tier={r.tier} />
                         <span className="min-w-0">
-                          <span className="block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
+                          <span translate="no" className="notranslate block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
                           <span className="block truncate text-[11.5px] text-[#94A3B8]">
                             {r.email || r.phone || '—'}{r.source && r.source !== 'none' ? ` · via ${r.source_label}` : ''}
                           </span>

@@ -160,6 +160,19 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAR
 // re-fetching anything.
 const ORIGINAL = Symbol('ft.original');
 
+// Names are data, not words (QA F08, 2026-10-08: in Arabic the business
+// « ok » became « حسنا »). The layout hands over the business, its
+// establishments and the signed-in person; a text that is exactly one of
+// them is never translated. Lists of customers / products mark their
+// cells translate="no" instead.
+const PROTECTED = new Set();
+export function protectNames(names) {
+  (names || []).forEach((n) => {
+    const t = String(n || '').trim().toLowerCase();
+    if (t) PROTECTED.add(t);
+  });
+}
+
 function shouldTranslateNode(node) {
   const txt = node.nodeValue;
   if (!txt) return false;
@@ -168,6 +181,7 @@ function shouldTranslateNode(node) {
   // Skip pure numerics / dates / currencies / barcodes.
   if (/^[\d\s.,€$%+\-*/:_/()]+$/.test(trimmed)) return false;
   if (/^FT-[A-Z0-9]+$/i.test(trimmed)) return false;
+  if (PROTECTED.has(trimmed.toLowerCase())) return false;
   let p = node.parentElement;
   const root = node.ownerDocument && node.ownerDocument.documentElement;
   // An opt-out on <html> itself is about the BROWSER's translation, never

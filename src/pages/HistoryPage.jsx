@@ -443,7 +443,7 @@ export default function HistoryPage() {
                               style={{ background: av.bg, color: av.fg }}>
                           {r.initials}
                         </span>
-                        <span className="truncate text-[13px] font-medium text-[#0B1C3F]">{r.customer_name}</span>
+                        <span translate="no" className="notranslate truncate text-[13px] font-medium text-[#0B1C3F]">{r.customer_name}</span>
                       </span>
                     </td>
                     <td className="px-4 py-3">
