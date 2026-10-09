@@ -6050,22 +6050,31 @@ class JoinRequest(BaseModel):
     # is not.
     parrain_barcode: Optional[str] = None
 
-def _check_join_fields(req: "JoinRequest") -> None:
+def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> None:
     """What the signup form says, checked by the server too (QA UX10,
     2026-10-08: « abc », « ABCDE » and « 13-99 » were never refused here —
     only the browser stood in the way). French messages naming the field;
-    the same rules as the shop's « Modifier la fiche » (services/customer_fields)."""
+    the same rules as the shop's « Modifier la fiche » (services/customer_fields).
+
+    `profile_optional`: the merchant API (POST /api/v1/customers) documents
+    postal code and birthday as optional — a till rarely has them. They are
+    still checked when given. Requiring them there broke every API signup
+    without a postal code (found 2026-10-09)."""
     from services import customer_fields as CF
     req.name = CF.name(req.name)
     req.phone = CF.phone(req.phone)
-    req.postal_code = CF.postal_code(req.postal_code)
-    req.birthday = CF.birthday(req.birthday)
+    if req.postal_code or not profile_optional:
+        req.postal_code = CF.postal_code(req.postal_code)
+    if req.birthday or not profile_optional:
+        req.birthday = CF.birthday(req.birthday)
     req.email = CF.email(req.email)
 
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
-    _check_join_fields(req)
+    # Only in-process callers (the merchant API) come without a request: the
+    # public page always has one, so it can never skip the profile fields.
+    _check_join_fields(req, profile_optional=request is None)
     # Where they came from (services/sources): the channel of the link they
     # opened, or their own answer — never a guess. An unknown word used to be
     # filed as « QR code en magasin », so a WhatsApp signup read as an in-store

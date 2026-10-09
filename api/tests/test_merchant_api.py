@@ -95,6 +95,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     c = r.json()
     check("customer created with a card number and card link", r.status_code == 201 and c["card_number"].startswith("FT-") and f"/card/{c['card_number']}?k=" in c["card_url"])   # the owner's link (services/card_owner)
     check("same phone again → the same card", http("POST", "/api/v1/customers", key=KEY, json={"name": "Inès F.", "phone": "0612345678", "consent": True}).json()["id"] == c["id"])
+    bad = http("POST", "/api/v1/customers", key=KEY, json={"name": "Bad", "phone": "0611112222", "postal_code": "ABC", "consent": True})
+    check("postal code optional on the API, but checked when given", bad.status_code == 400)
+    pub = http("POST", "/api/join/" + db.tenants.find_one({"id": "t1"})["slug"],
+               json={"name": "Page", "phone": "0611113333", "birthday": "01-02", "consent": True})
+    check("the public signup page still requires it", pub.status_code in (400, 422))
     check("read-only key cannot write", http("POST", "/api/v1/customers", key=RO, json={"name": "X", "phone": "0600000000", "consent": True}).status_code == 403)
     check("find by phone in any format", http("GET", "/api/v1/customers/+33612345678", key=RO).json()["id"] == c["id"])
     check("find by card number", http("GET", f"/api/v1/customers/{c['card_number'].lower()}", key=RO).json()["id"] == c["id"])
