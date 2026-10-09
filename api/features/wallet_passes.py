@@ -1064,6 +1064,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
     stamps = min(threshold, int(card.get("stamps_earned") if card.get("stamps_earned") is not None else visits // visits_per_stamp))
     remaining = threshold - stamps
+    pending = max(0, int(cust.get("rewards_pending") or 0))
     # The card page shows the customer's points balance (1 800 pts). The pass
     # used to show a figure derived from the current cycle, so the same
     # customer read 1 800 on the web and 100 in Wallet. One number, one source.
@@ -1133,6 +1134,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         {"key": "next_reward", "label": "Prochaine récompense",
          "value": "Récompense débloquée : présentez votre carte !" if remaining <= 0
          else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}"},
+        # a full card restarts on the next visit; its reward stays valid
+        # until handed over (user, 2026-10-09)
+        {"key": "pending_rewards", "label": "Récompense à récupérer",
+         "value": (f"{pending} récompense{'s' if pending > 1 else ''} à récupérer : {reward}. "
+                   "Présentez votre carte en caisse.") if pending else "Aucune pour le moment.",
+         "changeMessage": "%@"},
         {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
         {"key": "card", "label": "Ma carte en ligne", "value": CO.owner_url(_site_url(), serial)},
     ]
@@ -2326,7 +2333,7 @@ def google_save_url(payload: Dict[str, Any]) -> str:
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
 # the birthday message. Google allows 3 notifying messages per card per 24 h;
 # past that the message still lands in the card, silently.
-GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage"}
+GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward"}
 
 
 def _gw_reason(body: Dict[str, Any]) -> str:
@@ -2340,7 +2347,7 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
     Apple pulls a changed pass after a push; Google does not — the server has
     to send the new object itself. Called wherever Apple passes are woken
     (scan, redemption, campaign, card design), so both wallets move together.
-    `notify` ("campaign" | "reward" | {"kind": "birthday" | "parrainage", "header", "body"})
+    `notify` ("campaign" | "reward" | {"kind": "birthday" | "parrainage" | "near_reward", "header", "body"})
     adds a TEXT_AND_NOTIFY message; anything
     else updates the card without a notification. `update_class`: the design
     changed (colours, logo, name) — only then is the class sent again."""
@@ -2375,8 +2382,9 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
                 obj["messages"] = []                   # sent below, with the notification
-            elif kind in ("birthday", "parrainage"):
-                head = (notify.get("header") or ("Joyeux anniversaire !" if kind == "birthday" else "Parrainage")).strip()
+            elif kind in ("birthday", "parrainage", "near_reward"):
+                head = (notify.get("header") or {"birthday": "Joyeux anniversaire !", "parrainage": "Parrainage",
+                                                 "near_reward": "Vous y êtes presque !"}[kind]).strip()
                 message = {"id": f"{kind}-{int(time.time())}", "header": head[:60],
                            "body": ((notify.get("body") or "").strip() or head)[:300]}
             elif kind == "reward":

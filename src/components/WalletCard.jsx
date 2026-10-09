@@ -2,6 +2,7 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from './Code128Barcode';
 import { deriveCardTheme } from '../lib/cardTheme';
+import { cycleVisits } from '../lib/cardCycle';
 
 /**
  * WalletCard — the wallet-anatomy render (layout_style: "wallet").
@@ -75,14 +76,15 @@ export default function WalletCard({ customer, tenant, card = {}, compact = fals
     || parseInt(card.reward_threshold_stamps, 10) || 10);
   const pointsPerVisit = parseInt(card.points_per_visit, 10) || 10;
   const visitsPerStamp = Math.max(1, parseInt(card.visits_per_stamp, 10) || 1);
-  const stamps = Math.min(threshold, Math.floor(visits / visitsPerStamp));
+  const onCard = cycleVisits(customer);          // THIS card (lib/cardCycle)
+  const stamps = Math.min(threshold, Math.floor(onCard / visitsPerStamp));
   const remaining = threshold - stamps;
 
   const meterMax = threshold * visitsPerStamp * pointsPerVisit;
   // Cap the DISPLAYED figure at the cycle max: a customer past the reward
   // threshold was rendering "180 / 100", which reads as a broken counter
   // rather than an overflowing one (caught on the live Café Lumière card).
-  const earnedPoints = Math.min(visits * pointsPerVisit, meterMax);
+  const earnedPoints = Math.min(onCard * pointsPerVisit, meterMax);
   const meterPct = meterMax > 0 ? Math.max(0, Math.min(100, (earnedPoints / meterMax) * 100)) : 0;
 
   // ---- offer chip (the per-segment overlay's new, calmer home) -----------

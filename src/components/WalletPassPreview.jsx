@@ -2,6 +2,7 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from './Code128Barcode';
 import { deriveCardTheme } from '../lib/cardTheme';
+import { cycleVisits } from '../lib/cardCycle';
 
 /**
  * WalletPassPreview — a pkpass-FAITHFUL render of the merchant's card, shown
@@ -47,10 +48,11 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
     || parseInt(card.reward_threshold_stamps, 10) || 10);
   const pointsPerVisit = parseInt(card.points_per_visit, 10) || 10;
   const visitsPerStamp = Math.max(1, parseInt(card.visits_per_stamp, 10) || 1);
-  const stamps = Math.min(threshold, Math.floor(visits / visitsPerStamp));
+  const onCard = cycleVisits(customer);          // THIS card (lib/cardCycle)
+  const stamps = Math.min(threshold, Math.floor(onCard / visitsPerStamp));
   const remaining = threshold - stamps;
   const meterMax = threshold * visitsPerStamp * pointsPerVisit;
-  const earned = Math.min(visits * pointsPerVisit, meterMax);
+  const earned = Math.min(onCard * pointsPerVisit, meterMax);
   const tierKey = (customer?.tier || 'bronze').toLowerCase();
   const tierLabels = { bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' };
   const barcodeId = customer?.barcode_id || '';

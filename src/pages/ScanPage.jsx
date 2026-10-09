@@ -518,6 +518,7 @@ const ScanPage = () => {
       const stampsRequired = customerData.reward_threshold ?? 10;
       const canRedeem = !!customerData.reward_unlocked;
 
+      setRedeemDone(false);                     // a new receipt, a new customer
       setScanResult({
         customer_id: customerData.id,
         barcode_id: customerData.barcode_id,
@@ -526,6 +527,8 @@ const ScanPage = () => {
         stamps_current: stampsCurrent,
         stamps_required: stampsRequired,
         reward_unlocked: canRedeem,
+        // full cards not yet handed over — still valid (user, 2026-10-09)
+        rewards_pending: customerData.rewards_pending || 0,
         // Backend now returns these so the cashier sees tier-up celebrations.
         tier: customerData.tier || null,
         previous_tier: customerData.previous_tier || null,
@@ -992,22 +995,34 @@ const ScanPage = () => {
                   </div>
                 )}
 
-                {/* Reward Unlocked Banner — now with a live "Mark as redeemed" action */}
-                {scanResult.reward_unlocked && (
+                {/* Rewards to hand over: the card just completed (10/10) and
+                    any earlier full card not yet claimed — the meter restarts
+                    on the next visit, the reward stays valid (user, 2026-10-09). */}
+                {(scanResult.reward_unlocked || scanResult.rewards_pending > 0 || redeemDone) && (() => {
+                  const toGive = (scanResult.reward_unlocked ? 1 : 0) + (scanResult.rewards_pending || 0);
+                  return (
                   <div className="bg-[#0F8B58] text-white p-6 rounded-lg mb-6">
                     <div className="text-center mb-4">
-                      <p className="text-2xl font-bold mb-1">{t('scan.reward_unlocked')}</p>
+                      <p className="text-2xl font-bold mb-1">
+                        {scanResult.reward_unlocked ? t('scan.reward_unlocked')
+                          : toGive > 1 ? `🎁 ${toGive} récompenses en attente` : '🎁 Récompense en attente'}
+                      </p>
                       <p className="text-sm opacity-90">
-                        {t('scan.reward_subtitle', { name: scanResult.customer_name || t('scan.this_customer') })}
+                        {scanResult.reward_unlocked
+                          ? t('scan.reward_subtitle', { name: scanResult.customer_name || t('scan.this_customer') })
+                          : toGive > 0
+                            ? `${scanResult.customer_name || t('scan.this_customer')} a complété une carte sans récupérer sa récompense. Elle reste valable ; la nouvelle carte continue (${scanResult.stamps_current}/${scanResult.stamps_required}).`
+                            : ''}
                       </p>
                     </div>
-                    {redeemDone ? (
-                      <div className="bg-white/10 rounded-lg p-3 text-center">
+                    {redeemDone && (
+                      <div className="bg-white/10 rounded-lg p-3 text-center mb-3">
                         <p className="font-bold flex items-center justify-center gap-2">
-                          <CheckCircle2 size={18} /> {t('scan.reward_redeemed')}
+                          <CheckCircle2 size={18} /> Récompense remise et enregistrée.
                         </p>
                       </div>
-                    ) : (
+                    )}
+                    {toGive > 0 && (
                       <button
                         type="button"
                         onClick={async () => {
@@ -1019,9 +1034,13 @@ const ScanPage = () => {
                               reward_name: 'Loyalty reward',
                               branch_id: scanResult.branch_id || undefined,
                             });
+                            // the server hands over the oldest waiting card first
+                            setScanResult((r) => (r.rewards_pending > 0
+                              ? { ...r, rewards_pending: r.rewards_pending - 1 }
+                              : { ...r, reward_unlocked: false }));
                             setRedeemDone(true);
                           } catch (e) {
-                            alert('Failed to redeem: ' + (e?.response?.data?.detail || e.message));
+                            alert('Échec : ' + (e?.response?.data?.detail || e.message));
                           } finally {
                             setRedeemLoading(false);
                           }
@@ -1033,11 +1052,16 @@ const ScanPage = () => {
                         {redeemLoading ? t('scan.redeeming') : t('scan.give_reward')}
                       </button>
                     )}
-                    <p className="text-xs text-white/80 text-center mt-3">
-                      {t('scan.redeem_hint')}
-                    </p>
+                    {toGive > 0 && (
+                      <p className="text-xs text-white/80 text-center mt-3">
+                        {scanResult.rewards_pending > 0
+                          ? 'Enregistre la remise. La carte en cours garde ses tampons.'
+                          : t('scan.redeem_hint')}
+                      </p>
+                    )}
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Tier Upgrade Celebration — fires when scan_visit returns tier_upgraded:true */}
                 {scanResult.tier_upgraded && scanResult.tier && (

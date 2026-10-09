@@ -47,11 +47,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the second waits for tomorrow, not lost",
           r2.get("deferred") is True and db.deferred_messages.count_documents({"status": "waiting"}) == 1)
     check("only one reached the client today", [t for c, t in out if c == "c1"] == ["Campagne A"])
-    for kind in ("welcome", "near_reward", "reward_unlocked", "google_review"):
+    for kind in ("welcome", "reward_unlocked", "google_review"):
         server.dispatch_to_customer("t1", c1, kind, "…", kind=kind)
     check("what follows the client's own action is never held",
-          {"welcome", "near_reward", "reward_unlocked", "google_review"} <= {t for c, t in out if c == "c1"})
+          {"welcome", "reward_unlocked", "google_review"} <= {t for c, t in out if c == "c1"})
     check("… nor counted", db.send_counter.count_documents({"customer_id": "c1"}) == 1)
+    rn = server.dispatch_to_customer("t1", c1, "near_reward", "…", kind="near_reward")
+    check("« Récompense proche » counts (user, 2026-10-09): over the limit it waits for tomorrow",
+          rn.get("deferred") is True and "near_reward" not in {t for c, t in out if c == "c1"})
+    db.deferred_messages.delete_many({"kind": "near_reward"})
 
     print("\nThe next day, most important first")
     server.dispatch_to_customer("t1", c1, "IA", "…", kind="copilot")

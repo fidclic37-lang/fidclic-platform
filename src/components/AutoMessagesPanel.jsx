@@ -199,7 +199,7 @@ export default function AutoMessagesPanel({ canEdit, onEditScenario }) {
             <div><Label>Titre</Label><input className={inputCls} maxLength={120} value={n.title} onChange={(e) => setN({ ...n, title: e.target.value })} /></div>
             <div><Label>Message</Label><textarea className={`${inputCls} min-h-[64px] resize-y`} maxLength={400} value={n.body}
                                                  onChange={(e) => setN({ ...n, body: e.target.value })} />
-              <p className="mt-1 text-[11px] text-[#94A3B8]">{'{first_name}, {visits_left}, {reward} et {business_name} sont remplacés.'}</p></div>
+              <p className="mt-1 text-[11px] text-[#94A3B8]">{'{first_name}, {visits_left}, {visites} (visite ou visites), {reward} et {business_name} sont remplacés.'}</p></div>
           </fieldset>
           <SaveBtn k="near_reward" onClick={() => save('near_reward', {
             enabled: n.enabled, visits_left: n.visits_left, title: n.title, body: n.body })} />
