@@ -147,6 +147,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("latest pass bad auth → 401", status(WP.latest_pass, "pass.com.fidclic.test", "FT-TEST0001", "ApplePass x")[0] == 401)
     check("unregister → 200", status(WP.unregister_device, "dev1", "pass.com.fidclic.test", "FT-TEST0001", hdr)[0] == 200)
     check("no registrations → 204", status(WP.serials_for_device, "dev1", "pass.com.fidclic.test", None)[0] == 204)
+    # Clients › Carte (2026-10-10): removed, then put back in Apple Wallet → Active
+    from features import card_status as _CS
+    gone = db.customers.find_one({"barcode_id": "FT-TEST0001"})
+    check("the last Wallet removing it marks the card « Retirée »", _CS.state_of(gone)["state"] == "wallet_removed")
+    time.sleep(0.01)
+    status(WP.register_device, "dev2", "pass.com.fidclic.test", "FT-TEST0001", reg, hdr)
+    back = db.customers.find_one({"barcode_id": "FT-TEST0001"})
+    check("added to a Wallet again: the card reads « Active »", back.get("wallet_added_at") and _CS.state_of(back)["state"] == "active")
+    status(WP.unregister_device, "dev2", "pass.com.fidclic.test", "FT-TEST0001", hdr)
 
     # ---- banner (strip) layout ------------------------------------------
     # 1×1 pixel JPEG stand-in for the merchant's artwork.

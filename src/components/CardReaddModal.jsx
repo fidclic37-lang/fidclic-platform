@@ -28,7 +28,8 @@ export function CardStateBadge({ card, compact = false }) {
   return (
     <span title={card.at ? `Depuis le ${when(card.at)}` : undefined}
           className="inline-flex items-center gap-1 rounded-md bg-[#FEF2F2] px-2 py-0.5 text-[11px] font-semibold text-[#B91C1C]">
-      {card.state === 'deleted' ? 'Carte supprimée' : 'Retirée d’Apple Wallet'}
+      {card.state === 'deleted' ? 'Carte supprimée'
+        : card.state === 'google_removed' ? 'Retirée de Google Wallet' : 'Retirée d’Apple Wallet'}
       {card.at && !compact ? ` · ${new Date(card.at).toLocaleDateString('fr-FR')}` : ''}
     </span>
   );

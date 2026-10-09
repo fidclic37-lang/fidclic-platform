@@ -965,7 +965,8 @@ const ScanPage = () => {
                 {scanResult.card_state && scanResult.card_state.state !== 'active' && (
                   <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] p-4">
                     <p className="text-sm text-[#7F1D1D]">
-                      <strong>{scanResult.card_state.state === 'deleted' ? 'Carte supprimée' : 'Carte retirée d’Apple Wallet'}.</strong>{' '}
+                      <strong>{scanResult.card_state.state === 'deleted' ? 'Carte supprimée'
+                        : scanResult.card_state.state === 'google_removed' ? 'Carte retirée de Google Wallet' : 'Carte retirée d’Apple Wallet'}.</strong>{' '}
                       {scanResult.customer_name || t('scan.this_customer')} n’a plus sa carte sur son téléphone.
                     </p>
                     <button type="button" onClick={() => setReadd({ customerId: scanResult.customer_id })}

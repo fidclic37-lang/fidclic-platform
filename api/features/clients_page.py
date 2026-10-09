@@ -313,7 +313,8 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
           "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
-          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1,
+          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1,
+          "google_removed_at": 1, "google_added_at": 1,
           # the card's meter, apart from visits (QA R5 F22): stamps on the
           # current card, those added by hand and those of a paper card
           "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1}
@@ -473,12 +474,12 @@ def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_i
     from services import sources as SRC
     want_source = source if source in SRC.SOURCES or source == SRC.UNKNOWN else ""
     from features import card_status as CS
-    want_card = card if card in ("active", "deleted") else ""
+    want_card = card if card in ("active", "deleted", "recent") else ""
     for c in rows:
         if want_source and SRC.key_of(c) != want_source:
             continue
         # every plan: knowing who lost their card is not segmentation
-        if want_card and not CS.matches(c, want_card):
+        if want_card and not CS.matches(c, want_card, at):
             continue
         if segment and segment != "all" and not _matches_segment(segment, c, at, shop_avg, local_ids, rules):
             continue

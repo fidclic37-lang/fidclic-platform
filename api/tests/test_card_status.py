@@ -58,12 +58,16 @@ def main():
         {"id": "a", "tenant_id": "t1", "barcode_id": "FT-AAAA0001", "name": "Anna Petit", "phone": "0611111111",
          "email": "anna@exemple.fr", "visits": 3, "created_at": now},
         {"id": "b", "tenant_id": "t1", "barcode_id": "FT-BBBB0002", "name": "Bruno Roy", "phone": "0622222222",
-         "visits": 5, "created_at": now, "card_deleted_at": now - dt.timedelta(days=2)},
+         "visits": 5, "created_at": now, "card_deleted_at": now - dt.timedelta(hours=3)},
         {"id": "c", "tenant_id": "t1", "barcode_id": "FT-CCCC0003", "name": "Clara Diaz", "phone": "0633333333",
-         "email": "clara@exemple.fr", "visits": 7, "created_at": now, "wallet_removed_at": now - dt.timedelta(days=1)},
+         "email": "clara@exemple.fr", "visits": 7, "created_at": now, "wallet_removed_at": now - dt.timedelta(hours=30)},
         {"id": "d", "tenant_id": "t1", "barcode_id": "FT-DDDD0004", "name": "Dina Kay", "phone": "0644444444",
          "visits": 2, "created_at": now, "wallet_removed_at": now - dt.timedelta(days=5),
          "card_claimed_at": now - dt.timedelta(days=4)},
+        # removed from Apple Wallet, then added to it again (2026-10-10)
+        {"id": "e", "tenant_id": "t1", "barcode_id": "FT-EEEE0005", "name": "Eva Lune", "phone": "0655555555",
+         "visits": 1, "created_at": now, "wallet_removed_at": now - dt.timedelta(hours=2),
+         "wallet_added_at": now - dt.timedelta(hours=1)},
     ])
 
     print("1. Le statut de la carte, dans Clients")
@@ -75,18 +79,22 @@ def main():
     ids = set(http("GET", "/api/owner/clients/ids?card=deleted", headers=O).json()["ids"])
     check("filter « Carte supprimée » → Bruno and Clara", ids == {"b", "c"})
     ids = set(http("GET", "/api/owner/clients/ids?card=active", headers=O).json()["ids"])
-    check("filter « Carte active » → Anna and Dina", ids == {"a", "d"})
+    check("filter « Carte active » → Anna, Dina and Eva", ids == {"a", "d", "e"})
+    check("Eva, put back in Apple Wallet: Active again", rows["e"]["card"]["state"] == "active")
+    ids = set(http("GET", "/api/owner/clients/ids?card=recent", headers=O).json()["ids"])
+    check("filter « Supprimée (24 h) » → Bruno only (Clara was 30 h ago)", ids == {"b"})
     csv = http("GET", "/api/owner/clients/export?card=deleted", headers=O).text
     check("the export says it too", "Carte" in csv.splitlines()[0] and "Supprimée" in csv)
 
     print("\n2. La cloche et le tableau de bord")
     bell = http("GET", "/api/owner/insights/alerts/multi-store", headers=O).json()["alerts"]
     titles = [a["title"] for a in bell if str(a.get("id", "")).startswith("card-lost:")]
-    check(f"the bell: « Bruno R. a supprimé sa carte » and Clara's removal ({titles})",
-          "Bruno R. a supprimé sa carte" in titles and "Clara D. a retiré sa carte d'Apple Wallet" in titles)
+    check(f"the bell: « Bruno R. a supprimé sa carte », not Clara's of 30 h ago ({titles})",
+          titles == ["Bruno R. a supprimé sa carte"])
     home = http("GET", "/api/owner/home/overview", headers=O).json()
-    check("the dashboard counts 2 lost cards in 30 days, linking to the filter",
-          home.get("cards_lost", {}).get("count") == 2 and home["cards_lost"]["href"].endswith("card=deleted"))
+    check("the dashboard banner: 1 card lost in the last 24 h, linking to exactly those",
+          home.get("cards_lost", {}).get("count") == 1 and home["cards_lost"]["hours"] == 24
+          and home["cards_lost"]["href"].endswith("card=recent"))
 
     print("\n3. Récupérer la carte : QR en caisse")
     r = http("POST", "/api/owner/card-readd/find", headers=ST, json={"phone": "06 22 22 22 22"})
