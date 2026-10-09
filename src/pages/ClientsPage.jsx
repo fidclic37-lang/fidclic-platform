@@ -165,7 +165,7 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
               {nf(count)} client{count > 1 ? 's' : ''} recevront ce message.
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-[#94A3B8] hover:text-[#334155]">
+          <button type="button" onClick={onClose} aria-label="Fermer" title="Fermer" className="text-[#94A3B8] hover:text-[#334155]">
             <X size={18} />
           </button>
         </div>
@@ -539,10 +539,12 @@ export default function ClientsPage() {
                      placeholder="Nom du segment" maxLength={60}
                      className="w-44 rounded-full border border-[#2F6BFF] px-3 py-1 text-[12px] outline-none" />
               <button type="button" onClick={saveCurrent} disabled={!segName.trim()}
+                      aria-label="Enregistrer ce filtre" title="Enregistrer ce filtre"
                       className="rounded-full bg-[#2F6BFF] p-1.5 text-white disabled:opacity-40">
                 <Check size={12} />
               </button>
               <button type="button" onClick={() => { setNaming(false); setSegName(''); }}
+                      aria-label="Annuler l'enregistrement du filtre" title="Annuler"
                       className="rounded-full p-1.5 text-[#94A3B8] hover:text-[#334155]">
                 <X size={12} />
               </button>

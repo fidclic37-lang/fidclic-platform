@@ -403,16 +403,37 @@ const JoinPage = () => {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('auth.phone')}</label>
-              <input required type="tel" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+              <input required type="tel" inputMode="tel" autoComplete="tel" pattern="[0-9 ()+.\-]{9,25}"
+                     title="Un numéro de téléphone, par exemple 06 12 34 56 78"
+                     className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_1.4fr]">
               <div>
                 <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.postal_code')}</label>
-                <input required type="text" inputMode="numeric" maxLength={5} className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.postal_code} onChange={e => setFormData({...formData, postal_code: e.target.value})} />
+                <input required type="text" inputMode="numeric" autoComplete="postal-code" maxLength={5} pattern="[0-9]{5}"
+                       title="5 chiffres, par exemple 37000"
+                       className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.postal_code}
+                       onChange={e => setFormData({...formData, postal_code: e.target.value.replace(/\D/g, '').slice(0, 5)})} />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.birthday')}</label>
-                <input required type="text" placeholder="MM-DD" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.birthday} onChange={e => setFormData({...formData, birthday: e.target.value})} />
+                {/* day, then month — the French way, and never an impossible date (QA UX10) */}
+                <div className="flex gap-2">
+                  <select required aria-label="Jour de naissance" className="w-1/2 border border-[#E7E5E4] rounded-lg p-3 bg-white focus:ring-[#B85C38]/20 focus:border-[#B85C38]"
+                          value={(formData.birthday.split('-')[1]) || ''}
+                          onChange={e => { const m = formData.birthday.split('-')[0] || ''; setFormData({...formData, birthday: `${m}-${e.target.value}`}); }}>
+                    <option value="">Jour</option>
+                    {Array.from({ length: [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][(Number(formData.birthday.split('-')[0]) || 1) - 1] }, (_, i) => String(i + 1).padStart(2, '0'))
+                      .map((d) => <option key={d} value={d}>{Number(d)}</option>)}
+                  </select>
+                  <select required aria-label="Mois de naissance" className="w-1/2 border border-[#E7E5E4] rounded-lg p-3 bg-white focus:ring-[#B85C38]/20 focus:border-[#B85C38]"
+                          value={formData.birthday.split('-')[0] || ''}
+                          onChange={e => { const dd = formData.birthday.split('-')[1] || ''; const max = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][Number(e.target.value) - 1] || 31; setFormData({...formData, birthday: `${e.target.value}-${dd && Number(dd) > max ? String(max).padStart(2, '0') : dd}`}); }}>
+                    <option value="">Mois</option>
+                    {['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
+                      .map((m, i) => <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
             {lockedSource || parrainBarcode ? (

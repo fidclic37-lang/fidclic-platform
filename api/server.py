@@ -6023,8 +6023,38 @@ class JoinRequest(BaseModel):
     # is not.
     parrain_barcode: Optional[str] = None
 
+def _check_join_fields(req: "JoinRequest") -> None:
+    """What the signup form says, checked by the server too (QA UX10,
+    2026-10-08: « abc », « ABCDE » and « 13-99 » were never refused here —
+    only the browser stood in the way). French messages naming the field."""
+    import calendar as _cal
+    req.name = re.sub(r"\s+", " ", (req.name or "").strip())
+    if not req.name or len(req.name) > 80:
+        raise HTTPException(status_code=400, detail="Indiquez votre nom (80 caractères au plus).")
+    digits = re.sub(r"\D", "", req.phone or "")
+    if not re.fullmatch(r"[\d\s().+\-]{6,25}", (req.phone or "").strip()) or not 9 <= len(digits) <= 15:
+        raise HTTPException(status_code=400, detail="Numéro de téléphone invalide (par exemple 06 12 34 56 78).")
+    pc = (req.postal_code or "").strip()
+    if not re.fullmatch(r"\d{5}", pc):
+        raise HTTPException(status_code=400, detail="Code postal invalide : 5 chiffres (par exemple 37000).")
+    req.postal_code = pc
+    b = (req.birthday or "").strip()
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})", b)          # « 25/12 » (day/month) from older forms
+    if m:
+        b = f"{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    m = re.fullmatch(r"(?:\d{4}-)?(\d{2})-(\d{2})", b)   # « 12-25 » or « 1990-12-25 »
+    if not m or not 1 <= int(m.group(1)) <= 12 or not 1 <= int(m.group(2)) <= _cal.monthrange(2024, int(m.group(1)))[1]:
+        raise HTTPException(status_code=400, detail="Date d'anniversaire invalide : choisissez le jour et le mois.")
+    req.birthday = f"{m.group(1)}-{m.group(2)}"
+    e = (req.email or "").strip()
+    if e and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e):
+        raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+    req.email = e
+
+
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
+    _check_join_fields(req)
     # Where they came from (services/sources): the channel of the link they
     # opened, or their own answer — never a guess. An unknown word used to be
     # filed as « QR code en magasin », so a WhatsApp signup read as an in-store

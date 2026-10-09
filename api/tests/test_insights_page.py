@@ -374,6 +374,18 @@ def main():
     check("the export is a PDF", pdf.media_type == "application/pdf" and pdf.body[:4] == b"%PDF")
     check("with a dated filename", "fidclic-recommandations-" in pdf.headers["content-disposition"])
     check("and something in it", len(pdf.body) > 3000)
+    # QA UX08: numbered pages, header rows repeated, impacts that say their unit
+    import io as _io
+    from pypdf import PdfReader
+    pages = PdfReader(_io.BytesIO(pdf.body)).pages
+    texts = [pg.extract_text() or "" for pg in pages]
+    check(f"every page is numbered « Page n / {len(pages)} »", all(f"Page {i + 1} / {len(pages)}" in t for i, t in enumerate(texts)))
+    joined = " ".join(texts)
+    check("impacts say what they count", "Chiffre d'affaires :" in joined or "Clients :" in joined or "Avis Google :" in joined)
+    if len(pages) > 1:
+        heads = ("Opportunité", "Action", "Campagne", "Conseil")
+        check("a page that continues a table starts with its header again",
+              all(any(h in t.split("\n", 3)[-1][:400] or h in t[:400] for h in heads) for t in texts[1:]))
 
     # ---- wiring -----------------------------------------------------------------------------
     print("\nLe câblage")

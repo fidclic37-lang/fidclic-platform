@@ -1180,7 +1180,8 @@ def export_pdf(request: Request = None, token_data: TokenData = Depends(require_
         table = [[Paragraph(f"<b>{esc(c)}</b>", small) for c in cols]]
         for r in rows:
             table.append([Paragraph(esc(x), body if i == 0 else small) for i, x in enumerate(r)])
-        t = Table(table, colWidths=[62 * mm, 70 * mm, 45 * mm])
+        # a table running onto the next page repeats its header (QA UX08)
+        t = Table(table, colWidths=[62 * mm, 70 * mm, 45 * mm], repeatRows=1)
         t.setStyle(TableStyle([
             ("LINEBELOW", (0, 0), (-1, 0), 0.6, blue),
             ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E6EEFB")),
@@ -1189,12 +1190,29 @@ def export_pdf(request: Request = None, token_data: TokenData = Depends(require_
         ]))
         story.append(t)
 
+    def impact_line(imp):
+        """Each impact says what it counts (QA UX08: euros, clients and
+        reviews sat under one « impact » as if all were money)."""
+        lab = str(imp.get("label") or "")
+        if imp.get("euros") is not None or "€" in lab:
+            unit = "Chiffre d'affaires"
+        elif "avis" in lab.lower():
+            unit = "Avis Google"
+        elif "client" in lab.lower():
+            unit = "Clients"
+        elif "visite" in lab.lower():
+            unit = "Visites"
+        else:
+            unit = "Effet"
+        basis = f" ({imp['basis']})" if imp.get("basis") else ""
+        return f"{unit} : {lab}{basis}"
+
     section("Opportunités", [
-        (o["title"], o["body"], f"{o['impact']['label']} ({o['impact']['basis']})")
+        (o["title"], o["body"], impact_line(o["impact"]))
         for o in data["opportunities"]["all"]], ["Opportunité", "Pourquoi", "Impact estimé"])
     section("Actions recommandées", [
         (a["title"] + (" — déjà en place" if a.get("done") else ""), a["body"],
-         f"{a['impact']['label']} ({a['impact']['basis']}) · {a['setup']}")
+         f"{impact_line(a['impact'])} · {a['setup']}")
         for a in data["actions"]["all"]], ["Action", "Description", "Impact · mise en place"])
     section("Idées de campagnes", [
         (i["title"], i["body"], i["category"]["label"]) for i in data["ideas"]["all"]],
@@ -1204,10 +1222,33 @@ def export_pdf(request: Request = None, token_data: TokenData = Depends(require_
 
     story += [Spacer(1, 6 * mm), Paragraph(esc(data["impact_note"]), small)]
 
+    from reportlab.pdfgen import canvas as _canvas
+
+    class Numbered(_canvas.Canvas):
+        """« Page 2 / 3 » at the foot of every page (QA UX08)."""
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._pages = []
+
+        def showPage(self):
+            self._pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._pages)
+            for st in self._pages:
+                self.__dict__.update(st)
+                self.setFont("Helvetica", 8)
+                self.setFillColor(muted)
+                self.drawRightString(A4[0] - 16 * mm, 9 * mm, f"Page {self._pageNumber} / {total}")
+                self.drawString(16 * mm, 9 * mm, str(tenant.get("name") or "FidClic") + " — recommandations FidClic")
+                super().showPage()
+            super().save()
+
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm,
-                      topMargin=16 * mm, bottomMargin=16 * mm,
-                      title="Recommandations FidClic").build(story)
+                      topMargin=16 * mm, bottomMargin=18 * mm,
+                      title="Recommandations FidClic").build(story, canvasmaker=Numbered)
     return Response(content=buf.getvalue(), media_type="application/pdf",
                     headers={"Content-Disposition":
                              f'attachment; filename="fidclic-recommandations-{_now():%Y%m%d}.pdf"'})
