@@ -10,3 +10,6 @@
 # small and nothing test-related can ever ship to production.
 
 mongomock==4.1.2      # in-memory MongoDB for tests/test_s1_s2.py (no DB, no network)
+# mongomock 4.1.2 imports pkg_resources, which a fresh Python 3.12 (CI) no
+# longer ships: without this the e2e server never started (2026-10-09).
+setuptools<80
