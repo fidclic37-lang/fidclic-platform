@@ -93,24 +93,26 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.tenants.update_one({"id": "t1"}, {"$set": {"google_reviews_enabled": True}})
 
     # ---- Récompense proche — stamps -------------------------------------------------------
-    print("\nRécompense proche, two visits from the reward")
+    print("\nRécompense proche — one visit away by default (user, 2026-10-09)")
+    check("default distance: one visit", AM.config("t1")["near_reward"]["visits_left"] == 1)
+    AM.put_auto_messages(AM.AutoMessagesIn(near_reward=AM.NearRewardIn(visits_left=2)), token_data=OWNER())
     tpl = {"tenant_id": "t1", "programme": "stamps", "reward_threshold_stamps": 10, "visits_per_stamp": 1,
            "reward_description": "Un café offert"}
     db.customers.insert_one({"id": "c2", "tenant_id": "t1", "name": "Paul", "barcode_id": "FT-C2",
                              "visits": 7, "visits_at_last_redemption": 0})
     check("three visits away: not yet", AM.near_reward("t1", db.customers.find_one({"id": "c2"}), tpl, None) is False)
     db.customers.update_one({"id": "c2"}, {"$set": {"visits": 8}})
-    check("two visits away: sent", AM.near_reward("t1", db.customers.find_one({"id": "c2"}), tpl, None) is True)
+    check("two visits away: sent", AM.near_reward("t1", db.customers.find_one({"id": "c2"}), tpl, None))
     check("… naming the reward", "Un café offert" in kinds("c2", "near_reward")[0]["body"]
           and "2 visites" in kinds("c2", "near_reward")[0]["body"])
     check("once per card cycle", AM.near_reward("t1", db.customers.find_one({"id": "c2"}), tpl, None) is False)
     db.customers.update_one({"id": "c2"}, {"$set": {"visits": 18, "visits_at_last_redemption": 10}})
     redeemed_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)   # after the first nudge
     check("the next card, after a reward, starts again",
-          AM.near_reward("t1", db.customers.find_one({"id": "c2"}), tpl, redeemed_at) is True)
+          AM.near_reward("t1", db.customers.find_one({"id": "c2"}), tpl, redeemed_at))
     AM.put_auto_messages(AM.AutoMessagesIn(near_reward=AM.NearRewardIn(visits_left=3)), token_data=OWNER())
     db.customers.insert_one({"id": "c3", "tenant_id": "t1", "name": "Zoé", "barcode_id": "FT-C3", "visits": 7})
-    check("the shop may choose another distance", AM.near_reward("t1", db.customers.find_one({"id": "c3"}), tpl, None) is True)
+    check("the shop may choose another distance", AM.near_reward("t1", db.customers.find_one({"id": "c3"}), tpl, None))
     AM.put_auto_messages(AM.AutoMessagesIn(near_reward=AM.NearRewardIn(visits_left=2)), token_data=OWNER())
 
     # ---- Récompense proche — points ---------------------------------------------------------
@@ -121,7 +123,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         db.visits.insert_one({"id": f"v4{i}", "tenant_id": "t1", "customer_id": "c4", "points_awarded": p,
                               "visit_time": now - dt.timedelta(days=i)})
     check("30 points missing at 15 a visit = two visits", AM.visits_to_reward("t1", db.customers.find_one({"id": "c4"}), ptpl) == 2)
-    check("sent", AM.near_reward("t1", db.customers.find_one({"id": "c4"}), ptpl, None) is True)
+    check("sent", AM.near_reward("t1", db.customers.find_one({"id": "c4"}), ptpl, None))
     check("cashback has no such step", AM.visits_to_reward("t1", {"id": "c4", "points": 1}, {"programme": "cashback"}) is None)
 
     # ---- settings -------------------------------------------------------------------------

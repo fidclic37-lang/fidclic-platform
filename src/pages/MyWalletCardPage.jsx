@@ -13,6 +13,7 @@ import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import WalletPassPreview from '../components/WalletPassPreview';
 import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
+import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 
 // ---------------------------------------------------------------------------
 // Element / stamp rendering — mirrors the owner-side designer
@@ -762,6 +763,22 @@ const CardView = () => {
               )}
             </WalletCardErrorBoundary>
 
+            {/* A full card restarts on the next visit; its reward stays valid
+                until it is handed over (user, 2026-10-09). */}
+            {rewardsPending(customer) > 0 && (
+              <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#BFE6D3] bg-[#EAF7F0] p-4" style={{ maxWidth: 375 }}>
+                <Gift className="mt-0.5 h-5 w-5 shrink-0 text-[#0F8B58]" aria-hidden="true" />
+                <p className="text-sm leading-snug text-[#0B3D27]">
+                  <strong>
+                    {rewardsPending(customer) > 1
+                      ? `${rewardsPending(customer)} récompenses à récupérer`
+                      : '1 récompense à récupérer'}
+                  </strong>{card.reward_description ? ` : ${card.reward_description}` : ''}.
+                  {' '}Présentez votre carte en caisse.
+                </p>
+              </div>
+            )}
+
             {/* Native wallets — real signed passes (features/wallet_passes.py).
                 The buttons only appear once the certificates are configured. */}
             <WalletButtons barcodeId={barcodeId} onError={showToast} />
@@ -1318,7 +1335,7 @@ const WalletPass = ({ customer, tenant, card, activeOffer, onOpenDetails }) => {
   const showMeter = card.show_meter !== false;
   const promotion = card.promotion || { enabled: false };
   const stampsTarget = card.reward_threshold || 10;
-  const stampsEarned = Math.min(customer.visits || 0, stampsTarget);
+  const stampsEarned = Math.min(cycleVisits(customer), stampsTarget);   // THIS card (lib/cardCycle)
   const pointsRemaining = Math.max(0, stampsTarget - stampsEarned);
 
   const ctx = {

@@ -490,7 +490,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         # the scan really asks for a notification when it completes a card
         seen = {}
         real_refresh = server.refresh_wallet_pass
-        server.refresh_wallet_pass = lambda cid, reward_earned=False: seen.setdefault("r", []).append(reward_earned)
+        server.refresh_wallet_pass = lambda cid, reward_earned=False, google_notify=None: seen.setdefault("r", []).append(reward_earned)
         try:
             db.customers.update_one({"id": "c1"}, {"$set": {"visits": 9, "visits_at_last_redemption": 0}})
             class _ST:

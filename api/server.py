@@ -536,7 +536,7 @@ def send_email_to_customer(to_email: str, from_name: str, subject: str, body_htm
 # triggered it. Every attempt lands in `delivery_log` so a merchant asking
 # "did my message go out?" has an auditable answer.
 # ════════════════════════════════════════════════════════════════════
-def refresh_wallet_pass(customer_id: str, reward_earned: bool = False) -> None:
+def refresh_wallet_pass(customer_id: str, reward_earned: bool = False, google_notify: Any = None) -> None:
     """Wake every Wallet card of this customer (Apple by push, Google by
     sending it the new card) so the stamps, points and status match what just
     happened at the counter. `reward_earned`: this scan completed a card —
@@ -544,7 +544,9 @@ def refresh_wallet_pass(customer_id: str, reward_earned: bool = False) -> None:
     Fire-and-forget: a push must never fail a scan."""
     try:
         from features.wallet_passes import notify_customer   # noqa: WPS433
-        notify_customer(customer_id, google_notify="reward" if reward_earned else None)
+        # « Récompense proche » (google_notify) is sent only when the shop's
+        # limits let it out — held for tomorrow, the card stays quiet too.
+        notify_customer(customer_id, google_notify="reward" if reward_earned else google_notify)
     except Exception as exc:
         print(f"refresh_wallet_pass: {exc}")
 
@@ -5004,11 +5006,6 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception as _e:
         print(f"scan_visit: campaign attribution failed (non-fatal): {_e}")
 
-    # Reward eval (near_reward / unlock pushes) — non-blocking.
-    try:
-        _evaluate_reward_state_and_notify({"id": cid}, token_data.tenant_id)
-    except Exception as _e:
-        print(f"scan_visit: reward evaluator failed (non-fatal): {_e}")
     # Automatic after a scan: the Google review request, at the shop's pace.
     try:
         from features import auto_messages as _AM
@@ -5079,11 +5076,23 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception:
         pending_rewards = 0
 
+    # Reward eval (near_reward / unlock pushes) — after the card restarted
+    # above, so it reads THIS card's stamps. Non-blocking.
+    fired = {}
+    try:
+        fired = _evaluate_reward_state_and_notify({"id": cid}, token_data.tenant_id) or {}
+    except Exception as _e:
+        print(f"scan_visit: reward evaluator failed (non-fatal): {_e}")
+    near = fired.get("near_reward")
+    near_google = ({"kind": "near_reward", "header": near["title"], "body": near["body"]}
+                   if isinstance(near, dict) and not near.get("deferred") else None)
+
     # The stamp just changed — wake every Wallet pass now, not on the
     # customer's next pull-to-refresh.
     # « Récompense débloquée » is the scan that fills the card (10/10); the
     # card is banked and restarts on the NEXT visit (the loop above).
-    refresh_wallet_pass(cid, reward_earned=(cycles_completed == 0 and stamps_in_cycle == reward_threshold))
+    refresh_wallet_pass(cid, reward_earned=(cycles_completed == 0 and stamps_in_cycle == reward_threshold),
+                        google_notify=near_google)
 
     notification_status = "subscribed"
     try:
@@ -5122,6 +5131,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     }
 
 
+def _rewards_pending(customer_id: str) -> int:
+    """Full cards waiting at the counter (rewards_earned « pending »)."""
+    try:
+        return db.rewards_earned.count_documents({"customer_id": customer_id, "status": "pending"})
+    except Exception:
+        return 0
+
+
 def _cycle_start_for_customer(customer_id: str, tenant_id: str) -> Optional[datetime]:
     """The boundary that defines a customer's current 'card cycle' — the
     moment of their most recent reward redemption (or None if they've never
@@ -5130,7 +5147,15 @@ def _cycle_start_for_customer(customer_id: str, tenant_id: str) -> Optional[date
         {"customer_id": customer_id, "tenant_id": tenant_id},
         sort=[("redeemed_at", -1)],
     )
-    return last.get("redeemed_at") if last else None
+    # …or the moment a full card restarted on its own (banked, unclaimed):
+    # without it, « Récompense proche » never came back on the next card.
+    banked = db.rewards_earned.find_one(
+        {"customer_id": customer_id, "tenant_id": tenant_id},
+        sort=[("earned_at", -1)],
+    )
+    times = [t for t in ((last or {}).get("redeemed_at"), (banked or {}).get("earned_at")) if t]
+    times = [t if getattr(t, "tzinfo", None) else t.replace(tzinfo=timezone.utc) for t in times]
+    return max(times) if times else None
 
 
 def _has_recent_notification(customer_id: str, tenant_id: str, notif_type: str,
@@ -5173,7 +5198,9 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     reward_description = card_template.get("reward_description") or "Une récompense"
 
     visits = int(cust.get("visits", 0) or 0)
-    stamps_earned = visits // visits_per_stamp
+    # this card's stamps: lifetime visits never reset (tiers), the card does
+    in_cycle = max(0, visits - int(cust.get("visits_at_last_redemption", 0) or 0))
+    stamps_earned = in_cycle // visits_per_stamp
     approach_threshold = threshold_stamps - notify_before
 
     tenant_doc = db.tenants.find_one({"id": tenant_id}) or {}
@@ -6427,6 +6454,11 @@ def _serialize_card_payload(cust: dict) -> dict:
             "barcode_id": cust.get("barcode_id"),
             "tier": tier,
             "visits": cust.get("visits", 0),
+            # THIS card's visits — the meter restarts after a full card
+            # (user, 2026-10-09); `visits` stays the lifetime count
+            "cycle_visits": stamps_in_cycle,
+            # full cards not yet handed over: still valid (user, 2026-10-09)
+            "rewards_pending": _rewards_pending(cust["id"]),
             "points": cust.get("points", 0),
             "total_amount_paid": cust.get("total_amount_paid", 0),
             "birthday": cust.get("birthday"),

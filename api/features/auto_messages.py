@@ -53,9 +53,10 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
                 "Un petit avis Google nous aiderait beaucoup.",
     },
     "near_reward": {
-        "enabled": True, "visits_left": 2,
+        # one visit away by default (user, 2026-10-09)
+        "enabled": True, "visits_left": 1,
         "title": "Vous y êtes presque, {first_name} ! ✨",
-        "body": "Plus que {visits_left} visites chez {business_name} pour débloquer : {reward}.",
+        "body": "Plus que {visits_left} {visites} chez {business_name} pour débloquer : {reward}.",
     },
 }
 
@@ -97,18 +98,18 @@ def _render(text: str, cust: Dict[str, Any], tenant: Dict[str, Any], **extra: An
 
 
 def _send(tid: str, cust: Dict[str, Any], kind: str, title: str, body: str,
-          url: Optional[str] = None, **log: Any) -> None:
+          url: Optional[str] = None, **log: Any) -> Dict[str, Any]:
     _db.push_notifications.insert_one({"tenant_id": tid, "customer_id": cust["id"], "type": kind,
                                        "title": title, "body": body, "sent_at": _now(), "automatic": True,
                                        **log})
     try:
         import server as core
         if url:
-            core.dispatch_to_customer(tid, cust, title, body, kind=kind, url=url)
-        else:
-            core.dispatch_to_customer(tid, cust, title, body, kind=kind)
+            return core.dispatch_to_customer(tid, cust, title, body, kind=kind, url=url) or {}
+        return core.dispatch_to_customer(tid, cust, title, body, kind=kind) or {}
     except Exception as exc:
         print(f"auto_messages: {kind} not delivered ({exc})")
+    return {}
 
 
 def _last(tid: str, cid: str, kind: str) -> Optional[datetime]:
@@ -216,11 +217,14 @@ def visits_to_reward(tid: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> Opt
     return left if left > 0 else None
 
 
-def near_reward(tid: str, cust: Dict[str, Any], tpl: Dict[str, Any], cycle_start: Optional[datetime]) -> bool:
+def near_reward(tid: str, cust: Dict[str, Any], tpl: Dict[str, Any], cycle_start: Optional[datetime]) -> Any:
+    """False, or what was said: {title, body, deferred}. Counted in the
+    shop's sending limits (send_rules) — over them it waits for tomorrow,
+    and the Wallet card then stays quiet too (server.scan_visit)."""
     cfg = config(tid)["near_reward"]
     if not cfg.get("enabled"):
         return False
-    want = max(1, int(cfg.get("visits_left") or 2))
+    want = max(1, int(cfg.get("visits_left") or 1))
     left = visits_to_reward(tid, cust, tpl)
     if left != want:
         return False
@@ -231,9 +235,12 @@ def near_reward(tid: str, cust: Dict[str, Any], tpl: Dict[str, Any], cycle_start
         return False
     tenant = _db.tenants.find_one({"id": tid}) or {}
     reward = tpl.get("reward_description") or "votre récompense"
-    _send(tid, cust, "near_reward", _render(cfg["title"], cust, tenant, visits_left=left, reward=reward),
-          _render(cfg["body"], cust, tenant, visits_left=left, reward=reward), visits_remaining=left)
-    return True
+    word = "visite" if left == 1 else "visites"
+    title = _render(cfg["title"], cust, tenant, visits_left=left, reward=reward, visites=word)
+    body = _render(cfg["body"], cust, tenant, visits_left=left, reward=reward, visites=word)
+    res = _send(tid, cust, "near_reward", title, body, visits_remaining=left)
+    held = bool(res.get("deferred")) or res.get("reason") == "marketing_off"
+    return {"title": title, "body": body, "deferred": held}
 
 
 def after_scan(tid: str, cid: str) -> Dict[str, bool]:

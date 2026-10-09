@@ -1,6 +1,7 @@
 import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from './Code128Barcode';
+import { cycleVisits } from '../lib/cardCycle';
 
 /**
  * What the QR on the card encodes: the card's own public URL, not the bare
@@ -143,8 +144,10 @@ export default function PremiumLoyaltyCard({ customer, tenant, card = {}, compac
     const pointsPerVisit = parseInt(card.points_per_visit, 10) || 10;
     const visitsPerStamp = Math.max(1, parseInt(card.visits_per_stamp, 10) || 1);
     const totalVisits    = visits;
-    const stampsFilled   = Math.min(cycle, Math.floor(totalVisits / visitsPerStamp));
-    const earnedPoints   = totalVisits * pointsPerVisit;
+    // the meter reads THIS card (lib/cardCycle); « visites » stays lifetime
+    const onCard         = cycleVisits(customer);
+    const stampsFilled   = Math.min(cycle, Math.floor(onCard / visitsPerStamp));
+    const earnedPoints   = onCard * pointsPerVisit;
     const maxPoints      = cycle * visitsPerStamp * pointsPerVisit;
     const pointsFillPct  = maxPoints > 0 ? Math.min(100, (earnedPoints / maxPoints) * 100) : 0;
     const showQr         = card.show_qr !== false;
