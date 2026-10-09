@@ -84,6 +84,21 @@ def _view_token(request: Request) -> Optional[str]:
         return None
     try:
         p = jwt.decode(h[7:], SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        # An « Accéder au compte » token past its time must NOT fall back to the
+        # super admin's own cookie: every page then answered « Not enough
+        # permissions » under a banner still saying « accès complet » (user,
+        # 2026-10-09). Said plainly; the tab renews it (lib/api.js).
+        try:
+            p = jwt.decode(h[7:], SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+        except jwt.PyJWTError:
+            return None
+        if p.get("view_only") or p.get("act_by"):
+            raise HTTPException(status_code=401, detail={
+                "code": "VIEW_EXPIRED", "tenant_id": p.get("tenant_id"),
+                "message": "L'accès à ce compte a expiré. Rouvrez-le depuis le Super Admin.",
+            })
+        return None
     except jwt.PyJWTError:
         return None
     return h[7:] if (p.get("view_only") or p.get("act_by")) else None
