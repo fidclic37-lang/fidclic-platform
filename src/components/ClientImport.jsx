@@ -70,7 +70,9 @@ export function ImportModal({ onClose, onDone }) {
   const [err, setErr] = useState('');
   const [p, setP] = useState(null);
   const [filter, setFilter] = useState('all');
-  const [invite, setInvite] = useState(true);
+  // QA UX01 (2026-10-08): sending the card by e-mail is a choice the owner
+  // makes — never ticked in advance — and the button says how many will go.
+  const [invite, setInvite] = useState(false);
   const [consent, setConsent] = useState(false);
   const [result, setResult] = useState(null);
   const input = useRef(null);
@@ -82,7 +84,7 @@ export function ImportModal({ onClose, onDone }) {
     try {
       const { data } = await ownerAPI.clientsImportPreview(file);
       setP({ ...data, filename: file.name });
-      setInvite(Boolean(data.mailer_ready && data.with_email));
+      setInvite(false);
       setStep('preview');
     } catch (e) {
       setErr(e?.response?.data?.detail || "Le fichier n'a pas pu être lu.");
@@ -150,6 +152,7 @@ export function ImportModal({ onClose, onDone }) {
                <Btn primary disabled={!willCreate || !consent || busy} onClick={go}>
                  {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                  Importer {nf(willCreate)} client{willCreate > 1 ? 's' : ''}
+                 {invite && p.mailer_ready && willEmail > 0 ? ` et envoyer ${nf(willEmail)} email${willEmail > 1 ? 's' : ''}` : ''}
                </Btn>
              </>}>
         {err && <Box tone="red" icon={AlertTriangle}>{err}</Box>}

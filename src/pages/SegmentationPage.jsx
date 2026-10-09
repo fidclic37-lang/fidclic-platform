@@ -200,7 +200,7 @@ const Builder = ({ fields, total, onClose, onCreated }) => {
               </p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="text-[#94A3B8] transition hover:text-[#334155]">
+          <button type="button" onClick={onClose} aria-label="Fermer" title="Fermer" className="text-[#94A3B8] transition hover:text-[#334155]">
             <X size={20} />
           </button>
         </header>
@@ -354,7 +354,7 @@ const MembersModal = ({ segment, onClose, onCampaign }) => (
             {nf(segment.count)} client{segment.count > 1 ? 's' : ''} — recomptés à l'instant.
           </p>
         </div>
-        <button type="button" onClick={onClose} className="text-[#94A3B8] hover:text-[#334155]">
+        <button type="button" onClick={onClose} aria-label="Fermer" title="Fermer" className="text-[#94A3B8] hover:text-[#334155]">
           <X size={18} />
         </button>
       </header>
@@ -604,6 +604,8 @@ export default function SegmentationPage() {
                         <span className="relative">
                           <button type="button"
                                   onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === s.id ? null : s.id); }}
+                                  aria-label={`Actions pour le segment « ${s.name} »`} aria-haspopup="menu" aria-expanded={menuFor === s.id}
+                                  title="Actions"
                                   className="rounded-lg p-1.5 text-[#94A3B8] transition hover:bg-[#F4F7FC]">
                             <MoreVertical size={15} />
                           </button>
