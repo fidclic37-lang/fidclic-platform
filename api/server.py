@@ -6348,8 +6348,31 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
 # auto-update toggle, and delete-card action.
 # ========================
 
-def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
-    """Offers = active card-template offer + sent campaigns (last 45 days).
+CAMPAIGN_OFFER_DAYS = 30      # a campaign's offer is valid 30 days (as on the Wallet pass)
+
+
+def _as_aware(v) -> Optional[datetime]:
+    """A stored date (datetime or ISO text), with UTC when it has no zone."""
+    if not v:
+        return None
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(v, datetime):
+        return None
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+def _derive_offers_for_tenant(tenant_id: str, customer_id: Optional[str] = None) -> List[dict]:
+    """Offers = active card-template offer + campaigns still valid.
+
+    With a customer (the card, the « Vos offres » page), a campaign shows only
+    to the customers it was sent to, and only while it is valid — sent less
+    than 30 days ago, the « Valable jusqu'au » the page prints (2026-10-09:
+    every campaign of the last 45 days used to reach every card, a birthday
+    or VIP-only offer included, and some read as already expired).
 
     Each campaign-kind offer now also carries `image_url`, `body`, and
     `link` so the wallet card's tap-to-open detail modal can render the
@@ -6360,6 +6383,10 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
     offers = []
     tpl = db.card_templates.find_one({"tenant_id": tenant_id})
     if tpl and tpl.get("active_offer_active") and tpl.get("active_offer_title"):
+        until = _as_aware(tpl.get("active_offer_expires_at") or tpl.get("offer_expires_at"))
+        if until and until < datetime.now(timezone.utc):
+            tpl = dict(tpl, active_offer_active=False)
+    if tpl and tpl.get("active_offer_active") and tpl.get("active_offer_title"):
         offers.append({
             "id": "offer-main",
             "title": tpl.get("active_offer_title"),
@@ -6368,13 +6395,14 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
             "image_url": tpl.get("active_offer_image_url"),
             "link": tpl.get("active_offer_link"),
             "kind": "primary",
-            "valid_until": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+            # the shop's own offer runs until the owner stops it, or its end date
+            "valid_until": until.isoformat() if until else None,
         })
-    cutoff = datetime.now(timezone.utc) - timedelta(days=45)
-    camps = list(db.campaigns.find({
-        "tenant_id": tenant_id, "status": "sent",
-        "sent_at": {"$gte": cutoff}
-    }).sort("sent_at", -1).limit(5))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=CAMPAIGN_OFFER_DAYS if customer_id else 45)
+    query = {"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff}}
+    if customer_id:
+        query["recipient_ids"] = customer_id
+    camps = list(db.campaigns.find(query).sort("sent_at", -1).limit(10 if customer_id else 5))
     for c in camps:
         offers.append({
             "id": c.get("id"),
@@ -6388,7 +6416,7 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
             "link": _campaign_link(c),
             "sent_at": c.get("sent_at").isoformat() if c.get("sent_at") else None,
             "kind": "campaign",
-            "valid_until": (c.get("sent_at") + timedelta(days=30)).isoformat() if c.get("sent_at") else None,
+            "valid_until": (_as_aware(c.get("sent_at")) + timedelta(days=CAMPAIGN_OFFER_DAYS)).isoformat() if c.get("sent_at") else None,
         })
     return offers
 
@@ -6433,7 +6461,7 @@ def _serialize_card_payload(cust: dict) -> dict:
     t = db.tenants.find_one({"id": cust["tenant_id"]}) or {}
     tpl = db.card_templates.find_one({"tenant_id": cust["tenant_id"]}) or {}
     prefs = _card_prefs_for(cust["id"])
-    offers = _derive_offers_for_tenant(cust["tenant_id"])
+    offers = _derive_offers_for_tenant(cust["tenant_id"], cust["id"])
     # Per-customer override (active, non-expired) — promotional overlay for a
     # filtered segment. Replaces the matching fields on the global template.
     override = _active_override_for(cust["id"], cust["tenant_id"])
@@ -6511,6 +6539,7 @@ def _serialize_card_payload(cust: dict) -> dict:
             "phone": t.get("phone"),
             "address": t.get("address"),
             "website": t.get("website"),
+            "sector": t.get("sector"),      # « Vos offres » pictures per trade
         },
         "card": {
             # Everything the Card Designer persists goes in FIRST, then the
@@ -6659,10 +6688,12 @@ def _campaign_link(c: dict) -> Optional[str]:
 
 
 def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dict]:
-    # Use sent campaigns as synthetic push log + one "welcome" synthetic entry
+    # The campaigns sent to THIS customer (2026-10-09: every card used to list
+    # every campaign of the shop, VIP-only or birthday ones included)
     cutoff = datetime.now(timezone.utc) - timedelta(days=45)
     items = []
-    for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff}}).sort("sent_at", -1).limit(6):
+    for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff},
+                                "recipient_ids": customer_id}).sort("sent_at", -1).limit(6):
         items.append({
             "id": c.get("id"),
             "title": c.get("name"),
