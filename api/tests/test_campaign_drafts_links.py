@@ -131,13 +131,13 @@ def main():
           and http("POST", f"/api/owner/campaigns/drafts/{pid2}/cancel-schedule").status_code == 409)
 
     print("\nLe lien arrive sur la carte")
-    card = http("GET", "/api/card/FT-00000000", headers={}).json()
+    card = http("GET", "/api/card/FT-00000000", headers={"X-Card-Key": __import__("services.card_owner", fromlist=["x"]).key_for("FT-00000000")}).json()
     feed = (card.get("offers") or []) + (card.get("notifications") or [])
     hit = [o for o in feed if o.get("id") == did]
     check("the card's offer carries the campaign's link", hit and all(o.get("link") == "https://monsite.fr/hiver" for o in hit))
     db.campaigns.insert_one({"id": "old", "tenant_id": "t1", "name": "Ancienne", "content": "x", "status": "sent",
                              "sent_at": now, "link": "javascript:alert(1)"})
-    card = http("GET", "/api/card/FT-00000000", headers={}).json()
+    card = http("GET", "/api/card/FT-00000000", headers={"X-Card-Key": __import__("services.card_owner", fromlist=["x"]).key_for("FT-00000000")}).json()
     bad = [o for o in (card.get("offers") or []) + (card.get("notifications") or []) if o.get("id") == "old"]
     check("a stored non-web link never reaches the card", bad and all(o.get("link") is None for o in bad))
 

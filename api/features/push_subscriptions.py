@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from auth import require_role
 
@@ -57,9 +57,18 @@ def vapid_public_key():
     return {"configured": True, "key": public_key()}
 
 
+def _owner_only(barcode_id: str, request: Optional[Request]) -> None:
+    """Only the card's own phone (or the shop) — server._card_customer."""
+    import server as core
+    core._card_customer(barcode_id, request)
+
+
 @router.post("/api/customer/push/subscribe")
-def subscribe(req: SubscribeRequest):
-    """Browser subscribes a customer to web push notifications."""
+def subscribe(req: SubscribeRequest, request: Request = None):
+    """Browser subscribes a customer to web push notifications — from the
+    card's own phone only: anyone holding the card number could otherwise
+    have another customer's messages sent to their browser (2026-10-09)."""
+    _owner_only(req.barcode_id, request)
     tenant = _db.tenants.find_one({"slug": req.tenant_slug})
     if not tenant:
         return {"ok": False, "error": "tenant_not_found"}
@@ -138,13 +147,14 @@ def test_push(
 
 
 @router.get("/api/card/{barcode_id}/notification-status")
-def get_notification_status(barcode_id: str):
+def get_notification_status(barcode_id: str, request: Request = None):
     """Returns whether the customer has an active push subscription, and if
     not, how many campaigns they've missed in the last 30 days. Powers the
     in-card 'missed offers' banner — see MyWalletCardPage."""
     from datetime import timedelta
     if _db is None:
         return {"subscribed": False, "missed_count": 0}
+    _owner_only(barcode_id, request)
     bc = (barcode_id or "").strip().upper()
     customer = _db.customers.find_one({"barcode_id": bc})
     if not customer:
@@ -174,7 +184,7 @@ def get_notification_status(barcode_id: str):
 
 
 @router.post("/api/card/{barcode_id}/test-push")
-def customer_self_test_push(barcode_id: str):
+def customer_self_test_push(barcode_id: str, request: Request = None):
     """Customer-initiated test push, no auth — they can only fire to their
     own device(s). Lets the customer verify push is actually working from
     their wallet card without needing the owner to send a campaign.
@@ -186,6 +196,7 @@ def customer_self_test_push(barcode_id: str):
     from services.web_push import send_push, is_configured            # noqa: WPS433
     if _db is None:
         return {"sent": 0, "error": "db_not_initialised"}
+    _owner_only(barcode_id, request)
     if not is_configured():
         return {"sent": 0, "error": "vapid_not_configured",
                 "hint": "Server missing VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY."}

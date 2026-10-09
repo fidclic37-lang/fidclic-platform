@@ -65,6 +65,8 @@ from auth import (
     require_role, check_plan_feature, TokenData, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from features.platform_access import require_admin   # Sécurité › Rôles & Permissions
+import auth   # _card_customer reads a shop login without raising
+import jwt
 
 import os
 import pymongo
@@ -6696,11 +6698,51 @@ def _log_card_message_view(cust: dict, payload: dict) -> None:
         print(f"card message view log failed (non-fatal): {exc}")
 
 
-@app.get("/api/card/{barcode_id}")
-def get_wallet_card(barcode_id: str):
-    cust = db.customers.find_one({"barcode_id": barcode_id})
+SHOP_CARD_ROLES = ("business_owner", "administrateur", "manager", "staff")
+
+
+def _card_customer(barcode_id: str, request: Optional[Request]) -> Dict[str, Any]:
+    """The customer behind a card, for whoever may act on it (2026-10-09).
+
+    A card's number is printed in its QR — shown at the counter, to friends,
+    in photos — so the number alone proves nothing. Reading the card (name,
+    e-mail, birthday, spend), its prefs, deleting it, exporting or erasing
+    the data, or downloading the Wallet pass needs one of:
+      • the owner key (services/card_owner): header X-Card-Key or ?k=, which
+        only the customer's own phone holds;
+      • a shop login of that business (owner, admin, manager, staff — the
+        dashboard's « Voir sa carte »), or a FidClic super admin.
+    """
+    bc = (barcode_id or "").strip().upper()
+    cust = db.customers.find_one({"barcode_id": bc})
     if not cust:
-        raise HTTPException(status_code=404, detail="Card not found")
+        raise HTTPException(status_code=404, detail="Carte introuvable.")
+    if request is None:                       # an in-process call (tests, other features)
+        return cust
+    key = request.headers.get("x-card-key") or request.query_params.get("k")
+    if _card_owner.valid(bc, key):
+        return cust
+    token = auth._view_token(request) or request.cookies.get("access_token")
+    if not token:
+        header = request.headers.get("authorization") or ""
+        token = header[7:] if header.startswith("Bearer ") else None
+    if token:
+        try:
+            p = jwt.decode(token[7:] if token.startswith("Bearer ") else token, auth.SECRET_KEY,
+                           algorithms=[auth.ALGORITHM])
+            ok_session = auth._session_check is None or auth._session_check(p.get("sub"), p.get("sid"))
+            if not p.get("purpose") and ok_session and (
+                    p.get("role") == "super_admin"
+                    or (p.get("role") in SHOP_CARD_ROLES and p.get("tenant_id") == cust.get("tenant_id"))):
+                return cust
+        except Exception:
+            pass
+    raise HTTPException(status_code=403, detail="Cette carte n'est pas enregistrée sur cet appareil.")
+
+
+@app.get("/api/card/{barcode_id}")
+def get_wallet_card(barcode_id: str, request: Request = None):
+    cust = _card_customer(barcode_id, request)
     payload = _serialize_card_payload(cust)
     _log_card_message_view(cust, payload)
     # The only observable "open" a wallet push has: the customer came and
@@ -6715,10 +6757,8 @@ class CardPrefsRequest(BaseModel):
 
 
 @app.put("/api/card/{barcode_id}/prefs")
-def update_card_prefs(barcode_id: str, req: CardPrefsRequest):
-    cust = db.customers.find_one({"barcode_id": barcode_id})
-    if not cust:
-        raise HTTPException(status_code=404, detail="Card not found")
+def update_card_prefs(barcode_id: str, req: CardPrefsRequest, request: Request = None):
+    cust = _card_customer(barcode_id, request)
     update = {"customer_id": cust["id"], "tenant_id": cust["tenant_id"]}
     if req.auto_update is not None:
         update["auto_update"] = req.auto_update
@@ -6729,10 +6769,8 @@ def update_card_prefs(barcode_id: str, req: CardPrefsRequest):
 
 
 @app.delete("/api/card/{barcode_id}")
-def delete_wallet_card(barcode_id: str):
-    cust = db.customers.find_one({"barcode_id": barcode_id})
-    if not cust:
-        raise HTTPException(status_code=404, detail="Card not found")
+def delete_wallet_card(barcode_id: str, request: Request = None):
+    cust = _card_customer(barcode_id, request)
     now = datetime.now(timezone.utc)
     # 1) Flip pass_issued back so dashboard 'Active wallet passes' is accurate
     # 2) Stamp card_deleted_at so we can surface 'Deleted cards' as its own KPI
@@ -6767,12 +6805,10 @@ def delete_wallet_card(barcode_id: str):
 
 
 @app.post("/api/card/{barcode_id}/wallet-readded")
-def mark_wallet_readded(barcode_id: str):
+def mark_wallet_readded(barcode_id: str, request: Request = None):
     """Customer re-added the card after a previous delete. Clears card_deleted_at
     and flips pass_issued back to True so the wallet-state KPIs reflect reality."""
-    cust = db.customers.find_one({"barcode_id": barcode_id})
-    if not cust:
-        raise HTTPException(status_code=404, detail="Card not found")
+    cust = _card_customer(barcode_id, request)
     db.customers.update_one(
         {"id": cust["id"]},
         {"$set": {"pass_issued": True}, "$unset": {"card_deleted_at": ""}},
@@ -6809,9 +6845,7 @@ def export_my_data(barcode_id: str, request: Request = None):
     rewards redeemed, card prefs, and push-subscription count (endpoints
     themselves are secrets — we expose the count, not the URLs).
     """
-    cust = db.customers.find_one({"barcode_id": barcode_id})
-    if not cust:
-        raise HTTPException(status_code=404, detail="Card not found")
+    cust = _card_customer(barcode_id, request)
     cid, tid = cust["id"], cust["tenant_id"]
     t = db.tenants.find_one({"id": tid}) or {}
 
@@ -6868,9 +6902,7 @@ def forget_me(barcode_id: str, req: ForgetMeRequest, request: Request = None):
             "code": "confirmation_required",
             "message": "Confirmation requise pour supprimer vos données.",
         })
-    cust = db.customers.find_one({"barcode_id": barcode_id})
-    if not cust:
-        raise HTTPException(status_code=404, detail="Card not found")
+    cust = _card_customer(barcode_id, request)
     cid, tid = cust["id"], cust["tenant_id"]
     now = datetime.now(timezone.utc)
 
@@ -10153,7 +10185,7 @@ class ReviewSubmit(BaseModel):
 
 
 @app.post("/api/public/reviews")
-def submit_review(req: ReviewSubmit):
+def submit_review(req: ReviewSubmit, request: Request = None):
     """Customer-facing endpoint. Accepts either customer_id or barcode_id so
     the wallet card page can post a review without the customer being logged
     in. Rating must be 1..10; text is optional. Dedupes one review per visit.
@@ -10167,7 +10199,9 @@ def submit_review(req: ReviewSubmit):
     if req.customer_id:
         q["id"] = req.customer_id
     else:
-        q["barcode_id"] = req.barcode_id
+        # by card number: only the card's own phone may speak for it (2026-10-09)
+        _card_customer(req.barcode_id, request)
+        q["barcode_id"] = (req.barcode_id or "").strip().upper()
     cust = db.customers.find_one(q)
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found")

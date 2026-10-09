@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
+import { keyOf } from '../lib/myCards';
 
 /**
  * WalletButtons — "Ajouter à Apple Wallet" / "Ajouter à Google Wallet" on the
@@ -49,7 +50,7 @@ export default function WalletButtons({ barcodeId, onError }) {
       {order.map((k) => {
         if (k === 'apple' && cfg.apple) {
           return (
-            <a key="apple" href={`/api/card/${barcodeId}/apple-wallet.pkpass`}
+            <a key="apple" href={`/api/card/${barcodeId}/apple-wallet.pkpass${keyOf(barcodeId) ? `?k=${encodeURIComponent(keyOf(barcodeId))}` : ''}`}
                className={`${pill} bg-black text-white`} style={{ order: isApple ? 0 : 1 }}>
               <svg width="20" height="16" viewBox="0 0 24 20" aria-hidden="true">
                 <rect x="1" y="1" width="22" height="18" rx="3" fill="#fff" />

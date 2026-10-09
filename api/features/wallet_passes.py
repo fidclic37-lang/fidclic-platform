@@ -1850,8 +1850,16 @@ def owner_notify(token_data: TokenData = Depends(require_role(["business_owner",
     return notify_tenant(token_data.tenant_id)
 
 
+def _owner_only(barcode_id: str, request: Optional[Request]) -> None:
+    """A Wallet pass is the card itself — only its owner's phone (or the
+    shop) may download it (server._card_customer, 2026-10-09)."""
+    import server as core
+    core._card_customer(barcode_id, request)
+
+
 @router.get("/api/card/{barcode_id}/apple-wallet.pkpass")
-def download_apple_pass(barcode_id: str):
+def download_apple_pass(barcode_id: str, request: Request = None):
+    _owner_only(barcode_id, request)
     if not _wallet_in_plan(barcode_id):
         raise HTTPException(status_code=403, detail="Apple Wallet n'est pas inclus dans l'offre de ce commerce.")
     return _pkpass_response(barcode_id)
@@ -2480,7 +2488,8 @@ def owner_google_preview(body: PassPreviewIn,
 
 
 @router.get("/api/card/{barcode_id}/google-wallet")
-def google_wallet_link(barcode_id: str):
+def google_wallet_link(barcode_id: str, request: Request = None):
+    _owner_only(barcode_id, request)
     if not _wallet_in_plan(barcode_id):
         raise HTTPException(status_code=403, detail="Google Wallet n'est pas inclus dans l'offre de ce commerce.")
     if not google_configured():
