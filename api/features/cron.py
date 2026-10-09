@@ -145,6 +145,13 @@ def agent_daily(authorization: str = Header(default="")):
         summary["daily_triggers"] = core.daily_triggers_pass()
     except Exception as e:                                       # noqa: BLE001
         summary["failures"].append({"step": "daily_triggers", "error": str(e)[:120]})
+    # Google Wallet classes made before 2026-10-10 learn where to report a
+    # saved or deleted pass (features/google_wallet_callbacks).
+    try:
+        from features.google_wallet_callbacks import ensure_callbacks
+        summary["google_callbacks"] = ensure_callbacks()
+    except Exception as e:                                       # noqa: BLE001
+        summary["failures"].append({"step": "google_callbacks", "error": str(e)[:120]})
     # The owners' monthly recap, in the first days of the month (idempotent).
     try:
         from datetime import datetime as _dt, timezone as _tz

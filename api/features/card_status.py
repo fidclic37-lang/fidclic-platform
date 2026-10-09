@@ -57,7 +57,8 @@ DASHBOARD_DAYS = 30          # kept for older callers
 # list stays in Clients, filtre « Carte : Supprimée ».
 ALERT_HOURS = 24
 
-STATE_LABELS = {"active": "Active", "deleted": "Supprimée", "wallet_removed": "Retirée d'Apple Wallet"}
+STATE_LABELS = {"active": "Active", "deleted": "Supprimée", "wallet_removed": "Retirée d'Apple Wallet",
+                "google_removed": "Retirée de Google Wallet"}
 
 
 def init(db):
@@ -89,7 +90,8 @@ def _aware(v: Any) -> Optional[datetime]:
 # ---------------------------------------------------------------------------
 # the status
 # ---------------------------------------------------------------------------
-FIELDS = {"card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1}
+FIELDS = {"card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1,
+          "google_removed_at": 1, "google_added_at": 1}
 
 
 def state_of(c: Dict[str, Any]) -> Dict[str, Any]:
@@ -105,6 +107,12 @@ def state_of(c: Dict[str, Any]) -> Dict[str, Any]:
     claimed = _aware(c.get("card_claimed_at"))
     if removed and not (claimed and claimed > removed) and not (added and added > removed):
         return {"state": "wallet_removed", "label": STATE_LABELS["wallet_removed"], "at": removed.isoformat()}
+    # Google Wallet tells us too since 2026-10-10 (features/google_wallet_callbacks):
+    # deleted from Google Wallet, unless saved there (or opened with its key) since
+    g_removed = _aware(c.get("google_removed_at"))
+    g_added = _aware(c.get("google_added_at"))
+    if g_removed and not (g_added and g_added > g_removed) and not (claimed and claimed > g_removed):
+        return {"state": "google_removed", "label": STATE_LABELS["google_removed"], "at": g_removed.isoformat()}
     return {"state": "active", "label": STATE_LABELS["active"], "at": None}
 
 
@@ -127,7 +135,8 @@ def recent_losses(tid: str, days: float, at: Optional[datetime] = None,
     """Cards lost in the last `days` days, newest first."""
     at = at or _now()
     since = at - timedelta(days=days)
-    q = {"tenant_id": tid, "$or": [{"card_deleted_at": {"$gte": since}}, {"wallet_removed_at": {"$gte": since}}],
+    q = {"tenant_id": tid, "$or": [{"card_deleted_at": {"$gte": since}}, {"wallet_removed_at": {"$gte": since}},
+                                   {"google_removed_at": {"$gte": since}}],
          "deleted_at": {"$exists": False}}
     out = []
     for c in _db.customers.find(q, {"_id": 0, "id": 1, "name": 1, **FIELDS}):
@@ -155,7 +164,8 @@ def bell_alerts(tid: str, at: Optional[datetime] = None, ids: Optional[set] = No
     actions = [{"kind": "open", "label": "Voir les clients", "href": href}]
     out = []
     for r in rows[:5]:
-        verb = "a supprimé sa carte" if r["state"] == "deleted" else "a retiré sa carte d'Apple Wallet"
+        verb = {"deleted": "a supprimé sa carte", "google_removed": "a retiré sa carte de Google Wallet"}.get(
+            r["state"], "a retiré sa carte d'Apple Wallet")
         out.append({"id": f"card-lost:{r['id']}:{r['at']:%Y%m%d%H%M}", "severity": "warning",
                     "title": f"{_short(r['name'])} {verb}",
                     "body": "Proposez-lui de la récupérer : un QR en caisse ou un lien par e-mail (fiche client).",

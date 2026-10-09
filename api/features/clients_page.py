@@ -314,6 +314,7 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
           "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1,
+          "google_removed_at": 1, "google_added_at": 1,
           # the card's meter, apart from visits (QA R5 F22): stamps on the
           # current card, those added by hand and those of a paper card
           "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1}

@@ -2212,6 +2212,11 @@ def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}"
 
 
+def _gw_callback_url() -> str:
+    from features.google_wallet_callbacks import callback_url
+    return callback_url()
+
+
 def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
     tenant, card = payload["tenant"], payload["card"]
     gd = clean_google_design(card.get("google_design"))
@@ -2222,6 +2227,9 @@ def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
         "reviewStatus": "UNDER_REVIEW",
         "hexBackgroundColor": gd.get("bg_color") or _hex6(derive_colors(card)["backgroundColor"]),
         "countryCode": "FR",
+        # Google tells us when a customer saves or deletes the pass
+        # (features/google_wallet_callbacks — Clients › Carte, 2026-10-10)
+        "callbackOptions": {"url": _gw_callback_url()},
     }
     # a data: URL logo (most uploads) is served by us: Google needs a public link
     if card.get("logo_url"):
