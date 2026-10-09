@@ -72,16 +72,10 @@ def _refresh_card(c: Dict[str, Any]) -> None:
         print(f"customer edit: wallet refresh failed ({exc})")
 
 
-def _tier(visits: int, paid: float) -> str:
-    """The scan's own rule (server.scan_visit)."""
-    avg = (paid / visits) if visits else 0
-    if visits >= 40 or (visits >= 10 and avg >= 60):
-        return "vip"
-    if visits >= 20:
-        return "gold"
-    if visits >= 10:
-        return "silver"
-    return "bronze"
+def _tier(tid: str, visits: int, points: int, paid: float) -> str:
+    """The scan's own rule: the owner's ladder (features/loyalty_card.tier_of)."""
+    from features import loyalty_card as LC
+    return LC.tier_of({"visits": visits, "points": points, "total_amount_paid": paid}, tid)
 
 
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
@@ -206,7 +200,7 @@ def adjust(customer_id: str, body: AdjustIn, request: Request = None,
         raise HTTPException(status_code=400, detail=f"Impossible de retirer plus de {int(c.get('visits') or 0) - floor} tampon(s) "
                                                     "sur la carte en cours.")
     upd = {"points": points, "visits": visits, "updated_at": _now(),
-           "tier": _tier(visits, float(c.get("total_amount_paid") or 0))}
+           "tier": _tier(tid, visits, points, float(c.get("total_amount_paid") or 0))}
     _db.customers.update_one({"id": customer_id}, {"$set": upd})
     parts = []
     if body.points:

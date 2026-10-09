@@ -493,8 +493,18 @@ def _metrics_campaign(people, shop) -> Tuple[List[Dict[str, str]], float, float]
     return ([{"icon": "chart", "label": visits}, {"icon": "euro", "label": f"+{_eur(e)} CA"}], v, e)
 
 
-def _next_tier(visits: int) -> Optional[Tuple[str, int]]:
-    for name, threshold in TIERS:
+def _next_tier(visits: int, tid: Optional[str] = None) -> Optional[Tuple[str, int]]:
+    """The next palier in visits — the shop's own ladder on a stamp card
+    (features/loyalty_card), the default one otherwise."""
+    ladder = TIERS
+    if tid:
+        try:
+            from features import loyalty_card as LC
+            if not LC._is_points(LC._programme(LC._template(tid))):
+                ladder = [(r["key"], r["min"]) for r in LC.tiers_for(tid)]
+        except Exception:
+            ladder = TIERS
+    for name, threshold in ladder:
         if visits < threshold:
             return name, threshold
     return None
@@ -569,7 +579,7 @@ def _library(shop) -> List[Dict[str, Any]]:
     reach = []
     for c in shop.people:
         v = int(_num(c.get("visits")))
-        nxt = _next_tier(v)
+        nxt = _next_tier(v, shop.tid)
         if v > 0 and nxt and 0 < nxt[1] - v <= NEAR_TIER:
             reach.append(c)
     active_n = len([c for c in shop.people

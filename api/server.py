@@ -4947,15 +4947,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     new_visits = current_visits + 1
     new_points = current_points + points_to_add
     new_paid = current_paid + float(req.amount_paid or 0)
-    avg_ticket = (new_paid / new_visits) if new_visits else 0
-    if new_visits >= 40 or (new_visits >= 10 and avg_ticket >= 60):
-        new_tier = "vip"
-    elif new_visits >= 20:
-        new_tier = "gold"
-    elif new_visits >= 10:
-        new_tier = "silver"
-    else:
-        new_tier = "bronze"
+    # The palier follows the owner's ladder (Carte de fidélité › Récompenses et
+    # paliers) and its VIP shortcut — one rule, shown where it is set (QA F21).
+    from features import loyalty_card as _LC
+    new_tier = _LC.tier_of({"visits": new_visits, "points": new_points, "total_amount_paid": new_paid},
+                           token_data.tenant_id)
 
     update_set = {
         "visits": new_visits,
