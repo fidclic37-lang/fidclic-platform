@@ -72,14 +72,17 @@ ACTIONS: Dict[str, Dict[str, str]] = {
     "signup":       {"label": "Nouveau client",         "icon": "user",    "tone": "green"},
     "campaign":     {"label": "Message envoyé",         "icon": "send",    "tone": "violet"},
     "card_update":  {"label": "Modification de la carte", "icon": "card",  "tone": "slate"},
+    # by the shop's team (features/customer_edit.py)
+    "client_update": {"label": "Fiche client modifiée", "icon": "user",   "tone": "slate"},
+    "adjustment":    {"label": "Ajustement manuel",     "icon": "gift",   "tone": "amber"},
 }
 
 # Tab → the actions it shows. "Activité des clients" is what a customer did;
 # the narrower tabs are subsets of it.
 TABS: List[Dict[str, Any]] = [
     {"key": "all",      "label": "Toutes les activités",     "actions": list(ACTIONS)},
-    {"key": "clients",  "label": "Activité des clients",     "actions": ["signup", "scan", "reward", "message_view"]},
-    {"key": "points",   "label": "Points et récompenses",    "actions": ["scan", "reward"]},
+    {"key": "clients",  "label": "Activité des clients",     "actions": ["signup", "scan", "reward", "message_view", "client_update", "adjustment"]},
+    {"key": "points",   "label": "Points et récompenses",    "actions": ["scan", "reward", "adjustment"]},
     {"key": "scan",     "label": "Scan du QR code",          "actions": ["scan"]},
     {"key": "messages", "label": "Messages envoyés",         "actions": ["campaign", "message_view"]},
     {"key": "card",     "label": "Modifications de la carte", "actions": ["card_update"]},
@@ -209,6 +212,26 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "customer_id": d.get("customer_id"),
                 "detail": d.get("title") or "Message envoyé",
                 "points": None,
+            },
+        },
+        "client_update": {
+            "coll": "customer_changes", "time": "at",
+            "query": {"tenant_id": tid, "kind": "profile", "at": span, **clients},
+            "row": lambda d: {
+                "customer_id": d.get("customer_id"),
+                "customer_name": d.get("customer_name"),
+                "detail": f"{d.get('text') or 'Fiche modifiée'} · par {d.get('by') or 'l’équipe'}",
+                "points": None,
+            },
+        },
+        "adjustment": {
+            "coll": "customer_changes", "time": "at",
+            "query": {"tenant_id": tid, "kind": "adjust", "at": span, **clients},
+            "row": lambda d: {
+                "customer_id": d.get("customer_id"),
+                "customer_name": d.get("customer_name"),
+                "detail": f"{d.get('text')} — {d.get('reason')} · par {d.get('by') or 'l’équipe'}",
+                "points": int(d.get("points_delta") or 0) or None,
             },
         },
         "card_update": {
