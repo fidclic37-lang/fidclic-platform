@@ -457,6 +457,8 @@ export const ownerAPI = {
   getCustomers: (params) => api.get('/owner/customers', { params }),
   getAnalytics: (params) => api.get('/owner/analytics', { params }),
   scanVisit: (data) => api.post('/owner/scan', data),
+  // whose card, its stamps, and the paper-card stamps it can still take (2026-10-10)
+  scanPreview: (barcode) => api.get('/owner/scan/preview', { params: { barcode } }),
   scan: (data) => api.post('/owner/scan', data),
   register: (data) => api.post('/owner/register', data),
   getCardTemplate: () => api.get('/owner/card-template'),

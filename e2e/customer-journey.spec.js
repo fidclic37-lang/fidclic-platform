@@ -140,6 +140,24 @@ test.describe.serial('a customer, end to end', () => {
     await ctx.close();
   });
 
+  test("the till moves a paper card's stamps once, on top of today's visit", async ({ request }) => {
+    const signed = await (await request.post(`/api/join/${SLUG}`, { data: {
+      name: 'Paula Papier', phone: phone(), postal_code: '37000', birthday: '03/04/1992', consent: true } })).json();
+    const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+    const auth = { Authorization: `Bearer ${login.access_token}` };
+    const pre = await (await request.get(`/api/owner/scan/preview?barcode=${signed.barcode_id}`, { headers: auth })).json();
+    expect(pre.paper_max, 'a new card can take a full paper card').toBe(pre.threshold);
+    const scan = await (await request.post('/api/owner/scan', { headers: auth,
+      data: { barcode_id: signed.barcode_id, amount_paid: 4, paper_stamps: 4 } })).json();
+    expect(scan.stamps_in_cycle, '4 paper stamps + today = 5').toBe(5);
+    const card = await (await request.get(`/api/card/${signed.barcode_id}`, { headers: { 'X-Card-Key': signed.card_key } })).json();
+    expect(card.customer.cycle_visits, 'the customer sees 5 on their card').toBe(5);
+    expect(card.customer.visits, 'one real visit').toBe(1);
+    const again = await request.post('/api/owner/scan', { headers: auth,
+      data: { barcode_id: signed.barcode_id, amount_paid: 4, paper_stamps: 2 } });
+    expect(again.status(), 'never twice').toBe(409);
+  });
+
   test('a deleted card comes back with the shop’s one-time link', async ({ browser, request }) => {
     const del = await request.delete(`/api/card/${me.barcode}`, { headers: { 'X-Card-Key': me.key } });
     expect(del.ok(), 'the customer deletes their card').toBeTruthy();

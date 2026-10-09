@@ -4324,6 +4324,11 @@ class ScanRequest(BaseModel):
     # that total. Prices in the request are ignored — server is the
     # source of truth, so a tampered client cannot inflate revenue.
     items: Optional[List[Dict[str, Any]]] = None
+    # Stamps from the customer's PAPER card, moved onto the digital one at
+    # this scan (user, 2026-10-10). Once per customer, never above a full
+    # card; they move the card's meter only — not visits, points or palier.
+    # Any: validated by _paper_stamps_check (pydantic would turn `true` into 1)
+    paper_stamps: Optional[Any] = None
 
 
 # ============================================================
@@ -4829,6 +4834,95 @@ def scan_visit(
         )
 
 
+def _card_rule(tenant_id: str) -> Dict[str, int]:
+    """The card's size: stamps for a reward, visits per stamp, and so the
+    visits a full card holds."""
+    tpl = db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+    stamps = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1)
+    per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
+    return {"stamps": stamps, "per_stamp": per, "visits": stamps * per}
+
+
+def _paper_done_message(cust: dict) -> str:
+    at = cust.get("paper_stamps_at")
+    when = ""
+    if isinstance(at, datetime):
+        try:
+            from zoneinfo import ZoneInfo
+            when = f" le {(at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo('Europe/Paris')):%d/%m/%Y}"
+        except Exception:
+            when = f" le {at:%d/%m/%Y}"
+    n = int(cust.get("paper_stamps") or 0)
+    return (f"La carte papier de ce client a déjà été transférée{when} ({n} tampon{'s' if n > 1 else ''}). "
+            "Une seule fois par client : pour corriger, utilisez « Ajuster points / tampons » sur sa fiche.")
+
+
+def _paper_stamps_check(cust: dict, tenant_id: str, value: Any, current_visits: int) -> Optional[Dict[str, int]]:
+    """Validate the paper-card stamps sent with a scan (user, 2026-10-10).
+
+    Rules: a whole number from 0 to the card's size; once per customer; and
+    the stamps already on the digital card plus the paper ones never exceed a
+    full card. 9 paper stamps on a 10-stamp card + this visit = the reward
+    today; 10 = a full paper card, banked as « à récupérer », and this visit
+    starts the new card. Returns None for nothing to move."""
+    if value is None or value == "":
+        return None
+    try:
+        if isinstance(value, bool) or isinstance(value, (list, dict)):
+            raise ValueError
+        text = str(value).strip()
+        if not text.lstrip("-").isdigit():          # « 2.5 », « 2,5 », « 3e1 », « abc »
+            raise ValueError
+        n = int(text)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Tampons de la carte papier : un nombre entier, sans virgule.")
+    if n == 0:
+        return None
+    rule = _card_rule(tenant_id)
+    if n < 0:
+        raise HTTPException(status_code=400, detail="Tampons de la carte papier : le nombre ne peut pas être négatif.")
+    if n > rule["stamps"]:
+        raise HTTPException(status_code=400, detail=f"Tampons de la carte papier : {rule['stamps']} au maximum "
+                                                    f"(une carte complète).")
+    if cust.get("paper_stamps") is not None:
+        raise HTTPException(status_code=409, detail=_paper_done_message(cust))
+    on_card = max(0, current_visits - int(cust.get("visits_at_last_redemption") or 0))
+    room = max(0, rule["visits"] - on_card) // rule["per_stamp"]
+    if n > room:
+        have = on_card // rule["per_stamp"]
+        raise HTTPException(status_code=400, detail=(
+            f"Cette carte a déjà {have} tampon{'s' if have > 1 else ''} sur {rule['stamps']} : "
+            f"{room} tampon{'s' if room > 1 else ''} de la carte papier au maximum."
+            if room else f"Cette carte est déjà complète ({rule['stamps']}/{rule['stamps']}) : "
+                         "remettez d'abord la récompense, puis ajoutez les tampons de la carte papier."))
+    return {"stamps": n, "visits": n * rule["per_stamp"]}
+
+
+@app.get("/api/owner/scan/preview")
+def scan_preview(barcode: str,
+                 token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
+    """What the till shows once a card id is typed or scanned, before the
+    visit is recorded: whose card, its stamps, and how many paper stamps it
+    can still take (none when its paper card was already moved)."""
+    bc = barcode_from(barcode)
+    cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": bc},
+                                 {"_id": 0, "id": 1, "name": 1, "barcode_id": 1, "visits": 1,
+                                  "visits_at_last_redemption": 1, "paper_stamps": 1, "paper_stamps_at": 1})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Aucun client trouvé avec ce code.")
+    rule = _card_rule(token_data.tenant_id)
+    on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
+    done = cust.get("paper_stamps") is not None
+    room = 0 if done else max(0, rule["visits"] - on_card) // rule["per_stamp"]
+    return {
+        "name": cust.get("name") or "", "barcode_id": cust.get("barcode_id"),
+        "stamps": min(on_card // rule["per_stamp"], rule["stamps"]), "threshold": rule["stamps"],
+        "paper_max": room, "paper_done": done,
+        "paper_stamps": int(cust.get("paper_stamps") or 0) if done else 0,
+        "paper_message": _paper_done_message(cust) if done else None,
+    }
+
+
 def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     """MINIMAL fast-path scan — does the essentials inline, defers every
     optional side effect to a best-effort try/except so a single bad
@@ -4908,8 +5002,13 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                     "updated_at": datetime.now(timezone.utc),
                 }},
             )
+            cust["visits_at_last_redemption"] = current_visits   # read below (paper stamps)
         except Exception:
             pass  # never let a heal failure block a real scan
+
+    # Stamps of a paper card (validated BEFORE anything is written: a refused
+    # transfer refuses the whole scan, so the till can correct and resend).
+    paper = _paper_stamps_check(cust, token_data.tenant_id, req.paper_stamps, current_visits)
 
     # If the scan came with a product-picker payload, resolve the items
     # against the tenant catalog and OVERRIDE amount_paid with the
@@ -4975,8 +5074,31 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     if req.branch_id and not cust.get("branch_id"):
         update_set["branch_id"] = req.branch_id
 
-    # Update customer — must succeed.
-    db.customers.update_one({"id": cid}, {"$set": update_set})
+    # Update customer — must succeed. A paper-card transfer rides on the SAME
+    # write, guarded by « not transferred yet »: two tills scanning the card
+    # at once can never move the stamps twice, and the visit and the stamps
+    # are written together or not at all.
+    if paper:
+        now_paper = datetime.now(timezone.utc)
+        update_set.update({"paper_stamps": paper["stamps"], "paper_stamps_at": now_paper,
+                           "paper_stamps_by": getattr(token_data, "email", None)})
+        res = db.customers.update_one(
+            {"id": cid, "paper_stamps": {"$exists": False}},
+            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"]}})
+        if res.matched_count == 0:
+            raise HTTPException(status_code=409, detail=_paper_done_message(db.customers.find_one({"id": cid}) or {}))
+        try:
+            db.customer_changes.insert_one({
+                "id": str(uuid.uuid4()), "tenant_id": token_data.tenant_id, "customer_id": cid,
+                "customer_name": cust.get("name"), "kind": "paper_stamps",
+                "visits_delta": 0, "points_delta": 0, "stamps": paper["stamps"],
+                "text": f"Carte papier transférée : {paper['stamps']} tampon{'s' if paper['stamps'] > 1 else ''}",
+                "reason": "Carte papier", "by": getattr(token_data, "email", None), "at": now_paper,
+            })
+        except Exception as _e:
+            print(f"scan_visit: paper stamps not logged (non-fatal): {_e}")
+    else:
+        db.customers.update_one({"id": cid}, {"$set": update_set})
 
     # Insert visit row — must succeed for analytics.
     try:
@@ -4989,6 +5111,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             "visit_time": datetime.now(timezone.utc),
             "branch_id": req.branch_id or cust.get("branch_id"),
         }
+        if paper:
+            visit_doc["paper_stamps"] = paper["stamps"]
         # Stamp the line items on the visit when a catalog-driven picker
         # was used. This is what powers the real "Top produits" panel
         # going forward (replacing the DEMO data in analyticsExtra.js).
@@ -5147,6 +5271,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # offers to give it back when it is not
         "card_state": _card_state_of(cid),
         "cycle_restarted": cycles_completed > 0,
+        # stamps moved from a paper card at this scan (0 when none)
+        "paper_stamps": paper["stamps"] if paper else 0,
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
         # the « activer les notifications » QR the till shows is opened by the
@@ -10545,10 +10671,15 @@ def redeem_reward(
     threshold = max(int(card_tpl.get("reward_threshold_stamps", 10)) *
                     int(card_tpl.get("visits_per_stamp", 1)), 1)
     current_visits = int(cust.get("visits", 0) or 0)
-    if current_visits < threshold:
+    # What counts is THIS card (and any full card waiting), not lifetime
+    # visits: a card completed with paper stamps (2026-10-10) holds fewer
+    # visits than its size.
+    on_card = current_visits - int(cust.get("visits_at_last_redemption") or 0)
+    waiting = db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
+    if on_card < threshold and not waiting:
         raise HTTPException(
             status_code=400,
-            detail=f"Customer needs {threshold - current_visits} more visit(s) before redeeming.",
+            detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
         )
 
     reward = {
@@ -10580,7 +10711,7 @@ def redeem_reward(
     # full card (not to the current visit count) so a customer at 13 visits on
     # a 10-visit card keeps the 3 stamps they have already earned.
     last_red = int(cust.get("visits_at_last_redemption") or 0)
-    new_marker = last_red if banked else min(current_visits, last_red + threshold)
+    new_marker = last_red if banked else last_red + threshold
     db.customers.update_one(
         {"id": cust["id"]},
         {"$inc": {"rewards_redeemed_count": 1},
