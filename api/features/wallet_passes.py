@@ -855,6 +855,8 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Card not found")
     payload = core._serialize_card_payload(cust)
     _attach_campaign_offer(payload.get("card") or {}, cust)
+    if isinstance(payload.get("card"), dict) and isinstance(cust.get("points_news"), dict):
+        payload["card"]["points_news"] = cust["points_news"]          # features/referrals._announce
     return payload
 
 
@@ -1029,6 +1031,28 @@ def _void_reason(cust: Dict[str, Any], tenant_doc: Dict[str, Any]) -> Optional[s
     return None
 
 
+POINTS_NEWS_HOURS = 24
+
+
+def _points_news(card: Dict[str, Any], points: int) -> Optional[str]:
+    """Why the points just moved, when they moved for a reason worth saying
+    (a parrainage: « Votre ami Marie est venu… »). Wallet shows the field's
+    changeMessage when the balance changes, so the reason rides on it — only
+    while the balance is still the one it was written for, and for a day."""
+    news = card.get("points_news")
+    if not isinstance(news, dict) or not news.get("text"):
+        return None
+    try:
+        if int(news.get("points")) != int(points):
+            return None
+    except (TypeError, ValueError):
+        return None
+    at = _parse_dt(news.get("at"))
+    if not at or _now() - at > timedelta(hours=POINTS_NEWS_HOURS):
+        return None
+    return str(news["text"])
+
+
 def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
     serial = cust["barcode_id"]
@@ -1067,7 +1091,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     tier_field = {"key": "tier", "label": "STATUT", "value": TIER_LABELS.get(tier, "Bronze")}
     points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points,
-                    "changeMessage": (card.get("points_change_message") or "Vous avez maintenant %@ points")}
+                    "changeMessage": _points_news(card, points)
+                    or (card.get("points_change_message") or "Vous avez maintenant %@ points")}
     show_tier = show("show_tier") and show("show_tier_badge")
 
     # ---- the front row ------------------------------------------------------
@@ -2315,7 +2340,7 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
     Apple pulls a changed pass after a push; Google does not — the server has
     to send the new object itself. Called wherever Apple passes are woken
     (scan, redemption, campaign, card design), so both wallets move together.
-    `notify` ("campaign" | "reward" | {"kind": "birthday", "header", "body"})
+    `notify` ("campaign" | "reward" | {"kind": "birthday" | "parrainage", "header", "body"})
     adds a TEXT_AND_NOTIFY message; anything
     else updates the card without a notification. `update_class`: the design
     changed (colours, logo, name) — only then is the class sent again."""
@@ -2350,9 +2375,9 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
                 obj["messages"] = []                   # sent below, with the notification
-            elif kind == "birthday":
-                head = (notify.get("header") or "Joyeux anniversaire !").strip()
-                message = {"id": f"birthday-{int(time.time())}", "header": head[:60],
+            elif kind in ("birthday", "parrainage"):
+                head = (notify.get("header") or ("Joyeux anniversaire !" if kind == "birthday" else "Parrainage")).strip()
+                message = {"id": f"{kind}-{int(time.time())}", "header": head[:60],
                            "body": ((notify.get("body") or "").strip() or head)[:300]}
             elif kind == "reward":
                 reward = payload["card"].get("reward_description") or "Votre récompense"

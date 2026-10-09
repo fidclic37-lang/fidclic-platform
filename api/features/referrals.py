@@ -35,7 +35,7 @@ SELF-REFERRAL
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 import re
 import secrets
 import string
@@ -245,15 +245,60 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
 
     if parrain_pts:
         _db.customers.update_one({"id": row["referrer_customer_id"]}, {"$inc": {"points": parrain_pts}})
-        try:                                   # the parrain was not scanned: wake their card
-            from features.wallet_passes import notify_customer
-            notify_customer(row["referrer_customer_id"])
-        except Exception:
-            pass
     if filleul_pts:
         _db.customers.update_one({"id": filleul_id}, {"$inc": {"points": filleul_pts}})
+    try:
+        _announce(tenant_id, row["referrer_customer_id"], filleul, kind, parrain_pts, filleul_pts)
+    except Exception as exc:                   # a message must never cost the points
+        print(f"referrals: announce failed ({exc})")
     return {"referrer_customer_id": row["referrer_customer_id"], "kind": kind,
             "referrer_points": parrain_pts, "referee_points": filleul_pts}
+
+
+def _first(name: Any, fallback: str) -> str:
+    # « % » would break Wallet's « %@ » placeholder
+    return ((str(name or "").strip().split(" ") or [""])[0] or fallback).replace("%", "")
+
+
+def messages(kind: str, shop: str, parrain: str, filleul: str, parrain_pts: int, filleul_pts: int) -> Dict[str, Any]:
+    """What each side is told when parrainage points land (user, 2026-10-09):
+    the parrain hears that their friend came, the filleul whom they owe it to."""
+    if kind == "first":
+        return {"parrain": ("Parrainage réussi 🎉", f"Votre ami {filleul} est venu chez {shop} : +{parrain_pts} points."),
+                "filleul": (f"Bienvenue chez {shop} 🎉",
+                            f"Merci d'être venu grâce à {parrain} : +{filleul_pts} points de parrainage.")}
+    return {"parrain": ("Parrainage 🎉", f"{filleul} est revenu chez {shop} : +{parrain_pts} points."),
+            "filleul": ("Parrainage 🎉", f"+{filleul_pts} points de parrainage grâce à {parrain}.")}
+
+
+def _announce(tenant_id: str, parrain_id: str, filleul: Dict[str, Any], kind: str,
+              parrain_pts: int, filleul_pts: int) -> None:
+    """Tell both sides, each on their own card: the Wallet pass (Apple shows
+    the reason when the points change, Google gets a message) and web push.
+    No SMS — the Wallet card is the channel, and an SMS costs the shop."""
+    from features.wallet_passes import notify_customer
+    tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
+    parrain = _db.customers.find_one({"id": parrain_id}, {"_id": 0, "name": 1}) or {}
+    shop = (tenant.get("name") or "votre commerce").replace("%", "")
+    said = messages(kind, shop, _first(parrain.get("name"), "votre parrain"),
+                    _first(filleul.get("name"), "Votre ami"), parrain_pts, filleul_pts)
+    now = datetime.now(timezone.utc)
+    for cid, pts, side in ((parrain_id, parrain_pts, "parrain"), (filleul["id"], filleul_pts, "filleul")):
+        if not pts:
+            continue
+        title, body = said[side]
+        total = int((_db.customers.find_one({"id": cid}, {"_id": 0, "points": 1}) or {}).get("points") or 0)
+        _db.customers.update_one({"id": cid}, {"$set": {"points_news": {
+            "text": f"{body} Vous avez maintenant %@ points.", "points": total, "at": now, "kind": "parrainage"}}})
+        try:
+            notify_customer(cid, google_notify={"kind": "parrainage", "header": title, "body": body})
+        except Exception as exc:
+            print(f"referrals: wallet notify failed ({exc})")
+        try:
+            from features.push_subscriptions import fan_out_to_customer
+            fan_out_to_customer(tenant_id, cid, title, body)
+        except Exception as exc:
+            print(f"referrals: web push failed ({exc})")
 
 
 @router.get("/api/card/{barcode_id}/inviter")

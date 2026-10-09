@@ -6089,8 +6089,16 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
                 {"_id": existing["_id"]},
                 {"$set": {"latitude": req.latitude, "longitude": req.longitude}}
             )
-        return {"barcode_id": existing["barcode_id"], "message": "Already joined",
-                "card_key": _card_owner.key_for(existing["barcode_id"])}
+        # Parrainage is for new customers only (user, 2026-10-09): someone who
+        # already has a card here — even one removed from Wallet — gets it back
+        # and is told so, instead of a « Bienvenue » that promised points.
+        out = {"barcode_id": existing["barcode_id"], "message": "Already joined",
+               "card_key": _card_owner.key_for(existing["barcode_id"]), "already_member": True}
+        if req.parrain_barcode:
+            out["parrainage"] = False
+            out["parrainage_refused"] = ("self" if str(req.parrain_barcode).strip().upper() == existing["barcode_id"]
+                                         else "existing_customer")
+        return out
 
     # ─── Plan cap enforcement ───────────────────────────────────────────
     # Block new customer creation once the tenant reaches the cap defined
