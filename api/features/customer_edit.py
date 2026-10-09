@@ -90,6 +90,9 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
         "stamps_in_cycle": max(0, visits - int(c.get("visits_at_last_redemption") or 0)),
         "visits_at_last_redemption": int(c.get("visits_at_last_redemption") or 0),
         "tier": (c.get("tier") or "bronze").lower(),
+        # stamps moved from a paper card at a scan (once per customer)
+        "paper_stamps": int(c.get("paper_stamps") or 0),
+        "paper_stamps_at": c.get("paper_stamps_at"),
     }
 
 
