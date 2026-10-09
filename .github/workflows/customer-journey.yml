@@ -1,0 +1,51 @@
+# Customer journey — a real browser walks what a customer does (signup, the
+# card, the Wallet tiles, a friend's QR, a card given back) on every pull
+# request, against the local server with in-memory demo data. A red check
+# means a customer would hit an error page: do not merge.
+# (2026-10-09: #176 shipped a « Carte introuvable » behind every Wallet tile
+# while all API tests were green.)
+name: Customer journey
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            api/requirements.txt
+            api/requirements-dev.txt
+      - run: pip install -r api/requirements.txt -r api/requirements-dev.txt uvicorn
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx vite build
+      - run: npx playwright install --with-deps chromium
+
+      - name: Walk the customer journey
+        run: npx playwright test
+        env:
+          CI: 'true'
+          PYTHON: python
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: customer-journey-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
