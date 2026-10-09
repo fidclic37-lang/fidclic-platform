@@ -87,6 +87,10 @@
     {
       "path": "/api/cron/backup-weekly",
       "schedule": "0 6 * * 0"
+    },
+    {
+      "path": "/api/cron/tick",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

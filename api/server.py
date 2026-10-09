@@ -7422,7 +7422,7 @@ def _heuristic_campaign_recap(campaign: Dict[str, Any], audience: Dict[str, Any]
     sent_hour = None
     if campaign.get("sent_at"):
         try:
-            sent_hour = campaign["sent_at"].hour
+            sent_hour = _paris_time(campaign["sent_at"]).hour
         except Exception:
             pass
 
@@ -9107,6 +9107,7 @@ def get_time_segmentation(token_data: TokenData = Depends(require_role(["busines
         vt = v.get("visit_time") or v.get("created_at")
         if not vt:
             continue
+        vt = _paris_time(vt)               # the shop's hours, not UTC's (2026-10-09)
         h = vt.hour
         wd = vt.weekday()
         hour_buckets[h] += 1
@@ -9878,7 +9879,7 @@ def get_ai_suggestions(
     for v in visits_recent:
         ts = v.get("created_at")
         if isinstance(ts, datetime):
-            by_weekday[ts.weekday()] += 1
+            by_weekday[_paris_time(ts).weekday()] += 1
     if visits_recent:
         avg = sum(by_weekday.values()) / 7
         quietest_day = min(range(7), key=lambda d: by_weekday[d])
@@ -11223,6 +11224,51 @@ def _supersede_pending(tenant_id: str, kind: str) -> int:
 
 
 LEGACY_AUTO_ENGINE = False
+
+
+def _paris_time(t: datetime) -> datetime:
+    """A stored (UTC) time on the shop's clock."""
+    from features import period as _P
+    return _P.local(t)
+
+
+def _cron_ok(request: Request) -> None:
+    provided = (
+        request.headers.get("x-cron-secret")
+        or (request.headers.get("authorization", "").replace("Bearer ", "") if request.headers.get("authorization") else "")
+        or request.query_params.get("secret", "")
+    )
+    if CRON_SECRET and provided != CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+
+@app.get("/api/cron/tick")
+@app.post("/api/cron/tick")
+def run_tick(request: Request):
+    """Every 15 minutes (vercel.json; needs Vercel Pro — 2026-10-09). The
+    daily run is once a day at 07:00 UTC, so a campaign planned for 18:30
+    left the next morning, and a « Plage horaire » 11h–13h never ran."""
+    _cron_ok(request)
+    return tick_pass()
+
+
+def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What must happen at its time, not once a day. Idempotent: running it
+    twice sends nothing twice (a campaign leaves `scheduled` before it sends;
+    a time slot runs once a day)."""
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, Any] = {"at": now.isoformat(), "failures": []}
+    try:                         # planned campaigns — the merchant's and the Autopilot's
+        from features.campaigns_page import run_due as _run_due_campaigns
+        out["campaigns"] = _run_due_campaigns(now)
+    except Exception as e:
+        out["failures"].append({"step": "campaigns", "error": str(e)[:120]})
+    try:                         # Automatisations › « Plage horaire »
+        from features.push_wallet import run_all_due, TIME_TRIGGERS
+        out["time_slots"] = run_all_due(now, only=TIME_TRIGGERS)
+    except Exception as e:
+        out["failures"].append({"step": "time_slots", "error": str(e)[:120]})
+    return out
 
 
 @app.get("/api/cron/daily-triggers")
