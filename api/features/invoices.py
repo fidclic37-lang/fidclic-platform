@@ -46,6 +46,9 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+_PARIS = ZoneInfo("Europe/Paris")
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -436,7 +439,8 @@ def billing_overview(token_data: TokenData = Depends(require_role(["business_own
         "status": tenant.get("subscription_status") or ("trialing" if tenant.get("trial_ends_at") else None),
         "cancel_at_period_end": bool(tenant.get("subscription_cancel_at_period_end")),
         "renews_on": renew.isoformat() if renew else None,
-        "days_left": max(0, (renew.date() - _now().date()).days) if renew else None,
+        # calendar days in France, as the trial banner counts them (QA UX07)
+        "days_left": max(0, (renew.astimezone(_PARIS).date() - _now().astimezone(_PARIS).date()).days) if renew else None,
         "usage": [
             {"key": "new_cards", "label": "Cartes de fidélité créées", **usage["new_cards"]},
             {"key": "campaigns", "label": "Campagnes envoyées", **usage["campaigns"]},

@@ -455,7 +455,7 @@ function TopTab({ d, onDays }) {
               <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-bold ${i < 3 ? 'bg-[#2F6BFF] text-white' : 'bg-[#F1F5F9] text-[#475569]'}`}>{i + 1}</span>
               <Thumb p={p} size="h-11 w-14" />
               <div className="min-w-[160px] flex-1">
-                <p className="text-[14.5px] font-bold text-[#0B1C3F]">{p.name}</p>
+                <p translate="no" className="notranslate text-[14.5px] font-bold text-[#0B1C3F]">{p.name}</p>
                 <Pill name={p.category} color={p.color} />
               </div>
               <div className="min-w-[180px] flex-[1.4]">

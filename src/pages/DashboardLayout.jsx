@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
+import { protectNames } from '../lib/translator';
 
 /* =====================================================================
    DashboardLayout — the shell used by every authenticated page.
@@ -362,7 +363,7 @@ const DashboardLayout = () => {
   }
   const role = user?.role || 'default';
   const partialScope = ['administrateur', 'manager'].includes(role) && user?.scope === 'partial';
-  const { branchId } = useBranch();
+  const { branchId, branches: myBranches } = useBranch();
   const theme = themeForRole(role);
 
   // Collapsed-sidebar toggle (persisted across reloads). When true the
@@ -392,6 +393,14 @@ const DashboardLayout = () => {
       .catch(() => { /* silent — keep header generic */ });
     return () => { alive = false; };
   }, [user?.email]);
+  // The business, its establishments and the person signed in are names:
+  // the page translator leaves them as written (QA F08).
+  React.useEffect(() => {
+    const t = tenantInfo || {};
+    protectNames([t.name, t.legal_name, t.commercial_name, t.brand_name,
+      ...((t.branches || []).map((b) => b.name)), ...((myBranches || []).map((b) => b.name)), user?.name, user?.full_name,
+      [user?.first_name, user?.last_name].filter(Boolean).join(' ')]);
+  }, [tenantInfo, user, myBranches]);
 
   // Analytics moved to the unified light theme (av2-light-skin) — same
   // palette as the rest of the dashboard so navigating Analytics ↔

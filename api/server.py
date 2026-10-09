@@ -3149,9 +3149,16 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
         if trial_ends_at.tzinfo is None:
             trial_ends_at = trial_ends_at.replace(tzinfo=timezone.utc)
         delta = trial_ends_at - now_utc
-        days_left = int(delta.total_seconds() // 86400)
+        # Days as a person counts them — calendar days in France until the
+        # last day (QA UX07: the banner floored the hours and said 26, the
+        # Abonnement page counted dates and said 27). 0 = it ends today.
+        from zoneinfo import ZoneInfo
+        _paris = ZoneInfo("Europe/Paris")
+        days_left = (trial_ends_at.astimezone(_paris).date() - now_utc.astimezone(_paris).date()).days
         hours_left = int(delta.total_seconds() // 3600)
         is_expired = delta.total_seconds() <= 0
+        if is_expired:
+            days_left = min(days_left, 0)
 
     reminder_days = int(features.get("trial_reminder_days_before", TRIAL_REMINDER_DAYS_BEFORE))
     in_reminder = (days_left is not None and 0 < days_left <= reminder_days)
@@ -3171,6 +3178,7 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
         "available_plans": [
             {
                 "plan": p,
+                "label": get_plan_features(p).get("label") or p,
                 "price": get_plan_features(p).get("price"),
                 "max_customers": get_plan_features(p).get("max_customers"),
                 "ai_queries_per_day": get_plan_features(p).get("ai_queries_per_day"),

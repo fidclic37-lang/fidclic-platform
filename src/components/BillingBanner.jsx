@@ -64,7 +64,7 @@ export default function BillingBanner() {
       // Visual confirmation — fall through to the re-render where the
       // banner disappears because subscription_status is now 'active'.
     } catch (e) {
-      alert('Plan switch failed: ' + (e?.response?.data?.detail || e.message));
+      alert("Le changement d'offre n'a pas abouti : " + (e?.response?.data?.detail || e.message));
     } finally {
       setUpgrading(false);
     }
@@ -82,13 +82,15 @@ export default function BillingBanner() {
   // Pretty time-left string. Below 24h, fall back to hours for granularity.
   const daysLeft = trial.days_left ?? 0;
   const hoursLeft = trial.hours_left ?? 0;
+  // French, like the rest of the app (QA UX06); days are calendar days in
+  // France, the same count as the Abonnement page (QA UX07).
   const timeLeftText = isExpired
-    ? 'Free trial ended'
+    ? "Votre période d'essai est terminée"
     : daysLeft >= 1
-      ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} left in your free trial`
+      ? `Plus que ${daysLeft} jour${daysLeft > 1 ? 's' : ''} d'essai gratuit`
       : hoursLeft > 0
-        ? `${hoursLeft} hour${hoursLeft > 1 ? 's' : ''} left in your free trial`
-        : 'Your free trial ends today';
+        ? `Votre essai gratuit se termine aujourd'hui (encore ${hoursLeft} h)`
+        : "Votre essai gratuit se termine aujourd'hui";
 
   return (
     <div className={`border-b ${bgClass}`} data-currency="eur">
@@ -98,14 +100,14 @@ export default function BillingBanner() {
         <div className="flex-1 min-w-0">
           {isExpired ? (
             <span>
-              <strong>{timeLeftText}.</strong> Paid features are locked — pick a plan to keep using FidClic.
+              <strong>{timeLeftText}.</strong> Les fonctions payantes sont verrouillées : choisissez une offre pour continuer à utiliser FidClic.
             </span>
           ) : isReminder ? (
             <span>
-              <strong>{timeLeftText}.</strong> Pick a plan now to avoid interruption.
+              <strong>{timeLeftText}.</strong> Choisissez une offre dès maintenant pour éviter toute interruption.
               {trial.trial_ends_at && (
                 <span className="ml-2 opacity-75">
-                  (expires {new Date(trial.trial_ends_at).toLocaleDateString()})
+                  (fin le {new Date(trial.trial_ends_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'Europe/Paris' })})
                 </span>
               )}
             </span>
@@ -119,7 +121,7 @@ export default function BillingBanner() {
                 className="underline font-semibold"
                 type="button"
               >
-                See plans
+                Voir les offres
               </button>
             </span>
           )}
@@ -131,14 +133,14 @@ export default function BillingBanner() {
           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-white text-[#171412] font-semibold text-xs hover:bg-[#FAFAF8] transition-colors border border-[#E9E5E0] shrink-0"
           type="button"
         >
-          {isExpired ? 'Unlock now' : isReminder ? 'Choose a plan' : 'View plans'}
+          {isExpired ? 'Débloquer maintenant' : isReminder ? 'Choisir une offre' : 'Voir les offres'}
         </button>
 
         {/* Quiet mode is dismissible — reminder & expired are not. */}
         {isQuiet && (
           <button
             onClick={() => setDismissed(true)}
-            aria-label="Dismiss"
+            aria-label="Masquer"
             className="text-current opacity-60 hover:opacity-100 shrink-0"
             type="button"
           >
@@ -169,7 +171,8 @@ export default function BillingBanner() {
 // ships — no extra request.
 // ───────────────────────────────────────────────────────────────────────────
 function PlanPicker({ trial, upgrading, onPick, onClose }) {
-  const plans = trial.available_plans || [];
+  // Franchise is on quote (no price): not a plan to pick here
+  const plans = (trial.available_plans || []).filter((p) => Number(p.price) > 0);
   return (
     <div
       data-currency="eur"
@@ -193,16 +196,16 @@ function PlanPicker({ trial, upgrading, onPick, onClose }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
           <div style={{ flex: 1 }}>
             <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: '#B85C38', margin: 0 }}>
-              FidClic Plans
+              Offres FidClic
             </p>
             <h2 style={{ fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: 28, fontWeight: 700, margin: '6px 0 4px', color: '#171412' }}>
-              {trial.is_expired ? 'Your trial has ended — pick a plan to continue' : 'Pick the plan that fits your business'}
+              {trial.is_expired ? "Votre essai est terminé — choisissez une offre pour continuer" : 'Choisissez l\'offre adaptée à votre commerce'}
             </h2>
             <p style={{ fontSize: 13.5, color: '#6B6359', margin: 0 }}>
-              Switch any time. Limits and features change instantly when you upgrade — no migration.
+              Changez d'offre quand vous voulez : les limites et les fonctions suivent immédiatement, sans migration.
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" type="button"
+          <button onClick={onClose} aria-label="Fermer" type="button"
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#6B6359' }}>
             <X size={20} />
           </button>
@@ -226,21 +229,21 @@ function PlanPicker({ trial, upgrading, onPick, onClose }) {
                     background: accent, color: 'white',
                     fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em',
                     padding: '3px 8px', borderRadius: 99,
-                  }}>Current</span>
+                  }}>Actuelle</span>
                 )}
                 <p style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: accent, margin: 0 }}>
-                  {p.plan}
+                  {p.label || p.plan}
                 </p>
                 <p style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 32, fontWeight: 700, margin: '4px 0 2px', color: '#171412' }}>
-                  €{p.price}<span style={{ fontSize: 14, fontWeight: 400, color: '#6B6359' }}>/mo</span>
+                  {p.price} €<span style={{ fontSize: 14, fontWeight: 400, color: '#6B6359' }}> HT / mois</span>
                 </p>
                 <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0', fontSize: 13, color: '#171412' }}>
-                  <li style={{ padding: '4px 0' }}>✓ Up to {p.max_customers?.toLocaleString()} customers</li>
+                  <li style={{ padding: '4px 0' }}>✓ Jusqu'à {p.max_customers?.toLocaleString('fr-FR')} clients</li>
                   <li style={{ padding: '4px 0', color: p.ai_queries_per_day > 0 ? '#171412' : '#A8A29E' }}>
-                    {p.ai_queries_per_day > 0 ? '✓' : '✗'} AI Assistant ({p.ai_queries_per_day || 0}/day)
+                    {p.ai_queries_per_day > 0 ? '✓' : '✗'} FidClic IA ({p.ai_queries_per_day || 0} / jour)
                   </li>
                   <li style={{ padding: '4px 0', color: p.geo_proximity ? '#171412' : '#A8A29E' }}>
-                    {p.geo_proximity ? '✓' : '✗'} Geolocation campaigns
+                    {p.geo_proximity ? '✓' : '✗'} Campagnes géolocalisées
                   </li>
                 </ul>
                 <button
@@ -255,16 +258,13 @@ function PlanPicker({ trial, upgrading, onPick, onClose }) {
                     fontSize: 13, fontWeight: 700,
                     opacity: upgrading ? 0.6 : 1,
                   }}>
-                  {isCurrent ? 'Current plan' : upgrading ? 'Switching…' : `Pick ${p.plan}`}
+                  {isCurrent ? 'Offre actuelle' : upgrading ? 'Changement…' : `Choisir ${p.label || p.plan}`}
                 </button>
               </div>
             );
           })}
         </div>
 
-        <p style={{ fontSize: 11, color: '#A8A29E', marginTop: 14, textAlign: 'center' }}>
-          Test/staging environment switches plans instantly. Production routes through Stripe Checkout.
-        </p>
       </div>
     </div>
   );

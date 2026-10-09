@@ -609,12 +609,8 @@ const ScanPage = () => {
           </div>
         )}
 
-        {/* Build fingerprint — verifies which JS bundle is running so we can
-            tell if the page is stale-cached. If you see "build 2026-05-07b"
-            on screen, the latest scan-error fix is live. */}
-        <div className="text-[10px] mt-2 opacity-50" style={{ color: '#64748B' }}>
-          build 2026-05-07d · jsQR camera
-        </div>
+        {/* (QA UX07, 2026-10-08: the old build fingerprint line is gone — it
+            meant nothing to a shop.) */}
       </div>
 
       {branches.length > 0 && (
