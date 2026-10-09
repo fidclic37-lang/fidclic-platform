@@ -254,7 +254,7 @@ const H = {
   tiers: {
     t: 'Paliers',
     what: "Combien de clients sont Bronze, Argent, Or et VIP.",
-    how: "Le palier actuel de chaque client, selon les seuils de votre Carte de fidélité.",
+    how: "Le palier de chaque client suit les seuils de Carte de fidélité › Récompenses et paliers, mis à jour à chaque passage. VIP aussi, si vous le gardez, dès un nombre de visites avec un panier moyen élevé (même carte). Différent de « Client très actif » des Règles clients.",
     why: "Faire monter vos clients de palier est un objectif clair à leur proposer.",
   },
   'avis:avg': {

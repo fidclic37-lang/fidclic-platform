@@ -10,6 +10,9 @@ import { confirmImportant } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 
+// the palier in French, as on the card (« Silver » read as English — QA F21)
+const TIER_FR = { bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' };
+
 /**
  * Segmentation — built to the approved mockups.
  *
@@ -378,7 +381,7 @@ const MembersModal = ({ segment, onClose, onCampaign }) => (
             {segment.clients?.map((c) => (
               <tr key={c.id} className="border-b border-[#F4F7FC] last:border-b-0">
                 <td className="px-3 py-2 text-[12.5px] font-medium text-[#0B1C3F]">{c.name}</td>
-                <td className="px-3 py-2 text-[12px] capitalize text-[#64748B]">{c.tier}</td>
+                <td className="px-3 py-2 text-[12px] text-[#64748B]">{TIER_FR[String(c.tier || '').toLowerCase()] || c.tier || '—'}</td>
                 <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-[#475569]">{nf(c.visits)}</td>
                 <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-[#0B1C3F]">{money(c.spend)}</td>
               </tr>

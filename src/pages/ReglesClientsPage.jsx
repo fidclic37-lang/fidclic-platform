@@ -392,6 +392,8 @@ export default function ReglesClientsPage() {
           Ces règles permettent de classer automatiquement vos clients. La segmentation détaillée (filtres,
           critères avancés, listes) se fait dans la section{' '}
           <Link to="/dashboard/segmentation" className="font-bold hover:underline">Segmentation</Link>.
+          {' '}Les paliers de la carte (Bronze, Argent, Or, VIP) sont autre chose : ils se règlent dans{' '}
+          <Link to="/dashboard/card" className="font-bold hover:underline">Carte de fidélité › Récompenses et paliers</Link>.
         </p>
       </div>
 

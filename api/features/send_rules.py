@@ -12,7 +12,8 @@ LIMITES D'ENVOI (decided with the user)
     Not counted, never held: what follows a client's own action —
     welcome, points after a scan, reward unlocked, the Google review request.
     « Récompense proche » IS counted (user, 2026-10-09): over the limit it
-    waits for the next day like the rest.
+    waits for the next day like the rest. « tier_up » — a new palier after
+    the owner changed the thresholds — is not (user, 2026-10-09).
 
     When a message would go over a limit it is not lost: it waits for the
     next day (`deferred_messages`) and the daily run sends the waiting ones
@@ -43,7 +44,7 @@ _db = None
 
 PARIS = ZoneInfo("Europe/Paris")
 READERS = ["business_owner", "administrateur", "manager"]
-EXEMPT = {"welcome", "google_review", "reward_unlocked", "points", "scan", "transactional", "test"}
+EXEMPT = {"welcome", "google_review", "reward_unlocked", "tier_up", "points", "scan", "transactional", "test"}
 PRIORITY = {"birthday": 0, "near_reward": 1, "campaign": 2, "offer": 2, "news": 2,
             "push_wallet": 3, "automation": 3, "copilot": 4, "ai": 4}
 DEFAULT_RULES = {"per_client_day": 3, "per_client_week": 10, "shop_day": 0, "shop_week": 0}

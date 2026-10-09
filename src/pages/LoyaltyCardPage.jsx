@@ -239,6 +239,10 @@ export default function LoyaltyCardPage() {
   const [error, setError] = useState('');
   const [editTiers, setEditTiers] = useState(false);
   const [tierError, setTierError] = useState('');
+  // VIP also from N visits with a high average basket — the one shortcut,
+  // shown and set here with the ladder (QA F21, user 2026-10-09)
+  const [vipRule, setVipRule] = useState({ enabled: true, min_visits: 10, min_avg: 60 });
+  const [moved, setMoved] = useState(null);       // who changed palier after a save
   const [snapshot, setSnapshot] = useState('');   // what the server holds, to know what is unsaved
   const advancedRef = useRef(null);
 
@@ -250,6 +254,7 @@ export default function LoyaltyCardPage() {
       setProgramme(r.data.programme);
       setToggles(r.data.toggles);
       setTiers(r.data.tiers);
+      if (r.data.vip_shortcut) setVipRule(r.data.vip_shortcut);
       // A photo on file with the banner style still reading "brand" can only be
       // a card saved before the upload started setting the style — the owner
       // added a banner and never saw it. Show the photo.
@@ -456,8 +461,14 @@ export default function LoyaltyCardPage() {
   const saveTiers = async () => {
     setSaving(true); setError(''); setTierError('');
     try {
-      const r = await ownerAPI.saveCardRewards(tiers.map((t) => ({ key: t.key, min: Number(t.min), reward: t.reward })));
+      const r = await ownerAPI.saveCardRewards({
+        tiers: tiers.map((t) => ({ key: t.key, min: Number(t.min), reward: t.reward })),
+        vip_shortcut: { enabled: !!vipRule.enabled, min_visits: Number(vipRule.min_visits) || 1,
+                        min_avg: Number(vipRule.min_avg) || 0 },
+      });
       setTiers(r.data.tiers);
+      if (r.data.vip_shortcut) setVipRule(r.data.vip_shortcut);
+      setMoved(r.data.moved || null);
       setEditTiers(false);
     } catch (e) {
       // Said beside the rungs, where the owner is looking.
@@ -984,6 +995,55 @@ export default function LoyaltyCardPage() {
             ))}
           </div>
           {tierError && <p className="mt-3 rounded-xl bg-[#FEECEC] px-3 py-2 text-center text-[12px] text-[#C0392B]">{tierError}</p>}
+
+          {/* The whole rule, said where it is set (QA F21): no palier comes
+              from anywhere else. */}
+          <div className="mt-4 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] p-3 text-[12.5px] text-[#334155]">
+            <p className="font-semibold text-[#0B1C3F]">Comment le palier d'un client est décidé</p>
+            <ul className="mt-1.5 list-disc space-y-1 pl-4">
+              <li>Selon ces seuils, en {unit}, recalculé à chaque passage en caisse.</li>
+              <li>
+                {editTiers ? (
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <label className="inline-flex items-center gap-1.5">
+                      <input type="checkbox" checked={!!vipRule.enabled}
+                             onChange={(e) => setVipRule({ ...vipRule, enabled: e.target.checked })} />
+                      VIP aussi dès
+                    </label>
+                    <span className="inline-block w-16">
+                      <Input type="number" min="1" value={vipRule.min_visits} aria-label="Visites minimum pour le raccourci VIP"
+                             disabled={!vipRule.enabled} className="py-1 text-center text-[12px]"
+                             onChange={(e) => setVipRule({ ...vipRule, min_visits: e.target.value })} />
+                    </span>
+                    visites avec un panier moyen d'au moins
+                    <span className="inline-block w-20">
+                      <Input type="number" min="0" value={vipRule.min_avg} aria-label="Panier moyen minimum en euros"
+                             disabled={!vipRule.enabled} className="py-1 text-center text-[12px]"
+                             onChange={(e) => setVipRule({ ...vipRule, min_avg: e.target.value })} />
+                    </span>
+                    €
+                  </span>
+                ) : vipRule.enabled ? (
+                  <>VIP aussi dès <strong>{vipRule.min_visits} visites</strong> avec un panier moyen d'au moins <strong>{vipRule.min_avg} €</strong>, même avant le seuil VIP.</>
+                ) : (
+                  <>Pas de raccourci VIP : seul le seuil VIP compte.</>
+                )}
+              </li>
+              <li>Quand vous changez ces réglages, tous vos clients sont reclassés : ceux qui montent sont prévenus sur leur carte.</li>
+              <li>
+                Différent de « Client très actif » des{' '}
+                <a href="/dashboard/parametres/regles-clients" className="font-semibold text-[#2F6BFF] underline">Règles clients</a>,
+                {' '}qui compte les visites par mois.
+              </li>
+            </ul>
+          </div>
+          {moved && (
+            <p className="mt-3 rounded-xl bg-[#ECFDF3] px-3 py-2 text-center text-[12px] text-[#065F46]" role="status">
+              {moved.up + moved.down === 0
+                ? 'Enregistré. Aucun client ne change de palier.'
+                : `Enregistré. ${moved.up + moved.down} client${moved.up + moved.down > 1 ? 's changent' : ' change'} de palier : ${moved.up} en hausse (prévenu${moved.up > 1 ? 's' : ''}), ${moved.down} en baisse.`}
+            </p>
+          )}
           {editTiers && (
             <p className="mt-3 text-center text-[11.5px] text-[#94A3B8]">
               Le nombre de {unit} jusqu'où va chaque palier, croissant. Le dernier commence là où s'arrête le précédent.

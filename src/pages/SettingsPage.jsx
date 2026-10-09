@@ -7,7 +7,6 @@ import LoadingDistraction from '../components/LoadingDistraction';
 import { PageHeader, C as C_PS } from '../components/PageShell';
 import DaypartConfigCard from '../components/DaypartConfigCard';
 import BusinessHoursCard from '../components/BusinessHoursCard';
-import TierDefinitionCard from '../components/TierDefinitionCard';
 import AutoCampaignsCard from '../components/AutoCampaignsCard';
 import WelcomeBonusCard from '../components/WelcomeBonusCard';
 import InactiveCustomerPurgeCard from '../components/InactiveCustomerPurgeCard';
@@ -325,8 +324,9 @@ const SettingsPage = () => {
             {/* Additive: weekly schedule + French public holidays + annual closures. */}
             <div id="settings-hours" className="scroll-mt-24"><BusinessHoursCard /></div>
 
-            {/* Additive: custom tier thresholds + big-spender rule. */}
-            <div id="settings-tiers" className="scroll-mt-24"><TierDefinitionCard /></div>
+            {/* Paliers live in one place now: Carte de fidélité › Récompenses et
+                paliers (QA F21, user 2026-10-09). TierDefinitionCard is kept,
+                unmounted. */}
 
             {/* Additive: welcome message + bonus points on signup. */}
             <div id="settings-welcome" className="scroll-mt-24"><WelcomeBonusCard /></div>
@@ -370,7 +370,6 @@ function SettingsNavigator() {
     { id: 'settings-status',   label: t('settings.section_status') },
     { id: 'settings-dayparts', label: t('settings.section_dayparts') },
     { id: 'settings-hours',    label: t('settings.section_hours') },
-    { id: 'settings-tiers',    label: t('settings.section_tiers') },
     { id: 'settings-welcome',  label: t('settings.section_welcome') },
     { id: 'settings-auto-pending', label: t('settings.section_auto_pending') },
     { id: 'settings-auto',     label: t('settings.section_auto') },

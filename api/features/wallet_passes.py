@@ -2333,7 +2333,7 @@ def google_save_url(payload: Dict[str, Any]) -> str:
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
 # the birthday message. Google allows 3 notifying messages per card per 24 h;
 # past that the message still lands in the card, silently.
-GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward"}
+GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward", "tier_up"}
 
 
 def _gw_reason(body: Dict[str, Any]) -> str:
@@ -2382,9 +2382,10 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
                 obj["messages"] = []                   # sent below, with the notification
-            elif kind in ("birthday", "parrainage", "near_reward"):
+            elif kind in ("birthday", "parrainage", "near_reward", "tier_up"):
                 head = (notify.get("header") or {"birthday": "Joyeux anniversaire !", "parrainage": "Parrainage",
-                                                 "near_reward": "Vous y êtes presque !"}[kind]).strip()
+                                                 "near_reward": "Vous y êtes presque !",
+                                                 "tier_up": "Nouveau palier"}[kind]).strip()
                 message = {"id": f"{kind}-{int(time.time())}", "header": head[:60],
                            "body": ((notify.get("body") or "").strip() or head)[:300]}
             elif kind == "reward":

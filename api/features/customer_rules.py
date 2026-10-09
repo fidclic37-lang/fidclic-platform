@@ -99,9 +99,11 @@ BUILTINS: List[Dict[str, Any]] = [
     {"key": "fidele", "name": "Client fidèle", "icon": "star", "tone": "blue",
      "conditions": [{"type": "visits_per_month", "value": 4}],
      "description": "Client qui visite souvent votre commerce."},
-    {"key": "vip", "name": "Client VIP", "icon": "crown", "tone": "amber",
+    # Not « Client VIP » any more (QA F21, user 2026-10-09): VIP is the top
+    # palier of the loyalty card; this rule is about how often they come.
+    {"key": "vip", "name": "Client très actif", "icon": "crown", "tone": "amber",
      "conditions": [{"type": "visits_per_month", "value": 8}],
-     "description": "Client très actif et à forte valeur."},
+     "description": "Vient très souvent. À ne pas confondre avec le palier VIP de la carte de fidélité."},
 ]
 BUILTIN_KEYS = [b["key"] for b in BUILTINS]
 
@@ -196,6 +198,12 @@ def load(tid: str) -> List[Dict[str, Any]]:
     if "rules" not in doc:
         return _from_legacy(doc)
     rules = [dict(r) for r in doc.get("rules") or []]
+    for r in rules:
+        # saved before the rename: the old default name and wording follow it
+        if r.get("key") == "vip" and r.get("name") == "Client VIP":
+            r["name"] = "Client très actif"
+            if r.get("description") == "Client très actif et à forte valeur.":
+                r["description"] = _builtin("vip")["description"]
     rules.sort(key=lambda r: r.get("order", 0))
     return rules
 
@@ -457,7 +465,7 @@ def _check_ladders(rules: List[Dict[str, Any]]) -> None:
                                    f"de « Client actif ».")
     ladder = [(k, v(k, 1) if k == "regulier" else v(k)) for k in ("regulier", "fidele", "vip")]
     ladder = [(k, x) for k, x in ladder if x is not None]
-    names = {"regulier": "Client régulier", "fidele": "Client fidèle", "vip": "Client VIP"}
+    names = {"regulier": "Client régulier", "fidele": "Client fidèle", "vip": "Client très actif"}
     for (k1, x1), (k2, x2) in zip(ladder, ladder[1:]):
         if x2 <= x1:
             raise HTTPException(status_code=400,

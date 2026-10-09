@@ -141,7 +141,11 @@ KB: List[Dict[str, Any]] = [
         "body": (
             "Vous définissez une récompense principale (par exemple 100 points = une boisson offerte) et "
             "quatre paliers — Bronze, Argent, Or, VIP — avec le seuil de chacun, en points, en visites ou en "
-            "euros cagnottés selon votre programme. Quand une carte est complète, la récompense est mise de "
+            "euros cagnottés selon votre programme. Ces seuils décident du palier de chaque client, à chaque "
+            "passage ; quand vous les changez, tous vos clients sont reclassés et ceux qui montent sont "
+            "prévenus. Un raccourci, réglable au même endroit : VIP aussi dès un nombre de visites avec un "
+            "panier moyen élevé (10 visites et 60 € par défaut). Le « Client très actif » des Règles clients "
+            "est autre chose : il compte les visites par mois. Quand une carte est complète, la récompense est mise de "
             "côté et la carte repart à zéro à la visite suivante : rien n'est perdu, le client garde sa "
             "récompense à réclamer en caisse."
         ),

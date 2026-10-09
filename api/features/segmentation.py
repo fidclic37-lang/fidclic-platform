@@ -162,7 +162,7 @@ MODELS: List[Dict[str, Any]] = [
      "description": "À moins de 5 km de votre commerce.",
      "rules": [{"field": "distance", "op": "lt", "value": 5}]},
     # Behind the first five: what takes a model's place once it is in use.
-    {"key": "vip", "name": "Clients VIP", "icon": "star", "tone": "amber",
+    {"key": "vip", "name": "Palier VIP", "icon": "star", "tone": "amber",
      "description": "Ont atteint le palier VIP de votre carte.",
      "rules": [{"field": "tier", "op": "eq", "value": "vip"}]},
     {"key": "anciens_fideles", "name": "Anciens fidèles", "icon": "users", "tone": "rose",

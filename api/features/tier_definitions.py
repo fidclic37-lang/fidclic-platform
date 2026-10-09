@@ -68,8 +68,11 @@ def _recompute_for_tenant(tenant_id: str) -> dict:
     counts = {"bronze": 0, "silver": 0, "gold": 0, "vip": 0}
     big_spenders = 0
     updated = 0
+    # The palier is the card's own rule now (features/loyalty_card.tier_of,
+    # QA F21): this older page only keeps its big-spender flag.
+    from features import loyalty_card as LC
     for c in customers:
-        new_tier = _classify(int(c.get("visits", 0) or 0), defn)
+        new_tier = LC.tier_of(c, tenant_id)
         counts[new_tier] += 1
         spent = float(c.get("total_amount_paid", 0) or 0)
         avg_ticket = (spent / c["visits"]) if c.get("visits") else 0.0

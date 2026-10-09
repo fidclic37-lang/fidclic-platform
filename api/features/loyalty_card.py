@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -159,16 +159,101 @@ def tiers_for(tenant_id: str) -> List[Dict[str, Any]]:
 
 
 def classify(customer: Dict[str, Any], tenant_id: str) -> str:
-    """Which rung is this customer on? Points or visits, per the programme."""
-    tpl = _template(tenant_id)
+    """Which rung is this customer on? See tier_of."""
+    return tier_of(customer, tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# THE tier rule (QA F21, user 2026-10-09: « sab kuch dikhao »).
+# A customer's palier comes from the ladder the owner sets under « Récompenses
+# et paliers » — nowhere else. The scan, « Modifier la fiche » and a change of
+# thresholds all use tier_of. One shortcut, shown and editable on the same
+# card: VIP also from N visits with an average basket of at least X €.
+# ---------------------------------------------------------------------------
+VIP_SHORTCUT_DEFAULT = {"enabled": True, "min_visits": 10, "min_avg": 60}
+TIER_ORDER = ["bronze", "silver", "gold", "vip"]
+
+
+def vip_shortcut(tpl: Dict[str, Any]) -> Dict[str, Any]:
+    raw = tpl.get("vip_shortcut") if isinstance(tpl.get("vip_shortcut"), dict) else {}
+    out = {**VIP_SHORTCUT_DEFAULT, **{k: raw[k] for k in VIP_SHORTCUT_DEFAULT if k in raw}}
+    out["enabled"] = bool(out["enabled"])
+    out["min_visits"] = max(1, int(out["min_visits"] or 1))
+    out["min_avg"] = max(0.0, float(out["min_avg"] or 0))
+    return out
+
+
+def tier_of(customer: Dict[str, Any], tenant_id: str, tpl: Optional[Dict[str, Any]] = None) -> str:
+    """Points or visits against the ladder, per the programme; then the VIP
+    shortcut (visits + average basket), if the owner keeps it on."""
+    tpl = tpl if tpl is not None else _template(tenant_id)
     programme = _programme(tpl)
-    value = int(customer.get("points") or 0) if _is_points(programme) \
-        else int(customer.get("visits") or 0)
+    visits = int(customer.get("visits") or 0)
+    value = int(customer.get("points") or 0) if _is_points(programme) else visits
     tier = "bronze"
     for row in tiers_for(tenant_id):
         if value >= row["min"]:
             tier = row["key"]
+    sc = vip_shortcut(tpl)
+    if sc["enabled"] and tier != "vip" and visits >= sc["min_visits"]:
+        avg = float(customer.get("total_amount_paid") or 0) / visits if visits else 0.0
+        if avg >= sc["min_avg"]:
+            tier = "vip"
     return tier
+
+
+def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
+    """Every customer's palier again, after the owner changed the rule.
+
+    Each card whose palier changed is refreshed. A customer who goes UP is
+    told (user, 2026-10-09: « card update with push notifs »), outside the
+    shop's daily limits (kind « tier_up », features/send_rules.EXEMPT); one
+    who goes down only sees the card change. The daily « Atteinte d'un
+    palier » scenario is not stamped, so nobody is congratulated twice."""
+    tpl = _template(tenant_id)
+    tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1, "campaign_sender_name": 1}) or {}
+    shop = tenant.get("campaign_sender_name") or tenant.get("name") or "votre commerce"
+    rewards = {r["key"]: r.get("reward") or "" for r in tiers_for(tenant_id)}
+    out = {"up": 0, "down": 0, "same": 0}
+    quiet: List[str] = []                      # cards to refresh without a word
+    live = {"tenant_id": tenant_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    for c in _db.customers.find(live, {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "points": 1,
+                                        "total_amount_paid": 1}):
+        old = (c.get("tier") or "bronze").lower()
+        new = tier_of(c, tenant_id, tpl)
+        if new == old:
+            out["same"] += 1
+            continue
+        up = TIER_ORDER.index(new) > (TIER_ORDER.index(old) if old in TIER_ORDER else 0)
+        out["up" if up else "down"] += 1
+        _db.customers.update_one({"id": c["id"]}, {"$set": {"tier": new, "previous_tier": old,
+                                                            "tier_recomputed_at": _now(), "updated_at": _now()}})
+        if not (up and announce):
+            quiet.append(c["id"])
+            continue
+        if up and announce:
+            label = TIER_LABELS.get(new, new)
+            first = (c.get("name") or "").split(" ")[0]
+            title = f"🎉 Nouveau palier : {label}"
+            body = (f"Bravo{(' ' + first) if first else ''} ! Vous passez {label} chez {shop}."
+                    + (f" Votre avantage : {rewards.get(new)}." if rewards.get(new) else ""))
+            try:
+                import server as core
+                core.dispatch_to_customer(tenant_id, {**c, "tenant_id": tenant_id}, title, body, kind="tier_up")
+            except Exception as exc:
+                print(f"tiers: push not sent ({exc})")
+            try:
+                from features.wallet_passes import notify_customer
+                notify_customer(c["id"], google_notify={"kind": "tier_up", "header": title, "body": body})
+            except Exception as exc:
+                print(f"tiers: wallet not refreshed ({exc})")
+    if quiet:
+        try:
+            from features.wallet_passes import notify_tenant
+            notify_tenant(tenant_id, customer_ids=quiet)
+        except Exception:
+            pass
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +429,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "has_coordinates": bool(tenant.get("lat") or tenant.get("latitude")),
         },
         "tiers": tiers_for(tid),
+        "vip_shortcut": vip_shortcut(tpl),
     }
 
 
@@ -486,11 +572,25 @@ class RewardTier(BaseModel):
     reward: str = ""
 
 
+class VipShortcut(BaseModel):
+    enabled: bool = True
+    min_visits: int = Field(10, ge=1, le=1000)
+    min_avg: float = Field(60, ge=0, le=100000)
+
+
+class RewardsIn(BaseModel):
+    tiers: List[RewardTier]
+    vip_shortcut: Optional[VipShortcut] = None
+
+
 @router.put("/api/owner/card/rewards")
-def put_rewards(tiers: List[RewardTier],
+def put_rewards(body: Union[RewardsIn, List[RewardTier]],
                 token_data: TokenData = Depends(require_role(["business_owner"]))):
-    """The four rungs. Thresholds must climb; the first one starts at 0 so no
-    customer falls outside the ladder."""
+    """The four rungs (and the VIP shortcut). Thresholds must climb; the first
+    one starts at 0 so no customer falls outside the ladder. Every customer's
+    palier follows at once (recompute_tiers)."""
+    tiers = body.tiers if isinstance(body, RewardsIn) else body
+    shortcut = body.vip_shortcut if isinstance(body, RewardsIn) else None
     rows = [t.model_dump() for t in tiers][:4]
     if not rows:
         raise HTTPException(status_code=400, detail="Au moins un palier est requis")
@@ -510,9 +610,10 @@ def put_rewards(tiers: List[RewardTier],
             raise HTTPException(status_code=400, detail=(
                 f"Le palier {here} doit commencer au-dessus du palier {below} : "
                 "chaque palier va plus loin que le précédent."))
-    _db.card_templates.update_one({"tenant_id": token_data.tenant_id},
-                                  {"$set": {"reward_tiers": rows, "tenant_id": token_data.tenant_id,
-                                            "updated_at": _now()}}, upsert=True)
+    update = {"reward_tiers": rows, "tenant_id": token_data.tenant_id, "updated_at": _now()}
+    if shortcut is not None:
+        update["vip_shortcut"] = shortcut.model_dump()
+    _db.card_templates.update_one({"tenant_id": token_data.tenant_id}, {"$set": update}, upsert=True)
     try:
         from features import audit
         audit.log("card.rewards.updated", tenant_id=token_data.tenant_id, actor=token_data,
@@ -525,7 +626,9 @@ def put_rewards(tiers: List[RewardTier],
         notify_tenant(token_data.tenant_id)
     except Exception:
         pass
-    return {"ok": True, "tiers": tiers_for(token_data.tenant_id)}
+    moved = recompute_tiers(token_data.tenant_id)
+    return {"ok": True, "tiers": tiers_for(token_data.tenant_id),
+            "vip_shortcut": vip_shortcut(_template(token_data.tenant_id)), "moved": moved}
 
 
 # ---------------------------------------------------------------------------
