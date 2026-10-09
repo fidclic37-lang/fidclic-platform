@@ -507,6 +507,8 @@ export const ownerAPI = {
   // Parrainage — the programme's dashboard, its settings and its share links.
   referralOverview: (params) => api.get('/owner/referrals/overview', { params }),
   referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
+  // every parrainage of the period, 20 per page, searchable (QA R5 F25)
+  referralList: (params) => api.get('/owner/referrals/list', { params }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
   // Automatisations · Push Wallet — the scenarios, their figures, and firing
   // one by hand.
