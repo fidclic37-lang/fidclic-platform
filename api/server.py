@@ -4746,6 +4746,10 @@ def _items_to_amount(tenant_id: str, items: Optional[List[Dict[str, Any]]]) -> t
         })
     return round(total, 2), lines
 
+# The same ceiling as the merchant API (features/merchant_api.VisitIn).
+MAX_VISIT_AMOUNT = 100000.0
+
+
 @app.post("/api/owner/scan")
 def scan_visit(
     req: ScanRequest,
@@ -4761,6 +4765,21 @@ def scan_visit(
     surfaces only as Vercel's generic 'A server error has occurred' which
     is impossible to debug remotely.
     """
+    # QA F20 (2026-10-09): an amount is a payment — never negative. The till
+    # refuses it on screen; the server refuses it too, whatever sends it (a
+    # negative amount lowered the client's spend and, on a cashback card,
+    # took points away).
+    try:
+        _amount = float(req.amount_paid if req.amount_paid is not None else 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Montant invalide.")
+    if _amount != _amount or _amount in (float("inf"), float("-inf")):
+        raise HTTPException(status_code=400, detail="Montant invalide.")
+    if _amount < 0:
+        raise HTTPException(status_code=400, detail="Le montant ne peut pas être négatif.")
+    if _amount > MAX_VISIT_AMOUNT:
+        raise HTTPException(status_code=400,
+                            detail=f"Montant trop élevé (maximum {MAX_VISIT_AMOUNT:,.0f} €).".replace(",", " "))
     # A team account scans in its own establishments: the visit is tagged with
     # one of them — never with another shop's — so every establishment's
     # figures stay its own (features/store_scope.py filters on this tag).
