@@ -45,6 +45,8 @@ MODULES = [
     "features.analytics_usage",
     "features.analytics_deep",
     "features.support_center",
+    # Clients › « Modifier la fiche » / « Ajuster points / tampons » (QA UX04)
+    "features.customer_edit",
     # Super admin › Suivi d'équipe — FidClic's own team tasks (week board,
     # history, repeats, comments, bell). Rights: the « equipe » module.
     "features.team_tasks",

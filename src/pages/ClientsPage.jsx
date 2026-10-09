@@ -15,6 +15,7 @@ import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
 import { useResendCheck } from '../components/ResendCheck';
 import InfoTip from '../components/InfoTip';
 import { ImportModal, InvitationsPanel } from '../components/ClientImport';
+import { FicheModal, AdjustModal } from '../components/ClientEdit';
 
 /**
  * Clients — built to the approved mockup.
@@ -286,6 +287,8 @@ export default function ClientsPage() {
   const [segName, setSegName] = useState('');
   const [compose, setCompose] = useState(null);   // { ids, label } | null
   const [flash, setFlash] = useState('');
+  // « Modifier la fiche » / « Ajuster points / tampons » (QA UX04): { kind, id }
+  const [editing, setEditing] = useState(null);
   const [guardResend, resendModal] = useResendCheck();
   const [importOpen, setImportOpen] = useState(false);
   const [invitesKey, setInvitesKey] = useState(0);      // bumped after an import
@@ -757,6 +760,14 @@ export default function ClientsPage() {
                                   Voir sa carte
                                 </a>
                               )}
+                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'fiche', id: r.id }); }}
+                                      className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
+                                Modifier la fiche
+                              </button>
+                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'adjust', id: r.id }); }}
+                                      className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
+                                Ajuster points / tampons
+                              </button>
                               <button type="button" onClick={() => navigate('/dashboard/scan')}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Enregistrer une visite
@@ -828,6 +839,14 @@ export default function ClientsPage() {
       {importOpen && (
         <ImportModal onClose={() => setImportOpen(false)}
                      onDone={() => { loadMeta(); load(); setInvitesKey((k) => k + 1); }} />
+      )}
+      {editing?.kind === 'fiche' && (
+        <FicheModal clientId={editing.id} onClose={() => setEditing(null)}
+                    onSaved={(m) => { setEditing(null); setFlash(m); load(); loadMeta(); }} />
+      )}
+      {editing?.kind === 'adjust' && (
+        <AdjustModal clientId={editing.id} onClose={() => setEditing(null)}
+                     onSaved={(m) => { setEditing(null); setFlash(m); load(); loadMeta(); }} />
       )}
     </div>
   );

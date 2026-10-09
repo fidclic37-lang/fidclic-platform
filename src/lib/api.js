@@ -560,6 +560,10 @@ export const ownerAPI = {
   saveCampaignReportSettings: (body) => api.put('/owner/campaign-reports/settings', body),
   generateCampaignReport: (body) => api.post('/owner/campaign-reports/generate', body || {}),
   composeCampaign: (body) => api.post('/owner/campaigns/compose', body),
+  // Clients › « Modifier la fiche » / « Ajuster points / tampons » (features/customer_edit.py)
+  clientFiche: (id) => api.get(`/owner/clients/${id}/fiche`),
+  saveClientFiche: (id, body) => api.put(`/owner/clients/${id}/fiche`, body),
+  adjustClient: (id, body) => api.post(`/owner/clients/${id}/ajustement`, body),
   // « Reprendre » / « Supprimer » a draft (QA F02)
   campaignDraft: (id) => api.get(`/owner/campaigns/drafts/${id}`),
   deleteCampaignDraft: (id) => api.delete(`/owner/campaigns/drafts/${id}`),
