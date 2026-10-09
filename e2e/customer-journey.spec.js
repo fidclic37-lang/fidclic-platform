@@ -35,14 +35,19 @@ async function signup(page, { name, tel, path = `/join/${SLUG}` }) {
   await form.locator('input[type="text"]').first().fill(name);
   await page.locator('#join-phone').fill(tel);
   await page.locator('input[name="postal-code"]').fill('37000');
-  await page.locator('input[name="bday"]').fill('01021990');               // typed as digits, masked JJ/MM/AAAA
-  await expect(page.locator('input[name="bday"]')).toHaveValue('01/02/1990');
+  const bday = page.locator('input[name="bday"]');                         // typed as digits, masked JJ/MM/AAAA
+  await bday.pressSequentially('01');
+  await expect(bday, 'the « / » comes right after the day').toHaveValue('01/');
+  await bday.pressSequentially('02');
+  await expect(bday).toHaveValue('01/02/');
+  await bday.pressSequentially('1990');
+  await expect(bday).toHaveValue('01/02/1990');
   await form.locator('input[type="checkbox"][required]').check();
   await page.getByRole('button', { name: /Rejoindre le programme/ }).click();
   // « Félicitations ! » with the shop's own card (2026-10-09 redesign)
   await expect(page.getByText('Félicitations', { exact: false }).first()).toBeVisible();
   await expect(page.getByText('Votre carte de fidélité est prête')).toBeVisible();
-  await page.getByRole('link', { name: /Ouvrir ma carte de fidélité/ }).click();
+  await page.getByRole('link', { name: /Voir ma carte/ }).click();
   await expect(page).toHaveURL(/\/card\/FT-[A-Z0-9]+/);
   await expect(page.locator('body')).toContainText(name.split(' ')[0]);
   const barcode = page.url().match(/\/card\/(FT-[A-Z0-9]+)/)[1];

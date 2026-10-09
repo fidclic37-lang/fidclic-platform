@@ -8,6 +8,7 @@ import PhoneField, { phoneValueError } from '../components/PhoneField';
 import WalletButtons from '../components/WalletButtons';
 import WalletPassPreview from '../components/WalletPassPreview';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
+import Fireworks from '../components/Fireworks';
 
 /* /join/:slug — the customer's signup (redesigned 2026-10-09 to the user's
    mockup; the previous page is JoinPageLegacy.jsx, unrouted).
@@ -27,10 +28,13 @@ const postalDigits = (raw) => {
   return five ? five[1] : s.replace(/\D/g, '').slice(0, 5);
 };
 
-// « 25121990 » → « 25/12/1990 » as it is typed
-const maskDate = (raw) => {
+// « 25121990 » → « 25/12/1990 » as it is typed: the « / » appears as soon
+// as the day (and then the month) is complete; erasing never puts it back.
+export const maskDate = (raw, prev = '') => {
   const d = String(raw ?? '').replace(/\D/g, '').slice(0, 8);
-  return [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)].filter(Boolean).join('/');
+  const out = [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)].filter(Boolean).join('/');
+  const erasing = String(raw ?? '').length < String(prev ?? '').length;
+  return !erasing && (d.length === 2 || d.length === 4) ? `${out}/` : out;
 };
 
 export function birthError(value) {
@@ -86,7 +90,8 @@ const askPosition = () => new Promise((resolve) => {
 
 const box = (err) => `flex min-h-[60px] min-w-0 items-center gap-3 overflow-hidden rounded-2xl border bg-white px-4 transition focus-within:border-[#2F6BFF] focus-within:ring-4 focus-within:ring-[#2F6BFF]/10 ${err ? 'border-[#DC2626]' : 'border-[#E2E8F0]'}`;
 // the box draws the border: the app's global input styling is switched off inside it
-const inputCls = 'min-w-0 flex-1 !border-0 !rounded-none bg-transparent !px-0 py-4 text-[15px] text-[#0B1C3F] !shadow-none !outline-none !ring-0 placeholder:text-[#64748B]';
+// 16px: iPhone Safari zooms the whole page into any smaller field
+const inputCls = 'min-w-0 flex-1 !border-0 !rounded-none bg-transparent !px-0 py-4 !text-[16px] text-[#0B1C3F] !shadow-none !outline-none !ring-0 placeholder:text-[#64748B]';
 const Star = () => <span className="text-[#DC2626]" aria-hidden="true">*</span>;
 const FieldError = ({ id, children }) => (children ? <p id={id} role="alert" className="mt-1.5 px-1 text-[12px] text-[#B91C1C]">{children}</p> : null);
 
@@ -121,6 +126,7 @@ function Success({ result, tenant }) {
 
   return (
     <div className="text-center">
+      <Fireworks />
       <div className="relative mx-auto mb-4 h-16 w-16">
         {['-left-10 top-1 rotate-[35deg] bg-[#C2410C]', '-left-14 top-8 rotate-[60deg] bg-[#F59E0B]',
           '-right-10 top-1 -rotate-[35deg] bg-[#F59E0B]', '-right-14 top-8 -rotate-[60deg] bg-[#C2410C]'].map((c) => (
@@ -129,6 +135,7 @@ function Success({ result, tenant }) {
         <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#E7F6EC] text-[#15803D]"><Check size={30} strokeWidth={3} /></span>
       </div>
       <h2 className="text-[28px] font-extrabold text-[#0B1C3F]">Félicitations !</h2>
+      {tenant?.name && <p className="mt-1 text-[18px] font-semibold text-[#0B1C3F]">Bienvenue chez {tenant.name} !</p>}
       <p className="mt-1 text-[16px] text-[#64748B]">Votre carte de fidélité est prête.</p>
 
       <div className="mt-6 flex justify-center">
@@ -156,8 +163,8 @@ function Success({ result, tenant }) {
           ))}
         </div>
         <Link to={ownerLink(bc, result.card_key)}
-              className="flex items-center justify-center gap-2 rounded-2xl border border-[#E2E8F0] py-3 text-[14px] font-semibold text-[#2F6BFF] hover:bg-[#F8FAFF]">
-          Ouvrir ma carte de fidélité <ArrowRight size={16} />
+              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
+          Voir ma carte <ArrowRight size={18} />
         </Link>
       </div>
       {toast && <p role="status" className="mx-auto mt-4 max-w-[360px] rounded-xl bg-[#0B1C3F] px-4 py-2.5 text-[13px] text-white">{toast}</p>}
@@ -358,8 +365,8 @@ const JoinPage = () => {
                       <input type="text" inputMode="numeric" autoComplete="bday" name="bday" maxLength={10}
                              placeholder="JJ/MM/AAAA" aria-label="Date de naissance (JJ/MM/AAAA)" data-keep-zeros=""
                              aria-invalid={errors.birth ? 'true' : undefined}
-                             className="w-full min-w-0 !border-0 !rounded-none bg-transparent !p-0 text-[15px] text-[#0B1C3F] !shadow-none !outline-none !ring-0 placeholder:text-[#94A3B8]"
-                             value={form.birth} onChange={(e) => set('birth', maskDate(e.target.value))} />
+                             className="w-full min-w-0 !border-0 !rounded-none bg-transparent !p-0 !text-[16px] text-[#0B1C3F] !shadow-none !outline-none !ring-0 placeholder:text-[#94A3B8]"
+                             value={form.birth} onChange={(e) => set('birth', maskDate(e.target.value, form.birth))} />
                     </span>
                   </label>
                   <FieldError id="join-birth-error">{errors.birth}</FieldError>
