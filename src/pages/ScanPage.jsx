@@ -141,6 +141,8 @@ const ScanPage = () => {
   const [mode, setMode] = useState('manual'); // 'manual' or 'camera'
   const [barcode, setBarcode] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
+  // « -1 » is refused, said and kept on screen (QA F20) — nothing saves meanwhile
+  const [amountError, setAmountError] = useState(null);
   // Live points rule from this tenant's card template.
   // Two modes: 'per_visit' (flat, default) or 'per_euro' (amount × rate).
   const [pointsMode, setPointsMode] = useState('per_visit');
@@ -466,6 +468,7 @@ const ScanPage = () => {
   React.useEffect(() => {
     if (pickedItems.length > 0) {
       setAmountPaid(pickerTotal.toFixed(2));
+      setAmountError(null);                // the catalogue's total replaces what was typed
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickerTotal, pickedItems.length]);
@@ -484,6 +487,10 @@ const ScanPage = () => {
   const handleScan = async (e) => {
     e.preventDefault();
     if (!barcode.trim()) return;
+    if (amountError) {
+      setStatus({ type: 'error', message: amountError });
+      return;
+    }
 
     const parsedAmount = amountPaid.trim() === '' ? 0.0 : parseFloat(amountPaid);
     if (isNaN(parsedAmount) || parsedAmount < 0) {
@@ -727,13 +734,19 @@ const ScanPage = () => {
                 <DecimalInput
                   value={amountPaid}
                   onChange={setAmountPaid}
+                  onInvalid={setAmountError}
+                  aria-invalid={amountError ? 'true' : undefined}
+                  aria-describedby={amountError ? 'amount-error-camera' : undefined}
                   placeholder="0,00"
                   className="w-full pl-14 pr-4 py-3 rounded-lg border-2 outline-none text-lg font-bold font-['Inter'] transition-colors"
-                  style={{ borderColor: '#E6EEFB', background: '#FFFFFF' }}
-                  onFocus={(e) => (e.target.style.borderColor = '#2F6BFF')}
-                  onBlur={(e) => (e.target.style.borderColor = '#E6EEFB')}
+                  style={{ borderColor: amountError ? '#DC2626' : '#E6EEFB', background: '#FFFFFF' }}
+                  onFocus={(e) => { if (!amountError) e.target.style.borderColor = '#2F6BFF'; }}
+                  onBlur={(e) => { if (!amountError) e.target.style.borderColor = '#E6EEFB'; }}
                 />
               </div>
+              {amountError && (
+                <p id="amount-error-camera" role="alert" className="text-[12px] font-semibold text-[#DC2626]">{amountError}</p>
+              )}
               {!cashback && amountPaid && parseFloat(amountPaid) > 0 && (
                 <p className="text-[11px] font-semibold" style={{ color: '#0F8B58' }}>
                   ✓ {t('scan.points_will_credit', { count: computeAutoPoints(amountPaid) })}
@@ -914,9 +927,14 @@ const ScanPage = () => {
                 <DecimalInput
                   value={amountPaid}
                   onChange={setAmountPaid}
+                  onInvalid={setAmountError}
+                  aria-invalid={amountError ? 'true' : undefined}
+                  aria-describedby={amountError ? 'amount-error-manual' : undefined}
                   placeholder="0,00"
                   className={`w-full pl-14 pr-4 py-4 rounded-xl border-2 focus:ring-0 outline-none text-lg font-bold font-['Inter'] transition-colors ${
-                    pickedItems.length > 0
+                    amountError
+                      ? 'border-[#DC2626] focus:border-[#DC2626]'
+                      : pickedItems.length > 0
                       ? 'border-[#E3A869] bg-[#F6F9FF] focus:border-[#E3A869]'
                       : 'border-[#E6EEFB] focus:border-[#2F6BFF]'
                   }`}
@@ -924,6 +942,9 @@ const ScanPage = () => {
                   readOnly={pickedItems.length > 0}
                 />
               </div>
+              {amountError && (
+                <p id="amount-error-manual" role="alert" className="text-[12px] font-semibold text-[#DC2626] mt-2">{amountError}</p>
+              )}
               <p className="text-xs text-[#475569] mt-2">{
                 pickedItems.length > 0
                   ? t('scan.amount_hint_picker')
@@ -945,7 +966,7 @@ const ScanPage = () => {
 
             <button
               type="submit"
-              disabled={loading || !barcode.trim()}
+              disabled={loading || !barcode.trim() || !!amountError}
               className="w-full py-4 rounded-xl text-white font-bold text-lg bg-[#2F6BFF] hover:bg-[#2559DB] disabled:opacity-50 transition-all shadow-md mt-4"
             >
               {loading ? t('scan.submitting') : t('scan.submit')}

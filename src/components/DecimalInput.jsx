@@ -12,7 +12,13 @@ import React, { useEffect, useRef, useState } from 'react';
  * « » when empty) that parseFloat / Number / the API all read.
  *
  * Props: value (number | string), onChange(dotString), decimals (2),
- * allowNegative (false); anything else goes to the <input>.
+ * allowNegative (false), onInvalid(message | null); anything else goes to
+ * the <input>.
+ *
+ * A minus sign where none is allowed (QA F20, 2026-10-09): with `onInvalid`,
+ * the field keeps « -1 » on screen, hands the parent an empty value and says
+ * why — so nothing can be saved by mistake. Without it, the sign is dropped
+ * as before (fields that never asked to explain).
  */
 export function cleanDecimal(raw, decimals = 2, allowNegative = false) {
   let s = String(raw ?? '').replace(/\s/g, '').replace(/\./g, ',');
@@ -28,7 +34,9 @@ export const toDot = (s) => String(s ?? '').replace(',', '.');
 
 const toDisplay = (v) => (v === null || v === undefined ? '' : String(v).replace('.', ','));
 
-export default function DecimalInput({ value, onChange, decimals = 2, allowNegative = false, ...rest }) {
+export const NEGATIVE_MESSAGE = 'Le montant ne peut pas être négatif.';
+
+export default function DecimalInput({ value, onChange, decimals = 2, allowNegative = false, onInvalid, ...rest }) {
   const [draft, setDraft] = useState(toDisplay(value));
   const focused = useRef(false);
   useEffect(() => {
@@ -43,10 +51,20 @@ export default function DecimalInput({ value, onChange, decimals = 2, allowNegat
       value={draft}
       onFocus={(e) => { focused.current = true; rest.onFocus && rest.onFocus(e); }}
       onBlur={(e) => { focused.current = false; rest.onBlur && rest.onBlur(e); }}
+      aria-invalid={rest['aria-invalid']}
       onChange={(e) => {
-        const d = cleanDecimal(e.target.value, decimals, allowNegative);
+        const raw = e.target.value;
+        // a leading minus is a negative amount; a hyphen elsewhere is just noise
+        if (onInvalid && !allowNegative && raw.trim().startsWith('-')) {
+          setDraft(cleanDecimal(raw, decimals, true) || '-');
+          onChange('');
+          onInvalid(NEGATIVE_MESSAGE);
+          return;
+        }
+        const d = cleanDecimal(raw, decimals, allowNegative);
         setDraft(d);
         onChange(toDot(d));
+        if (onInvalid) onInvalid(null);
       }}
     />
   );
