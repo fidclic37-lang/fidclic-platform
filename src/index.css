@@ -2278,3 +2278,11 @@ main:has(.sc) > div:first-child input { background: #F4F7FC; border-color: #E6EE
 @media (prefers-reduced-motion: reduce) {
   .fc-flash { animation: none; box-shadow: 0 0 0 3px rgba(47, 107, 255, .5); }
 }
+
+/* ================================================================
+   Phone widths (QA F09, 2026-10-08): a grid cell is as wide as its widest
+   child by default, so a table inside a card pushed whole pages past the
+   screen (Campagnes, Automatisations: +550 px at 360 px). Cells may now
+   shrink; wide tables keep their own horizontal scroll.
+   ================================================================ */
+.fdt-dash main .grid > * { min-width: 0; }

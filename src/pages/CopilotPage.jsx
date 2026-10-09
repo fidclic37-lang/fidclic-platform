@@ -450,7 +450,7 @@ export default function CopilotPage() {
 
           {/* recommendations */}
           <Panel className="p-4">
-            <header className="mb-3 flex items-center gap-2">
+            <header className="mb-3 flex flex-wrap items-center gap-2">
               <Sparkle size={18} className="text-[#2F6BFF]" />
               <h2 className="text-[15px] font-bold text-[#0B1C3F]">Mes 3 recommandations prioritaires</h2>
               {recs.total > 0 && (
@@ -478,7 +478,7 @@ export default function CopilotPage() {
           <div className="grid gap-4 lg:grid-cols-[1.25fr_1fr]">
             {/* activity */}
             <Panel className="p-4">
-              <header className="mb-3 flex items-center gap-2">
+              <header className="mb-3 flex flex-wrap items-center gap-2">
                 <Send size={17} className="text-[#2F6BFF]" />
                 <h2 className="text-[15px] font-bold text-[#0B1C3F]">Analyse de votre activité</h2>
                 <span className="ml-auto">
@@ -620,8 +620,8 @@ export default function CopilotPage() {
         {/* ── right column ── */}
         <div className="min-w-0 space-y-4">
           <Panel className="p-4">
-            <header className="mb-2 flex items-center gap-2">
-              <h2 className="whitespace-nowrap text-[14px] font-bold text-[#0B1C3F]">Votre potentiel de croissance ce mois</h2>
+            <header className="mb-2 flex flex-wrap items-center gap-2">
+              <h2 className="text-[14px] font-bold text-[#0B1C3F] sm:whitespace-nowrap">Votre potentiel de croissance ce mois</h2>
               <span className="ml-auto">
                 <Select small value={horizon} onChange={setHorizon}
                         options={[[7, '7 prochains jours'], [30, '30 prochains jours'], [90, '90 prochains jours']]} />
