@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Gift, Sparkles, ChevronRight, X, ExternalLink, Loader2 } from 'lucide-react';
 import api from '../lib/api';
-import { ownerLink } from '../lib/myCards';
+import { ownerLink, addMine, keyOf } from '../lib/myCards';
 
 /**
  * Offres — where « Voir les offres et récompenses » under the Wallet pass
@@ -58,7 +58,28 @@ export default function CardOffersPage() {
   const [logoBroken, setLogoBroken] = useState(false);
 
   useEffect(() => {
-    api.get(`/card/${barcodeId}`).then((r) => setData(r.data)).catch(() => setErr('Carte introuvable.'));
+    // The Wallet tile opens /card/FT-…/offres?k=… (the card's owner key). The
+    // card's data answers only to that key since 2026-10-09 (#176), so the
+    // key from the link is used — and kept on this phone, then taken out of
+    // the address bar. Without it every tile read « Carte introuvable »
+    // (Wallet opens Safari, which often had no key stored).
+    const bc = String(barcodeId || '').toUpperCase();
+    const params = new URLSearchParams(window.location.search);
+    const fromLink = params.get('k');
+    const key = fromLink || keyOf(bc);
+    if (fromLink) {
+      params.delete('k');
+      const q = params.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${q ? `?${q}` : ''}${window.location.hash}`);
+    }
+    api.get(`/card/${bc}`, key ? { headers: { 'X-Card-Key': key } } : undefined)
+      .then((r) => {
+        if (fromLink) addMine(bc, fromLink);         // proven by the server's answer
+        setData(r.data);
+      })
+      .catch((e) => setErr(e?.response?.status === 403
+        ? 'Ouvrez vos offres depuis votre carte (Wallet, ou le lien reçu par SMS ou e-mail) : elles ne s’affichent que sur votre téléphone.'
+        : 'Carte introuvable.'));
   }, [barcodeId]);
 
   const feed = useMemo(() => {
