@@ -16,6 +16,7 @@ import { useResendCheck } from '../components/ResendCheck';
 import InfoTip from '../components/InfoTip';
 import { ImportModal, InvitationsPanel } from '../components/ClientImport';
 import { FicheModal, AdjustModal } from '../components/ClientEdit';
+import CardReaddModal, { CardStateBadge } from '../components/CardReaddModal';
 
 /**
  * Clients — built to the approved mockup.
@@ -272,6 +273,16 @@ export default function ClientsPage() {
       setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
     }
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
+  // « Carte » (user, 2026-10-09): active / supprimée — the bell and the
+  // dashboard open the deleted ones here with ?card=deleted
+  const [card, setCard] = useState(() => (['active', 'deleted'].includes(urlParams.get('card')) ? urlParams.get('card') : ''));
+  useEffect(() => {
+    const k = urlParams.get('card');
+    if (['active', 'deleted'].includes(k) && k !== card) {
+      setCard(k); setPage(1);
+      setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    }
+  }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   const [spend, setSpend] = useState('');
   const [joined, setJoined] = useState('');
   // ?q= (the header search, a client's link from Historique) and
@@ -331,8 +342,8 @@ export default function ClientsPage() {
   // What the current filter is, in one place: saved as-is, and applied back
   // as-is, so a reloaded segment shows exactly the rows it showed when it was
   // saved.
-  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source, ...extraParams }),
-                                 [segment, status, spend, joined, search, sort, source, extraParams]);
+  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source, ...(card ? { card } : {}), ...extraParams }),
+                                 [segment, status, spend, joined, search, sort, source, card, extraParams]);
 
   const saveCurrent = async () => {
     const name = segName.trim();
@@ -349,7 +360,7 @@ export default function ClientsPage() {
   const applySaved = (row) => {
     const f = row.filters || {};
     setSegment(f.segment || row.segment || 'all');
-    setStatus(f.status || ''); setSpend(f.spend || ''); setJoined(f.joined || ''); setSource(f.source || '');
+    setStatus(f.status || ''); setSpend(f.spend || ''); setJoined(f.joined || ''); setSource(f.source || ''); setCard(f.card || '');
     setTyped(f.search || ''); setSearch(f.search || '');
     setSort(f.sort || 'recent');
     setExtraState(Object.fromEntries(Object.keys(EXTRA_EMPTY).map((k) => [k, f[k] != null ? String(f[k]) : ''])));
@@ -369,7 +380,7 @@ export default function ClientsPage() {
       return;
     }
     try {
-      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, source, ...extraParams, ...(store ? { store } : {}) });
+      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, source, ...(card ? { card } : {}), ...extraParams, ...(store ? { store } : {}) });
       if (!data.ids?.length) { setError('Aucun client ne correspond à ce filtre.'); return; }
       setCompose({ ids: data.ids, label: activeSegment?.label || 'ce filtre' });
     } catch (e) { setError(e?.response?.data?.detail || 'Impossible de constituer la liste.'); }
@@ -395,8 +406,8 @@ export default function ClientsPage() {
   }, [typed]);
 
   const params = useMemo(() => ({
-    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...extraParams, ...(store ? { store } : {}),
-  }), [segment, status, spend, joined, search, source, sort, page, perPage, store, extraParams]);
+    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...(card ? { card } : {}), ...extraParams, ...(store ? { store } : {}),
+  }), [segment, status, spend, joined, search, source, card, sort, page, perPage, store, extraParams]);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -419,7 +430,7 @@ export default function ClientsPage() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...extraParams, ...(store ? { store } : {}) });
+      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...(card ? { card } : {}), ...extraParams, ...(store ? { store } : {}) });
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-clients-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -606,7 +617,7 @@ export default function ClientsPage() {
         <p className="mb-3 flex items-center gap-1.5 text-[12.5px] font-semibold text-[#475569]">
           <Filter size={14} /> Filtres
         </p>
-        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] md:items-end">
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_auto] lg:items-end">
           <Select label="Segment" value={segment}
                   onChange={needCrm((v) => { setSegment(v); setPage(1); })}
                   options={segments.map((s) => ({ key: s.key, label: s.key === 'all' ? 'Tous' : s.label }))} />
@@ -626,6 +637,13 @@ export default function ClientsPage() {
                   options={[{ key: '', label: 'Toutes' },
                             ...(meta?.sources || []).map((x) => ({ key: x.key, label: `${x.label} (${x.count})` })),
                             ...(source && !(meta?.sources || []).some((x) => x.key === source) ? [{ key: source, label: sourceLabel(source) }] : [])]} />
+          <Select label="Carte" value={card}
+                  onChange={(v) => {
+                    setCard(v); setPage(1);
+                    if (urlParams.get('card')) setUrlParams((p) => { p.delete('card'); return p; }, { replace: true });
+                  }}
+                  options={[{ key: '', label: 'Toutes' }, { key: 'active', label: 'Active' },
+                            { key: 'deleted', label: 'Supprimée' }]} />
           <button type="button" onClick={needCrm(() => setMore((v) => !v))}
                   className="inline-flex h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#E6EEFB] px-4 text-[13px] font-semibold text-[#475569] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <SlidersHorizontal size={14} /> Plus de filtres
@@ -655,7 +673,7 @@ export default function ClientsPage() {
               <em> client local</em> habite à moins de {meta.definitions.local_km} km.
             </p>
             <button type="button"
-                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setTyped(''); setExtraState(EXTRA_EMPTY); setPage(1); }}
+                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setCard(''); setTyped(''); setExtraState(EXTRA_EMPTY); setPage(1); }}
                     className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#E6EEFB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
               <X size={12} /> Réinitialiser les filtres
             </button>
@@ -753,6 +771,10 @@ export default function ClientsPage() {
                           <span className="block truncate text-[11.5px] text-[#94A3B8]">
                             {r.email || r.phone || '—'}{r.source && r.source !== 'none' ? ` · via ${r.source_label}` : ''}
                           </span>
+                          {/* the card left the phone: said on the row (user, 2026-10-09) */}
+                          {r.card && r.card.state !== 'active' && (
+                            <span className="mt-0.5 block"><CardStateBadge card={r.card} /></span>
+                          )}
                         </span>
                       </span>
                     </td>
@@ -795,6 +817,10 @@ export default function ClientsPage() {
                                   Voir sa carte
                                 </a>
                               )}
+                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'readd', id: r.id }); }}
+                                      className={`px-3 py-2 text-left text-[12.5px] hover:bg-[#F4F7FC] ${r.card && r.card.state !== 'active' ? 'font-semibold text-[#B91C1C]' : 'text-[#334155]'}`}>
+                                Récupérer la carte
+                              </button>
                               <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'fiche', id: r.id }); }}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Modifier la fiche
@@ -878,6 +904,9 @@ export default function ClientsPage() {
       {editing?.kind === 'fiche' && (
         <FicheModal clientId={editing.id} onClose={() => setEditing(null)}
                     onSaved={(m) => { setEditing(null); setFlash(m); load(); loadMeta(); }} />
+      )}
+      {editing?.kind === 'readd' && (
+        <CardReaddModal customerId={editing.id} onClose={() => { setEditing(null); load(); }} />
       )}
       {editing?.kind === 'adjust' && (
         <AdjustModal clientId={editing.id} onClose={() => setEditing(null)}

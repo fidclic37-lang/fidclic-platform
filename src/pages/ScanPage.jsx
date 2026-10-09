@@ -11,6 +11,7 @@ const C_SCAN = {
 };
 import { useBranch } from '../contexts/BranchContext';
 import DecimalInput from '../components/DecimalInput';
+import CardReaddModal from '../components/CardReaddModal';
 
 const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
 
@@ -155,6 +156,9 @@ const ScanPage = () => {
   const [loading, setLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [scanResult, setScanResult] = useState(null); // Enhanced post-scan result
+  // « Récupérer la carte » (user, 2026-10-09): { customerId } after a scan,
+  // { find: true } from the button — staff find the client by phone
+  const [readd, setReadd] = useState(null);
   const [redeemLoading, setRedeemLoading] = useState(false);
   const [redeemDone, setRedeemDone] = useState(false);
   // Catalog + picker state. When at least one item has qty > 0, the
@@ -536,6 +540,8 @@ const ScanPage = () => {
         reward_unlocked: canRedeem,
         // full cards not yet handed over — still valid (user, 2026-10-09)
         rewards_pending: customerData.rewards_pending || 0,
+        // the card left the client's phone (features/card_status)
+        card_state: customerData.card_state || null,
         // Backend now returns these so the cashier sees tier-up celebrations.
         tier: customerData.tier || null,
         previous_tier: customerData.previous_tier || null,
@@ -652,6 +658,15 @@ const ScanPage = () => {
           </div>
         </div>
       )}
+
+      {/* A client lost their card (deleted it, or removed it from Apple
+          Wallet): give it back from here — staff included (user, 2026-10-09) */}
+      <div className="flex justify-end">
+        <button type="button" onClick={() => setReadd({ find: true })}
+                className="inline-flex items-center gap-1.5 rounded-full border border-[#E6EEFB] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+          <Gift size={13} /> Rendre sa carte à un client
+        </button>
+      </div>
 
       {/* Mode tabs — pill switcher */}
       <div
@@ -1019,6 +1034,19 @@ const ScanPage = () => {
                 {/* Rewards to hand over: the card just completed (10/10) and
                     any earlier full card not yet claimed — the meter restarts
                     on the next visit, the reward stays valid (user, 2026-10-09). */}
+                {scanResult.card_state && scanResult.card_state.state !== 'active' && (
+                  <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] p-4">
+                    <p className="text-sm text-[#7F1D1D]">
+                      <strong>{scanResult.card_state.state === 'deleted' ? 'Carte supprimée' : 'Carte retirée d’Apple Wallet'}.</strong>{' '}
+                      {scanResult.customer_name || t('scan.this_customer')} n’a plus sa carte sur son téléphone.
+                    </p>
+                    <button type="button" onClick={() => setReadd({ customerId: scanResult.customer_id })}
+                            className="rounded-lg bg-white px-3 py-2 text-sm font-bold text-[#B91C1C] border border-[#FCA5A5] hover:bg-[#FFF5F5]">
+                      Lui rendre sa carte
+                    </button>
+                  </div>
+                )}
+
                 {(scanResult.reward_unlocked || scanResult.rewards_pending > 0 || redeemDone) && (() => {
                   const toGive = (scanResult.reward_unlocked ? 1 : 0) + (scanResult.rewards_pending || 0);
                   return (
@@ -1141,6 +1169,10 @@ const ScanPage = () => {
           </div>
         )}
       </div>
+      {readd && (
+        <CardReaddModal customerId={readd.customerId || null} findByPhone={!!readd.find}
+                        onClose={() => setReadd(null)} />
+      )}
     </div>
   );
 };

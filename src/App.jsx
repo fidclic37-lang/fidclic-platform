@@ -94,6 +94,7 @@ const ParametresPage = lazyPage(() => import('./pages/ParametresPage'));
 const CataloguePage = lazyPage(() => import('./pages/CataloguePage'));
 const JoinPage = lazyPage(() => import('./pages/JoinPage'));
 const MyWalletCardPage = lazyPage(() => import('./pages/MyWalletCardPage'));
+const ReaddCardPage = lazyPage(() => import('./pages/ReaddCardPage'));
 const CardOffersPage = lazyPage(() => import('./pages/CardOffersPage'));
 const HistoryPage = lazyPage(() => import('./pages/HistoryPage'));
 
@@ -339,6 +340,8 @@ function App() {
           <Route path="/inscription/:slug/:channel" element={<JoinPage />} />
           <Route path="/card/:barcodeId/offres" element={<CardOffersPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
+          {/* a card given back by the shop: a one-time link (features/card_status) */}
+          <Route path="/carte/recuperer/:token" element={<ReaddCardPage />} />
 
           {/* Public product pages. Deliberately NOT wrapped in PublicRoute: a
               logged-in owner or accountant must still be able to read about the

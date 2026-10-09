@@ -153,6 +153,14 @@ def _revenue(rows: List[Dict[str, Any]]) -> float:
     return sum(float(v.get("amount_paid") or 0) for v in rows)
 
 
+def _cards_lost(tid: str, scope, at: datetime) -> Dict[str, Any]:
+    from features import card_status as CS
+    try:
+        return CS.dashboard_count(tid, at, S.customer_ids(scope))
+    except Exception:
+        return {"count": 0, "days": CS.DASHBOARD_DAYS, "href": "/dashboard/customers?card=deleted"}
+
+
 @router.get("/api/owner/home/overview")
 def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
@@ -339,6 +347,8 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
         "status_mix": status_mix,
         # « Choisissez votre récompense » until the merchant saved one.
         "reward_setup": _reward_setup(tid, token_data),
+        # cards deleted in the last 30 days — a loss the owner must see (2026-10-09)
+        "cards_lost": _cards_lost(tid, scope, at),
         "recommendations": _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
                                             campaigns, products, goal),
     }

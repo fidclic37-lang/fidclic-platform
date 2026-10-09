@@ -399,6 +399,28 @@ export default function DashboardHomePage() {
         </div>
       )}
 
+      {/* Cards that left their client's phone in the last 30 days — a loss
+          the owner must see (user, 2026-10-09); opens them in Clients. */}
+      {d?.cards_lost?.count > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3.5 rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] px-5 py-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FEE2E2] text-[#B91C1C]">
+            <Gift size={19} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14.5px] font-bold text-[#0B1C3F]">
+              {d.cards_lost.count} carte{d.cards_lost.count > 1 ? 's' : ''} supprimée{d.cards_lost.count > 1 ? 's' : ''} sur {d.cards_lost.days} jours
+            </p>
+            <p className="text-[13px] text-[#64748B]">
+              Ces clients n'ont plus leur carte sur leur téléphone. Proposez-leur de la récupérer : un QR en caisse ou un lien par e-mail.
+            </p>
+          </div>
+          <button type="button" onClick={() => navigate(d.cards_lost.href)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-[13px] font-semibold text-[#B91C1C] border border-[#FCA5A5] hover:bg-[#FFF5F5]">
+            Voir les clients <ArrowRight size={14} />
+          </button>
+        </div>
+      )}
+
       {/* the four figures */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {/* Analyses opens on the same period, its card highlighted (?focus=). */}
