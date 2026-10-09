@@ -81,14 +81,17 @@ def main():
     ids = lambda rules: {c["id"] for c in S.evaluate("t1", S._clean_rules(rules), at=now)}
 
     # ---- the six criteria of the design ------------------------------------------------------
-    print("\nLes six critères")
-    check("the builder offers exactly the six of the mockup",
+    print("\nLes critères")
+    check("the builder offers the mockup's six, the money one split in two (QA R5 F24)",
           [f["key"] for f in S.FIELDS] ==
-          ["last_visit", "visits", "spend", "distance", "tier", "joined"])
-    check("and each names itself as the design does",
+          ["last_visit", "visits", "total_spend", "spend", "distance", "tier", "joined"])
+    check("and each names itself plainly",
           [f["label"] for f in S.FIELDS] ==
-          ["Dernière visite", "Nombre d'achats", "Montant dépensé",
+          ["Dernière visite", "Nombre d'achats", "Total dépensé", "Panier moyen",
            "Distance du magasin", "Statut fidélité", "Date d'inscription"])
+    check("both money criteria say what they count",
+          "depuis son inscription" in S.FIELD_BY_KEY["total_spend"]["note"]
+          and "moyen par visite" in S.FIELD_BY_KEY["spend"]["note"])
     check("a distance is 'inférieure', a montant is 'inférieur'",
           S.FIELD_BY_KEY["distance"]["ops"][0]["label"] == "est inférieure à"
           and S.FIELD_BY_KEY["spend"]["ops"][0]["label"] == "est inférieur à")
@@ -116,12 +119,24 @@ def main():
     check("nombre d'achats : supérieur à 5",
           ids([{"field": "visits", "op": "gt", "value": 5}]) == {"vip1", "vip2", "reg1", "reg2"})
 
-    check("montant dépensé is the AVERAGE basket, as the mockup words it",
+    check("« Panier moyen » is the average basket",
           ids([{"field": "spend", "op": "gt", "value": 20}]) == {"vip1", "vip2", "old1"})
     # QA (2026-10-08): « Petits paniers (< 8 €) » held every client who never came
     check("someone who never bought has no basket — neither small nor big",
           "zero" not in ids([{"field": "spend", "op": "lt", "value": 20}])
           and "zero" not in ids([{"field": "spend", "op": "gt", "value": 20}]))
+
+    # QA R5 F24 (2026-10-09): « > 1 000 € » found nobody while two customers
+    # had spent 2 775 € — the old criterion was the basket under another name.
+    check("« Total dépensé » > 1 000 € is the lifetime total",
+          ids([{"field": "total_spend", "op": "gt", "value": 1000}]) == {"vip1"})
+    check("« Total dépensé » > 20 €", ids([{"field": "total_spend", "op": "gt", "value": 20}])
+          == {"vip1", "vip2", "reg1", "reg2", "old1", "old2"})
+    check("someone who never bought has spent 0 € (« < 20 € » includes them)",
+          ids([{"field": "total_spend", "op": "lt", "value": 20}]) == {"new1", "zero"})
+    check("« Total dépensé » égal à 0", ids([{"field": "total_spend", "op": "eq", "value": 0}]) == {"zero"})
+    check("the summary reads « Total dépensé supérieur à 1 000 € »",
+          "Total dépensé" in str(S.describe([{"field": "total_spend", "op": "gt", "value": 1000}])))
 
     check("statut fidélité : VIP", ids([{"field": "tier", "op": "eq", "value": "vip"}]) == {"vip1", "vip2"})
     check("'Non membre' means nobody has ever bought, not a tier name",
@@ -164,7 +179,7 @@ def main():
     ]))]
     for want in ("Dernière visite : il y a plus de 30 jours",
                  "Nombre d'achats : égal à 0",
-                 "Montant dépensé : inférieur à 20 €",
+                 "Panier moyen : inférieur à 20 €",
                  "Distance du magasin : moins de 5 km",
                  "Statut fidélité : Non membre",
                  "Date d'inscription : il y a plus de 90 jours"):

@@ -114,9 +114,22 @@ FIELDS: List[Dict[str, Any]] = [
                 {"key": "gt", "label": "est supérieur à", "short": "supérieur à"},
                 {"key": "lt", "label": "est inférieur à", "short": "inférieur à"}],
     },
+    # Two money criteria (QA R5 F24, 2026-10-09): « Montant dépensé » used to
+    # compute the average basket, so « > 1 000 € » found nobody while two
+    # customers had spent 2 775 €. `spend` keeps its meaning (saved segments
+    # and the « Gros / Petits paniers » models use it) under its true name.
     {
-        "key": "spend", "label": "Montant dépensé", "icon": "coins",
+        "key": "total_spend", "label": "Total dépensé", "icon": "coins",
         "type": "number", "unit": "€",
+        "note": "Tout ce que le client a dépensé depuis son inscription (0 € s'il n'a jamais acheté).",
+        "ops": [{"key": "gt", "label": "est supérieur à", "short": "supérieur à"},
+                {"key": "lt", "label": "est inférieur à", "short": "inférieur à"},
+                {"key": "eq", "label": "est égal à", "short": "égal à"}],
+    },
+    {
+        "key": "spend", "label": "Panier moyen", "icon": "coins",
+        "type": "number", "unit": "€",
+        "note": "Montant moyen par visite, depuis l'inscription. Seuls les clients qui ont déjà acheté sont comptés.",
         "ops": [{"key": "lt", "label": "est inférieur à", "short": "inférieur à"},
                 {"key": "gt", "label": "est supérieur à", "short": "supérieur à"},
                 {"key": "eq", "label": "est égal à", "short": "égal à"}],
@@ -353,9 +366,13 @@ def _matches(cust: Dict[str, Any], rule: Dict[str, Any], at: datetime,
         n = _num(cust.get("visits"))
         return n == value if op == "eq" else (n > value if op == "gt" else n < value)
 
+    if field == "total_spend":
+        # lifetime total; someone who never bought has spent 0 €
+        total = _num(cust.get("total_amount_paid"))
+        return abs(total - value) < 0.005 if op == "eq" else (total > value if op == "gt" else total < value)
+
     if field == "spend":
-        # The mockup's own wording — "Panier moyen supérieur à 20 €" — so this
-        # is the average basket, not the lifetime total.
+        # « Panier moyen » — the average basket, not the lifetime total.
         basket = _avg_basket(cust)
         if basket is None:
             # Never bought: no basket at all, small or big (QA, 2026-10-08:
