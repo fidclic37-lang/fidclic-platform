@@ -9,6 +9,7 @@ import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import InfoTip from '../components/InfoTip';
+import ImpactFidClicCard from '../components/ImpactFidClicCard';
 import DecimalInput from '../components/DecimalInput';
 import { eur } from '../lib/money';
 
@@ -491,36 +492,9 @@ export default function DashboardHomePage() {
           </div>
         </Panel>
 
-        {/* Opens its detail — source by source — in Analyses, over the same period. */}
-        <div role="button" tabIndex={0} onClick={() => navigate(`/dashboard/analytics?period=${period}#impact`)}
-             onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/dashboard/analytics?period=${period}#impact`); }}
-             title="Voir le détail par source" className="cursor-pointer rounded-2xl transition hover:ring-2 hover:ring-[#BFD3FF]">
-        <Panel>
-          <div className="flex items-start gap-3.5">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E7F7EE] text-[#0F8B58]">
-              <BarChart3 size={20} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="inline-flex items-center gap-1 text-[13px] font-medium text-[#64748B]">Impact FidClic <InfoTip k="impact" /></span>
-                <span className="text-[30px] font-extrabold leading-none tabular-nums text-[#0F8B58]">
-                  +{money(d?.impact?.value)}
-                </span>
-                {d?.impact?.delta_pct !== null && d?.impact?.delta_pct !== undefined && (
-                  <span className={`rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${d.impact.delta_pct >= 0 ? 'bg-[#E7F7EE] text-[#0F8B58]' : 'bg-[#FEECEC] text-[#C0392B]'}`}>
-                    {d.impact.delta_pct >= 0 ? '↑ +' : '↓ '}{d.impact.delta_pct}%
-                  </span>
-                )}
-              </div>
-              <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-snug text-[#94A3B8]">
-                <Info size={12} className="mt-px shrink-0" />
-                {d?.impact?.note} — les visites dans les {d?.impact?.window_days} jours suivant
-                un message, et toutes celles des filleuls. Un simple passage en caisse n'est pas compté.
-              </p>
-            </div>
-          </div>
-        </Panel>
-        </div>
+        {/* « Impact FidClic » from the mockup (2026-10-10): not a link; its
+            tiles only say what brings the revenue back */}
+        <ImpactFidClicCard value={d?.impact?.value} />
       </div>
 
       {/* the two charts */}
