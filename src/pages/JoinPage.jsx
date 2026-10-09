@@ -352,8 +352,26 @@ const JoinPage = () => {
 
         {success ? (
           <div className="text-center space-y-6">
-            <h2 className="text-2xl font-bold text-[#4A5D23]">{t('join.welcome')}</h2>
-            <p className="text-[#57534E]">{t('join.card_ready')}</p>
+            {success.already_member ? (
+              // Already a customer here (even with the card removed from Wallet):
+              // the card comes back, and parrainage is for new customers only
+              // (user, 2026-10-09) — said plainly, never a « Bienvenue » that promised points.
+              <>
+                <h2 className="text-2xl font-bold text-[#4A5D23]">Vous avez déjà une carte{tenant?.name ? ` chez ${tenant.name}` : ''}</h2>
+                <p className="text-[#57534E]">
+                  {success.parrainage_refused === 'self'
+                    ? 'C’est votre propre carte : la voici, avec vos points.'
+                    : success.parrainage_refused
+                      ? 'Le parrainage est réservé aux nouveaux clients. Voici votre carte, avec vos points.'
+                      : 'La voici, avec vos points.'}
+                </p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-2xl font-bold text-[#4A5D23]">{t('join.welcome')}</h2>
+                <p className="text-[#57534E]">{t('join.card_ready')}</p>
+              </>
+            )}
             {/* QR only — the Code 128 1D barcode below was removed per
                 owner spec. Modern POS phones/tablets scan QR reliably. */}
             <div className="p-4 bg-white rounded-xl border border-[#E7E5E4] flex justify-center">
