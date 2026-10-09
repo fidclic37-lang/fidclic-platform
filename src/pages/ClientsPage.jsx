@@ -134,6 +134,23 @@ const Select = ({ label, value, onChange, options }) => (
   </label>
 );
 
+/* « Plus de filtres » (user, 2026-10-08): the old page's filters, in this
+   page's design. A number or a postal code is typed; the rest is picked. */
+const NumberBox = ({ label, value, onChange, placeholder, suffix, digitsOnly, maxLength }) => (
+  <label className="block min-w-0">
+    <span className="mb-1 block text-[11px] text-[#94A3B8]">{label}</span>
+    <div className="relative">
+      <input value={value} inputMode={digitsOnly ? 'numeric' : 'decimal'} maxLength={maxLength} placeholder={placeholder}
+             onChange={(e) => onChange(digitsOnly ? e.target.value.replace(/\D/g, '') : e.target.value.replace(/[^0-9,.]/g, ''))}
+             className={`w-full rounded-xl border border-[#E6EEFB] bg-white py-2.5 pl-3 ${suffix ? 'pr-8' : 'pr-3'} text-[13px] font-medium text-[#0B1C3F] outline-none placeholder:font-normal placeholder:text-[#94A3B8] focus:border-[#2F6BFF]`} />
+      {suffix && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-[#94A3B8]">{suffix}</span>}
+    </div>
+  </label>
+);
+const EXTRA_EMPTY = { tier: '', visits_min: '', visits_max: '', spent_min: '', spent_max: '', basket_min: '', postal: '', notif: '' };
+const TIER_OPTIONS = [{ key: '', label: 'Tous' }, { key: 'bronze', label: 'Bronze' }, { key: 'silver', label: 'Argent' },
+  { key: 'gold', label: 'Or' }, { key: 'vip', label: 'VIP' }];
+
 /* ── page ─────────────────────────────────────────────────────────────── */
 /* ── Contacter ─────────────────────────────────────────────────────────────
    The filter above this page is the whole point of the page, so the message
@@ -278,6 +295,11 @@ export default function ClientsPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(() => prefPerPage());
   const [more, setMore] = useState(false);
+  const [extra, setExtraState] = useState(EXTRA_EMPTY);
+  const setExtra = (k, v) => { setExtraState((x) => ({ ...x, [k]: v })); setPage(1); };
+  // only what is filled travels (an empty box is no filter)
+  const extraParams = useMemo(() => Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== '')), [extra]);
+  const extraCount = Object.keys(extraParams).length;
   const [picked, setPicked] = useState([]);
   const [menuFor, setMenuFor] = useState(null);
   const [exporting, setExporting] = useState(false);
@@ -309,8 +331,8 @@ export default function ClientsPage() {
   // What the current filter is, in one place: saved as-is, and applied back
   // as-is, so a reloaded segment shows exactly the rows it showed when it was
   // saved.
-  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source }),
-                                 [segment, status, spend, joined, search, sort, source]);
+  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source, ...extraParams }),
+                                 [segment, status, spend, joined, search, sort, source, extraParams]);
 
   const saveCurrent = async () => {
     const name = segName.trim();
@@ -330,6 +352,7 @@ export default function ClientsPage() {
     setStatus(f.status || ''); setSpend(f.spend || ''); setJoined(f.joined || ''); setSource(f.source || '');
     setTyped(f.search || ''); setSearch(f.search || '');
     setSort(f.sort || 'recent');
+    setExtraState(Object.fromEntries(Object.keys(EXTRA_EMPTY).map((k) => [k, f[k] != null ? String(f[k]) : ''])));
     setPage(1); setPicked([]);
   };
 
@@ -346,7 +369,7 @@ export default function ClientsPage() {
       return;
     }
     try {
-      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, source, ...(store ? { store } : {}) });
+      const { data } = await ownerAPI.clientIds({ segment, status, spend, joined, search, source, ...extraParams, ...(store ? { store } : {}) });
       if (!data.ids?.length) { setError('Aucun client ne correspond à ce filtre.'); return; }
       setCompose({ ids: data.ids, label: activeSegment?.label || 'ce filtre' });
     } catch (e) { setError(e?.response?.data?.detail || 'Impossible de constituer la liste.'); }
@@ -372,8 +395,8 @@ export default function ClientsPage() {
   }, [typed]);
 
   const params = useMemo(() => ({
-    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...(store ? { store } : {}),
-  }), [segment, status, spend, joined, search, source, sort, page, perPage, store]);
+    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...extraParams, ...(store ? { store } : {}),
+  }), [segment, status, spend, joined, search, source, sort, page, perPage, store, extraParams]);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -396,7 +419,7 @@ export default function ClientsPage() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...(store ? { store } : {}) });
+      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...extraParams, ...(store ? { store } : {}) });
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-clients-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -606,10 +629,22 @@ export default function ClientsPage() {
           <button type="button" onClick={needCrm(() => setMore((v) => !v))}
                   className="inline-flex h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#E6EEFB] px-4 text-[13px] font-semibold text-[#475569] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <SlidersHorizontal size={14} /> Plus de filtres
+            {extraCount > 0 && <span className="rounded-full bg-[#2F6BFF] px-1.5 text-[10.5px] font-bold text-white">{extraCount}</span>}
           </button>
         </div>
         {more && meta && (
           <div className="mt-3 rounded-xl bg-[#F8FAFF] px-4 py-3">
+            <div className="mb-3 grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+              <Select label="Palier" value={extra.tier} onChange={(v) => setExtra('tier', v)} options={TIER_OPTIONS} />
+              <NumberBox label="Visites — au moins" value={extra.visits_min} onChange={(v) => setExtra('visits_min', v)} placeholder="0" digitsOnly />
+              <NumberBox label="Visites — au plus" value={extra.visits_max} onChange={(v) => setExtra('visits_max', v)} placeholder="∞" digitsOnly />
+              <Select label="Notifications" value={extra.notif} onChange={(v) => setExtra('notif', v)}
+                      options={[{ key: '', label: 'Toutes' }, { key: 'oui', label: 'Activées' }, { key: 'non', label: 'Non activées' }]} />
+              <NumberBox label="Dépense totale — au moins" value={extra.spent_min} onChange={(v) => setExtra('spent_min', v)} placeholder="0" suffix="€" />
+              <NumberBox label="Dépense totale — au plus" value={extra.spent_max} onChange={(v) => setExtra('spent_max', v)} placeholder="∞" suffix="€" />
+              <NumberBox label="Panier moyen — au moins" value={extra.basket_min} onChange={(v) => setExtra('basket_min', v)} placeholder="0" suffix="€" />
+              <NumberBox label="Code postal (ou son début)" value={extra.postal} onChange={(v) => setExtra('postal', v)} placeholder="37000 ou 37" digitsOnly maxLength={5} />
+            </div>
             <p className="text-[12px] leading-relaxed text-[#475569]">
               <strong>Comment ces segments sont calculés.</strong> Un client est
               <em> fidèle</em> à partir de {meta.definitions.loyal_visits} visites,
@@ -620,7 +655,7 @@ export default function ClientsPage() {
               <em> client local</em> habite à moins de {meta.definitions.local_km} km.
             </p>
             <button type="button"
-                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setTyped(''); setPage(1); }}
+                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setTyped(''); setExtraState(EXTRA_EMPTY); setPage(1); }}
                     className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#E6EEFB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
               <X size={12} /> Réinitialiser les filtres
             </button>
