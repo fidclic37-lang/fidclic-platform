@@ -70,6 +70,9 @@ export function FicheModal({ clientId, onClose, onSaved }) {
       .catch((e) => setMsg(err(e, 'Fiche introuvable.')));
   }, [clientId]);
   const [mm, dd] = (f?.birthday || '').split('-');
+  // the year (user, 2026-10-09: the age shows in Clients) — optional here
+  const yy = (f?.birth_date || '').slice(0, 4);
+  const THIS_YEAR = new Date().getFullYear();
   const setBirthday = (m, day) => {
     const max = DAYS_IN[(Number(m) || 1) - 1];
     const dfix = day && Number(day) > max ? String(max).padStart(2, '0') : day;
@@ -81,7 +84,11 @@ export function FicheModal({ clientId, onClose, onSaved }) {
     ['name', 'phone', 'email', 'postal_code', 'is_student', 'acquisition_source'].forEach((k) => {
       if (f[k] !== d.client[k]) body[k] = f[k];
     });
-    if (f.birthday !== d.client.birthday) body.birthday = f.birthday;
+    if (f.birthday !== d.client.birthday || (f.birth_date || '') !== (d.client.birth_date || '')) {
+      const [m2, d2] = (f.birthday || '').split('-');
+      const y2 = (f.birth_date || '').slice(0, 4);
+      body.birthday = y2 && m2 && d2 ? `${y2}-${m2}-${d2}` : f.birthday;
+    }
     if (!Object.keys(body).length) { onClose(); return; }
     try {
       const { data } = await ownerAPI.saveClientFiche(clientId, body);
@@ -113,7 +120,7 @@ export function FicheModal({ clientId, onClose, onSaved }) {
           <label><Label>E-mail (facultatif)</Label>
             <input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={field} />
           </label>
-          <div><Label>Anniversaire</Label>
+          <div className="sm:col-span-2"><Label>Date de naissance{d.client.age != null ? ` · ${d.client.age} ans` : ''}</Label>
             <div className="flex gap-2">
               <select aria-label="Jour" value={dd || ''} onChange={(e) => setBirthday(mm, e.target.value)} className={field}>
                 <option value="">Jour</option>
@@ -123,6 +130,11 @@ export function FicheModal({ clientId, onClose, onSaved }) {
               <select aria-label="Mois" value={mm || ''} onChange={(e) => setBirthday(e.target.value, dd)} className={field}>
                 <option value="">Mois</option>
                 {MONTHS.map((m, i) => <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
+              </select>
+              <select aria-label="Année" value={yy || ''} className={field}
+                      onChange={(e) => setF({ ...f, birth_date: e.target.value ? `${e.target.value}-${mm || '01'}-${dd || '01'}` : '' })}>
+                <option value="">Année</option>
+                {Array.from({ length: THIS_YEAR - 1899 }, (_, i) => String(THIS_YEAR - i)).map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
           </div>

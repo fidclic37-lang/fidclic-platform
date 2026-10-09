@@ -59,7 +59,7 @@ def main():
     db.card_templates.insert_one({"tenant_id": "t1", "programme": "stamps", "reward_threshold_stamps": 10,
                                   "visits_per_stamp": 1, "reward_description": "Un café offert"})
     bc = http("POST", "/api/join/cafe", json={"name": "Marie Dupont", "phone": "0612345678", "postal_code": "37000",
-                                              "birthday": "01-02", "consent": True}).json()["barcode_id"]
+                                              "birthday": "1990-01-02", "consent": True}).json()["barcode_id"]
     cid = db.customers.find_one({"barcode_id": bc})["id"]
 
     def scan():

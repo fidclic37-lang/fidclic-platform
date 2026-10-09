@@ -730,8 +730,8 @@ export default function ClientsPage() {
                          onChange={togglePage}
                          className="h-4 w-4 accent-[#2F6BFF]" />
                 </th>
-                {['Client', 'Statut', 'Segment', 'Dernière visite', 'Total dépensé', 'Actions'].map((h, i) => (
-                  <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${i === 4 ? 'text-right' : ''}`}>
+                {['Client', 'Âge', 'Statut', 'Segment', 'Dernière visite', 'Total dépensé', 'Actions'].map((h, i) => (
+                  <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${i === 5 ? 'text-right' : ''}`}>
                     {h}
                   </th>
                 ))}
@@ -739,12 +739,12 @@ export default function ClientsPage() {
             </thead>
             <tbody>
               {loading && feed.rows.length === 0 && (
-                <tr key="loading"><td colSpan={7} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                <tr key="loading"><td colSpan={8} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                   <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement des clients…
                 </td></tr>
               )}
               {!loading && feed.rows.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-14 text-center">
+                <tr><td colSpan={8} className="px-4 py-14 text-center">
                   <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Aucun client ici</p>
                   <p className="mt-1 text-[12.5px] text-[#64748B]">
                     {search || status || spend || joined || source || segment !== 'all'
@@ -777,6 +777,10 @@ export default function ClientsPage() {
                           )}
                         </span>
                       </span>
+                    </td>
+                    {/* from the full date of birth (user, 2026-10-09) */}
+                    <td className="whitespace-nowrap px-4 py-3 text-[12.5px] tabular-nums text-[#475569]">
+                      {r.age != null ? `${r.age} ans` : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11.5px] font-semibold"

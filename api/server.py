@@ -7,7 +7,7 @@ import json
 from typing import List, Optional, Dict, Any, Union
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, status, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from models import (
     UserInDB, UserCreate, Tenant, Customer, Visit, CardTemplate, Campaign, PaymentTransaction, AIQueryRequest,
@@ -6047,6 +6047,8 @@ ALLOWED_ACQUISITION_SOURCES = {"instagram", "facebook", "whatsapp", "tiktok", "g
 
 class JoinRequest(BaseModel):
     name: str
+    # the full date of birth, set by _check_join_fields (YYYY-MM-DD)
+    _birth_date: Optional[str] = PrivateAttr(default=None)
     # Email is OPTIONAL — many walk-in customers don't have one handy,
     # and forcing it kills conversion. When blank, dedup falls back to
     # phone-only and email-based campaigns (drips, receipts) silently
@@ -6098,7 +6100,11 @@ def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> No
     if req.postal_code or not profile_optional:
         req.postal_code = CF.postal_code(req.postal_code)
     if req.birthday or not profile_optional:
-        req.birthday = CF.birthday(req.birthday)
+        # the full date on the signup page (user, 2026-10-09: the age shows in
+        # Clients); the merchant API may still send day and month only
+        b = CF.birth(req.birthday, need_year=not profile_optional)
+        req.birthday = b["birthday"]
+        req._birth_date = b["birth_date"]
     req.email = CF.email(req.email)
 
 
@@ -6248,6 +6254,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    if getattr(req, "_birth_date", None):
+        cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came
     # with it — « QR code en magasin » is only for customers who came on their
     # own, so the two never overlap (user, 2026-10-08).

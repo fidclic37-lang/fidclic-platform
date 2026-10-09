@@ -67,7 +67,7 @@ def main():
                                    "referee_reward_points": 25, "minimum_visits_to_earn": 1, "reward_mode": "once"})
 
     def join(name, phone, parrain=None, email=""):
-        body = {"name": name, "phone": phone, "email": email, "postal_code": "37000", "birthday": "01-02", "consent": True}
+        body = {"name": name, "phone": phone, "email": email, "postal_code": "37000", "birthday": "1990-01-02", "consent": True}
         if parrain:
             body["parrain_barcode"] = parrain
         return http("POST", "/api/join/petit-cafe", json=body)

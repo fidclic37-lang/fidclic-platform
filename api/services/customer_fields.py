@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from typing import Optional
+from typing import Dict, Optional
 
 from fastapi import HTTPException
 
@@ -71,17 +71,63 @@ def postal_code(v: Optional[str]) -> str:
     return s
 
 
-def birthday(v: Optional[str]) -> str:
-    """MM-DD. Also reads « 25/12 » (day/month) and « 1990-12-25 »."""
+def birth(v: Optional[str], need_year: bool = False) -> Dict[str, Optional[str]]:
+    """The date of birth (user, 2026-10-09: the full date, so the age shows in
+    Clients). Reads « 25/12/1990 », « 1990-12-25 », and the older « 25/12 » /
+    « 12-25 » without a year. Returns {"birthday": "MM-DD" (the birthday
+    automations' key, as before), "birth_date": "YYYY-MM-DD" or None}.
+    `need_year`: the signup form asks for the year."""
     b = (v or "").strip()
-    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})", b)
+    year = None
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", b)
     if m:
-        b = f"{int(m.group(2)):02d}-{int(m.group(1)):02d}"
-    m = re.fullmatch(r"(?:\d{4}-)?(\d{2})-(\d{2})", b)
-    if not m or not 1 <= int(m.group(1)) <= 12 or not 1 <= int(m.group(2)) <= calendar.monthrange(2024, int(m.group(1)))[1]:
-        raise _bad("Date d'anniversaire invalide : choisissez le jour et le mois.")
-    return f"{m.group(1)}-{m.group(2)}"
+        day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", b)
+        if m:
+            year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        else:
+            m = re.fullmatch(r"(\d{1,2})/(\d{1,2})", b) or None
+            if m:
+                day, month = int(m.group(1)), int(m.group(2))
+            else:
+                m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", b)
+                if not m:
+                    raise _bad("Date de naissance invalide : JJ/MM/AAAA, par exemple 25/12/1990.")
+                month, day = int(m.group(1)), int(m.group(2))
+    if year is None and need_year:
+        raise _bad("Date de naissance complète : JJ/MM/AAAA, par exemple 25/12/1990.")
+    if not 1 <= month <= 12 or not 1 <= day <= calendar.monthrange(year or 2024, month)[1]:
+        raise _bad("Date de naissance invalide : ce jour n'existe pas.")
+    iso = None
+    if year is not None:
+        today = _paris_today()
+        if year < 1900 or (year, month, day) > (today.year, today.month, today.day):
+            raise _bad("Date de naissance invalide : vérifiez l'année.")
+        iso = f"{year:04d}-{month:02d}-{day:02d}"
+    return {"birthday": f"{month:02d}-{day:02d}", "birth_date": iso}
 
+
+def birthday(v: Optional[str]) -> str:
+    """MM-DD — the birthday automations' key (see birth for the full date)."""
+    return birth(v)["birthday"]
+
+
+def _paris_today():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Europe/Paris")).date()
+
+
+def age_of(birth_date: Optional[str], today=None) -> Optional[int]:
+    """Whole years on the shop's calendar (Paris). A 29 February birthday
+    turns a year older on 1 March in a common year."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(birth_date or ""))
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    t = today or _paris_today()
+    return t.year - y - ((t.month, t.day) < (mo, d))
 
 def email(v: Optional[str]) -> str:
     """Optional: « » stays « »."""
