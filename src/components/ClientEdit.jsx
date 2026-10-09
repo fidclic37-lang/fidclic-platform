@@ -209,10 +209,16 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
       {!c ? (msg ? null : <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</p>) : (
         <>
           <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-            {[['Points', c.points], ['Tampons (carte en cours)', c.stamps_in_cycle], ['Visites au total', c.visits]].map(([l, v]) => (
+            {/* stamps are the card's meter; visits stay the real scans (QA R5 F22) */}
+            {[['Points', c.points, null],
+              ['Tampons (carte en cours)', c.stamps_in_cycle,
+               [c.stamps_adjusted ? `dont ${c.stamps_adjusted > 0 ? '+' : ''}${c.stamps_adjusted} à la main` : null,
+                c.paper_stamps ? `${c.paper_stamps} de la carte papier` : null].filter(Boolean).join(' · ') || null],
+              ['Visites (scans)', c.visits, null]].map(([l, v, sub]) => (
               <div key={l} className="rounded-xl bg-[#F5F8FE] px-2 py-2.5">
                 <p className="text-[18px] font-bold text-[#0B1C3F]">{v}</p>
                 <p className="text-[11px] leading-tight text-[#64748B]">{l}</p>
+                {sub && <p className="mt-0.5 text-[10.5px] leading-tight text-[#2F6BFF]">{sub}</p>}
               </div>
             ))}
           </div>
@@ -224,7 +230,7 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
           <label className="mt-3 block"><Label>Raison (obligatoire)</Label>
             <input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="Ex. visite oubliée au comptoir, geste commercial…" className={field} />
           </label>
-          <p className="mt-2 text-[11.5px] text-[#64748B]">La raison est gardée dans l'historique du client. Aucune visite n'est créée : vos statistiques restent celles des scans.</p>
+          <p className="mt-2 text-[11.5px] text-[#64748B]">La raison est gardée dans l'historique du client. Les tampons ne changent que la carte en cours : le nombre de visites, le palier et vos statistiques restent ceux des scans.</p>
         </>
       )}
       {msg && <p className="mt-3 rounded-lg bg-[#FEF2F2] px-3 py-2 text-[12.5px] text-[#B91C1C]">{msg}</p>}

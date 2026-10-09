@@ -90,6 +90,8 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
         "stamps_in_cycle": max(0, visits - int(c.get("visits_at_last_redemption") or 0)),
         "visits_at_last_redemption": int(c.get("visits_at_last_redemption") or 0),
         "tier": (c.get("tier") or "bronze").lower(),
+        # stamps added (or removed) by hand — on the card only, never visits (QA R5 F22)
+        "stamps_adjusted": int(c.get("stamps_adjusted") or 0),
         # stamps moved from a paper card at a scan (once per customer)
         "paper_stamps": int(c.get("paper_stamps") or 0),
         "paper_stamps_at": c.get("paper_stamps_at"),
@@ -188,6 +190,13 @@ class AdjustIn(BaseModel):
     reason: str = Field("", max_length=300)
 
 
+def _card_size(tid: str):
+    """Stamps for a reward and visits per stamp (Carte de fidélité)."""
+    tpl = _db.card_templates.find_one({"tenant_id": tid}) or {}
+    return (max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1),
+            max(int(tpl.get("visits_per_stamp", 1) or 1), 1))
+
+
 @router.post("/api/owner/clients/{customer_id}/ajustement")
 def adjust(customer_id: str, body: AdjustIn, request: Request = None,
            token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
@@ -201,16 +210,31 @@ def adjust(customer_id: str, body: AdjustIn, request: Request = None,
     if not body.points and not body.visits:
         raise HTTPException(status_code=400, detail="Rien à ajuster : indiquez des points ou des tampons.")
     points = int(c.get("points") or 0) + body.points
-    visits = int(c.get("visits") or 0) + body.visits
-    floor = int(c.get("visits_at_last_redemption") or 0)
     if points < 0:
         raise HTTPException(status_code=400, detail=f"Le client n'a que {int(c.get('points') or 0)} points.")
-    if visits < floor:
-        raise HTTPException(status_code=400, detail=f"Impossible de retirer plus de {int(c.get('visits') or 0) - floor} tampon(s) "
+    # Stamps move THIS card's meter only (QA R5 F22, user 2026-10-09: « sirf
+    # card ka meter »). A +1 stamp used to add a visit: the card and the CSV
+    # read 3 visits while the history held 2. Visits, palier and figures stay
+    # the scans'; the cycle marker moves instead (as for paper-card stamps).
+    visits = int(c.get("visits") or 0)
+    size, per = _card_size(tid)
+    on_card = visits - int(c.get("visits_at_last_redemption") or 0)
+    after_card = on_card + body.visits * per
+    if after_card < 0:
+        have = max(0, on_card) // per
+        raise HTTPException(status_code=400, detail=f"Impossible de retirer plus de {have} tampon{'s' if have > 1 else ''} "
                                                     "sur la carte en cours.")
-    upd = {"points": points, "visits": visits, "updated_at": _now(),
+    if body.visits > 0 and after_card > size * per:
+        have, room = on_card // per, max(0, size * per - on_card) // per
+        raise HTTPException(status_code=400, detail=(
+            f"La carte en cours a {have} tampon{'s' if have > 1 else ''} sur {size} : {room} au maximum."
+            if room else f"La carte en cours est complète ({size}/{size}) : remettez d'abord la récompense."))
+    upd = {"points": points, "updated_at": _now(),
            "tier": _tier(tid, visits, points, float(c.get("total_amount_paid") or 0))}
-    _db.customers.update_one({"id": customer_id}, {"$set": upd})
+    inc = {}
+    if body.visits:
+        inc = {"visits_at_last_redemption": -body.visits * per, "stamps_adjusted": body.visits}
+    _db.customers.update_one({"id": customer_id}, {"$set": upd, **({"$inc": inc} if inc else {})})
     parts = []
     if body.points:
         parts.append(f"{'+' if body.points > 0 else ''}{body.points} point{'s' if abs(body.points) > 1 else ''}")
@@ -221,8 +245,8 @@ def adjust(customer_id: str, body: AdjustIn, request: Request = None,
                                      "customer_name": c.get("name"), "kind": "adjust", "points_delta": body.points,
                                      "visits_delta": body.visits, "reason": reason, "text": text,
                                      "by": token_data.email, "at": _now(),
-                                     "before": {"points": int(c.get("points") or 0), "visits": int(c.get("visits") or 0)},
-                                     "after": {"points": points, "visits": visits}})
+                                     "before": {"points": int(c.get("points") or 0), "stamps": on_card // per},
+                                     "after": {"points": points, "stamps": after_card // per}})
     after = _db.customers.find_one({"id": customer_id}, {"_id": 0})
     _refresh_card(after)
     return {"client": _view(after), "text": text}

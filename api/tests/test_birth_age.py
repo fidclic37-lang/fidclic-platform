@@ -74,7 +74,8 @@ def main():
     want = CF.age_of("1990-12-25")
     check(f"Clients shows Inès's age ({rows[0].get('age')})", rows[0].get("age") == want)
     csv = http("GET", "/api/owner/clients/export", headers=H).text.splitlines()
-    check("the export has an « Âge » column", csv[0].endswith("Âge") and csv[1].endswith(str(want)))
+    head = csv[0].lstrip("\ufeff").split(";")
+    check("the export has an « Âge » column", "Âge" in head and csv[1].split(";")[head.index("Âge")] == str(want))
     cid = rows[0]["id"]
     r = http("PUT", f"/api/owner/clients/{cid}/fiche", headers=H, json={"birthday": "2001-03-04"})
     f = http("GET", f"/api/owner/clients/{cid}/fiche", headers=H).json()["client"]

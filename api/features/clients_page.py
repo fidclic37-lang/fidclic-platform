@@ -313,7 +313,10 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
           "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
-          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1}
+          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1,
+          # the card's meter, apart from visits (QA R5 F22): stamps on the
+          # current card, those added by hand and those of a paper card
+          "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1}
 
 
 # Owner, administrateur and manager read the Clients page; each sees the
@@ -711,14 +714,17 @@ def export_clients(
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Source", "Visites",
-                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte", "Âge"])
+                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte", "Âge",
+                "Tampons (carte en cours)", "Tampons ajoutés à la main", "Tampons carte papier"])
     for c in rows:
         p = _public(c, at, shop_avg, local, rules)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
                     p["source_label"], p["visits"], f"{p['spent']:.2f}".replace(".", ","),
                     _paris_day(p["last_visit"]), _paris_day(p["joined"]), p["city"],
                     p["card"]["label"] + (f" ({_paris_day(p['card']['at'])})" if p["card"]["at"] else ""),
-                    p["age"] if p["age"] is not None else ""])
+                    p["age"] if p["age"] is not None else "",
+                    max(0, int(c.get("visits") or 0) - int(c.get("visits_at_last_redemption") or 0)),
+                    int(c.get("stamps_adjusted") or 0), int(c.get("paper_stamps") or 0)])
     data = "﻿" + buf.getvalue()
     return Response(content=data, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition":
