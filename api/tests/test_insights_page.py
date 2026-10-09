@@ -201,9 +201,11 @@ def main():
     # that holds the afternoon coffees and nothing else.
     per_hour = {}
     for v in shop.recent(90):
-        per_hour[I._aware(v["visit_time"]).hour] = per_hour.get(I._aware(v["visit_time"]).hour, 0) + 1
+        h = I._paris(I._aware(v["visit_time"])).hour          # the shop's clock (QA F19)
+        per_hour[h] = per_hour.get(h, 0) + 1
     windows = {h: per_hour.get(h, 0) + per_hour.get(h + 1, 0) for h in range(7, 22)}
-    quiet = min((h for h, n in windows.items() if n > 0), key=lambda h: windows[h])
+    quiet = min((h for h, n in windows.items() if n > 0), key=lambda h: (windows[h], h))
+    busy = max(windows, key=lambda h: (windows[h], per_hour.get(h, 0), -h))
     check("the quiet hour is found in the scans",
           f"{quiet}h–{quiet + 2}h" in opp["heures_creuses"]["body"])
     check("and it is a slot the shop is actually open", windows[quiet] > 0)
@@ -270,7 +272,8 @@ def main():
     print("\nConseils")
     tips = {t["key"]: t for t in data["tips"]["all"]}
     check("four are shown", len(data["tips"]["shown"]) == 4)
-    check("the best hours come from the scans", "entre 12h et 14h" in tips["horaires"]["body"])
+    check(f"the best hours come from the scans, in Paris time ({busy}h–{busy + 2}h)",
+          f"entre {busy}h et {busy + 2}h (heure de Paris)" in tips["horaires"]["body"])
     check("the best-seller is named", "« Café »" in tips["best_sellers"]["body"])
     check("the rating is the shop's own", "7,7/10" in tips["experience"]["body"])
     check("no unsourced statistic is presented as fact", "20%" not in tips["visibilite"]["body"])

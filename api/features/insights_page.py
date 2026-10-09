@@ -447,6 +447,7 @@ def _best_weekday(shop: Shop) -> Optional[Dict[str, Any]]:
     for v in rows:
         t = _aware(v.get("visit_time"))
         if t:
+            t = _paris(t)                  # the shop's own calendar, not UTC's (QA F19)
             per_day[t.weekday()] += 1
             seen_dates[t.weekday()].add(t.date())
     avg = {d: per_day[d] / len(seen_dates[d]) for d in per_day if len(seen_dates[d]) >= 3}
@@ -501,21 +502,37 @@ def _top_product(shop: Shop) -> Optional[str]:
     return tally.most_common(1)[0][0] if tally else None
 
 
+HOURS_DAYS = 90          # the period the créneaux are read on
+HOURS_MIN_VISITS = 20    # below this, no personal advice
+
+
+def _paris(t: datetime) -> datetime:
+    """A visit's time on the shop's clock (features/period.local)."""
+    from features import period as P
+    return P.local(t)
+
+
 def _hours(shop: Shop) -> Optional[Dict[str, Any]]:
-    """The busiest and the quietest two-hour slot, when there is enough to say."""
-    rows = shop.recent(90)
-    if len(rows) < 20:
+    """The busiest and the quietest two-hour slot, when there is enough to say.
+
+    In Paris time (QA F19, 2026-10-09): visits stored in UTC were bucketed by
+    their UTC hour, so 14:48 in the shop read as « 12h » and the advice said
+    « 11h–13h » to a shop that had no visit then. A tie goes to the slot that
+    starts on the busier hour, so visits all at 14h read « 14h–16h »."""
+    rows = shop.recent(HOURS_DAYS)
+    if len(rows) < HOURS_MIN_VISITS:
         return None
     per: Dict[int, int] = defaultdict(int)
     for v in rows:
         t = _aware(v.get("visit_time"))
         if t:
-            per[t.hour] += 1
+            per[_paris(t).hour] += 1
     slots = {h: per.get(h, 0) + per.get(h + 1, 0) for h in range(7, 22)}
-    busy = max(slots, key=slots.get)
+    busy = max(slots, key=lambda h: (slots[h], per.get(h, 0), -h))
     open_slots = {h: n for h, n in slots.items() if n > 0}
-    quiet = min(open_slots, key=open_slots.get) if len(open_slots) > 2 else None
-    return {"busy": (busy, busy + 2), "quiet": (quiet, quiet + 2) if quiet is not None else None}
+    quiet = min(open_slots, key=lambda h: (open_slots[h], h)) if len(open_slots) > 2 else None
+    return {"busy": (busy, busy + 2), "quiet": (quiet, quiet + 2) if quiet is not None else None,
+            "visits": len(rows), "days": HOURS_DAYS}
 
 
 def _satisfied(shop: Shop) -> int:
@@ -722,7 +739,8 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
         out.append({
             "key": "heures_creuses", "category": _category("ventes"),
             "title": "Remplissez vos heures creuses",
-            "body": f"Le créneau {a}h–{b}h est le plus calme de votre journée. Une offre ciblée sur "
+            "body": f"Le créneau {a}h–{b}h (heure de Paris) est le plus calme de votre journée, sur vos "
+                    f"{hrs['visits']} passages des {hrs['days']} derniers jours. Une offre ciblée sur "
                     "ce créneau peut remplir vos heures creuses.",
             "image": "happyhour" if shop.food else "heures_creuses", "icon": "clock",
             "impact": _benchmark("+5 à 10% de CA", shop),
@@ -883,10 +901,15 @@ def _tips(shop: Shop) -> List[Dict[str, Any]]:
     hrs = _hours(shop)
     if hrs:
         a, b = hrs["busy"]
-        text = (f"Vos meilleurs créneaux sont entre {a}h et {b}h. Renforcez votre communication "
-                "sur ces horaires.")
+        # what it is read on, said (QA F19): the clock, the period, the visits
+        text = (f"Vos meilleurs créneaux sont entre {a}h et {b}h (heure de Paris), d'après vos "
+                f"{hrs['visits']} passages des {hrs['days']} derniers jours. Renforcez votre "
+                "communication sur ces horaires.")
     else:
-        text = "Repérez vos meilleurs créneaux et renforcez votre communication sur ces horaires."
+        # not personal yet — said as general advice, never as an observation
+        text = (f"Conseil général : pas encore assez de passages ({HOURS_MIN_VISITS} sur "
+                f"{HOURS_DAYS} jours) pour repérer vos créneaux. Une fois atteints, vos meilleurs "
+                "horaires s'afficheront ici.")
     out.append({"key": "horaires", "icon": "clock", "title": "Optimisez vos horaires", "body": text})
 
     top = _top_product(shop)
