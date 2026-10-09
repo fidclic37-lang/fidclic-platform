@@ -111,9 +111,12 @@ def main():
     r = http("POST", "/api/owner/scan", headers=H, json={"barcode_id": "FT-EVA", "amount_paid": 5})
     check(f"5th visit: Argent at the owner's 5, not the old 10 ({r.status_code})",
           r.status_code == 200 and r.json().get("tier") == "silver" and r.json().get("tier_upgraded"))
-    r = http("POST", "/api/owner/clients/e/ajustement", headers=H, json={"visits": 26, "reason": "Cartes papier"})
-    check(f"« Ajuster » uses the same rule: 31 visits → Or ({r.status_code})",
-          db.customers.find_one({"id": "e"})["tier"] == "gold")
+    # QA R5 F22 (2026-10-09): stamps added by hand move the card only — the
+    # palier stays the real scans' (5 visits → Argent)
+    r = http("POST", "/api/owner/clients/e/ajustement", headers=H, json={"visits": 3, "reason": "Cartes papier"})
+    e = db.customers.find_one({"id": "e"})
+    check(f"« Ajuster » +3 stamps: the card moves, the palier stays Argent ({r.status_code})",
+          r.status_code == 200 and e["tier"] == "silver" and e["visits"] == 5)
 
     print("\n4. Carte à points : le palier se lit en points")
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": "points_euro", "reward_tiers": [],
