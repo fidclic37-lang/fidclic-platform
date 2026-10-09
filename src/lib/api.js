@@ -62,7 +62,59 @@ const settingsSaved = (r) => {
   return r;
 };
 
+// « Accéder au compte » keeps its full access while the tab is open (user,
+// 2026-10-09: past its 30 minutes every page said « Not enough permissions »
+// under a banner still reading « accès complet »). The tab asks for a fresh
+// one with the super admin's own session — before it runs out, when the tab
+// comes back, and once more if a call finds it expired.
+const viewClaims = () => {
+  const t = viewToken();
+  if (!t) return null;
+  try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch (_e) { return null; }
+};
+let renewing = null;
+export const renewView = () => {
+  const c = viewClaims();
+  if (!c?.tenant_id) return Promise.resolve(false);
+  if (!renewing) {
+    let own = null;
+    try { own = localStorage.getItem(TOKEN_KEY); } catch (_e) { own = null; }
+    renewing = fetch(`/api/admin/commerces/${encodeURIComponent(c.tenant_id)}/view-as`, {
+      method: 'POST', credentials: 'include', headers: own ? { Authorization: `Bearer ${own}` } : {},
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.token) return false;
+        try { sessionStorage.setItem(VIEW_KEY, d.token); } catch (_e) { return false; }
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => { setTimeout(() => { renewing = null; }, 0); });
+  }
+  return renewing;
+};
+const renewIfDue = () => {
+  const c = viewClaims();
+  if (c?.exp && c.exp * 1000 - Date.now() < 12 * 60 * 1000) renewView();
+};
+if (typeof window !== 'undefined' && viewToken()) {
+  setInterval(renewIfDue, 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) renewIfDue(); });
+}
+
 api.interceptors.response.use(settingsSaved, async (error) => {
+  // the account's access ran out: renew it once and replay the call
+  try {
+    const res = error?.response;
+    const det = res?.data?.detail;
+    if (res?.status === 401 && det && typeof det === 'object' && det.code === 'VIEW_EXPIRED'
+        && error.config && !error.config._viewRenewed) {
+      if (await renewView()) {
+        error.config._viewRenewed = true;
+        return api(error.config);
+      }
+    }
+  } catch (_e) { /* fall through to the usual message */ }
   try {
     const res = error?.response;
     if (res && (res.status === 403 || res.status === 429)) {
