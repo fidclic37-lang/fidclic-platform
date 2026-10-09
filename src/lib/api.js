@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { keyOf } from './myCards';
 
 const api = axios.create({
   baseURL: '/api',
@@ -35,6 +36,14 @@ api.interceptors.request.use((config) => {
     // decides what the caller may actually see — see features/store_scope.py.
     config.headers = config.headers || {};
     config.headers['X-FidClic-Store'] = localStorage.getItem('ft_selected_branch_v1') || 'all';
+    // A card's own phone proves it with the card's owner key (lib/myCards):
+    // the server answers card data, prefs, delete, RGPD and Wallet passes
+    // only to that phone or to the shop (2026-10-09 — the card number alone
+    // is printed in every QR).
+    const m = String(config.url || '').match(/\/card\/(FT-[A-Z0-9]+)/i);
+    const bc = m ? m[1] : (config.data && typeof config.data === 'object' ? config.data.barcode_id : null);
+    const k = bc ? keyOf(bc) : null;
+    if (k) config.headers['X-Card-Key'] = k;
   } catch (_e) { /* ignore */ }
   return config;
 });

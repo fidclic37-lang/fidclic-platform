@@ -75,8 +75,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     print("\nThe card page itself logs every opening")
     db.card_opens.delete_many({"customer_id": "c3"})
-    http("GET", "/api/card/FT-OPEN0003")
-    http("GET", "/api/card/FT-OPEN0003")
+    http("GET", "/api/card/FT-OPEN0003", headers={"X-Card-Key": __import__("services.card_owner", fromlist=["x"]).key_for("FT-OPEN0003")})
+    http("GET", "/api/card/FT-OPEN0003", headers={"X-Card-Key": __import__("services.card_owner", fromlist=["x"]).key_for("FT-OPEN0003")})
     row = db.card_opens.find_one({"customer_id": "c3"})
     check("two openings of /card the same day → two times on the row", row and len(row.get("ats") or []) == 2)
     check("…and the customer's last opening is kept for the other pages",

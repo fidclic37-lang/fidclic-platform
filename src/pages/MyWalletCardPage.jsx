@@ -287,7 +287,8 @@ const CardView = () => {
   useEffect(() => {
     if (!barcodeId) return;
     let alive = true;
-    fetch(`/api/card/${encodeURIComponent(barcodeId)}/notification-status`)
+    fetch(`/api/card/${encodeURIComponent(barcodeId)}/notification-status`,
+          { headers: keyOf(barcodeId) ? { 'X-Card-Key': keyOf(barcodeId) } : {} })
       .then((r) => r.ok ? r.json() : null)
       .then((s) => { if (alive && s) setNotifStatus(s); })
       .catch(() => { /* silent — banner just won't show */ });
