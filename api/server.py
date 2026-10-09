@@ -2466,6 +2466,10 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
                 status_code=400,
                 detail="Vous devez accepter les Conditions Générales, la Politique de Confidentialité et le DPA",
             )
+        # The owner's phone, the same rule as every form (user, 2026-10-09):
+        # digits only, France 0 + 9 digits, abroad « + » and a listed code.
+        from services import customer_fields as _CF
+        payload["phone"] = _CF.phone(payload.get("phone"))
 
     now_utc = datetime.now(timezone.utc)
     tenant_id = None
@@ -6106,54 +6110,45 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         raise HTTPException(status_code=404, detail="Tenant not found")
     tid = t["id"]
 
-    # Dedup logic:
-    #   • If both email AND phone are present, require BOTH to match (the
-    #     conservative case — protects against family members sharing one
-    #     phone or one email from being merged).
-    #   • If only phone is present (email left blank, now allowed), match
-    #     on phone alone. We have no second signal, so any signup with the
-    #     same phone number is treated as the same person.
-    # This is the right trade-off now that email is optional: forcing a
-    # double match when only one signal exists would create a duplicate
-    # customer record on every re-join attempt.
+    # Who is already a customer here (user, 2026-10-09).
+    #   • A phone number is one customer (« 06 12… », « +33 6 12… » alike —
+    #     services/customer_fields.phone_digits).
+    #   • An e-mail is one customer too (QA F16): a new phone with someone
+    #     else's e-mail is refused, as « Modifier la fiche » already does.
+    # Erased customers (deleted_at) no longer count.
+    from services import customer_fields as _CF
     norm_email = (req.email or "").strip().lower()
-    norm_phone = "".join(c for c in (req.phone or "") if c.isdigit())
-    existing = None
-    if norm_email and norm_phone:
-        # Both present → strict double-match (existing behaviour).
-        for cand in db.customers.find({
-            "tenant_id": tid,
-            "email": {"$regex": f"^{re.escape(norm_email)}$", "$options": "i"},
-        }):
-            cand_phone = "".join(c for c in (cand.get("phone") or "") if c.isdigit())
-            if cand_phone == norm_phone:
-                existing = cand
-                break
-    elif norm_phone:
-        # Email omitted → phone-only match. Same phone in this tenant is
-        # treated as the same customer; we just refresh their record.
-        for cand in db.customers.find({"tenant_id": tid}):
-            cand_phone = "".join(c for c in (cand.get("phone") or "") if c.isdigit())
-            if cand_phone == norm_phone:
-                existing = cand
-                break
+    phone_key = _CF.phone_digits(req.phone)
+    live = {"tenant_id": tid, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    phone_match = next((c for c in db.customers.find(live, {"_id": 1, "id": 1, "barcode_id": 1, "phone": 1})
+                        if phone_key and _CF.phone_digits(c.get("phone")) == phone_key), None)
+    email_match = None
+    if norm_email and not phone_match:
+        email_match = db.customers.find_one(
+            {**live, "email": {"$regex": f"^{re.escape(norm_email)}$", "$options": "i"}},
+            {"_id": 1, "id": 1, "barcode_id": 1})
+    existing = phone_match or email_match
+    if existing and request is None:
+        # The merchant API (signed in as the shop) gets the existing card back,
+        # as documented: « same phone or e-mail → the existing card ».
+        return {"barcode_id": existing["barcode_id"], "message": "Already joined",
+                "card_key": _card_owner.key_for(existing["barcode_id"]), "already_member": True}
     if existing:
-        # Backfill GPS if newly provided
-        if req.latitude is not None and req.longitude is not None:
-            db.customers.update_one(
-                {"_id": existing["_id"]},
-                {"$set": {"latitude": req.latitude, "longitude": req.longitude}}
-            )
-        # Parrainage is for new customers only (user, 2026-10-09): someone who
-        # already has a card here — even one removed from Wallet — gets it back
-        # and is told so, instead of a « Bienvenue » that promised points.
-        out = {"barcode_id": existing["barcode_id"], "message": "Already joined",
-               "card_key": _card_owner.key_for(existing["barcode_id"]), "already_member": True}
-        if req.parrain_barcode:
-            out["parrainage"] = False
-            out["parrainage_refused"] = ("self" if str(req.parrain_barcode).strip().upper() == existing["barcode_id"]
-                                         else "existing_customer")
-        return out
+        # The public page never hands over a card it did not create (user,
+        # 2026-10-09): typing someone's number used to open THEIR card, owner
+        # key included — points, « Télécharger / Supprimer mes données ».
+        # Their own card is in their Wallet, or shown at the counter.
+        shop = t.get("name") or "ce commerce"
+        if phone_match:
+            code = "already_member"
+            message = (f"Ce numéro a déjà une carte chez {shop}. "
+                       "Ouvrez-la depuis votre Wallet ou demandez-la en caisse.")
+        else:
+            code = "email_taken"
+            message = f"Cet e-mail est déjà utilisé pour une carte chez {shop}."
+        if req.parrain_barcode and phone_match:
+            message += " Le parrainage est réservé aux nouveaux clients."
+        raise HTTPException(status_code=409, detail={"code": code, "message": message})
 
     # ─── Plan cap enforcement ───────────────────────────────────────────
     # Block new customer creation once the tenant reaches the cap defined

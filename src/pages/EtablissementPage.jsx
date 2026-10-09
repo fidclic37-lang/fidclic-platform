@@ -511,7 +511,7 @@ export default function EtablissementPage() {
                 <input className={inputCls} value={legal.legal_name} onChange={(e) => setLegal({ ...legal, legal_name: e.target.value })} /></label>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block"><Label right="14 chiffres">SIRET</Label>
-                  <input className={inputCls} value={legal.siret} inputMode="numeric" onChange={(e) => setLegal({ ...legal, siret: e.target.value })} /></label>
+                  <input className={inputCls} value={legal.siret} inputMode="numeric" data-keep-zeros="" onChange={(e) => setLegal({ ...legal, siret: e.target.value })} /></label>
                 <label className="block"><Label>N° de TVA</Label>
                   <input className={inputCls} value={legal.vat_number} placeholder="FR12345678901" onChange={(e) => setLegal({ ...legal, vat_number: e.target.value })} /></label>
               </div>

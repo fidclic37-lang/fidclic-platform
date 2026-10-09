@@ -24,12 +24,44 @@ def name(v: Optional[str]) -> str:
     return s
 
 
+FR_PHONE_MESSAGE = "Numéro de téléphone français : 0 suivi de 9 chiffres (par exemple 06 12 34 56 78)."
+
+
 def phone(v: Optional[str]) -> str:
+    """Digits only (user, 2026-10-09: « # », « * » and letters got through).
+
+    France: 0 then exactly 9 digits — returned as « 0612345678 ». « +33 6 … »
+    is the same number and comes back in that form too.
+    Abroad: « + », a country code from the list (services/dial_codes, the
+    same as the forms' list), then the number — returned as « +447700900123 ».
+    Spaces, dots and dashes between digits are tolerated (a pasted number),
+    anything else is refused."""
+    from services.dial_codes import DIAL_CODES
     raw = (v or "").strip()
+    if not raw:
+        raise _bad("Indiquez le numéro de téléphone.")
+    if re.search(r"[^\d\s().+\-]", raw) or "+" in raw[1:]:
+        raise _bad("Le téléphone ne peut contenir que des chiffres.")
     digits = re.sub(r"\D", "", raw)
-    if not re.fullmatch(r"[\d\s().+\-]{6,25}", raw) or not 9 <= len(digits) <= 15:
-        raise _bad("Numéro de téléphone invalide (par exemple 06 12 34 56 78).")
-    return raw
+    international = raw.startswith("+") or digits.startswith("00")
+    if international:
+        if digits.startswith("00"):
+            digits = digits[2:]
+        if digits.startswith("33"):                       # France written abroad-style
+            national = digits[2:]
+            national = national if national.startswith("0") else "0" + national
+            if re.fullmatch(r"0[1-9]\d{8}", national):
+                return national
+            raise _bad(FR_PHONE_MESSAGE)
+        code = next((digits[:n] for n in (3, 2, 1) if digits[:n] in DIAL_CODES), None)
+        if not code:
+            raise _bad("Indicatif pays inconnu : choisissez le pays dans la liste.")
+        if len(digits) - len(code) < 4 or len(digits) > 15:
+            raise _bad("Numéro de téléphone invalide pour ce pays.")
+        return "+" + digits
+    if not re.fullmatch(r"0[1-9]\d{8}", digits):
+        raise _bad(FR_PHONE_MESSAGE)
+    return digits
 
 
 def postal_code(v: Optional[str]) -> str:
@@ -60,4 +92,15 @@ def email(v: Optional[str]) -> str:
 
 
 def phone_digits(v: Optional[str]) -> str:
-    return re.sub(r"\D", "", v or "")
+    """The comparison key of a phone — the same person whatever the writing:
+    « 06 12 34 56 78 », « +33 6 12 34 56 78 » and « 0033612345678 » all give
+    « 0612345678 »."""
+    raw = (v or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if digits.startswith("0033"):
+        digits = digits[4:]
+        return digits if digits.startswith("0") else "0" + digits
+    if raw.startswith("+") and digits.startswith("33"):
+        rest = digits[2:]
+        return rest if rest.startswith("0") else "0" + rest
+    return digits

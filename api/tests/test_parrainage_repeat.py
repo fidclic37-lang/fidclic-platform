@@ -126,24 +126,26 @@ def main():
                                                           "points_news.at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)}})
     check("and an old reason is never replayed", WP._points_news({"points_news": cust(me)["points_news"]}, 155) is None)
 
-    print("\n4. Déjà client : pas de parrainage, et on le dit")
+    print("\n4. Déjà client : pas de parrainage, et on le dit — sans donner la carte")
+    # (user, 2026-10-09) a typed number never hands over the card it belongs to
     rows = db.referral_redemptions.count_documents({})
-    r = join("Marie Dupont", "0622222222", parrain=friends[1]).json()
-    check("Marie, already a customer, gets her own card back", r["barcode_id"] == friends[0])
-    check("…told she is already a member, parrainage refused",
-          r.get("already_member") is True and r.get("parrainage") is False
-          and r.get("parrainage_refused") == "existing_customer")
+    r = join("Marie Dupont", "0622222222", parrain=friends[1])
+    det = (r.json() or {}).get("detail") or {}
+    check(f"Marie, already a customer: told so, parrainage refused ({r.status_code})",
+          r.status_code == 409 and det.get("code") == "already_member"
+          and "réservé aux nouveaux clients" in det.get("message", ""))
+    check("…given no card and no key", "barcode_id" not in r.json() and "card_key" not in r.json())
     check("…and no parrainage is recorded", db.referral_redemptions.count_documents({}) == rows)
     db.customers.update_one({"barcode_id": friends[1]}, {"$set": {"wallet_removed_at": dt.datetime.now(dt.timezone.utc)}})
-    r = join("Sami Ben", "0633333333", parrain=me).json()
-    check("a card removed from Wallet is still a customer: card back, no new parrainage",
-          r["barcode_id"] == friends[1] and r.get("parrainage_refused") == "existing_customer"
-          and db.referral_redemptions.count_documents({}) == rows)
-    r = join("Akshansh Test", "0611111111", parrain=me).json()
-    check("my own QR on a new phone: my card, said as mine", r["barcode_id"] == me and r.get("parrainage_refused") == "self")
-    r = join("Akshansh Test", "0611111111").json()
+    r = join("Sami Ben", "+33 6 33 33 33 33", parrain=me)
+    check("a card removed from Wallet is still a customer — the number written « +33 » too",
+          r.status_code == 409 and db.referral_redemptions.count_documents({}) == rows)
+    r = join("Akshansh Test", "0611111111", parrain=me)
+    check("my own QR on a new phone: told my number has a card", r.status_code == 409)
+    r = join("Akshansh Test", "0611111111")
+    det = (r.json() or {}).get("detail") or {}
     check("without a parrain: already a member, nothing about parrainage",
-          r.get("already_member") is True and "parrainage_refused" not in r)
+          r.status_code == 409 and "parrainage" not in det.get("message", ""))
 
     print("\n5. « À chaque visite » : chaque visite est annoncée")
     db.referral_config.update_one({"tenant_id": "t1"}, {"$set": {"reward_mode": "every",

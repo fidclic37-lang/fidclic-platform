@@ -6,6 +6,15 @@ import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from '../components/Code128Barcode';
 import { SIGNUP_SOURCES, normalizeSource, sourceLabel } from '../lib/sources';
 import { addMine, ownerLink } from '../lib/myCards';
+import PhoneField, { phoneValueError } from '../components/PhoneField';
+
+// « 37000 Tours », « 12 rue … 37000 » (autofill) → « 37000 »: the 5-digit group
+// when there is one, otherwise the digits typed so far.
+const postalDigits = (raw) => {
+  const s = String(raw ?? '');
+  const five = s.match(/(?:^|\D)(\d{5})(?:\D|$)/);
+  return five ? five[1] : s.replace(/\D/g, '').slice(0, 5);
+};
 
 // Where they came from (lib/sources, user 2026-10-08): the channel of the link —
 // /inscription/<slug>/insta, /wa, /qr… or the older ?src=ig / ?utm_source=fb.
@@ -95,6 +104,10 @@ const JoinPage = () => {
   // customer cap and we surface a friendly message instead of a generic
   // alert. All other failures fall back to a single-line error message.
   const [joinError, setJoinError] = useState(null);
+  // phone and postal code are checked here, said under their field, and again
+  // by the server (user, 2026-10-09)
+  const [fieldErrors, setFieldErrors] = useState({});
+  const postalRef = React.useRef(null);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -253,8 +266,17 @@ const JoinPage = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // What the browser put in the field counts, not only what React saw: a
+    // saved address picked from autofill could leave text there.
+    const postal = String(postalRef.current?.value ?? formData.postal_code ?? '').trim();
+    const errs = {};
+    const phoneErr = phoneValueError(formData.phone);
+    if (phoneErr) errs.phone = phoneErr;
+    if (!/^\d{5}$/.test(postal)) errs.postal_code = 'Code postal : 5 chiffres, par exemple 37000.';
+    setFieldErrors(errs);
+    if (Object.keys(errs).length) return;
     try {
-      const payload = { ...formData };
+      const payload = { ...formData, postal_code: postal };
       if (geoCoords) {
         payload.latitude = geoCoords.latitude;
         payload.longitude = geoCoords.longitude;
@@ -290,8 +312,14 @@ const JoinPage = () => {
       // Plan-cap hit: the backend returns 403 with a structured detail.
       // Surface its `message` field directly so the visitor sees the
       // friendly French explanation instead of a raw "Error" alert.
-      const detail = err?.response?.data?.detail;
-      if (err?.response?.status === 403 && detail && typeof detail === 'object' && detail.code === 'plan_limit_reached') {
+      // lib/api turns an object detail into its sentence and keeps the object
+      // as detail_raw — the code (already_member, plan_limit_reached…) is there
+      const detail = err?.response?.data?.detail_raw ?? err?.response?.data?.detail;
+      if (err?.response?.status === 409 && detail && typeof detail === 'object') {
+        // Already a customer here, or an e-mail already used: said plainly —
+        // the card itself is never handed over to whoever typed the number.
+        setJoinError({ kind: detail.code || 'already_member', message: detail.message });
+      } else if (err?.response?.status === 403 && detail && typeof detail === 'object' && detail.code === 'plan_limit_reached') {
         setJoinError({
           kind: 'plan_limit_reached',
           message: detail.message || 'Ce programme de fidélité est complet pour le moment.',
@@ -352,26 +380,8 @@ const JoinPage = () => {
 
         {success ? (
           <div className="text-center space-y-6">
-            {success.already_member ? (
-              // Already a customer here (even with the card removed from Wallet):
-              // the card comes back, and parrainage is for new customers only
-              // (user, 2026-10-09) — said plainly, never a « Bienvenue » that promised points.
-              <>
-                <h2 className="text-2xl font-bold text-[#4A5D23]">Vous avez déjà une carte{tenant?.name ? ` chez ${tenant.name}` : ''}</h2>
-                <p className="text-[#57534E]">
-                  {success.parrainage_refused === 'self'
-                    ? 'C’est votre propre carte : la voici, avec vos points.'
-                    : success.parrainage_refused
-                      ? 'Le parrainage est réservé aux nouveaux clients. Voici votre carte, avec vos points.'
-                      : 'La voici, avec vos points.'}
-                </p>
-              </>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold text-[#4A5D23]">{t('join.welcome')}</h2>
-                <p className="text-[#57534E]">{t('join.card_ready')}</p>
-              </>
-            )}
+            <h2 className="text-2xl font-bold text-[#4A5D23]">{t('join.welcome')}</h2>
+            <p className="text-[#57534E]">{t('join.card_ready')}</p>
             {/* QR only — the Code 128 1D barcode below was removed per
                 owner spec. Modern POS phones/tablets scan QR reliably. */}
             <div className="p-4 bg-white rounded-xl border border-[#E7E5E4] flex justify-center">
@@ -420,18 +430,37 @@ const JoinPage = () => {
               <input type="email" className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('auth.phone')}</label>
-              <input required type="tel" inputMode="tel" autoComplete="tel" pattern="[0-9 ()+.\-]{9,25}"
-                     title="Un numéro de téléphone, par exemple 06 12 34 56 78"
-                     className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+              <label htmlFor="join-phone" className="block text-sm font-medium mb-1 text-[#57534E]">{t('auth.phone')}</label>
+              {/* a country from the list, then digits only (user, 2026-10-09) */}
+              <div className={`flex items-stretch rounded-lg border bg-white focus-within:border-[#B85C38] ${fieldErrors.phone ? 'border-[#DC2626]' : 'border-[#E7E5E4]'}`}>
+                <PhoneField
+                  id="join-phone"
+                  required
+                  value={formData.phone}
+                  onChange={(v) => { setFormData((f) => ({ ...f, phone: v })); setFieldErrors((x) => ({ ...x, phone: undefined })); }}
+                  aria-invalid={fieldErrors.phone ? 'true' : undefined}
+                  aria-describedby={fieldErrors.phone ? 'join-phone-error' : undefined}
+                  selectClassName="shrink-0 cursor-pointer rounded-l-lg border-r border-[#E7E5E4] bg-transparent pl-2 pr-1 text-sm text-[#1C1917] outline-none"
+                  inputClassName="min-w-0 flex-1 rounded-r-lg bg-transparent p-3 outline-none"
+                />
+              </div>
+              {fieldErrors.phone && <p id="join-phone-error" role="alert" className="mt-1 text-xs text-[#B91C1C]">{fieldErrors.phone}</p>}
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_1.4fr]">
               <div>
                 <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.postal_code')}</label>
-                <input required type="text" inputMode="numeric" autoComplete="postal-code" maxLength={5} pattern="[0-9]{5}"
-                       title="5 chiffres, par exemple 37000"
-                       className="w-full border border-[#E7E5E4] rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38]" value={formData.postal_code}
-                       onChange={e => setFormData({...formData, postal_code: e.target.value.replace(/\D/g, '').slice(0, 5)})} />
+                {/* digits only — even when a saved address is picked from the
+                    browser's autofill (user, 2026-10-09: text got in) */}
+                <input ref={postalRef} required type="text" inputMode="numeric" autoComplete="postal-code" name="postal-code"
+                       maxLength={5} pattern="[0-9]{5}" title="5 chiffres, par exemple 37000"
+                       aria-invalid={fieldErrors.postal_code ? 'true' : undefined}
+                       aria-describedby={fieldErrors.postal_code ? 'join-postal-error' : undefined}
+                       className={`w-full border rounded-lg p-3 focus:ring-[#B85C38]/20 focus:border-[#B85C38] ${fieldErrors.postal_code ? 'border-[#DC2626]' : 'border-[#E7E5E4]'}`}
+                       value={formData.postal_code}
+                       onInput={e => { const d = postalDigits(e.currentTarget.value); if (e.currentTarget.value !== d) e.currentTarget.value = d; }}
+                       onBlur={e => { const d = postalDigits(e.currentTarget.value); setFormData(f => ({ ...f, postal_code: d })); }}
+                       onChange={e => { setFormData({...formData, postal_code: postalDigits(e.target.value)}); setFieldErrors(x => ({ ...x, postal_code: undefined })); }} />
+                {fieldErrors.postal_code && <p id="join-postal-error" role="alert" className="mt-1 text-xs text-[#B91C1C]">{fieldErrors.postal_code}</p>}
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1 text-[#57534E]">{t('join.birthday')}</label>
@@ -579,7 +608,7 @@ const JoinPage = () => {
               <div
                 role="alert"
                 className={`p-3 rounded-lg border text-sm ${
-                  joinError.kind === 'plan_limit_reached'
+                  ['plan_limit_reached', 'already_member', 'email_taken'].includes(joinError.kind)
                     ? 'bg-[#FFF7ED] border-[#FCD9B6] text-[#92400E]'
                     : 'bg-[#FEE2E2] border-[#FCA5A5] text-[#7A2E20]'
                 }`}
@@ -587,7 +616,11 @@ const JoinPage = () => {
                 <p className="font-medium mb-0.5">
                   {joinError.kind === 'plan_limit_reached'
                     ? t('join.plan_full_title')
-                    : t('join.join_error_title')}
+                    : joinError.kind === 'already_member'
+                      ? 'Vous avez déjà une carte'
+                      : joinError.kind === 'email_taken'
+                        ? 'E-mail déjà utilisé'
+                        : t('join.join_error_title')}
                 </p>
                 <p className="text-xs leading-relaxed">{joinError.message}</p>
               </div>

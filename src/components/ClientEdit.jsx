@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Loader2, Minus, Plus, History } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import PhoneField, { phoneValueError } from './PhoneField';
 
 /* Clients › « Modifier la fiche » and « Ajuster points / tampons » (QA UX04,
    user, 2026-10-08). The same rules as the signup form; a phone or e-mail
@@ -100,9 +101,15 @@ export function FicheModal({ clientId, onClose, onSaved }) {
           <label className="sm:col-span-2"><Label>Nom</Label>
             <input translate="no" value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} className={field} />
           </label>
-          <label><Label>Téléphone</Label>
-            <input type="tel" inputMode="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} className={field} />
-          </label>
+          <div><Label>Téléphone</Label>
+            {/* the signup's own rule and field (user, 2026-10-09) */}
+            <div className="flex h-11 items-stretch rounded-xl border border-[#E6EEFB] bg-white focus-within:border-[#2F6BFF]">
+              <PhoneField value={f.phone} onChange={(v) => setF({ ...f, phone: v })} aria-label="Téléphone"
+                          selectClassName="shrink-0 cursor-pointer rounded-l-xl border-r border-[#E6EEFB] bg-transparent pl-2 pr-1 text-[13px] text-[#0B1C3F] outline-none"
+                          inputClassName="min-w-0 flex-1 rounded-r-xl bg-transparent px-3 text-[13.5px] text-[#0B1C3F] outline-none" />
+            </div>
+            {f.phone && phoneValueError(f.phone) && <p className="mt-1 text-[11.5px] text-[#B91C1C]">{phoneValueError(f.phone)}</p>}
+          </div>
           <label><Label>E-mail (facultatif)</Label>
             <input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={field} />
           </label>

@@ -87,10 +87,11 @@ def main():
           r["view"] == "join" and ME in r["drop"])
     j = http("POST", "/api/join/cafe", json={"name": "Me", "phone": "0611111111", "postal_code": "37000",
                                              "birthday": "01-02", "consent_marketing": True, "accept_terms": True}).json()
-    check(f"signing up again with my number gives back my card and its key ({j.get('message')})",
-          j.get("barcode_id") == ME and j.get("card_key") == k(ME))
-    whose(ME, key=j.get("card_key"))
-    check("…and from then on a friend's QR opens my card again", whose(FRIEND, mine={ME: k(ME)})["view"] == "own")
+    # (user, 2026-10-09) typing a number never hands over its card: the owner
+    # finds it in Wallet or at the counter — a stranger with the number gets nothing
+    det = j.get("detail") or {}
+    check(f"signing up again with my number: told I have a card, given no card and no key ({det.get('code')})",
+          det.get("code") == "already_member" and "barcode_id" not in j and "card_key" not in j)
 
     print("\nThe shop's team")
     def tok(role, tid):
