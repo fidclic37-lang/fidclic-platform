@@ -15,7 +15,7 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Headphones, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown, ClipboardCheck,
-  Receipt, Eye, ShieldCheck, Lock,
+  Receipt, Eye, ShieldCheck, Lock, Menu, X as XIcon,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -380,6 +380,32 @@ const DashboardLayout = () => {
     catch { /* localStorage may be blocked — fine */ }
   }, [collapsed]);
 
+  // Phone and tablet (QA F09, 2026-10-08: at 390 px the open menu took
+  // ~230 px and the header buttons overlapped): below 1024 px the menu is a
+  // drawer over the page, opened from ☰ and closed by a tap outside, Escape
+  // or any navigation; the icons-only rail exists on large screens only.
+  const SMALL = '(max-width: 1023px)';
+  const [small, setSmall] = React.useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(SMALL).matches);
+  React.useEffect(() => {
+    const mq = window.matchMedia?.(SMALL);
+    if (!mq) return undefined;
+    const on = () => setSmall(mq.matches);
+    on();
+    mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on);
+    return () => (mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on));
+  }, []);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  React.useEffect(() => { setMenuOpen(false); }, [currentPath]);
+  React.useEffect(() => {
+    if (!menuOpen) return undefined;
+    const key = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+    window.addEventListener('keydown', key);
+    const before = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', key); document.body.style.overflow = before; };
+  }, [menuOpen]);
+  const rail = !small && collapsed;
+
   // Fetch tenant identity once — shown in the sidebar so the user always
   // knows which business account they're acting as. Prevents the "wait,
   // why isn't this scan working" tenant-mismatch confusion.
@@ -420,8 +446,14 @@ const DashboardLayout = () => {
       {/* The super admin and the sales team use the blue design's plain canvas. */}
       {!isTeam(user) && <AmbientBackdrop role={role} />}
 
+      {small && menuOpen && (
+        <div className="fixed inset-0 z-[55] bg-[#0B1C3F]/40" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+      )}
       <aside
-        className={`sticky top-0 z-10 ${collapsed ? 'w-[72px]' : 'w-64'} h-screen flex flex-col shrink-0 transition-[width,background-color] duration-200 ease-out fd-aside fd-sidebar-host`}
+        className={`${small
+          ? `fixed inset-y-0 left-0 z-[60] w-[280px] max-w-[85vw] shadow-2xl ${menuOpen ? 'translate-x-0' : '-translate-x-full invisible'}`
+          : `sticky top-0 z-10 ${rail ? 'w-[72px]' : 'w-64'}`} h-screen flex flex-col shrink-0 transition-[width,background-color,transform] duration-200 ease-out fd-aside fd-sidebar-host`}
+        aria-hidden={small && !menuOpen ? true : undefined}
         style={{
           background: 'color-mix(in srgb, var(--flc-card, #FFFFFF) 78%, transparent)',
           backdropFilter: 'blur(14px)',
@@ -439,7 +471,7 @@ const DashboardLayout = () => {
           aria-label={collapsed ? t('nav.expand_sidebar') : t('nav.collapse_sidebar')}
           aria-expanded={!collapsed}
           title={collapsed ? t('nav.expand_sidebar') : t('nav.collapse_sidebar')}
-          className="absolute -right-3 top-6 z-20 w-7 h-7 rounded-full flex items-center justify-center transition-all hover:scale-110"
+          className="absolute -right-3 top-6 z-20 w-7 h-7 rounded-full hidden lg:flex items-center justify-center transition-all hover:scale-110"
           style={{
             // White in both states — a black puck on a white rail read as a
             // different control depending on which way the arrow pointed.
@@ -452,23 +484,30 @@ const DashboardLayout = () => {
           {collapsed ? <ChevronsRight size={15} strokeWidth={2.25} />
                     : <ChevronsLeft size={15} strokeWidth={2.25} />}
         </button>
+        {/* phone / tablet: the drawer's own way out */}
+        {small && (
+          <button type="button" onClick={() => setMenuOpen(false)} aria-label="Fermer le menu"
+                  className="absolute right-3 top-3 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#334155] shadow-[0_2px_8px_rgba(11,28,63,0.12)]">
+            <XIcon size={18} />
+          </button>
+        )}
 
         {/* Brand mark, then the shop whose figures are on screen. The account
             badge that used to sit here became the establishment switcher — one
             place to say which shop you are looking at. */}
-        <div className={collapsed ? 'px-3 pt-3 pb-1' : 'px-4 pt-4 pb-1'}>
-          <Link to="/" className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2.5'}`}>
+        <div className={rail ? 'px-3 pt-3 pb-1' : 'px-4 pt-4 pb-1'}>
+          <Link to="/" className={`flex items-center ${rail ? 'justify-center' : 'gap-2.5'}`}>
             {/* The FidClic logo: the F-and-cursor mark, « Fid » in blue, « Clic » in yellow. */}
             <img src="/brand/fidclic-icon.png" alt="FidClic" width="36" height="36"
                  className="h-9 w-9 shrink-0 object-contain"
                  style={{ filter: 'drop-shadow(0 8px 14px rgba(20,80,184,.28))' }}
-                 title={collapsed ? 'FidClic' : undefined} />
-            {!collapsed && (
+                 title={rail ? 'FidClic' : undefined} />
+            {!rail && (
               <span className="text-[21px] font-extrabold leading-none tracking-[-0.02em]">
                 <span style={{ color: BRAND_BLUE }}>Fid</span><span style={{ color: BRAND_YELLOW }}>Clic</span>
               </span>
             )}
-            {!collapsed && isTeam(user) && (
+            {!rail && isTeam(user) && (
               <span className="max-w-[92px] truncate rounded-md bg-[#EAF1FF] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#2F6BFF]">
                 {role === 'super_admin' ? 'SUPER ADMIN' : (user?.platform_role_name || 'COMMERCIAL')}
               </span>
@@ -477,51 +516,51 @@ const DashboardLayout = () => {
         </div>
         {/* The owner picks any establishment, an administrateur one of its
             own; a manager or an employé sees its establishment's name. */}
-        {!isTeam(user) && <EstablishmentSwitcher tenant={tenantInfo} collapsed={collapsed} />}
+        {!isTeam(user) && <EstablishmentSwitcher tenant={tenantInfo} collapsed={rail} />}
 
         <div className="px-4">
           <div className="h-px" style={{ background: C.hairline }} />
         </div>
 
-        <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} py-2 space-y-[1px] overflow-y-auto`}>
+        <nav className={`flex-1 ${rail ? 'px-2' : 'px-3'} py-2 space-y-[1px] overflow-y-auto`}>
           {role === 'business_owner' && (
             <>
               {/* Order follows the approved sidebar mockup. Every row points at
                   a page that exists. */}
-              <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={rail} />
               {/* At the till the owner scans from their own account too. */}
-              <NavLink to="/dashboard/scan"          icon={QrCode}       label={t('nav.scan_visit')}       currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}  currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/catalogue"     icon={ShoppingBag}  label={t('nav.catalogue')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={collapsed} badge="Nouveau" />
-              <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={collapsed} />
+              <NavLink to="/dashboard/scan"          icon={QrCode}       label={t('nav.scan_visit')}       currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}     currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}  currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')} currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}  currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}      currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}   currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/catalogue"     icon={ShoppingBag}  label={t('nav.catalogue')}     currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle} label={t('nav.ai_assistant')}  currentPath={currentPath} role={role} collapsed={rail} badge="Nouveau" />
+              <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}       currentPath={currentPath} role={role} collapsed={rail} />
               {/* Paramètres is one page with tabs, like Analyses. The older
                   all-in-one settings page stays reachable from its tabs. */}
-              <NavLink to="/dashboard/parametres" icon={Settings2} label={t('nav.settings')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/settings']} />
-              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+              <NavLink to="/dashboard/parametres" icon={Settings2} label={t('nav.settings')} currentPath={currentPath} role={role} collapsed={rail} alsoActive={['/dashboard/settings']} />
+              <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
           {role === 'manager' && !partialScope && (
             <>
-              <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/ai-assistant" icon={Sparkle} label={t('nav.ai_assistant')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/campaigns" icon={Megaphone} label={t('nav.campaigns')}    currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/segmentation" icon={PieChart} label={t('nav.segmentation')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/scan"      icon={QrCode}    label={t('nav.scan_visit')}   currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
-              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+              <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/ai-assistant" icon={Sparkle} label={t('nav.ai_assistant')} currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/customers" icon={Users}     label={t('nav.customers')}    currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/campaigns" icon={Megaphone} label={t('nav.campaigns')}    currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/segmentation" icon={PieChart} label={t('nav.segmentation')} currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/map"       icon={MapPin}    label={t('nav.geolocation')} currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/history"   icon={History}   label={t('nav.history')}      currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/scan"      icon={QrCode}    label={t('nav.scan_visit')}   currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={rail} alsoActive={['/dashboard/parametres']} />
+              <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
           {/* An administrateur — and a manager covering only some of the
@@ -529,46 +568,46 @@ const DashboardLayout = () => {
               filter by establishment. */}
           {(role === 'administrateur' || (role === 'manager' && partialScope)) && (
             <>
-              <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle}      label={t('nav.ai_assistant')}     currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}         currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}      currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/catalogue"     icon={ShoppingBag}  label={t('nav.catalogue')}        currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}          currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={collapsed} alsoActive={['/dashboard/parametres']} />
-              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+              <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/customers"     icon={Users}        label={t('nav.customers')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/campaigns"     icon={Megaphone}    label={t('nav.campaigns')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/card"          icon={CreditCard}   label={t('nav.loyalty_card')}     currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/automations"   icon={Zap}          label={t('nav.automations')}      currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/segmentation"  icon={PieChart}     label={t('nav.segmentation')}     currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/insights"      icon={Sparkles}     label={t('nav.insights')}         currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/ai-assistant"  icon={Sparkle}      label={t('nav.ai_assistant')}     currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/referral"      icon={Share2}       label={t('nav.referral')}         currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/map"           icon={MapPin}       label={t('nav.geolocation')}      currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/catalogue"     icon={ShoppingBag}  label={t('nav.catalogue')}        currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/history"       icon={History}      label={t('nav.history')}          currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={rail} />
+              <NavLink to="/dashboard/parametres/equipe" icon={Settings2} label={t('nav.team')} currentPath={currentPath} role={role} collapsed={rail} alsoActive={['/dashboard/parametres']} />
+              <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
           {role === 'staff' && (
             <>
-              <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={collapsed} />
-              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+              <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={rail} />
+              <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
           {/* FidClic's team — the approved mockup's order and French names.
               Each role sees the sections it may open (Sécurité › Rôles). */}
           {isTeam(user) && (
             <>
-              {can(user, 'dashboard') && <NavLink to="/admin" icon={Home} label="Dashboard" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'commerces') && <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'analytics') && <NavLink to="/admin/analytics" icon={BarChart3} label="Analytics" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'insights') && <NavLink to="/admin/insights" icon={Sparkles} label="Insights" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Admin" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              {can(user, 'support') && <NavLink to="/admin/support" icon={Headphones} label="Centre de support" currentPath={currentPath} role={role} collapsed={collapsed} badge={supportUnread || null} />}
-              {can(user, 'equipe') && <NavLink to="/admin/equipe" icon={ClipboardCheck} label="Suivi d'équipe" currentPath={currentPath} role={role} collapsed={collapsed} />}
-              <SignOutNavItem onClick={logout} collapsed={collapsed} />
+              {can(user, 'dashboard') && <NavLink to="/admin" icon={Home} label="Dashboard" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'commerces') && <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'analytics') && <NavLink to="/admin/analytics" icon={BarChart3} label="Analytics" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'insights') && <NavLink to="/admin/insights" icon={Sparkles} label="Insights" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Admin" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'support') && <NavLink to="/admin/support" icon={Headphones} label="Centre de support" currentPath={currentPath} role={role} collapsed={rail} badge={supportUnread || null} />}
+              {can(user, 'equipe') && <NavLink to="/admin/equipe" icon={ClipboardCheck} label="Suivi d'équipe" currentPath={currentPath} role={role} collapsed={rail} />}
+              <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
         </nav>
@@ -579,22 +618,22 @@ const DashboardLayout = () => {
         {/* FidClic's team answers from « Centre de support » (in the menu); the
             merchant's « Besoin d'aide ? » row is not theirs. */}
         {!isTeam(user) && (
-        <div className={`mt-auto ${collapsed ? 'flex justify-center px-2 pb-3' : 'px-3 pb-3'}`}>
+        <div className={`mt-auto ${rail ? 'flex justify-center px-2 pb-3' : 'px-3 pb-3'}`}>
           <button
             type="button"
             onClick={() => navigate('/dashboard/aide')}
-            title={collapsed ? t('nav.help') : undefined}
+            title={rail ? t('nav.help') : undefined}
             aria-label={t('nav.help')}
-            className={collapsed
+            className={rail
               ? 'flex h-9 w-9 items-center justify-center rounded-xl transition-colors'
               : 'flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors'}
             style={{ background: '#EAF1FF', color: '#2F6BFF' }}
           >
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full"
-                  style={{ background: collapsed ? 'transparent' : '#2F6BFF', color: collapsed ? '#2F6BFF' : '#fff' }}>
-              <LifeBuoy size={collapsed ? 17 : 13} />
+                  style={{ background: rail ? 'transparent' : '#2F6BFF', color: rail ? '#2F6BFF' : '#fff' }}>
+              <LifeBuoy size={rail ? 17 : 13} />
             </span>
-            {!collapsed && (
+            {!rail && (
               <>
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold" style={{ color: '#1D4ED8' }}>
                   {t('nav.help')}
@@ -650,6 +689,17 @@ const DashboardLayout = () => {
           </div>
         )}
 
+        {/* Phone / tablet, roles without the owner's bar: ☰ to reach the menu. */}
+        {small && role !== 'business_owner' && (
+          <div className="sticky top-0 z-30 flex items-center gap-3 border-b border-[#E6EEFB] bg-white/90 px-3 py-2.5 backdrop-blur">
+            <button type="button" onClick={() => setMenuOpen(true)} aria-label="Ouvrir le menu" aria-expanded={menuOpen}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E6EEFB] bg-white text-[#334155]">
+              <Menu size={18} />
+            </button>
+            <span className="text-[15px] font-bold text-[#0B1C3F]">FidClic</span>
+          </div>
+        )}
+
         {/* Premium top toolbar — search + bell + avatar.
             Sits as a sticky bar across every dashboard page (matches the
             reference mockup with the search bar centered and the bell +
@@ -657,7 +707,7 @@ const DashboardLayout = () => {
             slot hidden so staff don't see owner-only alerts. */}
         {role === 'business_owner' && (
           <div
-            className="sticky top-0 z-30 relative flex items-center justify-center px-6 lg:px-8 py-2.5 backdrop-blur"
+            className="sticky top-0 z-30 relative flex items-center gap-2 px-3 py-2.5 backdrop-blur sm:px-4 lg:justify-center lg:px-8"
             style={{
               background: 'color-mix(in srgb, var(--flc-card, #FFFFFF) 82%, transparent)',
               borderBottom: '1px solid var(--hairline, #EFEDE9)',
@@ -667,9 +717,15 @@ const DashboardLayout = () => {
                 the query. Barcode-style inputs (FT-XXXX) hit the customer
                 page filter by barcode_id; everything else hits the free
                 text search. */}
+            {small && (
+              <button type="button" onClick={() => setMenuOpen(true)} aria-label="Ouvrir le menu" aria-expanded={menuOpen}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#E6EEFB] bg-white text-[#334155]">
+                <Menu size={18} />
+              </button>
+            )}
             <form
               onSubmit={submitSearch}
-              className="flex items-center gap-2 rounded-full px-3.5 py-2 shrink-0 w-[260px] lg:w-[340px] xl:w-[460px] 2xl:w-[520px]"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-full px-3.5 py-2 lg:w-[340px] lg:flex-none lg:shrink-0 xl:w-[460px] 2xl:w-[520px]"
               style={{ background: 'var(--flc-card, #FFFFFF)', border: '1px solid var(--hairline, #EFEDE9)' }}
             >
               <button type="submit" aria-label={t('common.search')} className="shrink-0" style={{ lineHeight: 0 }}>
@@ -697,7 +753,7 @@ const DashboardLayout = () => {
                 >✕</button>
               )}
               <kbd
-                className="text-[9.5px] px-1 py-0.5 rounded shrink-0"
+                className="hidden text-[9.5px] px-1 py-0.5 rounded shrink-0 lg:inline"
                 style={{
                   background: 'var(--flc-paper2, #F5F4F1)',
                   color: 'var(--ink-mute, #8D857D)',
@@ -715,7 +771,7 @@ const DashboardLayout = () => {
                 scans from any page in one click. The branch pills moved into the
                 sidebar's establishment switcher; help has its own row at the
                 foot of the sidebar. */}
-            <div className="absolute right-6 lg:right-8 flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2 lg:absolute lg:right-8 lg:gap-3">
               {(!user?.view_as || user.view_as.can_edit) && (
                 <Link to="/dashboard/scan" title={t('nav.scan_visit')} aria-label={t('nav.scan_visit')}
                       className={`inline-flex h-9 items-center gap-2 rounded-full px-2.5 text-[13.5px] font-semibold text-white transition hover:-translate-y-px xl:px-4 ${
@@ -733,7 +789,7 @@ const DashboardLayout = () => {
           </div>
         )}
 
-        <div className="px-6 py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto">
+        <div className="px-3 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto">
           {(partialScope || role === 'administrateur') && (
             <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
               <span className="mt-0.5 font-bold">i</span>
