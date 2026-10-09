@@ -187,7 +187,8 @@ export default function CardOffersPage() {
   const left = threshold - onCard;
   const pending = rewardsPending(customer);
   const first = (customer.name || '').split(' ')[0];
-  const shop = card.card_name || tenant.name || '';
+  // the shop's own name: a card named « Carte fidélité – hfdd » read twice (« Carte fidélité – Carte fidélité – hfdd »)
+  const shop = tenant.name || card.card_name || '';
   const reward = card.reward_description || 'Une récompense fidélité';
   const shown = all ? feed : feed.slice(0, FIRST_OFFERS);
   const cardLink = ownerLink(barcodeId, ownerKey);
@@ -255,7 +256,7 @@ export default function CardOffersPage() {
         </section>
 
         {/* the Wallet tile's owner key goes on to the card (lib/myCards) */}
-        <Link to={cardLink} className="mt-6 block text-center text-[13.5px] font-semibold text-[#2F6BFF]">Voir ma carte complète</Link>
+        <Link to={cardLink} className="mt-6 block text-center text-[13.5px] font-semibold text-[#2F6BFF]">Voir ma carte</Link>
       </div>
       {open && <OfferSheet item={open} customer={customer} onClose={() => setOpen(null)} />}
     </div>

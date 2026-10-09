@@ -93,8 +93,13 @@ test.describe.serial('a customer, end to end', () => {
     await page.goto(`/card/${me.barcode}/offres?k=${me.key}`);  // featured action « Offres »
     await expect(page.locator('body')).toContainText('Vos offres');
     await w.clean('offres tile');
+    await page.getByRole('link', { name: 'Voir ma carte' }).click();      // → the card (2026-10-10 redesign)
+    await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}$`));
+    await expect(page.getByRole('navigation', { name: 'Ma carte' })).toBeVisible();
+    await w.clean('card from the offers');
     await page.goto(`/card/${me.barcode}?onglet=programme&k=${me.key}`);   // « Programme »
     await expect(page).toHaveURL(new RegExp(`/card/${me.barcode}`));
+    await expect(page.getByRole('dialog', { name: 'Le programme' })).toBeVisible();
     await expect(page.locator('body')).toContainText(me.name.split(' ')[0]);
     await w.clean('programme tile');
     await ctx.close();
