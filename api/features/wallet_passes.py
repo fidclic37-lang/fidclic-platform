@@ -2326,7 +2326,7 @@ def google_save_url(payload: Dict[str, Any]) -> str:
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
 # the birthday message. Google allows 3 notifying messages per card per 24 h;
 # past that the message still lands in the card, silently.
-GOOGLE_NOTIFY = {"campaign", "reward", "birthday"}
+GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage"}
 
 
 def _gw_reason(body: Dict[str, Any]) -> str:

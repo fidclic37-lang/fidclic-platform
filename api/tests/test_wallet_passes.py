@@ -477,6 +477,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         msg = [c[2]["message"] for c in gcalls if c[1].endswith("/addMessage")]
         check("birthday → one notifying message with the scenario's own words", len(msg) == 1
               and msg[0]["messageType"] == "TEXT_AND_NOTIFY" and msg[0]["header"] == "Joyeux anniversaire Marie !")
+        gcalls.clear()
+        WP.notify_customer("c1", google_notify={"kind": "parrainage", "header": "Parrainage réussi 🎉",
+                                                "body": "Votre ami Sami est venu chez Le Café : +50 points."})
+        msg = [c[2]["message"] for c in gcalls if c[1].endswith("/addMessage")]
+        check("parrainage → one notifying message with its words (#168 sent none)", len(msg) == 1
+              and msg[0]["messageType"] == "TEXT_AND_NOTIFY" and "Sami" in msg[0]["body"])
         class _OT3:
             email, role, tenant_id = "owner@x.fr", "business_owner", "t1"
         g = WP.owner_wallet_stats(_OT3())["google"]
