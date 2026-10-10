@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Gift, Sparkles, ChevronRight, ChevronLeft, X, ExternalLink, Loader2, Tag } from 'lucide-react';
+import { Gift, Sparkles, ChevronRight, ChevronLeft, X, ExternalLink, Loader2, Tag, Clock, Flame } from 'lucide-react';
 import api from '../lib/api';
 import { ownerLink, addMine, keyOf } from '../lib/myCards';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
@@ -17,9 +17,16 @@ import { cycleVisits, rewardsPending } from '../lib/cardCycle';
  * as an open (campaign pixel), its link as a click.
  */
 // a campaign written with {first_name} / {prenom} reads with the customer's own
+// …and the Campagnes wizard's own (2026-10-10): {prénom}, {nom_commerce}, {points},
+// {visites}, {prochaine_récompense}, {points_manquants} — read from `who` (customer + shop)
 const personal = (text, c = {}) => String(text || '')
-  .replace(/\{(first_name|prenom)\}/gi, (c.name || '').split(' ')[0] || '')
-  .replace(/\{(name|nom)\}/gi, c.name || '');
+  .replace(/\{(first_name|prenom|prénom)\}/gi, (c.name || '').split(' ')[0] || '')
+  .replace(/\{(name|nom)\}/gi, c.name || '')
+  .replace(/\{(nom_commerce|business_name)\}/gi, c._shop || '')
+  .replace(/\{points\}/gi, String(c.points ?? 0))
+  .replace(/\{(visites|visits)\}/gi, String(c.visits ?? 0))
+  .replace(/\{(prochaine_récompense|prochaine_recompense)\}/gi, c._reward || 'votre récompense')
+  .replace(/\{(points_manquants|points_to_next_reward|points_remaining)\}/gi, String(c._missing ?? 0));
 const fmtDay = (v) => (v ? new Date(v).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : '');
 
 // The shop's trade (Mon établissement › secteur) gives the pictures when an
@@ -73,11 +80,13 @@ function OfferSheet({ item, customer = {}, onClose }) {
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-[19px] font-bold leading-snug text-[#0B1C3F]">{personal(item.title, customer)}</h2>
-            {item.valid_until && <p className="mt-0.5 text-[12.5px] text-[#94A3B8]">Valable jusqu’au {fmtDay(item.valid_until)}</p>}
+            {item.terms && <p className="mt-0.5 text-[13px] font-semibold text-[#E11D48]">{item.terms}</p>}
+            {item.valid_until && <p className="mt-0.5 text-[12.5px] text-[#94A3B8]">{item.valid_from ? `À partir du ${fmtDay(item.valid_from)} · ` : ''}Valable jusqu’au {fmtDay(item.valid_until)}</p>}
           </div>
           <button type="button" onClick={onClose} aria-label="Fermer" className="rounded-full p-1.5 text-[#64748B] hover:bg-[#F1F5F9]"><X size={18} /></button>
         </div>
         {item.image_url && <img src={item.image_url} alt="" className="mb-4 w-full rounded-2xl" />}
+        {item.details && <p className="mb-3 whitespace-pre-line text-[14.5px] leading-relaxed text-[#334155]">{item.details}</p>}
         {(item.body || item.description) && (
           <p className="whitespace-pre-line text-[14.5px] leading-relaxed text-[#334155]">{personal(item.body || item.description, customer)}</p>
         )}
@@ -110,7 +119,8 @@ function OfferRow({ item, customer, sector, onOpen }) {
         {text && text !== personal(item.title, customer) && (
           <span className="mt-0.5 line-clamp-1 text-[13.5px] text-[#475569]">{text}</span>
         )}
-        {item.valid_until && <span className="mt-0.5 block whitespace-nowrap text-[12.5px] text-[#94A3B8]">Valable jusqu’au {fmtDay(item.valid_until)}</span>}
+        {item.hours_label && <span className="mt-0.5 flex items-center gap-1 text-[12.5px] font-semibold text-[#E11D48]"><Clock size={12} /> {item.hours_label}</span>}
+        {item.valid_until && <span className="mt-0.5 block whitespace-nowrap text-[12.5px] text-[#94A3B8]">{item.valid_from ? `À partir du ${fmtDay(item.valid_from)}` : `Valable jusqu’au ${fmtDay(item.valid_until)}`}</span>}
       </span>
       <ChevronRight size={20} className="shrink-0 text-[#94A3B8]" />
     </button>
@@ -190,6 +200,8 @@ export default function CardOffersPage() {
   // the shop's own name: a card named « Carte fidélité – hfdd » read twice (« Carte fidélité – Carte fidélité – hfdd »)
   const shop = tenant.name || card.card_name || '';
   const reward = card.reward_description || 'Une récompense fidélité';
+  // the customer as the variables read them (personal)
+  const who = { ...customer, _shop: tenant.name || shop, _reward: card.reward_description, _missing: Math.max(0, left) };
   const shown = all ? feed : feed.slice(0, FIRST_OFFERS);
   const cardLink = ownerLink(barcodeId, ownerKey);
 
@@ -209,6 +221,43 @@ export default function CardOffersPage() {
           </div>
         </header>
 
+        {/* « Défi en cours » (Campagnes › Défi, mockup 2026-10-10): the soonest end first */}
+        {(data.defis?.running || []).map((x) => (
+          <section key={x.id} className="relative mb-4 overflow-hidden rounded-[28px] bg-gradient-to-br from-[#16181F] via-[#1C1E26] to-[#3A2414] p-5 text-white shadow-[0_22px_44px_-26px_rgba(15,23,42,.9)]">
+            <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-[#F97316]/25 blur-3xl" />
+            <div className="relative flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-wide text-[#FB923C]"><Flame size={18} /> Défi en cours</p>
+                <p className="mt-1 text-[22px] font-extrabold leading-tight">{x.title}</p>
+                <p className="mt-1 text-[14px] text-white/75">
+                  Faites {x.target} visite{x.target > 1 ? 's' : ''} avant le {fmtDay(x.end_date)}{x.count_mode === 'per_day' ? ' (une par jour)' : ''}
+                </p>
+              </div>
+              {x.days_left != null && (
+                <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-[12.5px] font-medium">
+                  <Clock size={14} /> {x.days_left <= 1 ? 'Dernier jour' : `Encore ${x.days_left} jours`}
+                </span>
+              )}
+            </div>
+            <div className="relative mt-4 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+              <div className="px-4 py-3">
+                <p className="flex items-baseline gap-2"><span className="text-[30px] font-extrabold text-[#FB923C]">{Math.min(x.progress, x.target)}</span>
+                  <span className="text-[16px] text-white/80">/ {x.target} visite{x.target > 1 ? 's' : ''}</span></p>
+                <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuemin={0} aria-valuemax={x.target} aria-valuenow={x.progress}>
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#F97316] to-[#FB923C]" style={{ width: `${Math.min(100, (x.progress / x.target) * 100)}%` }} />
+                </div>
+              </div>
+              <p className="flex items-center gap-2 border-t border-white/10 px-4 py-3 text-[15px] font-semibold"><span className="text-[18px]">🎁</span> {x.reward}</p>
+            </div>
+          </section>
+        ))}
+        {(data.defis?.won || []).map((w) => (
+          <section key={w.id} className="mb-4 rounded-[28px] bg-gradient-to-br from-[#FFF7ED] to-[#FFEDD5] p-5 text-[#7C2D12] shadow-[0_14px_30px_-24px_rgba(124,45,18,.6)]">
+            <p className="text-[13px] font-bold uppercase tracking-wide text-[#EA580C]">🏆 Défi réussi</p>
+            <p className="mt-1 text-[20px] font-extrabold">{w.reward}</p>
+            <p className="text-[13.5px]">« {w.title} » — présentez votre carte en caisse{w.expires_at ? `, avant le ${fmtDay(w.expires_at)}` : ''}.</p>
+          </section>
+        ))}
         <section className="mb-4 overflow-hidden rounded-[28px] bg-gradient-to-br from-[#3B7BFF] via-[#2F6BFF] to-[#1D4FE0] p-5 text-white shadow-[0_22px_44px_-26px_rgba(47,107,255,.95)]">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
@@ -249,7 +298,7 @@ export default function CardOffersPage() {
           ) : (
             <div className="space-y-3">
               {shown.map((item) => (
-                <OfferRow key={item.id} item={item} customer={customer} sector={tenant.sector} onOpen={openItem} />
+                <OfferRow key={item.id} item={item} customer={who} sector={tenant.sector} onOpen={openItem} />
               ))}
             </div>
           )}
@@ -258,7 +307,7 @@ export default function CardOffersPage() {
         {/* the Wallet tile's owner key goes on to the card (lib/myCards) */}
         <Link to={cardLink} className="mt-6 block text-center text-[13.5px] font-semibold text-[#2F6BFF]">Voir ma carte</Link>
       </div>
-      {open && <OfferSheet item={open} customer={customer} onClose={() => setOpen(null)} />}
+      {open && <OfferSheet item={open} customer={who} onClose={() => setOpen(null)} />}
     </div>
   );
 }

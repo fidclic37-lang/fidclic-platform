@@ -89,6 +89,7 @@ MODULES = [
     # Campagnes — the composer, its audience, and what the last sends did.
     # Delivers on two channels at once: web push and the wallet card's offer.
     "features.campaigns_page",
+    "features.defis",                  # Campagnes › Défi: progress, « Défi réussi », rewards to hand over
     "features.resend_guard",           # « déjà contactés » check before a send
     "features.campaign_learning",      # « Ce qui marche chez vous » — learns from sent campaigns
     "features.autopilot",              # Autopilot: daily + weekly campaigns, owner validates

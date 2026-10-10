@@ -608,6 +608,10 @@ export const ownerAPI = {
   sendCampaignToGroup: (body) => api.post('/owner/campaigns/send-to-group', body),
   // Campagnes — the page in one call, the composer in one call.
   campaignsPage: () => api.get('/owner/campaigns/page'),
+  // Campagnes redesign (2026-10-10): the list's tabs and the wizard's live audience
+  campaignsList: (params) => api.get('/owner/campaigns/list', { params }),
+  campaignAudiencePreview: (body) => api.post('/owner/campaigns/audience-preview', body),
+  redeemDefiReward: (id) => api.post(`/owner/defis/rewards/${id}/redeem`),
   // « Ce qui marche chez vous » (features/campaign_learning.py).
   campaignLearning: () => api.get('/owner/campaigns/learning'),
   campaignResult: (id) => api.get(`/owner/campaigns/${id}/result`),

@@ -44,7 +44,8 @@ _db = None
 
 PARIS = ZoneInfo("Europe/Paris")
 READERS = ["business_owner", "administrateur", "manager"]
-EXEMPT = {"welcome", "google_review", "reward_unlocked", "tier_up", "points", "scan", "transactional", "test"}
+EXEMPT = {"welcome", "google_review", "reward_unlocked", "tier_up", "points", "scan", "transactional", "test",
+          "defi_won"}          # « Défi réussi » (features/defis.py): the customer earned it, never held back
 PRIORITY = {"birthday": 0, "near_reward": 1, "campaign": 2, "offer": 2, "news": 2,
             "push_wallet": 3, "automation": 3, "copilot": 4, "ai": 4}
 DEFAULT_RULES = {"per_client_day": 3, "per_client_week": 10, "shop_day": 0, "shop_week": 0}
