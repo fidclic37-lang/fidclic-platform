@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { sourceLabel } from '../lib/sources';
-import { perPage as prefPerPage } from '../lib/prefs';
+import { perPage as prefPerPage, confirmImportant } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranch } from '../contexts/BranchContext';
 import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
@@ -373,9 +373,30 @@ export default function ClientsPage() {
     setPage(1); setPicked([]);
   };
 
+  // QA F07 (R5): deleting a saved filter follows Paramètres › Préférences ›
+  // « Confirmation des actions importantes », like every other deletion — and
+  // can be undone for a few seconds, the preference on or off.
+  const [undoSaved, setUndoSaved] = useState(null);       // { name, filters }
+  useEffect(() => {
+    if (!undoSaved) return undefined;
+    const t0 = setTimeout(() => setUndoSaved(null), 10000);
+    return () => clearTimeout(t0);
+  }, [undoSaved]);
   const removeSaved = async (id) => {
-    try { await ownerAPI.deleteSavedSegment(id); loadSaved(); }
-    catch { setError("Le segment n'a pas pu être supprimé."); }
+    const row = saved.find((r) => r.id === id);
+    if (!confirmImportant(`Supprimer le filtre enregistré « ${row?.name || ''} » ?`)) return;
+    try {
+      await ownerAPI.deleteSavedSegment(id);
+      loadSaved();
+      if (row) setUndoSaved({ name: row.name, filters: row.filters || {} });
+    } catch { setError("Le segment n'a pas pu être supprimé."); }
+  };
+  const restoreSaved = async () => {
+    const back = undoSaved;
+    setUndoSaved(null);
+    if (!back) return;
+    try { await ownerAPI.createSavedSegment(back); loadSaved(); setFlash(`Segment « ${back.name} » rétabli.`); }
+    catch (e) { setError(e?.response?.data?.detail || "Le segment n'a pas pu être rétabli."); }
   };
 
   // Message the SELECTION when there is one, otherwise everyone the filter
@@ -570,13 +591,20 @@ export default function ClientsPage() {
                       className="text-[12px] font-semibold text-[#334155] hover:text-[#2F6BFF]">
                 {row.name}
               </button>
-              <button type="button" onClick={() => removeSaved(row.id)} title="Supprimer"
+              <button type="button" onClick={() => removeSaved(row.id)} title="Supprimer" aria-label={`Supprimer le filtre ${row.name}`}
                       className="rounded-full p-1 text-[#94A3B8] transition hover:bg-[#FEECEC] hover:text-[#C0392B]">
                 <X size={11} />
               </button>
             </span>
           ))}
-          {!saved.length && !naming && (
+          {undoSaved && (
+            <span role="status" className="inline-flex items-center gap-2 rounded-full bg-[#0B1C3F] py-1 pl-3 pr-1 text-[12px] text-white">
+              Filtre « {undoSaved.name} » supprimé.
+              <button type="button" onClick={restoreSaved}
+                      className="rounded-full bg-white/15 px-2.5 py-0.5 font-semibold hover:bg-white/25">Annuler</button>
+            </span>
+          )}
+          {!saved.length && !naming && !undoSaved && (
             <span className="text-[11.5px] italic text-[#94A3B8]">
               Réglez les filtres, puis enregistrez la combinaison pour la retrouver.
             </span>
