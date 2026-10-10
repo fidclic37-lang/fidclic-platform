@@ -138,5 +138,44 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     pj = WP.build_pass_json(WP._card_payload("FT-C1"))
     check("two pins, 300 m each", [l["maxDistance"] for l in pj.get("locations", [])] == [300, 300])
 
+    print("\nThe owner's name (Informations générales)")
+    v = E.get_etablissement(token_data=OWNER)
+    check("the page shows the owner's name fields, editable by the owner",
+          v["owner"]["email"] == "o@c.fr" and v["can"]["owner_name"] is True)
+    check("an administrateur sees them read-only", E.get_etablissement(token_data=ALI)["can"]["owner_name"] is False
+          and E.get_etablissement(token_data=ALI)["owner"]["email"] == "o@c.fr")
+    before = dict(db.users.find_one({"email": "o@c.fr"}, {"_id": 0}))
+    tbefore = dict(db.tenants.find_one({"id": "t1"}, {"_id": 0}))
+    for first, last, why in [("", "Dupont", "empty first name"), ("Marie", "  ", "blank last name"),
+                             ("M4rie", "Dupont", "a digit"), ("<b>Marie</b>", "Dupont", "markup"),
+                             ("x" * 61, "Dupont", "61 characters"), ("-Marie", "Dupont", "starts with a hyphen")]:
+        check(f"refused: {why}", refused(lambda: E.put_etablissement(E.EtablissementIn(
+            owner=E.OwnerIn(first_name=first, last_name=last), business=E.BusinessIn(name="Autre nom")), token_data=OWNER), 400))
+    check("…and a refused name saves nothing, not even the rest of the page",
+          db.users.find_one({"email": "o@c.fr"}, {"_id": 0}) == before
+          and db.tenants.find_one({"id": "t1"}, {"_id": 0})["name"] == tbefore["name"])
+    check("an administrateur can't rename the owner", refused(lambda: E.put_etablissement(E.EtablissementIn(
+        owner=E.OwnerIn(first_name="Ali", last_name="Baba")), token_data=ALI)))
+    check("…nor a manager", refused(lambda: E.put_etablissement(E.EtablissementIn(
+        owner=E.OwnerIn(first_name="Sara", last_name="X")), token_data=SARA)))
+    v = E.put_etablissement(E.EtablissementIn(owner=E.OwnerIn(first_name="  Jean-Luc ", last_name="D'Arcy   Martin")),
+                            token_data=OWNER)
+    u = db.users.find_one({"email": "o@c.fr"})
+    check("saved on the owner's account, tidied", (u["first_name"], u["last_name"]) == ("Jean-Luc", "D'Arcy Martin"))
+    check("the page answers with the new name", v["owner"]["first_name"] == "Jean-Luc")
+    check("only the owner's account changed", db.users.find_one({"email": "ali@c.fr"}).get("first_name") is None)
+    me = server.get_me(token_data=OWNER)
+    check("« Bonjour … » reads it at once (/api/auth/me)", me["first_name"] == "Jean-Luc" and me["last_name"] == "D'Arcy Martin")
+    team = T.get_team(token=OWNER)
+    rows = team.get("users") or team.get("members") or []
+    row = next((r for r in rows if r.get("email") == "o@c.fr"), {})
+    check("Équipe & accès shows the new name", row.get("first_name") == "Jean-Luc" or "Jean-Luc" in (row.get("name") or ""))
+    check("accents and other alphabets are names too", E.put_etablissement(E.EtablissementIn(
+        owner=E.OwnerIn(first_name="Zoé", last_name="Ångström")), token_data=OWNER)["owner"]["last_name"] == "Ångström")
+    view_as = TokenData(email="o@c.fr", role="business_owner", tenant_id="t1", view_by="admin@fidclic.fr")
+    E.put_etablissement(E.EtablissementIn(owner=E.OwnerIn(first_name="Akshansh", last_name="Shukla")), token_data=view_as)
+    check("the super admin viewing the shop renames the owner, not itself",
+          db.users.find_one({"email": "o@c.fr"})["first_name"] == "Akshansh")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
