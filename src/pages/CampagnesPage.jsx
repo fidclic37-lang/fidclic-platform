@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Send, Users, Mail, BarChart3, Euro, ArrowRight, Search, Filter, ChevronLeft, ChevronRight, MoreVertical, Loader2,
-  CheckCircle2, Info,
+  CheckCircle2,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
@@ -10,6 +10,7 @@ import { eur } from '../lib/money';
 import InfoTip from '../components/InfoTip';
 import { ResultModal } from '../components/CampaignLearning';
 import CampaignWizard, { emptyState } from '../components/campagnes/CampaignWizard';
+import CampaignDetail from '../components/campagnes/CampaignDetail';
 import { KIND_META, TYPE_ORDER } from '../components/campagnes/kinds';
 
 /**
@@ -87,6 +88,7 @@ export default function CampagnesPage() {
   const [listBusy, setListBusy] = useState(false);
   const [menu, setMenu] = useState(null);
   const [resultOf, setResultOf] = useState(null);
+  const [detailOf, setDetailOf] = useState(null);       // a row opened
   const [wizard, setWizard] = useState(null);          // { initial, step }
 
   const load = useCallback(() => {
@@ -129,14 +131,13 @@ export default function CampagnesPage() {
       });
   }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const start = (kind) => {
-    if (kind === 'configurer') { navigate('/dashboard/card'); return; }
-    setWizard({ initial: emptyState(kind), step: 1 });
-  };
+  // « Configurer une offre » opens the same wizard: any message outside the
+  // four other types (user, 2026-10-10)
+  const start = (kind) => setWizard({ initial: emptyState(kind), step: 1 });
 
   // « Modifier » a draft, a planned or a cancelled campaign
   const edit = async (row) => {
-    setMenu(null); setError('');
+    setMenu(null); setError(''); setDetailOf(null);
     try {
       const { data: d } = await ownerAPI.campaignDraft(row.id);
       const kind = d.kind || 'offre';
@@ -166,12 +167,14 @@ export default function CampagnesPage() {
   const cancel = async (row) => {
     setMenu(null);
     if (!confirmImportant(`Annuler l'envoi programmé de « ${row.name} » ?`)) return;
+    setDetailOf(null);
     try { await ownerAPI.cancelCampaignSchedule(row.id); setFlash('Envoi annulé : la campagne est dans « Annulées ».'); loadList(); }
     catch (e) { setError(e?.response?.data?.detail || "L'envoi n'a pas pu être annulé."); loadList(); }
   };
   const remove = async (row) => {
     setMenu(null);
     if (!confirmImportant(`Supprimer « ${row.name} » ?`)) return;
+    setDetailOf(null);
     try { await ownerAPI.deleteCampaignDraft(row.id); setFlash('Campagne supprimée.'); loadList(); }
     catch (e) { setError(e?.response?.data?.detail || "La campagne n'a pas pu être supprimée."); }
   };
@@ -181,6 +184,10 @@ export default function CampagnesPage() {
 
   return (
     <div className="cg pb-10">
+      {detailOf && (
+        <CampaignDetail id={detailOf} onClose={() => setDetailOf(null)} onEdit={edit} onCancel={cancel} onDelete={remove}
+                        onAnalysis={(id) => setResultOf(id)} />
+      )}
       {resultOf && <ResultModal id={resultOf} onClose={() => setResultOf(null)} />}
       {wizard && (
         <CampaignWizard initial={wizard.initial} startStep={wizard.step} page={data}
@@ -216,27 +223,23 @@ export default function CampagnesPage() {
         {(data?.strip || []).map((s) => <Stat key={s.key} s={s} />)}
         {!data && [0, 1, 2, 3, 4].map((i) => <div key={i} className="h-[96px] animate-pulse rounded-2xl bg-white" />)}
       </div>
-      {data?.open_note && (
-        <p className="-mt-3 mb-5 flex items-start gap-1.5 text-[11.5px] text-[#94A3B8]"><Info size={12} className="mt-px shrink-0" /> {data.open_note} {data.revenue_note}</p>
-      )}
 
       <section className="mb-5 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
         <h2 className="text-[22px] font-extrabold text-[#0B1C3F]">Choisissez le type de campagne</h2>
         <p className="mb-4 text-[14.5px] text-[#475569]">Sélectionnez un modèle adapté à votre objectif. Vous pourrez le personnaliser ensuite.</p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {TYPE_ORDER.map((k, i) => {
+          {TYPE_ORDER.map((k) => {
             const m = KIND_META[k];
             const I = m.icon;
-            const first = i === 0;
             return (
-              <div key={k} className={`flex flex-col rounded-2xl border p-4 ${first ? 'border-[#2F6BFF] bg-[#F8FAFF]' : 'border-[#E6EEFB] bg-white'}`}>
-                <div className="flex items-start gap-3">
+              <div key={k} className="group flex h-full flex-col rounded-2xl border border-[#E6EEFB] bg-white p-4 transition hover:border-[#2F6BFF] hover:bg-[#F8FAFF] hover:shadow-[0_14px_30px_-24px_rgba(20,99,255,.7)]">
+                <div className="flex flex-1 items-start gap-3">
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ background: m.bg, color: m.fg }}><I size={26} /></span>
                   <span className="min-w-0"><span className="block text-[16px] font-bold text-[#0B1C3F]">{m.label}</span>
                     <span className="mt-1 block text-[13px] leading-snug text-[#64748B]">{m.sub}</span></span>
                 </div>
                 <button type="button" onClick={() => start(k)}
-                        className={`mt-4 inline-flex items-center justify-center gap-2 rounded-xl py-3 text-[15px] font-semibold transition ${first ? 'bg-[#1463FF] text-white hover:bg-[#0F54E0]' : 'border border-[#2F6BFF] text-[#1463FF] hover:bg-[#F1F6FF]'}`}>
+                        className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#2F6BFF] py-3 text-[15px] font-semibold text-[#1463FF] transition group-hover:bg-[#1463FF] group-hover:text-white">
                   Choisir <ArrowRight size={17} />
                 </button>
               </div>
@@ -260,7 +263,7 @@ export default function CampagnesPage() {
             </button>
             {filterOpen && (
               <div className="absolute right-0 top-12 z-20 w-56 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
-                {[['', 'Tous les types'], ...['offre', 'nouveaute', 'defi', 'evenement', 'message'].map((k) => [k, KIND_META[k].label])].map(([k, l]) => (
+                {[['', 'Tous les types'], ...['offre', 'nouveaute', 'defi', 'evenement', 'configurer', 'message'].map((k) => [k, KIND_META[k].label])].map(([k, l]) => (
                   <button key={k || 'all'} type="button" onClick={() => { setKindFilter(k); setFilterOpen(false); setPage(1); }}
                           className={`block w-full rounded-lg px-3 py-2 text-left text-[14px] ${kindFilter === k ? 'bg-[#F1F6FF] font-semibold text-[#1463FF]' : 'text-[#0B1C3F] hover:bg-[#F8FAFC]'}`}>{l}</button>
                 ))}
@@ -300,7 +303,9 @@ export default function CampagnesPage() {
                 const [sl, sbg, sfg] = STATUS[r.status] || STATUS.draft;
                 const editable = ['draft', 'scheduled', 'cancelled'].includes(r.status);
                 return (
-                  <tr key={r.id} className="border-t border-[#EEF2F7]">
+                  <tr key={r.id} onClick={() => setDetailOf(r.id)} tabIndex={0} aria-label={`Ouvrir la campagne ${r.name}`}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) setDetailOf(r.id); }}
+                      className="cursor-pointer border-t border-[#EEF2F7] transition hover:bg-[#F8FAFF] focus:bg-[#F8FAFF] focus:outline-none">
                     <td className="px-3 py-3">
                       <span className="flex items-center gap-3">
                         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: m.bg, color: m.fg }}><I size={20} /></span>
@@ -327,18 +332,18 @@ export default function CampagnesPage() {
                     <td className="whitespace-nowrap px-3 py-3 text-[14px] text-[#475569]">
                       {r.sent_at ? when(r.sent_at) : r.status === 'scheduled' ? when(r.scheduled_for, true) : '—'}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-3">
+                    <td className="whitespace-nowrap px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       {editable ? (
                         <button type="button" onClick={() => edit(r)} className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[#1463FF]">Modifier <ArrowRight size={15} /></button>
                       ) : r.sent_at ? (
-                        <button type="button" onClick={() => setResultOf(r.id)} className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[#1463FF]">Voir les résultats <ArrowRight size={15} /></button>
+                        <button type="button" onClick={() => setDetailOf(r.id)} className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-[#1463FF]">Voir les résultats <ArrowRight size={15} /></button>
                       ) : null}
                     </td>
-                    <td className="relative px-2 py-3">
+                    <td className="relative px-2 py-3" onClick={(e) => e.stopPropagation()}>
                       <button type="button" aria-label="Plus d'actions" onClick={() => setMenu(menu === r.id ? null : r.id)} className="rounded-lg p-1.5 text-[#0B1C3F] hover:bg-[#F1F5F9]"><MoreVertical size={18} /></button>
                       {menu === r.id && (
                         <div className="absolute right-2 top-11 z-20 w-52 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
-                          {r.sent_at && <button type="button" onClick={() => { setMenu(null); setResultOf(r.id); }} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Voir les résultats</button>}
+                          {r.sent_at && <button type="button" onClick={() => { setMenu(null); setDetailOf(r.id); }} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Voir les résultats</button>}
                           {editable && <button type="button" onClick={() => edit(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Modifier</button>}
                           {r.status === 'scheduled' && <button type="button" onClick={() => cancel(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#B45309] hover:bg-[#FFF7ED]">Annuler l'envoi</button>}
                           {['draft', 'cancelled'].includes(r.status) && <button type="button" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}

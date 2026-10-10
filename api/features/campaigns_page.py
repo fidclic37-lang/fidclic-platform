@@ -381,6 +381,49 @@ def list_campaigns(tab: str = "all", search: str = "", page: int = 1, per_page: 
             "pages": pages, "per_page": per_page, "counts": counts}
 
 
+@router.get("/api/owner/campaigns/{campaign_id}/detail")
+def campaign_detail(campaign_id: str, request: Request = None,
+                    token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """A row of « Vos campagnes récentes » opened (user, 2026-10-10: a click
+    always shows the campaign): what was said, to whom, when, and — once sent —
+    what it did (opens, clicks, clients back within 15 days, their spend)."""
+    tid = token_data.tenant_id
+    at = _now()
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
+    found = _limit([c for c in [_db.campaigns.find_one({"tenant_id": tid, "id": campaign_id}, {"_id": 0})] if c], mine)
+    if not found:
+        raise HTTPException(status_code=404, detail="Campagne introuvable.")
+    c = found[0]
+    row = _row(c, tid, at)
+    ids = list(c.get("recipient_ids") or [])
+    sent_at = _aware(c.get("sent_at"))
+    stats = None
+    if c.get("status") == "sent" and sent_at:
+        opened = _opened_ids(tid, ids, sent_at, c)
+        back = _db.visits.distinct("customer_id", {
+            "tenant_id": tid, "customer_id": {"$in": ids},
+            "visit_time": {"$gte": sent_at, "$lte": sent_at + timedelta(days=ATTRIBUTION_DAYS)},
+            **S.visit_filter(scope)}) if ids else []
+        delivered = int(c.get("delivered_count") or 0)
+        stats = {"recipients": len(ids), "delivered": min(delivered, len(ids)) if delivered else None,
+                 "opened": len(opened), "open_rate": _pct(len(opened), len(ids)),
+                 "clicks": int(c.get("offer_clicks") or 0), "came_back": len(back),
+                 "came_back_rate": _pct(len(back), len(ids)),
+                 "revenue": _attributed_revenue(tid, ids, sent_at, scope),
+                 "window_days": ATTRIBUTION_DAYS, "open_window_h": OPEN_WINDOW_H}
+    _, until = K.window(c) if sent_at else (None, None)
+    st = row["status"]
+    return {**row, "title": c.get("name") or "", "message": c.get("content") or "", "details": c.get("details"),
+            "link_url": safe_link(c.get("link_url")), "audience_label": c.get("audience_label") or "Sélection",
+            "discount": K.discount_label(c.get("offer")) if c.get("kind") in K.OFFER_KINDS else None,
+            "live_until": until.isoformat() if until else None,
+            "cancelled_at": (d.isoformat() if (d := _aware(c.get("cancelled_at"))) else None),
+            "stats": stats,
+            "can_edit": st in ("draft", "scheduled", "cancelled"), "can_cancel": st == "scheduled",
+            "can_delete": st in ("draft", "cancelled")}
+
+
 # ---------------------------------------------------------------------------
 # Rates
 # ---------------------------------------------------------------------------
@@ -694,6 +737,10 @@ def compose(req: Compose, request: Request = None,
     terms: Dict[str, Any] = {"offer": None, "event": None, "defi": None}
     if kind == "offre":
         terms["offer"] = K.clean_offer(req.offer, send_at)
+    elif kind == "configurer":
+        # no discount here: a title, a description, and its dates when it has some
+        terms["offer"] = K.clean_offer(req.offer.model_copy(update={"discount_type": None, "discount_value": None})
+                                       if req.offer else None, send_at)
     elif kind == "evenement":
         terms["event"] = K.clean_event(req.event, send_at)
     elif kind == "defi":

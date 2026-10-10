@@ -343,8 +343,70 @@ def main():
     print("\n9. Les chiffres du mois")
     p = http("GET", "/api/owner/campaigns/page").json()
     check("the five figures are there, « vs. mois précédent »", len(p["strip"]) == 5 and p["month_label"] == "vs. mois précédent")
-    check("kinds are offered", [k["key"] for k in p["kinds"]] == ["offre", "nouveaute", "evenement", "defi"])
+    check("kinds are offered", [k["key"] for k in p["kinds"]] == ["offre", "nouveaute", "evenement", "defi", "configurer"])
     check("the shop's position is known (zone possible)", p["has_position"] is True)
+
+    print("\n10. Configurer une offre — any other message")
+    db.campaigns.delete_many({})
+    n = count0()
+    r = compose(kind="configurer", title="Soirée privée",
+                offer={"start_date": iso(today + dt.timedelta(days=3)), "end_date": iso(today + dt.timedelta(days=1))})
+    check("its dates are checked like an offer's", r.status_code == 400 and count0() == n)
+    r = compose(kind="configurer", title="Soirée privée", offer={"all_day": False, "time_from": "20:00", "time_to": "18:00"})
+    check("…and its hours", r.status_code == 400 and count0() == n)
+    end7 = today + dt.timedelta(days=7)
+    r = compose(kind="configurer", title="Un café offert pour 2 achetés", details="Du lundi au vendredi.",
+                offer={"discount_type": "percent", "discount_value": 50, "start_date": iso(today), "end_date": iso(end7),
+                       "all_day": False, "time_from": "08:00", "time_to": "11:00"},
+                audience={"mode": "custom", "customer_ids": ["c1"]})
+    cf = db.campaigns.find_one({"id": r.json().get("id")})
+    check("it is saved as « Configurer une offre »", r.status_code == 200 and cf["kind"] == "configurer"
+          and K.KINDS[cf["kind"]] == "Configurer une offre")
+    check("a discount sent by mistake is dropped (this type has none)",
+          cf["offer"]["discount_type"] is None and cf["offer"]["discount_value"] is None)
+    check("its terms read « du … au … · 8h–11h »", K.terms_label(cf).startswith("du ") and K.terms_label(cf).endswith("8h–11h"))
+    check("it stays live until its last day", K.window(cf)[1] == K.end_of(end7))
+    card = server._serialize_card_payload(db.customers.find_one({"id": "c1"}))
+    row = next((o for o in card["offers"] if o["id"] == cf["id"]), None)
+    check("it is on the client's card like an offer, with its description",
+          row is not None and row["details"] == "Du lundi au vendredi." and not row.get("discount_label"))
+    check("…not on a client who did not get it",
+          all(o["id"] != cf["id"] for o in server._serialize_card_payload(db.customers.find_one({"id": "c2"}))["offers"]))
+    lr = http("GET", "/api/owner/campaigns/list", params={"kind": "configurer"}).json()
+    check("the list's type filter finds it, typed « Configurer une offre »",
+          [x["type_label"] for x in lr["rows"]] == ["Configurer une offre"])
+
+    print("\n11. Une campagne ouverte (clic sur la ligne)")
+    db.visits.insert_many([
+        {"id": "v-a", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 12.5, "visit_time": now + dt.timedelta(minutes=5)},
+        {"id": "v-b", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 7.5, "visit_time": now + dt.timedelta(minutes=9)},
+        {"id": "v-c", "tenant_id": "t1", "customer_id": "c2", "amount_paid": 99, "visit_time": now + dt.timedelta(minutes=5)},
+        {"id": "v-d", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 50, "visit_time": now + dt.timedelta(days=20)},
+    ])
+    det = http("GET", f"/api/owner/campaigns/{cf['id']}/detail").json()
+    check("it shows what was said, to whom and when", det["message"] == "Bonjour {prénom} !"
+          and det["details"] == "Du lundi au vendredi." and det["recipients"] == 1 and det["sent_at"])
+    st = det["stats"] or {}
+    check("one recipient came back within 15 days (not the client who never got it)",
+          st.get("recipients") == 1 and st.get("came_back") == 1 and st.get("came_back_rate") == 100)
+    check("its CA counts that client's visits inside 15 days only (12,50 + 7,50 €)", st.get("revenue") == 20.0)
+    check("a sent campaign can't be edited, cancelled or deleted from it",
+          not det["can_edit"] and not det["can_cancel"] and not det["can_delete"])
+    check("its card window is given", det["live_until"] is not None and det["live_until"][:10] == K.end_of(end7).isoformat()[:10])
+    later = (now + dt.timedelta(days=2)).isoformat()
+    sid = compose(kind="nouveaute", title="Nouveau menu", schedule_at=later).json()["id"]
+    det = http("GET", f"/api/owner/campaigns/{sid}/detail").json()
+    check("a planned one has no figures yet, and can be edited or cancelled",
+          det["stats"] is None and det["status"] == "scheduled" and det["can_edit"] and det["can_cancel"] and not det["can_delete"])
+    did = compose(kind="nouveaute", title="Brouillon", draft=True).json()["id"]
+    det = http("GET", f"/api/owner/campaigns/{did}/detail").json()
+    check("a draft can be edited and deleted", det["status"] == "draft" and det["can_edit"] and det["can_delete"])
+    check("another shop can't open it", http("GET", f"/api/owner/campaigns/{cf['id']}/detail", headers=H2).status_code == 404)
+    check("an unknown id is a plain 404", http("GET", "/api/owner/campaigns/nope/detail").status_code == 404)
+    check("staff can't open campaigns", http("GET", f"/api/owner/campaigns/{cf['id']}/detail", headers=STAFF).status_code == 403)
+    db.campaigns.update_one({"id": cf["id"]}, {"$set": {"link_url": "javascript:alert(1)"}})
+    check("a stored link that is not http(s) is never handed out",
+          http("GET", f"/api/owner/campaigns/{cf['id']}/detail").json()["link_url"] is None)
 
     server.dispatch_to_customer = real_dispatch
     print(f"\n{passed} passed, {failed} failed")

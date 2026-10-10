@@ -32,6 +32,8 @@ const fullLink = (raw) => {
   return /^[a-z][a-z0-9+.-]*:/i.test(s) ? s : `https://${s.replace(/^\/+/, '')}`;
 };
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
+// « Configurer une offre » = any other message: title, description, optional dates/hours, no discount
+const OFFERISH = ['offre', 'configurer'];
 
 const field = 'w-full rounded-xl border border-[#D9E2F2] bg-white px-4 py-3 !text-[16px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF] focus:ring-2 focus:ring-[#2F6BFF]/15';
 const Label = ({ children, hint }) => (
@@ -148,7 +150,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     return '';
   };
   const step1Problem = () => {
-    if (s.kind === 'offre') return offerProblems();
+    if (OFFERISH.includes(s.kind)) return offerProblems();
     if (s.kind === 'defi') return defiProblems();
     if (!s.title.trim()) return 'Donnez un titre.';
     if (s.kind === 'evenement') {
@@ -170,7 +172,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     if (s.sendMode === 'later') {
       if (!s.date || !s.time) return "Indiquez la date et l'heure d'envoi.";
       if (new Date(`${s.date}T${s.time}:00`) <= new Date(Date.now() + 60000)) return "Choisissez un moment à venir.";
-      const end = s.kind === 'offre' ? o.end_date : s.kind === 'defi' ? d.end_date : s.kind === 'evenement' ? s.event.date : '';
+      const end = OFFERISH.includes(s.kind) ? o.end_date : s.kind === 'defi' ? d.end_date : s.kind === 'evenement' ? s.event.date : '';
       if (end && s.date > end) return "L'envoi serait après la fin : avancez la date d'envoi.";
     }
     return '';
@@ -192,8 +194,8 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       audience: audienceBody, draft: mode === 'draft', schedule_at: mode === 'draft' ? null : scheduleIso(),
       ...(s.draftId ? { draft_id: s.draftId } : {}), ...(s.template ? { template: s.template } : {}),
     };
-    if (s.kind === 'offre') {
-      const v = String(o.discount_value ?? '').replace(',', '.');
+    if (OFFERISH.includes(s.kind)) {
+      const v = s.kind === 'offre' ? String(o.discount_value ?? '').replace(',', '.') : '';
       b.offer = { discount_type: v ? o.discount_type : null, discount_value: v ? Number(v) : null,
         start_date: o.end_date ? (o.start_date || today) : (o.start_date || null), end_date: o.end_date || null,
         all_day: o.all_day, time_from: o.all_day ? null : o.time_from, time_to: o.all_day ? null : o.time_to };
@@ -243,8 +245,8 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
 
   // ---- summary lines ----------------------------------------------------------
   const offerSummary = () => {
-    if (s.kind === 'offre') {
-      const v = String(o.discount_value ?? '').trim();
+    if (OFFERISH.includes(s.kind)) {
+      const v = s.kind === 'offre' ? String(o.discount_value ?? '').trim() : '';
       const bits = [];
       if (o.end_date) bits.push(`Du ${dayShort(o.start_date || today)} au ${dayShort(o.end_date)}`);
       if (!o.all_day) bits.push(`${hh(o.time_from)}–${hh(o.time_to)}`);
@@ -292,13 +294,13 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl bg-[#F1F6FF] p-4">
       <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ background: meta.bg, color: meta.fg }}><KIcon size={24} /></span>
       <div className="min-w-0 flex-1">
-        <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">{meta.short} sélectionné{s.kind === 'offre' || s.kind === 'defi' ? 'e' : ''}</p>
+        <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">{meta.short} sélectionné{OFFERISH.includes(s.kind) || s.kind === 'defi' ? 'e' : ''}</p>
         <p className="truncate text-[17px] font-bold text-[#0B1C3F]">{s.title}</p>
         <p className="truncate text-[13px] text-[#475569]">{offerSummary()}</p>
       </div>
       <button type="button" onClick={() => go(1)}
               className="inline-flex items-center gap-2 rounded-xl border border-[#BFD3FF] bg-white px-4 py-2.5 text-[14px] font-semibold text-[#1463FF]">
-        <Pencil size={15} /> Modifier {s.kind === 'offre' ? "l'offre" : s.kind === 'defi' ? 'le défi' : s.kind === 'evenement' ? "l'événement" : 'la nouveauté'}
+        <Pencil size={15} /> Modifier {OFFERISH.includes(s.kind) ? "l'offre" : s.kind === 'defi' ? 'le défi' : s.kind === 'evenement' ? "l'événement" : 'la nouveauté'}
       </button>
     </div>
   );
@@ -333,13 +335,13 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
   // ---- step 1 -----------------------------------------------------------------
   const days = o.end_date ? daysBetween(o.start_date || today, o.end_date) + 1 : null;
   const Step1 = (
-    <Card title={`1. Définissez votre ${s.kind === 'offre' ? 'offre' : s.kind === 'defi' ? 'défi' : s.kind === 'evenement' ? 'événement' : 'nouveauté'}`}
-          sub={s.kind === 'offre' ? 'Choisissez les détails de votre offre spéciale.' : s.kind === 'defi' ? 'Combien de visites, jusqu\'à quand, pour quelle récompense.'
+    <Card title={`1. Définissez votre ${OFFERISH.includes(s.kind) ? 'offre' : s.kind === 'defi' ? 'défi' : s.kind === 'evenement' ? 'événement' : 'nouveauté'}`}
+          sub={s.kind === 'offre' ? 'Choisissez les détails de votre offre spéciale.' : s.kind === 'configurer' ? 'Un titre, une description et, si besoin, ses dates.' : s.kind === 'defi' ? 'Combien de visites, jusqu\'à quand, pour quelle récompense.'
             : s.kind === 'evenement' ? 'Quand et où a lieu votre événement.' : 'Présentez votre nouveau produit, menu ou service.'}>
       <label className="block">
-        <Label>{s.kind === 'offre' ? "Titre de l'offre" : s.kind === 'defi' ? 'Titre du défi' : s.kind === 'evenement' ? "Nom de l'événement" : 'Titre'}</Label>
+        <Label>{OFFERISH.includes(s.kind) ? "Titre de l'offre" : s.kind === 'defi' ? 'Titre du défi' : s.kind === 'evenement' ? "Nom de l'événement" : 'Titre'}</Label>
         <input className={field} value={s.title} maxLength={TITLE_MAX} onChange={(e) => set({ title: e.target.value })}
-               placeholder={s.kind === 'offre' ? '-20% sur votre prochain achat' : s.kind === 'defi' ? 'Défi de la semaine'
+               placeholder={s.kind === 'offre' ? '-20% sur votre prochain achat' : s.kind === 'configurer' ? 'Un café offert pour 2 achetés' : s.kind === 'defi' ? 'Défi de la semaine'
                  : s.kind === 'evenement' ? 'Soirée dégustation' : 'Nouveau menu'} />
         <span className="mt-1 block text-right text-[12px] text-[#64748B]">{s.title.length}/{TITLE_MAX}</span>
       </label>
@@ -369,6 +371,17 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
               </span>
             </label>
           </div>
+        </>
+      )}
+
+      {s.kind === 'configurer' && (
+        <label className="mt-2 block"><Label hint="(optionnelle)">Description</Label>
+          <textarea className={`${field} min-h-[96px]`} maxLength={500} value={s.details}
+                    onChange={(e) => set({ details: e.target.value })} placeholder="Ce que vos clients doivent savoir : conditions, produits concernés…" /></label>
+      )}
+
+      {OFFERISH.includes(s.kind) && (
+        <>
           <div className="mt-4">
             <Label hint="(optionnelle)">Durée de l'offre</Label>
             <div className="grid gap-3 sm:grid-cols-2">
