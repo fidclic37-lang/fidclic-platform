@@ -16,7 +16,14 @@ import { applyGoogleTranslate } from '../components/GoogleTranslateBridge';
 
 const BLUE = '#2F6BFF';
 const LANGS = [['fr', '🇫🇷', 'Français'], ['en', '🇬🇧', 'English'], ['ar', '🇸🇦', 'العربية']];
-const DATE_FORMATS = [['dmy', '31/12/2026 (JJ/MM/AAAA)'], ['mdy', '12/31/2026 (MM/JJ/AAAA)'], ['ymd', '2026-12-31 (AAAA-MM-JJ)'], ['dmy_dot', '31.12.2026 (JJ.MM.AAAA)']];
+// The pattern in the reader's own letters (QA R5 F08: Google turned « (MM/JJ/AAAA) »
+// into « (DD/MM/YYYY) » next to 12/31/2026). Written by us, never sent to Google.
+const DATE_FORMATS = [['dmy', '31/12/2026', 'dmy'], ['mdy', '12/31/2026', 'mdy'], ['ymd', '2026-12-31', 'ymd'], ['dmy_dot', '31.12.2026', 'dmy_dot']];
+const DATE_PATTERNS = {
+  fr: { dmy: 'JJ/MM/AAAA', mdy: 'MM/JJ/AAAA', ymd: 'AAAA-MM-JJ', dmy_dot: 'JJ.MM.AAAA' },
+  en: { dmy: 'DD/MM/YYYY', mdy: 'MM/DD/YYYY', ymd: 'YYYY-MM-DD', dmy_dot: 'DD.MM.YYYY' },
+  ar: { dmy: 'يوم/شهر/سنة', mdy: 'شهر/يوم/سنة', ymd: 'سنة-شهر-يوم', dmy_dot: 'يوم.شهر.سنة' },
+};
 const PAGES = [['/dashboard', 'Tableau de bord'], ['/dashboard/analytics', 'Analyses'], ['/dashboard/customers', 'Clients'],
                ['/dashboard/campaigns', 'Campagnes'], ['/dashboard/scan', 'Scan'], ['/dashboard/insights', 'Insights'], ['/dashboard/card', 'Carte de fidélité']];
 const EMAILS = [['billing', 'Emails de facturation', 'Factures, confirmations de paiement, renouvellement.'],
@@ -70,7 +77,8 @@ export default function PreferencesPage() {
   const [err, setErr] = useState('');
   const [toast, setToast] = useState('');
   const [busy, setBusy] = useState(false);
-  const currencies = useMemo(() => allCurrencies(), []);
+  const uiLang = (i18n.language || 'fr').slice(0, 2);
+  const currencies = useMemo(() => allCurrencies(uiLang), [uiLang]);
   const zones = useMemo(() => allTimezones(), []);
 
   useEffect(() => {
@@ -118,7 +126,8 @@ export default function PreferencesPage() {
           <div className="relative">
             <span className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-[18px]">{lang[1]}</span>
             <Select value={p.language} onChange={(v) => save({ language: v })} className="[&_select]:pl-10">
-              {LANGS.map(([k, , label]) => <option key={k} value={k}>{label}</option>)}
+              {/* each language in its own name — never translated (QA R5 F08) */}
+              {LANGS.map(([k, , label]) => <option key={k} value={k} translate="no" className="notranslate">{label}</option>)}
             </Select>
           </div>
         </Card>
@@ -131,7 +140,11 @@ export default function PreferencesPage() {
         <Card>
           <Head icon={CalendarDays} title="Format de date" sub="Choisissez le format d'affichage des dates." />
           <Select value={p.date_format} onChange={(v) => save({ date_format: v })}>
-            {DATE_FORMATS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            {DATE_FORMATS.map(([k, example]) => (
+              <option key={k} value={k} translate="no" className="notranslate">
+                {`${example} (${(DATE_PATTERNS[p.language] || DATE_PATTERNS.fr)[k]})`}
+              </option>
+            ))}
           </Select>
           <Example>{dateExample(p.date_format, p.timezone)}</Example>
         </Card>
@@ -139,7 +152,8 @@ export default function PreferencesPage() {
         <Card>
           <Head icon={Coins} title="Format monétaire" sub="Choisissez la devise et le format d'affichage des montants." />
           <Select value={d.currency} disabled={!d.can_edit_currency} onChange={(v) => save({ currency: v })}>
-            {currencies.map((c) => <option key={c.code} value={c.code}>{c.name} ({c.symbol}) - {c.code}</option>)}
+            {/* already in the interface's language (lib/prefs): never sent to Google */}
+            {currencies.map((c) => <option key={c.code} value={c.code} translate="no" className="notranslate">{`${c.name} (${c.symbol}) - ${c.code}`}</option>)}
           </Select>
           <Example>{moneyExample(cur.code)}</Example>
           <p className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-snug text-[#94A3B8]">
