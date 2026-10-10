@@ -29,7 +29,12 @@ from pydantic import BaseModel
 PARIS = ZoneInfo("Europe/Paris")
 DEFAULT_LIVE_DAYS = 30
 
-KINDS = {"offre": "Offre spéciale", "nouveaute": "Nouveauté", "evenement": "Événement", "defi": "Défi"}
+KINDS = {"offre": "Offre spéciale", "nouveaute": "Nouveauté", "evenement": "Événement", "defi": "Défi",
+         "configurer": "Configurer une offre"}
+# « Configurer une offre » = any other message (user, 2026-10-10): a title, a
+# description and optional dates/hours, shown on the card like an offer, with
+# no discount.
+OFFER_KINDS = ("offre", "configurer")
 LEGACY_LABEL = "Notification"
 
 STATUS_LABELS = {"draft": "Brouillon", "scheduled": "Programmée", "sending": "En cours d'envoi",
@@ -254,7 +259,7 @@ def window(c: Dict[str, Any]) -> Tuple[Optional[datetime], Optional[datetime]]:
     kind = c.get("kind")
     until = None
     start = sent
-    if kind == "offre" and (c.get("offer") or {}).get("end_date"):
+    if kind in OFFER_KINDS and (c.get("offer") or {}).get("end_date"):
         until = end_of(date.fromisoformat(c["offer"]["end_date"]))
         if c["offer"].get("start_date"):
             s = start_of(date.fromisoformat(c["offer"]["start_date"]))
@@ -287,7 +292,7 @@ def active_now(c: Dict[str, Any], at: Optional[datetime] = None) -> bool:
     if start and at < start:
         return False
     o = c.get("offer") or {}
-    if c.get("kind") == "offre" and not o.get("all_day", True) and o.get("time_from") and o.get("time_to"):
+    if c.get("kind") in OFFER_KINDS and not o.get("all_day", True) and o.get("time_from") and o.get("time_to"):
         hm = at.astimezone(PARIS).strftime("%H:%M")
         return o["time_from"] <= hm < o["time_to"]
     return True
@@ -338,7 +343,7 @@ def terms_label(c: Dict[str, Any]) -> Optional[str]:
     """One line for the card, the offers page and the till: what and when."""
     kind = c.get("kind")
     parts: List[str] = []
-    if kind == "offre":
+    if kind in OFFER_KINDS:
         o = c.get("offer") or {}
         if discount_label(o):
             parts.append(discount_label(o))

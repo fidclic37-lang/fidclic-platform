@@ -4916,7 +4916,7 @@ def _offers_active_for(tenant_id: str, customer_id: str) -> List[Dict[str, Any]]
         from features import campaign_kinds as _K
         now_utc = datetime.now(timezone.utc)
         out = []
-        for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "kind": "offre",
+        for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "kind": {"$in": list(_K.OFFER_KINDS)},
                                     "recipient_ids": customer_id}, {"_id": 0}):
             if _K.active_now(c, now_utc):
                 out.append({"id": c.get("id"), "title": c.get("name"), "label": _K.discount_label(c.get("offer")),
