@@ -4,6 +4,7 @@ import {
   Clock, Radar, Landmark, LocateFixed, Info, Trash2,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 /* Paramètres › Établissement — built to the approved mockup (blocks 1–8),
    plus what lived nowhere else and the user asked to add: the opening hours,
@@ -208,7 +209,9 @@ function StoreModal({ store, onClose, onSaved }) {
 }
 
 export default function EtablissementPage() {
+  const { checkAuth } = useAuth();
   const [d, setD] = useState(null);
+  const [owner, setOwner] = useState(null);
   const [biz, setBiz] = useState(null);
   const [addr, setAddr] = useState(null);
   const [legal, setLegal] = useState(null);
@@ -225,7 +228,7 @@ export default function EtablissementPage() {
   const [menu, setMenu] = useState(null);
 
   const apply = useCallback((data) => {
-    setD(data); setBiz(data.business); setAddr(data.address); setLegal(data.legal); setGeo(data.geo);
+    setD(data); setOwner(data.owner || { first_name: '', last_name: '' }); setBiz(data.business); setAddr(data.address); setLegal(data.legal); setGeo(data.geo);
   }, []);
   useEffect(() => {
     ownerAPI.etablissement().then(({ data }) => apply(data)).catch((e) => setErr(e?.response?.data?.detail || "Impossible de charger l'établissement."));
@@ -246,6 +249,9 @@ export default function EtablissementPage() {
     setSaving(true); setErr('');
     try {
       const body = {};
+      const renamed = can.owner_name && owner
+        && (owner.first_name.trim() !== (d.owner?.first_name || '') || owner.last_name.trim() !== (d.owner?.last_name || ''));
+      if (renamed) body.owner = { first_name: owner.first_name, last_name: owner.last_name };
       if (can.brand) {
         body.business = { name: biz.name, phone: biz.phone, email: biz.email, sector: biz.sector, description: biz.description,
                           ...(biz.logo_url !== d.business.logo_url ? { logo_url: biz.logo_url } : {}) };
@@ -262,6 +268,8 @@ export default function EtablissementPage() {
         setDirtyHours({ weekly: false, annual: false, holidays: false });
       }
       apply(data);
+      // the new name shows at once everywhere the app greets the owner (« Bonjour … »)
+      if (renamed) await checkAuth();
       say('Modifications enregistrées.');
     } catch (e) { setErr(e?.response?.data?.detail || "L'enregistrement n'a pas abouti."); }
     finally { setSaving(false); }
@@ -361,6 +369,14 @@ export default function EtablissementPage() {
 
         {/* 6 — the whole width */}
         <Block n={6} title="Informations générales" className="lg:col-span-2">
+          <div className="mb-4 grid gap-3 sm:grid-cols-2">
+            <label className="block"><Label required right={`${(owner.first_name || '').length}/60`}>Prénom du propriétaire</Label>
+              <input className={inputCls} value={owner.first_name} maxLength={60} autoComplete="given-name" disabled={!can.owner_name}
+                     onChange={(e) => setOwner({ ...owner, first_name: e.target.value })} placeholder="Marie" /></label>
+            <label className="block"><Label required right={`${(owner.last_name || '').length}/60`}>Nom du propriétaire</Label>
+              <input className={inputCls} value={owner.last_name} maxLength={60} autoComplete="family-name" disabled={!can.owner_name}
+                     onChange={(e) => setOwner({ ...owner, last_name: e.target.value })} placeholder="Dupont" /></label>
+          </div>
           <Label required>Description du commerce</Label>
           <textarea className={`${inputCls} h-auto min-h-[90px] resize-y py-2.5 leading-snug`} maxLength={500} value={biz.description}
                     onChange={(e) => setBiz({ ...biz, description: e.target.value })} placeholder="Ce qui rend votre commerce unique…" />
