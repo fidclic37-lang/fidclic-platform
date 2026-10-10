@@ -878,15 +878,19 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
     promotion that has expired.
     """
     try:
-        since = _now() - timedelta(days=CAMPAIGN_OFFER_DAYS)
+        # live until its own end — an offer's last day, an event's day — or 30
+        # days after the send (features/campaign_kinds, redesign 2026-10-10)
+        from features import campaign_kinds as _K
+        now = _now()
         rows = _db.campaigns.find(
             {"tenant_id": cust.get("tenant_id"), "status": "sent",
              "wallet_offer": True, "recipient_ids": cust.get("id")},
-            {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1})
+            {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1, "status": 1,
+             "kind": 1, "offer": 1, "event": 1, "defi": 1})
         newest, newest_at = None, None
         for c in rows:
             at = _parse_dt(c.get("sent_at"))
-            if at and at >= since and (newest_at is None or at > newest_at):
+            if at and _K.is_live(c, now) and (newest_at is None or at > newest_at):
                 newest, newest_at = c, at
         if newest and (newest.get("name") or "").strip():
             title, sub = newest["name"].strip(), (newest.get("content") or "").strip()

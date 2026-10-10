@@ -499,7 +499,18 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
             "{amount_paid}": f"{amount_paid:.2f}€",
             "{business_name}": business_name,
             "{sector}": (tenant or {}).get("sector", ""),
+            # the Campagnes wizard's French variables (redesign, 2026-10-10)
+            "{prénom}": first_name, "{prenom}": first_name,
+            "{nom_commerce}": business_name,
+            "{visites}": str(visits),
+            "{points_manquants}": str(ptnr),
         }
+        if "{prochaine_récompense}" in content or "{prochaine_recompense}" in content:
+            tpl = db.card_templates.find_one({"tenant_id": customer.get("tenant_id") or (tenant or {}).get("id")},
+                                             {"reward_description": 1}) or {}
+            nxt = tpl.get("reward_description") or "votre récompense"
+            replacements["{prochaine_récompense}"] = nxt
+            replacements["{prochaine_recompense}"] = nxt
         rendered = content
         for token, value in replacements.items():
             rendered = rendered.replace(token, str(value))
@@ -4898,6 +4909,33 @@ def _paper_stamps_check(cust: dict, tenant_id: str, value: Any, current_visits: 
     return {"stamps": n, "visits": n * rule["per_stamp"]}
 
 
+def _offers_active_for(tenant_id: str, customer_id: str) -> List[Dict[str, Any]]:
+    """The campaign offers valid for this client at this very moment — dates
+    and happy hours included (features/campaign_kinds.active_now)."""
+    try:
+        from features import campaign_kinds as _K
+        now_utc = datetime.now(timezone.utc)
+        out = []
+        for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "kind": "offre",
+                                    "recipient_ids": customer_id}, {"_id": 0}):
+            if _K.active_now(c, now_utc):
+                out.append({"id": c.get("id"), "title": c.get("name"), "label": _K.discount_label(c.get("offer")),
+                            "terms": _K.terms_label(c)})
+        return out
+    except Exception as exc:
+        print(f"scan: active offers unavailable (non-fatal): {exc}")
+        return []
+
+
+def _defi_rewards_of(customer_id: str) -> List[Dict[str, Any]]:
+    try:
+        from features import defis as _defis
+        return _defis.pending_rewards(customer_id)
+    except Exception as exc:
+        print(f"scan: defi rewards unavailable (non-fatal): {exc}")
+        return []
+
+
 @app.get("/api/owner/scan/preview")
 def scan_preview(barcode: str,
                  token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
@@ -4920,6 +4958,9 @@ def scan_preview(barcode: str,
         "paper_max": room, "paper_done": done,
         "paper_stamps": int(cust.get("paper_stamps") or 0) if done else 0,
         "paper_message": _paper_done_message(cust) if done else None,
+        # Campagnes (2026-10-10): what the staff must not forget for this client
+        "offers_active": _offers_active_for(token_data.tenant_id, cust["id"]),
+        "defi_rewards": _defi_rewards_of(cust["id"]),
     }
 
 
@@ -5151,6 +5192,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception as _e:
         print(f"scan_visit: campaign attribution failed (non-fatal): {_e}")
 
+    # Défis (Campagnes › Défi): does this visit win one?
+    defis_won = []
+    try:
+        from features import defis as _defis
+        defis_won = _defis.after_scan(token_data.tenant_id, db.customers.find_one({"id": cid}, {"_id": 0}) or cust)
+    except Exception as _e:
+        print(f"scan_visit: defis failed (non-fatal): {_e}")
+
     # Automatic after a scan: the Google review request, at the shop's pace.
     try:
         from features import auto_messages as _AM
@@ -5273,6 +5322,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "cycle_restarted": cycles_completed > 0,
         # stamps moved from a paper card at this scan (0 when none)
         "paper_stamps": paper["stamps"] if paper else 0,
+        # Campagnes (2026-10-10): défis this visit won, rewards to hand over,
+        # and the offers valid right now — the till reminds the staff
+        "defis_won": defis_won,
+        "defi_rewards": _defi_rewards_of(cid),
+        "offers_active": _offers_active_for(token_data.tenant_id, cid),
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
         # the « activer les notifications » QR the till shows is opened by the
@@ -6524,11 +6578,18 @@ def _derive_offers_for_tenant(tenant_id: str, customer_id: Optional[str] = None)
             # the shop's own offer runs until the owner stops it, or its end date
             "valid_until": until.isoformat() if until else None,
         })
-    cutoff = datetime.now(timezone.utc) - timedelta(days=CAMPAIGN_OFFER_DAYS if customer_id else 45)
+    from features import campaign_kinds as _K
+    now_utc = datetime.now(timezone.utc)
+    # a campaign with its own end (offer, event) can run past 30 days: read a
+    # year back, then keep only what is live today (features/campaign_kinds)
+    cutoff = now_utc - timedelta(days=365 if customer_id else 45)
     query = {"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff}}
     if customer_id:
         query["recipient_ids"] = customer_id
-    camps = list(db.campaigns.find(query).sort("sent_at", -1).limit(10 if customer_id else 5))
+    camps = list(db.campaigns.find(query).sort("sent_at", -1).limit(60 if customer_id else 5))
+    if customer_id:
+        # live on the card, défis apart (they have their own « Défi en cours »)
+        camps = [c for c in camps if c.get("kind") != "defi" and _K.is_live(c, now_utc)][:10]
     for c in camps:
         offers.append({
             "id": c.get("id"),
@@ -6542,7 +6603,14 @@ def _derive_offers_for_tenant(tenant_id: str, customer_id: Optional[str] = None)
             "link": _campaign_link(c),
             "sent_at": c.get("sent_at").isoformat() if c.get("sent_at") else None,
             "kind": "campaign",
-            "valid_until": (_as_aware(c.get("sent_at")) + timedelta(days=CAMPAIGN_OFFER_DAYS)).isoformat() if c.get("sent_at") else None,
+            "valid_until": (_K.window(c)[1].isoformat() if c.get("sent_at") and _K.window(c)[1] else None),
+            # the redesign's terms (Campagnes, 2026-10-10)
+            "campaign_kind": c.get("kind"),
+            "details": c.get("details"),
+            "discount_label": _K.discount_label(c.get("offer")),
+            "hours_label": _K.hours_label(c.get("offer")),
+            "terms": _K.terms_label(c),
+            "valid_from": ((s := _K.window(c)[0]) and s > now_utc and s.isoformat()) or None,
         })
     return offers
 
@@ -6802,9 +6870,20 @@ def _serialize_card_payload(cust: dict) -> dict:
             "has_personalised_overlay": bool(override),
         },
         "offers": offers,
+        # Campagnes › Défi (features/defis.py): running and won
+        "defis": _defis_of(cust),
         "prefs": prefs,
         "notifications": _recent_push_notifications_for(cust["id"], cust["tenant_id"]),
     }
+
+
+def _defis_of(cust: dict) -> dict:
+    try:
+        from features import defis as _D
+        return _D.card_view(cust)
+    except Exception as exc:
+        print(f"card: defis unavailable (non-fatal): {exc}")
+        return {"running": [], "won": []}
 
 
 def _campaign_link(c: dict) -> Optional[str]:

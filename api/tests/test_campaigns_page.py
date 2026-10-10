@@ -207,8 +207,12 @@ def main():
     db.card_opens.delete_many({})
     db.visits.delete_many({})
 
-    older = now - dt.timedelta(days=45)      # previous period
-    recent = now - dt.timedelta(days=5)      # current period
+    # « vs. mois précédent » (redesign 2026-10-10): this calendar month vs the
+    # last one, in Paris — fixtures placed inside each, whatever today is
+    from features import campaign_kinds as _K
+    month_start, prev_start, _ = _K.month_bounds(now)
+    older = prev_start + dt.timedelta(days=3)                 # previous month
+    recent = month_start + (now - month_start) / 2           # this month, already past
     db.campaigns.insert_many([
         {"id": "old-1", "tenant_id": "t1", "name": "Ancienne", "content": "...", "status": "sent",
          "sent_at": older, "recipient_ids": ["c1", "c2"], "offer_clicks": 2, "segment": "all"},

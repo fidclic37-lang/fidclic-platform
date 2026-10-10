@@ -137,6 +137,43 @@ function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
   );
 }
 
+// Campagnes (2026-10-10): what the staff must not forget for this client —
+// an offer valid right now (dates and happy hours) and a défi's reward won.
+function TillReminders({ offers = [], rewards = [], onRedeemed }) {
+  const [busy, setBusy] = useState('');
+  const [done, setDone] = useState({});
+  const [err, setErr] = useState('');
+  if (!offers.length && !rewards.length) return null;
+  const give = async (r) => {
+    setBusy(r.id); setErr('');
+    try { await ownerAPI.redeemDefiReward(r.id); setDone((d) => ({ ...d, [r.id]: true })); onRedeemed && onRedeemed(r); }
+    catch (e) { setErr(e?.response?.data?.detail || "La récompense n'a pas pu être remise."); }
+    finally { setBusy(''); }
+  };
+  return (
+    <div className="mt-3 space-y-2">
+      {offers.map((o) => (
+        <p key={o.id} className="flex items-start gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2.5 text-[13.5px] text-[#92400E]">
+          <span aria-hidden="true">%</span>
+          <span><b>Offre active{o.label ? ` : ${o.label}` : ''}</b> — {o.title}{o.terms ? ` (${o.terms})` : ''}. Pensez à l'appliquer.</span>
+        </p>
+      ))}
+      {rewards.map((r) => (
+        <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2.5 text-[13.5px] text-[#14532D]">
+          <span className="flex-1"><b>🏆 Défi réussi : {r.reward}</b> — « {r.title} »{r.expires_at ? `, valable jusqu'au ${new Date(r.expires_at).toLocaleDateString('fr-FR')}` : ''}.</span>
+          {done[r.id] ? <span className="font-semibold text-[#15803D]">Remise ✓</span> : (
+            <button type="button" onClick={() => give(r)} disabled={busy === r.id}
+                    className="rounded-lg bg-[#16A34A] px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60">
+              {busy === r.id ? '…' : 'Remettre'}
+            </button>
+          )}
+        </div>
+      ))}
+      {err && <p role="alert" className="text-[12.5px] font-semibold text-[#DC2626]">{err}</p>}
+    </div>
+  );
+}
+
 const ScanPage = () => {
   const { t } = useTranslation();
   // 'camera' or 'manual'. A phone or tablet at the till opens on the camera
@@ -632,6 +669,9 @@ const ScanPage = () => {
         notification_status: customerData.notification_status || 'unknown',
         card_key: customerData.card_key || null,
         paper_stamps: customerData.paper_stamps || 0,
+        defis_won: customerData.defis_won || [],
+        defi_rewards: customerData.defi_rewards || [],
+        offers_active: customerData.offers_active || [],
       });
       setStatus({ type: 'success', message: t('scan.success') });
       setBarcode('');
@@ -809,6 +849,7 @@ const ScanPage = () => {
               </p>
             )}
             {previewErr && <p role="alert" className="mt-2 text-[13px] font-semibold text-[#DC2626]">{previewErr}</p>}
+            {preview && <TillReminders offers={preview.offers_active} rewards={preview.defi_rewards} />}
           </div>
 
           <div>
@@ -924,6 +965,12 @@ const ScanPage = () => {
                   </h3>
                 </div>
 
+                {scanResult.defis_won?.length > 0 && (
+                  <p className="mb-3 rounded-xl bg-[#FEF3C7] px-4 py-3 text-center text-[15px] font-bold text-[#92400E]">
+                    🎉 Défi réussi : {scanResult.defis_won.map((w) => w.reward).join(', ')} !
+                  </p>
+                )}
+                <TillReminders offers={scanResult.offers_active} rewards={scanResult.defi_rewards} />
                 {/* Points & Stamps Summary */}
                 <div className="grid grid-cols-2 gap-4 mb-6 text-center">
                   <div className="bg-white p-4 rounded-lg">

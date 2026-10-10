@@ -406,10 +406,13 @@ def main():
     comp = open(os.path.join(here, "..", "..", "src", "pages", "CampagnesPage.jsx")).read()
     check("the composer reads ?template= and asks the server for the copy",
           "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))" in comp)
+    wiz = open(os.path.join(here, "..", "..", "src", "components", "campagnes", "CampaignWizard.jsx")).read()
     check("… and sends the recommendation's key with the campaign, so it can step aside",
-          "...(fromTemplate ? { template: fromTemplate } : {})" in comp)
+          "st.template = key.startsWith('client:') ? 'client' : key;" in comp
+          and "...(s.template ? { template: s.template } : {})" in wiz)
     check("a narrower audience is sent by id, not widened to a card",
-          "...(custom ? { customer_ids: custom.ids } : {})" in comp)
+          "if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };" in comp
+          and "customer_ids: a.mode === 'custom' ? a.customer_ids : null" in wiz)
     check("the parameter is dropped once applied, so a reload never overwrites edits",
           "['template', 'day', 'store', 'from'].forEach((k) => rest.delete(k))" in comp
           and "{ replace: true }" in comp)
