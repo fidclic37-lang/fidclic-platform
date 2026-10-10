@@ -238,7 +238,8 @@ def resolve_audience(tid: str, a: "K.AudienceIn", at: datetime,
         label = f"À moins de {_km(a.km)} km"
     else:
         raise HTTPException(status_code=400, detail="Destinataires inconnus.")
-    f = a.filters
+    # « Tous les clients » means everyone: no filter applies (user, 2026-10-10)
+    f = None if a.mode == "all" else a.filters
     if f and f.active and f.inactive:
         raise HTTPException(status_code=400, detail="« Clients actifs » et « Clients inactifs » ne peuvent pas être cochés ensemble.")
     if f and f.min_points is not None and not (0 <= int(f.min_points) <= 1_000_000):

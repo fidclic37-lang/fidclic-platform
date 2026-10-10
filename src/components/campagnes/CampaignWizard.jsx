@@ -83,8 +83,10 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     const f = a.filters;
     const filters = { active: f.active, inactive: f.inactive, new: f.new,
       min_points: f.min_points === '' || f.min_points == null ? null : Number(f.min_points) };
+    // « Tous les clients » = everyone: no filter (they stay set for the other modes)
     return { mode: a.mode, segment: a.mode === 'segment' ? a.segment : null,
-      customer_ids: a.mode === 'custom' ? a.customer_ids : null, km: a.mode === 'zone' ? Number(a.km) : null, filters };
+      customer_ids: a.mode === 'custom' ? a.customer_ids : null, km: a.mode === 'zone' ? Number(a.km) : null,
+      filters: a.mode === 'all' ? null : filters };
   }, [s.audience]);
   useEffect(() => {
     const a = s.audience;
@@ -670,33 +672,37 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
           <span className="text-[12px] text-[#64748B]">clients sélectionnés</span></span>
       </div>
 
-      <h4 className="mt-5 text-[16px] font-bold text-[#0B1C3F]">Filtres optionnels</h4>
-      <p className="mb-2 text-[13px] text-[#64748B]">Affinez votre audience avec des critères supplémentaires.</p>
-      <div className="divide-y divide-[#EEF2F7] rounded-2xl border border-[#E6EEFB]">
-        {[['active', 'Clients actifs uniquement', 'Clients ayant visité récemment', '#10B981'],
-          ['inactive', 'Clients inactifs', "Clients qui n'ont pas visité depuis un certain temps", '#F59E0B'],
-          ['new', 'Nouveaux clients', 'Clients inscrits récemment', '#2F6BFF']].map(([k, l, h, c]) => (
-          <div key={k} className="flex items-center gap-3 px-4 py-3">
-            <span className="h-3 w-3 rounded-full" style={{ background: c }} />
-            <span className="min-w-0 flex-1"><span className="block text-[14px] font-semibold text-[#0B1C3F]">{l}</span>
-              <span className="text-[12.5px] text-[#64748B]">{h}</span></span>
-            <Toggle label={l} on={f[k]} onChange={(v) => setIn('audience', { filters: { ...f, [k]: v,
-              ...(k === 'active' && v ? { inactive: false } : {}), ...(k === 'inactive' && v ? { active: false } : {}) } })} />
+      {a.mode !== 'all' && (
+        <>
+        <h4 className="mt-5 text-[16px] font-bold text-[#0B1C3F]">Filtres optionnels</h4>
+        <p className="mb-2 text-[13px] text-[#64748B]">Affinez votre audience avec des critères supplémentaires.</p>
+        <div className="divide-y divide-[#EEF2F7] rounded-2xl border border-[#E6EEFB]">
+          {[['active', 'Clients actifs uniquement', 'Clients ayant visité récemment', '#10B981'],
+            ['inactive', 'Clients inactifs', "Clients qui n'ont pas visité depuis un certain temps", '#F59E0B'],
+            ['new', 'Nouveaux clients', 'Clients inscrits récemment', '#2F6BFF']].map(([k, l, h, c]) => (
+            <div key={k} className="flex items-center gap-3 px-4 py-3">
+              <span className="h-3 w-3 rounded-full" style={{ background: c }} />
+              <span className="min-w-0 flex-1"><span className="block text-[14px] font-semibold text-[#0B1C3F]">{l}</span>
+                <span className="text-[12.5px] text-[#64748B]">{h}</span></span>
+              <Toggle label={l} on={f[k]} onChange={(v) => setIn('audience', { filters: { ...f, [k]: v,
+                ...(k === 'active' && v ? { inactive: false } : {}), ...(k === 'inactive' && v ? { active: false } : {}) } })} />
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+            <Star size={14} className="text-[#7C3AED]" />
+            <span className="min-w-0 flex-1"><span className="block text-[14px] font-semibold text-[#0B1C3F]">Clients avec un minimum de points</span>
+              <span className="text-[12.5px] text-[#64748B]">Par exemple : au moins 50 points</span></span>
+            {f.min_points != null && (
+              <input inputMode="numeric" aria-label="Points minimum" value={f.min_points}
+                     onChange={(e) => setIn('audience', { filters: { ...f, min_points: e.target.value.replace(/\D/g, '').slice(0, 7) } })}
+                     className="w-24 rounded-lg border border-[#D9E2F2] px-2 py-1.5 text-right !text-[16px]" />
+            )}
+            <Toggle label="Minimum de points" on={f.min_points != null}
+                    onChange={(v) => setIn('audience', { filters: { ...f, min_points: v ? '50' : null } })} />
           </div>
-        ))}
-        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-          <Star size={14} className="text-[#7C3AED]" />
-          <span className="min-w-0 flex-1"><span className="block text-[14px] font-semibold text-[#0B1C3F]">Clients avec un minimum de points</span>
-            <span className="text-[12.5px] text-[#64748B]">Par exemple : au moins 50 points</span></span>
-          {f.min_points != null && (
-            <input inputMode="numeric" aria-label="Points minimum" value={f.min_points}
-                   onChange={(e) => setIn('audience', { filters: { ...f, min_points: e.target.value.replace(/\D/g, '').slice(0, 7) } })}
-                   className="w-24 rounded-lg border border-[#D9E2F2] px-2 py-1.5 text-right !text-[16px]" />
-          )}
-          <Toggle label="Minimum de points" on={f.min_points != null}
-                  onChange={(v) => setIn('audience', { filters: { ...f, min_points: v ? '50' : null } })} />
         </div>
-      </div>
+        </>
+      )}
     </Card>
   );
 
@@ -770,7 +776,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B1C3F]/45 p-2 backdrop-blur-[2px] sm:p-6">
       {resendModal}
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={pickImage} />
-      <div className="w-full max-w-[1240px] rounded-[28px] bg-white p-4 shadow-2xl sm:p-7">
+      <div className="w-full max-w-[1240px] rounded-[28px] bg-white p-4 shadow-2xl sm:px-7 sm:pb-5 sm:pt-7">
         <header className="mb-5 flex items-start gap-4">
           <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl" style={{ background: meta.bg, color: meta.fg }}><KIcon size={30} /></span>
           <div className="min-w-0 flex-1">
@@ -786,8 +792,10 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
           {PreviewSide}
         </div>
         {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[14px] font-medium text-[#B91C1C]">{error}</p>}
-        <footer className="mt-5 flex flex-wrap items-center justify-between gap-3">
-          <span className="flex items-center gap-3">
+        {/* one line right under the cards: Annuler / Précédent at the window's
+            bottom-left, Suivant just outside the phone box, at its left (user, 2026-10-10) */}
+        <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 lg:grid lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:gap-5">
+          <span className="flex flex-wrap items-center gap-3">
             <button type="button" onClick={() => (step === 1 ? onClose() : go(step === 5 && s.sendMode === 'now' ? 4 : step - 1))}
                     className="inline-flex items-center gap-2 rounded-xl border border-[#CBD5E1] px-6 py-3.5 text-[16px] font-semibold text-[#0B1C3F]">
               {step === 1 ? 'Annuler' : <><ArrowLeft size={18} /> Précédent</>}
@@ -800,15 +808,15 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
             )}
           </span>
           {step < 5 ? (
-            (step !== 4 || s.sendMode === 'later') && (
+            (step !== 4 || s.sendMode === 'later') ? (
               <button type="button" onClick={next}
-                      className="inline-flex items-center gap-3 rounded-xl bg-[#1463FF] px-8 py-3.5 text-[16px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
+                      className="inline-flex items-center gap-3 justify-self-start rounded-xl bg-[#1463FF] px-8 py-3.5 text-[16px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
                 Suivant <ArrowRight size={18} />
               </button>
-            )
+            ) : <span />
           ) : (
             <button type="button" onClick={() => submit('send')} disabled={!!busy}
-                    className="inline-flex items-center gap-3 rounded-xl bg-[#1463FF] px-8 py-3.5 text-[16px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0] disabled:opacity-60">
+                    className="inline-flex items-center gap-3 justify-self-start rounded-xl bg-[#1463FF] px-8 py-3.5 text-[16px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0] disabled:opacity-60">
               {busy === 'send' ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
               {s.sendMode === 'later' ? 'Programmer la notification' : 'Envoyer maintenant'}
             </button>

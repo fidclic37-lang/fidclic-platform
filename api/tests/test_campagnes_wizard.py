@@ -186,17 +186,21 @@ def main():
     check("a radius of 0 is refused", preview(mode="zone", km=0).status_code == 400)
     r = http("POST", "/api/owner/campaigns/audience-preview", headers=H2, json={"audience": {"mode": "zone", "km": 5}})
     check("a shop without a position is told plainly", r.status_code == 400 and "position" in r.json()["detail"])
+    ALL4 = ["c1", "c2", "c3", "c4"]
+    every = preview(mode="all", filters={"min_points": 100, "active": True, "inactive": True})
+    check("« Tous les clients » ignores any filter: everyone, labelled plainly",
+          every.status_code == 200 and set(every.json()["ids"]) == set(ALL4) and every.json()["label"] == "Tous les clients")
     check("« actifs » and « inactifs » together are refused",
-          preview(mode="all", filters={"active": True, "inactive": True}).status_code == 400)
+          preview(mode="custom", customer_ids=ALL4, filters={"active": True, "inactive": True}).status_code == 400)
     check("minimum 100 points → Alice and David",
-          set(preview(mode="all", filters={"min_points": 100}).json()["ids"]) == {"c1", "c4"})
+          set(preview(mode="custom", customer_ids=ALL4, filters={"min_points": 100}).json()["ids"]) == {"c1", "c4"})
     # everyone came 2 days ago, except Chloé who joined 3 days ago and never came
     # (aged from her signup, as on Clients): nobody is inactive yet
-    check("« inactifs » → nobody yet", preview(mode="all", filters={"inactive": True}).json()["ids"] == [])
+    check("« inactifs » → nobody yet", preview(mode="custom", customer_ids=ALL4, filters={"inactive": True}).json()["ids"] == [])
     check("« actifs » → those who came (Alice, Bruno, David)",
-          set(preview(mode="all", filters={"active": True}).json()["ids"]) == {"c1", "c2", "c4"})
+          set(preview(mode="custom", customer_ids=ALL4, filters={"active": True}).json()["ids"]) == {"c1", "c2", "c4"})
     check("« nouveaux » + ≥ 100 points → Alice",
-          preview(mode="all", filters={"new": True, "min_points": 100}).json()["ids"] == ["c1"])
+          preview(mode="custom", customer_ids=ALL4, filters={"new": True, "min_points": 100}).json()["ids"] == ["c1"])
     s = preview(mode="all").json()["sample"]
     check("the preview's sample is a real client, with their points", s["first_name"] in ("Alice", "Bruno", "Chloé", "David")
           and "points" in s and s["next_reward"] == "Un café offert")
