@@ -28,13 +28,15 @@ export function symbolFor(code) {
   } catch { return code; }
 }
 
-export function allCurrencies() {
+// Currency names in the interface's own language, from the browser (QA R5
+// F08: in Arabic they stayed French, mixed with the translated page).
+export function allCurrencies(lang = 'fr') {
   let codes = [];
   try { codes = Intl.supportedValuesOf('currency'); } catch { codes = ['EUR', 'USD', 'GBP', 'CHF', 'MAD', 'XOF', 'CAD', 'INR', 'AED', 'SAR']; }
   let names = null;
-  try { names = new Intl.DisplayNames(['fr'], { type: 'currency' }); } catch { /* ignore */ }
+  try { names = new Intl.DisplayNames([lang, 'fr'], { type: 'currency' }); } catch { /* ignore */ }
   return codes.map((c) => ({ code: c, name: names ? names.of(c) : c, symbol: symbolFor(c) }))
-    .sort((a, b) => (a.code === 'EUR' ? -1 : b.code === 'EUR' ? 1 : a.name.localeCompare(b.name, 'fr')));
+    .sort((a, b) => (a.code === 'EUR' ? -1 : b.code === 'EUR' ? 1 : a.name.localeCompare(b.name, lang)));
 }
 
 export function allTimezones() {

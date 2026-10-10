@@ -368,7 +368,8 @@ export default function DashboardHomePage() {
             Tableau de bord
           </p>
           <h1 className="mt-1 text-[30px] font-bold leading-tight text-[#0B1C3F]">
-            Bonjour <span className="text-[#2F6BFF]">{firstName || 'à vous'}</span>{' '}
+            {/* a first name is data, never translated (« Demo » read « تجريبي », QA R5 F08) */}
+            Bonjour <span className="text-[#2F6BFF]" {...(firstName ? { translate: 'no' } : {})}>{firstName || 'à vous'}</span>{' '}
             <span aria-hidden="true">👋</span>
           </h1>
           <p className="mt-1 text-[13.5px] text-[#64748B]">
