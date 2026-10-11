@@ -9,3 +9,8 @@ deploy.sh
 .vercel
 *.pem
 *.new
+
+# Playwright (customer journey test)
+/test-results/
+/playwright-report/
+/blob-report/

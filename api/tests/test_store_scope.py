@@ -509,7 +509,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a batch is never sent twice", twice is False)
     PW.run_due_for_tenant("t1", now + dt.timedelta(days=3))
     bell = server.get_proactive_alerts_multi_store(request=Req(), token_data=OWNER)
-    check("the bell tells the owner what waits", any(a["id"].startswith("pushwallet:pending") for a in bell["alerts"]))
+    # Automatisations no longer wait for an OK (redesign, 2026-10-11): no such alert
+    check("the bell no longer asks to validate automatic sends",
+          not any(a["id"].startswith("pushwallet:pending") for a in bell["alerts"]))
     PW.update_scenario(inactive["id"], PW.ScenarioPatch(body="Pour tous"), token_data=OWNER, request=Req())
     check("the owner's change applies everywhere: Blois' message gives way",
           next(x for x in PW.list_scenarios(token_data=SARA, request=Req())["scenarios"] if x["id"] == inactive["id"])["body"] == "Pour tous")

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Users, User, Gift, Euro, Settings2, Share2, Trophy, BarChart3, ChevronDown, Eye,
-  ChevronRight, ArrowRight, Loader2, X, Check, Download, Info,
+  ChevronRight, ArrowRight, Loader2, X, Check, Download, Info, ChevronLeft, Search,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -450,6 +450,11 @@ export default function ReferralPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [allRecent, setAllRecent] = useState(false);
+  // « Voir tous » (QA R5 F25): every parrainage of the period, 20 per page, searchable
+  const [full, setFull] = useState({ rows: [], total: 0, page: 1, pages: 1 });
+  const [fullPage, setFullPage] = useState(1);
+  const [fullSearch, setFullSearch] = useState('');
+  const [fullLoading, setFullLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [demo, setDemo] = useState(false);
 
@@ -467,6 +472,18 @@ export default function ReferralPage() {
       .finally(() => setLoading(false));
   }, [range]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!allRecent || demo) return undefined;
+    let alive = true;
+    const t0 = setTimeout(() => {
+      setFullLoading(true);
+      ownerAPI.referralList({ ...range, page: fullPage, per_page: 20, search: fullSearch.trim() || undefined })
+        .then(({ data: d }) => { if (alive) setFull(d); })
+        .catch(() => { if (alive) setFull({ rows: [], total: 0, page: 1, pages: 1 }); })
+        .finally(() => { if (alive) setFullLoading(false); });
+    }, fullSearch ? 250 : 0);
+    return () => { alive = false; clearTimeout(t0); };
+  }, [allRecent, demo, range, fullPage, fullSearch]);
 
   const exportCsv = async () => {
     if (demo) return;          // the example is not yours to export
@@ -485,7 +502,8 @@ export default function ReferralPage() {
   const view = demo ? EXAMPLE : data;
   const cards = view?.cards || [];
   const recent = view?.recent || [];
-  const shown = allRecent ? recent : recent.slice(0, 5);
+  const paged = allRecent && !demo;
+  const shown = paged ? full.rows : allRecent ? recent : recent.slice(0, 5);
   const growing = (cards[0]?.delta_pct ?? 0) > 0;
 
   return (
@@ -664,11 +682,24 @@ export default function ReferralPage() {
                        {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Exporter
                      </button>
                      {recent.length > 5 && (
-                       <SeeAll onClick={() => setAllRecent((v) => !v)}
-                               label={allRecent ? 'Voir moins' : 'Voir tous'} />
+                       <SeeAll onClick={() => { setAllRecent((v) => !v); setFullPage(1); setFullSearch(''); }}
+                               label={allRecent ? 'Voir moins' : `Voir tous (${nf(view?.total_referrals ?? recent.length)})`} />
                      )}
                    </span>
                  )}>
+            {paged && (
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <label className="flex min-w-[220px] flex-1 items-center gap-2 rounded-xl border border-[#E6EEFB] px-3 py-2 focus-within:border-[#2F6BFF]">
+                  <Search size={15} className="text-[#94A3B8]" />
+                  <input value={fullSearch} onChange={(e) => { setFullSearch(e.target.value); setFullPage(1); }}
+                         placeholder="Rechercher un parrain ou un filleul…" aria-label="Rechercher un parrain ou un filleul"
+                         className="min-w-0 flex-1 !border-0 bg-transparent !p-0 text-[13.5px] !shadow-none !outline-none !ring-0" />
+                </label>
+                <span className="text-[12.5px] text-[#64748B]">
+                  {fullLoading ? <Loader2 size={13} className="inline animate-spin" /> : `${nf(full.total)} parrainage${full.total > 1 ? 's' : ''}`}
+                </span>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] border-collapse">
                 <thead>
@@ -723,6 +754,17 @@ export default function ReferralPage() {
                 </tbody>
               </table>
             </div>
+            {paged && full.pages > 1 && (
+              <div className="mt-3 flex items-center justify-between gap-2 text-[12.5px] text-[#475569]">
+                <span>Page {full.page} sur {full.pages}</span>
+                <span className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => setFullPage((p) => Math.max(1, p - 1))} disabled={full.page <= 1}
+                          aria-label="Page précédente" className="rounded-lg border border-[#E6EEFB] p-1.5 disabled:opacity-40"><ChevronLeft size={15} /></button>
+                  <button type="button" onClick={() => setFullPage((p) => Math.min(full.pages, p + 1))} disabled={full.page >= full.pages}
+                          aria-label="Page suivante" className="rounded-lg border border-[#E6EEFB] p-1.5 disabled:opacity-40"><ChevronRight size={15} /></button>
+                </span>
+              </div>
+            )}
           </Panel>
         </>
       )}

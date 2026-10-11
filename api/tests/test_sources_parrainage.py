@@ -75,7 +75,7 @@ def main():
     def join(source=None, parrain=None, chain=None):
         n[0] += 1
         body = {"name": f"Client {n[0]}", "phone": f"07{n[0]:08d}", "postal_code": "06000",
-                "birthday": "01-02", "consent": True}
+                "birthday": "1990-01-02", "consent": True}
         if source is not None:
             body["acquisition_source"] = source
         if parrain:

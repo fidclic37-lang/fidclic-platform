@@ -1,3 +1,4 @@
+import { vh } from '../../../lib/fit';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -398,7 +399,7 @@ function Thread({ d, patch, refresh, say, back, openReplies, toggleInfo, navigat
         </span>
       </header>
 
-      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5" style={{ maxHeight: 'calc(100vh - 360px)', minHeight: 360 }}>
+      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5" style={{ maxHeight: `calc(${vh(100)} - 360px)`, minHeight: 360 }}>
         <p className="text-center text-[12px] text-[#64748B]">
           <span className="rounded-full bg-[#F4F7FC] px-3 py-1">Objet : <strong className="font-semibold text-[#0B1C3F]">{t.subject}</strong> · {t.category_label} · ouvert le {fullDate(t.created_at)}</span>
         </p>

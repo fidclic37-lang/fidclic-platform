@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ownerAPI } from '../lib/api';
-import { ScanLine, CheckCircle2, AlertCircle, Euro, Camera, Building2, Gift, BellRing, X } from 'lucide-react';
+import { ScanLine, CheckCircle2, AlertCircle, Euro, Camera, Building2, Gift, BellRing, X, Info, Zap, SwitchCamera, Package, ChevronDown, ArrowRight, Stamp, Keyboard, Link2, ImageUp } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 // The dashboard's blue palette — every account (owner, manager, employé)
 // works in the same colours.
@@ -137,9 +137,59 @@ function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
   );
 }
 
+// Campagnes (2026-10-10): what the staff must not forget for this client —
+// an offer valid right now (dates and happy hours) and a défi's reward won.
+function TillReminders({ offers = [], rewards = [], onRedeemed }) {
+  const [busy, setBusy] = useState('');
+  const [done, setDone] = useState({});
+  const [err, setErr] = useState('');
+  if (!offers.length && !rewards.length) return null;
+  const give = async (r) => {
+    setBusy(r.id); setErr('');
+    try { await ownerAPI.redeemDefiReward(r.id); setDone((d) => ({ ...d, [r.id]: true })); onRedeemed && onRedeemed(r); }
+    catch (e) { setErr(e?.response?.data?.detail || "La récompense n'a pas pu être remise."); }
+    finally { setBusy(''); }
+  };
+  return (
+    <div className="mt-3 space-y-2">
+      {offers.map((o) => (
+        <p key={o.id} className="flex items-start gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2.5 text-[13.5px] text-[#92400E]">
+          <span aria-hidden="true">%</span>
+          <span><b>Offre active{o.label ? ` : ${o.label}` : ''}</b> — {o.title}{o.terms ? ` (${o.terms})` : ''}. Pensez à l'appliquer.</span>
+        </p>
+      ))}
+      {rewards.map((r) => (
+        <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2.5 text-[13.5px] text-[#14532D]">
+          <span className="flex-1"><b>🏆 Défi réussi : {r.reward}</b> — « {r.title} »{r.expires_at ? `, valable jusqu'au ${new Date(r.expires_at).toLocaleDateString('fr-FR')}` : ''}.</span>
+          {done[r.id] ? <span className="font-semibold text-[#15803D]">Remise ✓</span> : (
+            <button type="button" onClick={() => give(r)} disabled={busy === r.id}
+                    className="rounded-lg bg-[#16A34A] px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60">
+              {busy === r.id ? '…' : 'Remettre'}
+            </button>
+          )}
+        </div>
+      ))}
+      {err && <p role="alert" className="text-[12.5px] font-semibold text-[#DC2626]">{err}</p>}
+    </div>
+  );
+}
+
 const ScanPage = () => {
   const { t } = useTranslation();
-  const [mode, setMode] = useState('manual'); // 'manual' or 'camera'
+  // 'camera' or 'manual'. A phone or tablet at the till opens on the camera
+  // (2026-10-10 redesign); a computer on the typed form.
+  const [mode, setMode] = useState(() => {
+    try { return window.matchMedia('(pointer: coarse)').matches && navigator.mediaDevices?.getUserMedia ? 'camera' : 'manual'; }
+    catch (_e) { return 'manual'; }
+  });
+  const [facing, setFacing] = useState('environment');   // « Retourner »
+  const [torch, setTorch] = useState({ supported: false, on: false });   // « Flash »
+  // Stamps of the customer's PAPER card, moved once onto the digital card
+  // (user, 2026-10-10). The preview says whose card it is and how many it can take.
+  const [paperStamps, setPaperStamps] = useState('');
+  const [preview, setPreview] = useState(null);       // { name, stamps, threshold, paper_max, paper_done, paper_message }
+  const [previewErr, setPreviewErr] = useState('');
+  const [threshold, setThreshold] = useState(10);
   const [barcode, setBarcode] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
   // « -1 » is refused, said and kept on screen (QA F20) — nothing saves meanwhile
@@ -169,7 +219,8 @@ const ScanPage = () => {
   // Open by default: line items are what make the 'Top produits' analytics
   // real. When the picker starts collapsed the cashier types a bare amount and
   // the visit carries no items, so the product report stays empty forever.
-  const [pickerOpen, setPickerOpen] = useState(true);
+  // a dropdown now (« Sélectionner un produit… », 2026-10-10): closed until tapped
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQty, setPickerQty] = useState({}); // { [item.id]: qty }
   // App-wide branch context (item #18). Picking a branch here also reflects on every other page.
   const { branchId: _branchIdRaw, setBranchId: _setBranchIdGlobal, branches: _branchesCtx, setBranches: _setBranchesCtx } = useBranch();
@@ -203,6 +254,8 @@ const ScanPage = () => {
         setCashback((t.data?.programme || '').toLowerCase() === 'cashback');
         if (rate && rate > 0) setPointsPerEuro(rate);
         if (visit && visit > 0) setPointsPerVisit(visit);
+        const size = Number(t.data?.reward_threshold_stamps);
+        if (size && size > 0) setThreshold(size);
       } catch (_e) { /* keep defaults */ }
     })();
     // Load tenant identity so the banner can show "you are at X".
@@ -266,10 +319,11 @@ const ScanPage = () => {
     };
   }, []);
 
-  const startCamera = async () => {
+  const startCamera = async (face = facing) => {
     try {
+      if (streamRef.current) stopCamera();
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: { facingMode: face },
       });
 
       if (videoRef.current) {
@@ -277,6 +331,11 @@ const ScanPage = () => {
         streamRef.current = stream;
         setCameraActive(true);
         setStatus(null);
+        // « Flash »: only where the camera has a torch (most Android phones)
+        try {
+          const caps = stream.getVideoTracks()[0]?.getCapabilities?.() || {};
+          setTorch({ supported: !!caps.torch, on: false });
+        } catch (_e) { setTorch({ supported: false, on: false }); }
 
         // Kick off detection. jsQR loads from CDN on first use; we don't
         // wait for it before showing the preview — the loop checks for
@@ -385,6 +444,41 @@ const ScanPage = () => {
     setCameraActive(false);
   };
 
+  const toggleTorch = async () => {
+    const track = streamRef.current?.getVideoTracks?.()[0];
+    if (!track || !torch.supported) return;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: !torch.on }] });
+      setTorch((t0) => ({ ...t0, on: !t0.on }));
+    } catch (_e) { setTorch({ supported: false, on: false }); }
+  };
+  const flipCamera = () => {
+    const next = facing === 'environment' ? 'user' : 'environment';
+    setFacing(next);
+    startCamera(next);
+  };
+  // the camera opens by itself when the page does on a phone or tablet
+  useEffect(() => {
+    if (mode === 'camera') startCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Whose card is it? Once a full card id is there (typed or scanned), the
+  // till shows the customer, their stamps and the paper stamps it can take.
+  useEffect(() => {
+    setPreview(null);
+    setPreviewErr('');
+    const bc = barcodeFrom(barcode);
+    if (!/^FT-[A-Z0-9]{8}$/.test(bc)) return undefined;
+    let alive = true;
+    const t0 = setTimeout(() => {
+      ownerAPI.scanPreview(bc)
+        .then(({ data }) => { if (alive) setPreview(data); })
+        .catch((e) => { if (alive) setPreviewErr(e?.response?.status === 404 ? 'Aucun client trouvé avec ce code.' : ''); });
+    }, 300);
+    return () => { alive = false; clearTimeout(t0); };
+  }, [barcode]);
+
   const startDetectionLoop = () => {
     // Hidden canvas for jsQR — re-used across frames so we don't allocate per tick.
     const canvas = document.createElement('canvas');
@@ -488,6 +582,18 @@ const ScanPage = () => {
   };
   const clearPicker = () => setPickerQty({});
 
+  // The paper-card field: digits only, 0 to what this card can still take.
+  const paperMax = preview ? preview.paper_max : threshold;
+  const paperCount = paperStamps === '' ? 0 : parseInt(paperStamps, 10) || 0;
+  const paperError = preview?.paper_done && paperCount > 0
+    ? 'La carte papier de ce client a déjà été transférée.'
+    : paperCount > paperMax
+      ? (preview && preview.stamps > 0
+        ? `Cette carte a déjà ${preview.stamps} tampon${preview.stamps > 1 ? 's' : ''} : ${paperMax} au maximum.`
+        : `${paperMax} tampons au maximum (une carte complète).`)
+      : null;
+  const catalogMissing = catalog.length > 0 && pickedItems.length === 0;
+
   const handleScan = async (e) => {
     e.preventDefault();
     if (!barcode.trim()) return;
@@ -500,6 +606,14 @@ const ScanPage = () => {
     if (isNaN(parsedAmount) || parsedAmount < 0) {
         setStatus({ type: 'error', message: t('scan.error_invalid_amount') });
         return;
+    }
+    if (catalog.length > 0 && pickedItems.length === 0) {
+      setStatus({ type: 'error', message: 'Choisissez au moins un produit du catalogue.' });
+      return;
+    }
+    if (paperError) {
+      setStatus({ type: 'error', message: paperError });
+      return;
     }
 
     setLoading(true);
@@ -514,6 +628,8 @@ const ScanPage = () => {
         // so the server can recompute the authoritative total + store
         // the line items on the visit for analytics.
         items: pickerLineItems.length > 0 ? pickerLineItems : undefined,
+        // stamps of the paper card, once per customer (the server checks it all again)
+        paper_stamps: paperCount > 0 ? paperCount : undefined,
       });
 
       // Backend returns full customer object + cycle-aware stamp math.
@@ -551,10 +667,16 @@ const ScanPage = () => {
         // notifications" prompt staff sees post-scan. Customers without
         // push subscriptions get a QR code they can scan to enable.
         notification_status: customerData.notification_status || 'unknown',
+        card_key: customerData.card_key || null,
+        paper_stamps: customerData.paper_stamps || 0,
+        defis_won: customerData.defis_won || [],
+        defi_rewards: customerData.defi_rewards || [],
+        offers_active: customerData.offers_active || [],
       });
       setStatus({ type: 'success', message: t('scan.success') });
       setBarcode('');
       setAmountPaid('');
+      setPaperStamps('');
       clearPicker();
       setPickerOpen(false);
     } catch (error) {
@@ -583,423 +705,272 @@ const ScanPage = () => {
     }
   };
 
+  const inputBox = 'flex min-w-0 items-stretch overflow-hidden rounded-xl border border-[#E2E8F0] bg-white focus-within:border-[#2F6BFF] focus-within:ring-2 focus-within:ring-[#2F6BFF]/15';
+  const iconCell = 'flex w-[52px] shrink-0 items-center justify-center border-r border-[#E2E8F0] text-[#64748B]';
+  const fieldCls = 'min-w-0 flex-1 !border-0 !rounded-none bg-transparent !px-4 py-3.5 !text-[16px] text-[#0B1C3F] !shadow-none !outline-none !ring-0 placeholder:text-[#94A3B8]';
+  const amountHint = pickedItems.length > 0
+    ? 'Calculé à partir des produits choisis.'
+    : cashback
+      ? 'Cashback : un pourcentage du montant est crédité au client.'
+      : pointsMode === 'per_euro'
+        ? `${pointsPerEuro} point${pointsPerEuro > 1 ? 's' : ''} par euro dépensé.`
+        : 'Le montant ne change pas les points dans ce mode (forfait par visite). Le commerçant peut le modifier dans les réglages.';
+  const switchMode = (key) => {
+    setMode(key);
+    if (status?.type === 'error') setStatus(null);      // a camera error does not follow to the form
+    if (key === 'manual') stopCamera();
+    else if (!cameraActive) startCamera();
+  };
+
   return (
-    <div className="sc space-y-6 max-w-2xl mx-auto">
-      {/* Hero — single focused action surface for staff */}
-      <div className="relative text-center pt-4 pb-2">
-        <div
-          aria-hidden="true"
-          className="absolute -top-4 left-1/2 -translate-x-1/2 w-72 h-72 rounded-full blur-3xl opacity-30 pointer-events-none"
-          style={{ background: `radial-gradient(circle, ${C_SCAN.sky} 0%, transparent 70%)` }}
-        />
-        <div
-          className="relative inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.2em] mb-4"
-          style={{
-            background: `linear-gradient(135deg, ${C_SCAN.sky}1A, ${C_SCAN.lavender}1A)`,
-            color: C_SCAN.sky,
-            border: `1px solid ${C_SCAN.sky}33`,
-          }}
-        >
-          <ScanLine size={12} /> {t('scan.staff_workspace')}
-        </div>
-        <h1
-          className="relative font-['Inter'] font-bold leading-[1.1]"
-          style={{ color: C_SCAN.inkDeep, fontSize: 44 }}
-        >
-          {t('scan.hero_title')}
-        </h1>
-        <p className="relative mt-3 text-base max-w-md mx-auto" style={{ color: C_SCAN.inkMute }}>
-          {t('scan.hero_subtitle')}
+    <div className="sc mx-auto max-w-[860px] space-y-6 pb-10">
+      <style>{`@keyframes scanline{0%{top:18%}50%{top:78%}100%{top:18%}}`}</style>
+      {/* Hero */}
+      <div className="pt-2 text-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-[#BFD3FF] bg-[#EEF4FF] px-3.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#2F6BFF]">
+          <Link2 size={13} /> Enregistrer une visite
+        </span>
+        <h1 className="mt-4 text-[34px] font-extrabold leading-tight tracking-tight text-[#0B1C3F] sm:text-[40px]">Enregistrer une visite</h1>
+        <p className="mx-auto mt-2 max-w-[520px] text-[15.5px] leading-relaxed text-[#64748B]">
+          Scannez le code de la carte client ou saisissez-le manuellement pour créditer les points de fidélité.
         </p>
-
-        {/* Tenant identity banner — gives the staff a clear "you are at X" so
-            they immediately notice if they're logged into the wrong account. */}
-        {tenantInfo && (
-          <div
-            className="relative mx-auto mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
-            style={{ background: 'color-mix(in srgb, #2F6BFF 12%, #FFFFFF)', border: '1px solid color-mix(in srgb, #2F6BFF 33%, transparent)', color: '#1D4ED8' }}
-          >
-            <Building2 size={12} />
-            {t('scan.you_are_at')} <b>{tenantInfo.name || t('scan.no_business_name')}</b>
-            <span className="font-mono opacity-70">·  /join/{tenantInfo.slug}</span>
-          </div>
-        )}
-
-        {/* (QA UX07, 2026-10-08: the old build fingerprint line is gone — it
-            meant nothing to a shop.) */}
       </div>
 
-      {branches.length > 0 && (
-        <div
-          className="w-full rounded-2xl p-4 flex items-center gap-3"
-          style={{ background: '#FFFFFF', border: `1px solid ${C_SCAN.hairline}`, boxShadow: '0 1px 2px rgba(28,25,23,0.04)' }}
-        >
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: `${C_SCAN.sky}1A`, color: C_SCAN.sky, border: `1px solid ${C_SCAN.sky}33` }}
-          >
-            <Building2 size={18} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <label className="block text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: C_SCAN.inkMute }}>
-              {t('scan.scanning_at_branch')}
+      {/* Establishment and « give a card back » — only what the shop needs */}
+      {(
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {branches.length > 0 ? (
+            <label className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 text-[12.5px] text-[#334155]">
+              <Building2 size={14} className="text-[#2F6BFF]" />
+              <span className="font-semibold">{t('scan.scanning_at_branch')}</span>
+              <select value={branchId} onChange={(e) => setBranchId(e.target.value)}
+                      className="max-w-[180px] !border-0 bg-transparent !p-0 text-[12.5px] font-semibold text-[#0B1C3F] !outline-none">
+                <option value="">{t('scan.branch_not_tagged')}</option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
+              </select>
             </label>
-            <select
-              value={branchId}
-              onChange={(e) => setBranchId(e.target.value)}
-              className="w-full mt-1 px-2 py-1 text-sm rounded-lg outline-none"
-              style={{ border: `1px solid ${C_SCAN.hairline}`, background: '#FFFFFF' }}
-            >
-              <option value="">{t('scan.branch_not_tagged')}</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>{b.name || b.id}</option>
-              ))}
-            </select>
-          </div>
+          ) : <span />}
+          <button type="button" onClick={() => setReadd({ find: true })}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+            <Gift size={13} /> Rendre sa carte à un client
+          </button>
         </div>
       )}
 
-      {/* A client lost their card (deleted it, or removed it from Apple
-          Wallet): give it back from here — staff included (user, 2026-10-09) */}
-      <div className="flex justify-end">
-        <button type="button" onClick={() => setReadd({ find: true })}
-                className="inline-flex items-center gap-1.5 rounded-full border border-[#E6EEFB] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-          <Gift size={13} /> Rendre sa carte à un client
-        </button>
+      {/* Mode tabs */}
+      <div role="tablist" className="mx-auto grid max-w-[740px] grid-cols-2 gap-1 rounded-full bg-white p-1.5 shadow-[0_6px_20px_-14px_rgba(15,23,42,.35)]">
+        {[['camera', 'Scanner avec la caméra', Camera, 'Caméra'], ['manual', 'Saisie manuelle', Keyboard, 'Saisie manuelle']].map(([key, label, Icon, short]) => (
+          <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => switchMode(key)}
+                  className={`inline-flex items-center justify-center gap-2 rounded-full px-3 py-3 text-[14px] font-semibold transition ${
+                    mode === key ? 'bg-[#1463FF] text-white shadow-[0_10px_24px_-12px_rgba(20,99,255,.9)]' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>
+            <Icon size={18} /> <span className="truncate sm:hidden">{short}</span><span className="hidden truncate sm:inline">{label}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Mode tabs — pill switcher */}
-      <div
-        className="w-full p-1.5 rounded-full flex"
-        style={{ background: '#FFFFFF', border: `1px solid ${C_SCAN.hairline}` }}
-      >
-        {[
-          { key: 'manual', label: t('scan.mode_manual'), icon: ScanLine },
-          { key: 'camera', label: t('scan.mode_camera'), icon: Camera },
-        ].map((tab) => {
-          const isActive = mode === tab.key;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => {
-                setMode(tab.key);
-                if (tab.key === 'manual') stopCamera();
-                else if (!cameraActive) startCamera();
-              }}
-              className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all"
-              style={{
-                background: isActive ? `linear-gradient(135deg, ${C_SCAN.sky}, ${C_SCAN.lavender})` : 'transparent',
-                color: isActive ? 'white' : C_SCAN.inkMute,
-                boxShadow: isActive ? '0 4px 14px rgba(74,144,226,0.25)' : 'none',
-              }}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      <div
-        className="bg-white w-full p-8 md:p-10 rounded-3xl shadow-md border relative overflow-hidden"
-        style={{ borderColor: C_SCAN.hairline }}
-      >
-        {/* Decorative gradient orbs */}
-        <div
-          aria-hidden="true"
-          className="absolute -top-24 -right-24 w-56 h-56 rounded-full blur-3xl opacity-25 pointer-events-none"
-          style={{ background: C_SCAN.sky }}
-        />
-        <div
-          aria-hidden="true"
-          className="absolute -bottom-24 -left-24 w-56 h-56 rounded-full blur-3xl opacity-15 pointer-events-none"
-          style={{ background: C_SCAN.lavender }}
-        />
-
-        {/* Camera Mode */}
-        {mode === 'camera' && (
-          <div className="relative z-10 space-y-4">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              className="w-full rounded-xl border-2 border-[#E6EEFB] bg-[#0B1C3F]"
-              style={{ maxHeight: '400px', objectFit: 'cover' }}
-            />
-
-            {/* Inline amount field — fill BEFORE scanning so we capture the visit value */}
-            <div className="rounded-xl border-2 p-4 space-y-3"
-                 style={{ borderColor: '#E3A86955', background: 'linear-gradient(135deg, #EAF1FF 0%, #FFFFFF 100%)' }}>
-              <div className="flex items-start gap-2">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                     style={{ background: '#E3A869', color: 'white' }}>
-                  <Euro size={16} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-xs font-bold uppercase tracking-widest" style={{ color: '#1D4ED8' }}>
-                    {t('scan.amount_in_advance')}
-                  </p>
-                  <p className="text-[10px] mt-0.5" style={{ color: '#475569' }}>
-                    {t('scan.amount_in_advance_hint')}
-                  </p>
-                </div>
-              </div>
-              <div className="relative">
-                <Euro className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                <DecimalInput
-                  value={amountPaid}
-                  onChange={setAmountPaid}
-                  onInvalid={setAmountError}
-                  aria-invalid={amountError ? 'true' : undefined}
-                  aria-describedby={amountError ? 'amount-error-camera' : undefined}
-                  placeholder="0,00"
-                  className="w-full pl-14 pr-4 py-3 rounded-lg border-2 outline-none text-lg font-bold font-['Inter'] transition-colors"
-                  style={{ borderColor: amountError ? '#DC2626' : '#E6EEFB', background: '#FFFFFF' }}
-                  onFocus={(e) => { if (!amountError) e.target.style.borderColor = '#2F6BFF'; }}
-                  onBlur={(e) => { if (!amountError) e.target.style.borderColor = '#E6EEFB'; }}
-                />
-              </div>
-              {amountError && (
-                <p id="amount-error-camera" role="alert" className="text-[12px] font-semibold text-[#DC2626]">{amountError}</p>
-              )}
-              {!cashback && amountPaid && parseFloat(amountPaid) > 0 && (
-                <p className="text-[11px] font-semibold" style={{ color: '#0F8B58' }}>
-                  ✓ {t('scan.points_will_credit', { count: computeAutoPoints(amountPaid) })}
-                </p>
+      {/* Camera */}
+      {mode === 'camera' && (
+        <div className="space-y-4">
+          <div className="relative overflow-hidden rounded-[28px] bg-[#0B1220] shadow-[0_24px_60px_-30px_rgba(15,23,42,.7)]" style={{ aspectRatio: '16 / 9', minHeight: 300 }}>
+            <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+            {/* the frame the code goes in */}
+            <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-[62%] w-[min(46%,340px)] -translate-x-1/2 -translate-y-1/2">
+              {['left-0 top-0 border-l-4 border-t-4 rounded-tl-2xl', 'right-0 top-0 border-r-4 border-t-4 rounded-tr-2xl',
+                'left-0 bottom-0 border-l-4 border-b-4 rounded-bl-2xl', 'right-0 bottom-0 border-r-4 border-b-4 rounded-br-2xl'].map((c) => (
+                <span key={c} className={`absolute h-10 w-10 border-[#4F8BFF] [filter:drop-shadow(0_0_6px_rgba(79,139,255,.95))] ${c}`} />
+              ))}
+              {cameraActive && (
+                <span className="absolute left-2 right-2 h-[2px] rounded-full bg-[#7FB0FF] shadow-[0_0_14px_4px_rgba(79,139,255,.65)]"
+                      style={{ animation: 'scanline 2.4s ease-in-out infinite' }} />
               )}
             </div>
-
-            {cameraActive && (
-              <button
-                onClick={stopCamera}
-                className="w-full py-3 rounded-xl text-white font-bold bg-[#2F6BFF] hover:bg-[#2559DB] transition-all"
-              >
-                {t('scan.stop_camera')}
+            {/* Flash and Retourner */}
+            <div className="absolute left-4 top-4 flex flex-col items-center gap-1">
+              <button type="button" onClick={toggleTorch} disabled={!torch.supported} aria-pressed={torch.on}
+                      title={torch.supported ? 'Flash' : 'Flash indisponible sur cette caméra'}
+                      className={`flex h-12 w-12 items-center justify-center rounded-full border border-white/40 backdrop-blur transition disabled:opacity-40 ${torch.on ? 'bg-white text-[#0B1C3F]' : 'bg-black/35 text-white'}`}>
+                <Zap size={20} fill={torch.on ? 'currentColor' : 'none'} />
               </button>
-            )}
-
-            {/* Photo upload fallback — works on EVERY browser. On mobile,
-                capture="environment" pops the rear camera straight from the
-                file picker, even on browsers that block getUserMedia (old
-                Android Chrome, Firefox without permission). On desktop, the
-                staff can pick any photo of the customer's QR. This is the
-                safety net that means scanning always works. */}
-            <div className="rounded-xl border-2 border-dashed p-3"
-                 style={{ borderColor: '#E6EEFB', background: '#FFFFFF' }}>
-              <p className="text-[11px] font-semibold mb-2 text-[#475569] uppercase tracking-wider">
-                {t('scan.camera_blocked')}
-              </p>
-              <label className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg cursor-pointer text-sm font-semibold border-2 transition-colors"
-                     style={{ borderColor: '#4A90E2', color: '#4A90E2', background: '#FFFFFF' }}>
-                <Camera size={16} />
-                {t('scan.import_photo')}
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) decodeImageFile(f);
-                    e.target.value = ''; // allow re-picking same file
-                  }}
-                />
-              </label>
-              <p className="text-[10px] text-[#64748B] mt-2 text-center">
-                {t('scan.import_photo_compat')}
-              </p>
+              <span className="text-[11.5px] font-medium text-white drop-shadow">Flash</span>
             </div>
-          </div>
-        )}
-
-        {/* Manual Entry Form */}
-        {mode === 'manual' && (
-          <form onSubmit={handleScan} className="space-y-6 relative z-10">
-            <div>
-              <label className="block text-sm font-bold text-[#0B1C3F] mb-2 uppercase tracking-wide">{t('scan.barcode_label')}</label>
-              <div className="relative">
-                {/* 20px icon (w-5) at left-4 (16px) → icon occupies 16-36px.
-                    pl-14 (56px) leaves a clean ~20px gap before the
-                    placeholder text begins. pointer-events-none so the
-                    icon doesn't eat clicks on the first few pixels. */}
-                <ScanLine className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                <input
-                  type="text"
-                  value={barcode}
-                  onChange={e => setBarcode(barcodeFrom(e.target.value) || e.target.value.toUpperCase())}
-                  placeholder={t('scan.barcode_placeholder')}
-                  className="w-full pl-14 pr-4 py-4 rounded-xl border-2 border-[#E6EEFB] focus:border-[#2F6BFF] focus:ring-0 outline-none text-lg font-mono tracking-widest transition-colors uppercase"
-                  disabled={loading}
-                />
-              </div>
-              <p className="text-xs text-[#475569] mt-2">{t('scan.barcode_hint')}</p>
+            <div className="absolute right-4 top-4 flex flex-col items-center gap-1">
+              <button type="button" onClick={flipCamera} title="Changer de caméra"
+                      className="flex h-12 w-12 items-center justify-center rounded-full border border-white/40 bg-black/35 text-white backdrop-blur">
+                <SwitchCamera size={20} />
+              </button>
+              <span className="text-[11.5px] font-medium text-white drop-shadow">Retourner</span>
             </div>
-
-            {/* ──────────────────────────────────────────────────────────
-                CATALOG ITEM PICKER — only renders when the owner has
-                added items in Settings → Catalogue. Cashier taps items
-                with +/- to build the basket; the total auto-fills the
-                Amount Paid field below. The server is the source of
-                truth for prices, so what the cashier sees here is what
-                gets stored.
-                ────────────────────────────────────────────────────── */}
-            {catalog.length > 0 && (
-              <div>
-                <label className="flex items-center justify-between text-sm font-bold text-[#0B1C3F] mb-2 uppercase tracking-wide">
-                  <span>{t('scan.catalog_label')}</span>
-                  {pickedItems.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearPicker}
-                      className="text-xs font-normal normal-case tracking-normal text-[#2F6BFF] underline"
-                    >
-                      {t('scan.catalog_clear')}
-                    </button>
-                  )}
-                </label>
-                <div
-                  className="rounded-xl border-2 border-[#E6EEFB]"
-                  style={{ background: '#FFFFFF' }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen((v) => !v)}
-                    className="w-full flex items-center justify-between px-4 py-3 text-left"
-                    style={{ font: 'inherit', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                  >
-                    <span className="text-sm text-[#0B1C3F]">
-                      {pickedItems.length === 0
-                        ? t('scan.catalog_no_selection_summary', { count: catalog.length })
-                        : t('scan.catalog_total_selected', { count: pickedItems.reduce((s, r) => s + r.qty, 0), total: pickerTotal.toFixed(2) })}
-                    </span>
-                    <span className="text-xs text-[#64748B]">{pickerOpen ? t('scan.catalog_close') : t('scan.catalog_open')}</span>
-                  </button>
-                  {pickerOpen && (
-                    <div className="border-t border-[#E6EEFB] max-h-80 overflow-y-auto">
-                      {catalog.map((it) => {
-                        const qty = Number(pickerQty[it.id]) || 0;
-                        return (
-                          <div
-                            key={it.id}
-                            className="flex items-center gap-3 px-4 py-2.5 border-b border-[#F4F7FC] last:border-b-0"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm text-[#0B1C3F] truncate">{it.name}</div>
-                              {it.category && (
-                                <div className="text-[10.5px] uppercase tracking-wider text-[#64748B]">{it.category}</div>
-                              )}
-                            </div>
-                            <div className="text-sm font-mono text-[#475569] w-16 text-right" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                              {Number(it.price).toFixed(2)} €
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => bumpQty(it.id, -1)}
-                                aria-label={t('scan.qty_minus')}
-                                className="w-8 h-8 rounded-lg border border-[#E6EEFB] text-[#2F6BFF] font-bold"
-                                style={{ background: '#FFFFFF', font: 'inherit', cursor: 'pointer' }}
-                              >
-                                −
-                              </button>
-                              <span className="w-8 text-center text-sm font-bold" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                                {qty}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => bumpQty(it.id, +1)}
-                                aria-label={t('scan.qty_plus')}
-                                className="w-8 h-8 rounded-lg border border-[#E6EEFB] text-[#10A36B] font-bold"
-                                style={{ background: '#FFFFFF', font: 'inherit', cursor: 'pointer' }}
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+            {/* hint, or the way to switch the camera on */}
+            {cameraActive ? (
+              <div className="absolute bottom-4 left-1/2 flex w-[min(92%,480px)] -translate-x-1/2 items-center gap-3 rounded-2xl border border-white/10 bg-[#0B1220]/80 px-4 py-3 backdrop-blur">
+                <ScanLine size={26} className="shrink-0 text-white" />
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold text-white">Placez le code de la carte client dans le cadre</p>
+                  <p className="text-[12px] text-white/75">Le scan se fait automatiquement</p>
                 </div>
-                <p className="text-xs text-[#475569] mt-2">
-                  {t('scan.catalog_no_items_hint')}
-                </p>
+              </div>
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
+                <Camera size={34} className="text-white/80" />
+                <button type="button" onClick={() => startCamera()}
+                        className="rounded-full bg-[#1463FF] px-5 py-2.5 text-[14px] font-semibold text-white">Activer la caméra</button>
               </div>
             )}
+          </div>
+          {/* Camera refused or missing: a photo of the code works everywhere */}
+          <label className="mx-auto flex w-fit cursor-pointer items-center gap-2 text-[13px] font-semibold text-[#2F6BFF]">
+            <ImageUp size={16} /> Caméra indisponible ? Importer une photo du code
+            <input type="file" accept="image/*" capture="environment" className="hidden"
+                   onChange={(e) => { const f = e.target.files?.[0]; if (f) decodeImageFile(f); e.target.value = ''; }} />
+          </label>
+          <p className="mx-auto flex max-w-[600px] items-start gap-3 rounded-2xl bg-[#EEF4FF] px-5 py-3.5 text-[14px] leading-relaxed text-[#1D4ED8]">
+            <Info size={20} className="mt-0.5 shrink-0" />
+            <span>Les points sont ajoutés automatiquement selon les règles de votre carte. La carte du client (Apple Wallet comprise) se met à jour toute seule.</span>
+          </p>
+        </div>
+      )}
 
-            <div>
-              <label className="block text-sm font-bold text-[#0B1C3F] mb-2 uppercase tracking-wide">
-                {t('scan.amount_label')}
-                {pickedItems.length > 0 && (
-                  <span className="ml-2 normal-case text-xs font-normal text-[#10A36B]">
-                    {t('scan.catalog_auto_filled')}
-                  </span>
-                )}
-              </label>
-              <div className="relative">
-                <Euro className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                {/* « 1,25 » is 1,25 € — never 125 (QA F12): a decimal text field */}
-                <DecimalInput
-                  value={amountPaid}
-                  onChange={setAmountPaid}
-                  onInvalid={setAmountError}
-                  aria-invalid={amountError ? 'true' : undefined}
-                  aria-describedby={amountError ? 'amount-error-manual' : undefined}
-                  placeholder="0,00"
-                  className={`w-full pl-14 pr-4 py-4 rounded-xl border-2 focus:ring-0 outline-none text-lg font-bold font-['Inter'] transition-colors ${
-                    amountError
-                      ? 'border-[#DC2626] focus:border-[#DC2626]'
-                      : pickedItems.length > 0
-                      ? 'border-[#E3A869] bg-[#F6F9FF] focus:border-[#E3A869]'
-                      : 'border-[#E6EEFB] focus:border-[#2F6BFF]'
-                  }`}
-                  disabled={loading || pickedItems.length > 0}
-                  readOnly={pickedItems.length > 0}
-                />
-              </div>
-              {amountError && (
-                <p id="amount-error-manual" role="alert" className="text-[12px] font-semibold text-[#DC2626] mt-2">{amountError}</p>
-              )}
-              <p className="text-xs text-[#475569] mt-2">{
-                pickedItems.length > 0
-                  ? t('scan.amount_hint_picker')
-                  : pointsMode === 'per_euro'
-                    ? t('scan.amount_hint_per_euro')
-                    : t('scan.amount_hint_per_visit')
-              }</p>
+      {/* Typed form — also where a scanned code lands, to add the amount and products */}
+      {mode === 'manual' && (
+        <form onSubmit={handleScan} noValidate
+              className="mx-auto max-w-[800px] space-y-5 rounded-[24px] bg-white p-5 shadow-[0_10px_34px_-24px_rgba(15,23,42,.45)] sm:p-6">
+          <div>
+            <label htmlFor="scan-card-id" className="mb-2 block text-[15px] font-bold text-[#0B1C3F]">ID de la carte client <span className="text-[#E11D48]">*</span></label>
+            <div className={inputBox}>
+              <span className={iconCell}><ScanLine size={20} /></span>
+              <input id="scan-card-id" type="text" value={barcode} autoComplete="off" autoCapitalize="characters"
+                     onChange={(e) => setBarcode(barcodeFrom(e.target.value) || e.target.value.toUpperCase())}
+                     placeholder="Saisissez l’ID de la carte client (ex : FT-A1B2C3D4)"
+                     className={`${fieldCls} font-mono tracking-wider`} disabled={loading} />
             </div>
+            {preview && (
+              <p className="mt-2 flex items-center gap-1.5 text-[13px] text-[#0F8B58]">
+                <CheckCircle2 size={15} /> <b>{preview.name || 'Client'}</b> · {preview.stamps}/{preview.threshold} tampons sur sa carte
+              </p>
+            )}
+            {previewErr && <p role="alert" className="mt-2 text-[13px] font-semibold text-[#DC2626]">{previewErr}</p>}
+            {preview && <TillReminders offers={preview.offers_active} rewards={preview.defi_rewards} />}
+          </div>
 
-            {/* No points field (user, 2026-10-04): the server adds them from the
-                card's own rules (per visit, per euro or cashback) and the
-                customer's Wallet card updates by itself. A typed number used
-                to override those rules — and a cashback card got 10 « points »
-                instead of its euros. */}
-            <p className="flex items-start gap-2 rounded-xl bg-[#F4F7FC] px-4 py-3 text-[13px] text-[#334155]">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#2F6BFF]" />
-              <span>{t('scan.points_auto')}</span>
-            </p>
+          <div>
+            <label htmlFor="scan-amount" className="mb-2 block text-[15px] font-bold text-[#0B1C3F]">Montant payé (€)</label>
+            <div className={`${inputBox} ${amountError ? '!border-[#DC2626]' : ''} ${pickedItems.length > 0 ? 'bg-[#F6F9FF]' : ''}`}>
+              <span className={iconCell}><Euro size={20} /></span>
+              {/* « 1,25 » is 1,25 € — never 125 (QA F12) */}
+              <DecimalInput id="scan-amount" value={amountPaid} onChange={setAmountPaid} onInvalid={setAmountError}
+                            aria-invalid={amountError ? 'true' : undefined} placeholder="0,00"
+                            className={`${fieldCls} font-semibold`} disabled={loading || pickedItems.length > 0} readOnly={pickedItems.length > 0} />
+            </div>
+            {amountError
+              ? <p role="alert" className="mt-2 text-[12.5px] font-semibold text-[#DC2626]">{amountError}</p>
+              : <p className="mt-2 text-[12.5px] text-[#64748B]">{amountHint}</p>}
+            {!cashback && pointsMode === 'per_euro' && amountPaid && parseFloat(amountPaid) > 0 && (
+              <p className="mt-1 text-[12px] font-semibold text-[#0F8B58]">✓ {t('scan.points_will_credit', { count: computeAutoPoints(amountPaid) })}</p>
+            )}
+          </div>
 
-            <button
-              type="submit"
-              disabled={loading || !barcode.trim() || !!amountError}
-              className="w-full py-4 rounded-xl text-white font-bold text-lg bg-[#2F6BFF] hover:bg-[#2559DB] disabled:opacity-50 transition-all shadow-md mt-4"
-            >
-              {loading ? t('scan.submitting') : t('scan.submit')}
-            </button>
-          </form>
-        )}
+          {catalog.length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[15px] font-bold text-[#0B1C3F]">Catalogue produits <span className="text-[#E11D48]">*</span></span>
+                {pickedItems.length > 0 && (
+                  <button type="button" onClick={clearPicker} className="text-[12.5px] font-medium text-[#2F6BFF] underline">{t('scan.catalog_clear')}</button>
+                )}
+              </div>
+              <div className={`${inputBox} flex-col`}>
+                <button type="button" onClick={() => setPickerOpen((v) => !v)} aria-expanded={pickerOpen}
+                        className="flex w-full items-stretch text-left">
+                  <span className={iconCell}><Package size={20} /></span>
+                  <span className={`flex min-w-0 flex-1 items-center px-4 py-3.5 text-[15px] ${pickedItems.length ? 'text-[#0B1C3F]' : 'text-[#94A3B8]'}`}>
+                    <span className="truncate">
+                      {pickedItems.length
+                        ? `${pickedItems.map(({ item, qty }) => `${qty} × ${item.name}`).join(', ')} — ${pickerTotal.toFixed(2).replace('.', ',')} €`
+                        : 'Sélectionner un produit…'}
+                    </span>
+                  </span>
+                  <span className="flex items-center pr-4 text-[#0B1C3F]"><ChevronDown size={18} className={pickerOpen ? 'rotate-180' : ''} /></span>
+                </button>
+                {pickerOpen && (
+                  <div className="max-h-72 overflow-y-auto border-t border-[#E2E8F0]">
+                    {catalog.map((it) => {
+                      const qty = Number(pickerQty[it.id]) || 0;
+                      return (
+                        <div key={it.id} className="flex items-center gap-3 border-b border-[#F1F5F9] px-4 py-2.5 last:border-b-0">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[14px] text-[#0B1C3F]">{it.name}</div>
+                            {it.category && <div className="text-[11px] uppercase tracking-wider text-[#64748B]">{it.category}</div>}
+                          </div>
+                          <div className="w-16 text-right font-mono text-[13.5px] text-[#475569]">{Number(it.price).toFixed(2).replace('.', ',')} €</div>
+                          <div className="flex items-center gap-1">
+                            <button type="button" onClick={() => bumpQty(it.id, -1)} aria-label={t('scan.qty_minus')}
+                                    className="h-9 w-9 rounded-lg border border-[#E2E8F0] font-bold text-[#2F6BFF]">−</button>
+                            <span className="w-7 text-center text-[14px] font-bold tabular-nums">{qty}</span>
+                            <button type="button" onClick={() => bumpQty(it.id, +1)} aria-label={t('scan.qty_plus')}
+                                    className="h-9 w-9 rounded-lg border border-[#E2E8F0] font-bold text-[#10A36B]">+</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
-        {status && (
-          <div className={`mt-8 rounded-2xl border animation-fadeIn ${status.type === 'success' ? 'bg-[#F6F9FF] border-[#E3A869]/50 p-8' : status.type === 'error' ? 'bg-red-50 border-red-200 p-6' : 'bg-[#F4F7FC] border-[#E6EEFB] p-6'}`}>
+          {/* Stamps of a paper loyalty card, moved once onto the digital card */}
+          <div>
+            <label htmlFor="scan-paper" className="mb-2 block text-[15px] font-bold text-[#0B1C3F]">
+              Tampons de la carte papier <span className="font-normal text-[#64748B]">(optionnel)</span>
+            </label>
+            <div className={`${inputBox} ${paperError ? '!border-[#DC2626]' : ''} ${preview?.paper_done ? 'bg-[#F8FAFC]' : ''}`}>
+              <span className={iconCell}><Stamp size={20} /></span>
+              <input id="scan-paper" type="text" inputMode="numeric" maxLength={2} data-keep-zeros
+                     value={paperStamps} disabled={loading || !!preview?.paper_done}
+                     onChange={(e) => setPaperStamps(e.target.value.replace(/\D/g, '').slice(0, 2))}
+                     placeholder={preview?.paper_done ? 'Déjà transférée' : `0 à ${paperMax}`}
+                     aria-invalid={paperError ? 'true' : undefined} aria-describedby="scan-paper-hint"
+                     className={fieldCls} />
+              <span className="flex items-center pr-4 text-[13px] text-[#64748B]">/ {preview?.threshold || threshold}</span>
+            </div>
+            {paperError ? (
+              <p id="scan-paper-hint" role="alert" className="mt-2 text-[12.5px] font-semibold text-[#DC2626]">{paperError}</p>
+            ) : preview?.paper_done ? (
+              <p id="scan-paper-hint" className="mt-2 text-[12.5px] text-[#64748B]">{preview.paper_message}</p>
+            ) : (
+              <p id="scan-paper-hint" className="mt-2 text-[12.5px] text-[#64748B]">
+                Le client a une carte de fidélité papier ? Saisissez ses tampons : ils s’ajoutent à sa carte digitale, en plus de la visite d’aujourd’hui. Une seule fois par client.
+              </p>
+            )}
+          </div>
+
+          {catalogMissing && barcode.trim() && (
+            <p className="text-[12.5px] font-semibold text-[#B45309]">Choisissez au moins un produit du catalogue.</p>
+          )}
+          <button type="submit" disabled={loading || !barcode.trim() || !!amountError || !!paperError || catalogMissing}
+                  className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#1463FF] px-4 text-[16px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] transition hover:bg-[#0F54E0] disabled:opacity-50">
+            <Gift size={20} /> {loading ? t('scan.submitting') : 'Enregistrer la visite et ajouter les points'} {!loading && <ArrowRight size={20} />}
+          </button>
+        </form>
+      )}
+
+      {status && (
+          <div role={status.type === 'error' ? 'alert' : 'status'}
+               className={`mx-auto max-w-[800px] rounded-[24px] border animation-fadeIn shadow-[0_10px_34px_-24px_rgba(15,23,42,.45)] ${status.type === 'success' ? 'border-[#DCE7FF] bg-white p-6 sm:p-8' : status.type === 'error' ? 'border-red-200 bg-red-50 p-6' : 'border-[#E6EEFB] bg-[#F4F7FC] p-6'}`}>
             {status.type === 'success' && scanResult ? (
               <>
                 <div className="flex items-center justify-center gap-3 mb-6">
-                  <CheckCircle2 className="w-10 h-10 text-[#E3A869]" />
+                  <CheckCircle2 className="w-10 h-10 shrink-0 text-[#0F8B58]" />
                   <h3 className="text-2xl font-bold font-['Inter'] text-[#0B1C3F]">
                     {t('scan.visit_recorded_for', { name: scanResult.customer_name || t('scan.customer_fallback') })}
                   </h3>
                 </div>
 
+                {scanResult.defis_won?.length > 0 && (
+                  <p className="mb-3 rounded-xl bg-[#FEF3C7] px-4 py-3 text-center text-[15px] font-bold text-[#92400E]">
+                    🎉 Défi réussi : {scanResult.defis_won.map((w) => w.reward).join(', ')} !
+                  </p>
+                )}
+                <TillReminders offers={scanResult.offers_active} rewards={scanResult.defi_rewards} />
                 {/* Points & Stamps Summary */}
                 <div className="grid grid-cols-2 gap-4 mb-6 text-center">
                   <div className="bg-white p-4 rounded-lg">
@@ -1007,8 +978,12 @@ const ScanPage = () => {
                     <p className="text-sm text-[#475569]">{t('scan.label_points')}</p>
                   </div>
                   <div className="bg-white p-4 rounded-lg">
-                    <p className="text-3xl font-bold text-[#0F8B58]">+1</p>
-                    <p className="text-sm text-[#475569]">{t('scan.label_stamp')}</p>
+                    <p className="text-3xl font-bold text-[#0F8B58]">+{1 + (scanResult.paper_stamps || 0)}</p>
+                    <p className="text-sm text-[#475569]">
+                      {scanResult.paper_stamps > 0
+                        ? `tampons, dont ${scanResult.paper_stamps} de la carte papier`
+                        : t('scan.label_stamp')}
+                    </p>
                   </div>
                 </div>
 
@@ -1037,7 +1012,8 @@ const ScanPage = () => {
                 {scanResult.card_state && scanResult.card_state.state !== 'active' && (
                   <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#FCA5A5] bg-[#FEF2F2] p-4">
                     <p className="text-sm text-[#7F1D1D]">
-                      <strong>{scanResult.card_state.state === 'deleted' ? 'Carte supprimée' : 'Carte retirée d’Apple Wallet'}.</strong>{' '}
+                      <strong>{scanResult.card_state.state === 'deleted' ? 'Carte supprimée'
+                        : scanResult.card_state.state === 'google_removed' ? 'Carte retirée de Google Wallet' : 'Carte retirée d’Apple Wallet'}.</strong>{' '}
                       {scanResult.customer_name || t('scan.this_customer')} n’a plus sa carte sur son téléphone.
                     </p>
                     <button type="button" onClick={() => setReadd({ customerId: scanResult.customer_id })}
@@ -1167,8 +1143,7 @@ const ScanPage = () => {
               <p className="text-[#475569] font-medium">{status.message}</p>
             )}
           </div>
-        )}
-      </div>
+      )}
       {readd && (
         <CardReaddModal customerId={readd.customerId || null} findByPhone={!!readd.find}
                         onClose={() => setReadd(null)} />

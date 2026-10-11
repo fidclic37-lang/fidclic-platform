@@ -254,6 +254,8 @@ const Builder = ({ fields, total, onClose, onCreated }) => {
                             className="shrink-0 rounded-lg p-2 text-[#94A3B8] transition hover:bg-[#FEECEC] hover:text-[#C0392B] disabled:opacity-30 disabled:hover:bg-transparent">
                       <Trash2 size={15} />
                     </button>
+                    {/* what the criterion counts (« Total dépensé » vs « Panier moyen », QA R5 F24) */}
+                    {f.note && <p className="basis-full pl-11 text-[11.5px] leading-snug text-[#64748B]">{f.note}</p>}
                   </div>
                 );
               })}

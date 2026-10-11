@@ -70,6 +70,9 @@ export function FicheModal({ clientId, onClose, onSaved }) {
       .catch((e) => setMsg(err(e, 'Fiche introuvable.')));
   }, [clientId]);
   const [mm, dd] = (f?.birthday || '').split('-');
+  // the year (user, 2026-10-09: the age shows in Clients) — optional here
+  const yy = (f?.birth_date || '').slice(0, 4);
+  const THIS_YEAR = new Date().getFullYear();
   const setBirthday = (m, day) => {
     const max = DAYS_IN[(Number(m) || 1) - 1];
     const dfix = day && Number(day) > max ? String(max).padStart(2, '0') : day;
@@ -81,7 +84,11 @@ export function FicheModal({ clientId, onClose, onSaved }) {
     ['name', 'phone', 'email', 'postal_code', 'is_student', 'acquisition_source'].forEach((k) => {
       if (f[k] !== d.client[k]) body[k] = f[k];
     });
-    if (f.birthday !== d.client.birthday) body.birthday = f.birthday;
+    if (f.birthday !== d.client.birthday || (f.birth_date || '') !== (d.client.birth_date || '')) {
+      const [m2, d2] = (f.birthday || '').split('-');
+      const y2 = (f.birth_date || '').slice(0, 4);
+      body.birthday = y2 && m2 && d2 ? `${y2}-${m2}-${d2}` : f.birthday;
+    }
     if (!Object.keys(body).length) { onClose(); return; }
     try {
       const { data } = await ownerAPI.saveClientFiche(clientId, body);
@@ -113,7 +120,7 @@ export function FicheModal({ clientId, onClose, onSaved }) {
           <label><Label>E-mail (facultatif)</Label>
             <input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={field} />
           </label>
-          <div><Label>Anniversaire</Label>
+          <div className="sm:col-span-2"><Label>Date de naissance{d.client.age != null ? ` · ${d.client.age} ans` : ''}</Label>
             <div className="flex gap-2">
               <select aria-label="Jour" value={dd || ''} onChange={(e) => setBirthday(mm, e.target.value)} className={field}>
                 <option value="">Jour</option>
@@ -123,6 +130,11 @@ export function FicheModal({ clientId, onClose, onSaved }) {
               <select aria-label="Mois" value={mm || ''} onChange={(e) => setBirthday(e.target.value, dd)} className={field}>
                 <option value="">Mois</option>
                 {MONTHS.map((m, i) => <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
+              </select>
+              <select aria-label="Année" value={yy || ''} className={field}
+                      onChange={(e) => setF({ ...f, birth_date: e.target.value ? `${e.target.value}-${mm || '01'}-${dd || '01'}` : '' })}>
+                <option value="">Année</option>
+                {Array.from({ length: THIS_YEAR - 1899 }, (_, i) => String(THIS_YEAR - i)).map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
           </div>
@@ -197,10 +209,16 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
       {!c ? (msg ? null : <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</p>) : (
         <>
           <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-            {[['Points', c.points], ['Tampons (carte en cours)', c.stamps_in_cycle], ['Visites au total', c.visits]].map(([l, v]) => (
+            {/* stamps are the card's meter; visits stay the real scans (QA R5 F22) */}
+            {[['Points', c.points, null],
+              ['Tampons (carte en cours)', c.stamps_in_cycle,
+               [c.stamps_adjusted ? `dont ${c.stamps_adjusted > 0 ? '+' : ''}${c.stamps_adjusted} à la main` : null,
+                c.paper_stamps ? `${c.paper_stamps} de la carte papier` : null].filter(Boolean).join(' · ') || null],
+              ['Visites (scans)', c.visits, null]].map(([l, v, sub]) => (
               <div key={l} className="rounded-xl bg-[#F5F8FE] px-2 py-2.5">
                 <p className="text-[18px] font-bold text-[#0B1C3F]">{v}</p>
                 <p className="text-[11px] leading-tight text-[#64748B]">{l}</p>
+                {sub && <p className="mt-0.5 text-[10.5px] leading-tight text-[#2F6BFF]">{sub}</p>}
               </div>
             ))}
           </div>
@@ -212,7 +230,7 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
           <label className="mt-3 block"><Label>Raison (obligatoire)</Label>
             <input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} placeholder="Ex. visite oubliée au comptoir, geste commercial…" className={field} />
           </label>
-          <p className="mt-2 text-[11.5px] text-[#64748B]">La raison est gardée dans l'historique du client. Aucune visite n'est créée : vos statistiques restent celles des scans.</p>
+          <p className="mt-2 text-[11.5px] text-[#64748B]">La raison est gardée dans l'historique du client. Les tampons ne changent que la carte en cours : le nombre de visites, le palier et vos statistiques restent ceux des scans.</p>
         </>
       )}
       {msg && <p className="mt-3 rounded-lg bg-[#FEF2F2] px-3 py-2 text-[12.5px] text-[#B91C1C]">{msg}</p>}

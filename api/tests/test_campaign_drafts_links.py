@@ -117,11 +117,12 @@ def main():
           http("POST", f"/api/owner/campaigns/drafts/{pid}/cancel-schedule", headers=H2).status_code == 404)
     r = http("POST", f"/api/owner/campaigns/drafts/{pid}/cancel-schedule")
     d = db.campaigns.find_one({"id": pid})
-    check("« Annuler l'envoi »: it stays, as a draft, with no day", r.json()["status"] == "draft"
-          and d["status"] == "draft" and d["scheduled_for"] is None and d["name"] == "Brunch du dimanche")
+    # redesign (2026-10-10): a cancelled plan is listed under « Annulées »
+    check("« Annuler l'envoi »: it stays, « Annulée », its message kept", r.json()["status"] == "cancelled"
+          and d["status"] == "cancelled" and d["name"] == "Brunch du dimanche")
     import features.campaigns_page as CPG
     CPG.run_due(now + dt.timedelta(days=4))
-    check("…and the scheduler never sends it", db.campaigns.find_one({"id": pid})["status"] == "draft"
+    check("…and the scheduler never sends it", db.campaigns.find_one({"id": pid})["status"] == "cancelled"
           and not db.push_notifications.count_documents({"campaign_id": pid}))
     check("cancelling a draft is refused", http("POST", f"/api/owner/campaigns/drafts/{pid}/cancel-schedule").status_code == 409)
     pid2 = compose(title="Goûter", schedule_at=later).json()["id"]
@@ -136,7 +137,9 @@ def main():
     hit = [o for o in feed if o.get("id") == did]
     check("the card's offer carries the campaign's link", hit and all(o.get("link") == "https://monsite.fr/hiver" for o in hit))
     db.campaigns.insert_one({"id": "old", "tenant_id": "t1", "name": "Ancienne", "content": "x", "status": "sent",
-                             "sent_at": now, "link": "javascript:alert(1)"})
+                             "sent_at": now, "link": "javascript:alert(1)",
+                             # a card lists only the campaigns sent to it (2026-10-09)
+                             "recipient_ids": [db.customers.find_one({"barcode_id": "FT-00000000"})["id"]]})
     card = http("GET", "/api/card/FT-00000000", headers={"X-Card-Key": __import__("services.card_owner", fromlist=["x"]).key_for("FT-00000000")}).json()
     bad = [o for o in (card.get("offers") or []) + (card.get("notifications") or []) if o.get("id") == "old"]
     check("a stored non-web link never reaches the card", bad and all(o.get("link") is None for o in bad))

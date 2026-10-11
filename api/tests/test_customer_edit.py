@@ -84,15 +84,25 @@ def main():
     woken.clear()
     r = call("POST", "/api/owner/clients/c1/ajustement", json={"points": 25, "visits": 3, "reason": "Visites oubliées au comptoir"})
     c = db.customers.find_one({"id": "c1"})
-    check(f"+25 points and +3 stamps ({r.json().get('text')})", r.status_code == 200 and c["points"] == 75 and c["visits"] == 15
+    check(f"+25 points and +3 stamps ({r.json().get('text')})", r.status_code == 200 and c["points"] == 75
           and r.json()["client"]["stamps_in_cycle"] == 5)
+    # QA R5 F22 (2026-10-09): a stamp is the card's meter, never a visit
+    check("the visits stay the scans' (12, not 15)", c["visits"] == 12 and r.json()["client"]["visits"] == 12)
+    check("the stamps added by hand are kept apart", r.json()["client"]["stamps_adjusted"] == 3)
     check("no visit is invented: the shop's figures stay the scans'", db.visits.count_documents({}) == 0)
     check("the Wallet card refreshes", "FT-0000000A" in woken)
     check("points never go below 0", call("POST", "/api/owner/clients/c1/ajustement", json={"points": -500, "reason": "x"}).status_code == 400)
     r = call("POST", "/api/owner/clients/c1/ajustement", json={"visits": -6, "reason": "Erreur"})
     check(f"stamps never go below the current card ({r.json().get('detail')})", r.status_code == 400 and "5 tampon" in r.json()["detail"])
-    call("POST", "/api/owner/clients/c1/ajustement", json={"visits": 6, "reason": "Rattrapage"})
-    check("the tier follows the visits (21 → gold)", db.customers.find_one({"id": "c1"})["tier"] == "gold")
+    r = call("POST", "/api/owner/clients/c1/ajustement", json={"visits": 6, "reason": "Trop"})
+    check(f"never above a full card ({r.json().get('detail')})", r.status_code == 400 and "5 au maximum" in r.json()["detail"])
+    call("POST", "/api/owner/clients/c1/ajustement", json={"visits": 5, "reason": "Rattrapage"})
+    c = db.customers.find_one({"id": "c1"})
+    check("a full card by hand: 10/10, still 12 visits", c["visits"] - c["visits_at_last_redemption"] == 10 and c["visits"] == 12)
+    check("the palier stays the scans' (silver, not gold)", c["tier"] == "silver")
+    r = call("POST", "/api/owner/clients/c1/ajustement", json={"visits": 1, "reason": "x"})
+    check("a full card takes no more", r.status_code == 400 and "complète" in r.json()["detail"])
+
 
     print("\nQui peut")
     check("staff cannot", call("PUT", "/api/owner/clients/c2/fiche", ST, json={"name": "X"}).status_code == 403)
@@ -103,12 +113,30 @@ def main():
     f = call("GET", "/api/owner/clients/c1/fiche").json()
     kinds = [x["kind"] for x in f["changes"]]
     check("the client's changes are listed, newest first", kinds[:3] == ["adjust", "adjust", "profile"] and f["changes"][0]["reason"] == "Rattrapage")
+    last = db.customer_changes.find_one({"customer_id": "c1", "reason": "Rattrapage"})
+    check("…recording the card's stamps before and after (5 → 10)",
+          last["before"]["stamps"] == 5 and last["after"]["stamps"] == 10)
     h = call("GET", "/api/owner/history/activity").json()
     rows = h.get("rows") or h.get("items") or []
     acts = {r.get("action") for r in rows}
     check(f"the Historique shows « Fiche client modifiée » and « Ajustement manuel » ({acts})", {"client_update", "adjustment"} <= acts)
     adj = next(r for r in rows if r.get("action") == "adjustment")
     check("with the reason and who did it", "Rattrapage" in adj.get("detail", "") and "o@x.fr" in adj.get("detail", ""))
+
+    print("\nR5 retest (F22)")
+    # The R5 retest: +1 then −1 stamp leaves visits, visit rows and spend as they were
+    before = db.customers.find_one({"id": "c2"})
+    call("POST", "/api/owner/clients/c2/ajustement", json={"visits": 1, "reason": "QA +1"})
+    mid = db.customers.find_one({"id": "c2"})
+    call("POST", "/api/owner/clients/c2/ajustement", json={"visits": -1, "reason": "QA -1"})
+    after = db.customers.find_one({"id": "c2"})
+    check("+1 stamp: the card reads 2, visits stay 1",
+          mid["visits"] - mid["visits_at_last_redemption"] == 2 and mid["visits"] == 1)
+    check("−1 back: card, visits, points and spend as before",
+          after["visits"] == before["visits"] and after["visits"] - after["visits_at_last_redemption"] == 1
+          and after.get("points") == before.get("points") and after.get("total_amount_paid") == before.get("total_amount_paid")
+          and int(after.get("stamps_adjusted") or 0) == 0)
+    check("…and no visit row was ever written", db.visits.count_documents({}) == 0)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

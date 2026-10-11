@@ -44,6 +44,7 @@ from pydantic import BaseModel
 from auth import require_role
 from models import TokenData
 from features import store_scope as S
+from features import campaign_kinds as K
 
 # Campaigns are the owner's, an administrateur's (its establishments) and a
 # manager's (its establishment) — each reaches only its own clients.
@@ -156,6 +157,275 @@ def segment_cards(tid: str) -> List[Dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# The redesign's audience (step 3, 2026-10-10): every client, a segment, the
+# clients picked one by one, or a radius around the shop — then the optional
+# filters. One resolver for the live count, the preview and the send.
+# ---------------------------------------------------------------------------
+EXTRA_SEGMENTS = [("new", "Nouveaux clients", "Inscrits depuis moins de 30 jours")]
+
+
+def _people(tid: str, mine: Optional[set]) -> List[Dict[str, Any]]:
+    q: Dict[str, Any] = {"tenant_id": tid, "deleted_at": {"$exists": False}}
+    if mine is not None:
+        q["id"] = {"$in": list(mine)}
+    return list(_db.customers.find(q, {"_id": 0}))
+
+
+def segment_options(tid: str, at: datetime, mine: Optional[set]) -> List[Dict[str, Any]]:
+    """« Segment de clients »: ours, then the shop's own from Segmentation."""
+    out = [{"key": s["key"], "label": s["label"], "hint": s["hint"]}
+           for s in segment_cards(tid) if s["key"] != "all"]
+    out += [{"key": k, "label": label, "hint": hint} for k, label, hint in EXTRA_SEGMENTS]
+    for doc in _db.saved_segments.find({"tenant_id": tid}, {"_id": 0, "id": 1, "name": 1}):
+        out.append({"key": f"seg:{doc['id']}", "label": doc.get("name") or "Segment", "hint": "Segmentation"})
+    for o in out:
+        try:
+            o["count"] = len(_segment_people(tid, o["key"], at, mine))
+        except HTTPException:
+            o["count"] = 0
+    return out
+
+
+def _segment_people(tid: str, key: str, at: datetime, mine: Optional[set]) -> List[Dict[str, Any]]:
+    if key in SEGMENT_KEYS:
+        return audience(tid, key, at, mine)
+    if key == "new":
+        return K.apply_filters(tid, _people(tid, mine), K.FiltersIn(new=True), at)
+    if key.startswith("seg:"):
+        from features import segmentation as SEG
+        doc = _db.saved_segments.find_one({"id": key[4:], "tenant_id": tid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=400, detail="Ce segment n'existe plus.")
+        return SEG.evaluate(tid, SEG._rules_of(doc), _people(tid, mine), at=at)
+    raise HTTPException(status_code=400, detail=f"Segment inconnu : {key}")
+
+
+def _segment_label(tid: str, key: str) -> str:
+    if key in SEGMENT_LABELS:
+        return SEGMENT_LABELS[key]
+    for k, label, _hint in EXTRA_SEGMENTS:
+        if k == key:
+            return label
+    if key.startswith("seg:"):
+        doc = _db.saved_segments.find_one({"id": key[4:], "tenant_id": tid}, {"_id": 0, "name": 1}) or {}
+        return doc.get("name") or "Segment"
+    return "Segment"
+
+
+def _km(v: Any) -> str:
+    return f"{float(v):g}".replace(".", ",")
+
+
+def resolve_audience(tid: str, a: "K.AudienceIn", at: datetime,
+                     mine: Optional[set]) -> Tuple[List[Dict[str, Any]], str]:
+    if a.mode == "all":
+        people, label = _people(tid, mine), "Tous les clients"
+    elif a.mode == "segment":
+        if not a.segment:
+            raise HTTPException(status_code=400, detail="Choisissez un segment.")
+        people, label = _segment_people(tid, a.segment, at, mine), f"Segment : {_segment_label(tid, a.segment)}"
+    elif a.mode == "custom":
+        ids = [i for i in (a.customer_ids or []) if mine is None or i in mine]
+        if not ids:
+            raise HTTPException(status_code=400, detail="Sélectionnez au moins un client.")
+        people = list(_db.customers.find({"tenant_id": tid, "id": {"$in": ids},
+                                          "deleted_at": {"$exists": False}}, {"_id": 0}))
+        label = f"{len(people)} client{'s' if len(people) > 1 else ''} choisi{'s' if len(people) > 1 else ''}"
+    elif a.mode == "zone":
+        if a.km is None or not (0 < float(a.km) <= 500):
+            raise HTTPException(status_code=400, detail="Choisissez un rayon entre 1 et 500 km.")
+        people, _ = K.zone_people(tid, _people(tid, mine), float(a.km))
+        label = f"À moins de {_km(a.km)} km"
+    else:
+        raise HTTPException(status_code=400, detail="Destinataires inconnus.")
+    # « Tous les clients » means everyone: no filter applies (user, 2026-10-10)
+    f = None if a.mode == "all" else a.filters
+    if f and f.active and f.inactive:
+        raise HTTPException(status_code=400, detail="« Clients actifs » et « Clients inactifs » ne peuvent pas être cochés ensemble.")
+    if f and f.min_points is not None and not (0 <= int(f.min_points) <= 1_000_000):
+        raise HTTPException(status_code=400, detail="Nombre de points minimum invalide.")
+    people = K.apply_filters(tid, people, f, at)
+    return people, label + K.filters_label(f)
+
+
+def best_slot(tid: str) -> Optional[Dict[str, Any]]:
+    """« Conseil FIDCLIC AI »: the busiest two hours (Paris, 90 days), when
+    there are enough visits to say it (Insights' own reading)."""
+    try:
+        from features import insights_page as IP
+        shop = IP.Shop(tid, _now(), None)
+        hrs = IP._hours(shop)
+    except Exception as exc:
+        print(f"campagnes: best slot unavailable ({exc})")
+        return None
+    if not hrs:
+        return None
+    a, b = hrs["busy"]
+    names = {range(5, 11): "Matin", range(11, 14): "Midi", range(14, 18): "Après-midi", range(18, 24): "Soir"}
+    name = next((n for r, n in names.items() if int(a) in r), "Créneau")
+    return {"from": f"{int(a):02d}:00", "to": f"{int(b):02d}:00", "label": f"{name} ({int(a):02d}:00 - {int(b):02d}:00)",
+            "visits": hrs.get("visits"), "days": hrs.get("days")}
+
+
+def _has_position(tid: str) -> bool:
+    try:
+        from features import geolocation as geo
+        lat, lng, _ = geo._shop_position(_db.tenants.find_one({"id": tid}) or {})
+        return lat is not None and lng is not None
+    except Exception:
+        return False
+
+
+class PreviewIn(BaseModel):
+    audience: K.AudienceIn
+    exclude_ids: Optional[List[str]] = None
+
+
+@router.post("/api/owner/campaigns/audience-preview")
+def audience_preview(req: PreviewIn, request: Request = None,
+                     token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """The live count of step 3, the clients of a zone (nearest first), and one
+    real recipient to fill the phone preview's variables."""
+    tid = token_data.tenant_id
+    at = _now()
+    mine = S.customer_ids(S.resolve(token_data, request))
+    people, label = resolve_audience(tid, req.audience, at, mine)
+    from features.resend_guard import without
+    people = without(people, req.exclude_ids)
+    zone = None
+    if req.audience.mode == "zone":
+        from features import segmentation as SEG
+        dist = SEG._distances(tid, people)
+        zone = sorted(({"id": c["id"], "name": c.get("name") or "Client", "km": round(dist.get(c["id"]) or 0, 1)}
+                       for c in people), key=lambda r: r["km"])[:300]
+    names = None
+    if req.audience.mode == "custom" and req.audience.customer_ids:
+        # the chips of step 3 name the clients handed over by Insights / Clients
+        want = [i for i in req.audience.customer_ids[:60] if mine is None or i in mine]
+        names = {c["id"]: c.get("name") or "Client"
+                 for c in _db.customers.find({"tenant_id": tid, "id": {"$in": want}}, {"_id": 0, "id": 1, "name": 1})}
+    sample = None
+    if people:
+        c = people[0]
+        try:
+            import server as core
+            ptnr = core._compute_points_to_next_reward(c, tid)
+        except Exception:
+            ptnr = 0
+        tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "reward_description": 1}) or {}
+        sample = {"first_name": (c.get("name") or "").split(" ")[0] or "Client", "points": int(c.get("points") or 0),
+                  "visits": int(c.get("visits") or 0), "points_missing": ptnr,
+                  "next_reward": tpl.get("reward_description") or "votre récompense"}
+    return {"count": len(people), "label": label, "zone": zone, "sample": sample, "names": names,
+            "ids": [c["id"] for c in people] if len(people) <= 5000 else None}
+
+
+def _row(c: Dict[str, Any], tid: str, at: datetime) -> Dict[str, Any]:
+    ids = list(c.get("recipient_ids") or [])
+    sent_at = _aware(c.get("sent_at"))
+    st = K.status_of(c, at)
+    kind = c.get("kind")
+    return {
+        "id": c.get("id"), "name": c.get("name") or "Campagne",
+        "kind": kind or "message", "type_label": K.KINDS.get(kind, K.LEGACY_LABEL),
+        "recipients": len(ids) or int(c.get("targeted_count") or 0),
+        "open_rate": _pct(len(_opened_ids(tid, ids, sent_at, c)), len(ids)) if c.get("status") == "sent" and ids and sent_at else None,
+        "status": st, "status_label": STATUS_TEXT.get(st, K.STATUS_LABELS.get(st, st)),
+        "sent_at": sent_at.isoformat() if sent_at else None,
+        "scheduled_for": (d.isoformat() if (d := _aware(c.get("scheduled_for"))) else None),
+        "created_at": (d.isoformat() if (d := _aware(c.get("created_at"))) else None),
+        "terms": K.terms_label(c), "image_url": c.get("image_url"),
+        "cancel_reason": c.get("cancel_reason"),
+    }
+
+
+STATUS_TEXT = dict(K.STATUS_LABELS)
+
+
+@router.get("/api/owner/campaigns/list")
+def list_campaigns(tab: str = "all", search: str = "", page: int = 1, per_page: int = 5, kind: str = "",
+                   request: Request = None,
+                   token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """« Vos campagnes récentes »: Toutes · En cours · Programmées · Terminées ·
+    Annulées, newest first, searchable by name, five per page."""
+    tid = token_data.tenant_id
+    at = _now()
+    if tab not in K.TABS:
+        raise HTTPException(status_code=400, detail="Onglet inconnu.")
+    per_page = max(1, min(int(per_page or 5), 50))
+    mine = S.customer_ids(S.resolve(token_data, request))
+    # an administrateur or a manager sees the campaigns that reach its clients
+    docs = _limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine)
+    rows = [_row(c, tid, at) for c in docs]
+    q = (search or "").strip().lower()
+    if q:
+        rows = [r for r in rows if q in (r["name"] or "").lower()]
+    if kind:
+        # the funnel next to the search: one type (« message » = before the redesign)
+        rows = [r for r in rows if r["kind"] == kind]
+    counts = {t: 0 for t in K.TABS}
+    for r in rows:
+        counts["all"] += 1
+        t = K.tab_of(r["status"])
+        if t != "all":
+            counts[t] += 1
+    if tab != "all":
+        rows = [r for r in rows if K.tab_of(r["status"]) == tab]
+
+    def when(r):
+        return r["sent_at"] or r["scheduled_for"] or r["created_at"] or ""
+    rows.sort(key=when, reverse=True)
+    total = len(rows)
+    pages = max(1, -(-total // per_page))
+    page = max(1, min(int(page or 1), pages))
+    return {"rows": rows[(page - 1) * per_page: page * per_page], "total": total, "page": page,
+            "pages": pages, "per_page": per_page, "counts": counts}
+
+
+@router.get("/api/owner/campaigns/{campaign_id}/detail")
+def campaign_detail(campaign_id: str, request: Request = None,
+                    token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
+    """A row of « Vos campagnes récentes » opened (user, 2026-10-10: a click
+    always shows the campaign): what was said, to whom, when, and — once sent —
+    what it did (opens, clicks, clients back within 15 days, their spend)."""
+    tid = token_data.tenant_id
+    at = _now()
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
+    found = _limit([c for c in [_db.campaigns.find_one({"tenant_id": tid, "id": campaign_id}, {"_id": 0})] if c], mine)
+    if not found:
+        raise HTTPException(status_code=404, detail="Campagne introuvable.")
+    c = found[0]
+    row = _row(c, tid, at)
+    ids = list(c.get("recipient_ids") or [])
+    sent_at = _aware(c.get("sent_at"))
+    stats = None
+    if c.get("status") == "sent" and sent_at:
+        opened = _opened_ids(tid, ids, sent_at, c)
+        back = _db.visits.distinct("customer_id", {
+            "tenant_id": tid, "customer_id": {"$in": ids},
+            "visit_time": {"$gte": sent_at, "$lte": sent_at + timedelta(days=ATTRIBUTION_DAYS)},
+            **S.visit_filter(scope)}) if ids else []
+        delivered = int(c.get("delivered_count") or 0)
+        stats = {"recipients": len(ids), "delivered": min(delivered, len(ids)) if delivered else None,
+                 "opened": len(opened), "open_rate": _pct(len(opened), len(ids)),
+                 "clicks": int(c.get("offer_clicks") or 0), "came_back": len(back),
+                 "came_back_rate": _pct(len(back), len(ids)),
+                 "revenue": _attributed_revenue(tid, ids, sent_at, scope),
+                 "window_days": ATTRIBUTION_DAYS, "open_window_h": OPEN_WINDOW_H}
+    _, until = K.window(c) if sent_at else (None, None)
+    st = row["status"]
+    return {**row, "title": c.get("name") or "", "message": c.get("content") or "", "details": c.get("details"),
+            "link_url": safe_link(c.get("link_url")), "audience_label": c.get("audience_label") or "Sélection",
+            "discount": K.discount_label(c.get("offer")) if c.get("kind") in K.OFFER_KINDS else None,
+            "live_until": until.isoformat() if until else None,
+            "cancelled_at": (d.isoformat() if (d := _aware(c.get("cancelled_at"))) else None),
+            "stats": stats,
+            "can_edit": st in ("draft", "scheduled", "cancelled"), "can_cancel": st == "scheduled",
+            "can_delete": st in ("draft", "cancelled")}
+
+
+# ---------------------------------------------------------------------------
 # Rates
 # ---------------------------------------------------------------------------
 def _opened_ids(tid: str, recipients: List[str], sent_at: datetime,
@@ -227,7 +497,9 @@ def page(request: Request = None,
     at = _now()
     scope = S.resolve(token_data, request)
     mine = S.customer_ids(scope)
-    start, prev_start = at - timedelta(days=30), at - timedelta(days=60)
+    # « vs. mois précédent »: this calendar month so far vs the whole last month
+    # (Paris), as the user chose for the redesign (2026-10-10)
+    start, prev_start, _ = K.month_bounds(at)
 
     now_rows = _sent_between(tid, start, at, mine)
     prev_rows = _sent_between(tid, prev_start, start, mine)
@@ -303,6 +575,13 @@ def page(request: Request = None,
                         f"{ATTRIBUTION_DAYS} jours suivant l'envoi.",
         "empty": not recent,
         "scope": scope.describe(),
+        # the redesign's wizard: segments to pick from, the best time to send,
+        # whether « Zone géographique » can work (the shop's position)
+        "segment_options": segment_options(tid, at, mine),
+        "best_slot": best_slot(tid),
+        "kinds": [{"key": k, "label": v} for k, v in K.KINDS.items()],
+        "has_position": _has_position(tid),
+        "month_label": "vs. mois précédent",
     }
 
 
@@ -330,6 +609,14 @@ class Compose(BaseModel):
     # FidClic IA). Recorded so the recommendation can step aside once it has
     # been used, and something new can take its place.
     template: Optional[str] = None
+    # The redesign (2026-10-10): the kind and its step-1 terms, the details
+    # shown on the card, and the audience as chosen in step 3.
+    kind: Optional[str] = None
+    offer: Optional[K.OfferIn] = None
+    event: Optional[K.EventIn] = None
+    defi: Optional[K.DefiIn] = None
+    details: Optional[str] = None
+    audience: Optional[K.AudienceIn] = None
 
 
 def _clean(text: str, limit: int) -> str:
@@ -364,7 +651,7 @@ def safe_link(raw: Optional[str]) -> Optional[str]:
 
 # What can still be changed: a draft, and a planned campaign not yet sent
 # (user, 2026-10-08: « planifiée ko cancel ya edit karne ka button »).
-EDITABLE = ("draft", "scheduled")
+EDITABLE = ("draft", "scheduled", "cancelled")
 
 
 def _own_draft(tid: str, draft_id: str, allow: Tuple[str, ...] = EDITABLE) -> Dict[str, Any]:
@@ -396,27 +683,30 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "template": d.get("template"),
         "status": d.get("status"),
         "scheduled_for": when.isoformat() if when else None,
+        "kind": d.get("kind"), "offer": d.get("offer"), "event": d.get("event"), "defi": d.get("defi"),
+        "details": d.get("details") or "", "audience_spec": d.get("audience_spec"),
     }
 
 
 @router.post("/api/owner/campaigns/drafts/{draft_id}/cancel-schedule")
 def cancel_schedule(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
-    """« Annuler l'envoi »: the planned campaign does not leave and goes back
-    to the drafts, its message kept (delete it from there if unwanted)."""
+    """« Annuler l'envoi »: the planned campaign does not leave. It is listed
+    under « Annulées » (redesign, 2026-10-10), its message kept: « Modifier »
+    plans or sends it again, « Supprimer » removes it."""
     _own_draft(token_data.tenant_id, draft_id, allow=("scheduled",))
     done = _db.campaigns.update_one({"id": draft_id, "tenant_id": token_data.tenant_id, "status": "scheduled"},
-                                    {"$set": {"status": "draft", "scheduled_for": None}})
+                                    {"$set": {"status": "cancelled", "cancelled_at": _now()}})
     if not getattr(done, "modified_count", 0):                 # the cron took it in between
         raise HTTPException(status_code=409, detail="Cette campagne est déjà partie : elle ne peut plus être annulée.")
-    return {"id": draft_id, "status": "draft"}
+    return {"id": draft_id, "status": "cancelled"}
 
 
 @router.delete("/api/owner/campaigns/drafts/{draft_id}")
 def delete_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
     """« Supprimer » a draft (QA F02). Only drafts: what was sent is history,
     and a planned one is cancelled first (« Annuler l'envoi »)."""
-    _own_draft(token_data.tenant_id, draft_id, allow=("draft",))
-    _db.campaigns.delete_one({"id": draft_id, "tenant_id": token_data.tenant_id, "status": "draft"})
+    _own_draft(token_data.tenant_id, draft_id, allow=("draft", "cancelled"))
+    _db.campaigns.delete_one({"id": draft_id, "tenant_id": token_data.tenant_id, "status": {"$in": ["draft", "cancelled"]}})
     return {"deleted": True}
 
 
@@ -441,13 +731,33 @@ def compose(req: Compose, request: Request = None,
     at = _now()
     scope = S.resolve(token_data, request)
     mine = S.customer_ids(scope)
-    if req.customer_ids:
+    when_req = _aware(req.schedule_at)
+    send_at = when_req if (when_req and when_req > at and not req.draft) else at
+    # the kind and its terms (step 1), checked against the moment it leaves
+    kind = K.clean_kind(req.kind)
+    terms: Dict[str, Any] = {"offer": None, "event": None, "defi": None}
+    if kind == "offre":
+        terms["offer"] = K.clean_offer(req.offer, send_at)
+    elif kind == "configurer":
+        # no discount here: a title, a description, and its dates when it has some
+        terms["offer"] = K.clean_offer(req.offer.model_copy(update={"discount_type": None, "discount_value": None})
+                                       if req.offer else None, send_at)
+    elif kind == "evenement":
+        terms["event"] = K.clean_event(req.event, send_at)
+    elif kind == "defi":
+        terms["defi"] = K.clean_defi(req.defi, send_at)
+    details = re.sub(r"[ \t]+", " ", (req.details or "").strip())[:500] or None
+    if req.audience is not None:
+        people, label = resolve_audience(tid, req.audience, at, mine)
+    elif req.customer_ids:
         ids = [i for i in req.customer_ids if mine is None or i in mine]
         people = list(_db.customers.find({"tenant_id": tid, "id": {"$in": ids}}, {"_id": 0}))
         label = f"{len(people)} client{'s' if len(people) > 1 else ''}"
     else:
         people = audience(tid, req.segment, at, mine)
         label = SEGMENT_LABELS.get(req.segment, "Sélection")
+    if not people and not req.draft and not req.exclude_ids:
+        raise HTTPException(status_code=400, detail="Aucun client ne correspond à ces destinataires.")
     from features.resend_guard import without
     people = without(people, req.exclude_ids)
     if not people and not req.draft and req.exclude_ids:
@@ -465,7 +775,7 @@ def compose(req: Compose, request: Request = None,
         "content": message,
         "status": status,
         "source": "push",
-        "segment": req.segment if not req.customer_ids else "custom",
+        "segment": ("custom" if (req.customer_ids or (req.audience and req.audience.mode != "all")) else req.segment),
         "audience_label": label,
         "image_url": req.image_url or None,
         "link_url": link,
@@ -483,6 +793,8 @@ def compose(req: Compose, request: Request = None,
         # wallet pass builder, so the pass and the web card agree.
         "wallet_offer": bool(req.wallet),
         "template": (req.template or "").strip()[:40] or None,
+        "kind": kind, **terms, "details": details,
+        "audience_spec": req.audience.dict() if req.audience is not None else None,
         # For which establishments it was sent (None = the whole shop), and by whom.
         "store_ids": scope.ids,
         "sent_by": getattr(token_data, "email", None),
@@ -582,6 +894,13 @@ def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
             continue
         if not plan_limits.allows_tenant(doc.get("tenant_id"), "campaigns"):
             continue                    # Campagnes no longer in the plan: it will show as « non envoyée »
+        _, until = K.window({**doc, "sent_at": at})
+        if doc.get("kind") and until and until < at:
+            # its offer / event / défi ended before it could leave
+            _db.campaigns.update_one({"id": doc["id"], "status": "scheduled"},
+                                     {"$set": {"status": "cancelled", "cancelled_at": at,
+                                               "cancel_reason": "Terminée avant son envoi"}})
+            continue
         claimed = _db.campaigns.update_one(
             {"id": doc["id"], "status": "scheduled"}, {"$set": {"status": "sending"}})
         if not getattr(claimed, "modified_count", 1):

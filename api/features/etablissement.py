@@ -92,6 +92,32 @@ def _me(token: TokenData) -> Dict[str, Any]:
     return _db.users.find_one({"email": getattr(token, "email", None)}, {"_id": 0}) or {}
 
 
+def _owner(tid: str, token: TokenData) -> Dict[str, Any]:
+    """The shop's owner account: the signed-in one when it is the owner (also
+    when the super admin views the shop as it), else the first owner."""
+    me = _me(token)
+    if me.get("role") == "business_owner" and me.get("tenant_id") == tid:
+        return me
+    rows = list(_db.users.find({"tenant_id": tid, "role": "business_owner"}, {"_id": 0}).sort("created_at", 1).limit(1))
+    return rows[0] if rows else {}
+
+
+NAME_MAX = 60
+# letters (any alphabet, accents), spaces, hyphens, apostrophes, dots — « Jean-Luc », « D'Arcy », « Mª »
+NAME_RE = re.compile(r"^[^\W\d_]+(?:[ '’.\-][^\W\d_]*)*$")
+
+
+def _clean_name(raw: Optional[str], label: str) -> str:
+    v = re.sub(r"\s+", " ", (raw or "").strip())
+    if not v:
+        raise HTTPException(status_code=400, detail=f"Le {label} du propriétaire est obligatoire.")
+    if len(v) > NAME_MAX:
+        raise HTTPException(status_code=400, detail=f"Le {label} du propriétaire dépasse {NAME_MAX} caractères.")
+    if not NAME_RE.match(v):
+        raise HTTPException(status_code=400, detail=f"Le {label} du propriétaire ne peut contenir que des lettres, espaces, tirets et apostrophes.")
+    return v
+
+
 def _covers(token: TokenData, tid: str) -> List[str]:
     from features import team_access as T
     all_ids = [s["id"] for s in T.stores(tid)]
@@ -131,8 +157,12 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
         multi = bool(features_for(t).get("multi_branch"))
     except Exception:
         multi = False
+    o = _owner(tid, token)
     return {
-        "can": {"brand": owner, "legal": role in EDITORS, "geo": owner, "hours": owner,
+        # the owner's own name (« Bonjour … » on the dashboard), changed by the owner only
+        "owner": {"first_name": o.get("first_name") or "", "last_name": o.get("last_name") or "",
+                  "email": o.get("email") or ""},
+        "can": {"brand": owner, "owner_name": owner, "legal": role in EDITORS, "geo": owner, "hours": owner,
                 "add_store": owner and multi, "plan_allows_stores": multi},
         "business": {"name": t.get("name") or "", "logo_url": tpl.get("logo_url") or "",
                      "phone": t.get("phone") or "", "email": t.get("email") or t.get("contact_email") or "",
@@ -188,7 +218,13 @@ class GeoIn(BaseModel):
     cooldown_days: Optional[int] = None
 
 
+class OwnerIn(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
 class EtablissementIn(BaseModel):
+    owner: Optional[OwnerIn] = None
     business: Optional[BusinessIn] = None
     address: Optional[AddressIn] = None
     legal: Optional[LegalIn] = None
@@ -222,9 +258,14 @@ def put_etablissement(body: EtablissementIn,
     owner = getattr(token_data, "role", None) == "business_owner"
     if getattr(token_data, "role", None) not in EDITORS:
         raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient l'établissement.")
-    if not owner and (body.business or body.address or body.geo):
+    if not owner and (body.business or body.address or body.geo or body.owner):
         raise HTTPException(status_code=403, detail="Seul le propriétaire modifie ces informations.")
     sets: Dict[str, Any] = {}
+    owner_names: Dict[str, str] = {}
+    if body.owner:
+        # checked before anything is written: a refused name saves nothing
+        owner_names = {"first_name": _clean_name(body.owner.first_name, "prénom"),
+                       "last_name": _clean_name(body.owner.last_name, "nom")}
 
     if body.business:
         b = body.business
@@ -295,6 +336,20 @@ def put_etablissement(body: EtablissementIn,
             sets["geo_radius_meters"] = max(50, min(2000, int(g.radius_m)))
         if g.cooldown_days is not None:
             sets["geo_cooldown_days"] = max(1, min(30, int(g.cooldown_days)))
+
+    if owner_names:
+        me = _owner(tid, token_data)
+        if not me.get("email"):
+            raise HTTPException(status_code=404, detail="Compte du propriétaire introuvable.")
+        if any((me.get(k) or "") != v for k, v in owner_names.items()):
+            # one place: every page reads the name from the account (team, admin, e-mails, « Bonjour »)
+            _db.users.update_one({"email": me["email"]}, {"$set": {**owner_names, "updated_at": _now()}})
+            try:
+                from server import log_audit
+                log_audit("owner.renamed", actor=getattr(token_data, "email", None), actor_type="user",
+                          tenant_id=tid, target=me["email"], meta={"by": getattr(token_data, "view_by", None)})
+            except Exception:
+                pass
 
     if sets:
         sets["updated_at"] = _now()

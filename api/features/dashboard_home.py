@@ -158,7 +158,7 @@ def _cards_lost(tid: str, scope, at: datetime) -> Dict[str, Any]:
     try:
         return CS.dashboard_count(tid, at, S.customer_ids(scope))
     except Exception:
-        return {"count": 0, "days": CS.DASHBOARD_DAYS, "href": "/dashboard/customers?card=deleted"}
+        return {"count": 0, "hours": CS.ALERT_HOURS, "href": "/dashboard/customers?card=recent"}
 
 
 @router.get("/api/owner/home/overview")

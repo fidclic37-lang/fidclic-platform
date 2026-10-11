@@ -69,7 +69,7 @@ export default function ModuleChooserPage() {
             className="font-['Playfair_Display'] text-3xl md:text-4xl font-bold mb-2"
             style={{ color: '#1C1917' }}
           >
-            Bonjour{user?.name ? `, ${user.name}` : ''} 👋
+            Bonjour{user?.first_name || user?.name ? `, ${user.first_name || user.name}` : ''} 👋
           </h1>
           <p className="text-[#57534E] text-sm md:text-base">
             Choisissez l'espace dans lequel vous souhaitez travailler.

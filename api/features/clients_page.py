@@ -310,10 +310,14 @@ def status_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = 
 
 FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visits": 1,
           "points": 1, "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
-          "birthday": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
+          "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
           "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
-          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1}
+          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1,
+          "google_removed_at": 1, "google_added_at": 1,
+          # the card's meter, apart from visits (QA R5 F22): stamps on the
+          # current card, those added by hand and those of a paper card
+          "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1}
 
 
 # Owner, administrateur and manager read the Clients page; each sees the
@@ -358,10 +362,18 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         "last_visit": last.isoformat() if last else None,
         "joined": joined.isoformat() if joined else None,
         "city": cust.get("city") or "",
+        # from the full date of birth (user, 2026-10-09); None for clients who
+        # gave day and month only
+        "age": _age(cust),
         "source": _source_key(cust), "source_label": _source_label(cust),
         # « Active », « Supprimée », « Retirée d'Apple Wallet » (user, 2026-10-09)
         "card": _card_state(cust),
     }
+
+
+def _age(cust: Dict[str, Any]) -> Optional[int]:
+    from services import customer_fields as CF
+    return CF.age_of(cust.get("birth_date"))
 
 
 def _card_state(cust: Dict[str, Any]) -> Dict[str, Any]:
@@ -462,12 +474,12 @@ def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_i
     from services import sources as SRC
     want_source = source if source in SRC.SOURCES or source == SRC.UNKNOWN else ""
     from features import card_status as CS
-    want_card = card if card in ("active", "deleted") else ""
+    want_card = card if card in ("active", "deleted", "recent") else ""
     for c in rows:
         if want_source and SRC.key_of(c) != want_source:
             continue
         # every plan: knowing who lost their card is not segmentation
-        if want_card and not CS.matches(c, want_card):
+        if want_card and not CS.matches(c, want_card, at):
             continue
         if segment and segment != "all" and not _matches_segment(segment, c, at, shop_avg, local_ids, rules):
             continue
@@ -703,13 +715,17 @@ def export_clients(
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Source", "Visites",
-                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte"])
+                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte", "Âge",
+                "Tampons (carte en cours)", "Tampons ajoutés à la main", "Tampons carte papier"])
     for c in rows:
         p = _public(c, at, shop_avg, local, rules)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
                     p["source_label"], p["visits"], f"{p['spent']:.2f}".replace(".", ","),
                     _paris_day(p["last_visit"]), _paris_day(p["joined"]), p["city"],
-                    p["card"]["label"] + (f" ({_paris_day(p['card']['at'])})" if p["card"]["at"] else "")])
+                    p["card"]["label"] + (f" ({_paris_day(p['card']['at'])})" if p["card"]["at"] else ""),
+                    p["age"] if p["age"] is not None else "",
+                    max(0, int(c.get("visits") or 0) - int(c.get("visits_at_last_redemption") or 0)),
+                    int(c.get("stamps_adjusted") or 0), int(c.get("paper_stamps") or 0)])
     data = "﻿" + buf.getvalue()
     return Response(content=data, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition":

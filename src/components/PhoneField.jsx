@@ -69,11 +69,12 @@ export default function PhoneField({
         <span aria-hidden="true" className="pointer-events-none whitespace-nowrap">
           {`${flagOf(iso)} +${country(iso).dial}`} <span className="text-[10px] opacity-60">▾</span>
         </span>
+        {/* 16px: iPhone Safari zooms into any smaller field */}
         <select
           aria-label="Pays de l'indicatif"
           value={iso}
           onChange={(e) => { setIso(e.target.value); emit(e.target.value, national); }}
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          className="absolute inset-0 h-full w-full cursor-pointer !text-[16px] opacity-0"
         >
           {COUNTRIES.map(([code, name, dial]) => (
             <option key={code} value={code}>{`${flagOf(code)} ${name} (+${dial})`}</option>

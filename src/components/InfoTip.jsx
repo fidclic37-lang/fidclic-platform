@@ -1,3 +1,4 @@
+import { fitRect, viewW, viewH } from '../lib/fit';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { HelpCircle } from 'lucide-react';
@@ -27,9 +28,9 @@ export default function InfoTip({ k, page, className = '', size = 13 }) {
   const id = useId();
 
   const place = useCallback(() => {
-    const r = btn.current?.getBoundingClientRect();
-    if (!r) return;
-    const vw = window.innerWidth, vh = window.innerHeight;
+    if (!btn.current) return;
+    const r = fitRect(btn.current);                 // the app's pixels, even when it is scaled to fit
+    const vw = viewW(), vh = viewH();
     const width = Math.min(W, vw - 24);
     const left = Math.max(12, Math.min(r.left + r.width / 2 - width / 2, vw - width - 12));
     const below = r.bottom + 8;

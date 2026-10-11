@@ -78,7 +78,7 @@ def main():
 
     def join(phone, email="", postal="37000", name="Client"):
         return http("POST", "/api/join/cafe", json={"name": name, "phone": phone, "email": email, "postal_code": postal,
-                                                    "birthday": "01-02", "consent": True})
+                                                    "birthday": "1990-01-02", "consent": True})
 
     print("\n2. Inscription client")
     r = join("06 11 11 11 11", "lea@exemple.fr", name="Léa")

@@ -37,7 +37,7 @@ def main():
     db.tenants.insert_one({"id": "t1", "slug": "cafe", "name": "Café", "plan": "vip", "subscription_status": "active"})
 
     def join(**kw):
-        body = {"name": "Léa Martin", "phone": "06 12 34 56 78", "postal_code": "37000", "birthday": "12-25",
+        body = {"name": "Léa Martin", "phone": "06 12 34 56 78", "postal_code": "37000", "birthday": "25/12/1990",
                 "consent": True, "consent_policy_version": "2026-07-21", **kw}
 
         async def run():
@@ -48,23 +48,25 @@ def main():
     print("\nInscription : le serveur vérifie aussi (UX10)")
     for field, bad, word in (("phone", "abc", "téléphone"), ("phone", "12", "téléphone"),
                              ("postal_code", "ABCDE", "Code postal"), ("postal_code", "3700", "Code postal"),
-                             ("birthday", "13-99", "anniversaire"), ("birthday", "02-30", "anniversaire"),
+                             ("birthday", "13-99", "naissance"), ("birthday", "30/02/1990", "naissance"),
+                             ("birthday", "25/12", "naissance"),      # the year is asked now (2026-10-09)
                              ("email", "pas-un-mail", "e-mail"), ("name", "   ", "nom")):
         r = join(**{field: bad})
         check(f"{field} « {bad} » is refused, in French ({r.status_code})", r.status_code == 400 and word in r.json()["detail"])
     r = join()
     check("a valid signup goes through", r.status_code == 200 and r.json().get("barcode_id"))
     c = db.customers.find_one({"barcode_id": r.json()["barcode_id"]})
-    check("the birthday is stored as MM-DD", c["birthday"] == "12-25")
-    r = join(phone="+33 6 98 76 54 32", birthday="29/02", name="Paul")
-    check("« 29/02 » (day/month, older forms) is read as 02-29", r.status_code == 200
+    check("the birthday is stored as MM-DD, the full date beside it",
+          c["birthday"] == "12-25" and c.get("birth_date") == "1990-12-25")
+    r = join(phone="+33 6 98 76 54 32", birthday="29/02/2000", name="Paul")
+    check("« 29/02/2000 » is read as 02-29", r.status_code == 200
           and db.customers.find_one({"barcode_id": r.json()["barcode_id"]})["birthday"] == "02-29")
 
     print("\nLe formulaire")
     jp = open(os.path.join(ROOT, "src", "pages", "JoinPage.jsx")).read()
-    check("birthday: a day and a month to pick, no free « MM-DD »", 'placeholder="MM-DD"' not in jp
-          and 'aria-label="Jour de naissance"' in jp and 'aria-label="Mois de naissance"' in jp)
-    check("postal code: 5 digits", 'pattern="[0-9]{5}"' in jp)
+    check("date of birth: JJ/MM/AAAA (2026-10-09), no free « MM-DD »", 'placeholder="MM-DD"' not in jp
+          and 'placeholder="JJ/MM/AAAA"' in jp)
+    check("postal code: 5 digits", 'maxLength={5}' in jp and "postalDigits" in jp)
 
     print("\nImport (UX01)")
     ci = open(os.path.join(ROOT, "src", "components", "ClientImport.jsx")).read()

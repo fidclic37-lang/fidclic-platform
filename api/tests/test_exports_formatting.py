@@ -77,9 +77,11 @@ def main():
     check("a whole amount has no cents, and thousands are spaced", SEG._eur(1200) == "1 200 €" and I._eur_cents(1200) == "1 200 €")
     src = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "lib", "money.js")).read()
     check("the pages share one formatter that keeps two cent digits", "minimumFractionDigits: cents ? 2 : 0" in src)
-    for page in ("DashboardHomePage.jsx", "AnalysesPage.jsx", "CampagnesPage.jsx"):
+    for page in ("DashboardHomePage.jsx", "AnalysesPage.jsx"):
         s = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "pages", page)).read()
         check(f"{page} uses it", "const money = eur;" in s)
+    s = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "pages", "CampagnesPage.jsx")).read()
+    check("CampagnesPage.jsx uses it", "import { eur } from '../lib/money';" in s and "eur(s.value)" in s)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

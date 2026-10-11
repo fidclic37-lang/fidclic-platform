@@ -2286,3 +2286,17 @@ main:has(.sc) > div:first-child input { background: #F4F7FC; border-color: #E6EE
    shrink; wide tables keep their own horizontal scroll.
    ================================================================ */
 .fdt-dash main .grid > * { min-width: 0; }
+
+/* « Même affichage partout » (index.html, postcss.config.js): <body> is the
+   container every width breakpoint measures, in the app's scaled pixels; a
+   steady scrollbar gutter keeps that width from jumping when a page grows
+   long enough to scroll. Past 125 % on very wide screens the app keeps its
+   1536 px design width, centred on the page background. */
+body { container: fit / inline-size; }
+html { scrollbar-gutter: stable; }
+html.fit-wide { background: #EEF3FB; }
+html.fit-wide body {
+  max-width: 1536px;
+  margin-left: auto;
+  margin-right: auto;
+}

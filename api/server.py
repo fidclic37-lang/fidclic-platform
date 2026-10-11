@@ -7,7 +7,7 @@ import json
 from typing import List, Optional, Dict, Any, Union
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, status, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from models import (
     UserInDB, UserCreate, Tenant, Customer, Visit, CardTemplate, Campaign, PaymentTransaction, AIQueryRequest,
@@ -471,6 +471,21 @@ def _compute_points_to_next_reward(customer: dict, tenant_id: str) -> int:
         return 0
 
 
+def _auto_message_of(cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        from features import automations as _AU
+        return _AU.latest_for(cust)
+    except Exception:
+        return None
+
+
+def _tier_up(old: Optional[str], new: Optional[str]) -> bool:
+    """A palier gained (not lost) — « Atteinte d'un palier » congratulates only that."""
+    from features.loyalty_card import TIER_ORDER
+    o, n = (old or "bronze").lower(), (new or "bronze").lower()
+    return n in TIER_ORDER and TIER_ORDER.index(n) > (TIER_ORDER.index(o) if o in TIER_ORDER else 0)
+
+
 def render_template(content: str, customer: dict, tenant: dict = None) -> str:
     """Replace curly-brace placeholders in a campaign body with per-customer values.
     Missing values are silently replaced with a neutral fallback so the message never
@@ -499,7 +514,18 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
             "{amount_paid}": f"{amount_paid:.2f}€",
             "{business_name}": business_name,
             "{sector}": (tenant or {}).get("sector", ""),
+            # the Campagnes wizard's French variables (redesign, 2026-10-10)
+            "{prénom}": first_name, "{prenom}": first_name,
+            "{nom_commerce}": business_name,
+            "{visites}": str(visits),
+            "{points_manquants}": str(ptnr),
         }
+        if "{prochaine_récompense}" in content or "{prochaine_recompense}" in content:
+            tpl = db.card_templates.find_one({"tenant_id": customer.get("tenant_id") or (tenant or {}).get("id")},
+                                             {"reward_description": 1}) or {}
+            nxt = tpl.get("reward_description") or "votre récompense"
+            replacements["{prochaine_récompense}"] = nxt
+            replacements["{prochaine_recompense}"] = nxt
         rendered = content
         for token, value in replacements.items():
             rendered = rendered.replace(token, str(value))
@@ -4324,6 +4350,11 @@ class ScanRequest(BaseModel):
     # that total. Prices in the request are ignored — server is the
     # source of truth, so a tampered client cannot inflate revenue.
     items: Optional[List[Dict[str, Any]]] = None
+    # Stamps from the customer's PAPER card, moved onto the digital one at
+    # this scan (user, 2026-10-10). Once per customer, never above a full
+    # card; they move the card's meter only — not visits, points or palier.
+    # Any: validated by _paper_stamps_check (pydantic would turn `true` into 1)
+    paper_stamps: Optional[Any] = None
 
 
 # ============================================================
@@ -4829,6 +4860,125 @@ def scan_visit(
         )
 
 
+def _card_rule(tenant_id: str) -> Dict[str, int]:
+    """The card's size: stamps for a reward, visits per stamp, and so the
+    visits a full card holds."""
+    tpl = db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+    stamps = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1)
+    per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
+    return {"stamps": stamps, "per_stamp": per, "visits": stamps * per}
+
+
+def _paper_done_message(cust: dict) -> str:
+    at = cust.get("paper_stamps_at")
+    when = ""
+    if isinstance(at, datetime):
+        try:
+            from zoneinfo import ZoneInfo
+            when = f" le {(at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(ZoneInfo('Europe/Paris')):%d/%m/%Y}"
+        except Exception:
+            when = f" le {at:%d/%m/%Y}"
+    n = int(cust.get("paper_stamps") or 0)
+    return (f"La carte papier de ce client a déjà été transférée{when} ({n} tampon{'s' if n > 1 else ''}). "
+            "Une seule fois par client : pour corriger, utilisez « Ajuster points / tampons » sur sa fiche.")
+
+
+def _paper_stamps_check(cust: dict, tenant_id: str, value: Any, current_visits: int) -> Optional[Dict[str, int]]:
+    """Validate the paper-card stamps sent with a scan (user, 2026-10-10).
+
+    Rules: a whole number from 0 to the card's size; once per customer; and
+    the stamps already on the digital card plus the paper ones never exceed a
+    full card. 9 paper stamps on a 10-stamp card + this visit = the reward
+    today; 10 = a full paper card, banked as « à récupérer », and this visit
+    starts the new card. Returns None for nothing to move."""
+    if value is None or value == "":
+        return None
+    try:
+        if isinstance(value, bool) or isinstance(value, (list, dict)):
+            raise ValueError
+        text = str(value).strip()
+        if not text.lstrip("-").isdigit():          # « 2.5 », « 2,5 », « 3e1 », « abc »
+            raise ValueError
+        n = int(text)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Tampons de la carte papier : un nombre entier, sans virgule.")
+    if n == 0:
+        return None
+    rule = _card_rule(tenant_id)
+    if n < 0:
+        raise HTTPException(status_code=400, detail="Tampons de la carte papier : le nombre ne peut pas être négatif.")
+    if n > rule["stamps"]:
+        raise HTTPException(status_code=400, detail=f"Tampons de la carte papier : {rule['stamps']} au maximum "
+                                                    f"(une carte complète).")
+    if cust.get("paper_stamps") is not None:
+        raise HTTPException(status_code=409, detail=_paper_done_message(cust))
+    on_card = max(0, current_visits - int(cust.get("visits_at_last_redemption") or 0))
+    room = max(0, rule["visits"] - on_card) // rule["per_stamp"]
+    if n > room:
+        have = on_card // rule["per_stamp"]
+        raise HTTPException(status_code=400, detail=(
+            f"Cette carte a déjà {have} tampon{'s' if have > 1 else ''} sur {rule['stamps']} : "
+            f"{room} tampon{'s' if room > 1 else ''} de la carte papier au maximum."
+            if room else f"Cette carte est déjà complète ({rule['stamps']}/{rule['stamps']}) : "
+                         "remettez d'abord la récompense, puis ajoutez les tampons de la carte papier."))
+    return {"stamps": n, "visits": n * rule["per_stamp"]}
+
+
+def _offers_active_for(tenant_id: str, customer_id: str) -> List[Dict[str, Any]]:
+    """The campaign offers valid for this client at this very moment — dates
+    and happy hours included (features/campaign_kinds.active_now)."""
+    try:
+        from features import campaign_kinds as _K
+        now_utc = datetime.now(timezone.utc)
+        out = []
+        for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "kind": {"$in": list(_K.OFFER_KINDS)},
+                                    "recipient_ids": customer_id}, {"_id": 0}):
+            if _K.active_now(c, now_utc):
+                out.append({"id": c.get("id"), "title": c.get("name"), "label": _K.discount_label(c.get("offer")),
+                            "terms": _K.terms_label(c)})
+        return out
+    except Exception as exc:
+        print(f"scan: active offers unavailable (non-fatal): {exc}")
+        return []
+
+
+def _defi_rewards_of(customer_id: str) -> List[Dict[str, Any]]:
+    try:
+        from features import defis as _defis
+        return _defis.pending_rewards(customer_id)
+    except Exception as exc:
+        print(f"scan: defi rewards unavailable (non-fatal): {exc}")
+        return []
+
+
+@app.get("/api/owner/scan/preview")
+def scan_preview(barcode: str,
+                 token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
+    """What the till shows once a card id is typed or scanned, before the
+    visit is recorded: whose card, its stamps, and how many paper stamps it
+    can still take (none when its paper card was already moved)."""
+    bc = barcode_from(barcode)
+    cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": bc},
+                                 {"_id": 0, "id": 1, "name": 1, "barcode_id": 1, "visits": 1,
+                                  "visits_at_last_redemption": 1, "paper_stamps": 1, "paper_stamps_at": 1})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Aucun client trouvé avec ce code.")
+    rule = _card_rule(token_data.tenant_id)
+    on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
+    done = cust.get("paper_stamps") is not None
+    room = 0 if done else max(0, rule["visits"] - on_card) // rule["per_stamp"]
+    return {
+        "name": cust.get("name") or "", "barcode_id": cust.get("barcode_id"),
+        "stamps": min(on_card // rule["per_stamp"], rule["stamps"]), "threshold": rule["stamps"],
+        "paper_max": room, "paper_done": done,
+        "paper_stamps": int(cust.get("paper_stamps") or 0) if done else 0,
+        "paper_message": _paper_done_message(cust) if done else None,
+        # Campagnes (2026-10-10): what the staff must not forget for this client
+        "offers_active": _offers_active_for(token_data.tenant_id, cust["id"]),
+        "defi_rewards": _defi_rewards_of(cust["id"]),
+    }
+
+
 def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     """MINIMAL fast-path scan — does the essentials inline, defers every
     optional side effect to a best-effort try/except so a single bad
@@ -4908,8 +5058,13 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                     "updated_at": datetime.now(timezone.utc),
                 }},
             )
+            cust["visits_at_last_redemption"] = current_visits   # read below (paper stamps)
         except Exception:
             pass  # never let a heal failure block a real scan
+
+    # Stamps of a paper card (validated BEFORE anything is written: a refused
+    # transfer refuses the whole scan, so the till can correct and resend).
+    paper = _paper_stamps_check(cust, token_data.tenant_id, req.paper_stamps, current_visits)
 
     # If the scan came with a product-picker payload, resolve the items
     # against the tenant catalog and OVERRIDE amount_paid with the
@@ -4975,8 +5130,31 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     if req.branch_id and not cust.get("branch_id"):
         update_set["branch_id"] = req.branch_id
 
-    # Update customer — must succeed.
-    db.customers.update_one({"id": cid}, {"$set": update_set})
+    # Update customer — must succeed. A paper-card transfer rides on the SAME
+    # write, guarded by « not transferred yet »: two tills scanning the card
+    # at once can never move the stamps twice, and the visit and the stamps
+    # are written together or not at all.
+    if paper:
+        now_paper = datetime.now(timezone.utc)
+        update_set.update({"paper_stamps": paper["stamps"], "paper_stamps_at": now_paper,
+                           "paper_stamps_by": getattr(token_data, "email", None)})
+        res = db.customers.update_one(
+            {"id": cid, "paper_stamps": {"$exists": False}},
+            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"]}})
+        if res.matched_count == 0:
+            raise HTTPException(status_code=409, detail=_paper_done_message(db.customers.find_one({"id": cid}) or {}))
+        try:
+            db.customer_changes.insert_one({
+                "id": str(uuid.uuid4()), "tenant_id": token_data.tenant_id, "customer_id": cid,
+                "customer_name": cust.get("name"), "kind": "paper_stamps",
+                "visits_delta": 0, "points_delta": 0, "stamps": paper["stamps"],
+                "text": f"Carte papier transférée : {paper['stamps']} tampon{'s' if paper['stamps'] > 1 else ''}",
+                "reason": "Carte papier", "by": getattr(token_data, "email", None), "at": now_paper,
+            })
+        except Exception as _e:
+            print(f"scan_visit: paper stamps not logged (non-fatal): {_e}")
+    else:
+        db.customers.update_one({"id": cid}, {"$set": update_set})
 
     # Insert visit row — must succeed for analytics.
     try:
@@ -4989,6 +5167,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             "visit_time": datetime.now(timezone.utc),
             "branch_id": req.branch_id or cust.get("branch_id"),
         }
+        if paper:
+            visit_doc["paper_stamps"] = paper["stamps"]
         # Stamp the line items on the visit when a catalog-driven picker
         # was used. This is what powers the real "Top produits" panel
         # going forward (replacing the DEMO data in analyticsExtra.js).
@@ -5027,10 +5207,24 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception as _e:
         print(f"scan_visit: campaign attribution failed (non-fatal): {_e}")
 
-    # Automatic after a scan: the Google review request, at the shop's pace.
+    # Défis (Campagnes › Défi): does this visit win one?
+    defis_won = []
     try:
-        from features import auto_messages as _AM
-        _AM.after_scan(token_data.tenant_id, cid)
+        from features import defis as _defis
+        defis_won = _defis.after_scan(token_data.tenant_id, db.customers.find_one({"id": cid}, {"_id": 0}) or cust)
+    except Exception as _e:
+        print(f"scan_visit: defis failed (non-fatal): {_e}")
+
+    # Automatisations after a scan (features/automations): « Avis Google », and
+    # « Atteinte d'un palier » when this visit moved the client up.
+    try:
+        from features import automations as _AU
+        _fresh = db.customers.find_one({"id": cid}, {"_id": 0}) or cust
+        if new_tier != previous_tier and _tier_up(previous_tier, new_tier):
+            _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "tier"})     # « Changement de statut »
+        _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "visit"})        # points / visites / montant
+        _AU.fire("google_review", token_data.tenant_id, _fresh)
+        _AU.fire("custom", token_data.tenant_id, _fresh, {"event": "visit"})    # « Personnalisée »
     except Exception as _e:
         print(f"scan_visit: automatic messages failed (non-fatal): {_e}")
 
@@ -5147,6 +5341,13 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # offers to give it back when it is not
         "card_state": _card_state_of(cid),
         "cycle_restarted": cycles_completed > 0,
+        # stamps moved from a paper card at this scan (0 when none)
+        "paper_stamps": paper["stamps"] if paper else 0,
+        # Campagnes (2026-10-10): défis this visit won, rewards to hand over,
+        # and the offers valid right now — the till reminds the staff
+        "defis_won": defis_won,
+        "defi_rewards": _defi_rewards_of(cid),
+        "offers_active": _offers_active_for(token_data.tenant_id, cid),
         # Notification status — drives staff prompt to encourage enable.
         "notification_status": notification_status,
         # the « activer les notifications » QR the till shows is opened by the
@@ -5248,7 +5449,16 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     # once per card cycle — on a points card too.
     try:
         from features import auto_messages as _AM
-        fired["near_reward"] = _AM.near_reward(tenant_id, cust, card_template, cycle_start)
+        from features import automations as _AU
+        _left = _AM.visits_to_reward(tenant_id, cust, card_template)
+        if _left:
+            _said = [x for x in _AU.fire("near_reward", tenant_id, cust,
+                                         {"visits_left": _left,
+                                          "cycle": cycle_start.isoformat() if cycle_start else "first"})
+                     if x.get("title")]
+            # the Wallet card was already told by the automation itself
+            fired["near_reward"] = ({"title": _said[0]["title"], "body": _said[0]["body"], "deferred": True}
+                                    if _said else False)
     except Exception as _e:
         print(f"near_reward: not sent (non-fatal): {_e}")
 
@@ -6047,6 +6257,8 @@ ALLOWED_ACQUISITION_SOURCES = {"instagram", "facebook", "whatsapp", "tiktok", "g
 
 class JoinRequest(BaseModel):
     name: str
+    # the full date of birth, set by _check_join_fields (YYYY-MM-DD)
+    _birth_date: Optional[str] = PrivateAttr(default=None)
     # Email is OPTIONAL — many walk-in customers don't have one handy,
     # and forcing it kills conversion. When blank, dedup falls back to
     # phone-only and email-based campaigns (drips, receipts) silently
@@ -6098,7 +6310,11 @@ def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> No
     if req.postal_code or not profile_optional:
         req.postal_code = CF.postal_code(req.postal_code)
     if req.birthday or not profile_optional:
-        req.birthday = CF.birthday(req.birthday)
+        # the full date on the signup page (user, 2026-10-09: the age shows in
+        # Clients); the merchant API may still send day and month only
+        b = CF.birth(req.birthday, need_year=not profile_optional)
+        req.birthday = b["birthday"]
+        req._birth_date = b["birth_date"]
     req.email = CF.email(req.email)
 
 
@@ -6248,6 +6464,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    if getattr(req, "_birth_date", None):
+        cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came
     # with it — « QR code en magasin » is only for customers who came on their
     # own, so the two never overlap (user, 2026-10-08).
@@ -6320,7 +6538,14 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     welcome = None
     try:
         from features import auto_messages as _AM
-        welcome = _AM.welcome(tid, cust_doc)
+        from features import automations as _AU
+        _pts = _AM.credit_welcome_points(tid, cust_doc)       # Carte de fidélité › points de bienvenue
+        _fresh = db.customers.find_one({"id": cust_doc["id"]}, {"_id": 0}) or cust_doc
+        _said = [x for x in _AU.fire("welcome", tid, _fresh) if x.get("title")]
+        _AU.fire("custom", tid, _fresh, {"event": "signup"})                    # « Personnalisée »
+        if _said or _pts:
+            welcome = {"title": _said[0]["title"] if _said else None,
+                       "message": _said[0]["body"] if _said else None, "points": _pts}
     except Exception as _e:
         print(f"join: welcome not sent (non-fatal): {_e}")
     # API & Intégrations: the business's webhooks hear about the new card.
@@ -6340,8 +6565,31 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
 # auto-update toggle, and delete-card action.
 # ========================
 
-def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
-    """Offers = active card-template offer + sent campaigns (last 45 days).
+CAMPAIGN_OFFER_DAYS = 30      # a campaign's offer is valid 30 days (as on the Wallet pass)
+
+
+def _as_aware(v) -> Optional[datetime]:
+    """A stored date (datetime or ISO text), with UTC when it has no zone."""
+    if not v:
+        return None
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(v, datetime):
+        return None
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+def _derive_offers_for_tenant(tenant_id: str, customer_id: Optional[str] = None) -> List[dict]:
+    """Offers = active card-template offer + campaigns still valid.
+
+    With a customer (the card, the « Vos offres » page), a campaign shows only
+    to the customers it was sent to, and only while it is valid — sent less
+    than 30 days ago, the « Valable jusqu'au » the page prints (2026-10-09:
+    every campaign of the last 45 days used to reach every card, a birthday
+    or VIP-only offer included, and some read as already expired).
 
     Each campaign-kind offer now also carries `image_url`, `body`, and
     `link` so the wallet card's tap-to-open detail modal can render the
@@ -6352,6 +6600,10 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
     offers = []
     tpl = db.card_templates.find_one({"tenant_id": tenant_id})
     if tpl and tpl.get("active_offer_active") and tpl.get("active_offer_title"):
+        until = _as_aware(tpl.get("active_offer_expires_at") or tpl.get("offer_expires_at"))
+        if until and until < datetime.now(timezone.utc):
+            tpl = dict(tpl, active_offer_active=False)
+    if tpl and tpl.get("active_offer_active") and tpl.get("active_offer_title"):
         offers.append({
             "id": "offer-main",
             "title": tpl.get("active_offer_title"),
@@ -6360,13 +6612,21 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
             "image_url": tpl.get("active_offer_image_url"),
             "link": tpl.get("active_offer_link"),
             "kind": "primary",
-            "valid_until": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+            # the shop's own offer runs until the owner stops it, or its end date
+            "valid_until": until.isoformat() if until else None,
         })
-    cutoff = datetime.now(timezone.utc) - timedelta(days=45)
-    camps = list(db.campaigns.find({
-        "tenant_id": tenant_id, "status": "sent",
-        "sent_at": {"$gte": cutoff}
-    }).sort("sent_at", -1).limit(5))
+    from features import campaign_kinds as _K
+    now_utc = datetime.now(timezone.utc)
+    # a campaign with its own end (offer, event) can run past 30 days: read a
+    # year back, then keep only what is live today (features/campaign_kinds)
+    cutoff = now_utc - timedelta(days=365 if customer_id else 45)
+    query = {"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff}}
+    if customer_id:
+        query["recipient_ids"] = customer_id
+    camps = list(db.campaigns.find(query).sort("sent_at", -1).limit(60 if customer_id else 5))
+    if customer_id:
+        # live on the card, défis apart (they have their own « Défi en cours »)
+        camps = [c for c in camps if c.get("kind") != "defi" and _K.is_live(c, now_utc)][:10]
     for c in camps:
         offers.append({
             "id": c.get("id"),
@@ -6380,7 +6640,14 @@ def _derive_offers_for_tenant(tenant_id: str) -> List[dict]:
             "link": _campaign_link(c),
             "sent_at": c.get("sent_at").isoformat() if c.get("sent_at") else None,
             "kind": "campaign",
-            "valid_until": (c.get("sent_at") + timedelta(days=30)).isoformat() if c.get("sent_at") else None,
+            "valid_until": (_K.window(c)[1].isoformat() if c.get("sent_at") and _K.window(c)[1] else None),
+            # the redesign's terms (Campagnes, 2026-10-10)
+            "campaign_kind": c.get("kind"),
+            "details": c.get("details"),
+            "discount_label": _K.discount_label(c.get("offer")),
+            "hours_label": _K.hours_label(c.get("offer")),
+            "terms": _K.terms_label(c),
+            "valid_from": ((s := _K.window(c)[0]) and s > now_utc and s.isoformat()) or None,
         })
     return offers
 
@@ -6425,7 +6692,7 @@ def _serialize_card_payload(cust: dict) -> dict:
     t = db.tenants.find_one({"id": cust["tenant_id"]}) or {}
     tpl = db.card_templates.find_one({"tenant_id": cust["tenant_id"]}) or {}
     prefs = _card_prefs_for(cust["id"])
-    offers = _derive_offers_for_tenant(cust["tenant_id"])
+    offers = _derive_offers_for_tenant(cust["tenant_id"], cust["id"])
     # Per-customer override (active, non-expired) — promotional overlay for a
     # filtered segment. Replaces the matching fields on the global template.
     override = _active_override_for(cust["id"], cust["tenant_id"])
@@ -6503,6 +6770,7 @@ def _serialize_card_payload(cust: dict) -> dict:
             "phone": t.get("phone"),
             "address": t.get("address"),
             "website": t.get("website"),
+            "sector": t.get("sector"),      # « Vos offres » pictures per trade
         },
         "card": {
             # Everything the Card Designer persists goes in FIRST, then the
@@ -6639,9 +6907,23 @@ def _serialize_card_payload(cust: dict) -> dict:
             "has_personalised_overlay": bool(override),
         },
         "offers": offers,
+        # Campagnes › Défi (features/defis.py): running and won
+        "defis": _defis_of(cust),
+        # Automatisations: the latest message and its action button, shown at
+        # the top of the card (a Wallet notification can't carry a button)
+        "auto_message": _auto_message_of(cust),
         "prefs": prefs,
         "notifications": _recent_push_notifications_for(cust["id"], cust["tenant_id"]),
     }
+
+
+def _defis_of(cust: dict) -> dict:
+    try:
+        from features import defis as _D
+        return _D.card_view(cust)
+    except Exception as exc:
+        print(f"card: defis unavailable (non-fatal): {exc}")
+        return {"running": [], "won": []}
 
 
 def _campaign_link(c: dict) -> Optional[str]:
@@ -6651,10 +6933,12 @@ def _campaign_link(c: dict) -> Optional[str]:
 
 
 def _recent_push_notifications_for(customer_id: str, tenant_id: str) -> List[dict]:
-    # Use sent campaigns as synthetic push log + one "welcome" synthetic entry
+    # The campaigns sent to THIS customer (2026-10-09: every card used to list
+    # every campaign of the shop, VIP-only or birthday ones included)
     cutoff = datetime.now(timezone.utc) - timedelta(days=45)
     items = []
-    for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff}}).sort("sent_at", -1).limit(6):
+    for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": cutoff},
+                                "recipient_ids": customer_id}).sort("sent_at", -1).limit(6):
         items.append({
             "id": c.get("id"),
             "title": c.get("name"),
@@ -9708,33 +9992,8 @@ def get_proactive_alerts_multi_store(
         except Exception as _e:
             print(f"alerts: copilot hook failed (non-fatal): {_e}")
 
-    # Automatisations waiting for an OK — for whoever may give it.
-    try:
-        from features import push_wallet as _PW
-        _lots = _PW.pending_lots(token_data, scope)
-        # One alert per establishment (user, 2026-10-03: each shop its own
-        # alerts, never mixed). A batch with no establishment concerns the
-        # whole shop.
-        _names = {b.get("id"): b.get("name") for b in branches}
-        _by_store: Dict[Any, list] = {}
-        for _l in _lots:
-            _by_store.setdefault(_l.get("store_id"), []).append(_l)
-        for _sid, _group in _by_store.items():
-            _n = sum(int(l.get("count") or 0) for l in _group)
-            alerts_combined.append({
-                "id": ("pushwallet:pending:" + (f"{_sid}:" if _sid else "")
-                       + ",".join(sorted(l["id"] for l in _group)))[:160],
-                "severity": "warning",
-                "title": f"{len(_group)} envoi{'s' if len(_group) > 1 else ''} automatique{'s' if len(_group) > 1 else ''} à valider",
-                "body": f"{_n} client{'s' if _n > 1 else ''} au total. Rien ne part sans votre validation.",
-                "metric": str(len(_group)), "action": "/dashboard/automations?tab=pending",
-                "actions": _alert_actions("/dashboard/automations?tab=pending"),
-                "href": "/dashboard/automations?tab=pending",
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "branch_id": _sid, "branch_name": (_names.get(_sid) or _group[0].get("store_name")) if _sid else None,
-                "scope": "branch" if _sid else "shop"})
-    except Exception as _e:
-        print(f"alerts: automations hook failed (non-fatal): {_e}")
+    # Automatisations send by themselves since the redesign (2026-10-11):
+    # nothing waits for an OK, so no « à valider » alert any more.
 
     # A client deleted their card, or removed it from Apple Wallet (2026-10-09):
     # said once for the shop, newest first (features/card_status).
@@ -10507,10 +10766,15 @@ def redeem_reward(
     threshold = max(int(card_tpl.get("reward_threshold_stamps", 10)) *
                     int(card_tpl.get("visits_per_stamp", 1)), 1)
     current_visits = int(cust.get("visits", 0) or 0)
-    if current_visits < threshold:
+    # What counts is THIS card (and any full card waiting), not lifetime
+    # visits: a card completed with paper stamps (2026-10-10) holds fewer
+    # visits than its size.
+    on_card = current_visits - int(cust.get("visits_at_last_redemption") or 0)
+    waiting = db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
+    if on_card < threshold and not waiting:
         raise HTTPException(
             status_code=400,
-            detail=f"Customer needs {threshold - current_visits} more visit(s) before redeeming.",
+            detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
         )
 
     reward = {
@@ -10542,7 +10806,7 @@ def redeem_reward(
     # full card (not to the current visit count) so a customer at 13 visits on
     # a 10-visit card keeps the 3 stamps they have already earned.
     last_red = int(cust.get("visits_at_last_redemption") or 0)
-    new_marker = last_red if banked else min(current_visits, last_red + threshold)
+    new_marker = last_red if banked else last_red + threshold
     db.customers.update_one(
         {"id": cust["id"]},
         {"$inc": {"rewards_redeemed_count": 1},
@@ -10687,7 +10951,8 @@ def proximity_ping(req: ProximityPingRequest):
 
     Public endpoint intentionally — called from the customer's own device,
     before/after login matters less than the customer_id matching a real
-    record. Rate-limited by the geo_cooldown_days window per customer.
+    record. Each Géolocalisation automation keeps its own gap per client
+    (« une fois tous les X jours », features/automations).
     """
     cust = db.customers.find_one({"id": req.customer_id})
     if not cust:
@@ -10712,34 +10977,14 @@ def proximity_ping(req: ProximityPingRequest):
         if (cust.get("tier") or "").lower() != "vip":
             return {"status": "ignored", "reason": "vip_only: customer not VIP"}
 
-    radius_m = float(tenant.get("geo_radius_meters") or 200)   # one radius: Paramètres › Établissement
-    cooldown_days = int(tenant.get("geo_cooldown_days") or 1)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
-
-    # Last proximity push for this customer — cooldown enforcement.
-    last = db.push_notifications.find_one(
-        {"customer_id": cust["id"], "tenant_id": tid, "type": "proximity"},
-        sort=[("sent_at", -1)],
-    )
-    if last and last.get("sent_at") and last["sent_at"] >= cutoff:
-        return {"status": "cooldown", "next_eligible_at": (last["sent_at"] + timedelta(days=cooldown_days)).isoformat()}
-
-    # Figure out which branch (or the tenant address) they're nearest to.
-    anchors = []
-    for b in tenant.get("branches") or []:
-        # Branches often lack raw lat/lng — resolve from postal_code when needed.
-        blat, blng = b.get("latitude"), b.get("longitude")
-        if blat is None or blng is None:
-            blat, blng = get_postal_coords(b.get("postal_code") or "")
-        if blat is not None:
-            anchors.append({"id": b.get("id"), "name": b.get("name", ""), "lat": blat, "lng": blng})
-    if not anchors:
-        # Fall back to tenant-level address coords
-        tl, tn = get_postal_coords((tenant.get("address") or "").split(",")[-1].strip().split()[0] if tenant.get("address") else "")
-        anchors = [{"id": tid, "name": tenant.get("name", ""), "lat": tl, "lng": tn}]
-
+    # The shop's establishments (features/geo_automation.anchors — the same
+    # ids an automation's « établissements » use) and its one radius.
+    from features import geo_automation as _GA
+    radius_m = float(_GA.radius_of(tenant))
     nearest = None
-    for a in anchors:
+    for a in _GA.anchors(tid):
+        if a["lat"] is None:
+            continue
         dist = _haversine_meters(req.latitude, req.longitude, a["lat"], a["lng"])
         if nearest is None or dist < nearest["distance_m"]:
             nearest = {**a, "distance_m": dist}
@@ -10747,30 +10992,35 @@ def proximity_ping(req: ProximityPingRequest):
     if not nearest or nearest["distance_m"] > radius_m:
         return {"status": "out_of_range", "distance_m": (nearest["distance_m"] if nearest else None)}
 
-    # In range — fire a push.
-    biz = tenant.get("campaign_sender_name") or tenant.get("name") or "votre boutique"
-    first_name = (cust.get("name") or "").split(" ")[0]
-    title = f"{biz} est juste à côté 👋"
-    body = (
-        f"Bonjour {first_name}, vous êtes tout près de {nearest['name'] or biz}. "
-        "Venez scanner votre carte — une attention vous attend !"
-    )
-    db.push_notifications.insert_one({
-        "customer_id": cust["id"],
-        "tenant_id": tid,
-        "title": title,
-        "body": body,
-        "type": "proximity",
-        "branch_id": nearest.get("id"),
-        "distance_m": int(nearest["distance_m"]),
-        "sent_at": datetime.now(timezone.utc),
-    })
+    # The owner's map: this client was near the shop (rounded ~50 m, kept 30 days).
+    try:
+        _GA.record(tid, cust, nearest, req.latitude, req.longitude, nearest["distance_m"])
+    except Exception as exc:
+        print(f"proximity: detection not kept ({exc})")
+
+    # In range — the shop's « Géolocalisation » automations speak (features/
+    # automations, 2026-10-11): their words, button, targeting, hours, weather
+    # and the gap per client (« une fois tous les X jours »).
+    from features import automations as _AU
+    said = [x for x in _AU.fire("geo", tid, cust, {"store": nearest.get("name") or "", "store_id": nearest.get("id"),
+                                                     "distance_m": int(nearest["distance_m"])}) if x.get("title")]
+    if not said:
+        return {"status": "ignored", "reason": "no geolocation automation for this client"}
+    db.push_notifications.update_one({"log_id": said[0]["id"]}, {"$set": {
+        "branch_id": nearest.get("id"), "distance_m": int(nearest["distance_m"])}})
+    # told here: the Wallet pass goes quiet for the same gap
+    try:
+        _GA.refresh_one(db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust)
+    except Exception as exc:
+        print(f"proximity: pass not refreshed ({exc})")
     return {
         "status": "sent",
         "branch_id": nearest.get("id"),
         "distance_m": int(nearest["distance_m"]),
-        "title": title,
-        "body": body,
+        "title": said[0]["title"],
+        "body": said[0]["body"],
+        "button_label": said[0].get("button_label"),
+        "button_url": said[0].get("click_url"),
     }
 
 
@@ -11528,10 +11778,21 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
     # Wrapped: a scenario that blows up must not stop the rest of the cron.
     push_wallet_summary = {"tenants": 0, "sent": 0}
     try:
-        from features.push_wallet import run_all_due
-        push_wallet_summary = run_all_due()
+        # Automatisations (2026-10-11): the new engine; the old Push Wallet
+        # scenarios were carried over and removed (features/automations.migrate)
+        from features.automations import run_due as _auto_run_due
+        push_wallet_summary = _auto_run_due(source="daily")
     except Exception as _e:
         print(f"push wallet runner failed (non-fatal): {_e}")
+    # Géolocalisation: each Wallet pass carries the shop's locations only while
+    # its automation's days, period, weather and targeting allow; the map's
+    # detections are forgotten after 30 days.
+    try:
+        from features import geo_automation as _GA
+        push_wallet_summary["geo_passes"] = _GA.sync_passes(now)
+        push_wallet_summary["geo_purged"] = _GA.purge(now)
+    except Exception as _e:
+        print(f"geo passes runner failed (non-fatal): {_e}")
 
     # FidClic IA Autopilot — prepares (never sends) the week's campaign steps
     # for the shops that switched it on. Sending waits for the merchant's OK.

@@ -1,3 +1,4 @@
+import { vh } from '../lib/fit';
 /**
  * SupportModal — lets a business send a query to the FidClic
  * support team from inside their dashboard.
@@ -98,7 +99,7 @@ export default function SupportModal({ open, onClose, defaultEmail = '', tenantS
           background: 'var(--flc-card, #FFFFFF)',
           borderRadius: 16,
           width: 'min(560px, 100%)',
-          maxHeight: 'calc(100vh - 32px)',
+          maxHeight: `calc(${vh(100)} - 32px)`,
           overflow: 'auto',
           border: `1px solid ${C.hairline}`,
           boxShadow: '0 24px 60px -20px rgba(28, 25, 23, 0.25)',

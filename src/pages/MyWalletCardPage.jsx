@@ -1,10 +1,11 @@
+import { vh } from '../lib/fit';
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { readMine, addMine, forgetMine, keyOf } from '../lib/myCards';
 import { QRCodeSVG } from 'qrcode.react';
 import { cardUrl } from '../components/PremiumLoyaltyCard';
 import Code128Barcode from '../components/Code128Barcode';
-import { Bell, RefreshCw, Trash2, Gift, Sparkles, ChevronRight, Store, MapPin, Phone, Globe, CheckCircle2, XCircle, Clock, ChevronDown, X, Download, ShieldCheck } from 'lucide-react';
+import { Bell, RefreshCw, Trash2, Gift, Sparkles, ChevronRight, Store, MapPin, Phone, Globe, CheckCircle2, XCircle, Clock, ChevronDown, X, Download, ShieldCheck, Star, Settings, Share2, Smartphone, Printer } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
 import { ensureSubscribed, unsubscribe as unsubscribePush, isSupported as isPushSupported } from '../lib/webpush';
 import InstallPwaPrompt from '../components/InstallPwaPrompt';
@@ -168,10 +169,20 @@ const CardView = () => {
   // name. Merged into a single "Offres & messages" feed on the offers
   // tab so customers (and merchants) don't see the same items twice.
   // ?onglet=offres|programme — where the iOS 27 tiles under the Wallet pass land.
-  const [tab, setTab] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get('onglet') === 'programme' ? 'program' : 'offers'; }
-    catch (_e) { return 'offers'; }
-  }); // offers | program
+  // The menu's open sheet: program | review | about | settings (2026-10-10
+  // redesign). The Wallet « Programme » tile (?onglet=programme) opens « Le
+  // programme » right away.
+  const [sheet, setSheet] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('onglet') === 'programme' ? 'program' : null; }
+    catch (_e) { return null; }
+  });
+  // the pass at the phone's width (WalletPassPreview draws at a fixed px width)
+  const [passW, setPassW] = useState(() => Math.min(420, Math.max(280, (typeof window !== 'undefined' ? window.innerWidth : 390) - 32)));
+  useEffect(() => {
+    const fit = () => setPassW(Math.min(420, Math.max(280, window.innerWidth - 32)));
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
   const [toast, setToast] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Forces the InstallPwaPrompt to ignore the "dismissed recently" memory.
@@ -357,8 +368,8 @@ const CardView = () => {
   // Real-time proximity push: when the wallet card page opens AND the user has
   // already granted geolocation, ping the backend with the current GPS. If the
   // customer is within the tenant's configured radius, a proximity push is
-  // logged and shown as a toast. Rate-limited on the server side by the
-  // tenant's geo_cooldown_days.
+  // logged and shown at the top of the card. Each Géolocalisation automation
+  // keeps its own gap per client on the server (« une fois tous les X jours »).
   useEffect(() => {
     if (!data?.customer?.id || !navigator.geolocation) return;
     // Only ping once per card view, and stay silent if permissions are denied
@@ -376,7 +387,9 @@ const CardView = () => {
               longitude: pos.coords.longitude,
             });
             if (res?.data?.status === 'sent') {
-              showToast(`📍 ${res.data.title || 'Vous êtes juste à côté !'}`);
+              // the shop's « Géolocalisation » automation: its words and its button, at the top
+              setGeoMsg({ log_id: `geo-${Date.now()}`, title: res.data.title, body: res.data.body,
+                button_label: res.data.button_label, button_url: res.data.button_url });
             }
           } catch (_e) { /* best-effort; ignore */ }
         },
@@ -387,6 +400,10 @@ const CardView = () => {
     return () => { ignored = true; };
   }, [data?.customer?.id]);
 
+  const [geoMsg, setGeoMsg] = useState(null);
+  const [hiddenMsg, setHiddenMsg] = useState(() => {
+    try { return localStorage.getItem('fidclic:auto_msg_hidden') || ''; } catch { return ''; }
+  });
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2600);
@@ -558,7 +575,6 @@ const CardView = () => {
     const item = mergedFeed.find((o) => o.kind === 'campaign' && String(o.id) === wanted);
     if (!item) return;
     offerOpened.current = true;
-    setTab('offers');
     setOpenedNotification({
       id: item.id, title: item.title, body: item.body || item.description || '',
       image_url: item.image_url, link: item.link, sent_at: item.sent_at,
@@ -655,547 +671,313 @@ const CardView = () => {
 
 
 
-  return (
-    <div className="min-h-screen bg-[#FAFAF8] font-['Manrope'] py-10 px-4">
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <Link to="/" className="text-[#B85C38] text-sm">← Retour</Link>
-          <TierBadge tier={customer.tier} size="sm" />
-        </div>
+  const recentVisit = (() => {
+    const last = customer.last_visit_date ? new Date(customer.last_visit_date) : null;
+    return !!last && (Date.now() - last.getTime()) / 86400000 <= 14;
+  })();
+  const pending = rewardsPending(customer);
+  const shareCard = async () => {
+    // the card's public link (no owner key): a friend who opens it gets the signup
+    const url = `${window.location.origin}/card/${barcodeId}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${tenant?.name || 'FidClic'} — ma carte de fidélité`, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        showToast('Lien copié — collez-le où vous voulez');
+      }
+    } catch (_e) { /* cancelled */ }
+  };
+  const homeHelp = () => {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    showToast(isIOS
+      ? 'Dans Safari : bouton Partager, puis « Sur l’écran d’accueil ».'
+      : 'Dans le menu du navigateur : « Ajouter à l’écran d’accueil ».');
+  };
+  const menu = [
+    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres` },
+    { key: 'program', icon: Gift, label: 'Le programme', hint: card.reward_description ? `${card.reward_description} après ${stampsTarget} visites` : 'Récompenses et points' },
+    recentVisit && { key: 'review', icon: Star, label: 'Donner mon avis', hint: 'Sur votre dernière visite — anonyme' },
+    { key: 'about', icon: Store, label: `À propos de ${tenant.name || 'la boutique'}`, hint: 'Adresse, horaires, contact' },
+    { key: 'settings', icon: Settings, label: 'Paramètres', hint: 'Notifications, mes données, supprimer ma carte' },
+  ].filter(Boolean);
 
-        {/* ─── Strategy 1 — Missed-offers banner ────────────────────────
-            Shows when customer is NOT subscribed to push AND has missed
-            ≥1 campaign in the last 30 days. Tap → triggers browser
-            permission prompt. Dismissable for this session. */}
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#F4F7FC] to-[#EEF3FB] font-['Inter',system-ui,sans-serif]">
+      <div className="mx-auto max-w-[460px] px-4 pb-12 pt-6">
+        {/* Missed offers — the customer is not subscribed and offers went out (push recovery, strategy 1) */}
         {notifStatus && !notifStatus.subscribed && notifStatus.missed_count > 0 && showMissedBanner && (
-          <div
-            style={{
-              marginBottom: 18,
-              padding: '14px 16px',
-              borderRadius: 12,
-              background: 'linear-gradient(135deg, hsl(42 78% 52% / .12), rgb(184 92 56 / .08))',
-              border: '1px solid hsl(42 78% 52% / .35)',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 12,
-            }}
-            role="alert"
-          >
-            <div style={{
-              flexShrink: 0, width: 40, height: 40, borderRadius: 10,
-              background: 'hsl(42 78% 52% / .20)', color: 'hsl(32 80% 35%)',
-              display: 'grid', placeItems: 'center', fontSize: 20,
-            }}>
-              🔔
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#171412' }}>
-                {notifStatus.missed_count === 1
-                  ? "Vous avez raté 1 offre exclusive"
-                  : `Vous avez raté ${notifStatus.missed_count} offres exclusives`}
+          <div role="alert" className="mb-4 flex items-start gap-3 rounded-2xl border border-[#F5D58A] bg-[#FFF8E6] p-3.5">
+            <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FDEBB8] text-[18px]">🔔</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] font-bold text-[#0B1C3F]">
+                {notifStatus.missed_count === 1 ? 'Vous avez raté 1 offre' : `Vous avez raté ${notifStatus.missed_count} offres`}
               </p>
-              <p style={{ margin: '2px 0 10px', fontSize: 12.5, color: '#57504A', lineHeight: 1.45 }}>
-                Activez les notifications pour ne plus rien manquer de {tenant?.name || 'cette boutique'}.
-              </p>
-              <button
-                type="button"
-                onClick={async () => {
-                  const slug = data?.tenant?.slug;
-                  if (!slug || !barcodeId) return;
-                  try {
-                    const r = await ensureSubscribed(slug, barcodeId);
-                    if (r && r.ok) {
-                      showToast('Notifications activées — merci !');
-                      setNotifStatus({ subscribed: true, missed_count: 0 });
-                    } else if (r?.status === 'permission_denied') {
-                      showToast('Activez les notifications dans les paramètres de votre navigateur.');
-                    } else {
-                      showToast("Impossible d'activer les notifications.");
-                    }
-                  } catch {
-                    showToast("Impossible d'activer les notifications.");
-                  }
-                }}
-                style={{
-                  background: 'linear-gradient(135deg, hsl(32 80% 48%), hsl(38 80% 42%))',
-                  color: '#FFFFFF', border: 'none', borderRadius: 8,
-                  padding: '8px 14px', fontSize: 12.5, fontWeight: 600,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  boxShadow: '0 6px 14px -6px hsl(32 80% 48% / .55)',
-                }}
-              >
+              <p className="mt-0.5 text-[12.5px] leading-snug text-[#475569]">Activez les notifications pour ne plus rien manquer de {tenant?.name || 'cette boutique'}.</p>
+              <button type="button"
+                      onClick={async () => {
+                        const slug = data?.tenant?.slug;
+                        if (!slug || !barcodeId) return;
+                        try {
+                          const r = await ensureSubscribed(slug, barcodeId);
+                          if (r && r.ok) { showToast('Notifications activées — merci !'); setNotifStatus({ subscribed: true, missed_count: 0 }); }
+                          else if (r?.status === 'permission_denied') showToast('Activez les notifications dans les paramètres de votre navigateur.');
+                          else showToast("Impossible d'activer les notifications.");
+                        } catch { showToast("Impossible d'activer les notifications."); }
+                      }}
+                      className="mt-2 rounded-lg bg-[#F59E0B] px-3 py-1.5 text-[12.5px] font-semibold text-white">
                 Activer les notifications
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowMissedBanner(false)}
-              aria-label="Fermer"
-              style={{
-                flexShrink: 0, background: 'transparent', border: 'none',
-                color: '#8D857D', cursor: 'pointer', padding: 4,
-                fontSize: 16,
-              }}
-            >
-              ×
-            </button>
+            <button type="button" onClick={() => setShowMissedBanner(false)} aria-label="Fermer" className="p-1 text-[#94A3B8]"><X size={16} /></button>
           </div>
         )}
 
-        <div className="grid lg:grid-cols-[1fr,360px] gap-8">
-          {/* LEFT: Wallet card.
-              Single source of truth — PremiumLoyaltyCard renders here AND in
-              Card Designer's preview. What the patron sees while designing is
-              literally the same component the customer sees on their phone. */}
-          <section>
-            <WalletCardErrorBoundary>
-              {/* Wallet templates render the pkpass-FAITHFUL card — the same
-                  component the designer previews, real Apple Wallet geometry.
-                  The interim PWA-styled render (WalletCard) is gone at the
-                  owner's request: the merchant launches with real passes, and
-                  this page must show exactly that. Legacy templates keep the
-                  old render until they opt in. */}
-              {card?.layout_style === 'wallet' ? (
-                <div style={{ maxWidth: 375, width: '100%' }}>
-                  <WalletPassPreview customer={customer} tenant={tenant} card={card} width={375} />
+        {/* Automatisations: the latest message and its action button (a Wallet
+            notification cannot carry a button — tapping it opens this card) */}
+        {(() => {
+          const am = geoMsg || data?.auto_message;
+          if (!am || !am.title || hiddenMsg === am.log_id) return null;
+          return (
+            <div className="mb-4 overflow-hidden rounded-2xl border border-[#D6E4FF] bg-white shadow-[0_18px_40px_-30px_rgba(20,99,255,.6)]">
+              <div className="flex items-start gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-bold leading-snug text-[#0B1C3F]">{am.title}</p>
+                  {am.body && <p className="mt-0.5 text-[13.5px] leading-snug text-[#334155]">{am.body}</p>}
                 </div>
-              ) : (
-                <PremiumLoyaltyCard customer={customer} tenant={tenant} card={card} />
-              )}
-            </WalletCardErrorBoundary>
-
-            {/* A full card restarts on the next visit; its reward stays valid
-                until it is handed over (user, 2026-10-09). */}
-            {rewardsPending(customer) > 0 && (
-              <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#BFE6D3] bg-[#EAF7F0] p-4" style={{ maxWidth: 375 }}>
-                <Gift className="mt-0.5 h-5 w-5 shrink-0 text-[#0F8B58]" aria-hidden="true" />
-                <p className="text-sm leading-snug text-[#0B3D27]">
-                  <strong>
-                    {rewardsPending(customer) > 1
-                      ? `${rewardsPending(customer)} récompenses à récupérer`
-                      : '1 récompense à récupérer'}
-                  </strong>{card.reward_description ? ` : ${card.reward_description}` : ''}.
-                  {' '}Présentez votre carte en caisse.
-                </p>
+                {am.image_url && <img src={am.image_url} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" />}
+                <button type="button" aria-label="Masquer ce message" className="-mr-1 -mt-1 p-1 text-[#94A3B8]"
+                        onClick={() => { setHiddenMsg(am.log_id); setGeoMsg(null); try { localStorage.setItem('fidclic:auto_msg_hidden', am.log_id); } catch { /* private mode */ } }}>
+                  <X size={16} /></button>
               </div>
-            )}
-
-            {/* Native wallets — real signed passes (features/wallet_passes.py).
-                The buttons only appear once the certificates are configured. */}
-            <WalletButtons barcodeId={barcodeId} onError={showToast} />
-
-            {/* Share / home-screen / print — always available, any browser. */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
-              <button
-                onClick={async () => {
-                  try {
-                    if (navigator.share) {
-                      await navigator.share({
-                        title: `${tenant?.name || 'FidClic'} — ma carte de fidélité`,
-                        text: `Ma carte de fidélité ${tenant?.name || 'FidClic'}`,
-                        url: window.location.href,
-                      });
-                    } else {
-                      await navigator.clipboard.writeText(window.location.href);
-                      showToast('Lien copié — collez-le où vous voulez');
-                    }
-                  } catch (_e) { /* user cancelled, ignore */ }
-                }}
-                className="bg-[#171412] text-white py-3 rounded-xl font-medium text-sm hover:opacity-90 transition"
-              >
-                📤 Partager / copier
-              </button>
-              <button
-                onClick={() => {
-                  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-                  showToast(isIOS
-                    ? "Touchez le bouton Partager dans Safari, puis 'Sur l'écran d'accueil'."
-                    : "Menu Chrome → 'Ajouter à l'écran d'accueil'.");
-                }}
-                className="bg-[#B85C38] text-white py-3 rounded-xl font-medium text-sm hover:opacity-90 transition"
-              >
-                📱 Sur l'écran d'accueil
-              </button>
-              <button
-                onClick={() => window.print()}
-                className="bg-white text-[#171412] py-3 rounded-xl font-medium text-sm border border-[#E9E5E0] hover:bg-[#FAFAF8] transition"
-              >
-                🖨️ Imprimer
-              </button>
+              {am.button_url && am.button_label && (
+                <a href={am.button_url} rel="noopener"
+                   className="block border-t border-[#E6EEFB] bg-[#F1F5FF] py-3 text-center text-[14.5px] font-semibold text-[#1463FF]">{am.button_label}</a>
+              )}
             </div>
-            <p className="text-[10px] text-[#8D857D] text-center mt-2">
-              💡 La carte fonctionne dans n'importe quel navigateur, et se met à jour automatiquement après chaque visite.
+          );
+        })()}
+
+        {/* The card itself — the pass as it sits in Apple / Google Wallet, in the shop's colours */}
+        <WalletCardErrorBoundary>
+          <div className="flex justify-center">
+            <div className="overflow-hidden rounded-[18px] shadow-[0_24px_50px_-28px_rgba(15,23,42,.6)]" style={{ width: passW }}>
+              <WalletPassPreview customer={customer} tenant={tenant} card={card} width={passW} />
+            </div>
+          </div>
+        </WalletCardErrorBoundary>
+
+        {/* A full card restarts on the next visit; its reward stays valid until handed over */}
+        {pending > 0 && (
+          <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#BFE6D3] bg-[#EAF7F0] p-4">
+            <Gift className="mt-0.5 h-5 w-5 shrink-0 text-[#0F8B58]" aria-hidden="true" />
+            <p className="text-[14px] leading-snug text-[#0B3D27]">
+              <strong>{pending > 1 ? `${pending} récompenses à récupérer` : '1 récompense à récupérer'}</strong>
+              {card.reward_description ? ` : ${card.reward_description}` : ''}. Présentez votre carte en caisse.
             </p>
+          </div>
+        )}
 
-            {/* PWA install prompt — quietly invites the customer to install
-                this card to their home screen. On iOS this is the only way to
-                receive push notifications, so the prompt becomes a hard
-                prerequisite for the Bell toggle below. */}
-            <InstallPwaPrompt
-              context="card"
-              force={showInstallHelp}
-              onInstalled={() => {
-                // After install, retry push subscription so iOS picks it up
-                // immediately on next launch.
-                if (data?.tenant?.slug && barcodeId) {
-                  ensureSubscribed(data.tenant.slug, barcodeId).catch(() => {});
-                }
-                setShowInstallHelp(false);
-              }}
-            />
-
-            {/* Geolocation consent — explicit pre-prompt with a clear "why".
-                Renders only if the customer hasn't already granted location.
-                After grant, we silently update prefs.geo_enabled = true so the
-                proximity-push backend can address them. */}
-            <GeoConsentCard
-              customerId={customer.id}
-              tenantSlug={tenant.slug}
-              barcodeId={barcodeId}
-            />
-
-            {/* Push notification preview */}
-            <div className="mt-6 bg-white/70 backdrop-blur rounded-xl p-4 border border-[#E9E5E0]">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles size={16} className="text-[#B85C38]" />
-                <h3 className="text-sm font-semibold text-[#171412]">Aperçu de la notification push</h3>
-              </div>
-              <div className="bg-[#171412]/5 rounded-lg p-3 flex gap-3">
-                <div
-                  className="w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm"
-                  style={{
-                    background: card?.primary_color || '#B85C38',
-                    color: '#FFFFFF',
-                  }}
-                >
-                  {tenant.name?.charAt(0)}
-                </div>
-                <div className="flex-1">
-                  <p className="text-[11px] font-semibold text-[#171412]">{tenant.name}</p>
-                  <p className="text-xs text-[#57504A] leading-snug">
-                    {activeOffer?.active
-                      ? `${activeOffer.title} — ${activeOffer.description}`
-                      : 'Nouvelle offre disponible dans votre carte de fidélité'}
-                  </p>
-                  <p className="text-[10px] text-[#8D857D] mt-0.5">maintenant</p>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* RIGHT: Settings + offers panel */}
-          <aside className="bg-white rounded-2xl border border-[#E9E5E0] shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-[#E9E5E0]">
-              <h2 className="font-['Cormorant_Garamond'] text-2xl font-bold ft-gradient-text-slow">Mon Programme de Fidélité</h2>
-              <p className="text-xs text-[#57504A] mt-1">{customer.name} · {customer.email}</p>
-            </div>
-
-            {/* Toggle list */}
-            <div className="divide-y divide-[#E9E5E0]">
-              <ToggleRow
-                icon={<RefreshCw size={18} />}
-                label="Mise à jour automatique"
-                hint="Met à jour votre carte sans action de votre part"
-                value={prefs.auto_update}
-                onToggle={() => togglePref('auto_update')}
-                disabled={savingPrefs}
-              />
-              <ToggleRow
-                icon={<Bell size={18} />}
-                label="Autoriser les notifications"
-                hint="Recevez les nouvelles offres et rappels"
-                value={prefs.push_enabled}
-                onToggle={() => togglePref('push_enabled')}
-                disabled={savingPrefs}
-              />
-              {/* Self-service push test. Hitting POST /api/card/<bc>/test-push
-                  fires a "FidClic — test push ✓" notification to all of
-                  this customer's subscribed devices. Surfaces the actual
-                  failure reason in a toast (no_subscription, vapid_not_configured,
-                  endpoint expired, etc) so the customer can debug without
-                  needing the owner to send a campaign. */}
-              <div className="p-4 bg-[#F5F4F1] border-t border-[#E9E5E0]">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      const res = await api.post(`/card/${customer.barcode_id}/test-push`);
-                      const d = res.data || {};
-                      if (d.sent > 0) {
-                        showToast(`Push envoyé à ${d.sent} appareil${d.sent > 1 ? 's' : ''}. Regardez votre écran de verrouillage.`);
-                      } else if (d.error === 'no_subscription') {
-                        showToast("Notifications pas encore activées — basculez le bouton ci-dessus puis réessayez.");
-                      } else if (d.error === 'vapid_not_configured') {
-                        showToast("Serveur non configuré pour les notifications (VAPID).");
-                      } else {
-                        showToast(`Échec: ${d.error || 'inconnu'} (${d.subs_total || 0} abonnement${(d.subs_total || 0) > 1 ? 's' : ''})`);
-                      }
-                    } catch (e) {
-                      showToast('Erreur réseau lors du test push.');
-                    }
-                  }}
-                  className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-lg bg-white border border-[#B85C38] text-[#B85C38] font-semibold text-sm hover:bg-[#B85C38] hover:text-white transition-colors"
-                >
-                  <Bell size={14} />
-                  Envoyer une notification test
-                </button>
-                <p className="text-[10px] text-[#8D857D] mt-1.5 text-center">
-                  Vérifie que les notifications atteignent bien votre téléphone.
-                </p>
-              </div>
-              <button
-                onClick={deleteCard}
-                className="w-full text-left p-4 flex items-center gap-3 hover:bg-[#FFF4F1] transition-colors text-[#B85C38]"
-              >
-                <Trash2 size={18} />
-                <div>
-                  <p className="font-medium text-sm">Supprimer la carte</p>
-                  <p className="text-xs opacity-80">Retire la carte de votre wallet</p>
-                </div>
+        <div className="mt-5 space-y-3">
+          {/* Native wallets — shown once the certificates are configured */}
+          <WalletButtons barcodeId={barcodeId} onError={showToast} />
+          <div className="grid grid-cols-3 gap-2">
+            {[[Share2, 'Partager / copier', shareCard], [Smartphone, 'Sur l’écran d’accueil', homeHelp], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
+              <button key={label} type="button" onClick={fn}
+                      className="flex flex-col items-center gap-1.5 rounded-2xl bg-white px-2 py-3 text-[12.5px] font-medium text-[#0B1C3F] shadow-[0_6px_18px_-14px_rgba(15,23,42,.35)] hover:bg-[#F8FAFC]">
+                <Icon size={18} aria-hidden="true" /> {label}
               </button>
-
-              {/* ─── RGPD — Confidentialité ─────────────────────────────
-                  Self-service data rights: export (Art. 15/20) and full
-                  erasure (Art. 17). Both barcode-keyed, no login needed —
-                  same auth model as the rest of the card page. */}
-              <div className="p-4 bg-[#F8F6F1]">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-[#8D857D] mb-3 flex items-center gap-1.5">
-                  <ShieldCheck size={12} /> Confidentialité (RGPD)
-                </p>
-                <button
-                  onClick={downloadMyData}
-                  className="w-full text-left py-2.5 flex items-center gap-3 text-[#171412] hover:text-[#B85C38] transition-colors"
-                >
-                  <Download size={16} className="shrink-0" />
-                  <div>
-                    <p className="font-medium text-sm">Télécharger mes données</p>
-                    <p className="text-xs text-[#8D857D]">Profil, visites, notifications — fichier JSON</p>
-                  </div>
-                </button>
-                <button
-                  onClick={forgetMe}
-                  className="w-full text-left py-2.5 flex items-center gap-3 text-[#9B2C2C] hover:opacity-80 transition-opacity"
-                >
-                  <XCircle size={16} className="shrink-0" />
-                  <div>
-                    <p className="font-medium text-sm">Supprimer mes données personnelles</p>
-                    <p className="text-xs opacity-70">Effacement définitif et irréversible (droit à l'oubli)</p>
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            {/* Rate your visit — only shown right after a visit (<= 14 days). */}
-            {(() => {
-              const lastVisit = customer.last_visit_date ? new Date(customer.last_visit_date) : null;
-              const recentVisit = lastVisit && (Date.now() - lastVisit.getTime()) / 86400000 <= 14;
-              if (!recentVisit) return null;
-              if (reviewThanks) {
-                return (
-                  <div className="m-3 rounded-xl border border-[#4A5D23]/40 bg-[#e8f3e5] p-4 text-center">
-                    <p className="text-sm font-semibold text-[#2d5016]">Merci pour votre avis ! 🙏</p>
-                    <p className="text-xs text-[#2d5016]/80 mt-1">Votre retour aide {tenant.name} à progresser.</p>
-                    {googleReviewUrl && (
-                      <a href={googleReviewUrl} target="_blank" rel="noopener noreferrer"
-                         onClick={() => { publicAPI.googleReviewClick(customer.barcode_id).catch(() => {}); }}
-                         className="mt-3 inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-[#171412] shadow-sm ring-1 ring-black/5">
-                        <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
-                          <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
-                          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-                          <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-                          <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
-                        </svg>
-                        Laissez-nous un avis sur Google
-                      </a>
-                    )}
-                  </div>
-                );
-              }
-              return (
-                <div className="m-3 rounded-xl border border-[#E3A869]/40 bg-[#F6E9E2] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-bold text-[#171412]">Comment s'est passée votre visite ?</p>
-                    <span className="text-xs text-[#96431F]">Votre note reste anonyme</span>
-                  </div>
-                  <div className="mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[#57504A] w-4">1</span>
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        step="1"
-                        value={reviewRating}
-                        onChange={(e) => setReviewRating(parseInt(e.target.value, 10))}
-                        className="flex-1 accent-[#B85C38]"
-                      />
-                      <span className="text-xs text-[#57504A] w-6">10</span>
-                    </div>
-                    <p className="text-center mt-1">
-                      <span className="text-3xl font-bold text-[#B85C38]">{reviewRating}</span>
-                      <span className="text-sm text-[#57504A]">/10</span>
-                    </p>
-                  </div>
-                  <textarea
-                    value={reviewText}
-                    onChange={(e) => setReviewText(e.target.value.slice(0, 500))}
-                    placeholder="Un mot pour l'équipe ? (optionnel — service, propreté, accueil…)"
-                    rows={2}
-                    className="w-full text-sm border border-[#E9E5E0] rounded p-2 bg-white resize-none"
-                  />
-                  {reviewError && (
-                    <p className="text-xs text-red-600 mt-2">{reviewError}</p>
-                  )}
-                  <button
-                    type="button"
-                    disabled={reviewSubmitting}
-                    onClick={async () => {
-                      try {
-                        setReviewSubmitting(true);
-                        setReviewError(null);
-                        const { data: sent } = await publicAPI.submitReview({
-                          customer_id: customer.id,
-                          barcode_id: customer.barcode_id,
-                          rating: reviewRating,
-                          text: reviewText,
-                          visit_id: customer.last_visit_id || undefined,
-                          branch_id: customer.branch_id || undefined,
-                        });
-                        setGoogleReviewUrl(sent?.google_review_url || null);
-                        setReviewThanks(true);
-                        setReviewText('');
-                      } catch (e) {
-                        setReviewError(e?.response?.data?.detail || 'Impossible d\'envoyer votre avis.');
-                      } finally {
-                        setReviewSubmitting(false);
-                      }
-                    }}
-                    className="mt-3 w-full bg-[#B85C38] text-white py-2 rounded-lg font-semibold text-sm disabled:opacity-50"
-                  >
-                    {reviewSubmitting ? 'Envoi…' : 'Envoyer mon avis'}
-                  </button>
-                </div>
-              );
-            })()}
-
-            {/* Tabs — Offres now combines the old offers + news lists into
-                one chronological feed. The old "News" tab was a duplicate
-                of the same campaigns shown under offers, which confused
-                both customers and merchants. */}
-            <div className="flex border-t border-[#E9E5E0] bg-[#FAFAF8]">
-              <TabBtn active={tab === 'offers'}  onClick={() => setTab('offers')} label="Offres" count={mergedFeed.length} />
-              <TabBtn active={tab === 'program'} onClick={() => setTab('program')} label="Programme" />
-            </div>
-
-            <div className="p-4 max-h-[420px] overflow-y-auto space-y-3">
-              {/* Single unified feed — standing offers + recent campaigns
-                  in chronological order, deduplicated. Every campaign-kind
-                  item is tappable and opens the detail modal (firing the
-                  pixel open-tracking endpoint). The standing card-template
-                  offer is rendered non-clickable because it has no
-                  campaign id to attach analytics to. */}
-              {tab === 'offers' && (mergedFeed.length === 0 ? (
-                <p className="text-sm text-[#8D857D] text-center py-8">Aucune offre ni message pour le moment.</p>
-              ) : mergedFeed.map(item => {
-                const isClickable = item.kind === 'campaign' && item.id;
-                const Wrapper = isClickable ? 'button' : 'div';
-                return (
-                  <Wrapper
-                    key={item.id}
-                    {...(isClickable ? {
-                      type: 'button',
-                      onClick: () => {
-                        setOpenedNotification({
-                          id: item.id,
-                          title: item.title,
-                          body: item.body || item.description || '',
-                          image_url: item.image_url,
-                          link: item.link,
-                          sent_at: item.sent_at,
-                        });
-                        try {
-                          api.get(`/campaigns/${item.id}/pixel/${customer.id}.png`).catch(() => {});
-                        } catch (_e) { /* tracking failure must not block the open */ }
-                      },
-                    } : {})}
-                    className={`w-full text-left rounded-lg border border-[#E9E5E0] p-3 bg-white ${isClickable ? 'hover:bg-[#FFF4F1] transition-colors cursor-pointer' : ''}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <Gift size={18} className="text-[#B85C38] mt-0.5 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-[#171412] text-sm">{item.title}</p>
-                        <p className="text-xs text-[#57504A] mt-0.5 line-clamp-2">{item.description || item.body}</p>
-                        {item.sent_at && item.kind === 'campaign' && (
-                          <p className="text-[10px] text-[#8D857D] mt-1">
-                            {new Date(item.sent_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                          </p>
-                        )}
-                        {item.valid_until && item.kind === 'primary' && (
-                          <p className="text-[10px] text-[#8D857D] mt-1">
-                            Valable jusqu'au {new Date(item.valid_until).toLocaleDateString('fr-FR')}
-                          </p>
-                        )}
-                      </div>
-                      {isClickable && <ChevronRight size={16} className="text-[#8D857D] shrink-0 mt-1" />}
-                    </div>
-                  </Wrapper>
-                );
-              }))}
-
-              {tab === 'program' && (
-                <div className="space-y-3 text-sm">
-                  <div className="rounded-lg border border-[#E9E5E0] p-3 bg-white">
-                    <p className="text-xs text-[#8D857D] uppercase tracking-wider font-semibold mb-1">Récompense</p>
-                    <p className="text-[#171412] font-medium">🎁 {card.reward_description}</p>
-                    <p className="text-xs text-[#57504A] mt-1">Débloquée après {stampsTarget} visites.</p>
-                  </div>
-                  <div className="rounded-lg border border-[#E9E5E0] p-3 bg-white">
-                    <p className="text-xs text-[#8D857D] uppercase tracking-wider font-semibold mb-1">Points par visite</p>
-                    <p className="text-[#171412] font-medium">+{card.points_per_visit} pts à chaque passage</p>
-                  </div>
-                  <div className="rounded-lg border border-[#E9E5E0] p-3 bg-white">
-                    <p className="text-xs text-[#8D857D] uppercase tracking-wider font-semibold mb-2">Commerçant</p>
-                    <p className="flex items-center gap-2 text-[#171412]"><Store size={14} /> {tenant.name}</p>
-                    {tenant.address && <p className="flex items-center gap-2 text-[#57504A] text-xs mt-1"><MapPin size={12} /> {tenant.address}</p>}
-                    {tenant.phone && <p className="flex items-center gap-2 text-[#57504A] text-xs mt-1"><Phone size={12} /> {tenant.phone}</p>}
-                    {tenant.website && <p className="flex items-center gap-2 text-[#57504A] text-xs mt-1"><Globe size={12} /> {tenant.website}</p>}
-                  </div>
-                </div>
-              )}
-            </div>
-          </aside>
+            ))}
+          </div>
         </div>
+
+        {/* The rest, one tap away */}
+        <nav aria-label="Ma carte" className="mt-5 overflow-hidden rounded-3xl bg-white shadow-[0_10px_30px_-22px_rgba(15,23,42,.35)]">
+          {menu.map(({ key, icon: Icon, label, hint, to }, i) => {
+            const inner = (
+              <>
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EAF1FF] text-[#2F6BFF]"><Icon size={18} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-semibold text-[#0B1C3F]">{label}</span>
+                  <span className="block truncate text-[12.5px] text-[#64748B]">{hint}</span>
+                </span>
+                <ChevronRight size={18} className="shrink-0 text-[#94A3B8]" />
+              </>
+            );
+            const cls = `flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-[#F8FAFC] ${i ? 'border-t border-[#EEF2F7]' : ''}`;
+            return to
+              ? <Link key={key} to={to} className={cls}>{inner}</Link>
+              : <button key={key} type="button" onClick={() => setSheet(key)} className={cls}>{inner}</button>;
+          })}
+        </nav>
+
+        <p className="mt-3 text-center text-[11.5px] text-[#94A3B8]">La carte se met à jour après chaque visite, dans n’importe quel navigateur.</p>
+
+        {/* iOS needs the card on the home screen before it can receive notifications */}
+        <InstallPwaPrompt
+          context="card"
+          force={showInstallHelp}
+          onInstalled={() => {
+            if (data?.tenant?.slug && barcodeId) ensureSubscribed(data.tenant.slug, barcodeId).catch(() => {});
+            setShowInstallHelp(false);
+          }}
+        />
+        <GeoConsentCard customerId={customer.id} tenantSlug={tenant.slug} barcodeId={barcodeId} />
       </div>
 
-      {/* Toast */}
+      {sheet === 'program' && (
+        <Sheet title="Le programme" onClose={() => setSheet(null)}>
+          <div className="space-y-3 text-[14px]">
+            <div className="rounded-2xl bg-[#F8FAFC] p-4">
+              <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Récompense</p>
+              <p className="mt-1 font-semibold text-[#0B1C3F]">🎁 {card.reward_description || 'Une récompense fidélité'}</p>
+              <p className="mt-1 text-[13px] text-[#475569]">Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
+            </div>
+            {!!card.points_per_visit && (
+              <div className="rounded-2xl bg-[#F8FAFC] p-4">
+                <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Points par visite</p>
+                <p className="mt-1 font-semibold text-[#0B1C3F]">+{card.points_per_visit} pts à chaque passage</p>
+              </div>
+            )}
+            <div className="rounded-2xl bg-[#F8FAFC] p-4">
+              <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Votre statut</p>
+              <p className="mt-1 font-semibold text-[#0B1C3F]">
+                {({ bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' })[String(customer.tier || 'bronze').toLowerCase()] || customer.tier}
+                {' · '}{customer.points || 0} pts · {customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
+              </p>
+            </div>
+          </div>
+        </Sheet>
+      )}
+
+      {sheet === 'review' && (
+        <Sheet title="Donner mon avis" onClose={() => setSheet(null)}>
+          {reviewThanks ? (
+            <div className="rounded-2xl bg-[#EAF7F0] p-4 text-center">
+              <p className="text-[15px] font-semibold text-[#0B3D27]">Merci pour votre avis ! 🙏</p>
+              <p className="mt-1 text-[13px] text-[#0B3D27]/80">Votre retour aide {tenant.name} à progresser.</p>
+              {googleReviewUrl && (
+                <a href={googleReviewUrl} target="_blank" rel="noopener noreferrer"
+                   onClick={() => { publicAPI.googleReviewClick(customer.barcode_id).catch(() => {}); }}
+                   className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-[14px] font-semibold text-[#0B1C3F] shadow-sm ring-1 ring-black/5">
+                  ⭐ Laissez-nous un avis sur Google
+                </a>
+              )}
+            </div>
+          ) : (
+            <div>
+              <p className="text-[14px] font-semibold text-[#0B1C3F]">Comment s’est passée votre visite ?</p>
+              <p className="text-[12.5px] text-[#64748B]">Votre note reste anonyme.</p>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="w-4 text-[12px] text-[#64748B]">1</span>
+                <input type="range" min="1" max="10" step="1" value={reviewRating}
+                       onChange={(e) => setReviewRating(parseInt(e.target.value, 10))} className="flex-1 accent-[#2F6BFF]" aria-label="Note sur 10" />
+                <span className="w-6 text-[12px] text-[#64748B]">10</span>
+              </div>
+              <p className="mt-1 text-center"><span className="text-[30px] font-bold text-[#2F6BFF]">{reviewRating}</span><span className="text-[14px] text-[#64748B]">/10</span></p>
+              <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value.slice(0, 500))} rows={3}
+                        placeholder="Un mot pour l’équipe ? (optionnel — service, propreté, accueil…)"
+                        className="mt-2 w-full resize-none rounded-xl border border-[#E2E8F0] bg-white p-3 text-[16px]" />
+              {reviewError && <p className="mt-2 text-[12.5px] text-[#B91C1C]">{reviewError}</p>}
+              <button type="button" disabled={reviewSubmitting}
+                      onClick={async () => {
+                        try {
+                          setReviewSubmitting(true);
+                          setReviewError(null);
+                          const { data: sent } = await publicAPI.submitReview({
+                            customer_id: customer.id, barcode_id: customer.barcode_id, rating: reviewRating, text: reviewText,
+                            visit_id: customer.last_visit_id || undefined, branch_id: customer.branch_id || undefined,
+                          });
+                          setGoogleReviewUrl(sent?.google_review_url || null);
+                          setReviewThanks(true);
+                          setReviewText('');
+                        } catch (e) {
+                          setReviewError(e?.response?.data?.detail || 'Impossible d\'envoyer votre avis.');
+                        } finally {
+                          setReviewSubmitting(false);
+                        }
+                      }}
+                      className="mt-3 h-12 w-full rounded-2xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-60">
+                {reviewSubmitting ? 'Envoi…' : 'Envoyer mon avis'}
+              </button>
+            </div>
+          )}
+        </Sheet>
+      )}
+
+      {sheet === 'about' && <DetailsDrawer tenant={tenant} card={card} onClose={() => setSheet(null)} />}
+
+      {sheet === 'settings' && (
+        <Sheet title="Paramètres" onClose={() => setSheet(null)}>
+          <div className="divide-y divide-[#EEF2F7] rounded-2xl bg-[#F8FAFC]">
+            <ToggleRow icon={<RefreshCw size={18} />} label="Mise à jour automatique" hint="Met à jour votre carte sans action de votre part"
+                       value={prefs.auto_update} onToggle={() => togglePref('auto_update')} disabled={savingPrefs} />
+            <ToggleRow icon={<Bell size={18} />} label="Autoriser les notifications" hint="Recevez les nouvelles offres et rappels"
+                       value={prefs.push_enabled} onToggle={() => togglePref('push_enabled')} disabled={savingPrefs} />
+          </div>
+          <button type="button"
+                  onClick={async () => {
+                    try {
+                      const { data: d = {} } = await api.post(`/card/${customer.barcode_id}/test-push`);
+                      if (d.sent > 0) showToast(`Notification envoyée à ${d.sent} appareil${d.sent > 1 ? 's' : ''}.`);
+                      else if (d.error === 'no_subscription') showToast('Activez d’abord les notifications ci-dessus.');
+                      else if (d.error === 'vapid_not_configured') showToast('Notifications non configurées (contactez le commerçant).');
+                      else showToast(`Échec : ${d.error || 'inconnu'}`);
+                    } catch (e) { showToast('Erreur réseau lors du test.'); }
+                  }}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#2F6BFF] py-3 text-[14px] font-semibold text-[#2F6BFF]">
+            <Bell size={15} /> Envoyer une notification test
+          </button>
+          <p className="mb-2 mt-6 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]"><ShieldCheck size={13} /> Mes données (RGPD)</p>
+          <div className="divide-y divide-[#EEF2F7] rounded-2xl bg-[#F8FAFC]">
+            <button type="button" onClick={downloadMyData} className="flex w-full items-center gap-3 p-4 text-left">
+              <Download size={18} className="shrink-0 text-[#2F6BFF]" />
+              <span><span className="block text-[14px] font-medium text-[#0B1C3F]">Télécharger mes données</span><span className="block text-[12px] text-[#64748B]">Profil, visites, notifications — fichier JSON</span></span>
+            </button>
+            <button type="button" onClick={deleteCard} className="flex w-full items-center gap-3 p-4 text-left">
+              <Trash2 size={18} className="shrink-0 text-[#B45309]" />
+              <span><span className="block text-[14px] font-medium text-[#0B1C3F]">Supprimer la carte</span><span className="block text-[12px] text-[#64748B]">Retire la carte ; vos visites restent chez le commerçant</span></span>
+            </button>
+            <button type="button" onClick={forgetMe} className="flex w-full items-center gap-3 p-4 text-left">
+              <XCircle size={18} className="shrink-0 text-[#B91C1C]" />
+              <span><span className="block text-[14px] font-medium text-[#B91C1C]">Supprimer mes données personnelles</span><span className="block text-[12px] text-[#64748B]">Effacement définitif et irréversible (droit à l’oubli)</span></span>
+            </button>
+          </div>
+          <p className="mt-4 text-center text-[12px] text-[#94A3B8]">{customer.name}{customer.email ? ` · ${customer.email}` : ''}</p>
+        </Sheet>
+      )}
+
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#171412] text-white text-sm py-2.5 px-5 rounded-full shadow-lg">
+        <div role="status" className="fixed bottom-6 left-1/2 z-[60] max-w-[90vw] -translate-x-1/2 rounded-2xl bg-[#0B1C3F] px-5 py-2.5 text-center text-[13.5px] text-white shadow-lg">
           {toast}
         </div>
       )}
 
-      {/* Tap-to-expand details drawer */}
-      {detailsOpen && (
-        <DetailsDrawer tenant={tenant} card={card} onClose={() => setDetailsOpen(false)} />
-      )}
-
-      {/* Notification detail modal — opens when the customer taps any
-          notification in the News tab. Shows the full campaign body and,
-          if present, a CTA link that fires the track-click endpoint
-          before navigating away (so the merchant's analytics show real
-          click-through numbers, not just opens). */}
+      {/* « Voir l'offre » on the back of the Wallet pass (?offre=) opens that campaign here */}
       {openedNotification && (
-        <NotificationDetailModal
-          notification={openedNotification}
-          tenant={tenant}
-          card={card}
-          customerId={customer.id}
-          onClose={() => setOpenedNotification(null)}
-        />
+        <NotificationDetailModal notification={openedNotification} tenant={tenant} card={card}
+                                 customerId={customer.id} onClose={() => setOpenedNotification(null)} />
       )}
     </div>
   );
 };
+
+// A bottom sheet for the menu's rows (Le programme, Avis, Paramètres).
+function Sheet({ title, onClose, children }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label={title} onClick={onClose}
+         className="fixed inset-0 z-50 flex items-end justify-center bg-[#0B1C3F]/50 sm:items-center sm:p-4">
+      <div onClick={(e) => e.stopPropagation()}
+           className="max-h-[88vh] w-full max-w-[520px] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-3xl">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-[19px] font-bold text-[#0B1C3F]">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Fermer" className="rounded-full p-1.5 text-[#64748B] hover:bg-[#F1F5F9]"><X size={18} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 // ───────────────────────────────────────────────────────────────────────
 // NotificationDetailModal — full-screen-ish modal for one notification.
@@ -1246,7 +1028,7 @@ function NotificationDetailModal({ notification, tenant, card, customerId, onClo
         onClick={(e) => e.stopPropagation()}
         style={{
           background: 'var(--flc-card, #FFFFFF)', borderRadius: 18, padding: '24px 22px 18px',
-          maxWidth: 520, width: '100%', maxHeight: '85vh', overflowY: 'auto',
+          maxWidth: 520, width: '100%', maxHeight: vh(85), overflowY: 'auto',
           boxShadow: '0 32px 80px rgba(0,0,0,0.25)',
         }}
       >
@@ -1615,7 +1397,7 @@ const DetailsDrawer = ({ tenant, card, onClose }) => {
 
 const ToggleRow = ({ icon, label, hint, value, onToggle, disabled }) => (
   <div className="flex items-center gap-3 p-4">
-    <div className="text-[#B85C38]">{icon}</div>
+    <div className="text-[#2F6BFF]">{icon}</div>
     <div className="flex-1">
       <p className="font-medium text-sm text-[#171412]">{label}</p>
       <p className="text-xs text-[#57504A]">{hint}</p>
@@ -1623,7 +1405,7 @@ const ToggleRow = ({ icon, label, hint, value, onToggle, disabled }) => (
     <button
       onClick={onToggle}
       disabled={disabled}
-      className={`relative w-11 h-6 rounded-full transition-colors ${value ? 'bg-[#4A5D23]' : 'bg-[#D6D3D1]'} ${disabled ? 'opacity-60' : ''}`}
+      className={`relative w-11 h-6 shrink-0 rounded-full transition-colors ${value ? 'bg-[#2F6BFF]' : 'bg-[#CBD5E1]'} ${disabled ? 'opacity-60' : ''}`}
       aria-pressed={value}
     >
       <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />

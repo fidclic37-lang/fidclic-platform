@@ -9,6 +9,7 @@ import { ownerAPI } from '../lib/api';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
+import ImpactFidClicCard from '../components/ImpactFidClicCard';
 import { eur } from '../lib/money';
 
 /**
@@ -340,60 +341,39 @@ const Donut = ({ mix, unit = 'Clients' }) => {
   );
 };
 
-/* « Impact FidClic »: the revenue FidClic brought back, by what brought it. */
-const ImpactPanel = ({ imp }) => {
-  const up = (imp.delta_pct ?? 0) >= 0;
-  return (
-    <section id="impact" className="mb-4 scroll-mt-24 rounded-2xl border border-[#BEE9D2] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
-        <div>
-          <h2 className="mb-3 flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#E7F7EE] text-[#0F8B58]"><Sparkles size={16} /></span>
-            Impact FidClic <InfoTip k="impact" />
-          </h2>
-          <p className="flex flex-wrap items-baseline gap-2">
-            <span className="text-[32px] font-extrabold leading-none text-[#0F8B58] tabular-nums">{money(imp.revenue)}</span>
-            {imp.delta_pct !== null && imp.delta_pct !== undefined && (
-              <span className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold"
-                    style={up ? { background: '#E7F7EE', color: '#0F8B58' } : { background: '#FEECEC', color: '#C0392B' }}>
-                {up ? `↑ +${imp.delta_pct}%` : `↓ ${imp.delta_pct}%`}
-              </span>
-            )}
-          </p>
-          <p className="mt-2 text-[12.5px] text-[#475569]">
-            CA des clients revenus grâce à FidClic — <b className="text-[#0B1C3F]">{imp.share_pct}%</b> de votre
-            chiffre d'affaires ({money(imp.revenue_total)}).
-          </p>
-          <p className="mt-1 text-[12.5px] text-[#475569]">
-            <b className="text-[#0B1C3F] tabular-nums">{nf(imp.visits)}</b> visite{imp.visits > 1 ? 's' : ''} ramenée{imp.visits > 1 ? 's' : ''} par FidClic.
-          </p>
-          <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#EEF3FB]" title={`${imp.share_pct}% du CA`}>
-            <span className="block h-full rounded-full bg-[#10B981]" style={{ width: `${Math.min(100, imp.share_pct)}%` }} />
-          </div>
-        </div>
-        <ul className="space-y-3">
-          {imp.sources.map((x) => (
-            <li key={x.key} className="text-[12.5px]">
-              <div className="mb-1 flex items-center gap-2">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[x.tone]?.dot }} />
-                <span className="flex-1 font-medium text-[#334155]">{x.label}</span>
-                <span className="text-[#94A3B8] tabular-nums">{nf(x.visits)} visite{x.visits > 1 ? 's' : ''}</span>
-                <span className="w-24 text-right font-bold text-[#0B1C3F] tabular-nums">{money(x.revenue)}</span>
-                <span className="w-10 text-right text-[#64748B] tabular-nums">{x.pct}%</span>
-              </div>
-              <span className="block h-2 overflow-hidden rounded-full bg-[#EEF3FB]">
-                <span className="block h-full rounded-full" style={{ width: `${x.pct}%`, background: TONES[x.tone]?.dot }} />
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
+/* « Impact FidClic »: the card from the mockup (2026-10-10, the same as the
+   Tableau de bord's), and beside it what brought the revenue, source by source. */
+const ImpactPanel = ({ imp }) => (
+  <div id="impact" className="mb-4 grid scroll-mt-24 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+    <ImpactFidClicCard value={imp.revenue} />
+    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <h3 className="text-[15px] font-bold text-[#0B1C3F]">Détail par source</h3>
+      <p className="mt-1 text-[12.5px] text-[#475569]">
+        <b className="text-[#0B1C3F]">{imp.share_pct}%</b> de votre chiffre d'affaires ({money(imp.revenue_total)})
+        {' · '}<b className="text-[#0B1C3F] tabular-nums">{nf(imp.visits)}</b> visite{imp.visits > 1 ? 's' : ''} ramenée{imp.visits > 1 ? 's' : ''}
+      </p>
+      <ul className="mt-3 space-y-3">
+        {imp.sources.map((x) => (
+          <li key={x.key} className="text-[12.5px]">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[x.tone]?.dot }} />
+              <span className="flex-1 font-medium text-[#334155]">{x.label}</span>
+              <span className="text-[#94A3B8] tabular-nums">{nf(x.visits)} visite{x.visits > 1 ? 's' : ''}</span>
+              <span className="w-24 text-right font-bold text-[#0B1C3F] tabular-nums">{money(x.revenue)}</span>
+              <span className="w-10 text-right text-[#64748B] tabular-nums">{x.pct}%</span>
+            </div>
+            <span className="block h-2 overflow-hidden rounded-full bg-[#EEF3FB]">
+              <span className="block h-full rounded-full" style={{ width: `${x.pct}%`, background: TONES[x.tone]?.dot }} />
+            </span>
+          </li>
+        ))}
+      </ul>
       <p className="mt-4 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
         <Info size={12} className="mt-px shrink-0" /> {imp.note}
       </p>
     </section>
-  );
-};
+  </div>
+);
 
 /* ── tabs ─────────────────────────────────────────────────────────────── */
 const TabVue = ({ d }) => (

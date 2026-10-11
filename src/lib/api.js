@@ -457,6 +457,8 @@ export const ownerAPI = {
   getCustomers: (params) => api.get('/owner/customers', { params }),
   getAnalytics: (params) => api.get('/owner/analytics', { params }),
   scanVisit: (data) => api.post('/owner/scan', data),
+  // whose card, its stamps, and the paper-card stamps it can still take (2026-10-10)
+  scanPreview: (barcode) => api.get('/owner/scan/preview', { params: { barcode } }),
   scan: (data) => api.post('/owner/scan', data),
   register: (data) => api.post('/owner/register', data),
   getCardTemplate: () => api.get('/owner/card-template'),
@@ -505,6 +507,8 @@ export const ownerAPI = {
   // Parrainage — the programme's dashboard, its settings and its share links.
   referralOverview: (params) => api.get('/owner/referrals/overview', { params }),
   referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
+  // every parrainage of the period, 20 per page, searchable (QA R5 F25)
+  referralList: (params) => api.get('/owner/referrals/list', { params }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
   // Automatisations · Push Wallet — the scenarios, their figures, and firing
   // one by hand.
@@ -520,6 +524,16 @@ export const ownerAPI = {
   approvePushWalletLot: (id) => api.post(`/owner/push-wallet/pending/${id}/approve`),
   skipPushWalletLot: (id) => api.post(`/owner/push-wallet/pending/${id}/skip`),
   // Messages automatiques — Google review after a scan, "récompense proche".
+  // Automatisations — redesign 2026-10-11 (features/automations.py)
+  automations: () => api.get('/owner/automations'),
+  createAutomation: (body) => api.post('/owner/automations', body),
+  updateAutomation: (id, body) => api.put(`/owner/automations/${encodeURIComponent(id)}`, body),
+  automationStatus: (id, status) => api.post(`/owner/automations/${encodeURIComponent(id)}/status`, { status }),
+  duplicateAutomation: (id) => api.post(`/owner/automations/${encodeURIComponent(id)}/duplicate`),
+  deleteAutomation: (id) => api.delete(`/owner/automations/${encodeURIComponent(id)}`),
+  automationPreview: (body) => api.post('/owner/automations/preview', body),
+  automationAiDraft: (objective) => api.post('/owner/automations/ai-draft', { objective }),
+  automationGeoZone: () => api.get('/owner/automations/geo/zone'),
   autoMessages: () => api.get('/owner/auto-messages'),
   saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
   // Paramètres › Établissement
@@ -604,6 +618,11 @@ export const ownerAPI = {
   sendCampaignToGroup: (body) => api.post('/owner/campaigns/send-to-group', body),
   // Campagnes — the page in one call, the composer in one call.
   campaignsPage: () => api.get('/owner/campaigns/page'),
+  // Campagnes redesign (2026-10-10): the list's tabs and the wizard's live audience
+  campaignDetail: (id) => api.get(`/owner/campaigns/${encodeURIComponent(id)}/detail`),
+  campaignsList: (params) => api.get('/owner/campaigns/list', { params }),
+  campaignAudiencePreview: (body) => api.post('/owner/campaigns/audience-preview', body),
+  redeemDefiReward: (id) => api.post(`/owner/defis/rewards/${id}/redeem`),
   // « Ce qui marche chez vous » (features/campaign_learning.py).
   campaignLearning: () => api.get('/owner/campaigns/learning'),
   campaignResult: (id) => api.get(`/owner/campaigns/${id}/result`),

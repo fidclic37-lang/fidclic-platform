@@ -159,13 +159,85 @@ const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAR
 // so we can revert when the user switches back to French without
 // re-fetching anything.
 const ORIGINAL = Symbol('ft.original');
+// What this layer last wrote into a node: a different value means React put
+// new source text there (a count went from 2 to 3), so it is read afresh.
+const WRITTEN = Symbol('ft.written');
+const LATIN = /[A-Za-zÀ-ÖØ-öø-ÿ]/;
+
+function sourceOf(node) {
+  if (node[ORIGINAL] == null || node[WRITTEN] === undefined || node.nodeValue !== node[WRITTEN]) {
+    node[ORIGINAL] = node.nodeValue;
+    node[WRITTEN] = undefined;
+  }
+  return node[ORIGINAL];
+}
+
+function write(node, value) {
+  node[WRITTEN] = value;
+  if (node.nodeValue !== value) node.nodeValue = value;   // an equal write still fires the observer
+}
+
+// « {n} jour{n > 1 ? 's' : ''} » renders as three text nodes — « 2 », « jour »,
+// « s » — and each used to be translated alone (« 2 يومs »). The text nodes of
+// an element that holds nothing else are one sentence: translated together,
+// written into the first, the others emptied.
+function pureTextParent(node) {
+  const p = node.parentNode;
+  if (!p || p.nodeType !== 1 || p.childNodes.length < 2) return null;
+  for (const c of p.childNodes) if (c.nodeType !== 3) return null;
+  return p;
+}
+
+function unitsOf(nodes) {
+  const units = [];
+  const seen = new Set();
+  for (const n of nodes) {
+    const p = pureTextParent(n);
+    if (p) {
+      if (seen.has(p)) continue;
+      seen.add(p);
+      units.push({ nodes: Array.from(p.childNodes) });
+    } else {
+      units.push({ nodes: [n] });
+    }
+  }
+  for (const u of units) u.source = u.nodes.map(sourceOf).join('');
+  return units;
+}
+
+function applyUnit(u, t) {
+  const source = u.source;
+  // no translation, or the same text: every node shows its own source again
+  // (switching Arabic → English used to leave the Arabic in place)
+  if (!t || t === source.trim()) {
+    u.nodes.forEach((n) => write(n, n[ORIGINAL]));
+    return;
+  }
+  const leading = source.match(/^\s*/)[0];
+  const trailing = source.match(/\s*$/)[0];
+  u.nodes.forEach((n, i) => write(n, i === 0 ? leading + t + trailing : ''));
+}
+
+async function translateNodes(nodes) {
+  const units = unitsOf(nodes).filter((u) => {
+    const t = u.source.trim();
+    return t.length >= 2 && LATIN.test(t) && !PROTECTED.has(t.toLowerCase());
+  });
+  if (!units.length) return;
+  const translated = await translateBatch(units.map((u) => u.source.trim()), currentLang);
+  if (currentLang === SOURCE_LANG) return;
+  units.forEach((u, i) => applyUnit(u, translated[i]));
+}
 
 // Names are data, not words (QA F08, 2026-10-08: in Arabic the business
 // « ok » became « حسنا »). The layout hands over the business, its
 // establishments and the signed-in person; a text that is exactly one of
 // them is never translated. Lists of customers / products mark their
 // cells translate="no" instead.
-const PROTECTED = new Set();
+// The product's own names never change language either (QA R5 F08,
+// 2026-10-10: the logo « Fid » « Clic » read « فيدانقر » — « Clic » as
+// « click » — and « FidClic IA » became « FidClic Amnesty International »).
+const PROTECTED = new Set(['fidclic', 'fid', 'clic', 'fidclic ia', 'fidclic ai']);
 export function protectNames(names) {
   (names || []).forEach((n) => {
     const t = String(n || '').trim().toLowerCase();
@@ -181,6 +253,10 @@ function shouldTranslateNode(node) {
   // Skip pure numerics / dates / currencies / barcodes.
   if (/^[\d\s.,€$%+\-*/:_/()]+$/.test(trimmed)) return false;
   if (/^FT-[A-Z0-9]+$/i.test(trimmed)) return false;
+  // Nothing Latin in it: already in Arabic (an i18n label), or symbols. Sent
+  // to Google as « French », « الأتمتة » (Automatisations) came back
+  // « التصميم » (Design) — QA R5 F08, 2026-10-10.
+  if (!LATIN.test(trimmed)) return false;
   if (PROTECTED.has(trimmed.toLowerCase())) return false;
   let p = node.parentElement;
   const root = node.ownerDocument && node.ownerDocument.documentElement;
@@ -257,10 +333,10 @@ export async function applyTranslation(lang) {
 
   if (currentLang === SOURCE_LANG) {
     // Restore originals from the per-node stash.
-    for (const node of collectTextNodes(document.body)) {
-      if (node[ORIGINAL] != null) {
-        node.nodeValue = node[ORIGINAL];
-      }
+    const back = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let tn;
+    while ((tn = back.nextNode())) {
+      if (tn[ORIGINAL] != null) write(tn, sourceOf(tn));
     }
     // Restore attribute originals too.
     document.querySelectorAll('input, textarea, [title], [aria-label]').forEach((el) => {
@@ -282,28 +358,7 @@ async function translateAllUnder(root) {
   if (currentLang === SOURCE_LANG) return;
 
   // ---- text nodes ----
-  const nodes = collectTextNodes(root);
-  if (nodes.length > 0) {
-    const originals = nodes.map((n) => {
-      // Stash the original on first translation so we can revert later.
-      if (n[ORIGINAL] == null) n[ORIGINAL] = n.nodeValue;
-      return n[ORIGINAL].trim();
-    });
-    const translated = await translateBatch(originals, currentLang);
-    // Bail if the user switched languages mid-flight.
-    if (currentLang === SOURCE_LANG) return;
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      const original = node[ORIGINAL];
-      if (!original) continue;
-      const t = translated[i];
-      if (!t || t === original.trim()) continue;
-      // Preserve leading/trailing whitespace from the original text node.
-      const leading = original.match(/^\s*/)[0];
-      const trailing = original.match(/\s*$/)[0];
-      node.nodeValue = leading + t + trailing;
-    }
-  }
+  await translateNodes(collectTextNodes(root));
 
   // ---- attributes (placeholder / title / aria-label) ----
   const attrJobs = collectAttrJobs(root);
@@ -333,11 +388,17 @@ function ensureObserver() {
     if (currentLang === SOURCE_LANG) return;
     for (const m of mutations) {
       if (m.type === 'characterData') {
-        if (shouldTranslateNode(m.target)) pendingNodes.add(m.target);
+        // our own write — nothing new to translate
+        if (m.target[WRITTEN] !== undefined && m.target.nodeValue === m.target[WRITTEN]) continue;
+        const group = pureTextParent(m.target);
+        if (group) pendingNodes.add(group);
+        else if (shouldTranslateNode(m.target)) pendingNodes.add(m.target);
       } else if (m.type === 'childList') {
         for (const added of m.addedNodes) {
           if (added.nodeType === Node.TEXT_NODE) {
-            if (shouldTranslateNode(added)) pendingNodes.add(added);
+            const group = pureTextParent(added);
+            if (group) pendingNodes.add(group);
+            else if (shouldTranslateNode(added)) pendingNodes.add(added);
           } else if (added.nodeType === Node.ELEMENT_NODE) {
             // Mark the whole subtree for re-translation. We'll re-walk
             // it in scheduleFlush so we also pick up its descendants
@@ -377,24 +438,7 @@ function scheduleFlush() {
     const textNodes = items.filter((n) => n.nodeType === Node.TEXT_NODE && shouldTranslateNode(n));
     const elements = items.filter((n) => n.nodeType === Node.ELEMENT_NODE);
 
-    if (textNodes.length > 0) {
-      const originals = textNodes.map((n) => {
-        if (n[ORIGINAL] == null) n[ORIGINAL] = n.nodeValue;
-        return n[ORIGINAL].trim();
-      });
-      const translated = await translateBatch(originals, currentLang);
-      if (currentLang === SOURCE_LANG) return;
-      for (let i = 0; i < textNodes.length; i++) {
-        const node = textNodes[i];
-        const original = node[ORIGINAL];
-        if (!original) continue;
-        const t = translated[i];
-        if (!t || t === original.trim()) continue;
-        const leading = original.match(/^\s*/)[0];
-        const trailing = original.match(/\s*$/)[0];
-        node.nodeValue = leading + t + trailing;
-      }
-    }
+    if (textNodes.length > 0) await translateNodes(textNodes);
     for (const el of elements) {
       // eslint-disable-next-line no-await-in-loop
       await translateAllUnder(el);

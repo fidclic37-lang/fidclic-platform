@@ -855,12 +855,27 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Card not found")
     payload = core._serialize_card_payload(cust)
     _attach_campaign_offer(payload.get("card") or {}, cust)
+    _attach_auto_news(payload.get("card") or {}, cust)
     if isinstance(payload.get("card"), dict) and isinstance(cust.get("points_news"), dict):
         payload["card"]["points_news"] = cust["points_news"]          # features/referrals._announce
     return payload
 
 
 CAMPAIGN_OFFER_DAYS = 30
+
+
+def _attach_auto_news(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
+    """The latest Automatisation message, for the pass (features/automations):
+    the « Dernier message » field — whose change makes Apple raise the
+    lock-screen banner — and the action button's link on the back."""
+    try:
+        from features import automations as AU
+        full = _db.customers.find_one({"id": cust.get("id")}, {"_id": 0, "auto_news": 1}) or {}
+        news = AU.latest_for(full)
+        if news:
+            card["auto_news"] = news
+    except Exception as exc:
+        print(f"wallet: automation message lookup failed (non-fatal): {exc}")
 
 
 def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
@@ -878,15 +893,19 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
     promotion that has expired.
     """
     try:
-        since = _now() - timedelta(days=CAMPAIGN_OFFER_DAYS)
+        # live until its own end — an offer's last day, an event's day — or 30
+        # days after the send (features/campaign_kinds, redesign 2026-10-10)
+        from features import campaign_kinds as _K
+        now = _now()
         rows = _db.campaigns.find(
             {"tenant_id": cust.get("tenant_id"), "status": "sent",
              "wallet_offer": True, "recipient_ids": cust.get("id")},
-            {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1})
+            {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1, "status": 1,
+             "kind": 1, "offer": 1, "event": 1, "defi": 1})
         newest, newest_at = None, None
         for c in rows:
             at = _parse_dt(c.get("sent_at"))
-            if at and at >= since and (newest_at is None or at > newest_at):
+            if at and _K.is_live(c, now) and (newest_at is None or at > newest_at):
                 newest, newest_at = c, at
         if newest and (newest.get("name") or "").strip():
             title, sub = newest["name"].strip(), (newest.get("content") or "").strip()
@@ -1153,6 +1172,36 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         offer_url = CO.owner_url(_site_url(), serial, query={"offre": str(campaign_id)})
         back.insert(1, {"key": "offer_link", "label": "Voir l'offre", "value": offer_url,
                         "attributedValue": f'<a href="{offer_url}">Voir l\'offre en entier</a>'})
+    # Automatisations (2026-10-11): ALWAYS present — Wallet only rings for a
+    # field that changes, never for one that appears — and its button's link.
+    news = card.get("auto_news") if isinstance(card.get("auto_news"), dict) else None
+    if news:
+        # a parrainage message rides on the points field's banner: shown here, silently
+        back.insert(0, {"key": "news", "label": "Dernier message",
+                        "value": f"{news.get('title') or ''} — {news.get('body') or ''}".strip(" —").replace("%", ""),
+                        **({"changeMessage": "%@"} if news.get("pass", True) else {})})
+    else:
+        back.insert(0, {"key": "news", "label": "Dernier message", "value": "Aucun message pour le moment."})
+    if news and news.get("button_url") and news.get("button_label"):
+        back.insert(1, {"key": "news_link", "label": news["button_label"], "value": news["button_url"],
+                        "attributedValue": f'<a href="{news["button_url"]}">{news["button_label"]}</a>'})
+    # Géolocalisation (features/geo_automation): while this client's automation
+    # allows it, the pass carries the shop's locations (below) and its message
+    # here, so the card the lock screen opens says it — quietly, no banner.
+    geo, geo_rules = None, False
+    try:
+        from features import geo_automation as GA
+        geo_rules = GA.governs(tenant.get("id"))
+        if geo_rules:
+            full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0}) or {}
+            geo = GA.for_pass({**full, "tenant_id": full.get("tenant_id") or tenant.get("id")})
+    except Exception as exc:
+        print(f"wallet: geolocation lookup failed (non-fatal): {exc}")
+    if geo:
+        back.insert(1, {"key": "geo_msg", "label": "Près de chez vous", "value": geo["text"]})
+        if geo.get("button_url") and geo.get("button_label"):
+            back.insert(2, {"key": "geo_link", "label": geo["button_label"], "value": geo["button_url"],
+                            "attributedValue": f'<a href="{geo["button_url"]}">{geo["button_label"]}</a>'})
     if card.get("tagline"):
         back.append({"key": "tagline", "label": org, "value": card["tagline"]})
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
@@ -1229,8 +1278,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
 
     # One radius for the shop (Paramètres › Établissement), and every open
-    # establishment with a pin — Apple takes up to ten.
-    if card.get("location_reminder") is not False:
+    # establishment with a pin — Apple takes up to ten. With an active
+    # Géolocalisation automation, IT decides: its message, its establishments,
+    # only while its rules hold for this client (none → no locations).
+    if geo_rules:
+        if geo:
+            pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": geo["radius"],
+                                       "relevantText": geo["text"]} for la, lo in geo["spots"][:10]]
+    elif card.get("location_reminder") is not False:
         radius = int(tenant_doc.get("geo_radius_meters") or card.get("location_radius_m") or 200)
         text = card.get("location_text") or f"Vous êtes près de {org} — pensez à scanner votre carte."
         spots = []
@@ -1911,6 +1966,9 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
                   "updated_at": datetime.now(timezone.utc)},
          "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
         upsert=True)
+    if not existing:
+        # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
+        _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
     return Response(status_code=200 if existing else 201)
 
 
@@ -2209,6 +2267,11 @@ def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}"
 
 
+def _gw_callback_url() -> str:
+    from features.google_wallet_callbacks import callback_url
+    return callback_url()
+
+
 def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
     tenant, card = payload["tenant"], payload["card"]
     gd = clean_google_design(card.get("google_design"))
@@ -2219,6 +2282,9 @@ def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
         "reviewStatus": "UNDER_REVIEW",
         "hexBackgroundColor": gd.get("bg_color") or _hex6(derive_colors(card)["backgroundColor"]),
         "countryCode": "FR",
+        # Google tells us when a customer saves or deletes the pass
+        # (features/google_wallet_callbacks — Clients › Carte, 2026-10-10)
+        "callbackOptions": {"url": _gw_callback_url()},
     }
     # a data: URL logo (most uploads) is served by us: Google needs a public link
     if card.get("logo_url"):
@@ -2270,7 +2336,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     code_type = gd["barcode"] if code_value else "QR_CODE"       # a code the card id cannot fill → QR
     # Apple's back of the pass = Google's details: offer, reward, statut…
     back = [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
-            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link")]
+            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link", "geo_link")]
     # the values a row of the card can show (classTemplateInfo), as modules
     tier_v = next((f["value"] for f in sc.get("backFields", []) if f["key"] == "tier_back"), None) \
         or by_key.get("tier", {}).get("value")
@@ -2298,12 +2364,19 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
                     **({"alternateText": serial} if gd["alt_text"] == "card" else {})},
         **({"heroImage": {"sourceUri": {"uri": hero}}} if hero else {}),
         "textModulesData": modules[:10],
-        "linksModuleData": {"uris": [{"uri": f["value"], "description": "Voir l'offre en entier"}
-                                     for f in sc.get("backFields", []) if f["key"] == "offer_link"]
+        "linksModuleData": {"uris": [{"uri": f["value"], "description": f["label"]}       # Automatisations' button
+                                     for f in sc.get("backFields", []) if f["key"] in ("news_link", "geo_link")]
+                            + [{"uri": f["value"], "description": "Voir l'offre en entier"}
+                               for f in sc.get("backFields", []) if f["key"] == "offer_link"]
                             + [{"uri": CO.owner_url(_site_url(), cust["barcode_id"]), "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
     }
+    # Google « Nearby passes »: the same locations as Apple's (Google writes
+    # the lock-screen words itself and decides the distance)
+    if pj.get("locations"):
+        obj["merchantLocations"] = [{"latitude": l["latitude"], "longitude": l["longitude"]}
+                                    for l in pj["locations"][:10]]
     if points:
         obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": {"int": int(points["value"] or 0)}}
     if progress:
@@ -2341,7 +2414,7 @@ def google_save_url(payload: Dict[str, Any]) -> str:
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
 # the birthday message. Google allows 3 notifying messages per card per 24 h;
 # past that the message still lands in the card, silently.
-GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward", "tier_up"}
+GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward", "tier_up", "automation"}
 
 
 def _gw_reason(body: Dict[str, Any]) -> str:
@@ -2390,10 +2463,11 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
                 obj["messages"] = []                   # sent below, with the notification
-            elif kind in ("birthday", "parrainage", "near_reward", "tier_up"):
+            elif kind in ("birthday", "parrainage", "near_reward", "tier_up", "automation"):
                 head = (notify.get("header") or {"birthday": "Joyeux anniversaire !", "parrainage": "Parrainage",
                                                  "near_reward": "Vous y êtes presque !",
-                                                 "tier_up": "Nouveau palier"}[kind]).strip()
+                                                 "tier_up": "Nouveau palier",
+                                                 "automation": "Nouveau message"}[kind]).strip()
                 message = {"id": f"{kind}-{int(time.time())}", "header": head[:60],
                            "body": ((notify.get("body") or "").strip() or head)[:300]}
             elif kind == "reward":

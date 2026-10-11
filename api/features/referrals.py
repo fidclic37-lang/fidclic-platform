@@ -273,32 +273,18 @@ def messages(kind: str, shop: str, parrain: str, filleul: str, parrain_pts: int,
 
 def _announce(tenant_id: str, parrain_id: str, filleul: Dict[str, Any], kind: str,
               parrain_pts: int, filleul_pts: int) -> None:
-    """Tell both sides, each on their own card: the Wallet pass (Apple shows
-    the reason when the points change, Google gets a message) and web push.
-    No SMS — the Wallet card is the channel, and an SMS costs the shop."""
-    from features.wallet_passes import notify_customer
-    tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
-    parrain = _db.customers.find_one({"id": parrain_id}, {"_id": 0, "name": 1}) or {}
-    shop = (tenant.get("name") or "votre commerce").replace("%", "")
-    said = messages(kind, shop, _first(parrain.get("name"), "votre parrain"),
-                    _first(filleul.get("name"), "Votre ami"), parrain_pts, filleul_pts)
-    now = datetime.now(timezone.utc)
-    for cid, pts, side in ((parrain_id, parrain_pts, "parrain"), (filleul["id"], filleul_pts, "filleul")):
-        if not pts:
+    """Tell each side, on their own card, through the shop's « Parrainage »
+    automations (features/automations, 2026-10-11): one for the parrain, one
+    for the filleul, words and button chosen by the shop. No automation
+    switched on for a side → that side gets the points quietly. No SMS."""
+    from features import automations as AU
+    parrain = _db.customers.find_one({"id": parrain_id}, {"_id": 0}) or {}
+    filleul_doc = _db.customers.find_one({"id": filleul["id"]}, {"_id": 0}) or filleul
+    names = {"parrain": _first(parrain.get("name"), "votre parrain"), "filleul": _first(filleul.get("name"), "Votre ami")}
+    for cust, pts, side in ((parrain, parrain_pts, "parrain"), (filleul_doc, filleul_pts, "filleul")):
+        if not pts or not cust.get("id"):
             continue
-        title, body = said[side]
-        total = int((_db.customers.find_one({"id": cid}, {"_id": 0, "points": 1}) or {}).get("points") or 0)
-        _db.customers.update_one({"id": cid}, {"$set": {"points_news": {
-            "text": f"{body} Vous avez maintenant %@ points.", "points": total, "at": now, "kind": "parrainage"}}})
-        try:
-            notify_customer(cid, google_notify={"kind": "parrainage", "header": title, "body": body})
-        except Exception as exc:
-            print(f"referrals: wallet notify failed ({exc})")
-        try:
-            from features.push_subscriptions import fan_out_to_customer
-            fan_out_to_customer(tenant_id, cid, title, body)
-        except Exception as exc:
-            print(f"referrals: web push failed ({exc})")
+        AU.fire("referral", tenant_id, cust, {"side": side, "points": pts, "kind": kind, **names})
 
 
 @router.get("/api/card/{barcode_id}/inviter")
@@ -485,6 +471,73 @@ def _rows_between(tid: str, start: datetime, end: datetime, mine: Optional[set] 
     return list(_db.referral_redemptions.find(q).sort("created_at", -1))
 
 
+def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    """One line of « Derniers parrainages »."""
+    parrain = people.get(r.get("referrer_customer_id") or "") or {}
+    filleul = people.get(r.get("referee_customer_id") or "") or {}
+    at = _aware(r.get("created_at"))
+    pending = bool(r.get("referrer_pending"))
+    source = (r.get("source") or "link").lower()
+    return {
+        "id": str(r.get("_id") or ""),
+        "at": at.isoformat() if at else None,
+        "parrain": {"name": _short(parrain.get("name") or "Client supprimé"),
+                    "initials": _initials(parrain.get("name") or ""),
+                    "tier": (parrain.get("tier") or "bronze").lower()},
+        "filleul": {"name": _short(filleul.get("name") or "Client supprimé"),
+                    "initials": _initials(filleul.get("name") or ""),
+                    "tier": (filleul.get("tier") or "bronze").lower()},
+        "status": "pending" if pending else "validated",
+        "status_label": "En attente" if pending else "Validé",
+        # Validated → what was actually credited. Pending → what is promised,
+        # as recorded when the parrainage was made, so a later change to the
+        # setting cannot rewrite history.
+        "reward_points": int(r.get("referrer_points") or 0) if not pending
+        else int(r.get("referrer_points_promised")
+                 or config.get("referrer_reward_points") or 0),
+        "source": source if source in SOURCES else "other",
+        "source_label": SOURCES.get(source, SOURCES["other"]),
+    }
+
+
+def _fold(text: str) -> str:
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", text or "") if unicodedata.category(ch) != "Mn").lower()
+
+
+@router.get("/api/owner/referrals/list")
+def list_referrals(
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    search: str = "",
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
+):
+    """Every parrainage of the period, page by page, searchable by the parrain's
+    or the filleul's name (QA R5 F25, 2026-10-09: « Voir tous » stopped at ten
+    of fifty-one; the rest was reachable only in the CSV)."""
+    tid = token_data.tenant_id
+    start, end = _window(date_from, date_to)
+    rows = _rows_between(tid, start, end, S.customer_ids(S.resolve(token_data, request)))
+    people = _people([r.get("referrer_customer_id") for r in rows]
+                     + [r.get("referee_customer_id") for r in rows])
+    words = _fold(search).split()
+    if words:
+        def hay(r):
+            return _fold(" ".join([(people.get(r.get("referrer_customer_id") or "") or {}).get("name") or "",
+                                   (people.get(r.get("referee_customer_id") or "") or {}).get("name") or ""]))
+        rows = [r for r in rows if all(w in hay(r) for w in words)]
+    total = len(rows)
+    pages = max(1, -(-total // per_page))
+    page = min(page, pages)
+    config = _db.referral_config.find_one({"tenant_id": tid}) or {}
+    chunk = rows[(page - 1) * per_page: page * per_page]
+    return {"rows": [_table_row(r, people, config) for r in chunk],
+            "total": total, "page": page, "pages": pages, "per_page": per_page}
+
+
 @router.get("/api/owner/referrals/overview")
 def overview(
     date_from: Optional[str] = Query(None, alias="from"),
@@ -578,34 +631,8 @@ def overview(
                     "initials": _initials(name), "tier": (person.get("tier") or "bronze").lower(),
                     "filleuls": acc["filleuls"], "points": acc["points"]})
 
-    # ---- the table ----------------------------------------------------------
-    recent = []
-    for r in rows[:10]:
-        parrain = people.get(r.get("referrer_customer_id") or "") or {}
-        filleul = people.get(r.get("referee_customer_id") or "") or {}
-        at = _aware(r.get("created_at"))
-        pending = bool(r.get("referrer_pending"))
-        source = (r.get("source") or "link").lower()
-        recent.append({
-            "id": str(r.get("_id") or ""),
-            "at": at.isoformat() if at else None,
-            "parrain": {"name": _short(parrain.get("name") or "Client supprimé"),
-                        "initials": _initials(parrain.get("name") or ""),
-                        "tier": (parrain.get("tier") or "bronze").lower()},
-            "filleul": {"name": _short(filleul.get("name") or "Client supprimé"),
-                        "initials": _initials(filleul.get("name") or ""),
-                        "tier": (filleul.get("tier") or "bronze").lower()},
-            "status": "pending" if pending else "validated",
-            "status_label": "En attente" if pending else "Validé",
-            # Validated → what was actually credited. Pending → what is promised,
-            # as recorded when the parrainage was made, so a later change to the
-            # setting cannot rewrite history.
-            "reward_points": int(r.get("referrer_points") or 0) if not pending
-            else int(r.get("referrer_points_promised")
-                     or config.get("referrer_reward_points") or 0),
-            "source": source if source in SOURCES else "other",
-            "source_label": SOURCES.get(source, SOURCES["other"]),
-        })
+    # ---- the table: its first rows (« Voir tous » pages through all of them) --
+    recent = [_table_row(r, people, config) for r in rows[:10]]
 
     return {
         "from": start.isoformat(), "to": end.isoformat(),

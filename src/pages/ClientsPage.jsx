@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { sourceLabel } from '../lib/sources';
-import { perPage as prefPerPage } from '../lib/prefs';
+import { perPage as prefPerPage, confirmImportant } from '../lib/prefs';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranch } from '../contexts/BranchContext';
 import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
@@ -275,10 +275,16 @@ export default function ClientsPage() {
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   // « Carte » (user, 2026-10-09): active / supprimée — the bell and the
   // dashboard open the deleted ones here with ?card=deleted
-  const [card, setCard] = useState(() => (['active', 'deleted'].includes(urlParams.get('card')) ? urlParams.get('card') : ''));
+  // ?card=recent (the dashboard banner and the bell): lost in the last 24 h
+  const CARD_KEYS = ['active', 'deleted', 'recent'];
+  const [card, setCard] = useState(() => (CARD_KEYS.includes(urlParams.get('card')) ? urlParams.get('card') : ''));
+  // Opened from a link that filters the list (?card=, ?source=): the page
+  // goes down to the list once it is loaded — the filter was set on the
+  // first render, so the « changed » path below never scrolled (2026-10-10).
+  const scrollToList = useRef(!!(urlParams.get('card') || urlParams.get('source')));
   useEffect(() => {
     const k = urlParams.get('card');
-    if (['active', 'deleted'].includes(k) && k !== card) {
+    if (CARD_KEYS.includes(k) && k !== card) {
       setCard(k); setPage(1);
       setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
     }
@@ -367,9 +373,30 @@ export default function ClientsPage() {
     setPage(1); setPicked([]);
   };
 
+  // QA F07 (R5): deleting a saved filter follows Paramètres › Préférences ›
+  // « Confirmation des actions importantes », like every other deletion — and
+  // can be undone for a few seconds, the preference on or off.
+  const [undoSaved, setUndoSaved] = useState(null);       // { name, filters }
+  useEffect(() => {
+    if (!undoSaved) return undefined;
+    const t0 = setTimeout(() => setUndoSaved(null), 10000);
+    return () => clearTimeout(t0);
+  }, [undoSaved]);
   const removeSaved = async (id) => {
-    try { await ownerAPI.deleteSavedSegment(id); loadSaved(); }
-    catch { setError("Le segment n'a pas pu être supprimé."); }
+    const row = saved.find((r) => r.id === id);
+    if (!confirmImportant(`Supprimer le filtre enregistré « ${row?.name || ''} » ?`)) return;
+    try {
+      await ownerAPI.deleteSavedSegment(id);
+      loadSaved();
+      if (row) setUndoSaved({ name: row.name, filters: row.filters || {} });
+    } catch { setError("Le segment n'a pas pu être supprimé."); }
+  };
+  const restoreSaved = async () => {
+    const back = undoSaved;
+    setUndoSaved(null);
+    if (!back) return;
+    try { await ownerAPI.createSavedSegment(back); loadSaved(); setFlash(`Segment « ${back.name} » rétabli.`); }
+    catch (e) { setError(e?.response?.data?.detail || "Le segment n'a pas pu être rétabli."); }
   };
 
   // Message the SELECTION when there is one, otherwise everyone the filter
@@ -412,7 +439,13 @@ export default function ClientsPage() {
   const load = useCallback(() => {
     setLoading(true); setError('');
     ownerAPI.clientsList(params)
-      .then(({ data }) => setFeed(data))
+      .then(({ data }) => {
+        setFeed(data);
+        if (scrollToList.current) {
+          scrollToList.current = false;
+          setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+        }
+      })
       .catch((e) => setError(e?.response?.data?.detail || 'Impossible de charger les clients.'))
       .finally(() => setLoading(false));
   }, [params]);
@@ -558,13 +591,20 @@ export default function ClientsPage() {
                       className="text-[12px] font-semibold text-[#334155] hover:text-[#2F6BFF]">
                 {row.name}
               </button>
-              <button type="button" onClick={() => removeSaved(row.id)} title="Supprimer"
+              <button type="button" onClick={() => removeSaved(row.id)} title="Supprimer" aria-label={`Supprimer le filtre ${row.name}`}
                       className="rounded-full p-1 text-[#94A3B8] transition hover:bg-[#FEECEC] hover:text-[#C0392B]">
                 <X size={11} />
               </button>
             </span>
           ))}
-          {!saved.length && !naming && (
+          {undoSaved && (
+            <span role="status" className="inline-flex items-center gap-2 rounded-full bg-[#0B1C3F] py-1 pl-3 pr-1 text-[12px] text-white">
+              Filtre « {undoSaved.name} » supprimé.
+              <button type="button" onClick={restoreSaved}
+                      className="rounded-full bg-white/15 px-2.5 py-0.5 font-semibold hover:bg-white/25">Annuler</button>
+            </span>
+          )}
+          {!saved.length && !naming && !undoSaved && (
             <span className="text-[11.5px] italic text-[#94A3B8]">
               Réglez les filtres, puis enregistrez la combinaison pour la retrouver.
             </span>
@@ -643,7 +683,7 @@ export default function ClientsPage() {
                     if (urlParams.get('card')) setUrlParams((p) => { p.delete('card'); return p; }, { replace: true });
                   }}
                   options={[{ key: '', label: 'Toutes' }, { key: 'active', label: 'Active' },
-                            { key: 'deleted', label: 'Supprimée' }]} />
+                            { key: 'deleted', label: 'Supprimée' }, { key: 'recent', label: 'Supprimée (24 h)' }]} />
           <button type="button" onClick={needCrm(() => setMore((v) => !v))}
                   className="inline-flex h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#E6EEFB] px-4 text-[13px] font-semibold text-[#475569] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <SlidersHorizontal size={14} /> Plus de filtres
@@ -730,8 +770,8 @@ export default function ClientsPage() {
                          onChange={togglePage}
                          className="h-4 w-4 accent-[#2F6BFF]" />
                 </th>
-                {['Client', 'Statut', 'Segment', 'Dernière visite', 'Total dépensé', 'Actions'].map((h, i) => (
-                  <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${i === 4 ? 'text-right' : ''}`}>
+                {['Client', 'Âge', 'Carte', 'Statut', 'Segment', 'Dernière visite', 'Total dépensé', 'Actions'].map((h, i) => (
+                  <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${i === 6 ? 'text-right' : ''}`}>
                     {h}
                   </th>
                 ))}
@@ -739,12 +779,12 @@ export default function ClientsPage() {
             </thead>
             <tbody>
               {loading && feed.rows.length === 0 && (
-                <tr key="loading"><td colSpan={7} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                <tr key="loading"><td colSpan={9} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                   <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement des clients…
                 </td></tr>
               )}
               {!loading && feed.rows.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-14 text-center">
+                <tr><td colSpan={9} className="px-4 py-14 text-center">
                   <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Aucun client ici</p>
                   <p className="mt-1 text-[12.5px] text-[#64748B]">
                     {search || status || spend || joined || source || segment !== 'all'
@@ -771,13 +811,16 @@ export default function ClientsPage() {
                           <span className="block truncate text-[11.5px] text-[#94A3B8]">
                             {r.email || r.phone || '—'}{r.source && r.source !== 'none' ? ` · via ${r.source_label}` : ''}
                           </span>
-                          {/* the card left the phone: said on the row (user, 2026-10-09) */}
-                          {r.card && r.card.state !== 'active' && (
-                            <span className="mt-0.5 block"><CardStateBadge card={r.card} /></span>
-                          )}
                         </span>
                       </span>
                     </td>
+                    {/* from the full date of birth (user, 2026-10-09) */}
+                    <td className="whitespace-nowrap px-4 py-3 text-[12.5px] tabular-nums text-[#475569]">
+                      {r.age != null ? `${r.age} ans` : '—'}
+                    </td>
+                    {/* « Carte » (user, 2026-10-10): still on the phone, deleted
+                        from the card page, or removed from Apple Wallet — with the date */}
+                    <td className="whitespace-nowrap px-4 py-3"><CardStateBadge card={r.card} /></td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11.5px] font-semibold"
                             style={{ background: st.bg, color: st.fg }}>

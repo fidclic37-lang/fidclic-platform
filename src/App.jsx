@@ -1,3 +1,4 @@
+import { vh } from './lib/fit';
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -21,7 +22,7 @@ class RootErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <div style={{
-          minHeight: '100vh', display: 'flex', alignItems: 'center',
+          minHeight: vh(100), display: 'flex', alignItems: 'center',
           justifyContent: 'center', background: '#FDFBF7',
           fontFamily: 'system-ui, -apple-system, sans-serif',
           padding: '2rem', textAlign: 'center',
@@ -133,6 +134,7 @@ const HelpPage = lazyPage(() => import('./pages/HelpPage'));
 const GeolocationPage = lazyPage(() => import('./pages/GeolocationPage'));
 const ReferralPage = lazyPage(() => import('./pages/ReferralPage'));
 const AutomationsPage = lazyPage(() => import('./pages/AutomationsPage'));
+const AutomationEditorPage = lazyPage(() => import('./pages/AutomationEditorPage'));
 const DashboardHomePage = lazyPage(() => import('./pages/DashboardHomePage'));
 const ClientsPage = lazyPage(() => import('./pages/ClientsPage'));
 const SegmentationPage = lazyPage(() => import('./pages/SegmentationPage'));
@@ -450,6 +452,16 @@ function App() {
             <Route path="automations" element={
               <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
                 <AutomationsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="automations/nouvelle" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur']} partialOk>
+                <AutomationEditorPage />
+              </ProtectedRoute>
+            } />
+            <Route path="automations/:id" element={
+              <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager']} partialOk>
+                <AutomationEditorPage />
               </ProtectedRoute>
             } />
             <Route path="referral" element={

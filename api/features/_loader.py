@@ -22,6 +22,8 @@ MODULES = [
     # Loyalty rules / config
     "features.welcome_bonus",
     "features.auto_messages",
+    "features.automations",               # Automatisations redesign (2026-10-11)
+    "features.geo_automation",            # Géolocalisation: Wallet lock screen + card (2026-10-11)
     "features.etablissement",
     "features.send_rules",
     "features.settings_versions",
@@ -48,6 +50,7 @@ MODULES = [
     # Clients › « Modifier la fiche » / « Ajuster points / tampons » (QA UX04)
     "features.customer_edit",
     "features.card_status",          # card active / deleted, and getting it back
+    "features.google_wallet_callbacks",  # Google Wallet tells us of saves and deletions
     # Super admin › Suivi d'équipe — FidClic's own team tasks (week board,
     # history, repeats, comments, bell). Rights: the « equipe » module.
     "features.team_tasks",
@@ -88,6 +91,7 @@ MODULES = [
     # Campagnes — the composer, its audience, and what the last sends did.
     # Delivers on two channels at once: web push and the wallet card's offer.
     "features.campaigns_page",
+    "features.defis",                  # Campagnes › Défi: progress, « Défi réussi », rewards to hand over
     "features.resend_guard",           # « déjà contactés » check before a send
     "features.campaign_learning",      # « Ce qui marche chez vous » — learns from sent campaigns
     "features.autopilot",              # Autopilot: daily + weekly campaigns, owner validates
