@@ -45,7 +45,7 @@ import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHe
  * design's unsaved edits survive the step change (user, 2026-10-11).
  */
 const STYLE_KEYS = STYLES.map((s) => s.key);
-const PHONE_W = 340;      // the v2 preview's iPhone
+const PHONE_W = 300;      // the v2 preview's iPhone — a normal iPhone's size (user, 2026-10-12: « thoda chhota »)
 const styleOf = (p) => STYLE_KEYS.find((k) => p && typeof p[k] === 'object');
 const IMG_RE = /^(background|primaryLogo|logo|icon|thumbnail|strip|footer)(@[23]x)?\.png$/;
 const baseOf = (name) => name.replace(/(@[23]x)?\.png$/, '');
