@@ -4,7 +4,8 @@ import {
   ArrowLeft, ArrowRight, Check, Pencil, Info, CalendarDays, Clock, Users, Tags, Wallet, User, Smile, Image as ImageIcon, Hash, UserPlus,
   X, Loader2, Sparkles, Lightbulb, Power, MessageSquare, RefreshCw, MousePointerClick, MapPin, Euro, Repeat,
   Trophy, Plus, Trash2, Settings2, Briefcase, Link2, BarChart3, Globe, RotateCcw, ChevronDown, PlusCircle, Award,
-  Footprints, CloudSun, Flag, Store, Star, Navigation, CheckCircle2, AlertTriangle,
+  Footprints, CloudSun, Flag, Store, Star, Navigation, CheckCircle2, AlertTriangle, Eye, Bell,
+  MoreHorizontal, Pause, Play, Copy, Filter, Hourglass, Smartphone, UserX, ArrowUp, Ban, Target, TrendingUp, Zap,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import LockScreenPreview from '../components/automations/LockScreenPreview';
@@ -13,6 +14,7 @@ import {
   ICONS, TONES, VAR_LABELS, VAR_SHORT, DAY_NAMES, GENDERS, AGES, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
   CLIENT_TYPES, AGE_STEPS,
   PASSANTS, RUSH, hLabel,
+  EMPTY_EXCLUSIONS, INACTIVE_DAYS, PAST_FREQS, TIERS, LAST_OFFER, ORIGINS, VISITS_MIN, AGE_BARS, CHANNELS, STATUS,
 } from '../components/automations/meta';
 import { EMOJIS } from '../components/campagnes/kinds';
 
@@ -100,20 +102,29 @@ const parisOffset = () => {
   } catch { return 'GMT+1'; }
 };
 const AVIS_IMAGE = '/automations/avis-google.png';
+// Client inactif (mockups 2026-10-11): its chips, in the mockup's words
+const INACTIVE_VARS = ['prénom', 'nom_commerce', 'offre', 'jours_absence', 'lien'];
+const INACTIVE_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établissement', offre: 'Offre', jours_absence: "Jours d'inactivité", lien: 'Lien' };
 const defaults = (sc, meta) => ({
   scenario: sc, name: sc === 'google_review' ? "Demande d'avis Google" : meta?.label || '', description: '', status: 'active',
   trigger: { delay_value: 0, delay_unit: 'hours', ...(TRIGGERS[sc] || {}) },
   // Avis Google (mockups 2026-10-11): the ready image and the « Laisser un avis » button
   message: { title: meta?.title || '', body: meta?.body || '', image_url: sc === 'google_review' ? AVIS_IMAGE : null,
     button: { enabled: sc === 'google_review', label: meta?.button || '', link_type: sc === 'tier_up' ? 'rewards' : sc === 'google_review' ? 'google_review' : 'card', offer_id: null, url: '' } },
-  // a géolocalisation targets passers-by through its filters (« filtered »)
-  targeting: { mode: sc === 'geo' ? 'filtered' : 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS } },
-  schedule: sc === 'google_review'
+  // a géolocalisation targets passers-by through its filters (« filtered »);
+  // Client inactif's « Tous mes clients » keeps its filters (mockups 2026-10-11)
+  targeting: { mode: ['geo', 'inactive'].includes(sc) ? 'filtered' : 'all', segment: null, passants: 'all',
+    filters: { ...EMPTY_FILTERS }, exclusions: { ...EMPTY_EXCLUSIONS } },
+  schedule: sc === 'inactive'
+    // the mockup's defaults: Lun – Ven, 11:00 – 20:00, at 14:00 from today, 200 per day at most
+    ? { days: 'specific', weekdays: [0, 1, 2, 3, 4], hour: '14:00', smart: false, window: true, window_from: '11:00', window_to: '20:00',
+      slots: [], holidays: true, valid_from: new Date().toISOString().slice(0, 10), valid_to: '', daily_limit: 200 }
+    : sc === 'google_review'
     ? { days: 'specific', weekdays: [0, 1, 2, 3, 4], hour: '10:00', smart: false, window: true, window_from: '08:00', window_to: '20:00',
-      slots: [], holidays: true, valid_from: new Date().toISOString().slice(0, 10), valid_to: '' }
+      slots: [], holidays: true, valid_from: new Date().toISOString().slice(0, 10), valid_to: '', daily_limit: null }
     : { days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6], hour: '10:00', smart: false,
       window: meta?.kind !== 'time' && sc !== 'geo', window_from: '09:00', window_to: '21:00',
-      slots: [], holidays: true, valid_from: '', valid_to: '' },
+      slots: [], holidays: true, valid_from: '', valid_to: '', daily_limit: null },
 });
 const DAY_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 const frDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
@@ -266,6 +277,7 @@ export default function AutomationEditorPage() {
   const [row, setRow] = useState(null);               // the saved automation (its results)
   const [zone, setZone] = useState(null);             // géolocalisation: detections + weather now
   const [links, setLinks] = useState({});             // Avis Google: the shop's (or each établissement's) link
+  const [menuOpen, setMenuOpen] = useState(false);    // the header's « ••• » (Client inactif mockups)
   const titleRef = useRef(null);
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
@@ -304,10 +316,19 @@ export default function AutomationEditorPage() {
             gender: asList(rf.gender, GENDERS), age: asList(rf.age, AGES), client_type: asList(rf.client_type, CLIENT_TYPES),
             visits_min: rf.visits_min ?? '', visits_max: rf.visits_max ?? '', age_min: rf.age_min ?? '', age_max: rf.age_max ?? '',
             spent: asList(rf.spent, SPENT), last_visit: asList(rf.last_visit, LAST_VISIT), stores: rf.stores || [],
-            radius_km: rf.radius_km || null } },
+            radius_km: rf.radius_km || null, past_freq: asList(rf.past_freq, PAST_FREQS), tiers: asList(rf.tiers, TIERS),
+            origin: asList(rf.origin, ORIGINS), last_offer: asList(rf.last_offer, LAST_OFFER) },
+            exclusions: { ...EMPTY_EXCLUSIONS, ...(row.targeting?.exclusions || {}) },
+            // a Client inactif saved as « Tous mes clients » (before its mockups) reads its filters now
+            ...(row.scenario === 'inactive' && (row.targeting?.mode || 'all') === 'all' ? { mode: 'filtered' } : {}) },
           schedule: { ...d.schedule, ...row.schedule, hour: row.schedule?.hour || '10:00', slots: row.schedule?.slots || [],
             valid_from: row.schedule?.valid_from || '', valid_to: row.schedule?.valid_to || '',
-            holidays: row.schedule?.holidays !== false } });
+            holidays: row.schedule?.holidays !== false, daily_limit: row.schedule?.daily_limit ?? null,
+            // Client inactif before its mockups: no plage — the whole day around its hour
+            ...(row.scenario === 'inactive' && !row.schedule?.window ? (() => {
+              const h = row.schedule?.hour || '10:00';
+              return { window: true, window_from: h < '08:00' ? h : '08:00', window_to: h >= '21:00' ? '23:59' : '21:00' };
+            })() : {}) } });
         setRow(row);
         const q = new URLSearchParams(location.search);
         if (q.get('step')) setStep(Math.min(6, Math.max(1, Number(q.get('step')) || 1)));
@@ -339,13 +360,14 @@ export default function AutomationEditorPage() {
   const pick = (key) => (v) => { if (v !== '__multi') setF({ [key]: v ? [v] : [] }); };
 
   // ---- the live count (step 4) ---------------------------------------------------
-  const tKey = s ? JSON.stringify([s.scenario, s.targeting]) : '';
+  const tKey = s ? JSON.stringify([s.scenario, s.targeting, s.scenario === 'inactive' ? s.trigger.days : 0]) : '';
   useEffect(() => {
     if (!s) return undefined;
     let alive = true;
     const t0 = setTimeout(() => {
       if (s.targeting.mode === 'segment' && !s.targeting.segment) { setPreview({ count: 0, sample: preview?.sample }); return; }
-      ownerAPI.automationPreview({ scenario: s.scenario, targeting: s.targeting })
+      ownerAPI.automationPreview({ scenario: s.scenario, targeting: s.targeting,
+        ...(s.scenario === 'inactive' ? { trigger: { days: Number(s.trigger.days) || 30 } } : {}) })
         .then(({ data }) => { if (alive) setPreview(data); }).catch(() => { if (alive) setPreview(null); });
     }, 250);
     return () => { alive = false; clearTimeout(t0); };
@@ -524,6 +546,13 @@ export default function AutomationEditorPage() {
         if (sc.window && sc.slots.some((x) => x.from === x.to)) return 'Une plage horaire commence et finit à la même heure.';
         const c = Number(tr.cooldown_days);
         if (!Number.isInteger(c) || c < 1 || c > 90) return 'Fréquence par client : entre 1 et 90 jours.';
+      } else if (s.scenario === 'inactive') {
+        if (sc.window && sc.window_to <= sc.window_from) return 'La fin de la plage horaire doit être après son début.';
+        if (sc.window && !sc.smart && !(sc.window_from <= sc.hour && sc.hour < sc.window_to)) return `L'heure d'envoi (${sc.hour}, étape Déclencheur) doit être comprise dans la plage horaire (${sc.window_from} – ${sc.window_to}).`;
+        if (sc.daily_limit !== null && sc.daily_limit !== undefined) {
+          const n = Number(sc.daily_limit);
+          if (!Number.isInteger(n) || n < 1 || n > 100000) return "Limite d'envoi par jour : entre 1 et 100 000.";
+        }
       } else if (!timed && sc.window && sc.window_to <= sc.window_from) return 'La fin de la plage horaire doit être après son début.';
       if (sc.valid_from && sc.valid_to && sc.valid_to < sc.valid_from) return 'La date de fin doit être après la date de début.';
       if (sc.valid_to && sc.valid_to < new Date().toISOString().slice(0, 10) && s.status !== 'paused') return 'La date de fin est déjà passée : choisissez une nouvelle date.';
@@ -548,9 +577,10 @@ export default function AutomationEditorPage() {
     ...(s.scenario === 'geo' ? { trigger: { cooldown_days: Number(tr.cooldown_days) || 7, weather: tr.weather || [], radius_m: Number(tr.radius_m) || 200,
       // every establishment ticked = all of them (the ones opened later too)
       stores: (tr.stores || []).length === geo.anchors.length ? [] : tr.stores } } : {}),
-    targeting: tg.mode === 'all' ? { mode: 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS } } : tg,
+    targeting: tg.mode === 'all' ? { mode: 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS }, exclusions: tg.exclusions || { ...EMPTY_EXCLUSIONS } } : tg,
     schedule: { ...sc, hour: timed ? sc.hour : null, slots: s.scenario === 'geo' && sc.window ? sc.slots : [],
-      valid_from: sc.valid_from || null, valid_to: sc.valid_to || null },
+      valid_from: sc.valid_from || null, valid_to: sc.valid_to || null,
+      daily_limit: sc.daily_limit === null || sc.daily_limit === undefined || sc.daily_limit === '' ? null : Number(sc.daily_limit) },
   });
   const save = async (status) => {
     if (status !== 'draft') {
@@ -1303,13 +1333,19 @@ export default function AutomationEditorPage() {
           </div>
         </div>
       )}
-      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>Titre{tiered ? ` — palier ${palierLabel(tr.condition, cur.value)}` : ''}</Label>
+      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>{s.scenario === 'inactive' ? 'Titre de la notification' : 'Titre'}{tiered ? ` — palier ${palierLabel(tr.condition, cur.value)}` : ''}</Label>
       <div className="flex items-center gap-2">
         <input ref={titleRef} className={field} value={cur.title || ''} maxLength={TITLE_MAX} onFocus={() => { lastFocus.current = 'title'; }}
                onChange={(e) => setCur({ title: e.target.value })} placeholder={m.title || 'Le titre de votre notification'} />
         <VarMenu which="title" />
       </div>
-      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>Message</Label></div>
+      {s.scenario === 'inactive' && (
+        <div className="mt-2 flex flex-wrap gap-2">{INACTIVE_VARS.filter((v) => v !== 'lien').map((v) => (
+          <button key={v} type="button" onMouseDown={() => { lastFocus.current = 'title'; }} onClick={() => { lastFocus.current = 'title'; insert(`{${v}}`); }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#DCE5F3] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {INACTIVE_VAR_LABELS[v]}</button>
+        ))}</div>
+      )}
+      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>{s.scenario === 'inactive' ? 'Texte de la notification' : 'Message'}</Label></div>
       <div className="flex items-start gap-2">
         <textarea ref={bodyRef} className={`${field} min-h-[96px] resize-y`} value={cur.body || ''} maxLength={BODY_MAX}
                   onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setCur({ body: e.target.value })}
@@ -1318,9 +1354,11 @@ export default function AutomationEditorPage() {
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {(s.scenario === 'geo' ? ['prénom', 'établissement', 'offre', 'distance', ...variables.filter((v) => !['prénom', 'établissement', 'offre', 'distance'].includes(v))]
-          : s.scenario === 'google_review' ? ['nom', 'prénom', 'établissement', 'lien_avis'] : variables).map((v) => (
-          <button key={v} type="button" title={`${VAR_LABELS[v] || v} — {${v}}`} onClick={() => insert(`{${v}}`)}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {VAR_SHORT[v] || v}</button>
+          : s.scenario === 'google_review' ? ['nom', 'prénom', 'établissement', 'lien_avis']
+          : s.scenario === 'inactive' ? INACTIVE_VARS : variables).map((v) => (
+          <button key={v} type="button" title={`${VAR_LABELS[v] || v} — {${v}}`} onMouseDown={() => { if (s.scenario === 'inactive') lastFocus.current = 'body'; }}
+                  onClick={() => { if (s.scenario === 'inactive') lastFocus.current = 'body'; insert(`{${v}}`); }}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {(s.scenario === 'inactive' && INACTIVE_VAR_LABELS[v]) || VAR_SHORT[v] || v}</button>
         ))}
         <span className="relative">
           <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))} aria-label="Ajouter un emoji"
@@ -1721,6 +1759,35 @@ export default function AutomationEditorPage() {
       }
       return out;
     }
+    if (s.scenario === 'inactive') {
+      const d = Number(tr.days) || 30;
+      const out = [];
+      if ([1, 6].includes(n)) out.push(named);
+      if ([2, 6].includes(n)) {
+        out.push(d >= 60 && d <= 90 ? [true, `Le délai de ${d} jours est idéal pour relancer des clients inactifs.${d === 90 ? ' Vous pouvez également tester 60 jours pour toucher plus de clients.' : ''}`]
+          : d < 60 ? [false, `À ${d} jours, beaucoup de clients ne sont pas encore partis : 60 à 90 jours touche les vrais inactifs.`]
+            : [false, `Au-delà de 90 jours, les clients reviennent moins souvent : testez 60 ou 90 jours.`]);
+      }
+      if ([3, 6].includes(n)) {
+        out.push(tips[0]);
+        out.push(/\{offre\}|%|offert|gratuit|réduction|remise|cadeau/i.test(words) ? [true, 'Un avantage clair donne envie de revenir.']
+          : [false, 'Ajoutez un avantage (une remise, un produit offert, {offre}) : les clients inactifs reviennent pour une raison.']);
+      }
+      if ([4, 6].includes(n)) {
+        out.push(preview?.inactive ? (preview.inactive.count ? [true, `${preview.inactive.count.toLocaleString('fr-FR')} client${preview.inactive.count > 1 ? 's' : ''} inactif${preview.inactive.count > 1 ? 's' : ''} correspondent aujourd'hui.`]
+          : [false, "Aucun client inactif ne correspond aujourd'hui : élargissez les filtres ou le délai."]) : tips[2]);
+        out.push(Number(f.visits_min) >= 2 ? [true, `Cibler des clients inactifs depuis plus de ${d} jours ayant au moins ${f.visits_min} visites passées : ils connaissent déjà votre établissement.`]
+          : [false, "Ciblez les clients ayant au moins 2 visites passées : ce sont eux qui reviennent le plus après une relance."]);
+      }
+      if ([5, 6].includes(n)) {
+        const best = page.best_slot;
+        out.push(!best || (sc.window_from <= best.from && best.from < sc.window_to) ? [true, best ? `Vos clients viennent surtout vers ${best.from} : la plage horaire couvre ce moment.` : 'La plage horaire est définie.']
+          : [false, `Vos clients viennent surtout vers ${best.from} (d'après vos visites) : incluez ce moment dans la plage horaire.`]);
+        out.push(sc.daily_limit !== null && sc.daily_limit !== undefined && sc.daily_limit !== '' ? [true, "Le nombre d'envois par jour est limité : vos clients ne sont pas saturés."]
+          : [false, "Limitez le nombre d'envois par jour pour lisser les envois et éviter la saturation."]);
+      }
+      return out;
+    }
     if (s.scenario !== 'geo') return ({ 1: [named], 3: [tips[0], tips[3]], 4: [tips[2]], 5: [tips[1]], 6: tips })[n] || [];
     const out = [];
     const busyTxt = geo.busy ? `${geo.busy[0]}h – ${geo.busy[1]}h` : '';
@@ -1781,6 +1848,289 @@ export default function AutomationEditorPage() {
       <span className="text-[18px] font-extrabold tabular-nums text-[#0B1C3F]">{value}</span>
     </div>
   );
+  // ---- Client inactif (mockups 2026-10-11): its own steps 2, 4, 5 and 6 ----------------
+  const inactiveOn = s.scenario === 'inactive';
+  const ins = preview?.inactive;
+  const nf = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('fr-FR'));
+  const inDays = Number(tr.days) || 30;
+  const cutoffDate = (() => { const d = new Date(); d.setDate(d.getDate() - inDays); return d.toLocaleDateString('fr-FR'); })();
+  const limitOn = sc.daily_limit !== null && sc.daily_limit !== undefined && sc.daily_limit !== '';
+  const sendHour = sc.smart && page.best_slot ? page.best_slot.from : sc.hour;
+  const dayList = sc.days === 'all' ? [0, 1, 2, 3, 4, 5, 6] : sc.days === 'weekdays' ? [0, 1, 2, 3, 4] : [...(sc.weekdays || [])].sort();
+  const inDaysText = (() => {
+    if (dayList.length === 7) return 'Tous les jours';
+    if (!dayList.length) return '—';
+    const run = dayList.every((d, i) => i === 0 || d === dayList[i - 1] + 1);
+    return run && dayList.length > 2 ? `Du ${DAY_FULL[dayList[0]].toLowerCase()} au ${DAY_FULL[dayList[dayList.length - 1]].toLowerCase()}` : dayList.map((d) => DAY_FULL[d]).join(', ');
+  })();
+  // « Prochain envoi estimé »: the first allowed day from the start date, at the hour
+  const nextSend = (() => {
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const start = sc.valid_from && sc.valid_from > today ? sc.valid_from : today;
+    const [hh, mm] = String(sendHour || '10:00').split(':').map(Number);
+    for (let i = 0; i < 21; i += 1) {
+      const d = new Date(`${start}T12:00:00`);
+      d.setDate(d.getDate() + i);
+      const iso = d.toISOString().slice(0, 10);
+      if (sc.valid_to && iso > sc.valid_to) return null;
+      if (!dayList.includes((d.getDay() + 6) % 7)) continue;
+      if (iso === today && (now.getHours() > hh || (now.getHours() === hh && now.getMinutes() >= mm))) continue;
+      const txt = d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      return `${txt.charAt(0).toUpperCase()}${txt.slice(1)} à ${sendHour}`;
+    }
+    return null;
+  })();
+  const setInDays = (weekdays) => setIn('schedule', { weekdays: [...weekdays].sort(), days: weekdays.length === 7 ? 'all' : 'specific' });
+  const Sec = ({ title, sub, right, children, className = '' }) => (
+    <div className={`mt-5 first:mt-0 ${className}`}>
+      <div className="mb-2.5 flex flex-wrap items-end justify-between gap-2">
+        <span><span className="block text-[14px] font-bold text-[#0B1C3F]">{title}</span>{sub && <span className="text-[12.5px] text-[#475569]">{sub}</span>}</span>{right}
+      </div>
+      {children}
+    </div>
+  );
+  const Ticked = ({ on }) => (on ? <CheckCircle2 size={19} className="shrink-0 fill-[#1463FF] text-white" /> : <span className="inline-block h-[18px] w-[18px] shrink-0 rounded-full border-2 border-[#CBD5E1] bg-white" />);
+  const hourOptions = [...(page.best_slot ? [['__smart', `Automatique — ${page.best_slot.from} (meilleur moment)`]] : []), ...HOURS.map((h) => [h, h])];
+
+  const Step2Inactive = (
+    <Card n={2} title="Déclencheur" sub="Définissez quand l'automatisation se déclenche.">
+      <div className="rounded-2xl border border-[#E6EEFB] p-4">
+        <p className="mb-3 flex items-start gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><UserX size={20} /></span>
+          <span><span className="block text-[14px] font-bold text-[#0B1C3F]">Condition d'inactivité</span>
+            <span className="text-[12.5px] text-[#475569]">Un client est considéré comme inactif s'il n'a pas visité votre établissement depuis :</span></span></p>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5" role="radiogroup" aria-label="Condition d'inactivité">
+          {INACTIVE_DAYS.map((d) => {
+            const on = inDays === d;
+            return (
+              <button key={d} type="button" role="radio" aria-checked={on} onClick={() => setIn('trigger', { days: d })}
+                      className={`relative flex items-center gap-2.5 rounded-2xl border px-3.5 py-4 text-left transition ${on ? 'border-[#2F6BFF] bg-[#EEF4FF] shadow-[0_0_0_1px_#2F6BFF]' : 'border-[#E2E8F0] bg-white hover:border-[#BFD3FF]'}`}>
+                <CalendarDays size={22} className={on ? 'text-[#1463FF]' : 'text-[#64748B]'} />
+                <span className="text-[14px] font-semibold text-[#0B1C3F]">{d} jours</span>
+                <span className="absolute right-2 top-2"><Ticked on={on} /></span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-[12.5px] text-[#475569]">
+          {INACTIVE_DAYS.includes(inDays) ? 'Autre durée :' : <b className="text-[#1463FF]">Durée personnalisée :</b>}
+          <Num value={tr.days} min={7} max={365} label="Jours sans visite" onChange={(v) => setIn('trigger', { days: v })} /> jours <span className="text-[#94A3B8]">(7 à 365)</span>
+        </p>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block"><Label>Date d'envoi</Label>
+          <span className={`${field} flex items-center gap-2.5 !py-0`}><CalendarDays size={18} className="shrink-0 text-[#64748B]" />
+            <input type="date" aria-label="Date d'envoi" className="min-w-0 flex-1 bg-transparent py-2.5 !text-[15px] outline-none" value={sc.valid_from || ''}
+                   onChange={(e) => setIn('schedule', { valid_from: e.target.value })} /></span></label>
+        <label className="block"><Label>Heure d'envoi</Label>
+          <span className="flex items-center gap-2.5"><Clock size={18} className="shrink-0 text-[#64748B]" />
+            <Select label="Heure d'envoi" value={sc.smart && page.best_slot ? '__smart' : sc.hour}
+                    onChange={(v) => setIn('schedule', v === '__smart' ? { smart: true } : { smart: false, hour: v })} options={hourOptions} /></span></label>
+      </div>
+      <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+        <span>À partir du {sc.valid_from ? frDate(sc.valid_from) : "jour de l'activation"}, chaque jour d'envoi à {sendHour}, les clients qui remplissent la condition d'inactivité reçoivent la notification, dans les jours et horaires de la Planification.</span></p>
+      <div className="mt-3 rounded-2xl border border-[#E6EEFB] p-4">
+        <p className="mb-2 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Repeat size={16} className="text-[#1463FF]" /> Relance <span className="font-normal text-[#64748B]">— si le client ne revient pas</span></p>
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-[#0B1C3F]">
+          <button type="button" onClick={() => setIn('trigger', { repeat: 'once' })} className="flex items-center gap-2"><Radio on={tr.repeat !== 'every'} /> Une seule fois par absence</button>
+          <span className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setIn('trigger', { repeat: 'every' })} className="flex items-center gap-2"><Radio on={tr.repeat === 'every'} /> Relancer tous les</button>
+            <Num value={tr.every_days} min={7} max={365} label="Relancer tous les" disabled={tr.repeat !== 'every'} onChange={(v) => setIn('trigger', { every_days: v })} /> jours
+          </span>
+        </div>
+      </div>
+    </Card>
+  );
+
+  const resetExtra = () => setF({ gender: [], age: [], age_min: '', age_max: '', past_freq: [], spent: [], origin: [], tiers: [], last_offer: [],
+    stores: [], radius_km: null, client_type: [], last_visit: [], visits_max: '' });
+  const ex = tg.exclusions || EMPTY_EXCLUSIONS;
+  const setEx = (patch) => setIn('targeting', { exclusions: { ...ex, ...patch } });
+  const daysOpts = [...(INACTIVE_DAYS.includes(inDays) ? [] : [[String(inDays), `Plus de ${inDays} jours`]]), ...INACTIVE_DAYS.map((d) => [String(d), `Plus de ${d} jours`])];
+  const visitsOpts = VISITS_MIN.some(([k]) => k === String(f.visits_min ?? '')) ? VISITS_MIN : [...VISITS_MIN, [String(f.visits_min), `Au moins ${f.visits_min} visites`]];
+  const XSelect = ({ label, keyName, options, all }) => (
+    <label className="block min-w-0"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">{label}</span>
+      <Select label={label} value={one(f[keyName] || [])} onChange={pick(keyName)} options={withMulti(f[keyName] || [], [['', all], ...options])} /></label>
+  );
+  const Step4Inactive = (
+    <Card n={4} title="Ciblage" sub="Affinez les critères des clients qui recevront cette notification.">
+      <Sec title="1. Base de clients" sub="Choisissez sur quelle base de clients appliquer la segmentation.">
+        <div className={`grid gap-3 ${tg.mode === 'wallet' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+          {[['filtered', 'Tous mes clients', "Appliquer les filtres sur l'ensemble de la base", Users], ['segment', 'Segment spécifique', 'Appliquer les filtres sur un segment existant', Filter],
+            ...(tg.mode === 'wallet' ? [['wallet', 'Clients avec carte Wallet', 'Uniquement les clients ayant ajouté leur carte', Wallet]] : [])].map(([k, l, h, I]) => (
+            <button key={k} type="button" onClick={() => setIn('targeting', { mode: k })}
+                    className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition ${tg.mode === k ? 'border-[#2F6BFF] bg-[#F5F8FF] shadow-[0_0_0_1px_#2F6BFF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={20} /></span>
+              <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">{l}</span><span className="text-[12px] text-[#64748B]">{h}</span></span>
+              <Ticked on={tg.mode === k} />
+            </button>
+          ))}
+        </div>
+        {tg.mode === 'segment' && (
+          <div className="mt-3 max-h-[220px] space-y-1.5 overflow-y-auto">
+            {page.segments.map((x) => (
+              <label key={x.key} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 ${tg.segment === x.key ? 'border-[#2F6BFF] bg-[#F1F6FF]' : 'border-[#E2E8F0]'}`}>
+                <input type="radio" name="au-seg-inactive" checked={tg.segment === x.key} onChange={() => setIn('targeting', { segment: x.key })} className="accent-[#1463FF]" />
+                <span className="flex-1"><span className="block text-[13px] font-semibold text-[#0B1C3F]">{x.label}</span><span className="text-[11.5px] text-[#64748B]">{x.hint}</span></span>
+                <span className="text-[12px] font-semibold tabular-nums text-[#475569]">{(x.count ?? 0).toLocaleString('fr-FR')}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </Sec>
+      <Sec title="2. Filtres des clients inactifs" sub="Affinez les critères pour cibler uniquement les clients concernés.">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">Inactivité depuis</span>
+            <Select label="Inactivité depuis" value={String(inDays)} onChange={(v) => setIn('trigger', { days: Number(v) })} options={daysOpts} /></label>
+          <label className="block"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">Nombre de visites précédentes</span>
+            <Select label="Nombre de visites précédentes" value={String(f.visits_min ?? '')} onChange={(v) => setF({ visits_min: v })} options={visitsOpts} /></label>
+          <label className="block"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">Dernière visite avant le</span>
+            <span className={`${field} flex items-center gap-2 bg-[#F8FAFC]`} title="Calculée depuis « Inactivité depuis »"><Clock size={16} className="text-[#64748B]" /> <span className="flex-1">{cutoffDate}</span><CalendarDays size={16} className="text-[#64748B]" /></span></label>
+        </div>
+      </Sec>
+      <Sec title="3. Filtres supplémentaires (optionnels)" sub="Ajoutez d'autres critères pour affiner votre audience."
+           right={<button type="button" onClick={resetExtra} className="inline-flex items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3 py-1.5 text-[12px] font-semibold text-[#1463FF]"><RotateCcw size={13} /> Réinitialiser</button>}>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <XSelect label="Genre" keyName="gender" options={GENDERS} all="Tous" />
+          <XSelect label="Tranche d'âge" keyName="age" options={AGES} all="Tous" />
+          <XSelect label="Fréquence d'achat passée" keyName="past_freq" options={PAST_FREQS} all="Tous" />
+          <XSelect label="Montant dépensé total" keyName="spent" options={SPENT} all="Tous" />
+          <XSelect label="Origine du client" keyName="origin" options={ORIGINS} all="Tous les canaux" />
+          <XSelect label="Programme de fidélité" keyName="tiers" options={TIERS} all="Tous les statuts" />
+          <XSelect label="Dernière offre reçue" keyName="last_offer" options={LAST_OFFER} all="Toutes" />
+          <label className="block min-w-0"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">Localisation</span>
+            <Select label="Localisation" value={f.radius_km ? `r:${f.radius_km}` : f.stores.length === 1 ? `s:${f.stores[0]}` : f.stores.length ? 'multi' : ''}
+                    onChange={(v) => v !== 'multi' && setF(v.startsWith('r:') ? { radius_km: Number(v.slice(2)), stores: [] } : v.startsWith('s:') ? { stores: [v.slice(2)], radius_km: null } : { stores: [], radius_km: null })}
+                    options={[['', 'Tous'], ...(f.stores.length > 1 ? [['multi', `${f.stores.length} établissements`]] : []),
+                      ...(page.has_position ? RADII.map((k) => [`r:${k}`, `À moins de ${k} km`]) : []),
+                      ...(page.stores.length > 1 ? page.stores.map((x) => [`s:${x.id}`, `Clients de : ${x.name}`]) : [])]} /></label>
+        </div>
+      </Sec>
+      <Sec title="4. Exclusions (optionnelles)" sub="Choisissez les clients à exclure de cette automatisation.">
+        <div className="grid gap-3 md:grid-cols-2">
+          {[['recent_contact', 'Exclure les clients déjà contactés récemment', 'Ne pas envoyer si une notification a été reçue dans les 30 derniers jours'],
+            ['active_offer', 'Exclure les clients ayant une offre active', 'Ne pas envoyer si une offre est déjà en cours']].map(([k, l, h]) => (
+            <div key={k} className="flex items-start gap-3 rounded-2xl border border-[#E6EEFB] bg-[#FAFCFF] p-3.5">
+              <Toggle label={l} on={Boolean(ex[k])} onChange={(v) => setEx({ [k]: v })} />
+              <span className="min-w-0"><span className="block text-[12.5px] font-semibold text-[#0B1C3F]">{l}</span><span className="text-[11.5px] text-[#64748B]">{h}</span></span>
+            </div>
+          ))}
+        </div>
+      </Sec>
+    </Card>
+  );
+
+  const Step5Inactive = (
+    <Card n={5} title="Planification" sub="Définissez les règles d'envoi de votre automatisation.">
+      <Sec title="1. Jours et horaires d'envoi" sub="Choisissez les jours et plages horaires pendant lesquels les notifications seront envoyées.">
+        <div className="flex flex-wrap items-end gap-4">
+          <div><span className="mb-1.5 block text-[12.5px] font-semibold text-[#0B1C3F]">Jours de la semaine</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Jours de la semaine">
+              {DAY_NAMES.map((d, i) => {
+                const on = dayList.includes(i);
+                return (
+                  <button key={d} type="button" aria-pressed={on} onClick={() => setInDays(on ? dayList.filter((x) => x !== i) : [...dayList, i])}
+                          className={`min-w-[52px] rounded-xl border px-3 py-2.5 text-[13px] font-semibold transition ${on ? 'border-[#1463FF] bg-[#1463FF] text-white' : 'border-[#DCE5F3] bg-white text-[#334155] hover:border-[#BFD3FF]'}`}>{d}</button>
+                );
+              })}
+            </div></div>
+          <div><span className="mb-1.5 block text-[12.5px] font-semibold text-[#0B1C3F]">Plage horaire</span>
+            <span className="flex items-center gap-2">
+              <span className="w-28"><Select label="Début de la plage" value={sc.window_from} onChange={(v) => setIn('schedule', { window: true, window_from: v })} options={HOURS.map((h) => [h, h])} /></span>
+              <span className="text-[#64748B]">–</span>
+              <span className="w-28"><Select label="Fin de la plage" value={sc.window_to} onChange={(v) => setIn('schedule', { window: true, window_to: v })} options={[...HOURS, '23:59'].map((h) => [h, h])} /></span>
+            </span></div>
+        </div>
+        <p className="mt-3 flex items-center gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12.5px] text-[#1E3A8A]"><Info size={16} className="shrink-0 text-[#1463FF]" /> Les notifications seront envoyées uniquement les jours et horaires sélectionnés.</p>
+      </Sec>
+      <Sec title="2. Limite d'envoi par jour (optionnel)" sub="Définissez un nombre maximum de notifications envoyées par jour pour éviter la saturation.">
+        <div className="grid items-center gap-3 md:grid-cols-[auto_auto_1fr]">
+          <span className="flex items-center gap-3"><Toggle label="Activer une limite d'envoi" on={limitOn} onChange={(v) => setIn('schedule', { daily_limit: v ? 200 : null })} />
+            <span className="text-[13px] font-medium text-[#0B1C3F]">Activer une limite d'envoi</span></span>
+          <label className="block"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">Nombre maximum par jour</span>
+            <Num value={limitOn ? sc.daily_limit : ''} digits={6} min={1} max={100000} label="Nombre maximum par jour" disabled={!limitOn}
+                 onChange={(v) => setIn('schedule', { daily_limit: v })} /></label>
+          <p className="flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] text-[#1E3A8A]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+            Cela permet de lisser l'envoi des notifications sur la journée : les clients restants reçoivent la leur les jours suivants.</p>
+        </div>
+      </Sec>
+      <Sec title="3. Fuseau horaire" sub="Les envois seront effectués selon le fuseau horaire de votre établissement.">
+        <span className={`${field} flex max-w-[420px] items-center gap-2.5 bg-[#F8FAFC]`}><Globe size={17} className="text-[#64748B]" /> Europe/Paris ({parisOffset()})</span>
+      </Sec>
+      <Sec title="Date de fin (optionnelle)" sub="Après cette date, l'automatisation passe « Terminée ».">
+        <input type="date" aria-label="Date de fin" className={`${field} max-w-[260px]`} value={sc.valid_to || ''} min={sc.valid_from || undefined}
+               onChange={(e) => setIn('schedule', { valid_to: e.target.value })} />
+      </Sec>
+      {!page.tick && (
+        <p className="mt-3 flex items-start gap-2 text-[11.5px] text-[#94A3B8]"><Info size={13} className="mt-0.5 shrink-0" />
+          L'envoi à l'heure exacte et l'étalement sur la plage arrivent avec l'envoi programmé toutes les 15 minutes ; en attendant, les messages du jour partent avec l'envoi quotidien du matin.</p>
+      )}
+    </Card>
+  );
+
+  const SumCard = ({ icon: I, title, n, badge, children }) => (
+    <div className="rounded-2xl border border-[#E6EEFB] bg-white p-4">
+      <div className="mb-2 flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={20} /></span>
+        <span className="min-w-0 flex-1 pt-2 text-[14px] font-bold text-[#0B1C3F]">{title}</span>
+        {badge}
+        {n && can && <button type="button" onClick={() => go(n)} aria-label={`Modifier : ${title}`} className="shrink-0 rounded-xl border border-[#BFD3FF] px-3 py-1.5 text-[12.5px] font-semibold text-[#1463FF]">Modifier</button>}
+      </div>
+      <div className="text-[12.5px] text-[#334155]">{children}</div>
+    </div>
+  );
+  const [stLabel, stColor] = STATUS[s.status === 'paused' ? 'paused' : s.status === 'draft' ? 'draft' : 'active'];
+  const StatusPill = <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold" style={{ background: `${stColor}1A`, color: stColor }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: stColor }} /> {stLabel}</span>;
+  const KV = ({ k, v }) => <span className="flex justify-between gap-3 border-t border-[#EEF2F7] py-1.5 first:border-t-0"><span className="text-[#475569]">{k}</span><span className="text-right font-medium text-[#0B1C3F]">{v}</span></span>;
+  const extraChips = [...filterChips(), ...names(f.past_freq || [], PAST_FREQS, '').split(', '), ...names(f.origin || [], ORIGINS, '').split(', '),
+    ...names(f.tiers || [], TIERS, '').split(', '), ...names(f.last_offer || [], LAST_OFFER, '').split(', '),
+    ...(ex.recent_contact ? ['Sans les clients contactés depuis 30 jours'] : []), ...(ex.active_offer ? ['Sans les clients ayant une offre active'] : [])]
+    .filter((x) => x && !/visites$/.test(x));
+  const inPreviewExtra = { jours_absence: String(inDays), offre: page.offers[0]?.name || 'notre offre du moment', lien: 'fidclic.com/c/…' };
+  const Step6Inactive = (
+    <Card n={6} title="Résumé" sub="Vérifiez les paramètres de votre automatisation avant de l'enregistrer.">
+      <div className="grid gap-3 md:grid-cols-2">
+        <SumCard icon={Target} title="Scénario" badge={StatusPill}>
+          <b className="block text-[13.5px] text-[#0B1C3F]">{s.name || m.label}</b>
+          <span className="text-[#475569]">{s.description || `Envoyer automatiquement une notification aux clients qui n'ont pas visité votre établissement depuis ${inDays} jours.`}</span>
+        </SumCard>
+        <SumCard icon={UserX} title="Déclencheur" n={2}>
+          <b className="block text-[13.5px] text-[#0B1C3F]">Client inactif depuis {inDays} jours</b>
+          <span className="block text-[#475569]">Un client est considéré comme inactif s'il n'a pas visité votre établissement depuis plus de {inDays} jours.</span>
+          <span className="mt-1 block text-[#475569]">À partir du {sc.valid_from ? frDate(sc.valid_from) : "jour de l'activation"} · {sendHour}{tr.repeat === 'every' ? ` · relance tous les ${tr.every_days || 30} j` : ' · une fois par absence'}</span>
+        </SumCard>
+        <SumCard icon={MessageSquare} title="Message" n={3}>
+          <span className="mb-2 flex items-center gap-1.5 text-[12.5px] font-medium text-[#0B1C3F]"><Smartphone size={14} /> Notification Wallet</span>
+          <span className="flex gap-3">
+            {msg.image_url && <img src={msg.image_url} alt="" className="h-20 w-28 shrink-0 rounded-xl object-cover" />}
+            <span className="min-w-0 flex-1"><b className="block text-[#0B1C3F]">{msg.title || '—'}</b><span className="block text-[#475569]">{msg.body || '—'}</span>
+              {btn.enabled && <span className="mt-1.5 block rounded-lg border border-[#BFD3FF] py-1 text-center text-[12px] font-semibold text-[#1463FF]">{btn.label}</span>}</span>
+          </span>
+        </SumCard>
+        <SumCard icon={Users} title="Ciblage" n={4}>
+          <b className="block text-[13.5px] text-[#0B1C3F]">{tg.mode === 'segment' ? `Segment : ${(page.segments.find((x) => x.key === tg.segment) || {}).label || '—'}` : tg.mode === 'wallet' ? 'Clients avec carte Wallet' : 'Tous mes clients'}</b>
+          <span className="mt-1.5 block rounded-xl bg-[#F8FAFC] px-3 py-1">
+            <KV k="Inactivité depuis :" v={`Plus de ${inDays} jours`} />
+            <KV k="Nombre de visites précédentes :" v={(VISITS_MIN.find(([k2]) => k2 === String(f.visits_min ?? '')) || ['', f.visits_min ? `Au moins ${f.visits_min} visites` : 'Toutes'])[1]} />
+            <KV k="Dernière visite avant le :" v={cutoffDate} />
+          </span>
+          {extraChips.length > 0 && <span className="mt-2 flex flex-wrap gap-1.5">{extraChips.map((c) => <span key={c} className="rounded-lg bg-[#F1F5F9] px-2 py-0.5 text-[11.5px] text-[#334155]">{c}</span>)}</span>}
+        </SumCard>
+        <SumCard icon={CalendarDays} title="Planification" n={5}>
+          {[[CalendarDays, "Jours d'envoi :", inDaysText], [Clock, 'Plage horaire :', `${sc.window_from} – ${sc.window_to}`],
+            [Globe, 'Fuseau horaire :', `Europe/Paris (${parisOffset()})`], [Bell, "Limite d'envoi par jour :", limitOn ? `${Number(sc.daily_limit).toLocaleString('fr-FR')} notifications maximum` : 'Aucune limite'],
+            ...(sc.valid_to ? [[Flag, 'Date de fin :', frDate(sc.valid_to)]] : [])].map(([I, k, v]) => (
+            <span key={k} className="flex items-start gap-2.5 py-1"><I size={16} className="mt-0.5 shrink-0 text-[#1463FF]" /><span><b className="block text-[#0B1C3F]">{k}</b>{v}</span></span>
+          ))}
+        </SumCard>
+        <SumCard icon={Eye} title="Aperçu du déclenchement" n={3}>
+          <div className="-m-1"><LockScreenPreview shop={page.shop} logo={page.logo_url} title={msg.title} body={msg.body} image={msg.image_url}
+                                                   button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact bigImage extra={inPreviewExtra} /></div>
+        </SumCard>
+      </div>
+    </Card>
+  );
+
   const reach = preview?.reachable;
   const res = row?.results;
   const stepPanel = (() => {
@@ -1837,12 +2187,212 @@ export default function AutomationEditorPage() {
     return s.scenario === 'geo' ? null : Recap;
   })();
 
+  // ---- Client inactif: the right column of each step (mockups) -----------------------
+  const Delta = ({ v, label = 'par rapport au mois dernier' }) => (v === null || v === undefined ? null : (
+    <span className="flex items-start gap-2 border-l border-[#E6EEFB] pl-4">
+      <ArrowUp size={20} className={`mt-0.5 shrink-0 ${v >= 0 ? 'text-[#059669]' : 'rotate-180 text-[#DC2626]'}`} />
+      <span><b className={`block text-[15px] ${v >= 0 ? 'text-[#059669]' : 'text-[#DC2626]'}`}>{v >= 0 ? '+' : ''}{v}%</b><span className="text-[12px] text-[#475569]">{label}</span></span>
+    </span>
+  ));
+  const Audience = ({ label = 'clients concernés' }) => (
+    <div className="flex flex-wrap items-center gap-4">
+      <span className="flex items-center gap-3"><Users size={34} className="text-[#1463FF]" />
+        <span><b className="block text-[28px] font-extrabold leading-none text-[#0B1C3F]">{ins ? nf(ins.count) : '…'}</b><span className="text-[12.5px] text-[#475569]">{label}</span></span></span>
+      <Delta v={ins?.delta} />
+    </div>
+  );
+  const Donut = ({ part, total }) => {
+    const r = 34; const c = 2 * Math.PI * r; const pctv = total ? part / total : 0;
+    return (
+      <svg width="92" height="92" viewBox="0 0 92 92" aria-hidden="true" className="shrink-0">
+        <circle cx="46" cy="46" r={r} fill="none" stroke="#E6EEFB" strokeWidth="14" />
+        <circle cx="46" cy="46" r={r} fill="none" stroke="#1463FF" strokeWidth="14" strokeDasharray={`${c * pctv} ${c}`} transform="rotate(-90 46 46)" strokeLinecap="butt" />
+      </svg>
+    );
+  };
+  const Bars = ({ title, rows }) => (
+    <div className="grid grid-cols-[96px_1fr] gap-x-3 border-t border-[#EEF2F7] py-2.5 first:border-t-0">
+      <span className="text-[12.5px] font-semibold text-[#0B1C3F]">{title}</span>
+      <span className="space-y-1.5">{rows.map(([l, p]) => (
+        <span key={l} className="grid grid-cols-[72px_1fr_36px] items-center gap-2 text-[11.5px] text-[#475569]">
+          <span>{l}</span><span className="h-2 rounded-full bg-[#E6EEFB]"><span className="block h-2 rounded-full bg-[#1463FF]" style={{ width: `${p}%` }} /></span><span className="text-right tabular-nums">{p}%</span>
+        </span>))}</span>
+    </div>
+  );
+  const pctOf = (list, key) => (list || []).find((x) => x.key === key)?.pct ?? 0;
+  const impact = ins?.impact;
+  const inactivePanel = (() => {
+    if (step === 2) {
+      return (
+        <>
+          <Panel icon={UserX} title="Aperçu du déclencheur">
+            <div className="mt-2 flex items-start gap-4 rounded-xl bg-[#F8FAFF] p-3">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#F1EAFF] text-[#7C3AED]"><CalendarDays size={30} /></span>
+              <span className="text-[12.5px] text-[#475569]"><span className="block">Clients inactifs depuis</span>
+                <b className="block text-[24px] font-extrabold leading-tight text-[#0B1C3F]">{inDays} jours</b>
+                Notification envoyée {sc.valid_from ? `à partir du ${frDate(sc.valid_from)}` : "dès l'activation"} à {sendHour}</span>
+            </div>
+            <p className="mt-2 text-[12px] text-[#475569]">Les clients inactifs recevront la notification à cette date et heure, selon les jours et horaires définis.</p>
+          </Panel>
+          <Panel icon={Users} title="Estimation de l'audience"><div className="pt-1"><Audience /></div></Panel>
+        </>
+      );
+    }
+    if (step === 3) {
+      return (
+        <Panel icon={Hash} title="Variables disponibles">
+          <div className="flex flex-wrap gap-2 pt-1">{INACTIVE_VARS.map((v) => (
+            <button key={v} type="button" onClick={() => insert(`{${v}}`)} className="inline-flex items-center gap-1 rounded-xl border border-[#DCE5F3] px-2.5 py-1.5 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {INACTIVE_VAR_LABELS[v]}</button>
+          ))}</div>
+        </Panel>
+      );
+    }
+    if (step === 4) {
+      const kept = ins ? ins.count : 0; const all = ins ? ins.lapsed : 0;
+      return (
+        <>
+          <Panel icon={Users} title="Aperçu de l'audience">
+            <div className="pt-1"><Audience label="clients inactifs" /></div>
+            <div className="mt-3 flex items-center gap-4">
+              <Donut part={kept} total={all} />
+              <span className="flex-1 space-y-2 text-[12.5px]">
+                <span className="grid grid-cols-[1fr_auto_auto] items-center gap-3"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#1463FF]" />Inactifs (&gt; {inDays} jours)</span><b className="tabular-nums">{nf(kept)}</b><span className="w-10 text-right text-[#1463FF]">{all ? Math.round(kept / all * 100) : 0}%</span></span>
+                <span className="grid grid-cols-[1fr_auto_auto] items-center gap-3 text-[#64748B]"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-[#E6EEFB]" />Autres clients (exclus)</span><b className="tabular-nums">{nf(ins?.excluded)}</b><span className="w-10 text-right">{all ? 100 - Math.round(kept / all * 100) : 0}%</span></span>
+              </span>
+            </div>
+          </Panel>
+          <Panel icon={BarChart3} title="Répartition de l'audience">
+            {ins && ins.count ? (
+              <div className="pt-1">
+                <Bars title="Âge" rows={AGE_BARS.map(([k, l]) => [l, pctOf(ins.breakdown.age, k)])} />
+                <Bars title="Genre" rows={[['Femmes', pctOf(ins.breakdown.gender, 'F')], ['Hommes', pctOf(ins.breakdown.gender, 'M')]]} />
+                <Bars title="Canal d'acquisition" rows={CHANNELS.map(([k, l]) => [l, pctOf(ins.breakdown.channel, k)])} />
+              </div>
+            ) : <p className="pt-1 text-[12.5px] text-[#64748B]">La répartition s'affiche dès qu'au moins un client correspond au ciblage.</p>}
+          </Panel>
+        </>
+      );
+    }
+    if (step === 5) {
+      return (
+        <>
+          <Panel icon={CalendarDays} title="Aperçu du planning">
+            <ol className="relative mt-2 space-y-4 pl-7 before:absolute before:bottom-3 before:left-[9px] before:top-3 before:border-l-2 before:border-dashed before:border-[#BFD3FF]">
+              {[[Zap, 'Déclenchement', `Client inactif depuis ${inDays} jours`], [Hourglass, 'Planification', `${inDaysText} · entre ${sc.window_from} et ${sc.window_to}${limitOn ? ` (${Number(sc.daily_limit).toLocaleString('fr-FR')} max/jour)` : ''}`],
+                [Smartphone, 'Envoi de la notification', msg.title || '—']].map(([I, t, d]) => (
+                <li key={t} className="relative flex items-start gap-3"><span className="absolute -left-7 top-3 h-3 w-3 rounded-full border-2 border-white bg-[#1463FF] shadow" />
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={19} /></span>
+                  <span className="min-w-0 text-[12.5px]"><b className="block text-[#0B1C3F]">{t}</b><span className="text-[#475569]">{d}</span></span></li>
+              ))}
+            </ol>
+          </Panel>
+          <section className="rounded-2xl border border-[#BFD3FF] bg-[#F5F8FF] p-4">
+            <p className="flex items-start gap-3"><Clock size={22} className="mt-0.5 shrink-0 text-[#1463FF]" />
+              <span><b className="block text-[13.5px] text-[#0B1C3F]">Prochain envoi estimé</b>
+                <b className="block text-[14.5px] text-[#1463FF]">{nextSend || 'Aucun jour d\'envoi à venir'}</b>
+                <span className="text-[12px] text-[#475569]">(si des clients inactifs correspondent aux critères)</span></span></p>
+          </section>
+        </>
+      );
+    }
+    if (step === 6) {
+      return (
+        <>
+          <Panel icon={Power} title="Statut de l'automatisation">
+            <div className="mt-2 flex items-center gap-3">
+              <Toggle label="Activer l'automatisation" on={s.status !== 'paused'} disabled={!can} onChange={(v) => set({ status: v ? 'active' : 'paused' })} />
+              <b className="text-[14px] text-[#0B1C3F]">{s.status !== 'paused' ? "L'automatisation est activée" : "L'automatisation est en pause"}</b>
+            </div>
+            <p className="mt-1.5 text-[12px] text-[#475569]">{s.status !== 'paused' ? 'Les notifications seront envoyées automatiquement selon les paramètres définis.' : 'Aucune notification ne part tant que vous ne la réactivez pas.'}</p>
+          </Panel>
+          <Panel icon={TrendingUp} title="Estimation de l'impact">
+            <Stat icon={Users} label="clients concernés" value={ins ? nf(ins.count) : '…'} />
+            <Stat icon={ArrowUp} label="potentiel de réactivation" value={impact?.rate != null ? `+${Math.round(impact.rate * 100)}%` : '—'}
+                  hint={impact?.basis === 'shop' ? `D'après vos ${impact.sends} relances passées` : impact?.basis === 'sector' ? 'Moyenne de commerces de votre secteur' : 'Pas encore assez de relances mesurées'} />
+            <Stat icon={Target} label="clients estimés réactivés" value={impact?.reactivated != null ? `~ ${nf(impact.reactivated)}` : '—'} />
+            <Stat icon={BarChart3} label="revenu potentiel estimé" value={impact?.revenue != null ? `+${nf(impact.revenue)} €` : '—'}
+                  hint={impact?.basket ? `Panier moyen de ces clients : ${impact.basket.toLocaleString('fr-FR')} €` : (impact?.rate != null ? 'Montants des achats inconnus' : '')} />
+            <p className="mt-1 text-[11px] text-[#94A3B8]">Réactivé = revenu en caisse dans les 15 jours qui suivent le message. Ce sont des estimations tirées de vrais envois, jamais des chiffres inventés.</p>
+          </Panel>
+        </>
+      );
+    }
+    return null;
+  })();
+  const BonnesPratiques = inactiveOn && step === 2 && (
+    <section className="rounded-2xl border border-[#D9F2E3] bg-[#F3FBF6] p-4">
+      <p className="mb-2 flex items-center gap-2 text-[14px] font-bold text-[#0B1C3F]"><Lightbulb size={17} className="text-[#059669]" /> Bonnes pratiques</p>
+      {['Choisissez un délai d\'inactivité adapté à votre secteur (60 à 90 jours).', 'Évitez d\'envoyer vos relances trop tôt.',
+        'Testez différents jours et horaires pour identifier le meilleur moment.', 'Analysez les résultats et ajustez si nécessaire.'].map((t) => (
+        <p key={t} className="flex items-start gap-2 py-1 text-[12.5px] text-[#14532D]"><Check size={15} className="mt-0.5 shrink-0 text-[#16A34A]" /> {t}</p>
+      ))}
+    </section>
+  );
+
   const geoNew = s.scenario === 'geo' && !editing;
   const avisNew = s.scenario === 'google_review' && !editing;
   const createLabel = geoNew ? "Activer l'automatisation" : s.scenario === 'google_review' ? "Enregistrer l'automatisation" : "Créer l'automatisation";
-  const content = [null, Step1, s.scenario === 'geo' ? Step2Geo : s.scenario === 'google_review' ? Step2Avis : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : s.scenario === 'google_review' ? Step5Avis : Step5, Step6][step];
+  const content = inactiveOn ? [null, Step1, Step2Inactive, Step3, Step4Inactive, Step5Inactive, Step6Inactive][step]
+    : [null, Step1, s.scenario === 'geo' ? Step2Geo : s.scenario === 'google_review' ? Step2Avis : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : s.scenario === 'google_review' ? Step5Avis : Step5, Step6][step];
+  // the header's « Désactiver / Activer » and « ••• » (Client inactif mockups)
+  const fmtWhen = (iso) => { try { const d = new Date(iso); return `${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`; } catch { return ''; } };
+  const flip = async () => {
+    const nextSt = s.status === 'paused' ? 'active' : 'paused';
+    if (!editing) { set({ status: nextSt }); return; }
+    setBusy('status'); setError('');
+    try {
+      await ownerAPI.automationStatus(id, nextSt);
+      set({ status: nextSt });
+      setRow((r) => (r ? { ...r, status: nextSt, updated_at: new Date().toISOString() } : r));
+    } catch (e) { setError(e?.response?.data?.detail || "Le statut n'a pas pu être changé."); } finally { setBusy(''); }
+  };
+  const menuAct = async (what) => {
+    setMenuOpen(false);
+    if (what === 'draft') { save('draft'); return; }
+    setBusy(what); setError('');
+    try {
+      if (what === 'duplicate') { await ownerAPI.duplicateAutomation(id); navigate('/dashboard/automations', { state: { flash: 'Automatisation dupliquée (en brouillon).' } }); }
+      if (what === 'delete') {
+        if (!window.confirm('Supprimer cette automatisation ? Ses envois passés restent dans vos statistiques.')) { setBusy(''); return; }
+        await ownerAPI.deleteAutomation(id); navigate('/dashboard/automations', { state: { flash: 'Automatisation supprimée.' } });
+      }
+    } catch (e) { setError(e?.response?.data?.detail || "L'action n'a pas abouti."); setBusy(''); }
+  };
+  const InactiveHeader = (
+    <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+      <div className="flex items-start gap-4">
+        <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><ArrowLeft size={20} /></button>
+        <div>
+          <h1 className="text-[25px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? "Modifier l'automatisation" : 'Créer une automatisation'} — {s.name || m.label}</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-3 text-[13.5px] text-[#475569]">{StatusPill}
+            {editing && row?.updated_at && <span>Dernière modification : {fmtWhen(row.updated_at)}</span>}</p>
+        </div>
+      </div>
+      {can && (
+        <div className="flex items-center gap-2">
+          <span className="relative">
+            <button type="button" aria-label="Plus d'actions" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}
+                    className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#DCE5F3] bg-white text-[#0B1C3F] hover:border-[#BFD3FF]"><MoreHorizontal size={20} /></button>
+            {menuOpen && (
+              <span role="menu" className="absolute right-0 top-12 z-30 w-60 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
+                <button type="button" role="menuitem" onClick={() => menuAct('draft')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]"><Pencil size={15} /> Enregistrer en brouillon</button>
+                {editing && <button type="button" role="menuitem" onClick={() => menuAct('duplicate')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]"><Copy size={15} /> Dupliquer</button>}
+                {editing && <button type="button" role="menuitem" onClick={() => menuAct('delete')} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] text-[#DC2626] hover:bg-[#FEF2F2]"><Trash2 size={15} /> Supprimer</button>}
+              </span>
+            )}
+          </span>
+          <button type="button" disabled={!!busy} onClick={flip}
+                  className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#DCE5F3] bg-white px-4 text-[13.5px] font-semibold text-[#0B1C3F] hover:border-[#BFD3FF] disabled:opacity-60">
+            {s.status === 'paused' ? <><Play size={16} /> Activer</> : <><Pause size={16} /> Désactiver</>}
+          </button>
+        </div>
+      )}
+    </header>
+  );
   return (
     <div className="pb-10">
+      {inactiveOn ? InactiveHeader : (
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-4">
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
@@ -1865,13 +2415,14 @@ export default function AutomationEditorPage() {
           </div>
         )}
       </header>
+      )}
 
       <ol className="mb-5 flex items-start overflow-x-auto pb-1">
         {STEPS.map(([label0, sub], i) => {
           const n = i + 1;
           const label = n === 2 && s.scenario === 'geo' ? 'Zone de détection' : label0;
           const done = n < step;
-          const subText = n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
+          const subText = inactiveOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
           return (
             <li key={label} className="flex min-w-0 flex-1 items-start last:flex-none">
               <button type="button" onClick={() => (done ? go(n) : null)} disabled={!done && n !== step}
@@ -1892,25 +2443,36 @@ export default function AutomationEditorPage() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <fieldset disabled={!can} className="m-0 min-w-0 border-0 p-0">{content}</fieldset>
         <aside className="space-y-4">
-          <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
+          {(!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
                              button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4 && s.scenario !== 'google_review'}
                              bigImage={s.scenario === 'google_review' && step === 3}
                              note={s.scenario === 'geo' ? "Sur l'écran verrouillé, Apple affiche ce message près de votre établissement (Google Wallet, son propre texte). Un appui ouvre la carte, où le message et son bouton s'affichent." : undefined}
                              extra={s.scenario === 'near_reward' ? { visites_restantes: String(tr.visits_left || 1), visite_s: Number(tr.visits_left) > 1 ? 'visites' : 'visite' }
                                : s.scenario === 'tier_up' ? { palier: tr.condition === 'status' ? 'Or' : palierLabel(tr.condition, tiered ? cur.value : tr.threshold),
                                  'récompense': (tiered && cur.reward) || preview?.sample?.next_reward || 'votre récompense' }
-                               : s.scenario === 'geo' ? { 'établissement': zoneSpots[0]?.name || page.shop } : {}} />
-          {stepPanel}
+                               : s.scenario === 'geo' ? { 'établissement': zoneSpots[0]?.name || page.shop }
+                               : inactiveOn ? inPreviewExtra : {}} />}
+          {inactiveOn && step >= 2 ? inactivePanel : stepPanel}
           {Conseil}
+          {BonnesPratiques}
         </aside>
       </div>
 
       {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">{error}</p>}
       <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E6EEFB] bg-white p-4">
+        {inactiveOn ? (
+          <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
+            <button type="button" onClick={() => navigate('/dashboard/automations')}
+                    className="rounded-xl border border-[#BFD3FF] px-6 py-2.5 text-[13px] font-semibold text-[#1463FF]">Annuler</button>
+            {step > 1 && <button type="button" onClick={() => go(step - 1)}
+                    className="ml-auto inline-flex items-center gap-2 rounded-xl border border-[#BFD3FF] px-5 py-2.5 text-[13px] font-semibold text-[#1463FF]"><ArrowLeft size={17} /> Précédent</button>}
+          </span>
+        ) : (
         <button type="button" onClick={() => (step === 1 ? navigate('/dashboard/automations') : go(step - 1))}
                 className="inline-flex items-center gap-2 rounded-xl border border-[#BFD3FF] px-5 py-2.5 text-[13px] font-semibold text-[#1463FF]">
           {step === 1 ? 'Annuler' : <><ArrowLeft size={17} /> Précédent</>}
         </button>
+        )}
         {step < 6 ? (
           <button type="button" onClick={next}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-6 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)]">

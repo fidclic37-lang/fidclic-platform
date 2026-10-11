@@ -204,7 +204,7 @@ VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
     "birthday": [], "tier_up": ["palier", "récompense"], "welcome": [], "near_reward": ["visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
-    "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence"], "custom": [],
+    "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": [],
 }
 VARIABLES["geo"] = ["établissement", "distance", "offre"]
 LINK_TYPES = ("card", "rewards", "offer", "google_review", "url")
@@ -235,6 +235,25 @@ GR_FREQS = ("every_scan", "days", "once", "smart")
 GR_TYPES = ("after_visit", "loyal", "date")
 # « Type de client » = the card's statut (user, 2026-10-11 — replaces « Fréquence de visite »)
 CLIENT_TYPES = {"new": ("bronze",), "regular": ("silver",), "loyal": ("gold", "vip")}
+# Client inactif (mockups, 2026-10-11): the five « Condition d'inactivité » tiles,
+# and the filters of its Ciblage — usable by every automation.
+INACTIVE_DAYS = (30, 60, 90, 120, 180)
+# « Fréquence d'achat passée »: visits per month while the client came, [lo, hi)
+PAST_FREQS = {"<1": (0, 1), "1-2": (1, 2.5), "3-4": (2.5, 4.5), ">4": (4.5, None)}
+# « Programme de fidélité »: the card's statut
+TIERS = ("bronze", "silver", "gold", "vip")
+# « Dernière offre reçue » (an offer campaign): never / under 30 days / over 30 days
+LAST_OFFER = ("none", "<30", ">30")
+# « Origine du client »: services/sources keys, « none » = Non renseigné
+from services.sources import SOURCES as _SOURCES, UNKNOWN as _UNKNOWN, normalize as _source_key
+ORIGINS = tuple(_SOURCES) + (_UNKNOWN,)
+# « Répartition de l'audience » — the channel groups of the mockup
+CHANNEL_GROUPS = {"qr_store": "store", "referral": "other", "import": "other", "autre": "other", _UNKNOWN: "other"}
+RECENT_CONTACT_DAYS = 30        # « Exclure les clients déjà contactés récemment »
+DAILY_LIMIT_MAX = 100000
+IMPACT_WINDOW_DAYS = 15         # a client « réactivé » = a visit within 15 days (fidclic_impact)
+IMPACT_MIN_SENDS = 20           # the shop's own history counts from 20 measured sends
+IMPACT_MIN_SHOPS = 3            # the sector's pool, anonymous, from 3 shops (campaign_learning)
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +435,80 @@ def _segment_ids(tid: str, key: Optional[str], at: datetime) -> Optional[set]:
         return set()
 
 
+def visits_per_month(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[float]:
+    """« Fréquence d'achat passée »: visits per month between the signup and
+    the last visit (a month at least) — None for a client who never came."""
+    n = int(cust.get("visits") or 0)
+    if n <= 0:
+        return None
+    first = _aware(cust.get("created_at"))
+    last = _aware(cust.get("last_visit_date")) or at or _now()
+    span = (last - first).days if first and last and last > first else 0
+    return n / max(1.0, span / 30.0)
+
+
+def origin_of(cust: Dict[str, Any]) -> str:
+    """« Origine du client »: the signup channel, as services/sources reads it."""
+    return _source_key(cust.get("acquisition_source")) or _UNKNOWN
+
+
+def _offer_history(tid: str) -> Tuple[Dict[str, datetime], set]:
+    """Who received an offer (Campagnes › Offre / Push Wallet offers): the last
+    time each client got one, and who holds one still running."""
+    last: Dict[str, datetime] = {}
+    live: set = set()
+    try:
+        from features import campaign_kinds as K
+        at = _now()
+        for c in _db.campaigns.find({"tenant_id": tid, "status": "sent", "kind": {"$in": list(K.OFFER_KINDS)}},
+                                    {"_id": 0}):
+            sent = _aware(c.get("sent_at"))
+            on = K.is_live(c, at)
+            for cid in c.get("recipient_ids") or []:
+                if sent and (cid not in last or sent > last[cid]):
+                    last[cid] = sent
+                if on:
+                    live.add(cid)
+    except Exception:
+        pass
+    try:
+        for m in _db.push_wallet_log.find({"tenant_id": tid}, {"_id": 0, "customer_id": 1, "sent_at": 1}):
+            t = _aware(m.get("sent_at"))
+            cid = m.get("customer_id")
+            if cid and t and (cid not in last or t > last[cid]):
+                last[cid] = t
+    except Exception:
+        pass
+    return last, live
+
+
+def _recent_ids(tid: str, at: datetime) -> set:
+    """« Déjà contactés récemment »: a campaign, an offer or an automation in
+    the last RECENT_CONTACT_DAYS days (features/resend_guard draws the line)."""
+    try:
+        from features import resend_guard as RG
+        ids = [c["id"] for c in _db.customers.find({"tenant_id": tid}, {"_id": 0, "id": 1})]
+        return set(RG.recently_contacted(tid, ids, at, days=RECENT_CONTACT_DAYS))
+    except Exception:
+        return set()
+
+
+def excluded(tid: str, tg: Dict[str, Any], cust: Dict[str, Any], at: datetime, cache: Dict[str, Any]) -> bool:
+    """The « Exclusions » of the Ciblage — on top of the base and the filters."""
+    ex = tg.get("exclusions") or {}
+    if ex.get("recent_contact"):
+        if "recent" not in cache:
+            cache["recent"] = _recent_ids(tid, at)
+        if cust["id"] in cache["recent"]:
+            return True
+    if ex.get("active_offer"):
+        if "offers" not in cache:
+            cache["offers"] = _offer_history(tid)
+        if cust["id"] in cache["offers"][1]:
+            return True
+    return False
+
+
 def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[datetime] = None,
             cache: Optional[Dict[str, Any]] = None) -> bool:
     """Does this client fall inside the automation's « Ciblage »?"""
@@ -445,6 +538,8 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
         n = int(cust.get("visits") or 0)
         if n < span[0] or (span[1] is not None and n > span[1]):
             return False
+    if excluded(tid, tg, cust, at, cache):
+        return False
     # « Tous mes clients » = everyone: no filter applies (as in Campagnes, 2026-10-10);
     # « filtered » (géolocalisation) = everyone, through the filters
     f = {} if mode == "all" else (tg.get("filters") or {})
@@ -507,6 +602,24 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
             except Exception:
                 cache[key] = set()             # no shop position: nobody is « within »
         if cust["id"] not in cache[key]:
+            return False
+    # Client inactif's filters (mockups, 2026-10-11) — every automation reads them
+    pf = as_list(f.get("past_freq"), PAST_FREQS)
+    if pf and not within(visits_per_month(cust, at), [PAST_FREQS[x] for x in pf], half_open=True):
+        return False
+    tiers = as_list(f.get("tiers"), TIERS)
+    if tiers and (cust.get("tier") or "bronze").lower() not in tiers:
+        return False
+    orig = as_list(f.get("origin"), ORIGINS)
+    if orig and origin_of(cust) not in orig:
+        return False
+    lo = as_list(f.get("last_offer"), LAST_OFFER)
+    if lo:
+        if "offers" not in cache:
+            cache["offers"] = _offer_history(tid)
+        got = cache["offers"][0].get(cust["id"])
+        bucket = "none" if not got else ("<30" if (at - got).days < 30 else ">30")
+        if bucket not in lo:
             return False
     return True
 
@@ -695,6 +808,13 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
     if scenario == "inactive":
         last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
         out["jours_absence"] = (_now() - last).days if last else ""
+        # mockup chips « Offre » and « Lien »: the offer running now, the client's card
+        out["offre"] = _live_offer(cust.get("tenant_id") or ctx.get("tenant_id") or "") or "notre offre du moment"
+        try:
+            from services import card_owner as CO
+            out["lien"] = CO.owner_url(public_base(), cust.get("barcode_id") or "")
+        except Exception:
+            out["lien"] = ""
     return out
 
 
@@ -1155,11 +1275,18 @@ def _birthday_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
 
 
 def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
+    """Clients past the inactivity, not told for this absence yet (or due a
+    relance), not already waiting in today's spread — the most recently
+    lapsed first: they are the likeliest to come back, and a daily limit
+    keeps them."""
     tr = row.get("trigger") or {}
     days = max(1, int(tr.get("days") or 30))
     cutoff = at - timedelta(days=days)
+    waiting = set(_db.automation_queue.distinct("customer_id", {"automation_id": row["id"]}))
     out = []
     for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}):
+        if c["id"] in waiting:
+            continue
         last = _aware(c.get("last_visit_date")) or _aware(c.get("created_at"))
         if not last or last > cutoff:
             continue
@@ -1172,7 +1299,21 @@ def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
             if tr.get("repeat") == "every" and at - sent < timedelta(days=max(1, int(tr.get("every_days") or 30))):
                 continue
         out.append(c)
+    out.sort(key=lambda c: _aware(c.get("last_visit_date")) or _aware(c.get("created_at")) or at, reverse=True)
     return out
+
+
+def _spread(sched: Dict[str, Any], at: datetime, n: int) -> List[datetime]:
+    """« Limite d'envoi par jour »: the day's sends shared out evenly from now
+    to the end of the plage horaire (« lisser l'envoi sur la journée »)."""
+    if n <= 1 or not sched.get("window"):
+        return [at] * n
+    th, tm = _hm(sched.get("window_to"), (20, 0))
+    end = _from_paris(_paris(at).date(), th, tm)
+    if end <= at + timedelta(minutes=15):
+        return [at] * n
+    step = (end - at) / n
+    return [at + step * i for i in range(n)]
 
 
 def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, Any]:
@@ -1194,6 +1335,10 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         if not row or not cust or not _plan_ok(row["tenant_id"]) or not running(row, at) \
                 or not matches(row["tenant_id"], row, cust, at):
             continue
+        if row["scenario"] == "inactive":         # came back while waiting: nothing to say
+            last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
+            if not last or at - last < timedelta(days=max(1, int((row.get("trigger") or {}).get("days") or 30))):
+                continue
         try:
             if _deliver(row["tenant_id"], row, cust, q.get("ctx") or {}, at):
                 summary["queued_sent"] += 1
@@ -1223,14 +1368,30 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             else:
                 people = _birthday_due(tid, row, at) if row["scenario"] == "birthday" else _inactive_due(tid, row, at)
             cache: Dict[str, Any] = {}
+            chosen = []
             for c in people:
                 ctx: Dict[str, Any] = {"event": "date"}
                 if not matches(tid, row, c, at, cache):
                     continue
                 if row["scenario"] == "google_review" and not _eligible(tid, row, c, ctx, at):
                     continue                       # its link, the click, « une seule fois »…
-                if _deliver(tid, row, c, ctx, at):
-                    summary["time_sent"] += 1
+                chosen.append((c, ctx))
+            limit = sched.get("daily_limit")
+            if limit:
+                chosen = chosen[:int(limit)]       # the rest are still due tomorrow
+            # with a limit and the 15-minute tick, the day's sends are spread
+            # over the plage horaire; without the tick they all go now
+            times = _spread(sched, at, len(chosen)) if limit and strict else [at] * len(chosen)
+            for (c, ctx), when in zip(chosen, times):
+                if when <= at + timedelta(seconds=30):
+                    if _deliver(tid, row, c, ctx, at):
+                        summary["time_sent"] += 1
+                else:
+                    _db.automation_queue.insert_one({"id": str(uuid.uuid4()), "tenant_id": tid,
+                                                     "automation_id": row["id"], "customer_id": c["id"],
+                                                     "due_at": when, "ctx": ctx, "created_at": at})
+                    summary.setdefault("spread", 0)
+                    summary["spread"] += 1
             _db.automations.update_one({"id": row["id"]}, {"$set": {"last_run_at": at}})
         except Exception as exc:
             summary["errors"] += 1
@@ -1469,7 +1630,12 @@ def schedule_text(r: Dict[str, Any]) -> str:
         a, b = _fr_date(s.get("valid_from")), _fr_date(s.get("valid_to"))
         period = f" · du {a} au {b}" if a and b else (f" · à partir du {a}" if a else f" · jusqu'au {b}")
     if is_timed(r["scenario"], r.get("trigger")):
-        return f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}{period}"
+        out = f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}"
+        if r["scenario"] == "inactive" and s.get("window"):
+            out += f" · entre {s.get('window_from') or '09:00'} et {s.get('window_to') or '21:00'}"
+        if s.get("daily_limit"):
+            out += f" · {int(s['daily_limit'])} max/jour"
+        return out + period
     if not s.get("window", True):
         return f"{days} · {'toute la journée' if r['scenario'] == 'geo' else 'immédiat'}{period}"
     hours = " / ".join(f"{a[0]:02d}h{a[1]:02d}–{b[0]:02d}h{b[1]:02d}".replace("h00", "h") for a, b in slots_of(s))
@@ -1585,6 +1751,15 @@ class FiltersIn(BaseModel):
     visits_max: Any = None
     age_min: Any = None                 # « Âge »: two dropdowns, « Tous » = none
     age_max: Any = None
+    past_freq: Any = []                 # Client inactif (2026-10-11): « Fréquence d'achat passée »
+    tiers: Any = []                     # « Programme de fidélité » (statut)
+    origin: Any = []                    # « Origine du client »
+    last_offer: Any = []                # « Dernière offre reçue »
+
+
+class ExclusionsIn(BaseModel):
+    recent_contact: bool = False        # a message in the last 30 days
+    active_offer: bool = False          # an offer still running
 
 
 class TargetingIn(BaseModel):
@@ -1592,6 +1767,7 @@ class TargetingIn(BaseModel):
     segment: Optional[str] = None
     passants: Optional[str] = "all"
     filters: FiltersIn = FiltersIn()
+    exclusions: ExclusionsIn = ExclusionsIn()
 
 
 class ScheduleIn(BaseModel):
@@ -1606,6 +1782,7 @@ class ScheduleIn(BaseModel):
     holidays: bool = True
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    daily_limit: Any = None             # « Limite d'envoi par jour » (optionnel)
 
 
 class AutomationIn(BaseModel):
@@ -1811,7 +1988,11 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     for key, val, allowed, label in (("gender", f.gender, GENDERS, "Genre"), ("age", f.age, AGES, "Âge"),
                                      ("spent", f.spent, SPENT, "Montant total des achats"),
                                      ("last_visit", f.last_visit, LAST_VISIT, "Dernière visite"),
-                                     ("client_type", f.client_type, CLIENT_TYPES, "Type de client")):
+                                     ("client_type", f.client_type, CLIENT_TYPES, "Type de client"),
+                                     ("past_freq", f.past_freq, PAST_FREQS, "Fréquence d'achat passée"),
+                                     ("tiers", f.tiers, TIERS, "Programme de fidélité"),
+                                     ("origin", f.origin, ORIGINS, "Origine du client"),
+                                     ("last_offer", f.last_offer, LAST_OFFER, "Dernière offre reçue")):
         raw = [] if val in (None, "", "all") else (val if isinstance(val, list) else [val])
         if any(str(x) not in allowed for x in raw):
             raise HTTPException(status_code=400, detail=f"{label} : valeur inconnue.")
@@ -1844,6 +2025,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     weekdays = sorted({_int(d, 0, 6, "Jour") for d in (s.weekdays or [])})
     if s.days == "specific" and not weekdays:
         raise HTTPException(status_code=400, detail="Cochez au moins un jour d'envoi.")
+    day_mode = "all" if s.days == "specific" and len(weekdays) == 7 else s.days   # every day ticked = « Tous les jours »
     timed = is_timed(sc, tr)
     hour = None
     if timed:
@@ -1854,6 +2036,21 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     wf, wt = (s.window_from or "09:00").strip(), (s.window_to or "21:00").strip()
     hm = r"([01]\d|2[0-3]):([0-5]\d)"
     slots: List[Dict[str, str]] = []
+    # Client inactif (mockups 2026-10-11): an hour (Déclencheur) AND a plage
+    # horaire (Planification) — the hour sits inside the plage, which the
+    # daily limit spreads the sends over
+    windowed = bool(s.window) and (not timed or sc == "inactive")
+    if timed and windowed:
+        for v in (wf, wt):
+            if not re.fullmatch(hm, v):
+                raise HTTPException(status_code=400, detail="Plage horaire invalide.")
+        if wt <= wf:
+            raise HTTPException(status_code=400, detail="La fin de la plage horaire doit être après son début.")
+        if not s.smart and not (wf <= hour < wt):
+            raise HTTPException(status_code=400, detail=f"L'heure d'envoi ({hour}) doit être comprise dans la plage horaire ({wf} – {wt}).")
+    limit = None
+    if s.daily_limit not in (None, "", 0, "0", False):
+        limit = _int(s.daily_limit, 1, DAILY_LIMIT_MAX, "Limite d'envoi par jour")
     if not timed and s.window:
         if s.slots:
             # « Plages horaires spécifiques » (géolocalisation): several, a night one may pass midnight
@@ -1905,11 +2102,14 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         "targeting": {"mode": t.mode, "segment": t.segment if t.mode == "segment" else None, "passants": passants,
                       "filters": ({"gender": [], "age": [], "spent": [], "last_visit": [], "client_type": [],
                                    "stores": [], "radius_km": None, "visits_min": None, "visits_max": None,
-                                   "age_min": None, "age_max": None} if t.mode == "all" else
-                                  {**picked, **nums, "stores": stores, "radius_km": radius})},
-        "schedule": {"days": s.days, "weekdays": weekdays if s.days == "specific" else [0, 1, 2, 3, 4, 5, 6],
+                                   "age_min": None, "age_max": None, "past_freq": [], "tiers": [], "origin": [],
+                                   "last_offer": []} if t.mode == "all" else
+                                  {**picked, **nums, "stores": stores, "radius_km": radius}),
+                      "exclusions": {"recent_contact": bool(t.exclusions.recent_contact),
+                                     "active_offer": bool(t.exclusions.active_offer)}},
+        "schedule": {"days": day_mode, "weekdays": weekdays if day_mode == "specific" else [0, 1, 2, 3, 4, 5, 6],
                      "hour": hour, "smart": bool(s.smart) if timed else False,
-                     "window": bool(s.window) if not timed else False,
+                     "window": windowed, "daily_limit": limit,
                      "window_from": wf, "window_to": wt, "slots": slots,
                      "holidays": bool(s.holidays), **valid},
     }
@@ -2142,6 +2342,112 @@ def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS,
 class PreviewIn(BaseModel):
     scenario: str
     targeting: TargetingIn = TargetingIn()
+    trigger: Dict[str, Any] = {}          # Client inactif: its « X jours »
+
+
+AGE_BARS = (("18-25", 18, 25), ("26-35", 26, 35), ("36-50", 36, 50), ("50+", 51, 200))
+
+
+def _last_seen(c: Dict[str, Any]) -> Optional[datetime]:
+    return _aware(c.get("last_visit_date")) or _aware(c.get("created_at"))
+
+
+def _reactivation(tid: str, at: datetime) -> Optional[Dict[str, Any]]:
+    """How often a Client inactif message brought the client back within
+    IMPACT_WINDOW_DAYS: this shop's own sends first (from IMPACT_MIN_SENDS),
+    else its sector's, pooled and anonymous (from IMPACT_MIN_SHOPS shops) —
+    else nothing: no number is made up."""
+    def measure(tids: List[str]) -> Tuple[int, int, int]:
+        n = came = 0
+        shops = set()
+        cutoff = at - timedelta(days=IMPACT_WINDOW_DAYS)
+        for lg in _db.automation_log.find({"tenant_id": {"$in": tids}, "scenario": "inactive",
+                                           "status": {"$ne": "deferred"}, "sent_at": {"$lte": cutoff}},
+                                          {"_id": 0, "tenant_id": 1, "customer_id": 1, "sent_at": 1}):
+            sent = _aware(lg.get("sent_at"))
+            if not sent:
+                continue
+            n += 1
+            shops.add(lg["tenant_id"])
+            if _db.visits.find_one({"tenant_id": lg["tenant_id"], "customer_id": lg["customer_id"],
+                                    "visit_time": {"$gt": sent, "$lte": sent + timedelta(days=IMPACT_WINDOW_DAYS)}}):
+                came += 1
+        return n, came, len(shops)
+    n, came, _ = measure([tid])
+    if n >= IMPACT_MIN_SENDS:
+        return {"rate": round(came / n, 4), "basis": "shop", "sends": n}
+    sector = (_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1}) or {}).get("sector")
+    if sector:
+        peers = [t["id"] for t in _db.tenants.find({"sector": sector, "id": {"$ne": tid}}, {"_id": 0, "id": 1})]
+        if peers:
+            n, came, shops = measure(peers)
+            if shops >= IMPACT_MIN_SHOPS and n >= IMPACT_MIN_SENDS:
+                return {"rate": round(came / n, 4), "basis": "sector", "sends": n}
+    return None
+
+
+def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, Any]:
+    """The Client inactif editor's right panels, from real data only:
+    « Estimation de l'audience » (now, and a month ago), the inactive clients
+    the filters / exclusions leave out, « Répartition de l'audience » and
+    « Estimation de l'impact »."""
+    from services import customer_fields as CF
+    days = max(7, min(365, int(((row.get("trigger") or {}).get("days")) or 30)))
+    cache: Dict[str, Any] = {}
+    own = None
+    if row.get("store_ids"):
+        own = _store_people(tid, row["store_ids"]) or set()
+    people = [c for c in _db.customers.find({"tenant_id": tid, "deleted_at": None}, {"_id": 0})
+              if own is None or c["id"] in own]
+    cutoff = at - timedelta(days=days)
+    lapsed = [c for c in people if (_last_seen(c) or at) <= cutoff]
+    targeted = [c for c in lapsed if matches(tid, row, c, at, cache)]
+    # a month ago: each client's last visit BEFORE that day, from the visits
+    then = at - timedelta(days=30)
+    before: Dict[str, datetime] = {}
+    for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$lt": then}}, {"_id": 0, "customer_id": 1, "visit_time": 1}):
+        t = _aware(v.get("visit_time"))
+        if t and (v["customer_id"] not in before or t > before[v["customer_id"]]):
+            before[v["customer_id"]] = t
+    was = 0
+    for c in people:
+        joined = _aware(c.get("created_at"))
+        if not joined or joined > then:
+            continue                               # not a client yet
+        seen = before.get(c["id"]) or joined
+        if seen <= then - timedelta(days=days) and matches(tid, row, c, then, {}):
+            was += 1
+    count = len(targeted)
+    ages: Dict[str, int] = {k: 0 for k, _, _ in AGE_BARS}
+    genders = {"F": 0, "M": 0}
+    channels = {"store": 0, "online": 0, "other": 0}
+    for c in targeted:
+        a = CF.age_of(c.get("birth_date"))
+        for k, lo, hi in AGE_BARS:
+            if a is not None and lo <= a <= hi:
+                ages[k] += 1
+        if c.get("gender") in genders:
+            genders[c["gender"]] += 1
+        channels[CHANNEL_GROUPS.get(origin_of(c), "online")] += 1
+    pct = lambda n, d: round(n / d * 100) if d else 0  # noqa: E731
+    known_age, known_g = sum(ages.values()), sum(genders.values())
+    rate = _reactivation(tid, at)
+    paid = sum(float(c.get("total_amount_paid") or 0) for c in targeted)
+    visits = sum(int(c.get("visits") or 0) for c in targeted)
+    basket = (paid / visits) if visits and paid else None
+    back = round(count * rate["rate"]) if rate else None
+    return {
+        "days": days, "count": count, "lapsed": len(lapsed), "excluded": len(lapsed) - count,
+        "month_ago": was, "delta": (round((count - was) / was * 100) if was else None),
+        "cutoff": cutoff.date().isoformat(),
+        "breakdown": {"age": [{"key": k, "n": n, "pct": pct(n, known_age)} for k, n in ages.items()],
+                      "gender": [{"key": k, "n": n, "pct": pct(n, known_g)} for k, n in genders.items()],
+                      "channel": [{"key": k, "n": n, "pct": pct(n, count)} for k, n in channels.items()]},
+        "impact": {"rate": rate["rate"] if rate else None, "basis": rate["basis"] if rate else None,
+                   "sends": rate["sends"] if rate else 0, "reactivated": back,
+                   "basket": round(basket, 2) if basket else None,
+                   "revenue": round(back * basket) if back is not None and basket else None},
+    }
 
 
 @router.post("/api/owner/automations/preview")
@@ -2151,7 +2457,7 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
     if body.scenario not in SCENARIOS:
         raise HTTPException(status_code=400, detail="Scénario inconnu.")
     row = {"id": "preview", "scenario": body.scenario, "store_ids": _own_stores(token_data),
-           "targeting": body.targeting.model_dump()}
+           "targeting": body.targeting.model_dump(), "trigger": body.trigger or {}}
     at = _now()
     cache: Dict[str, Any] = {}
     people = [c for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}) if matches(tid, row, c, at, cache)]
@@ -2168,4 +2474,7 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
         sample = {"first_name": (c.get("name") or "").split(" ")[0] or "Sarah", "name": c.get("name") or "",
                   "points": int(c.get("points") or 0),
                   "visits": int(c.get("visits") or 0), "next_reward": tpl.get("reward_description") or "votre récompense"}
-    return {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}
+    out = {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}
+    if body.scenario == "inactive":
+        out["inactive"] = inactive_insights(tid, row, at)
+    return out
