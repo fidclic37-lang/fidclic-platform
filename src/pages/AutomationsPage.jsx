@@ -331,7 +331,7 @@ export default function AutomationsPage() {
                           <span className="flex items-center gap-3">
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={20} /></span>
                             <span className="min-w-0"><span className="block truncate text-[13px] font-bold text-[#0B1C3F]">{r.name}</span>
-                              <span className="block truncate text-[11.5px] text-[#64748B]">{TAGLINE[r.scenario] || r.label}</span></span>
+                              <span className="block truncate text-[11.5px] text-[#64748B]" title={r.description || undefined}>{r.description || TAGLINE[r.scenario] || r.label}</span></span>
                           </span>
                         </td>
                         <td className="px-2 py-3"><span className="flex items-center gap-2 text-[12px] leading-snug text-[#475569]">

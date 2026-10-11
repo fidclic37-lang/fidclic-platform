@@ -191,14 +191,24 @@ def google_review(tid: str, cust: Dict[str, Any], at: Optional[datetime] = None)
 
 
 @router.get("/api/avis/{barcode_id}")
-def review_link(barcode_id: str):
-    """The link the push carries: counted, then on to the shop's Google page."""
+def review_link(barcode_id: str, b: Optional[str] = None):
+    """The link the push carries: counted, then on to the Google page — the
+    établissement's own when the shop has several (?b=, else the client's last
+    visit), the shop's otherwise."""
     cust = _db.customers.find_one({"barcode_id": (barcode_id or "").strip().upper()},
-                                  {"_id": 0, "id": 1, "tenant_id": 1})
+                                  {"_id": 0, "id": 1, "tenant_id": 1, "branch_id": 1})
     if not cust:
         raise HTTPException(status_code=404, detail="Carte inconnue")
     tenant = _db.tenants.find_one({"id": cust["tenant_id"]}) or {}
-    url = tenant.get("google_review_url")
+    branches = [x for x in tenant.get("branches") or [] if x.get("id") and x.get("status") != "closed"]
+    url = None
+    if len(branches) > 1:
+        if not b:
+            from features import automations as AU
+            b = AU._last_branch(cust["tenant_id"], cust)
+        url = next((x.get("google_review_url") for x in branches if x["id"] == b), None)
+    url = url or tenant.get("google_review_url") or next((x.get("google_review_url") for x in branches
+                                                          if x.get("google_review_url")), None)
     if not url:
         raise HTTPException(status_code=404, detail="Lien d'avis non configuré")
     _db.google_review_clicks.insert_one({"tenant_id": cust["tenant_id"], "customer_id": cust["id"],

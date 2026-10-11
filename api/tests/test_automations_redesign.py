@@ -376,6 +376,9 @@ def main():
           "news" in back3)
     defer["on"] = True
     db.customers.update_one({"id": "c3"}, {"$unset": {"auto_news": ""}})
+    # « après chaque visite » is now « au plus une fois par jour » (Avis Google mockups): a new day for Chloé
+    db.automation_log.update_many({"customer_id": "c3", "scenario": "google_review"},
+                                  {"$set": {"sent_at": now - dt.timedelta(days=2)}})
     AU.fire("google_review", "t1", db.customers.find_one({"id": "c3"}))
     check("held by the shop's daily limits: logged « deferred », the card stays quiet",
           db.automation_log.find_one({"customer_id": "c3", "status": "deferred"})
