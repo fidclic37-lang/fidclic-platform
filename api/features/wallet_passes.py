@@ -1495,6 +1495,25 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "member_since": since.strftime("%d/%m/%Y") if isinstance(since, datetime) else "",
         }
         pass_json = PD.apply(pass_json, tpl, values)
+        # iOS 27 with a design (user, 2026-10-12: « tampons preview mein nhi aa
+        # rhe in ios27 »): nothing is painted on a poster since 2026-10-11, so a
+        # design without a {jauge} field had no tampons at all. The jauge goes
+        # under the QR anyway: a field showing « 3 / 10 » becomes the jauge,
+        # else one is added (Wallet takes 4 primary fields).
+        pg = pass_json.get("posterGeneric")
+        jauge = jauge_text(stamps, threshold, stamp_shape(card)) if card.get("show_meter") is not False else None
+        if isinstance(pg, dict) and jauge:
+            front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
+            if not any(f.get("value") == jauge for f in front):
+                prim = pg.setdefault("primaryFields", [])
+                label = f"{(card.get('stamps_label') or 'Tampons').upper()} · {stamps}/{threshold}"
+                hit = next((f for f in prim if str(f.get("value")) == f"{stamps} / {threshold}"), None)
+                if hit:
+                    hit.update({"label": label, "value": jauge})
+                    hit.setdefault("changeMessage", "Tampons : %@")
+                elif len(prim) < 4:
+                    prim.append({"key": "jauge", "label": label, "value": jauge,
+                                 "changeMessage": card.get("stamps_change_message") or "Tampons : %@"})
     return pass_json
 
 

@@ -90,6 +90,45 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     expect(errors).toEqual([]);
   });
 
+  test('with a Pass Designer design: the photo, the band and the tampons reach iOS 27 too', async ({ page, request }) => {
+    // 2026-10-12: with a design, iOS 27 drew the design's own background and
+    // no tampons — « ios27 chhod k sab mein changes barabar dikh rhe hai »
+    const token = await asOwner(page, request);
+    const H = { Authorization: `Bearer ${token}` };
+    const st = await (await request.get('/api/owner/card/pass-designer/starter', { headers: H })).json();
+    st.pass.posterGeneric.primaryFields = [{ key: 'name', value: '{prenom}' }, { key: 'loves', label: 'LOVES', value: 'ROLLS ROYCE' }];
+    st.pass.footerBackgroundColor = 'rgb(105,27,27)';
+    expect((await request.put('/api/owner/card/pass-designer', { headers: H,
+      data: { name: 'Royal', pass_json: JSON.stringify(st.pass), images: st.image_data || {}, source: 'editor' } })).status()).toBe(200);
+
+    await page.goto('/dashboard/card');
+    const phone = page.locator('[translate="no"]').filter({ hasText: 'ROLLS ROYCE' }).first();
+    // the jauge, under the QR (in whichever shape the card has: the test before saved ◆)
+    await expect(phone).toContainText(/TAMPONS · 3\/10/);
+    await expect(phone).toContainText(/^.*[●◆★♥■]{3}[○◇☆♡□]{7}/s);
+    await expect(page.getByRole('button', { name: 'Couleur', exact: true })).toHaveAttribute('aria-pressed', 'true');
+
+    const bytes = await landscape(page);
+    const field = page.getByText('Image de fond (optionnelle)', { exact: true }).locator('..');
+    await field.locator('input[type="file"]').setInputFiles({ name: 'royal.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(bytes) });
+    await expect(page.getByText(/Votre design \(onglets/)).toBeVisible();
+    await page.getByRole('button', { name: 'Flou Apple' }).click();
+    await page.getByRole('button', { name: /Enregistrer les modifications/ }).click();
+    await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
+
+    const d = await (await request.get('/api/owner/card/pass-designer?full=1', { headers: H })).json();
+    expect(d.pass.footerBackgroundColor || '').toBe('');
+    const px = await page.evaluate(async (src) => {
+      const im = new Image(); im.src = src; await im.decode();
+      const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+      const x = c.getContext('2d'); x.drawImage(im, 0, 0);
+      return [c.width, c.height, ...x.getImageData(Math.round(c.width / 2), Math.round(c.height / 2), 1, 1).data.slice(0, 3)];
+    }, d.image_data['background@3x.png']);
+    expect(px.slice(0, 2)).toEqual([1035, 1515]);                       // the design's background is the new photo,
+    expect(px[2]).toBeLessThan(100); expect(px[4]).toBeGreaterThan(180); // centred: its blue middle
+    await request.delete('/api/owner/card/pass-designer', { headers: H });
+  });
+
   test('back to the defaults: Flou Apple, bars, automatic centring', async ({ page, request }) => {
     const token = await asOwner(page, request);
     await page.goto('/dashboard/card');

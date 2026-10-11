@@ -361,6 +361,47 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("{jauge} and {tampons} are both placeholders", PD.PLACEHOLDERS.get("jauge") == "meter")
     http("DELETE", "/api/owner/card/pass-designer", headers=H)
 
+    # 2026-10-12: a design made without a jauge (the user's « LOVES / ROLLS
+    # ROYCE » one) showed no tampons at all on iOS 27
+    def put_design(primary, footer=None):
+        pg = {"headerFields": [{"key": "m", "label": "MEMBRE", "value": "{carte}"}], "primaryFields": primary,
+              "footerFields": [{"key": "f", "value": "ROYALTY LIVES HERE"}], "backFields": []}
+        raw = {"posterGeneric": pg, "barcodes": [{"format": "PKBarcodeFormatQR"}]}
+        if footer:
+            raw["footerBackgroundColor"] = footer
+        r = http("PUT", "/api/owner/card/pass-designer", headers=H,
+                 json={"name": "Royal", "pass_json": json.dumps(raw), "images": {}, "source": "editor"})
+        assert r.status_code == 200, r.text
+    put_design([{"key": "name", "value": "{prenom}"}, {"key": "loves", "label": "LOVES", "value": "ROLLS ROYCE"}])
+    prim = pj()["posterGeneric"]["primaryFields"]
+    j = field(prim, "jauge")
+    check(f"a design without a jauge gets one under the QR ({[f['key'] for f in prim]})",
+          j is not None and j["value"] == "●●●○○○○○○○" and j["label"] == "TAMPONS · 3/10" and "%@" in j["changeMessage"])
+    check("…after the design's own fields, which stay as they are",
+          [f["key"] for f in prim] == ["name", "loves", "jauge"] and prim[1]["value"] == "ROLLS ROYCE")
+    setcard(stamp_shape="coeur")
+    check("…in the owner's shape", field(pj()["posterGeneric"]["primaryFields"], "jauge")["value"].startswith("♥"))
+    unset("stamp_shape")
+    setcard(show_meter=False)
+    check("jauge switched off: nothing added", field(pj()["posterGeneric"]["primaryFields"], "jauge") is None)
+    unset("show_meter")
+    put_design([{"key": "name", "value": "{prenom}"}, {"key": "p", "label": "PROGRESSION", "value": "{tampons}"}])
+    prim = pj()["posterGeneric"]["primaryFields"]
+    check(f"a design showing « 3 / 10 » gets the jauge in that very field ({prim[1]})",
+          len(prim) == 2 and prim[1]["key"] == "p" and prim[1]["value"] == "●●●○○○○○○○" and prim[1]["label"] == "TAMPONS · 3/10")
+    put_design([{"key": "name", "value": "{prenom}"}, {"key": "j", "label": "MES TAMPONS", "value": "{jauge}"}])
+    prim = pj()["posterGeneric"]["primaryFields"]
+    check("a design with its own {jauge} is left alone (no second jauge)",
+          len(prim) == 2 and prim[1]["label"] == "MES TAMPONS" and prim[1]["value"] == "●●●○○○○○○○")
+    put_design([{"key": f"k{i}", "label": f"L{i}", "value": f"v{i}"} for i in range(4)])
+    prim = pj()["posterGeneric"]["primaryFields"]
+    check("4 fields already (Wallet's maximum): nothing pushed out", len(prim) == 4 and field(prim, "jauge") is None)
+    put_design([{"key": "name", "value": "{prenom}"}], footer="rgb(186,13,140)")
+    check("the design's own footer colour is what iOS 27 draws",
+          pj().get("footerBackgroundColor") == "rgb(186,13,140)")
+    check("iOS 26 keeps FidClic's card with its strip", "storeCard" in pj())
+    http("DELETE", "/api/owner/card/pass-designer", headers=H)
+
     # ------------------------------------------------------------------
     print("\nThe « Aperçu »: the editor's draft, and fast")
     r = http("POST", "/api/owner/wallet/preview", headers=H,
