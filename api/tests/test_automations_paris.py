@@ -71,18 +71,39 @@ def main():
     for sid in ("bday", "spec", "dom"):
         db.push_scenarios.delete_one({"id": sid})
 
-    print("\n2. Le tick toutes les 15 minutes : la plage horaire")
+    print("\n2. Le tick toutes les 15 minutes : les Automatisations à leur heure")
+    from features import automations as AU
+    sent = []
+    server.dispatch_to_customer = lambda tid, cust, title, body, kind="campaign", url=None: sent.append(
+        (cust.get("id"), title)) or {"sent": True}
+    import features.wallet_passes as WP
+    WP.notify_customer = lambda *a, **k: {}
+    WP.notify_passes = lambda *a, **k: {}
+    db.automation_meta.insert_one({"tenant_id": "t1", "migrated": True})
+    bday = AU.new_doc("t1", "birthday", status="active", schedule={"hour": "11:30", "days": "all"},
+                      message={"title": "Joyeux anniversaire", "body": "Bonne fête !"})
+    bday["order"] = 0
+    db.automations.insert_one(dict(bday))
     r = server.tick_pass(dt.datetime(2026, 10, 14, 8, 45, tzinfo=UTC))              # 10:45 Paris
-    check("10:45 Paris: not yet", db.push_wallet_pending.count_documents({"scenario_id": "slot"}) == 0)
-    server.tick_pass(at_1130_paris)
-    check("11:30 Paris: the window opens, the batch is prepared",
-          db.push_wallet_pending.count_documents({"scenario_id": "slot"}) == 1)
+    check("10:45 Paris: the 11:30 birthday has not left", not sent and "automations" in r)
+    server.tick_pass(at_1130_paris)                                                   # 11:30 Paris
+    check("11:30 Paris: Anna's birthday leaves at its hour", ("a", "Joyeux anniversaire") in sent)
+    n = len(sent)
     server.tick_pass(at_1130_paris + dt.timedelta(minutes=15))
     server.tick_pass(at_1130_paris + dt.timedelta(minutes=30))
-    check("the next ticks in the window do nothing: once a day",
-          db.push_wallet_pending.count_documents({"scenario_id": "slot"}) == 1)
-    server.tick_pass(at_1130_paris + dt.timedelta(days=1))
-    check("the next day it opens again", db.push_wallet_pending.count_documents({"scenario_id": "slot"}) == 2)
+    check("the next ticks the same day send nothing again", len(sent) == n)
+    check("the tick is seen: the page stops promising « bientôt à l'heure exacte »", AU.tick_seen(at_1130_paris + dt.timedelta(minutes=30)))
+    welcome = AU.new_doc("t1", "welcome", status="active",
+                         schedule={"window": True, "window_from": "12:00", "window_to": "14:00", "days": "all"},
+                         message={"title": "Bienvenue", "body": "Merci !"})
+    db.automations.insert_one(dict(welcome))
+    AU.fire("welcome", "t1", db.customers.find_one({"id": "b"}, {"_id": 0}), at=at_1130_paris)
+    check("a signup at 11:30 waits for its 12:00 window", ("b", "Bienvenue") not in sent
+          and db.automation_queue.count_documents({"automation_id": welcome["id"]}) == 1)
+    server.tick_pass(at_1130_paris + dt.timedelta(minutes=35))                        # 12:05 Paris
+    check("12:05 Paris: released by the tick, not the next morning", ("b", "Bienvenue") in sent)
+    r = server.tick_pass(at_1130_paris + dt.timedelta(minutes=45))
+    check("the Géolocalisation passes are checked on every tick", "geo_passes" in r and not r["failures"])
 
     print("\n3. Le tick : une campagne planifiée part à son heure")
     planned = dt.datetime(2026, 10, 14, 16, 30, tzinfo=UTC)                        # 18:30 Paris

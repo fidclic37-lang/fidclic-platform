@@ -11513,11 +11513,17 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["campaigns"] = _run_due_campaigns(now)
     except Exception as e:
         out["failures"].append({"step": "campaigns", "error": str(e)[:120]})
-    try:                         # Automatisations › « Plage horaire »
-        from features.push_wallet import run_all_due, TIME_TRIGGERS
-        out["time_slots"] = run_all_due(now, only=TIME_TRIGGERS)
+    try:                         # Automatisations (features/automations): each at its hour,
+        # event messages released the moment their window opens
+        from features.automations import run_due as _auto_run_due
+        out["automations"] = _auto_run_due(now, source="tick")
     except Exception as e:
-        out["failures"].append({"step": "time_slots", "error": str(e)[:120]})
+        out["failures"].append({"step": "automations", "error": str(e)[:120]})
+    try:                         # Géolocalisation: Wallet passes follow the hours and the weather
+        from features.geo_automation import sync_passes as _geo_sync
+        out["geo_passes"] = _geo_sync(now)
+    except Exception as e:
+        out["failures"].append({"step": "geo_passes", "error": str(e)[:120]})
     return out
 
 
