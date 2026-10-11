@@ -129,6 +129,8 @@ const CrmSequencesPage = lazyPage(() => import('./pages/crm/CrmSequencesPage'));
 const CrmTemplatesPage = lazyPage(() => import('./pages/crm/CrmTemplatesPage'));
 const AdminCardDesignerPage = lazyPage(() => import('./pages/AdminCardDesignerPage')); // eslint-disable-line no-unused-vars -- section removed (user, 2026-09-30), kept for rollback
 const LoyaltyCardPage = lazyPage(() => import('./pages/LoyaltyCardPage'));
+// Carte de fidélité before the 4-step redesign (2026-10-11), kept unrouted for rollback:
+// const LoyaltyCardPageLegacy = lazyPage(() => import('./pages/LoyaltyCardPageLegacy'));
 const ComingSoonPage = lazyPage(() => import('./pages/ComingSoonPage'));
 const HelpPage = lazyPage(() => import('./pages/HelpPage'));
 const GeolocationPage = lazyPage(() => import('./pages/GeolocationPage'));

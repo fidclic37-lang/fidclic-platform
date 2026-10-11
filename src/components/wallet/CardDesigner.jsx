@@ -10,6 +10,7 @@ import FeaturedActionsEditor from './FeaturedActionsEditor';
 import GoogleDesignEditor from './GoogleDesignEditor';
 import GoogleWalletPreview from './GoogleWalletPreview';
 import PosterCropper from '../PosterCropper';
+import { WalletSwitch, VersionSwitch, IphoneFrame, Dots } from './PreviewStage';
 import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHex, hexToRgb } from './walletLook';
 
 /**
@@ -33,6 +34,11 @@ import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHe
  * card fields, for the preview), clientPreview (the web card, drawn by the
  * page), externalDirty + onSaveAll (one save for the page and the design),
  * onDirtyChange(bool), onSaved(). The ref exposes save() and reset().
+ *
+ * variant « v2 » (Carte de fidélité redesign, user 2026-10-11): the editor and
+ * the preview each in their own card, the Apple / Google switch as two big
+ * buttons, and one iPhone at a time chosen with « iOS 27 / iOS 26 et avant »
+ * (the customer's web card is the third view). Same editor, same data.
  */
 const STYLE_KEYS = STYLES.map((s) => s.key);
 const styleOf = (p) => STYLE_KEYS.find((k) => p && typeof p[k] === 'object');
@@ -190,8 +196,10 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
 const CardDesigner = forwardRef(function CardDesigner({
   edit = true, types = [], formats = [], actions = [], onActionsChange, onSaved,
   identityPanel = null, previewCard = {}, clientPreview = null, externalDirty = false, onSaveAll, onDirtyChange,
-  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange,
+  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange, variant = 'classic',
 }, ref) {
+  const v2 = variant === 'v2';
+  const [view, setView] = useState('ios27');
   // Apple and Google build their cards differently: one switch, two editors
   // (user, 2026-10-08), the identity tab and the save shared
   const [wallet, setWallet] = useState('apple');
@@ -430,10 +438,97 @@ const CardDesigner = forwardRef(function CardDesigner({
   const TABS = wallet === 'google' ? G_TABS : [['identite', 'Identité', Fingerprint], ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
     ['boutons', 'Boutons', MousePointerClick], ['champs', 'Champs', ListTree]];
 
+  // ── v2: one iPhone at a time, picked with the version buttons ──
+  const pj = preview?.pass_json;
+  const appleViews = [];
+  if (pj) {
+    const poster = styles.includes('posterGeneric');
+    const newCode = !poster && NEW_CODES.has((pj.barcodes || [])[0]?.format);
+    appleViews.push({ key: 'ios27', title: 'iOS 27', badge: 'Nouveau',
+      sub: poster ? 'Design moderne (Poster)' : 'Même carte que sur iOS 26',
+      render: (w) => <PassPreview pj={pj} style={poster ? 'posterGeneric' : styles[0]} images={preview.images} actions={poster ? preview.actions : []} width={w} /> });
+    const old = poster ? fbStyle : styles[0];
+    if (old) {
+      appleViews.push({ key: 'ios26', title: 'iOS 26 et avant', sub: newCode ? 'Code de secours' : 'Design classique', walletBar: true,
+        render: (w) => <PassPreview pj={pj} style={old} images={preview.images} width={w} legacy={poster || newCode} /> });
+    }
+  }
+  const dotViews = [...appleViews, ...(clientPreview ? [{ key: 'web', title: 'Page web du client', render: () => clientPreview }] : [])];
+  const current = dotViews.find((x) => x.key === view) || dotViews[0];
+  const stageState = wallet === 'google' ? gState : pvState;
+  const stage = (
+    <div className="min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6">
+      <header className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[19px] font-bold tracking-[-0.01em] text-[#0B1C3F]">
+            {wallet === 'google' ? 'Aperçu de la carte Google Wallet' : 'Aperçu de la carte sur iPhone'}
+          </h2>
+          <p className="mt-0.5 text-[13px] text-[#64748B]">
+            {wallet === 'google' ? 'Prévisualisez le design de votre carte de fidélité.'
+              : 'Voyez exactement comment votre carte apparaîtra dans Apple Wallet selon la version d’iOS.'}
+          </p>
+        </div>
+        {stageState === 'loading' && <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-[#94A3B8]" />}
+        {stageState === 'error' && <span className="mt-1 shrink-0 text-[11.5px] text-[#B91C1C]">Aperçu indisponible</span>}
+      </header>
+      {wallet === 'google' ? (
+        gPreview ? (
+          <div className="flex flex-col items-center py-2">
+            <GoogleWalletPreview data={gPreview} width={320} />
+            {!gPreview.configured && (
+              <p className="mt-4 max-w-[360px] text-center text-[11.5px] text-[#B45309]">
+                Les clients pourront ajouter cette carte dès que l’accès émetteur Google Wallet sera validé.
+              </p>
+            )}
+            <p className="mt-2 text-center text-[11px] text-[#94A3B8]">
+              Exemple : {gPreview.sample?.name} — construit par le serveur, comme la vraie carte Google.
+            </p>
+          </div>
+        ) : (
+          <div className="flex h-72 items-center justify-center text-[12.5px] text-[#94A3B8]">{gState === 'error' ? 'Aperçu indisponible' : 'Chargement de l’aperçu…'}</div>
+        )
+      ) : preview && current ? (
+        <>
+          {appleViews.length > 0 && <VersionSwitch views={appleViews} value={current.key} onChange={setView} />}
+          <div className="mt-5">
+            <IphoneFrame width={320} walletBar={!!current.walletBar}>
+              {current.key === 'web' ? <div style={{ width: 268 }}>{current.render()}</div> : current.render(272)}
+            </IphoneFrame>
+            <Dots views={dotViews} value={current.key} onChange={setView} />
+            <p className="mt-2 text-center text-[11.5px] font-semibold text-[#64748B]">{current.title}</p>
+          </div>
+          {current.key !== 'web' && (
+            <>
+              <button type="button" onClick={() => setShowBack((b) => !b)}
+                      className="mx-auto mt-3 flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF]">
+                Au dos de la carte <ChevronDown size={14} className={showBack ? 'rotate-180' : ''} />
+              </button>
+              {showBack && <div className="mx-auto mt-2 max-w-[340px]"><PassBack pj={pj} style={styles[0]} /></div>}
+              <p className="mt-2 text-center text-[11px] text-[#94A3B8]">
+                Exemple : {preview.sample?.name}, {preview.sample?.visits} visites — construit par le serveur, comme le vrai pass.
+              </p>
+            </>
+          )}
+        </>
+      ) : (
+        <div className="flex h-72 items-center justify-center text-[12.5px] text-[#94A3B8]">Chargement de l’aperçu…</div>
+      )}
+    </div>
+  );
+
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+    <div className={v2 ? 'grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : 'grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]'}>
       {/* ── the inspector ── */}
-      <div className="min-w-0">
+      <div className={v2 ? 'min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6' : 'min-w-0'}>
+        {v2 && (
+          <header className="mb-4">
+            <h2 className="text-[19px] font-bold tracking-[-0.01em] text-[#0B1C3F]">Design de la carte</h2>
+            <p className="mt-0.5 text-[13px] text-[#64748B]">Personnalisez l’apparence de votre carte de fidélité.</p>
+          </header>
+        )}
+        {v2 ? (
+          <div className="mb-4"><WalletSwitch value={wallet} onChange={(k) => { setWallet(k); setTab('identite'); }} /></div>
+        ) : (
         <div className="mb-3 inline-flex rounded-xl bg-[#F1F5F9] p-1">
           {[['apple', 'Apple Wallet'], ['google', 'Google Wallet']].map(([k, label]) => (
             <button key={k} type="button" onClick={() => { setWallet(k); setTab('identite'); }}
@@ -442,6 +537,7 @@ const CardDesigner = forwardRef(function CardDesigner({
             </button>
           ))}
         </div>
+        )}
         {wallet === 'apple' && ready && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <input className={`${inputCls} max-w-[240px] font-semibold`} value={d.name} disabled={!edit}
@@ -657,6 +753,7 @@ const CardDesigner = forwardRef(function CardDesigner({
       </div>
 
       {/* ── the live preview ── */}
+      {v2 ? stage : (
       <div className="min-w-0 rounded-2xl bg-[#F7FAFF] p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[#0B1C3F]"><Smartphone size={14} /> Aperçu en direct</p>
@@ -732,6 +829,7 @@ const CardDesigner = forwardRef(function CardDesigner({
           <div className="flex h-64 items-center justify-center text-[12.5px] text-[#94A3B8]">Chargement de l’aperçu…</div>
         )}
       </div>
+      )}
 
       {crop && (
         <PosterCropper file={crop.file} outW={crop.w} outH={crop.h} guides={crop.base === 'background' && style === 'posterGeneric'}
