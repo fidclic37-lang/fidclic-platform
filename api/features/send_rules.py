@@ -45,7 +45,8 @@ _db = None
 PARIS = ZoneInfo("Europe/Paris")
 READERS = ["business_owner", "administrateur", "manager"]
 EXEMPT = {"welcome", "google_review", "reward_unlocked", "tier_up", "points", "scan", "transactional", "test",
-          "defi_won"}          # « Défi réussi » (features/defis.py): the customer earned it, never held back
+          "defi_won",          # « Défi réussi » (features/defis.py): the customer earned it, never held back
+          "parrainage"}        # parrainage points just landed — was never held back (features/automations)
 PRIORITY = {"birthday": 0, "near_reward": 1, "campaign": 2, "offer": 2, "news": 2,
             "push_wallet": 3, "automation": 3, "copilot": 4, "ai": 4}
 DEFAULT_RULES = {"per_client_day": 3, "per_client_week": 10, "shop_day": 0, "shop_week": 0}
@@ -212,10 +213,6 @@ def overview(period: str = "current", token_data: TokenData = Depends(require_ro
     r = rules(tid)
     ordered = ["silver", "gold", "vip"]
     upper = ordered[ordered.index(plan) + 1] if plan in ordered and plan != "vip" else None
-    auto = _db.auto_message_config.find_one({"tenant_id": tid}, {"_id": 0}) or {}
-    scen = {s.get("builtin"): s for s in _db.push_scenarios.find({"tenant_id": tid}, {"_id": 0, "builtin": 1, "enabled": 1})}
-    rules_doc = _db.earn_rules.find_one({"tenant_id": tid}) or {}
-    others = [s for k, s in scen.items() if k not in ("birthday", "inactive")]
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
     last = _db.push_notifications.find_one({"tenant_id": tid}, {"_id": 0, "title": 1, "body": 1}, sort=[("sent_at", -1)])
     return {
@@ -232,24 +229,26 @@ def overview(period: str = "current", token_data: TokenData = Depends(require_ro
                                                                    "deleted_at": {"$exists": False}}),
                     "total": _db.customers.count_documents({"tenant_id": tid, "deleted_at": {"$exists": False}}),
                     "switched_off": _db.card_prefs.count_documents({"tenant_id": tid, "push_enabled": False})},
-        "automatic": [
-            {"key": "welcome", "label": "Bienvenue nouveau client", "sub": "Notification lors de l'inscription.",
-             "on": rules_doc.get("enabled", True) is not False and bool(rules_doc.get("welcome_bonus_message") or rules_doc.get("welcome_bonus_points")),
-             "to": "/dashboard/card"},
-            {"key": "birthday", "label": "Anniversaire", "sub": "Notification à la date d'anniversaire du client.",
-             "on": bool((scen.get("birthday") or {}).get("enabled")), "to": "/dashboard/automations"},
-            {"key": "inactive", "label": "Inactivité", "sub": "Rappel aux clients inactifs.",
-             "on": bool((scen.get("inactive") or {}).get("enabled")), "to": "/dashboard/automations"},
-            {"key": "near_reward", "label": "Récompense de fidélité", "sub": "Notification quand la récompense approche.",
-             "on": (auto.get("near_reward") or {}).get("enabled", True) is not False, "to": "/dashboard/automations"},
-            {"key": "others", "label": "Autres scénarios", "sub": "Notifications liées à vos automatisations.",
-             "on": any(s.get("enabled") for s in others), "to": "/dashboard/automations"},
-        ],
+        # Automatisations (redesign 2026-10-11): one switch line per scenario,
+        # « on » when at least one of its automations is active
+        "automatic": _automatic(tid),
         "preview": {"shop": t.get("campaign_sender_name") or t.get("name") or "", "logo_url": tpl.get("logo_url") or "",
                     "title": (last or {}).get("title") or "🎉 Votre boisson offerte vous attend !",
                     "body": (last or {}).get("body") or "Vous avez atteint 200 points."},
         "can_edit": getattr(token_data, "role", None) == "business_owner",
     }
+
+
+def _automatic(tid: str):
+    try:
+        from features import automations as AU
+        AU.migrate(tid)
+        on = set(_db.automations.distinct("scenario", {"tenant_id": tid, "status": "active"}))
+        return [{"key": k, "label": AU.SCENARIOS[k]["label"], "sub": AU.SCENARIOS[k]["sub"], "on": k in on,
+                 "to": "/dashboard/automations"} for k in AU.ORDER]
+    except Exception as exc:
+        print(f"send_rules: automations overview unavailable ({exc})")
+        return []
 
 
 class RulesIn(BaseModel):

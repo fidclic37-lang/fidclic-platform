@@ -214,7 +214,7 @@ PATH_RULES = [
     (re.compile(r"^/api/owner/segments(/|$)"), "crm_advanced"),
     (re.compile(r"^/api/owner/history(/|$)"), "crm_advanced"),
     (re.compile(r"^/api/owner/(campaigns|notifications/typed|notifications/re-enablement)(/|$)"), "campaigns"),
-    (re.compile(r"^/api/owner/(auto-campaigns|push-wallet)(/|$)"), "automations"),
+    (re.compile(r"^/api/owner/(auto-campaigns|push-wallet|automations)(/|$)"), "automations"),
     (re.compile(r"^/api/owner/referrals(/|$)"), "referral"),
     (re.compile(r"^/api/owner/geo(/|$)"), "geo_proximity"),
     (re.compile(r"^/api/owner/integrations(/|$)"), "api_access"),

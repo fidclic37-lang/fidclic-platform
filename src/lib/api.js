@@ -524,6 +524,14 @@ export const ownerAPI = {
   approvePushWalletLot: (id) => api.post(`/owner/push-wallet/pending/${id}/approve`),
   skipPushWalletLot: (id) => api.post(`/owner/push-wallet/pending/${id}/skip`),
   // Messages automatiques — Google review after a scan, "récompense proche".
+  // Automatisations — redesign 2026-10-11 (features/automations.py)
+  automations: () => api.get('/owner/automations'),
+  createAutomation: (body) => api.post('/owner/automations', body),
+  updateAutomation: (id, body) => api.put(`/owner/automations/${encodeURIComponent(id)}`, body),
+  automationStatus: (id, status) => api.post(`/owner/automations/${encodeURIComponent(id)}/status`, { status }),
+  duplicateAutomation: (id) => api.post(`/owner/automations/${encodeURIComponent(id)}/duplicate`),
+  deleteAutomation: (id) => api.delete(`/owner/automations/${encodeURIComponent(id)}`),
+  automationPreview: (body) => api.post('/owner/automations/preview', body),
   autoMessages: () => api.get('/owner/auto-messages'),
   saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
   // Paramètres › Établissement

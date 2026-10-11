@@ -273,32 +273,18 @@ def messages(kind: str, shop: str, parrain: str, filleul: str, parrain_pts: int,
 
 def _announce(tenant_id: str, parrain_id: str, filleul: Dict[str, Any], kind: str,
               parrain_pts: int, filleul_pts: int) -> None:
-    """Tell both sides, each on their own card: the Wallet pass (Apple shows
-    the reason when the points change, Google gets a message) and web push.
-    No SMS — the Wallet card is the channel, and an SMS costs the shop."""
-    from features.wallet_passes import notify_customer
-    tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
-    parrain = _db.customers.find_one({"id": parrain_id}, {"_id": 0, "name": 1}) or {}
-    shop = (tenant.get("name") or "votre commerce").replace("%", "")
-    said = messages(kind, shop, _first(parrain.get("name"), "votre parrain"),
-                    _first(filleul.get("name"), "Votre ami"), parrain_pts, filleul_pts)
-    now = datetime.now(timezone.utc)
-    for cid, pts, side in ((parrain_id, parrain_pts, "parrain"), (filleul["id"], filleul_pts, "filleul")):
-        if not pts:
+    """Tell each side, on their own card, through the shop's « Parrainage »
+    automations (features/automations, 2026-10-11): one for the parrain, one
+    for the filleul, words and button chosen by the shop. No automation
+    switched on for a side → that side gets the points quietly. No SMS."""
+    from features import automations as AU
+    parrain = _db.customers.find_one({"id": parrain_id}, {"_id": 0}) or {}
+    filleul_doc = _db.customers.find_one({"id": filleul["id"]}, {"_id": 0}) or filleul
+    names = {"parrain": _first(parrain.get("name"), "votre parrain"), "filleul": _first(filleul.get("name"), "Votre ami")}
+    for cust, pts, side in ((parrain, parrain_pts, "parrain"), (filleul_doc, filleul_pts, "filleul")):
+        if not pts or not cust.get("id"):
             continue
-        title, body = said[side]
-        total = int((_db.customers.find_one({"id": cid}, {"_id": 0, "points": 1}) or {}).get("points") or 0)
-        _db.customers.update_one({"id": cid}, {"$set": {"points_news": {
-            "text": f"{body} Vous avez maintenant %@ points.", "points": total, "at": now, "kind": "parrainage"}}})
-        try:
-            notify_customer(cid, google_notify={"kind": "parrainage", "header": title, "body": body})
-        except Exception as exc:
-            print(f"referrals: wallet notify failed ({exc})")
-        try:
-            from features.push_subscriptions import fan_out_to_customer
-            fan_out_to_customer(tenant_id, cid, title, body)
-        except Exception as exc:
-            print(f"referrals: web push failed ({exc})")
+        AU.fire("referral", tenant_id, cust, {"side": side, "points": pts, "kind": kind, **names})
 
 
 @router.get("/api/card/{barcode_id}/inviter")

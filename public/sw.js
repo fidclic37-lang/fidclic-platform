@@ -42,6 +42,14 @@ self.addEventListener('push', (event) => {
   const icon = payload.icon || '/icon-192.png';
   const badge = payload.badge || '/badge-96.png';
   const tag = payload.tag || 'fidelitour';   // collapses similar pushes into one
+  // Automatisations' action button (« Découvrir ma surprise »…): its text
+  // rides on the link — shown as a real button where the phone can (Android).
+  let actions = [];
+  try {
+    const u = new URL(url, self.location.origin);
+    const label = u.pathname.startsWith('/api/auto/c/') ? (u.searchParams.get('b') || '').slice(0, 30) : '';
+    if (label) actions = [{ action: 'open', title: label }];
+  } catch (_e) { /* no button */ }
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -50,6 +58,7 @@ self.addEventListener('push', (event) => {
       badge,
       tag,
       data: { url },
+      actions,
       // Re-show even if the same tag was used before, so the customer sees
       // updated content (e.g. a new offer with the same campaign tag).
       renotify: !!payload.renotify,

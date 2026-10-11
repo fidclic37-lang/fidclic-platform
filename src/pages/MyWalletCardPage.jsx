@@ -386,7 +386,9 @@ const CardView = () => {
               longitude: pos.coords.longitude,
             });
             if (res?.data?.status === 'sent') {
-              showToast(`📍 ${res.data.title || 'Vous êtes juste à côté !'}`);
+              // the shop's « Géolocalisation » automation: its words and its button, at the top
+              setGeoMsg({ log_id: `geo-${Date.now()}`, title: res.data.title, body: res.data.body,
+                button_label: res.data.button_label, button_url: res.data.button_url });
             }
           } catch (_e) { /* best-effort; ignore */ }
         },
@@ -397,6 +399,10 @@ const CardView = () => {
     return () => { ignored = true; };
   }, [data?.customer?.id]);
 
+  const [geoMsg, setGeoMsg] = useState(null);
+  const [hiddenMsg, setHiddenMsg] = useState(() => {
+    try { return localStorage.getItem('fidclic:auto_msg_hidden') || ''; } catch { return ''; }
+  });
   const showToast = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2600);
@@ -725,6 +731,31 @@ const CardView = () => {
             <button type="button" onClick={() => setShowMissedBanner(false)} aria-label="Fermer" className="p-1 text-[#94A3B8]"><X size={16} /></button>
           </div>
         )}
+
+        {/* Automatisations: the latest message and its action button (a Wallet
+            notification cannot carry a button — tapping it opens this card) */}
+        {(() => {
+          const am = geoMsg || data?.auto_message;
+          if (!am || !am.title || hiddenMsg === am.log_id) return null;
+          return (
+            <div className="mb-4 overflow-hidden rounded-2xl border border-[#D6E4FF] bg-white shadow-[0_18px_40px_-30px_rgba(20,99,255,.6)]">
+              <div className="flex items-start gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[15px] font-bold leading-snug text-[#0B1C3F]">{am.title}</p>
+                  {am.body && <p className="mt-0.5 text-[13.5px] leading-snug text-[#334155]">{am.body}</p>}
+                </div>
+                {am.image_url && <img src={am.image_url} alt="" className="h-16 w-16 shrink-0 rounded-xl object-cover" />}
+                <button type="button" aria-label="Masquer ce message" className="-mr-1 -mt-1 p-1 text-[#94A3B8]"
+                        onClick={() => { setHiddenMsg(am.log_id); setGeoMsg(null); try { localStorage.setItem('fidclic:auto_msg_hidden', am.log_id); } catch { /* private mode */ } }}>
+                  <X size={16} /></button>
+              </div>
+              {am.button_url && am.button_label && (
+                <a href={am.button_url} rel="noopener"
+                   className="block border-t border-[#E6EEFB] bg-[#F1F5FF] py-3 text-center text-[14.5px] font-semibold text-[#1463FF]">{am.button_label}</a>
+              )}
+            </div>
+          );
+        })()}
 
         {/* The card itself — the pass as it sits in Apple / Google Wallet, in the shop's colours */}
         <WalletCardErrorBoundary>
