@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
-  MapPin, Share2, CalendarClock, Type, ChevronDown,
+  MapPin, Share2, CalendarClock, Type, ChevronDown, RefreshCw,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -222,6 +222,26 @@ export default function LoyaltyCardPage() {
   const [pdVersion, setPdVersion] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customerPreview, setCustomerPreview] = useState(false);
+  // « Actualiser les cartes » — wakes every installed Wallet card so it
+  // downloads the current design now, not at the customer's next visit.
+  const [refresh, setRefresh] = useState({ busy: false, msg: null, ok: true });
+  const refreshCards = async () => {
+    setRefresh({ busy: true, msg: null, ok: true });
+    try {
+      const r = (await ownerAPI.walletNotify()).data || {};
+      const n = Number(r.sent || 0);
+      setRefresh({ busy: false, ok: true, msg: n > 0
+        ? `${n} carte${n > 1 ? 's' : ''} Apple Wallet actualisée${n > 1 ? 's' : ''}`
+        : 'Aucune carte Apple Wallet installée pour le moment' });
+    } catch (e) {
+      setRefresh({ busy: false, ok: false, msg: "L'actualisation n'a pas abouti. Réessayez dans un instant." });
+    }
+  };
+  useEffect(() => {
+    if (!refresh.msg) return undefined;
+    const t = window.setTimeout(() => setRefresh((r) => ({ ...r, msg: null })), 6000);
+    return () => window.clearTimeout(t);
+  }, [refresh.msg]);
   const [stats, setStats] = useState(null);
   const [days, setDays] = useState(30);
   const [saving, setSaving] = useState(false);
@@ -504,7 +524,15 @@ export default function LoyaltyCardPage() {
             </nav>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {edit && (
+            <button type="button" onClick={refreshCards} disabled={refresh.busy}
+                    title="Les cartes déjà ajoutées à Apple Wallet téléchargent tout de suite le design actuel"
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
+              {refresh.busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+              {refresh.busy ? 'Actualisation…' : 'Actualiser les cartes'}
+            </button>
+          )}
           <button type="button" onClick={() => setCustomerPreview(true)}
                   className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
             <Eye size={15} /> Aperçu client
@@ -517,6 +545,13 @@ export default function LoyaltyCardPage() {
           </button>
         </div>
       </div>
+
+      {refresh.msg && (
+        <div role="status" className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] ${refresh.ok
+          ? 'border-[#CDEBD8] bg-[#F0FAF4] text-[#166534]' : 'border-red-200 bg-red-50 text-red-700'}`}>
+          {refresh.ok ? <Check size={15} /> : <X size={15} />} {refresh.msg}
+        </div>
+      )}
 
       {/* ── info banner ── */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#DCE8FF] bg-[#F2F7FF] p-4">
