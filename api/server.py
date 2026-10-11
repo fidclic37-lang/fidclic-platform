@@ -5223,7 +5223,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         if new_tier != previous_tier and _tier_up(previous_tier, new_tier):
             _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "tier"})     # « Changement de statut »
         _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "visit"})        # points / visites / montant
-        _AU.fire("google_review", token_data.tenant_id, _fresh)
+        _AU.fire("google_review", token_data.tenant_id, _fresh,             # the visit's établissement: its Google link
+                 {"event": "visit", "branch_id": req.branch_id or cust.get("branch_id")})
         _AU.fire("custom", token_data.tenant_id, _fresh, {"event": "visit"})    # « Personnalisée »
     except Exception as _e:
         print(f"scan_visit: automatic messages failed (non-fatal): {_e}")

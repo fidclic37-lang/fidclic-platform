@@ -15,7 +15,7 @@ const parisNow = () => {
   return { time, day: day.charAt(0).toUpperCase() + day.slice(1) };
 };
 
-export default function LockScreenPreview({ shop, logo, title, body, image, button, sample, extra, note, compact }) {
+export default function LockScreenPreview({ shop, logo, title, body, image, button, sample, extra, note, compact, bigImage }) {
   const [logoOk, setLogoOk] = useState(true);
   const [now, setNow] = useState(parisNow);
   useEffect(() => setLogoOk(true), [logo]);
@@ -46,10 +46,15 @@ export default function LockScreenPreview({ shop, logo, title, body, image, butt
                 <p className="break-words text-[12.5px] font-bold leading-snug text-[#0B1C3F]">{t || 'Titre de la notification'}</p>
                 <p className="mt-0.5 break-words text-[12px] leading-snug text-[#334155]">{b || 'Votre message apparaîtra ici.'}</p>
               </div>
-              {image && <img src={image} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" />}
+              {image && !bigImage && <img src={image} alt="" className="h-11 w-11 shrink-0 rounded-lg object-cover" />}
             </div>
+            {/* an expanded notification (Android / the card): the picture large, the button under it */}
+            {image && bigImage && <img src={image} alt="" className="mt-2 w-full rounded-xl object-cover" />}
+            {button && bigImage && (
+              <span className="mt-2 block rounded-xl bg-[#1463FF] py-2 text-center text-[12px] font-semibold text-white">{button}</span>
+            )}
           </div>
-          {button && (
+          {button && !bigImage && (
             <span className="mt-2 block rounded-xl bg-white/85 py-2 text-center text-[12px] font-semibold text-[#1463FF]">{button}</span>
           )}
         </div>

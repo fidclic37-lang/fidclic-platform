@@ -10,7 +10,8 @@ import { ownerAPI } from '../lib/api';
 import LockScreenPreview from '../components/automations/LockScreenPreview';
 import GeoZoneMap from '../components/automations/GeoZoneMap';
 import {
-  ICONS, TONES, VAR_LABELS, VAR_SHORT, DAY_NAMES, GENDERS, AGES, FREQS, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
+  ICONS, TONES, VAR_LABELS, VAR_SHORT, DAY_NAMES, GENDERS, AGES, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
+  CLIENT_TYPES, AGE_STEPS,
   PASSANTS, RUSH, hLabel,
 } from '../components/automations/meta';
 import { EMOJIS } from '../components/campagnes/kinds';
@@ -39,7 +40,8 @@ const TRIGGERS = {
   birthday: { offset_days: 0 },
   tier_up: { condition: 'points', threshold: 200, repeat: 'each', min_days: 7, custom_tiers: false, tiers: [] },
   welcome: {}, near_reward: { visits_left: 1 }, referral: { side: 'parrain' },
-  geo: { cooldown_days: 7, weather: [], stores: [] }, google_review: { frequency: 'days', every_days: 30, stop_after_click: true },
+  geo: { cooldown_days: 7, weather: [], stores: [] },
+  google_review: { type: 'after_visit', delay_value: 2, delay_unit: 'hours', frequency: 'once', every_days: 30, visits: 5, date: '', stop_after_click: true },
   inactive: { days: 30, repeat: 'once', every_days: 30 },
   custom: { type: 'after_visit', visits: 5, visits_repeat: 'once', cooldown_days: 0, date_mode: 'once', date: '', weekday: 0, monthday: 1 },
 };
@@ -97,16 +99,21 @@ const parisOffset = () => {
     return (t.find((x) => x.type === 'timeZoneName') || {}).value || 'GMT+1';
   } catch { return 'GMT+1'; }
 };
+const AVIS_IMAGE = '/automations/avis-google.png';
 const defaults = (sc, meta) => ({
-  scenario: sc, name: meta?.label || '', status: 'active',
+  scenario: sc, name: sc === 'google_review' ? "Demande d'avis Google" : meta?.label || '', description: '', status: 'active',
   trigger: { delay_value: 0, delay_unit: 'hours', ...(TRIGGERS[sc] || {}) },
-  message: { title: meta?.title || '', body: meta?.body || '', image_url: null,
-    button: { enabled: false, label: meta?.button || '', link_type: sc === 'tier_up' ? 'rewards' : 'card', offer_id: null, url: '' } },
+  // Avis Google (mockups 2026-10-11): the ready image and the « Laisser un avis » button
+  message: { title: meta?.title || '', body: meta?.body || '', image_url: sc === 'google_review' ? AVIS_IMAGE : null,
+    button: { enabled: sc === 'google_review', label: meta?.button || '', link_type: sc === 'tier_up' ? 'rewards' : sc === 'google_review' ? 'google_review' : 'card', offer_id: null, url: '' } },
   // a géolocalisation targets passers-by through its filters (« filtered »)
   targeting: { mode: sc === 'geo' ? 'filtered' : 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS } },
-  schedule: { days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6], hour: '10:00', smart: false,
-    window: meta?.kind !== 'time' && sc !== 'geo', window_from: '09:00', window_to: '21:00',
-    slots: [], holidays: true, valid_from: '', valid_to: '' },
+  schedule: sc === 'google_review'
+    ? { days: 'specific', weekdays: [0, 1, 2, 3, 4], hour: '10:00', smart: false, window: true, window_from: '08:00', window_to: '20:00',
+      slots: [], holidays: true, valid_from: new Date().toISOString().slice(0, 10), valid_to: '' }
+    : { days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6], hour: '10:00', smart: false,
+      window: meta?.kind !== 'time' && sc !== 'geo', window_from: '09:00', window_to: '21:00',
+      slots: [], holidays: true, valid_from: '', valid_to: '' },
 });
 const DAY_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 const frDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
@@ -117,6 +124,19 @@ const overlaps = (slot, busy) => {
   return a < busy[1] && busy[0] < b;
 };
 const hasSlot = (sc, from, to) => sc.window && (sc.slots || []).some((x) => x.from === from && x.to === to);
+
+// a filter of step 4, as the Avis Google mockup draws it: icon, label, one dropdown
+function FilterTile({ icon: I, label, children, wide }) {
+  return (
+    <div className={`flex items-start gap-2.5 rounded-2xl border border-[#E6EEFB] bg-[#FAFCFF] p-3 sm:col-span-1 ${wide ? 'xl:col-span-3' : 'xl:col-span-2'}`}>
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={18} /></span>
+      <span className="min-w-0 flex-1"><span className="mb-1 block text-[12.5px] font-semibold text-[#0B1C3F]">{label}</span>{children}</span>
+    </div>
+  );
+}
+// one dropdown value for a list filter; an older multi-tick value still shows
+const one = (vals) => (vals.length === 1 ? vals[0] : vals.length > 1 ? '__multi' : '');
+const withMulti = (vals, opts) => (vals.length > 1 ? [...opts, ['__multi', `${vals.length} choix`]] : opts);
 
 // « Tous les âges » / « 18 – 25 ans, 26 – 35 ans » — a dropdown of ticks (step 2 conditions)
 function MultiPick({ label, icon: I, options, values, onChange, allLabel }) {
@@ -211,10 +231,10 @@ function Option({ on, onClick, icon: I, title, sub, children, disabled }) {
     </div>
   );
 }
-function Select({ value, onChange, options, label, disabled }) {
+function Select({ value, onChange, options, label, disabled, tight }) {
   return (
     <select aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}
-            className={`${field} appearance-none bg-[length:14px] bg-[right_12px_center] bg-no-repeat pr-9`}
+            className={`${field} appearance-none bg-[length:14px] bg-no-repeat ${tight ? '!pl-2.5 !pr-7 bg-[right_8px_center]' : 'bg-[right_12px_center] pr-9'}`}
             style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230B1C3F' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")" }}>
       {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
     </select>
@@ -245,6 +265,7 @@ export default function AutomationEditorPage() {
   const [varMenu, setVarMenu] = useState('');         // « Insérer une variable »: 'title' | 'body' | ''
   const [row, setRow] = useState(null);               // the saved automation (its results)
   const [zone, setZone] = useState(null);             // géolocalisation: detections + weather now
+  const [links, setLinks] = useState({});             // Avis Google: the shop's (or each établissement's) link
   const titleRef = useRef(null);
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
@@ -261,6 +282,7 @@ export default function AutomationEditorPage() {
   useEffect(() => {
     ownerAPI.automations().then(({ data }) => {
       setPage(data);
+      setLinks(data.google?.links || {});
       const meta = Object.fromEntries(data.scenarios.map((x) => [x.key, x]));
       if (editing) {
         const row = data.rows.find((r) => r.id === id);
@@ -272,10 +294,15 @@ export default function AutomationEditorPage() {
         if (row.scenario === 'tier_up' && !row.trigger?.condition) trig.condition = 'status';
         if (row.scenario === 'tier_up') trig.tiers = (trig.tiers || []).map((t) => ({ ...t, value: String(t.value), reward: t.reward || '' }));
         if (row.scenario === 'geo') geoInit(trig, data);
-        setS({ ...d, name: row.name, status: row.status === 'ended' ? 'active' : row.status, trigger: trig,
+        if (row.scenario === 'google_review') {                     // before the mockups: « après chaque visite »
+          trig.type = trig.type || 'after_visit';
+          if (trig.frequency === 'every_scan') { trig.frequency = 'days'; trig.every_days = 1; }
+        }
+        setS({ ...d, name: row.name, description: row.description || '', status: row.status === 'ended' ? 'active' : row.status, trigger: trig,
           message: { ...d.message, ...row.message, button: { ...d.message.button, ...(row.message?.button || {}), url: row.message?.button?.url || '' } },
           targeting: { ...d.targeting, ...row.targeting, filters: {
-            gender: asList(rf.gender, GENDERS), age: asList(rf.age, AGES), frequency: asList(rf.frequency, FREQS),
+            gender: asList(rf.gender, GENDERS), age: asList(rf.age, AGES), client_type: asList(rf.client_type, CLIENT_TYPES),
+            visits_min: rf.visits_min ?? '', visits_max: rf.visits_max ?? '', age_min: rf.age_min ?? '', age_max: rf.age_max ?? '',
             spent: asList(rf.spent, SPENT), last_visit: asList(rf.last_visit, LAST_VISIT), stores: rf.stores || [],
             radius_km: rf.radius_km || null } },
           schedule: { ...d.schedule, ...row.schedule, hour: row.schedule?.hour || '10:00', slots: row.schedule?.slots || [],
@@ -303,12 +330,13 @@ export default function AutomationEditorPage() {
   const meta = useMemo(() => Object.fromEntries((page?.scenarios || []).map((x) => [x.key, x])), [page]);
   const m = s ? meta[s.scenario] : null;
   const can = Boolean(page?.can_edit);
-  const timed = m?.kind === 'time' || (s?.scenario === 'custom' && s?.trigger?.type === 'date');
+  const timed = m?.kind === 'time' || (['custom', 'google_review'].includes(s?.scenario) && s?.trigger?.type === 'date');
   const set = (patch) => setS((o) => ({ ...o, ...patch }));
   const setIn = (key, patch) => setS((o) => ({ ...o, [key]: { ...o[key], ...patch } }));
   const setMsg = (patch) => setS((o) => ({ ...o, message: { ...o.message, ...patch } }));
   const setBtn = (patch) => setS((o) => ({ ...o, message: { ...o.message, button: { ...o.message.button, ...patch } } }));
   const setF = (patch) => setS((o) => ({ ...o, targeting: { ...o.targeting, filters: { ...o.targeting.filters, ...patch } } }));
+  const pick = (key) => (v) => { if (v !== '__multi') setF({ [key]: v ? [v] : [] }); };
 
   // ---- the live count (step 4) ---------------------------------------------------
   const tKey = s ? JSON.stringify([s.scenario, s.targeting]) : '';
@@ -336,6 +364,8 @@ export default function AutomationEditorPage() {
   }
 
   const tr = s.trigger;
+  const googleStores = page.google?.stores || [];
+  const googleKeys = googleStores.length > 1 ? googleStores.map((b) => b.id) : ['main'];
   const msg = s.message;
   const btn = msg.button;
   const tg = s.targeting;
@@ -359,20 +389,37 @@ export default function AutomationEditorPage() {
     if (s.scenario === 'near_reward') return `À ${tr.visits_left || 1} visite${Number(tr.visits_left) > 1 ? 's' : ''} de la récompense`;
     if (s.scenario === 'inactive') return `Après ${tr.days || 30} jours sans visite${tr.repeat === 'every' ? `, puis tous les ${tr.every_days || 30} j` : ''}`;
     if (s.scenario === 'referral') return `Récompense de parrainage gagnée · ${tr.side === 'filleul' ? 'au filleul' : 'au parrain'}`;
-    if (s.scenario === 'google_review') return tr.frequency === 'every_scan' ? 'Après chaque visite' : tr.frequency === 'once' ? 'Après une visite (une seule fois)' : `Après une visite (au plus tous les ${tr.every_days || 30} j)`;
+    if (s.scenario === 'google_review') {
+      const u = tr.delay_unit === 'days' ? (Number(tr.delay_value) === 1 ? 'jour' : 'jours') : (Number(tr.delay_value) === 1 ? 'heure' : 'heures');
+      const after = Number(tr.delay_value) > 0 ? `${tr.delay_value} ${u} après` : 'juste après';
+      if (tr.type === 'loyal') return `Client fidèle · ${after} la ${tr.visits || '?'}${Number(tr.visits) === 1 ? 're' : 'e'} visite`;
+      if (tr.type === 'date') return tr.date ? `Le ${frDate(tr.date)} à ${sc.hour}` : 'Date à choisir';
+      return `Après la visite · ${after} la dernière visite`;
+    }
     if (s.scenario === 'geo') return `Entrée dans la zone · ${tr.radius_m || 200} m (au plus tous les ${tr.cooldown_days || 7} j)`;
     if (s.scenario === 'custom') return customText(tr);
     if (s.scenario === 'tier_up') return tierText(tr);
     return m.trigger_label;
   };
-  const delayText = () => (!timed && !['geo', 'custom'].includes(s.scenario) && Number(tr.delay_value) > 0
+  const delayText = () => (!timed && !['geo', 'custom', 'google_review'].includes(s.scenario) && Number(tr.delay_value) > 0
     ? ` · ${tr.delay_value} ${{ minutes: 'min', hours: 'h', days: 'j' }[tr.delay_unit] || 'h'} après` : '');
+  const filterChips = () => {
+    const nm = (vals, opts) => vals.map((v) => (opts.find((x) => x[0] === v) || [])[1]).filter(Boolean);
+    return [...nm(f.gender, GENDERS), ...nm(f.age, AGES), ...nm(f.client_type || [], CLIENT_TYPES), ...nm(f.spent, SPENT),
+      ...nm(f.last_visit, LAST_VISIT).map((x) => `Dernière visite : ${x.toLowerCase()}`),
+      ...(f.age_min !== '' || f.age_max !== '' ? [`Âge : ${f.age_min || 'tous'} – ${f.age_max || '65+'}`] : []),
+      ...(f.visits_min !== '' || f.visits_max !== '' ? [`${f.visits_min || 0}${f.visits_max !== '' ? ` à ${f.visits_max}` : ' et plus'} visites`] : []),
+      ...(f.radius_km ? [`À moins de ${f.radius_km} km`] : []),
+      ...page.stores.filter((x) => f.stores.includes(x.id)).map((x) => x.name)];
+  };
   const targetText = () => {
     const base = tg.mode === 'wallet' ? 'Clients avec carte Wallet'
       : tg.mode === 'segment' ? `Segment : ${(page.segments.find((x) => x.key === tg.segment) || {}).label || '—'}` : 'Tous mes clients';
     const names = (vals, opts) => vals.map((v) => (opts.find((x) => x[0] === v) || [])[1]).filter(Boolean).join(' ou ');
     const extra = [f.gender.length && names(f.gender, GENDERS), f.age.length && names(f.age, AGES),
-      f.frequency.length && names(f.frequency, FREQS), f.spent.length && names(f.spent, SPENT),
+      f.client_type?.length && names(f.client_type, CLIENT_TYPES), f.spent.length && names(f.spent, SPENT),
+      (f.visits_min !== '' || f.visits_max !== '') && `${f.visits_min !== '' ? `${f.visits_min}` : '0'}${f.visits_max !== '' ? ` à ${f.visits_max}` : ' et plus'} visites`,
+      (f.age_min !== '' || f.age_max !== '') && `${f.age_min || 'Tous'} – ${f.age_max ? `${f.age_max} ans` : '65 ans et +'}`,
       f.last_visit.length && `Dernière visite : ${names(f.last_visit, LAST_VISIT)}`,
       f.radius_km && `À moins de ${f.radius_km} km`,
       f.stores?.length && page.stores.filter((x) => f.stores.includes(x.id)).map((x) => x.name).join(', ')].filter(Boolean);
@@ -387,7 +434,11 @@ export default function AutomationEditorPage() {
   const validText = () => (sc.valid_from || sc.valid_to
     ? ` · ${sc.valid_from && sc.valid_to ? `du ${sc.valid_from.split('-').reverse().join('/')} au ${sc.valid_to.split('-').reverse().join('/')}`
       : sc.valid_from ? `à partir du ${sc.valid_from.split('-').reverse().join('/')}` : `jusqu'au ${sc.valid_to.split('-').reverse().join('/')}`}` : '');
-  const planText = () => (s.scenario === 'geo'
+  const freqText = () => ({ once: 'Une seule fois', smart: 'Envoi intelligent (une fois, au meilleur moment du client)',
+    days: `Au plus une fois tous les ${tr.every_days || 30} jours` }[tr.frequency === 'every_scan' ? 'days' : tr.frequency || 'once']);
+  const planText = () => (s.scenario === 'google_review'
+    ? `${sc.days === 'all' ? 'Tous les jours' : sc.weekdays.map((d) => DAY_NAMES[d]).join(', ')}${tr.type === 'date' ? ` · ${sc.hour} (${parisOffset()} Paris)` : ''}${sc.window ? ' · entre 8h et 20h' : ''} · ${freqText()}${validText()}`
+    : s.scenario === 'geo'
     ? `${sc.days === 'all' ? 'Tous les jours' : sc.weekdays.map((d) => DAY_NAMES[d]).join(', ')} · ${sc.window ? (sc.slots || []).map((x) => `${x.from}–${x.to}`).join(' / ') : 'toute la journée'}${validText()}`
     : (timed
       ? `${daysText()} à ${sc.smart && page.best_slot ? `${page.best_slot.from} (plage intelligente)` : sc.hour}`
@@ -396,6 +447,13 @@ export default function AutomationEditorPage() {
   // ---- the checks (the server repeats them) --------------------------------------
   const problem = (n) => {
     if (n === 1 && !s.scenario) return 'Choisissez un scénario.';
+    if (n === 1 && s.scenario === 'google_review') {
+      if (!s.name.trim()) return "Donnez un nom à l'automatisation.";
+      const miss = googleKeys.find((k) => !String(links[k] || '').trim());
+      if (miss) return miss === 'main' ? 'Ajoutez le lien vers votre fiche Google Avis.' : `Ajoutez le lien Google de « ${(googleStores.find((b) => b.id === miss) || {}).name} ».`;
+      const bad = googleKeys.find((k) => !LINK_RE.test(fullLink(links[k])));
+      if (bad) return 'Lien Google invalide : collez l\'adresse de votre fiche, par exemple https://g.page/r/…/review.';
+    }
     if (n === 2) {
       const num = (v, lo, hi, l) => (!Number.isInteger(Number(v)) || Number(v) < lo || Number(v) > hi ? `${l} : entre ${lo} et ${hi}.` : '');
       if (s.scenario === 'birthday') return num(Math.abs(Number(tr.offset_days || 0)), 0, 30, 'Jours');
@@ -406,7 +464,15 @@ export default function AutomationEditorPage() {
         if (!zoneSpots.length) return "La position de votre établissement est inconnue : placez-le sur la carte dans Paramètres › Établissement.";
         return '';
       }
-      if (s.scenario === 'google_review' && tr.frequency === 'days') return num(tr.every_days, 1, 365, 'Fréquence');
+      if (s.scenario === 'google_review') {
+        if (tr.type === 'loyal') return num(tr.visits, 1, 1000, 'Nombre de visites');
+        if (tr.type === 'date') {
+          if (!tr.date) return "Choisissez la date d'envoi.";
+          if (tr.date < new Date().toISOString().slice(0, 10)) return 'Cette date est déjà passée.';
+          return '';
+        }
+        return num(tr.delay_value ?? 0, 0, 365, 'Délai après la visite');
+      }
       if (s.scenario === 'tier_up') {
         if (tr.repeat === 'custom' && num(tr.min_days, 1, 365, 'Délai minimum entre deux envois (jours)')) return num(tr.min_days, 1, 365, 'Délai minimum entre deux envois (jours)');
         if (tr.condition === 'status') return '';
@@ -445,7 +511,7 @@ export default function AutomationEditorPage() {
         if (!btn.label.trim()) return 'Indiquez le texte du bouton.';
         if (btn.link_type === 'url' && !LINK_RE.test(fullLink(btn.url))) return 'Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.';
         if (btn.link_type === 'offer' && !btn.offer_id) return 'Choisissez une offre.';
-        if (btn.link_type === 'google_review' && !page.google_review_ready) return "Ajoutez d'abord votre lien Google (Insights › Avis Google).";
+        if (btn.link_type === 'google_review' && s.scenario !== 'google_review' && !page.google_review_ready) return "Ajoutez d'abord votre lien Google (Insights › Avis Google).";
       }
     }
     if (n === 4) {
@@ -468,7 +534,8 @@ export default function AutomationEditorPage() {
   const next = () => { const p = problem(step); if (p) { setError(p); return; } go(step + 1); };
 
   const body = (status) => ({
-    scenario: s.scenario, name: s.name, status,
+    scenario: s.scenario, name: s.name, status, description: s.scenario === 'google_review' ? '' : (s.description || ''),
+    ...(s.scenario === 'google_review' ? { google_links: Object.fromEntries(Object.entries(links).map(([k, v]) => [k, fullLink(v)])) } : {}),
     trigger: { ...tr, offset_days: Number(tr.offset_days || 0),
       ...(s.scenario === 'tier_up' ? { threshold: Number(tr.threshold) || 0, min_days: Number(tr.min_days) || 7,
         custom_tiers: tiered, tiers: tiered ? tr.tiers.map((t) => ({ value: Number(t.value), title: String(t.title || '').trim(),
@@ -542,7 +609,7 @@ export default function AutomationEditorPage() {
                       // words the owner (or FidClic IA) already wrote are kept
                       const own = s.message.title.trim() && s.message.title !== m.title;
                       const d = defaults(x.key, x);
-                      setS({ ...d, name: x.label, ...(own ? { message: { ...d.message, title: s.message.title, body: s.message.body } } : {}) });
+                      setS({ ...d, name: d.name || x.label, ...(own ? { message: { ...d.message, title: s.message.title, body: s.message.body } } : {}) });
                     }}
                     className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition disabled:opacity-50 ${on ? 'border-[#2F6BFF] bg-[#F5F8FF] shadow-[0_0_0_1px_#2F6BFF]' : 'border-[#E2E8F0] bg-white hover:border-[#BFD3FF]'}`}>
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={20} /></span>
@@ -553,8 +620,40 @@ export default function AutomationEditorPage() {
           );
         })}
       </div>
-      <label className="mt-4 block"><Label right={`${s.name.length}/60`}>Nom de l'automatisation</Label>
-        <input className={field} value={s.name} maxLength={60} onChange={(e) => set({ name: e.target.value })} placeholder={m.label} /></label>
+      <label className="mt-4 block"><Label right={`${s.name.length}/100`}>Nom de l'automatisation{s.scenario === 'google_review' ? ' *' : ''}</Label>
+        <input className={field} value={s.name} maxLength={100} onChange={(e) => set({ name: e.target.value })} placeholder={m.label} /></label>
+      {s.scenario !== 'google_review' && (
+        <label className="mt-3 block"><Label right={`${(s.description || '').length}/500`}>Description <span className="font-normal text-[#64748B]">(optionnelle)</span></Label>
+          <textarea className={`${field} min-h-[72px] resize-y`} maxLength={500} value={s.description || ''} onChange={(e) => set({ description: e.target.value })}
+                    placeholder="À quoi sert cette automatisation ? Elle s'affiche sous son nom dans la liste." /></label>
+      )}
+      {s.scenario === 'google_review' && (
+        <div className="mt-3">
+          {googleStores.length > 1 ? (
+            <>
+              <Label>Liens vers les fiches Google Avis *</Label>
+              <div className="space-y-2">
+                {googleStores.map((b) => (
+                  <label key={b.id} className="block"><span className="mb-1 block text-[12px] font-semibold text-[#475569]">{b.name}</span>
+                    <span className={`${field} flex items-center gap-2 !py-0`}><Link2 size={16} className="shrink-0 text-[#64748B]" />
+                      <input className="min-w-0 flex-1 !border-0 bg-transparent py-2.5 !text-[14px] !shadow-none !outline-none !ring-0" inputMode="url"
+                             aria-label={`Lien Google Avis de ${b.name}`} placeholder="https://g.page/votre-entreprise/review"
+                             value={links[b.id] || ''} onChange={(e) => setLinks({ ...links, [b.id]: e.target.value })} /></span></label>
+                ))}
+              </div>
+            </>
+          ) : (
+            <label className="block"><Label>Lien vers la fiche Google Avis *</Label>
+              <span className={`${field} flex items-center gap-2 !py-0`}><Link2 size={16} className="shrink-0 text-[#64748B]" />
+                <input className="min-w-0 flex-1 !border-0 bg-transparent py-2.5 !text-[14px] !shadow-none !outline-none !ring-0" inputMode="url"
+                       aria-label="Lien vers la fiche Google Avis" placeholder="https://g.page/votre-entreprise/review"
+                       value={links.main || ''} onChange={(e) => setLinks({ ...links, main: e.target.value })} /></span></label>
+          )}
+          <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] leading-snug text-[#334155]"><Info size={16} className="mt-0.5 shrink-0 text-[#1463FF]" />
+            <span><b className="block text-[#0B1C3F]">Où trouver ce lien ?</b>Rendez-vous sur votre fiche Google Business, cliquez sur « Obtenir plus d'avis » puis sur « Copier le lien ». Collez ce lien ici pour que vos clients puissent laisser un avis directement.
+              {googleStores.length > 1 ? " Chaque établissement a sa fiche : le client reçoit le lien de l'établissement où il est venu." : ' Le même lien est utilisé dans Insights › Avis Google.'}</span></p>
+        </div>
+      )}
     </Card>
   );
 
@@ -886,7 +985,7 @@ export default function AutomationEditorPage() {
       </div>
       <ChipRow title="Tranche d'âge" sub="Sélectionnez la tranche d'âge de votre audience." options={AGES} values={f.age} allLabel="Tous les âges" onChange={(v) => setF({ age: v })} />
       <ChipRow title="Genre (optionnel)" options={GENDERS} values={f.gender} onChange={(v) => setF({ gender: v })} />
-      <ChipRow title="Fréquence de visite" sub="Ciblez selon la fréquence des visites passées (si déjà clients)." options={FREQS} values={f.frequency} onChange={(v) => setF({ frequency: v })} />
+      <ChipRow title="Type de client" sub="Selon le statut de la carte du client." options={CLIENT_TYPES} values={f.client_type || []} onChange={(v) => setF({ client_type: v })} />
       <ChipRow title="Dernière visite" sub="Ciblez selon la dernière visite (si déjà clients)." options={LAST_VISIT} values={f.last_visit} onChange={(v) => setF({ last_visit: v })} />
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         <div className="flex items-center gap-3 rounded-2xl bg-[#F1F6FF] p-3">
@@ -993,6 +1092,128 @@ export default function AutomationEditorPage() {
     </Card>
   );
 
+  // ---- Avis Google (updated mockups 2026-10-11) -----------------------------------
+  const AVIS_TRIGGERS = [['after_visit', CalendarDays, 'Après la visite', "Envoyer la demande d'avis un certain temps après la dernière visite du client.", '#EAF1FF', '#2F6BFF'],
+    ['loyal', Star, 'Client fidèle', "Envoyer la demande d'avis après un certain nombre de visites.", '#FFF4E0', '#F59E0B'],
+    ['date', CalendarDays, 'Date spécifique', "Envoyer la demande d'avis à une date précise (ex : après un événement).", '#EAF1FF', '#2F6BFF']];
+  const Step2Avis = (
+    <Card n={2} title="Déclencheur" sub="Choisissez quand envoyer automatiquement la demande d'avis.">
+      {!page.google_review_ready && googleKeys.every((k) => !links[k]) && (
+        <p className="mb-3 rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412]">Ajoutez votre lien Google à l'étape Scénario : aucune demande ne part sans lui.</p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Déclencheur">
+        {AVIS_TRIGGERS.map(([k, I, l, h, bg, fg]) => {
+          const on = (tr.type || 'after_visit') === k;
+          return (
+            <button key={k} type="button" role="radio" aria-checked={on}
+                    onClick={() => setIn('trigger', { type: k, ...(k === 'date' && tr.frequency === 'smart' ? { frequency: 'once' } : {}) })}
+                    className={`relative rounded-2xl border p-4 text-left transition ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
+              <span className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={20} /></span>
+              <span className="block pr-5 text-[14px] font-bold text-[#0B1C3F]">{l}</span>
+              <span className="mt-0.5 block text-[12px] leading-snug text-[#64748B]">{h}</span>
+              {on && <CheckCircle2 size={18} className="absolute right-3 top-3 text-[#1463FF]" />}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mb-2 mt-5 text-[15px] font-bold text-[#0B1C3F]">Configurer le déclencheur</p>
+      <div className="rounded-2xl bg-[#F5F8FF] p-4">
+        {(tr.type || 'after_visit') === 'after_visit' && (
+          <>
+            <p className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#475569]">Délai après la visite
+              <span title="Le temps qui sépare la visite (le scan de la carte) de la demande d'avis."><Info size={14} /></span></p>
+            <span className="flex flex-wrap items-center gap-2 text-[13px] text-[#475569]">
+              <Num value={tr.delay_value ?? 0} min={0} max={365} label="Délai après la visite" onChange={(v) => setIn('trigger', { delay_value: v })} />
+              <span className="w-36"><Select label="Unité du délai" value={tr.delay_unit === 'days' ? 'days' : 'hours'} onChange={(v) => setIn('trigger', { delay_unit: v })}
+                                             options={[['hours', 'heures'], ['days', 'jours']]} /></span>
+              après la dernière visite du client.</span>
+          </>
+        )}
+        {tr.type === 'loyal' && (
+          <span className="flex flex-wrap items-center gap-2 text-[13px] text-[#475569]">Envoyer à la
+            <Num value={tr.visits} digits={4} min={1} max={1000} label="Nombre de visites" onChange={(v) => setIn('trigger', { visits: v })} />
+            <span>{Number(tr.visits) === 1 ? 're' : 'e'} visite du client, </span>
+            <Num value={tr.delay_value ?? 0} min={0} max={365} label="Délai après cette visite" onChange={(v) => setIn('trigger', { delay_value: v })} />
+            <span className="w-32"><Select label="Unité" value={tr.delay_unit === 'days' ? 'days' : 'hours'} onChange={(v) => setIn('trigger', { delay_unit: v })} options={[['hours', 'heures'], ['days', 'jours']]} /></span>
+            après.</span>
+        )}
+        {tr.type === 'date' && (
+          <span className="flex flex-wrap items-center gap-2 text-[13px] text-[#475569]">Envoyer le
+            <input type="date" aria-label="Date d'envoi" className={`${field} !w-48`} value={tr.date || ''} min={new Date().toISOString().slice(0, 10)}
+                   onChange={(e) => setIn('trigger', { date: e.target.value })} />
+            <span>à l'heure choisie à l'étape Planification.</span></span>
+        )}
+        <div className="mt-3 flex items-start gap-2 rounded-xl bg-white/70 px-3 py-2.5 text-[12.5px] text-[#334155]"><Info size={16} className="mt-0.5 shrink-0 text-[#1463FF]" />
+          <span><b className="block text-[#1463FF]">Recommandation</b>Envoyez la demande d'avis entre 1 et 4 heures après la visite, lorsque l'expérience est encore fraîche dans l'esprit du client.</span></div>
+      </div>
+    </Card>
+  );
+
+  const FREQ_CARDS = [['once', Navigation, 'Une seule fois', 'Envoyer la demande une seule fois selon le déclencheur.'],
+    ['days', RefreshCw, 'Répétition régulière', 'Envoyer plusieurs fois selon une fréquence définie.'],
+    ['smart', Sparkles, 'Envoi intelligent', 'FidClic AI choisit le meilleur moment pour chaque client (selon son comportement).']];
+  const Step5Avis = (
+    <Card n={5} title="Planification" sub="Définissez quand et à quelle fréquence envoyer la demande d'avis.">
+      <p className="flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]">Jours d'envoi</p>
+      <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-7" role="group" aria-label="Jours d'envoi">
+        {DAY_NAMES.map((d, i) => {
+          const on = sc.days === 'all' || (sc.days === 'weekdays' ? i < 5 : sc.weekdays.includes(i));
+          const cur = sc.days === 'all' ? [0, 1, 2, 3, 4, 5, 6] : sc.days === 'weekdays' ? [0, 1, 2, 3, 4] : sc.weekdays;
+          return (
+            <label key={d} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-2 text-[12.5px] font-medium ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0]'}`}>
+              <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={on}
+                     onChange={() => { const w = on ? cur.filter((x) => x !== i) : [...cur, i].sort(); setIn('schedule', { weekdays: w, days: w.length === 7 ? 'all' : 'specific' }); }} /> {d}</label>
+          );
+        })}
+      </div>
+      {tr.type === 'date' && (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="block"><Label>Heure d'envoi</Label>
+            <Select label="Heure d'envoi" value={sc.hour} onChange={(v) => setIn('schedule', { hour: v })} options={HOURS.map((h) => [h, h])} /></label>
+          <label className="block"><Label>Fuseau horaire</Label>
+            <span className={`${field} flex items-center gap-2 bg-[#F8FAFC]`}><Globe size={15} className="text-[#64748B]" /> ({parisOffset().replace('GMT', 'GMT')}) Paris</span></label>
+        </div>
+      )}
+      <p className="mt-4 text-[13.5px] font-bold text-[#0B1C3F]">Fréquence d'envoi</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Fréquence d'envoi">
+        {FREQ_CARDS.map(([k, I, l, h]) => {
+          const on = (tr.frequency || 'once') === k;
+          const off = k === 'smart' && tr.type === 'date';
+          return (
+            <button key={k} type="button" role="radio" aria-checked={on} disabled={off} onClick={() => setIn('trigger', { frequency: k })}
+                    title={off ? "Pour une date précise, l'heure d'envoi s'applique." : undefined}
+                    className={`relative rounded-xl border p-3 text-left disabled:opacity-50 ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
+              <span className="flex items-center gap-2"><I size={19} className={k === 'smart' ? 'text-[#7C3AED]' : 'text-[#1463FF]'} />
+                {k === 'smart' && <span className="inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-1.5 text-[10.5px] font-semibold text-[#047857]"><CheckCircle2 size={11} /> Recommandé</span>}</span>
+              <span className="mt-1.5 block pr-5 text-[13.5px] font-bold text-[#0B1C3F]">{l}</span>
+              <span className="text-[11.5px] leading-snug text-[#64748B]">{h}</span>
+              {on ? <CheckCircle2 size={18} className="absolute right-2.5 top-2.5 text-[#1463FF]" /> : <span className="absolute right-2.5 top-2.5 h-[18px] w-[18px] rounded-full border-2 border-[#CBD5E1]" />}
+            </button>
+          );
+        })}
+      </div>
+      {tr.frequency === 'days' && (
+        <span className="mt-2 flex items-center gap-2 text-[12.5px] text-[#475569]">Au plus une fois tous les
+          <Num value={tr.every_days} min={1} max={365} label="Répéter tous les (jours)" onChange={(v) => setIn('trigger', { every_days: v })} /> jours par client</span>
+      )}
+      <div className="mt-3 flex items-center gap-3 rounded-2xl bg-[#FAF7FF] p-3">
+        <Toggle label="Plage d'envoi intelligente" on={sc.window} onChange={(v) => setIn('schedule', { window: v, window_from: '08:00', window_to: '20:00', slots: [] })} />
+        <Sparkles size={20} className="shrink-0 text-[#7C3AED]" />
+        <span className="min-w-0"><span className="block text-[13px] font-bold text-[#0B1C3F]">Plage d'envoi intelligente (FidClic AI)</span>
+          <span className="text-[12px] text-[#64748B]">Envoie automatiquement la demande au moment où le client est le plus susceptible de répondre (entre 8h et 20h).</span></span>
+      </div>
+      <p className="mt-4 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]">Période de validité de l'automatisation</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <label className="block"><span className="mb-1 block text-[12px] text-[#475569]">Date de début</span>
+          <input type="date" aria-label="Date de début" className={field} value={sc.valid_from || ''} onChange={(e) => setIn('schedule', { valid_from: e.target.value })} /></label>
+        <label className="block"><span className="mb-1 block text-[12px] text-[#475569]">Date de fin (optionnel)</span>
+          <input type="date" aria-label="Date de fin" className={field} value={sc.valid_to || ''} min={sc.valid_from || undefined} onChange={(e) => setIn('schedule', { valid_to: e.target.value })} /></label>
+      </div>
+      <p className="mt-3 flex items-start gap-2 text-[11.5px] text-[#64748B]"><Info size={13} className="mt-0.5 shrink-0" />
+        Un client qui a déjà ouvert votre page d'avis ne reçoit plus de demande.{!page.tick ? " L'envoi à la minute près arrive avec l'envoi programmé toutes les 15 minutes ; en attendant, les messages en attente partent avec l'envoi du matin." : ''}</p>
+    </Card>
+  );
+
   const VarMenu = ({ which }) => (
     <span className="relative shrink-0">
       <button type="button" onClick={() => { lastFocus.current = which; setVarMenu(varMenu === which ? '' : which); }}
@@ -1016,9 +1237,56 @@ export default function AutomationEditorPage() {
     google_review: "Le client sera redirigé vers votre page d'avis Google.",
     url: 'Le client sera redirigé vers le lien de votre choix.',
   };
+  // Avis Google step 3 (mockup): the image tiles beside the button and its link
+  const singleGoogle = googleStores.length <= 1;
+  const AvisMedia = (
+    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+      <div>
+        <Label>Image <span className="font-normal text-[#64748B]">(optionnelle)</span></Label>
+        <div className="grid grid-cols-2 gap-2">
+          {msg.image_url ? (
+            <span className="relative block overflow-hidden rounded-xl border border-[#E6EEFB] bg-[#F5F8FF]">
+              <img src={msg.image_url} alt="Image de la notification" className="aspect-[1200/628] w-full object-cover" />
+              <button type="button" onClick={() => setMsg({ image_url: null })} aria-label="Supprimer l'image"
+                      className="absolute right-1.5 top-1.5 rounded-lg bg-white/90 p-1 text-[#1463FF] shadow hover:text-[#DC2626]"><Trash2 size={14} /></button>
+            </span>
+          ) : (
+            <button type="button" onClick={() => setMsg({ image_url: AVIS_IMAGE })}
+                    className="rounded-xl border border-dashed border-[#BFD3FF] p-2 text-center text-[11.5px] text-[#1463FF]">Remettre l'image Google</button>
+          )}
+          <button type="button" onClick={() => fileRef.current?.click()}
+                  className="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[#9DB9FF] bg-white p-2 text-center">
+            <ImageIcon size={20} className="text-[#1463FF]" />
+            <span className="text-[12.5px] font-semibold text-[#1463FF]">Changer l'image</span>
+            <span className="text-[10.5px] text-[#64748B]">JPG, PNG · Max 2 Mo<br />Recommandé : 1200 × 628 px</span>
+          </button>
+        </div>
+      </div>
+      <div>
+        <Label>Bouton d'action</Label>
+        <label className="block"><span className="mb-1 flex justify-between text-[12px] text-[#475569]"><span>Texte du bouton</span><span>{btn.label.length}/{BUTTON_MAX}</span></span>
+          <input className={field} value={btn.label} maxLength={BUTTON_MAX} onChange={(e) => setBtn({ label: e.target.value, enabled: true })} placeholder="Laisser un avis" /></label>
+        <label className="mt-2 block"><span className="mb-1 block text-[12px] text-[#475569]">Lien</span>
+          <span className={`${field} flex items-center gap-2 !py-0`}><Link2 size={16} className="shrink-0 text-[#64748B]" />
+            <input className="min-w-0 flex-1 !border-0 bg-transparent py-2.5 !text-[14px] !shadow-none !outline-none !ring-0" inputMode="url" aria-label="Lien du bouton"
+                   value={btn.link_type === 'url' ? btn.url : singleGoogle ? (links.main || '') : "Lien Google de l'établissement visité"}
+                   readOnly={btn.link_type !== 'url' && !singleGoogle}
+                   onChange={(e) => {
+                     const v = e.target.value;
+                     // the Google link stays « google_review » (clicks counted, asked once); anything else is a custom link
+                     if (singleGoogle && fullLink(v) === fullLink(links.main)) setBtn({ link_type: 'google_review', url: '', enabled: true });
+                     else setBtn({ link_type: 'url', url: v, enabled: true });
+                   }} /></span>
+          <span className="mt-1 block text-[11px] text-[#64748B]">{btn.link_type === 'url'
+            ? <>Un lien personnalisé. <button type="button" className="font-semibold text-[#1463FF]" onClick={() => setBtn({ link_type: 'google_review', url: '' })}>Revenir au lien Google</button></>
+            : 'Le lien de votre fiche Google (étape Scénario) : le client qui l\'ouvre ne reçoit plus de demande.'}</span></label>
+      </div>
+    </div>
+  );
+
   const Step3 = (
     <Card n={3} title="Message" sub="Personnalisez le contenu de votre notification.">
-      <p className="mb-3 inline-flex rounded-xl border border-[#2F6BFF] bg-[#F5F8FF] px-4 py-2 text-[13px] font-semibold text-[#1463FF]">Notification Wallet</p>
+      {s.scenario !== 'google_review' && <p className="mb-3 inline-flex rounded-xl border border-[#2F6BFF] bg-[#F5F8FF] px-4 py-2 text-[13px] font-semibold text-[#1463FF]">Notification Wallet</p>}
       {tiered && (
         <div className="mb-3">
           <p className="mb-1.5 text-[12px] text-[#64748B]">Un message par palier — choisissez le palier à rédiger :</p>
@@ -1049,7 +1317,8 @@ export default function AutomationEditorPage() {
         <VarMenu which="body" />
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        {(s.scenario === 'geo' ? ['prénom', 'établissement', 'offre', 'distance', ...variables.filter((v) => !['prénom', 'établissement', 'offre', 'distance'].includes(v))] : variables).map((v) => (
+        {(s.scenario === 'geo' ? ['prénom', 'établissement', 'offre', 'distance', ...variables.filter((v) => !['prénom', 'établissement', 'offre', 'distance'].includes(v))]
+          : s.scenario === 'google_review' ? ['nom', 'prénom', 'établissement', 'lien_avis'] : variables).map((v) => (
           <button key={v} type="button" title={`${VAR_LABELS[v] || v} — {${v}}`} onClick={() => insert(`{${v}}`)}
                   className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {VAR_SHORT[v] || v}</button>
         ))}
@@ -1069,6 +1338,7 @@ export default function AutomationEditorPage() {
           <span>Sur l'écran verrouillé, l'iPhone affiche ce message près de votre établissement ; Google Wallet y écrit son propre texte. Un appui ouvre la carte, où votre message et son bouton s'affichent. {'{distance}'} n'est connue que si la carte est ouverte : écrivez « à {'{distance}'} », cela donne « à 80 m », ou « à deux pas » sur l'écran verrouillé.</span></p>
       )}
       <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={pickImage} />
+      {s.scenario === 'google_review' ? AvisMedia : (<>
       <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E6EEFB] p-4">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F1EAFF] text-[#7C3AED]"><ImageIcon size={18} /></span>
         <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">Ajouter une image <span className="font-normal text-[#64748B]">(optionnel)</span></span>
@@ -1116,6 +1386,7 @@ export default function AutomationEditorPage() {
           </div>
         )}
       </div>
+      </>)}
     </Card>
   );
 
@@ -1157,47 +1428,54 @@ export default function AutomationEditorPage() {
             <button type="button" onClick={() => setIn('targeting', { filters: { ...EMPTY_FILTERS } })}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3 py-1.5 text-[12.5px] font-semibold text-[#1463FF]"><RotateCcw size={14} /> Réinitialiser les filtres</button>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {[['gender', 'Genre', User, GENDERS, 'Renseigné par le client à son inscription.'], ['age', 'Âge', Users, AGES],
-              ['frequency', 'Fréquence de visite', BarChart3, FREQS], ['spent', 'Montant total des achats', Euro, SPENT],
-              ['last_visit', 'Dernière visite', CalendarDays, LAST_VISIT]].map(([key, l, I, opts, hint]) => (
-              <div key={key} className="rounded-2xl border border-[#E6EEFB] p-3">
-                <p className="mb-1.5 flex items-center gap-2 text-[13px] font-bold text-[#0B1C3F]"><I size={16} className="text-[#1463FF]" /> {l}</p>
-                <label className="flex cursor-pointer items-center gap-2 py-0.5 text-[12.5px] text-[#334155]">
-                  <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={!f[key].length} onChange={() => setF({ [key]: [] })} /> Tous</label>
-                {opts.map(([v, lab]) => (
-                  <label key={v} className="flex cursor-pointer items-center gap-2 py-0.5 text-[12.5px] text-[#334155]">
-                    <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={f[key].includes(v)}
-                           onChange={() => setF({ [key]: f[key].includes(v) ? f[key].filter((x) => x !== v) : [...f[key], v] })} /> {lab}</label>
-                ))}
-                {hint && <p className="mt-1 text-[11px] text-[#94A3B8]">{hint}</p>}
-              </div>
-            ))}
-            <div className="rounded-2xl border border-[#E6EEFB] p-3">
-              <p className="mb-1.5 flex items-center gap-2 text-[13px] font-bold text-[#0B1C3F]"><MapPin size={16} className="text-[#1463FF]" /> Localisation</p>
-              <label className="flex cursor-pointer items-center gap-2 py-0.5 text-[12.5px] text-[#334155]">
-                <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={!f.radius_km && !f.stores.length}
-                       onChange={() => setF({ radius_km: null, stores: [] })} /> Tous</label>
-              <label className="flex flex-wrap items-center gap-2 py-0.5 text-[12.5px] text-[#334155]">
-                <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={Boolean(f.radius_km)} disabled={!page.has_position}
-                       onChange={() => setF({ radius_km: f.radius_km ? null : 5 })} /> Dans un rayon de
-                <select aria-label="Rayon" value={f.radius_km || 5} disabled={!page.has_position} onChange={(e) => setF({ radius_km: Number(e.target.value) })}
-                        className="rounded-lg border border-[#D9E2F2] px-2 py-1 text-[12.5px]">
-                  {RADII.map((k) => <option key={k} value={k}>{k} km</option>)}
-                </select></label>
-              <p className="text-[11px] text-[#94A3B8]">{page.has_position ? 'Autour de mon établissement.' : 'Placez votre établissement sur la carte (Paramètres › Établissement) pour filtrer par distance.'}</p>
-              {page.stores.length > 1 && (
-                <div className="mt-2 border-t border-[#F1F5F9] pt-2">
-                  <p className="text-[11.5px] font-semibold text-[#475569]">Établissements</p>
-                  {page.stores.map((x) => (
-                    <label key={x.id} className="flex cursor-pointer items-center gap-2 py-0.5 text-[12.5px] text-[#334155]">
-                      <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={f.stores.includes(x.id)}
-                             onChange={() => setF({ stores: f.stores.includes(x.id) ? f.stores.filter((y) => y !== x.id) : [...f.stores, x.id] })} /> {x.name}</label>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-6">
+            <FilterTile icon={User} label="Genre">
+              <Select label="Genre" value={one(f.gender)} onChange={pick('gender')}
+                      options={withMulti(f.gender, [['', 'Tous'], ...GENDERS])} />
+            </FilterTile>
+            <FilterTile icon={CalendarDays} label="Âge">
+              <span className="flex items-center gap-1.5">
+                <Select tight label="Âge à partir de" value={String(f.age_min ?? '')} onChange={(v) => setF({ age_min: v, age: [] })}
+                        options={[['', 'Tous'], ...AGE_STEPS.map((x) => [String(x), String(x)])]} />
+                <span className="text-[#64748B]">–</span>
+                <Select tight label="Âge jusqu'à" value={String(f.age_max ?? '')} onChange={(v) => setF({ age_max: v, age: [] })}
+                        options={[['', '65+'], ...AGE_STEPS.filter((x) => x < 65).map((x) => [String(x), String(x)])]} />
+              </span>
+            </FilterTile>
+            <FilterTile icon={Euro} label="Montant des achats">
+              <Select label="Montant des achats" value={one(f.spent)} onChange={pick('spent')}
+                      options={withMulti(f.spent, [['', 'Tous'], ...SPENT])} />
+            </FilterTile>
+            <FilterTile icon={CalendarDays} label="Dernière visite" wide>
+              <Select label="Dernière visite" value={one(f.last_visit)} onChange={pick('last_visit')}
+                      options={withMulti(f.last_visit, [['', 'Tous'], ...LAST_VISIT])} />
+            </FilterTile>
+            <FilterTile icon={RotateCcw} label="Nombre de visites" wide>
+              <span className="flex items-center gap-1.5 text-[12.5px] text-[#475569]">
+                <input inputMode="numeric" aria-label="Nombre de visites minimum" placeholder="min" value={f.visits_min ?? ''}
+                       onChange={(e) => setF({ visits_min: e.target.value.replace(/\D/g, '').slice(0, 5) })} className={`${field} !py-2 text-center`} />
+                à
+                <input inputMode="numeric" aria-label="Nombre de visites maximum" placeholder="max" value={f.visits_max ?? ''}
+                       onChange={(e) => setF({ visits_max: e.target.value.replace(/\D/g, '').slice(0, 5) })} className={`${field} !py-2 text-center`} />
+              </span>
+              <span className="mt-1 block text-[11px] text-[#94A3B8]">{f.visits_min === '' && f.visits_max === '' ? 'Vide = tous' : 'Visites depuis l\'inscription'}</span>
+            </FilterTile>
+            <FilterTile icon={MapPin} label="Localisation" wide>
+              <Select label="Localisation" value={f.radius_km ? `r:${f.radius_km}` : f.stores.length === 1 ? `s:${f.stores[0]}` : f.stores.length ? 'multi' : ''}
+                      onChange={(v) => v !== 'multi' && setF(v.startsWith('r:') ? { radius_km: Number(v.slice(2)), stores: [] } : v.startsWith('s:') ? { stores: [v.slice(2)], radius_km: null } : { stores: [], radius_km: null })}
+                      options={[['', 'Toutes les zones'], ...(f.stores.length > 1 ? [['multi', `${f.stores.length} établissements`]] : []),
+                        ...(page.has_position ? RADII.map((k) => [`r:${k}`, `À moins de ${k} km de mon établissement`]) : []),
+                        ...(page.stores.length > 1 ? page.stores.map((x) => [`s:${x.id}`, `Clients de : ${x.name}`]) : [])]} />
+            </FilterTile>
+            <FilterTile icon={Award} label="Type de client" wide>
+              <Select label="Type de client" value={one(f.client_type || [])} onChange={pick('client_type')}
+                      options={withMulti(f.client_type || [], [['', 'Tous (Nouveaux, Réguliers, Fidèles)'], ...CLIENT_TYPES])} />
+            </FilterTile>
           </div>
+          {s.scenario === 'google_review' && (
+            <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12.5px] text-[#334155]"><Info size={16} className="mt-0.5 shrink-0 text-[#1463FF]" />
+              <span><b className="text-[#1463FF]">Conseil :</b> pour un meilleur taux de réponse, ciblez les clients venus il y a moins de 7 jours et ayant effectué au moins un achat.</span></p>
+          )}
         </div>
       )}
     </Card>
@@ -1329,7 +1607,9 @@ export default function AutomationEditorPage() {
   const Step6 = (
     <Card n={6} title="Résumé" sub="Vérifiez les paramètres de votre automatisation avant de l'enregistrer.">
       <div className="space-y-3">
-        <Row n={1} icon={ScIcon} title="Scénario" sub={m.label}>{s.name || m.label}<span className="block text-[#64748B]">{m.sub}</span></Row>
+        <Row n={1} icon={ScIcon} title="Scénario" sub={m.label}><b className="text-[#0B1C3F]">{s.name || m.label}</b>
+          <span className="block text-[#64748B]">{s.scenario !== 'google_review' && s.description ? s.description : m.sub}</span>
+          {s.scenario === 'google_review' && <span className="block break-all text-[#64748B]">{googleKeys.map((k) => links[k]).filter(Boolean).join(' · ')}</span>}</Row>
         {s.scenario === 'geo' ? (
           <Row n={2} icon={Navigation} title="Zone de détection" sub={`Rayon : ${tr.radius_m || 200} m`}>
             <span className="flex flex-wrap items-start gap-3">
@@ -1340,7 +1620,7 @@ export default function AutomationEditorPage() {
                 {weatherNames.length > 0 && <span className="block"><b>Météo :</b> {weatherNames.join(' ou ')}</span>}</span>
             </span>
           </Row>
-        ) : <Row n={2} icon={CalendarDays} title="Déclencheur" sub={m.trigger_label}>{triggerText()}{delayText()}</Row>}
+        ) : <Row n={2} icon={CalendarDays} title="Déclencheur" sub={s.scenario === 'google_review' ? ({ after_visit: 'Après la visite', loyal: 'Client fidèle', date: 'Date spécifique' }[tr.type || 'after_visit']) : m.trigger_label}>{triggerText()}{delayText()}</Row>}
         <Row n={3} icon={MessageSquare} title="Message" sub="Notification Wallet">
           <span className="flex items-start gap-3"><span className="min-w-0 flex-1">
             {tiered ? tr.tiers.map((t, i) => (
@@ -1349,7 +1629,15 @@ export default function AutomationEditorPage() {
             {btn.enabled && <span className="block"><b>Bouton :</b> {btn.label}</span>}</span>
             {msg.image_url && <img src={msg.image_url} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />}</span></Row>
         <Row n={4} icon={Users} title="Ciblage" sub={tg.mode === 'all' ? 'Tous mes clients' : tg.mode === 'wallet' ? 'Carte Wallet' : tg.mode === 'filtered' ? 'Passants' : 'Segment'}>
-          {targetText()}<span className="block text-[#64748B]">{preview ? `${preview.count.toLocaleString('fr-FR')} client(s) ciblé(s) aujourd'hui${s.scenario === 'geo' && preview.reachable ? ` · ${preview.reachable.total.toLocaleString('fr-FR')} joignable(s)` : ''}` : ''}</span></Row>
+          {s.scenario === 'google_review' ? (
+            <>
+              <b className="text-[#0B1C3F]">{tg.mode === 'wallet' ? 'Clients avec une carte Wallet' : tg.mode === 'segment' ? `Segment : ${(page.segments.find((x) => x.key === tg.segment) || {}).label || '—'}` : 'Tous mes clients'}</b>
+              <span className="block text-[#64748B]">Envoyer la demande aux clients correspondant au déclencheur{preview ? ` · ${preview.count.toLocaleString('fr-FR')} aujourd'hui` : ''}.</span>
+              <span className="mt-1 block font-semibold text-[#0B1C3F]">Filtres appliqués :</span>
+              <span className="mt-1 flex flex-wrap gap-1.5">{(filterChips().length ? filterChips() : ['Aucun filtre']).map((c) => (
+                <span key={c} className="rounded-lg bg-[#F1F5F9] px-2 py-0.5 text-[11.5px] text-[#334155]">{c}</span>))}</span>
+            </>
+          ) : <>{targetText()}<span className="block text-[#64748B]">{preview ? `${preview.count.toLocaleString('fr-FR')} client(s) ciblé(s) aujourd'hui${s.scenario === 'geo' && preview.reachable ? ` · ${preview.reachable.total.toLocaleString('fr-FR')} joignable(s)` : ''}` : ''}</span></>}</Row>
         {s.scenario === 'geo' ? (
           <Row n={5} icon={Clock} title="Planification" sub={periodText()}>
             <span className="block"><b>Période :</b> {periodText()}</span>
@@ -1358,6 +1646,14 @@ export default function AutomationEditorPage() {
             {rushOn.length > 0 && <span className="block"><b>Heures de forte affluence :</b> {rushOn.map((r) => `${hLabel(r[2])} – ${hLabel(r[3])}`).join(' / ')}</span>}
             <span className="block"><b>Jours fériés :</b> {sc.holidays !== false ? 'Activé' : 'Désactivé'}</span>
             <span className="block"><b>Fréquence :</b> au plus une fois tous les {tr.cooldown_days || 7} jours par client</span>
+          </Row>
+        ) : s.scenario === 'google_review' ? (
+          <Row n={5} icon={Clock} title="Planification" sub={freqText()}>
+            <span className="block"><b>Jours d'envoi :</b> {sc.days === 'all' ? 'Tous les jours' : sc.weekdays.map((d) => DAY_FULL[d]).join(', ')}</span>
+            {tr.type === 'date' && <span className="block"><b>Heure d'envoi :</b> {sc.hour} ({parisOffset()} Paris)</span>}
+            <span className="block"><b>Fréquence :</b> {freqText()}</span>
+            <span className="block"><b>Plage d'envoi :</b> {sc.window ? 'entre 8h et 20h (FidClic AI)' : 'à toute heure'}</span>
+            <span className="block"><b>Période :</b> {sc.valid_from || sc.valid_to ? validText().replace(' · ', '').replace(/^./, (c) => c.toUpperCase()) : 'Sans limite'}</span>
           </Row>
         ) : <Row n={5} icon={Clock} title="Planification" sub={timed ? 'À heure fixe' : 'Dès l\'événement'}>{planText()}</Row>}
         <div className="flex items-center gap-3 rounded-2xl bg-[#F1FBF5] p-4">
@@ -1395,7 +1691,37 @@ export default function AutomationEditorPage() {
   // ---- « Conseil FidClic AI »: tips from the settings and the shop's real data,
   // « Optimisé » only when every tip of the step holds (user, 2026-10-11) ----------
   const tipsFor = (n) => {
-    if (s.scenario !== 'geo') return ({ 3: [tips[0], tips[3]], 4: [tips[2]], 5: [tips[1]], 6: tips })[n] || [];
+    const named = [s.name.trim() && s.name.trim() !== m.label, s.name.trim() && s.name.trim() !== m.label
+      ? 'Un nom clair : vous retrouverez facilement cette automatisation.' : 'Donnez-lui un nom clair et précis pour la retrouver facilement.'];
+    if (s.scenario === 'google_review') {
+      const out = [];
+      const hrs = tr.delay_unit === 'days' ? Number(tr.delay_value) * 24 : Number(tr.delay_value);
+      if ([1, 6].includes(n)) {
+        out.push(named);
+        out.push(googleKeys.every((k) => String(links[k] || '').trim()) ? [true, 'Votre lien Google est prêt : le client arrive directement sur votre fiche.']
+          : [false, 'Ajoutez le lien de votre fiche Google : sans lui, aucune demande ne part.']);
+      }
+      if ([2, 6].includes(n)) {
+        if ((tr.type || 'after_visit') === 'after_visit') {
+          out.push(hrs >= 1 && hrs <= 4 ? [true, `Demande envoyée ${tr.delay_value} h après la visite : l'expérience est encore fraîche.`]
+            : [false, "Les demandes d'avis répondent le mieux entre 1 et 4 heures après la visite."]);
+        } else if (tr.type === 'loyal') out.push([true, 'Vos clients fidèles sont les plus enclins à laisser un avis positif.']);
+        else out.push([true, 'Une date après un événement : vos clients en gardent un souvenir frais.']);
+      }
+      if ([3, 6].includes(n)) {
+        out.push(/\{pr[ée]nom\}|\{nom\}/.test(words) ? [true, 'Message personnalisé avec le nom du client.'] : [false, 'Personnalisez votre message avec le prénom du client.']);
+        out.push(btn.enabled && btn.label.trim() ? [true, 'Un bouton clair (« Laisser un avis ») augmente le taux d\'avis.'] : [false, 'Ajoutez un bouton « Laisser un avis ».']);
+      }
+      if ([4, 6].includes(n)) out.push(tips[2]);
+      if ([5, 6].includes(n)) {
+        out.push(sc.window || tr.frequency === 'smart' ? [true, 'Vos demandes partent en journée (8h – 20h), quand les clients répondent le plus.']
+          : [false, "Activez la plage d'envoi intelligente : en journée (8h – 20h), les clients répondent davantage."]);
+        out.push(tr.frequency !== 'days' || Number(tr.every_days) >= 30 ? [true, 'Vos clients ne sont pas sollicités trop souvent.']
+          : [false, 'Ne redemandez pas un avis trop souvent : 30 jours ou plus entre deux demandes.']);
+      }
+      return out;
+    }
+    if (s.scenario !== 'geo') return ({ 1: [named], 3: [tips[0], tips[3]], 4: [tips[2]], 5: [tips[1]], 6: tips })[n] || [];
     const out = [];
     const busyTxt = geo.busy ? `${geo.busy[0]}h – ${geo.busy[1]}h` : '';
     const covers = !sc.window || (sc.slots || []).some((x) => overlaps(['', '', x.from, x.to], geo.busy));
@@ -1473,7 +1799,7 @@ export default function AutomationEditorPage() {
         <Panel icon={Users} title="Résumé du ciblage" lines={[
           ['Type de passants', (PASSANTS.find((x) => x[0] === (tg.passants || 'all')) || PASSANTS[0])[1]],
           ['Tranche d\'âge', names(f.age, AGES, 'Tous les âges')], ['Genre', names(f.gender, GENDERS, 'Tous')],
-          ['Fréquence de visite', names(f.frequency, FREQS, 'Tous')], ['Dernière visite', names(f.last_visit, LAST_VISIT, 'Tous')],
+          ['Type de client', names(f.client_type || [], CLIENT_TYPES, 'Tous')], ['Dernière visite', names(f.last_visit, LAST_VISIT, 'Tous')],
           ['Météo', weatherNames.join(' ou ') || 'Toutes les conditions']]} />
       ) : <Panel icon={Users} title="Résumé du ciblage" lines={[['Ciblage', targetText()], ['Clients ciblés', preview ? preview.count.toLocaleString('fr-FR') : '…']]} />;
     }
@@ -1512,8 +1838,9 @@ export default function AutomationEditorPage() {
   })();
 
   const geoNew = s.scenario === 'geo' && !editing;
-  const createLabel = geoNew ? "Activer l'automatisation" : "Créer l'automatisation";
-  const content = [null, Step1, s.scenario === 'geo' ? Step2Geo : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : Step5, Step6][step];
+  const avisNew = s.scenario === 'google_review' && !editing;
+  const createLabel = geoNew ? "Activer l'automatisation" : s.scenario === 'google_review' ? "Enregistrer l'automatisation" : "Créer l'automatisation";
+  const content = [null, Step1, s.scenario === 'geo' ? Step2Geo : s.scenario === 'google_review' ? Step2Avis : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : s.scenario === 'google_review' ? Step5Avis : Step5, Step6][step];
   return (
     <div className="pb-10">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -1521,9 +1848,10 @@ export default function AutomationEditorPage() {
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><ArrowLeft size={18} /></button>
           <div>
-            <h1 className="text-[25px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? 'Modifier une automatisation' : geoNew ? 'Créer une automatisation géolocalisée' : 'Créer une automatisation'}</h1>
+            <h1 className="text-[25px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? 'Modifier une automatisation' : geoNew ? 'Créer une automatisation géolocalisée' : avisNew ? "Automatiser une demande d'avis Google" : 'Créer une automatisation'}</h1>
             <p className="text-[13.5px] text-[#475569]">{editing ? 'Modifiez les paramètres de cette automatisation pour mettre à jour vos notifications.'
-              : geoNew ? 'Attirez les personnes qui passent devant votre établissement avec une offre au bon moment.' : 'Une notification qui part toute seule, au bon moment, pour fidéliser vos clients.'}</p>
+              : geoNew ? 'Attirez les personnes qui passent devant votre établissement avec une offre au bon moment.'
+              : avisNew ? 'Encouragez vos clients satisfaits à laisser un avis sur votre fiche Google et améliorez votre visibilité.' : 'Une notification qui part toute seule, au bon moment, pour fidéliser vos clients.'}</p>
           </div>
         </div>
         {can && (
@@ -1565,7 +1893,8 @@ export default function AutomationEditorPage() {
         <fieldset disabled={!can} className="m-0 min-w-0 border-0 p-0">{content}</fieldset>
         <aside className="space-y-4">
           <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
-                             button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4}
+                             button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4 && s.scenario !== 'google_review'}
+                             bigImage={s.scenario === 'google_review' && step === 3}
                              note={s.scenario === 'geo' ? "Sur l'écran verrouillé, Apple affiche ce message près de votre établissement (Google Wallet, son propre texte). Un appui ouvre la carte, où le message et son bouton s'affichent." : undefined}
                              extra={s.scenario === 'near_reward' ? { visites_restantes: String(tr.visits_left || 1), visite_s: Number(tr.visits_left) > 1 ? 'visites' : 'visite' }
                                : s.scenario === 'tier_up' ? { palier: tr.condition === 'status' ? 'Or' : palierLabel(tr.condition, tiered ? cur.value : tr.threshold),
