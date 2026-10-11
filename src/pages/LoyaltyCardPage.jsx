@@ -489,7 +489,10 @@ export default function LoyaltyCardPage() {
                 (iOS 27, iOS 26, Google) — only its colour, nothing else (user, 2026-10-12) */}
             <Label>Couleur du nom (à côté du logo)</Label>
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
+              {/* « Couleur » is also the band's option below — name the group so
+                  a screen reader (and a test) can tell the two apart. */}
+              <div role="group" aria-label="Couleur du nom (à côté du logo)"
+                   className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
                 {[['', 'Automatique'], ['color', 'Couleur']].map(([k, l]) => {
                   const on = k ? Boolean(advanced.logo_text_color) : !advanced.logo_text_color;
                   return (
@@ -578,7 +581,8 @@ export default function LoyaltyCardPage() {
             <div>
               <Label>Bande du bas (sous le QR code)</Label>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
+                <div role="group" aria-label="Bande du bas (sous le QR code)"
+                     className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
                   {[['', 'Flou Apple'], ['color', 'Couleur']].map(([k, l]) => {
                     const on = k ? Boolean(footerHex) : !footerHex;
                     return (

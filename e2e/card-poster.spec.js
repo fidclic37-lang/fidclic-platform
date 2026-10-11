@@ -29,6 +29,11 @@ async function landscape(page) {
   });
 }
 
+// « Couleur » labels two different toggles on this page — the colour of the
+// shop's name beside the logo, and the colour of the band under the QR. Each
+// segmented control carries its own aria-label group; this is the band's.
+const band = (page) => page.getByRole('group', { name: 'Bande du bas (sous le QR code)' });
+
 test.describe.serial('the owner designs the iOS 27 card', () => {
   test.use({ viewport: { width: 1536, height: 960 } });
 
@@ -55,8 +60,9 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     await page.getByRole('button', { name: 'Utiliser ce cadre' }).click();
     await expect(page.getByText('Cadrage personnalisé')).toBeVisible();
 
-    // the band: a colour
-    await page.getByRole('button', { name: 'Couleur', exact: true }).click();
+    // the band: a colour. « Couleur » is also the name-colour option above,
+    // so always ask the band's own group for it.
+    await band(page).getByRole('button', { name: 'Couleur', exact: true }).click();
     // the shape: ★
     await page.getByRole('button', { name: /Étoile/ }).click();
     await expect(phone).toContainText('★★★☆☆☆☆☆☆☆');
@@ -106,7 +112,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     // the jauge, under the QR (in whichever shape the card has: the test before saved ◆)
     await expect(phone).toContainText(/TAMPONS · 3\/10/);
     await expect(phone).toContainText(/^.*[●◆★♥■]{3}[○◇☆♡□]{7}/s);
-    await expect(page.getByRole('button', { name: 'Couleur', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(band(page).getByRole('button', { name: 'Couleur', exact: true })).toHaveAttribute('aria-pressed', 'true');
 
     const bytes = await landscape(page);
     const field = page.getByText('Image de fond (optionnelle)', { exact: true }).locator('..');
