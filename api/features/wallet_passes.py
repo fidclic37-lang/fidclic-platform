@@ -2019,6 +2019,13 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
     if not existing:
         # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
         _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
+        try:                                     # Bienvenue (once per client, features/automations)
+            from features import automations as AU
+            full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
+            if full:
+                AU.wallet_added(full.get("tenant_id"), full, "apple")
+        except Exception as exc:
+            print(f"wallet: welcome not sent (non-fatal): {exc}")
     return Response(status_code=200 if existing else 201)
 
 

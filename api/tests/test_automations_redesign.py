@@ -202,7 +202,7 @@ def main():
     AU._segment_ids = real_seg
     check("a real client fills the preview", pv(mode="all")["sample"]["first_name"] in ("Alice", "Bruno", "Chloé"))
 
-    print("\n4. Bienvenue, à l'inscription, dans sa plage horaire")
+    print("\n4. Bienvenue, quand la carte arrive dans Wallet, dans sa plage horaire")
     wel = [r for r in http("GET", "/api/owner/automations").json()["rows"] if r["scenario"] == "welcome"][0]
     http("PUT", f"/api/owner/automations/{wel['id']}", json={
         "scenario": "welcome", "status": "active", "trigger": {},
@@ -213,11 +213,19 @@ def main():
     r = http("POST", "/api/join/cafe", headers={}, json={"name": "Dina Sow", "phone": "0611111111", "postal_code": "37000",
                                                          "birthday": "02/03/1995", "consent": True})
     dina = db.customers.find_one({"barcode_id": r.json().get("barcode_id")}) or {}
-    check(f"signing up sends the welcome at once ({r.status_code})",
+    check(f"signing up alone sends no welcome (user, 2026-10-11: « sirf Wallet add pe ») ({r.status_code})",
+          r.status_code == 200 and not [p for p in pushed if p["cid"] == dina.get("id")])
+    reg = lambda dev: http("POST", f"/api/passes/v1/devices/{dev}/registrations/pass.x/{dina['barcode_id']}",  # noqa: E731
+                           headers={"Authorization": "ApplePass " + WP._auth_token(dina["barcode_id"])}, json={"pushToken": "tok"})
+    r = reg("iphone-1")
+    check(f"the card added to Apple Wallet sends the welcome at once ({r.status_code})",
           [p["title"] for p in pushed if p["cid"] == dina.get("id")] == ["Bienvenue Dina 🎉"])
     check("its tap goes through the counted link, the button's text riding on it",
           (pushed[-1]["url"] or "").startswith(AU.public_base() + "/api/auto/c/") and "?b=Voir%20ma%20carte" in pushed[-1]["url"])
-    check("the welcome is never sent twice", AU.fire("welcome", "t1", dina) == [])
+    check("the welcome is never sent twice", AU.fire("welcome", "t1", dina, {"event": "wallet"}) == [])
+    reg("ipad-2")
+    check("…not even when a second device adds the card", len([p for p in pushed if p["cid"] == dina["id"]]) == 1)
+    check("a call without the Wallet event sends nothing", AU.fire("welcome", "t1", person("c-nowallet", "Sans Wallet")) == [])
     card = server._serialize_card_payload(db.customers.find_one({"id": dina["id"]}))
     check("the card shows it at the top with its button", card["auto_message"]["title"] == "Bienvenue Dina 🎉"
           and card["auto_message"]["button_label"] == "Voir ma carte")
@@ -236,7 +244,7 @@ def main():
     late = dt.datetime(2026, 10, 14, 21, 0, tzinfo=UTC)           # 23:00 in Paris
     eva = person("c4", "Eva Petit")
     pushed.clear()
-    res = AU.fire("welcome", "t1", eva, at=late)
+    res = AU.fire("welcome", "t1", eva, {"event": "wallet"}, at=late)
     q = db.automation_queue.find_one({"customer_id": "c4"})
     check("at 23:00 it is not sent, it waits", not pushed and res and res[0].get("queued") and q)
     check("…for 09:00 Paris the next morning", q["due_at"].replace(tzinfo=UTC) == dt.datetime(2026, 10, 15, 7, 0, tzinfo=UTC))

@@ -417,10 +417,10 @@ def main():
     welcome = next(r for r in db.automations.find({"tenant_id": "t1", "scenario": "welcome"}))
     db.automations.update_one({"id": welcome["id"]}, {"$set": {"status": "active", "schedule.window": False,
                                                                "schedule.valid_to": (paris.date() - dt.timedelta(days=1)).isoformat()}})
-    n = len([x for x in AU.fire("welcome", "t1", db.customers.find_one({"id": "c1"})) if not x.get("queued")])
+    n = len([x for x in AU.fire("welcome", "t1", db.customers.find_one({"id": "c1"}), {"event": "wallet"}) if not x.get("queued")])
     check("Bienvenue « Terminée »: a new client gets nothing", n == 0)
     db.automations.update_one({"id": welcome["id"]}, {"$set": {"schedule.valid_to": None}})
-    check("Bienvenue without a period: sent", len(AU.fire("welcome", "t1", db.customers.find_one({"id": "c1"}))) == 1)
+    check("Bienvenue without a period: sent", len(AU.fire("welcome", "t1", db.customers.find_one({"id": "c1"}), {"event": "wallet"})) == 1)
     bday = next(r for r in db.automations.find({"tenant_id": "t1", "scenario": "birthday"}))
     db.customers.update_one({"id": "c2"}, {"$set": {"birthday": paris.strftime("%m-%d")}})
     db.automations.update_one({"id": bday["id"]}, {"$set": {"status": "active", "last_run_at": None,

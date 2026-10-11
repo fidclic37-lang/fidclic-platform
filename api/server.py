@@ -6535,18 +6535,18 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
             parrainage = _record_referral(tid, req.parrain_barcode, cust_doc)
         except Exception as _e:
             print(f"join: referral not recorded (non-fatal): {_e}")
-    # Bienvenue — automatic: the shop's message and points (Carte de fidélité).
+    # Bienvenue points (Carte de fidélité). The Bienvenue MESSAGE waits for
+    # the card to land in Apple / Google Wallet (features/automations
+    # .wallet_added, user 2026-10-11: « sirf Wallet add pe »).
     welcome = None
     try:
         from features import auto_messages as _AM
         from features import automations as _AU
         _pts = _AM.credit_welcome_points(tid, cust_doc)       # Carte de fidélité › points de bienvenue
         _fresh = db.customers.find_one({"id": cust_doc["id"]}, {"_id": 0}) or cust_doc
-        _said = [x for x in _AU.fire("welcome", tid, _fresh) if x.get("title")]
         _AU.fire("custom", tid, _fresh, {"event": "signup"})                    # « Personnalisée »
-        if _said or _pts:
-            welcome = {"title": _said[0]["title"] if _said else None,
-                       "message": _said[0]["body"] if _said else None, "points": _pts}
+        if _pts:
+            welcome = {"title": None, "message": None, "points": _pts}
     except Exception as _e:
         print(f"join: welcome not sent (non-fatal): {_e}")
     # API & Intégrations: the business's webhooks hear about the new card.

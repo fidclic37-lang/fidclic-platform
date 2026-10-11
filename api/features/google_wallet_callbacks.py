@@ -164,6 +164,12 @@ async def google_callback(request: Request):
         return {"ok": True, "ignored": True}
     field = "google_removed_at" if event == "del" else "google_added_at"
     _db.customers.update_one({"id": cust["id"]}, {"$set": {field: _now()}})
+    if event == "save":
+        try:                                     # Bienvenue (once per client, features/automations)
+            from features import automations as AU
+            AU.wallet_added(cust["tenant_id"], cust, "google")
+        except Exception as exc:
+            print(f"google callback: welcome not sent (non-fatal): {exc}")
     return {"ok": True}
 
 
