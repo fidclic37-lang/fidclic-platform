@@ -368,8 +368,8 @@ const CardView = () => {
   // Real-time proximity push: when the wallet card page opens AND the user has
   // already granted geolocation, ping the backend with the current GPS. If the
   // customer is within the tenant's configured radius, a proximity push is
-  // logged and shown as a toast. Rate-limited on the server side by the
-  // tenant's geo_cooldown_days.
+  // logged and shown at the top of the card. Each Géolocalisation automation
+  // keeps its own gap per client on the server (« une fois tous les X jours »).
   useEffect(() => {
     if (!data?.customer?.id || !navigator.geolocation) return;
     // Only ping once per card view, and stay silent if permissions are denied

@@ -533,6 +533,7 @@ export const ownerAPI = {
   deleteAutomation: (id) => api.delete(`/owner/automations/${encodeURIComponent(id)}`),
   automationPreview: (body) => api.post('/owner/automations/preview', body),
   automationAiDraft: (objective) => api.post('/owner/automations/ai-draft', { objective }),
+  automationGeoZone: () => api.get('/owner/automations/geo/zone'),
   autoMessages: () => api.get('/owner/auto-messages'),
   saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
   // Paramètres › Établissement

@@ -23,6 +23,7 @@ MODULES = [
     "features.welcome_bonus",
     "features.auto_messages",
     "features.automations",               # Automatisations redesign (2026-10-11)
+    "features.geo_automation",            # Géolocalisation: Wallet lock screen + card (2026-10-11)
     "features.etablissement",
     "features.send_rules",
     "features.settings_versions",

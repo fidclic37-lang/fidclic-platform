@@ -4,11 +4,14 @@ import {
   ArrowLeft, ArrowRight, Check, Pencil, Info, CalendarDays, Clock, Users, Tags, Wallet, User, Smile, Image as ImageIcon, Hash, UserPlus,
   X, Loader2, Sparkles, Lightbulb, Power, MessageSquare, RefreshCw, MousePointerClick, MapPin, Euro, Repeat,
   Trophy, Plus, Trash2, Settings2, Briefcase, Link2, BarChart3, Globe, RotateCcw, ChevronDown, PlusCircle, Award,
+  Footprints, CloudSun, Flag, Store, Star, Navigation, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
-import WalletPreview from '../components/automations/WalletPreview';
+import LockScreenPreview from '../components/automations/LockScreenPreview';
+import GeoZoneMap from '../components/automations/GeoZoneMap';
 import {
-  ICONS, TONES, VAR_LABELS, DAY_NAMES, GENDERS, AGES, FREQS, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
+  ICONS, TONES, VAR_LABELS, VAR_SHORT, DAY_NAMES, GENDERS, AGES, FREQS, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
+  PASSANTS, RUSH, hLabel,
 } from '../components/automations/meta';
 import { EMOJIS } from '../components/campagnes/kinds';
 
@@ -36,7 +39,7 @@ const TRIGGERS = {
   birthday: { offset_days: 0 },
   tier_up: { condition: 'points', threshold: 200, repeat: 'each', min_days: 7, custom_tiers: false, tiers: [] },
   welcome: {}, near_reward: { visits_left: 1 }, referral: { side: 'parrain' },
-  geo: { cooldown_days: 7 }, google_review: { frequency: 'days', every_days: 30, stop_after_click: true },
+  geo: { cooldown_days: 7, weather: [], stores: [] }, google_review: { frequency: 'days', every_days: 30, stop_after_click: true },
   inactive: { days: 30, repeat: 'once', every_days: 30 },
   custom: { type: 'after_visit', visits: 5, visits_repeat: 'once', cooldown_days: 0, date_mode: 'once', date: '', weekday: 0, monthday: 1 },
 };
@@ -99,10 +102,73 @@ const defaults = (sc, meta) => ({
   trigger: { delay_value: 0, delay_unit: 'hours', ...(TRIGGERS[sc] || {}) },
   message: { title: meta?.title || '', body: meta?.body || '', image_url: null,
     button: { enabled: false, label: meta?.button || '', link_type: sc === 'tier_up' ? 'rewards' : 'card', offer_id: null, url: '' } },
-  targeting: { mode: 'all', segment: null, filters: { ...EMPTY_FILTERS } },
+  // a géolocalisation targets passers-by through its filters (« filtered »)
+  targeting: { mode: sc === 'geo' ? 'filtered' : 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS } },
   schedule: { days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6], hour: '10:00', smart: false,
-    window: meta?.kind !== 'time', window_from: '09:00', window_to: '21:00' },
+    window: meta?.kind !== 'time' && sc !== 'geo', window_from: '09:00', window_to: '21:00',
+    slots: [], holidays: true, valid_from: '', valid_to: '' },
 });
+const DAY_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+const frDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
+const overlaps = (slot, busy) => {
+  if (!busy) return false;
+  const h = (x) => Number(String(x).split(':')[0]);
+  const a = h(slot[2]); let b = h(slot[3]); if (b <= a) b += 24;
+  return a < busy[1] && busy[0] < b;
+};
+const hasSlot = (sc, from, to) => sc.window && (sc.slots || []).some((x) => x.from === from && x.to === to);
+
+// « Tous les âges » / « 18 – 25 ans, 26 – 35 ans » — a dropdown of ticks (step 2 conditions)
+function MultiPick({ label, icon: I, options, values, onChange, allLabel }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  const text = values.length ? options.filter(([k]) => values.includes(k)).map(([, l]) => l).join(', ') : allLabel;
+  return (
+    <div ref={ref} className="relative rounded-2xl border border-[#E6EEFB] p-3">
+      <p className="mb-1.5 flex items-center gap-2 text-[12.5px] font-semibold text-[#0B1C3F]">{I && <I size={15} className="text-[#1463FF]" />}{label}</p>
+      <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={() => setOpen((v) => !v)}
+              className={`${field} flex items-center justify-between gap-2 !py-2 text-left`}>
+        <span className="min-w-0 truncate !text-[13px]">{text}</span><ChevronDown size={15} className="shrink-0 text-[#475569]" />
+      </button>
+      {open && (
+        <div role="listbox" aria-multiselectable="true" className="absolute left-3 right-3 top-full z-30 mt-1 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] hover:bg-[#F8FAFC]">
+            <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={!values.length} onChange={() => onChange([])} /> {allLabel}</label>
+          {options.map(([k, l]) => (
+            <label key={k} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] hover:bg-[#F8FAFC]">
+              <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={values.includes(k)}
+                     onChange={() => onChange(values.includes(k) ? values.filter((x) => x !== k) : [...values, k])} /> {l}</label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// a row of ticks with « Tous » first (step 4 of a géolocalisation)
+function ChipRow({ title, sub, options, values, onChange, allLabel = 'Tous' }) {
+  const chip = (on) => `flex items-center gap-2 rounded-xl border px-3 py-2 text-[12.5px] font-medium ${on ? 'border-[#2F6BFF] bg-[#F5F8FF] text-[#0B1C3F]' : 'border-[#E2E8F0] bg-white text-[#334155] hover:border-[#BFD3FF]'}`;
+  return (
+    <div className="mt-4">
+      <p className="text-[13.5px] font-bold text-[#0B1C3F]">{title}</p>
+      {sub && <p className="mb-2 text-[12px] text-[#64748B]">{sub}</p>}
+      <div className="flex flex-wrap gap-2" role="group" aria-label={title}>
+        <label className={chip(!values.length)}><input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={!values.length} onChange={() => onChange([])} /> {allLabel}</label>
+        {options.map(([k, l]) => (
+          <label key={k} className={chip(values.includes(k))}>
+            <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={values.includes(k)}
+                   onChange={() => onChange(values.includes(k) ? values.filter((x) => x !== k) : [...values, k])} /> {l}</label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const Toggle = ({ on, onChange, label, disabled }) => (
   <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => onChange(!on)}
@@ -177,11 +243,21 @@ export default function AutomationEditorPage() {
   const [emoji, setEmoji] = useState('');
   const [tierTab, setTierTab] = useState(0);          // the palier whose words are being written (step 3)
   const [varMenu, setVarMenu] = useState('');         // « Insérer une variable »: 'title' | 'body' | ''
+  const [row, setRow] = useState(null);               // the saved automation (its results)
+  const [zone, setZone] = useState(null);             // géolocalisation: detections + weather now
   const titleRef = useRef(null);
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
   const lastFocus = useRef('body');
 
+  // the shop's one radius, and the establishments as an explicit list of ticks (none saved = all)
+  const geoInit = (trig, data) => {
+    const ids = (data.geo?.anchors || []).map((a) => a.id);
+    trig.radius_m = data.geo?.radius_m || 200;
+    trig.weather = trig.weather || [];
+    trig.stores = (trig.stores || []).filter((x) => ids.includes(x));
+    if (!trig.stores.length) trig.stores = ids;
+  };
   useEffect(() => {
     ownerAPI.automations().then(({ data }) => {
       setPage(data);
@@ -195,13 +271,17 @@ export default function AutomationEditorPage() {
         // a palier carried over from before the redesign has no condition: it is the statut
         if (row.scenario === 'tier_up' && !row.trigger?.condition) trig.condition = 'status';
         if (row.scenario === 'tier_up') trig.tiers = (trig.tiers || []).map((t) => ({ ...t, value: String(t.value), reward: t.reward || '' }));
-        setS({ ...d, name: row.name, status: row.status, trigger: trig,
+        if (row.scenario === 'geo') geoInit(trig, data);
+        setS({ ...d, name: row.name, status: row.status === 'ended' ? 'active' : row.status, trigger: trig,
           message: { ...d.message, ...row.message, button: { ...d.message.button, ...(row.message?.button || {}), url: row.message?.button?.url || '' } },
           targeting: { ...d.targeting, ...row.targeting, filters: {
             gender: asList(rf.gender, GENDERS), age: asList(rf.age, AGES), frequency: asList(rf.frequency, FREQS),
             spent: asList(rf.spent, SPENT), last_visit: asList(rf.last_visit, LAST_VISIT), stores: rf.stores || [],
             radius_km: rf.radius_km || null } },
-          schedule: { ...d.schedule, ...row.schedule, hour: row.schedule?.hour || '10:00' } });
+          schedule: { ...d.schedule, ...row.schedule, hour: row.schedule?.hour || '10:00', slots: row.schedule?.slots || [],
+            valid_from: row.schedule?.valid_from || '', valid_to: row.schedule?.valid_to || '',
+            holidays: row.schedule?.holidays !== false } });
+        setRow(row);
         const q = new URLSearchParams(location.search);
         if (q.get('step')) setStep(Math.min(6, Math.max(1, Number(q.get('step')) || 1)));
       } else {
@@ -211,6 +291,7 @@ export default function AutomationEditorPage() {
         const ai = location.state?.ai;
         if (ai?.title) d.message = { ...d.message, title: ai.title.slice(0, TITLE_MAX), body: (ai.body || '').slice(0, BODY_MAX) };
         if (ai?.title && sc === 'custom') d.name = ai.title.replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || d.name;
+        if (sc === 'geo') geoInit(d.trigger, data);
         const ex = EXAMPLES[Number(q.get('ex'))];
         if (ex && ex.scenario === sc) d.message = { ...d.message, title: ex.title, body: ex.body, button: { ...d.message.button, label: ex.button } };
         setS(d);
@@ -242,6 +323,13 @@ export default function AutomationEditorPage() {
     return () => { alive = false; clearTimeout(t0); };
   }, [tKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // géolocalisation: the clients detected near the shops (7 days) and the weather now
+  const geoOn = s?.scenario === 'geo';
+  useEffect(() => {
+    if (!geoOn) return;
+    ownerAPI.automationGeoZone().then(({ data }) => setZone(data)).catch(() => setZone({ points: [], clients_week: 0, clients_today: 0 }));
+  }, [geoOn]);
+
   if (error && !s) return <p role="alert" className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] text-[#B91C1C]">{error}</p>;
   if (!s || !page || !m) {
     return <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
@@ -272,7 +360,7 @@ export default function AutomationEditorPage() {
     if (s.scenario === 'inactive') return `Après ${tr.days || 30} jours sans visite${tr.repeat === 'every' ? `, puis tous les ${tr.every_days || 30} j` : ''}`;
     if (s.scenario === 'referral') return `Récompense de parrainage gagnée · ${tr.side === 'filleul' ? 'au filleul' : 'au parrain'}`;
     if (s.scenario === 'google_review') return tr.frequency === 'every_scan' ? 'Après chaque visite' : tr.frequency === 'once' ? 'Après une visite (une seule fois)' : `Après une visite (au plus tous les ${tr.every_days || 30} j)`;
-    if (s.scenario === 'geo') return `Entrée dans la zone (au plus tous les ${tr.cooldown_days || 7} j)`;
+    if (s.scenario === 'geo') return `Entrée dans la zone · ${tr.radius_m || 200} m (au plus tous les ${tr.cooldown_days || 7} j)`;
     if (s.scenario === 'custom') return customText(tr);
     if (s.scenario === 'tier_up') return tierText(tr);
     return m.trigger_label;
@@ -288,13 +376,22 @@ export default function AutomationEditorPage() {
       f.last_visit.length && `Dernière visite : ${names(f.last_visit, LAST_VISIT)}`,
       f.radius_km && `À moins de ${f.radius_km} km`,
       f.stores?.length && page.stores.filter((x) => f.stores.includes(x.id)).map((x) => x.name).join(', ')].filter(Boolean);
+    if (tg.mode === 'filtered') {
+      const p = (PASSANTS.find((x) => x[0] === (tg.passants || 'all')) || PASSANTS[0])[1];
+      return [p, ...extra].join(' · ');
+    }
     return tg.mode === 'all' ? base : [base, ...extra].join(' · ');
   };
   const daysText = () => (sc.days === 'all' ? 'Tous les jours' : sc.days === 'weekdays' ? 'Jours ouvrés'
     : sc.weekdays.map((d) => DAY_NAMES[d]).join(', ') || '—');
-  const planText = () => (timed
-    ? `${daysText()} à ${sc.smart && page.best_slot ? `${page.best_slot.from} (plage intelligente)` : sc.hour}`
-    : `${daysText()} · ${sc.window ? `entre ${sc.window_from} et ${sc.window_to}` : 'immédiat'}`);
+  const validText = () => (sc.valid_from || sc.valid_to
+    ? ` · ${sc.valid_from && sc.valid_to ? `du ${sc.valid_from.split('-').reverse().join('/')} au ${sc.valid_to.split('-').reverse().join('/')}`
+      : sc.valid_from ? `à partir du ${sc.valid_from.split('-').reverse().join('/')}` : `jusqu'au ${sc.valid_to.split('-').reverse().join('/')}`}` : '');
+  const planText = () => (s.scenario === 'geo'
+    ? `${sc.days === 'all' ? 'Tous les jours' : sc.weekdays.map((d) => DAY_NAMES[d]).join(', ')} · ${sc.window ? (sc.slots || []).map((x) => `${x.from}–${x.to}`).join(' / ') : 'toute la journée'}${validText()}`
+    : (timed
+      ? `${daysText()} à ${sc.smart && page.best_slot ? `${page.best_slot.from} (plage intelligente)` : sc.hour}`
+      : `${daysText()} · ${sc.window ? `entre ${sc.window_from} et ${sc.window_to}` : 'immédiat'}`) + validText());
 
   // ---- the checks (the server repeats them) --------------------------------------
   const problem = (n) => {
@@ -304,7 +401,11 @@ export default function AutomationEditorPage() {
       if (s.scenario === 'birthday') return num(Math.abs(Number(tr.offset_days || 0)), 0, 30, 'Jours');
       if (s.scenario === 'near_reward') return num(tr.visits_left, 1, 50, 'Visites avant la récompense');
       if (s.scenario === 'inactive') return num(tr.days, 7, 365, 'Jours sans visite') || (tr.repeat === 'every' ? num(tr.every_days, 7, 365, 'Répéter tous les') : '');
-      if (s.scenario === 'geo') return num(tr.cooldown_days, 1, 90, 'Délai entre deux messages');
+      if (s.scenario === 'geo') {
+        if (!(tr.stores || []).length) return 'Cochez au moins un établissement.';
+        if (!zoneSpots.length) return "La position de votre établissement est inconnue : placez-le sur la carte dans Paramètres › Établissement.";
+        return '';
+      }
       if (s.scenario === 'google_review' && tr.frequency === 'days') return num(tr.every_days, 1, 365, 'Fréquence');
       if (s.scenario === 'tier_up') {
         if (tr.repeat === 'custom' && num(tr.min_days, 1, 365, 'Délai minimum entre deux envois (jours)')) return num(tr.min_days, 1, 365, 'Délai minimum entre deux envois (jours)');
@@ -352,7 +453,14 @@ export default function AutomationEditorPage() {
     }
     if (n === 5) {
       if (sc.days === 'specific' && !sc.weekdays.length) return "Cochez au moins un jour d'envoi.";
-      if (!timed && sc.window && sc.window_to <= sc.window_from) return 'La fin de la plage horaire doit être après son début.';
+      if (s.scenario === 'geo') {
+        if (sc.window && !(sc.slots || []).length) return 'Ajoutez au moins une plage horaire, ou choisissez « Toute la journée ».';
+        if (sc.window && sc.slots.some((x) => x.from === x.to)) return 'Une plage horaire commence et finit à la même heure.';
+        const c = Number(tr.cooldown_days);
+        if (!Number.isInteger(c) || c < 1 || c > 90) return 'Fréquence par client : entre 1 et 90 jours.';
+      } else if (!timed && sc.window && sc.window_to <= sc.window_from) return 'La fin de la plage horaire doit être après son début.';
+      if (sc.valid_from && sc.valid_to && sc.valid_to < sc.valid_from) return 'La date de fin doit être après la date de début.';
+      if (sc.valid_to && sc.valid_to < new Date().toISOString().slice(0, 10) && s.status !== 'paused') return 'La date de fin est déjà passée : choisissez une nouvelle date.';
     }
     return '';
   };
@@ -370,8 +478,12 @@ export default function AutomationEditorPage() {
       title: (tiered ? String(tr.tiers[0]?.title || '') : msg.title).trim(),
       body: (tiered ? String(tr.tiers[0]?.body || '') : msg.body).trim(),
       button: { ...btn, url: btn.link_type === 'url' ? fullLink(btn.url) : null, offer_id: btn.link_type === 'offer' ? btn.offer_id : null } },
-    targeting: tg.mode === 'all' ? { mode: 'all', segment: null, filters: { ...EMPTY_FILTERS } } : tg,
-    schedule: { ...sc, hour: timed ? sc.hour : null },
+    ...(s.scenario === 'geo' ? { trigger: { cooldown_days: Number(tr.cooldown_days) || 7, weather: tr.weather || [], radius_m: Number(tr.radius_m) || 200,
+      // every establishment ticked = all of them (the ones opened later too)
+      stores: (tr.stores || []).length === geo.anchors.length ? [] : tr.stores } } : {}),
+    targeting: tg.mode === 'all' ? { mode: 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS } } : tg,
+    schedule: { ...sc, hour: timed ? sc.hour : null, slots: s.scenario === 'geo' && sc.window ? sc.slots : [],
+      valid_from: sc.valid_from || null, valid_to: sc.valid_to || null },
   });
   const save = async (status) => {
     if (status !== 'draft') {
@@ -511,15 +623,6 @@ export default function AutomationEditorPage() {
         <div className="grid gap-3 sm:grid-cols-2">
           <Option on={tr.side !== 'filleul'} onClick={() => setIn('trigger', { side: 'parrain' })} icon={Users} title="Au parrain" sub="Celui qui a invité : son ami est venu, il gagne ses points." />
           <Option on={tr.side === 'filleul'} onClick={() => setIn('trigger', { side: 'filleul' })} icon={User} title="Au filleul" sub="L'ami invité : il gagne ses points grâce à son parrain." />
-        </div>
-      )}
-      {s.scenario === 'geo' && (
-        <div className="space-y-3">
-          {!page.geo_ready && <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412]">Le rappel de proximité est désactivé : activez-le dans Paramètres › Établissement pour que ce message parte.</p>}
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[13px]">
-            <span className="font-semibold text-[#0B1C3F]">Au plus un message tous les</span>
-            <Num value={tr.cooldown_days} min={1} max={90} label="Délai entre deux messages" onChange={(v) => setIn('trigger', { cooldown_days: v })} /> <span>jours par client</span>
-          </div>
         </div>
       )}
       {s.scenario === 'google_review' && (
@@ -667,6 +770,229 @@ export default function AutomationEditorPage() {
     </Card>
   );
 
+  // ---- Géolocalisation (mockups 2026-10-11) -------------------------------------
+  const geo = page.geo || { anchors: [], radius_m: 200, live: {}, weather: [], busy: null, radii: [50, 100, 200, 500] };
+  const zoneSpots = geo.anchors.filter((a) => (tr.stores || []).includes(a.id));
+  const allDay = !sc.window && sc.days === 'all';
+  const slotsText = () => (sc.window ? (sc.slots || []).map((x) => `${hLabel(x.from)} – ${hLabel(x.to)}`).join(' / ') || '—' : 'Toute la journée');
+  const geoDays = () => (sc.days === 'all' ? 'Tous les jours' : sc.days === 'weekdays' ? 'Du lundi au vendredi' : sc.weekdays.map((d) => DAY_NAMES[d]).join(', ') || '—');
+  const periodText = () => (sc.valid_from || sc.valid_to
+    ? (sc.valid_from && sc.valid_to ? `Du ${frDate(sc.valid_from)} au ${frDate(sc.valid_to)}` : sc.valid_from ? `À partir du ${frDate(sc.valid_from)}` : `Jusqu'au ${frDate(sc.valid_to)}`)
+    : 'En continu');
+  const rushOn = RUSH.filter(([, , a, b]) => hasSlot(sc, a, b));
+  const weatherNames = (tr.weather || []).map((k) => (geo.weather.find((w) => w.key === k) || {}).label).filter(Boolean);
+  const setSlots = (slots) => setIn('schedule', { slots, window: slots.length > 0, ...(slots[0] ? { window_from: slots[0].from, window_to: slots[0].to } : {}) });
+  const setDays = (weekdays) => setIn('schedule', { weekdays, days: weekdays.length === 7 ? 'all' : 'specific' });
+  const geoProblems = [!geo.live?.enabled && ['Le rappel de proximité est désactivé', 'Activez-le dans Paramètres › Établissement pour que ce message parte.'],
+    geo.live?.plan === false && ['Géolocalisation hors de votre offre', 'Passez à une offre qui inclut la géolocalisation.'],
+    geo.live?.privacy === false && ['Géolocalisation coupée', 'Réactivez-la dans Données & confidentialité.'],
+    geo.live?.marketing === false && ['Communications marketing coupées', 'Réactivez-les dans Données & confidentialité.']].filter(Boolean);
+
+  const Step2Geo = (
+    <Card n={2} title="Zone de détection" sub="Définissez la zone autour de votre établissement où les passants recevront la notification.">
+      {geoProblems.map(([t, h]) => (
+        <p key={t} className="mb-3 flex items-start gap-2 rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412]"><AlertTriangle size={15} className="mt-0.5 shrink-0" /><span><b>{t}.</b> {h}</span></p>
+      ))}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <div className="min-w-0 space-y-4">
+          <div>
+            <Label>{geo.anchors.length > 1 ? 'Vos établissements' : 'Votre établissement'}</Label>
+            <div className="space-y-2">
+              {geo.anchors.map((a) => {
+                const on = (tr.stores || []).includes(a.id);
+                return (
+                  <div key={a.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${on ? 'border-[#BFD3FF] bg-[#F5F8FF]' : 'border-[#E2E8F0]'}`}>
+                    {geo.anchors.length > 1 ? (
+                      <input type="checkbox" aria-label={a.name} className="h-4 w-4 accent-[#1463FF]" checked={on}
+                             onChange={() => setIn('trigger', { stores: on ? tr.stores.filter((x) => x !== a.id) : [...tr.stores, a.id] })} />
+                    ) : <MapPin size={17} className="shrink-0 text-[#1463FF]" />}
+                    <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-semibold text-[#0B1C3F]">{geo.anchors.length > 1 ? a.name : (a.address || a.name)}</span>
+                      {geo.anchors.length > 1 && <span className="block truncate text-[11.5px] text-[#64748B]">{a.address || '—'}</span>}
+                      {a.lat == null && <span className="block text-[11.5px] text-[#B45309]">Position inconnue</span>}</span>
+                    <a href="/dashboard/parametres/etablissement" aria-label={`Modifier l'adresse de ${a.name}`} className="rounded-lg p-1.5 text-[#1463FF] hover:bg-white"><Pencil size={15} /></a>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <Label>Rayon de détection</Label>
+            <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Rayon de détection">
+              {[...new Set([...geo.radii, Number(tr.radius_m) || 200])].sort((x, y) => x - y).map((r) => (
+                <button key={r} type="button" role="radio" aria-checked={Number(tr.radius_m) === r} onClick={() => setIn('trigger', { radius_m: r })}
+                        className={`rounded-xl border py-2.5 text-[13px] font-semibold ${Number(tr.radius_m) === r ? 'border-[#1463FF] bg-[#1463FF] text-white' : 'border-[#E2E8F0] bg-white text-[#334155] hover:border-[#BFD3FF]'}`}>{r} m</button>
+              ))}
+            </div>
+            <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] leading-snug text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+              <span>Les clients qui passent dans ce rayon voient votre carte et ce message sur leur écran verrouillé (Apple et Google Wallet), sans rien ouvrir. Le téléphone décide lui-même de la distance exacte (environ 100 m). Ce rayon est celui de votre établissement : il vaut pour toutes vos automatisations géolocalisées.</span></p>
+          </div>
+        </div>
+        <GeoZoneMap anchors={zoneSpots} radius={Number(tr.radius_m) || 200} points={zone?.points || []} height={300} />
+      </div>
+
+      <div className="mt-5">
+        <p className="flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Clock size={17} className="text-[#1463FF]" /> Plage d'activation <span className="font-normal text-[#64748B]">(optionnel)</span></p>
+        <p className="mb-2 text-[12px] text-[#64748B]">Choisissez quand la zone de détection est active.</p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {[['all', 'Toute la journée', '24h/24, 7j/7', allDay, () => setIn('schedule', { window: false, days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6] })],
+            ['slots', 'Plages horaires', sc.window ? slotsText() : 'Ex : 11h – 14h / 17h – 21h', sc.window,
+              () => (sc.window ? setIn('schedule', { window: false }) : setSlots(sc.slots?.length ? sc.slots : [{ from: '11:00', to: '14:00' }, { from: '17:00', to: '21:00' }]))],
+            ['days', 'Jours spécifiques', sc.days !== 'all' ? geoDays() : 'Ex : du lundi au vendredi', sc.days !== 'all',
+              () => (sc.days !== 'all' ? setIn('schedule', { days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6] }) : setDays([0, 1, 2, 3, 4]))]].map(([k, l, h, on, click]) => (
+            <button key={k} type="button" onClick={click} aria-pressed={on}
+                    className={`flex items-start gap-2.5 rounded-xl border p-3 text-left ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
+              {on ? <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-[#1463FF]" /> : <span className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded-full border-2 border-[#CBD5E1]" />}
+              <span className="min-w-0"><span className="block text-[13px] font-semibold text-[#0B1C3F]">{l}</span><span className="block truncate text-[11.5px] text-[#64748B]">{h}</span></span>
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={() => go(5)} className="mt-1.5 text-[12px] font-semibold text-[#1463FF]">Régler les jours et les horaires en détail (Planification) →</button>
+      </div>
+
+      <div className="mt-4">
+        <p className="mb-2 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Settings2 size={17} className="text-[#1463FF]" /> Conditions supplémentaires <span className="font-normal text-[#64748B]">(optionnel)</span></p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <MultiPick label="Tranche d'âge" icon={Users} options={AGES} values={f.age} allLabel="Tous les âges" onChange={(v) => setF({ age: v })} />
+          <MultiPick label="Genre" icon={User} options={GENDERS} values={f.gender} allLabel="Tous" onChange={(v) => setF({ gender: v })} />
+          <MultiPick label="Météo" icon={CloudSun} options={geo.weather.map((w) => [w.key, w.label])} values={tr.weather || []} allLabel="Toutes les conditions"
+                     onChange={(v) => setIn('trigger', { weather: v })} />
+        </div>
+        <p className="mt-1.5 text-[11.5px] text-[#64748B]">
+          {zone?.weather_now ? `Météo actuelle près de votre établissement : ${zone.weather_now.labels.join(', ').toLowerCase()}, ${zone.weather_now.temp} °C. ` : ''}
+          L'âge et le genre sont les mêmes qu'à l'étape Ciblage. La météo se vérifie en direct (Froid : moins de 10 °C · Chaud : 25 °C et plus).</p>
+      </div>
+    </Card>
+  );
+
+  const Step4Geo = (
+    <Card n={4} title="Ciblage" sub="Affinez qui reçoit la notification selon vos critères.">
+      <p className="text-[13.5px] font-bold text-[#0B1C3F]">Type de passants</p>
+      <p className="mb-2 text-[12px] text-[#64748B]">Choisissez les profils de personnes à cibler.</p>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4" role="radiogroup" aria-label="Type de passants">
+        {PASSANTS.map(([k, l, h, v], i) => {
+          const on = (tg.passants || 'all') === k;
+          const I = [Users, UserPlus, RefreshCw, Star][i];
+          return (
+            <button key={k} type="button" role="radio" aria-checked={on} onClick={() => setIn('targeting', { passants: k })}
+                    className={`relative rounded-xl border p-3 text-left ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
+              <I size={20} className="mb-1.5 text-[#1463FF]" />
+              <span className="block pr-5 text-[13px] font-bold leading-tight text-[#0B1C3F]">{l}</span>
+              <span className="block text-[11.5px] leading-snug text-[#64748B]">{h}</span>
+              {v && <span className="block text-[11px] text-[#94A3B8]">{v}</span>}
+              {on && <CheckCircle2 size={17} className="absolute right-2 top-2 text-[#1463FF]" />}
+            </button>
+          );
+        })}
+      </div>
+      <ChipRow title="Tranche d'âge" sub="Sélectionnez la tranche d'âge de votre audience." options={AGES} values={f.age} allLabel="Tous les âges" onChange={(v) => setF({ age: v })} />
+      <ChipRow title="Genre (optionnel)" options={GENDERS} values={f.gender} onChange={(v) => setF({ gender: v })} />
+      <ChipRow title="Fréquence de visite" sub="Ciblez selon la fréquence des visites passées (si déjà clients)." options={FREQS} values={f.frequency} onChange={(v) => setF({ frequency: v })} />
+      <ChipRow title="Dernière visite" sub="Ciblez selon la dernière visite (si déjà clients)." options={LAST_VISIT} values={f.last_visit} onChange={(v) => setF({ last_visit: v })} />
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <div className="flex items-center gap-3 rounded-2xl bg-[#F1F6FF] p-3">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1463FF] text-white"><Users size={17} /></span>
+          <span className="flex-1 text-[12.5px] font-semibold text-[#0B1C3F]">Clients ciblés</span>
+          <span className="text-[18px] font-extrabold tabular-nums text-[#1463FF]">{preview ? preview.count.toLocaleString('fr-FR') : '…'}</span>
+        </div>
+        <div className="flex items-center gap-3 rounded-2xl bg-[#F0FDF4] p-3">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#059669] text-white"><Wallet size={17} /></span>
+          <span className="flex-1 text-[12.5px] font-semibold text-[#0B1C3F]">Clients joignables<span className="block text-[11px] font-normal text-[#475569]">carte Wallet ou notifications activées</span></span>
+          <span className="text-[18px] font-extrabold tabular-nums text-[#059669]">{preview?.reachable ? preview.reachable.total.toLocaleString('fr-FR') : '…'}</span>
+        </div>
+      </div>
+    </Card>
+  );
+
+  const slotOpts = [...HOURS, '23:59'].map((h) => [h, h.replace(':00', 'h').replace(':30', 'h30')]);
+  const Step5Geo = (
+    <Card n={5} title="Planification" sub="Définissez quand votre automatisation est active.">
+      <p className="text-[13.5px] font-bold text-[#0B1C3F]">Période d'activation</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <Option on={!sc.valid_from && !sc.valid_to} onClick={() => setIn('schedule', { valid_from: '', valid_to: '' })} icon={CalendarDays}
+                title="En continu" sub="L'automatisation reste active sans date de fin." />
+        <Option on={Boolean(sc.valid_from || sc.valid_to)} icon={CalendarDays} title="Période définie" sub="Choisissez une date de début et une date de fin."
+                onClick={() => { if (!sc.valid_from && !sc.valid_to) setIn('schedule', { valid_from: new Date().toISOString().slice(0, 10), valid_to: '' }); }} />
+      </div>
+      {(sc.valid_from || sc.valid_to) && (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="block"><Label>Date de début</Label><input type="date" aria-label="Date de début" className={field} value={sc.valid_from || ''} onChange={(e) => setIn('schedule', { valid_from: e.target.value })} /></label>
+          <label className="block"><Label>Date de fin</Label><input type="date" aria-label="Date de fin" className={field} value={sc.valid_to || ''} min={sc.valid_from || undefined} onChange={(e) => setIn('schedule', { valid_to: e.target.value })} /></label>
+        </div>
+      )}
+
+      <p className="mt-4 text-[13.5px] font-bold text-[#0B1C3F]">Jours de diffusion</p>
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7" role="group" aria-label="Jours de diffusion">
+        {DAY_FULL.map((d, i) => {
+          const on = sc.days === 'all' || (sc.days === 'weekdays' ? i < 5 : sc.weekdays.includes(i));
+          const cur = sc.days === 'all' ? [0, 1, 2, 3, 4, 5, 6] : sc.days === 'weekdays' ? [0, 1, 2, 3, 4] : sc.weekdays;
+          return (
+            <label key={d} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-2 text-[12.5px] font-medium ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0]'}`}>
+              <input type="checkbox" className="h-4 w-4 accent-[#1463FF]" checked={on} onChange={() => setDays(on ? cur.filter((x) => x !== i) : [...cur, i].sort())} /> {d}</label>
+          );
+        })}
+      </div>
+
+      <p className="mt-4 text-[13.5px] font-bold text-[#0B1C3F]">Horaires de diffusion</p>
+      <p className="mb-2 text-[12px] text-[#64748B]">Choisissez les plages horaires pendant lesquelles l'automatisation est active.</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Option on={!sc.window} onClick={() => setIn('schedule', { window: false })} icon={Clock} title="Toute la journée" sub="24h/24" />
+        <Option on={sc.window} onClick={() => { if (!sc.window) setSlots(sc.slots?.length ? sc.slots : [{ from: '11:00', to: '14:00' }, { from: '17:00', to: '21:00' }]); }}
+                icon={Clock} title="Plages horaires spécifiques" sub="Ex : 11h – 14h / 17h – 21h" />
+      </div>
+      {sc.window && (
+        <div className="mt-2 space-y-2">
+          {(sc.slots || []).map((x, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl bg-[#F8FAFC] p-2">
+              <span className="text-[12.5px] text-[#475569]">De</span>
+              <span className="w-28"><Select label={`Début de la plage ${i + 1}`} value={x.from} options={slotOpts} onChange={(v) => setSlots(sc.slots.map((y, j) => (j === i ? { ...y, from: v } : y)))} /></span>
+              <span className="text-[12.5px] text-[#475569]">à</span>
+              <span className="w-28"><Select label={`Fin de la plage ${i + 1}`} value={x.to} options={slotOpts} onChange={(v) => setSlots(sc.slots.map((y, j) => (j === i ? { ...y, to: v } : y)))} /></span>
+              {x.to < x.from && <span className="text-[11.5px] text-[#64748B]">(jusqu'au lendemain)</span>}
+              <button type="button" aria-label={`Retirer la plage ${i + 1}`} onClick={() => setSlots(sc.slots.filter((_, j) => j !== i))}
+                      className="ml-auto rounded-lg p-1.5 text-[#DC2626] hover:bg-[#FEF2F2]"><Trash2 size={15} /></button>
+            </div>
+          ))}
+          {(sc.slots || []).length < 6 && (
+            <button type="button" onClick={() => setSlots([...(sc.slots || []), { from: '09:00', to: '12:00' }])}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-[#BFD3FF] px-3 py-2 text-[12.5px] font-semibold text-[#1463FF]"><Plus size={14} /> Ajouter une plage</button>
+          )}
+        </div>
+      )}
+
+      <p className="mt-4 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]">Heures de forte affluence <span className="font-normal text-[#64748B]">(optionnel)</span></p>
+      <p className="mb-2 text-[12px] text-[#64748B]">{geo.busy ? `D'après les visites de vos clients, votre heure de pointe est ${geo.busy[0]}h – ${geo.busy[1]}h.` : "Pas encore assez de visites pour connaître vos heures de pointe : choisissez vos créneaux."}</p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {RUSH.map((r) => {
+          const [k, l, a, b] = r;
+          const on = hasSlot(sc, a, b);
+          return (
+            <label key={k} className={`relative flex cursor-pointer items-start gap-2 rounded-xl border p-2.5 ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0]'}`}>
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#1463FF]" checked={on}
+                     onChange={() => setSlots(on ? sc.slots.filter((x) => !(x.from === a && x.to === b)) : [...(sc.window ? sc.slots || [] : []), { from: a, to: b }])} />
+              <span><span className="block text-[12.5px] font-semibold text-[#0B1C3F]">{l}</span><span className="text-[11.5px] text-[#64748B]">{hLabel(a)} – {hLabel(b)}</span>
+                {overlaps(r, geo.busy) && <span className="mt-1 block w-fit rounded-full bg-[#DCFCE7] px-1.5 text-[10.5px] font-semibold text-[#047857]">Recommandé</span>}</span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex items-center gap-3 rounded-2xl border border-[#E6EEFB] p-3">
+        <Flag size={18} className="shrink-0 text-[#1463FF]" />
+        <span className="min-w-0 flex-1"><span className="block text-[13px] font-semibold text-[#0B1C3F]">Jours fériés <span className="font-normal text-[#64748B]">(optionnel)</span></span>
+          <span className="text-[12px] text-[#64748B]">Diffuser l'automatisation pendant les jours fériés.</span></span>
+        <Toggle label="Diffuser pendant les jours fériés" on={sc.holidays !== false} onChange={(v) => setIn('schedule', { holidays: v })} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[#E6EEFB] p-3 text-[13px]">
+        <RefreshCw size={18} className="shrink-0 text-[#1463FF]" />
+        <span className="font-semibold text-[#0B1C3F]">Fréquence par client :</span> au plus une fois tous les
+        <Num value={tr.cooldown_days} min={1} max={90} label="Délai entre deux messages" onChange={(v) => setIn('trigger', { cooldown_days: v })} /> jours
+      </div>
+      <p className="mt-3 flex items-start gap-2 text-[11.5px] text-[#64748B]"><Info size={13} className="mt-0.5 shrink-0" />
+        {page.tick ? 'Les cartes Wallet suivent ces jours, horaires et la météo, mises à jour toutes les 15 minutes.'
+          : "Quand la carte est ouverte, tout s'applique à la minute. Sur l'écran verrouillé, les cartes Wallet sont mises à jour une fois par jour ; à la minute près dès l'envoi programmé toutes les 15 minutes."}</p>
+    </Card>
+  );
+
   const VarMenu = ({ which }) => (
     <span className="relative shrink-0">
       <button type="button" onClick={() => { lastFocus.current = which; setVarMenu(varMenu === which ? '' : which); }}
@@ -723,10 +1049,9 @@ export default function AutomationEditorPage() {
         <VarMenu which="body" />
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="text-[12px] text-[#475569]">Variables disponibles :</span>
-        {variables.map((v) => (
-          <button key={v} type="button" title={VAR_LABELS[v] || v} onClick={() => insert(`{${v}}`)}
-                  className="rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]">{`{${v}}`}</button>
+        {(s.scenario === 'geo' ? ['prénom', 'établissement', 'offre', 'distance', ...variables.filter((v) => !['prénom', 'établissement', 'offre', 'distance'].includes(v))] : variables).map((v) => (
+          <button key={v} type="button" title={`${VAR_LABELS[v] || v} — {${v}}`} onClick={() => insert(`{${v}}`)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {VAR_SHORT[v] || v}</button>
         ))}
         <span className="relative">
           <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))} aria-label="Ajouter un emoji"
@@ -739,6 +1064,10 @@ export default function AutomationEditorPage() {
         </span>
       </div>
       {tiered && <p className="mt-2 text-[11.5px] text-[#64748B]">L'image et le bouton ci-dessous sont communs à tous les paliers.</p>}
+      {s.scenario === 'geo' && (
+        <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+          <span>Sur l'écran verrouillé, l'iPhone affiche ce message près de votre établissement ; Google Wallet y écrit son propre texte. Un appui ouvre la carte, où votre message et son bouton s'affichent. {'{distance}'} n'est connue que si la carte est ouverte : écrivez « à {'{distance}'} », cela donne « à 80 m », ou « à deux pas » sur l'écran verrouillé.</span></p>
+      )}
       <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={pickImage} />
       <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E6EEFB] p-4">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F1EAFF] text-[#7C3AED]"><ImageIcon size={18} /></span>
@@ -974,6 +1303,14 @@ export default function AutomationEditorPage() {
               : "Pas encore assez de visites pour trouver votre meilleur créneau : l'heure choisie s'applique."}</p>
         </div>
       )}
+      <div className="mt-3 rounded-2xl border border-[#E6EEFB] p-4">
+        <p className="flex items-center gap-3 text-[13.5px] font-bold text-[#0B1C3F]"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><CalendarDays size={18} /></span>
+          <span>Période de validité <span className="font-normal text-[#64748B]">(optionnel)</span><span className="block text-[12px] font-normal text-[#64748B]">L'automatisation part entre ces dates ; après la date de fin, elle passe « Terminée ».</span></span></p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="block"><Label>Date de début</Label><input type="date" aria-label="Date de début" className={field} value={sc.valid_from || ''} onChange={(e) => setIn('schedule', { valid_from: e.target.value })} /></label>
+          <label className="block"><Label>Date de fin (optionnel)</Label><input type="date" aria-label="Date de fin" className={field} value={sc.valid_to || ''} min={sc.valid_from || undefined} onChange={(e) => setIn('schedule', { valid_to: e.target.value })} /></label>
+        </div>
+      </div>
       {!page.tick && (
         <p className="mt-3 flex items-start gap-2 text-[11.5px] text-[#94A3B8]"><Info size={13} className="mt-0.5 shrink-0" />
           L'envoi à l'heure exacte arrive avec l'envoi programmé toutes les 15 minutes ; en attendant, les messages du jour partent avec l'envoi quotidien du matin.</p>
@@ -993,7 +1330,17 @@ export default function AutomationEditorPage() {
     <Card n={6} title="Résumé" sub="Vérifiez les paramètres de votre automatisation avant de l'enregistrer.">
       <div className="space-y-3">
         <Row n={1} icon={ScIcon} title="Scénario" sub={m.label}>{s.name || m.label}<span className="block text-[#64748B]">{m.sub}</span></Row>
-        <Row n={2} icon={CalendarDays} title="Déclencheur" sub={m.trigger_label}>{triggerText()}{delayText()}</Row>
+        {s.scenario === 'geo' ? (
+          <Row n={2} icon={Navigation} title="Zone de détection" sub={`Rayon : ${tr.radius_m || 200} m`}>
+            <span className="flex flex-wrap items-start gap-3">
+              <span className="w-full max-w-[200px] shrink-0"><GeoZoneMap anchors={zoneSpots} radius={Number(tr.radius_m) || 200} height={110} interactive={false} showPeople={false} /></span>
+              <span className="min-w-0 flex-1"><b>Rayon de détection :</b> {tr.radius_m || 200} m
+                <span className="block"><b>{zoneSpots.length > 1 ? 'Établissements' : 'Adresse'} :</b> {zoneSpots.map((a) => (zoneSpots.length > 1 ? a.name : a.address || a.name)).join(' · ') || '—'}</span>
+                <span className="block"><b>Zone active :</b> {allDay ? 'Toute la journée (24h/24, 7j/7)' : `${geoDays()} · ${slotsText()}`}</span>
+                {weatherNames.length > 0 && <span className="block"><b>Météo :</b> {weatherNames.join(' ou ')}</span>}</span>
+            </span>
+          </Row>
+        ) : <Row n={2} icon={CalendarDays} title="Déclencheur" sub={m.trigger_label}>{triggerText()}{delayText()}</Row>}
         <Row n={3} icon={MessageSquare} title="Message" sub="Notification Wallet">
           <span className="flex items-start gap-3"><span className="min-w-0 flex-1">
             {tiered ? tr.tiers.map((t, i) => (
@@ -1001,9 +1348,18 @@ export default function AutomationEditorPage() {
             )) : <><b>Titre :</b> {msg.title}<span className="block"><b>Message :</b> {msg.body}</span></>}
             {btn.enabled && <span className="block"><b>Bouton :</b> {btn.label}</span>}</span>
             {msg.image_url && <img src={msg.image_url} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />}</span></Row>
-        <Row n={4} icon={Users} title="Ciblage" sub={tg.mode === 'all' ? 'Tous mes clients' : tg.mode === 'wallet' ? 'Carte Wallet' : 'Segment'}>
-          {targetText()}<span className="block text-[#64748B]">{preview ? `${preview.count.toLocaleString('fr-FR')} client(s) ciblé(s) aujourd'hui` : ''}</span></Row>
-        <Row n={5} icon={Clock} title="Planification" sub={timed ? 'À heure fixe' : 'Dès l\'événement'}>{planText()}</Row>
+        <Row n={4} icon={Users} title="Ciblage" sub={tg.mode === 'all' ? 'Tous mes clients' : tg.mode === 'wallet' ? 'Carte Wallet' : tg.mode === 'filtered' ? 'Passants' : 'Segment'}>
+          {targetText()}<span className="block text-[#64748B]">{preview ? `${preview.count.toLocaleString('fr-FR')} client(s) ciblé(s) aujourd'hui${s.scenario === 'geo' && preview.reachable ? ` · ${preview.reachable.total.toLocaleString('fr-FR')} joignable(s)` : ''}` : ''}</span></Row>
+        {s.scenario === 'geo' ? (
+          <Row n={5} icon={Clock} title="Planification" sub={periodText()}>
+            <span className="block"><b>Période :</b> {periodText()}</span>
+            <span className="block"><b>Jours :</b> {geoDays()}</span>
+            <span className="block"><b>Horaires :</b> {slotsText()}</span>
+            {rushOn.length > 0 && <span className="block"><b>Heures de forte affluence :</b> {rushOn.map((r) => `${hLabel(r[2])} – ${hLabel(r[3])}`).join(' / ')}</span>}
+            <span className="block"><b>Jours fériés :</b> {sc.holidays !== false ? 'Activé' : 'Désactivé'}</span>
+            <span className="block"><b>Fréquence :</b> au plus une fois tous les {tr.cooldown_days || 7} jours par client</span>
+          </Row>
+        ) : <Row n={5} icon={Clock} title="Planification" sub={timed ? 'À heure fixe' : 'Dès l\'événement'}>{planText()}</Row>}
         <div className="flex items-center gap-3 rounded-2xl bg-[#F1FBF5] p-4">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#DCFCE7] text-[#059669]"><Power size={18} /></span>
           <span className="flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">Activer l'automatisation</span>
@@ -1036,7 +1392,128 @@ export default function AutomationEditorPage() {
     </section>
   );
 
-  const content = [null, Step1, Step2, Step3, Step4, Step5, Step6][step];
+  // ---- « Conseil FidClic AI »: tips from the settings and the shop's real data,
+  // « Optimisé » only when every tip of the step holds (user, 2026-10-11) ----------
+  const tipsFor = (n) => {
+    if (s.scenario !== 'geo') return ({ 3: [tips[0], tips[3]], 4: [tips[2]], 5: [tips[1]], 6: tips })[n] || [];
+    const out = [];
+    const busyTxt = geo.busy ? `${geo.busy[0]}h – ${geo.busy[1]}h` : '';
+    const covers = !sc.window || (sc.slots || []).some((x) => overlaps(['', '', x.from, x.to], geo.busy));
+    if ([2, 6].includes(n)) {
+      out.push(Number(tr.radius_m) <= 200 ? [true, `Un rayon de ${tr.radius_m} m touche les passants sans être intrusif.`]
+        : [false, "Sur l'écran verrouillé, le téléphone n'affiche la carte qu'à une centaine de mètres : un grand rayon sert surtout quand la carte est ouverte."]);
+    }
+    if ([2, 5, 6].includes(n) && geo.busy) {
+      out.push(covers ? [true, `Vos heures de pointe (${busyTxt}, d'après vos visites) sont couvertes.`]
+        : [false, `Activez la zone pendant vos heures de pointe : ${busyTxt}, d'après vos visites.`]);
+    }
+    if ([3, 6].includes(n)) {
+      const short = (msg.title || '').length <= 40 && (msg.body || '').length <= 120;
+      out.push(short ? [true, 'Message court et percutant : idéal pour un passant.']
+        : [false, 'Faites court : un passant lit en deux secondes (titre de 40 caractères, message de 120 au plus).']);
+      out.push(/\{offre\}|%|offert|gratuit|réduction|remise/i.test(words) ? [true, "Un avantage clair donne une raison d'entrer."]
+        : [false, 'Mettez en avant un avantage immédiat : une remise, un produit offert, {offre}.']);
+    }
+    if ([4, 6].includes(n)) {
+      out.push(preview?.reachable?.total ? [true, `${preview.reachable.total.toLocaleString('fr-FR')} client${preview.reachable.total > 1 ? 's peuvent' : ' peut'} recevoir ce message.`]
+        : [false, 'Aucun client joignable avec ce ciblage : élargissez-le, ou invitez vos clients à ajouter leur carte Wallet.']);
+    }
+    if ([5, 6].includes(n)) {
+      out.push(Number(tr.cooldown_days) >= 3 ? [true, `Au plus un message tous les ${tr.cooldown_days} jours : vos clients ne se sentent pas harcelés.`]
+        : [false, 'Espacez les messages (3 jours ou plus) pour ne pas lasser vos clients.']);
+    }
+    return out;
+  };
+  const stepTips = tipsFor(step);
+  const Conseil = stepTips.length > 0 && (
+    <section className="rounded-2xl border border-[#E9DDFE] bg-[#FAF7FF] p-4">
+      <p className="mb-2 flex items-center gap-2 text-[14px] font-bold text-[#0B1C3F]"><Sparkles size={17} className="text-[#7C3AED]" /> Conseil FidClic AI
+        {stepTips.every(([ok]) => ok) && <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-[#DCFCE7] px-2 py-0.5 text-[11px] font-semibold text-[#047857]"><CheckCircle2 size={12} /> Optimisé</span>}</p>
+      {stepTips.map(([ok, t]) => (
+        <p key={t} className={`flex items-start gap-2 py-1 text-[12.5px] ${ok ? 'text-[#14532D]' : 'text-[#7C2D12]'}`}>
+          {ok ? <Check size={15} className="mt-0.5 shrink-0 text-[#16A34A]" /> : <Lightbulb size={15} className="mt-0.5 shrink-0 text-[#D97706]" />} {t}</p>
+      ))}
+    </section>
+  );
+  const Panel = ({ icon: I, title, lines, children }) => (
+    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <p className="mb-1 flex items-center gap-2 text-[14px] font-bold text-[#0B1C3F]"><I size={17} className="text-[#1463FF]" /> {title}</p>
+      {lines?.map(([l, v]) => (
+        <div key={l} className="flex items-start gap-3 border-t border-[#EEF2F7] py-2 first:border-t-0">
+          <span className="w-36 shrink-0 text-[12.5px] text-[#475569]">{l}</span>
+          <span className="min-w-0 flex-1 break-words text-[12.5px] font-medium text-[#0B1C3F]">{v}</span>
+        </div>
+      ))}
+      {children}
+    </section>
+  );
+  const names = (vals, opts, all) => (vals.length ? vals.map((v) => (opts.find((x) => x[0] === v) || [])[1]).filter(Boolean).join(', ') : all);
+  const Stat = ({ icon: I, label, value, hint }) => (
+    <div className="flex items-center gap-3 border-t border-[#EEF2F7] py-2.5 first:border-t-0">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={17} /></span>
+      <span className="min-w-0 flex-1 text-[12.5px] text-[#475569]">{label}{hint && <span className="block text-[11px] text-[#94A3B8]">{hint}</span>}</span>
+      <span className="text-[18px] font-extrabold tabular-nums text-[#0B1C3F]">{value}</span>
+    </div>
+  );
+  const reach = preview?.reachable;
+  const res = row?.results;
+  const stepPanel = (() => {
+    if (step === 2 && s.scenario === 'geo') {
+      return (
+        <Panel icon={Users} title="Estimation de l'audience">
+          <Stat icon={Wallet} label="Clients joignables" value={reach ? reach.total.toLocaleString('fr-FR') : '…'}
+                hint={reach ? `${reach.wallet} avec carte Wallet · ${reach.push} avec notifications` : ''} />
+          <Stat icon={Footprints} label="Clients détectés près de vos établissements" value={zone ? zone.clients_week.toLocaleString('fr-FR') : '…'}
+                hint={zone ? `7 derniers jours · ${zone.clients_today} aujourd'hui (carte ouverte)` : ''} />
+        </Panel>
+      );
+    }
+    if (step === 4) {
+      return s.scenario === 'geo' ? (
+        <Panel icon={Users} title="Résumé du ciblage" lines={[
+          ['Type de passants', (PASSANTS.find((x) => x[0] === (tg.passants || 'all')) || PASSANTS[0])[1]],
+          ['Tranche d\'âge', names(f.age, AGES, 'Tous les âges')], ['Genre', names(f.gender, GENDERS, 'Tous')],
+          ['Fréquence de visite', names(f.frequency, FREQS, 'Tous')], ['Dernière visite', names(f.last_visit, LAST_VISIT, 'Tous')],
+          ['Météo', weatherNames.join(' ou ') || 'Toutes les conditions']]} />
+      ) : <Panel icon={Users} title="Résumé du ciblage" lines={[['Ciblage', targetText()], ['Clients ciblés', preview ? preview.count.toLocaleString('fr-FR') : '…']]} />;
+    }
+    if (step === 5) {
+      return s.scenario === 'geo' ? (
+        <Panel icon={CalendarDays} title="Résumé de la planification" lines={[['Période', periodText()], ['Jours de diffusion', geoDays()], ['Horaires', slotsText()],
+          ['Heures de forte affluence', rushOn.map((r) => `${hLabel(r[2])} – ${hLabel(r[3])}`).join(' / ') || '—'],
+          ['Jours fériés', sc.holidays !== false ? 'Oui' : 'Non'], ['Fréquence', `1 fois / ${tr.cooldown_days || 7} j par client`]]} />
+      ) : <Panel icon={CalendarDays} title="Résumé de la planification" lines={[['Planification', planText()]]} />;
+    }
+    if (step === 6) {
+      return (
+        <>
+          {s.scenario === 'geo' && (
+            <Panel icon={BarChart3} title="Résultats de l'automatisation">
+              {res && res.sent ? (
+                <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                  {[['Envoyés', res.sent, 'carte ouverte'], ['Clics', res.clicks, 'sur le bouton'], ['Visites', res.visits_24h, 'dans les 24 h']].map(([l, v, h]) => (
+                    <div key={l} className="rounded-xl bg-[#F5F8FF] p-2"><p className="text-[18px] font-extrabold tabular-nums text-[#0B1C3F]">{v.toLocaleString('fr-FR')}</p>
+                      <p className="text-[11.5px] font-semibold text-[#475569]">{l}</p><p className="text-[10.5px] text-[#94A3B8]">{h}</p></div>
+                  ))}
+                </div>
+              ) : <p className="text-[12.5px] text-[#475569]">Les résultats réels (messages envoyés, clics, visites dans les 24 h) s'afficheront ici après les premiers envois.</p>}
+              <p className="mt-2 text-[11px] text-[#94A3B8]">Les apparitions sur l'écran verrouillé (Wallet) ne sont pas communiquées par Apple et Google : elles ne sont pas comptées.</p>
+            </Panel>
+          )}
+          <section className="rounded-2xl border border-[#BFD3FF] bg-[#F5F8FF] p-4">
+            <p className="mb-1 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Info size={17} className="text-[#1463FF]" /> Prêt à enregistrer ?</p>
+            <p className="text-[12.5px] text-[#475569]">{editing ? 'Votre automatisation sera mise à jour et remplacera l\'ancienne version. Les prochaines notifications seront envoyées selon ces nouveaux paramètres.'
+              : s.status !== 'paused' ? 'Votre automatisation partira toute seule dès son prochain déclencheur.' : 'Votre automatisation sera enregistrée en pause : activez-la quand vous voulez.'}</p>
+          </section>
+        </>
+      );
+    }
+    return s.scenario === 'geo' ? null : Recap;
+  })();
+
+  const geoNew = s.scenario === 'geo' && !editing;
+  const createLabel = geoNew ? "Activer l'automatisation" : "Créer l'automatisation";
+  const content = [null, Step1, s.scenario === 'geo' ? Step2Geo : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : Step5, Step6][step];
   return (
     <div className="pb-10">
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
@@ -1044,8 +1521,9 @@ export default function AutomationEditorPage() {
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><ArrowLeft size={18} /></button>
           <div>
-            <h1 className="text-[25px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? 'Modifier une automatisation' : 'Créer une automatisation'}</h1>
-            <p className="text-[13.5px] text-[#475569]">{editing ? 'Modifiez les paramètres de cette automatisation pour mettre à jour vos notifications.' : 'Une notification qui part toute seule, au bon moment, pour fidéliser vos clients.'}</p>
+            <h1 className="text-[25px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? 'Modifier une automatisation' : geoNew ? 'Créer une automatisation géolocalisée' : 'Créer une automatisation'}</h1>
+            <p className="text-[13.5px] text-[#475569]">{editing ? 'Modifiez les paramètres de cette automatisation pour mettre à jour vos notifications.'
+              : geoNew ? 'Attirez les personnes qui passent devant votre établissement avec une offre au bon moment.' : 'Une notification qui part toute seule, au bon moment, pour fidéliser vos clients.'}</p>
           </div>
         </div>
         {can && (
@@ -1055,14 +1533,15 @@ export default function AutomationEditorPage() {
               {busy === 'draft' ? 'Enregistrement…' : 'Enregistrer en brouillon'}</button>
             <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
                     className="rounded-xl bg-[#1463FF] px-5 py-3 text-[13px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
-              {busy && busy !== 'draft' ? 'Enregistrement…' : editing ? 'Enregistrer les modifications' : "Créer l'automatisation"}</button>
+              {busy && busy !== 'draft' ? 'Enregistrement…' : editing ? 'Enregistrer les modifications' : createLabel}</button>
           </div>
         )}
       </header>
 
       <ol className="mb-5 flex items-start overflow-x-auto pb-1">
-        {STEPS.map(([label, sub], i) => {
+        {STEPS.map(([label0, sub], i) => {
           const n = i + 1;
+          const label = n === 2 && s.scenario === 'geo' ? 'Zone de détection' : label0;
           const done = n < step;
           const subText = n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
           return (
@@ -1085,28 +1564,15 @@ export default function AutomationEditorPage() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <fieldset disabled={!can} className="m-0 min-w-0 border-0 p-0">{content}</fieldset>
         <aside className="space-y-4">
-          <WalletPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
-                         button={btn.enabled ? btn.label : ''} sample={preview?.sample}
-                         extra={s.scenario === 'near_reward' ? { visites_restantes: String(tr.visits_left || 1), visite_s: Number(tr.visits_left) > 1 ? 'visites' : 'visite' }
-                           : s.scenario === 'tier_up' ? { palier: tr.condition === 'status' ? 'Or' : palierLabel(tr.condition, tiered ? cur.value : tr.threshold),
-                             'récompense': (tiered && cur.reward) || preview?.sample?.next_reward || 'votre récompense' } : {}} />
-          {step < 6 ? Recap : (
-            <>
-              <section className="rounded-2xl border border-[#BBF7D0] bg-[#F0FDF4] p-4">
-                <p className="mb-2 flex items-center gap-2 text-[14.5px] font-bold text-[#047857]"><Lightbulb size={18} /> Conseils FidClic AI</p>
-                {tips.every(([ok]) => ok) && <p className="mb-1 text-[12.5px] font-semibold text-[#14532D]">Votre automatisation est bien configurée !</p>}
-                {tips.map(([ok, t]) => (
-                  <p key={t} className={`flex items-start gap-2 py-1 text-[12.5px] ${ok ? 'text-[#14532D]' : 'text-[#9A3412]'}`}>
-                    {ok ? <Check size={16} className="mt-0.5 shrink-0 text-[#16A34A]" /> : <Info size={16} className="mt-0.5 shrink-0" />} {t}</p>
-                ))}
-              </section>
-              <section className="rounded-2xl border border-[#BFD3FF] bg-[#F5F8FF] p-4">
-                <p className="mb-1 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Info size={17} className="text-[#1463FF]" /> Prêt à enregistrer ?</p>
-                <p className="text-[12.5px] text-[#475569]">{editing ? 'Votre automatisation sera mise à jour et remplacera l\'ancienne version. Les prochaines notifications seront envoyées selon ces nouveaux paramètres.'
-                  : s.status !== 'paused' ? 'Votre automatisation partira toute seule dès son prochain déclencheur.' : 'Votre automatisation sera enregistrée en pause : activez-la quand vous voulez.'}</p>
-              </section>
-            </>
-          )}
+          <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
+                             button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4}
+                             note={s.scenario === 'geo' ? "Sur l'écran verrouillé, Apple affiche ce message près de votre établissement (Google Wallet, son propre texte). Un appui ouvre la carte, où le message et son bouton s'affichent." : undefined}
+                             extra={s.scenario === 'near_reward' ? { visites_restantes: String(tr.visits_left || 1), visite_s: Number(tr.visits_left) > 1 ? 'visites' : 'visite' }
+                               : s.scenario === 'tier_up' ? { palier: tr.condition === 'status' ? 'Or' : palierLabel(tr.condition, tiered ? cur.value : tr.threshold),
+                                 'récompense': (tiered && cur.reward) || preview?.sample?.next_reward || 'votre récompense' }
+                               : s.scenario === 'geo' ? { 'établissement': zoneSpots[0]?.name || page.shop } : {}} />
+          {stepPanel}
+          {Conseil}
         </aside>
       </div>
 
@@ -1124,7 +1590,7 @@ export default function AutomationEditorPage() {
         ) : can && (
           <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-7 py-3 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
-            {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editing ? 'Enregistrer les modifications' : "Créer l'automatisation"}
+            {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editing ? 'Enregistrer les modifications' : createLabel}
           </button>
         )}
       </footer>

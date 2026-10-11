@@ -204,9 +204,12 @@ VARIABLES = {
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
     "google_review": [], "inactive": ["jours_absence"], "custom": [],
 }
+VARIABLES["geo"] = ["établissement", "distance", "offre"]
 LINK_TYPES = ("card", "rewards", "offer", "google_review", "url")
 DAY_MODES = ("all", "specific", "weekdays")
-TARGET_MODES = ("all", "segment", "wallet")
+TARGET_MODES = ("all", "segment", "wallet", "filtered")
+# « Type de passants » (géolocalisation mockups, 2026-10-11): lifetime visits
+PASSANTS = {"new": (0, 0), "regular": (1, 10), "old": (11, None)}
 # « Filtres avancés » (palier mockups, 2026-10-11 — every automation): ticks
 # inside a group widen it (OR), groups narrow each other (AND); none = Tous.
 GENDERS = ("F", "M", "X")
@@ -242,7 +245,9 @@ def _default_trigger(scenario: str) -> Dict[str, Any]:
         "welcome": {},
         "near_reward": {"visits_left": 1},
         "referral": {"side": "parrain"},
-        "geo": {"cooldown_days": 7},
+        # Géolocalisation (mockups 2026-10-11): the gap per client, the weather
+        # asked (none = any), the establishments watched (none = all)
+        "geo": {"cooldown_days": 7, "weather": [], "stores": []},
         "google_review": {"frequency": "days", "every_days": 30, "stop_after_click": True},
         "inactive": {"days": 30, "repeat": "once", "every_days": 30},
         "custom": {"type": "after_visit", "visits": 5, "visits_repeat": "once", "cooldown_days": 0,
@@ -254,7 +259,8 @@ def _default_schedule(scenario: str) -> Dict[str, Any]:
     timed = is_timed(scenario, _default_trigger(scenario))
     return {"days": "all", "weekdays": [0, 1, 2, 3, 4, 5, 6],
             "hour": "10:00" if timed else None, "smart": False,
-            "window_from": "09:00", "window_to": "21:00", "window": not timed}
+            "window_from": "09:00", "window_to": "21:00", "window": not timed,
+            "slots": [], "holidays": True, "valid_from": None, "valid_to": None}
 
 
 def new_doc(tid: str, scenario: str, **over: Any) -> Dict[str, Any]:
@@ -267,7 +273,7 @@ def new_doc(tid: str, scenario: str, **over: Any) -> Dict[str, Any]:
         "message": {"title": meta["title"], "body": meta["body"], "image_url": None,
                     "button": {"enabled": False, "label": meta["button"], "link_type": "card",
                                "offer_id": None, "url": None}},
-        "targeting": {"mode": "all", "segment": None,
+        "targeting": {"mode": "filtered" if scenario == "geo" else "all", "segment": None, "passants": "all",
                       "filters": {"gender": [], "age": [], "frequency": [], "spent": [], "last_visit": [],
                                   "stores": [], "radius_km": None}},
         "schedule": _default_schedule(scenario),
@@ -425,7 +431,14 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
             cache[key] = _store_people(tid, row["store_ids"]) or set()
         if cust["id"] not in cache[key]:
             return False
-    # « Tous mes clients » = everyone: no filter applies (as in Campagnes, 2026-10-10)
+    # « Type de passants » (géolocalisation): never / a few times / many times
+    span = PASSANTS.get(tg.get("passants") or "all")
+    if span:
+        n = int(cust.get("visits") or 0)
+        if n < span[0] or (span[1] is not None and n > span[1]):
+            return False
+    # « Tous mes clients » = everyone: no filter applies (as in Campagnes, 2026-10-10);
+    # « filtered » (géolocalisation) = everyone, through the filters
     f = {} if mode == "all" else (tg.get("filters") or {})
 
     def within(value: Optional[float], ranges: List[Tuple[Any, Any]], half_open: bool = False) -> bool:
@@ -484,6 +497,12 @@ def _hm(s: Optional[str], default: Tuple[int, int]) -> Tuple[int, int]:
 
 
 def _day_ok(sched: Dict[str, Any], d: date) -> bool:
+    if sched.get("holidays") is False:
+        from features import geo_automation as GA
+        if GA.is_holiday(d):
+            return False                     # « Jours fériés » switched off
+    if not _valid_on(sched, d):
+        return False
     mode = sched.get("days") or "all"
     if mode == "weekdays":
         return d.weekday() < 5
@@ -506,27 +525,82 @@ def _send_hour(tid: str, sched: Dict[str, Any]) -> Tuple[int, int]:
     return _hm(sched.get("hour"), (10, 0))
 
 
-def next_window(sched: Dict[str, Any], at: datetime) -> datetime:
-    """The first moment at or after `at` inside the days and hours of an event
-    scenario. A window that never opens (no day ticked) answers far away."""
+def _valid_on(sched: Dict[str, Any], d: date) -> bool:
+    """« Période de validité » / « Période d'activation »: inside the dates."""
+    for key, after in (("valid_from", False), ("valid_to", True)):
+        raw = sched.get(key)
+        if not raw:
+            continue
+        try:
+            edge = date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        if (d > edge) if after else (d < edge):
+            return False
+    return True
+
+
+def slots_of(sched: Dict[str, Any]) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    """The hours a message may leave. No window = the whole day. A slot whose
+    end is before its start runs past midnight (« Nuit 21h – 8h »)."""
     if not sched.get("window", True):
-        days_only = True
-    else:
-        days_only = False
-    fh, fm = _hm(sched.get("window_from"), (0, 0))
-    th, tm = _hm(sched.get("window_to"), (23, 59))
-    if days_only or (fh, fm) >= (th, tm):
-        fh, fm, th, tm = 0, 0, 23, 59
+        return [((0, 0), (23, 59))]
+    raw = [x for x in (sched.get("slots") or []) if isinstance(x, dict)] or \
+        [{"from": sched.get("window_from"), "to": sched.get("window_to")}]
+    out = []
+    for x in raw:
+        a, b = _hm(x.get("from"), (0, 0)), _hm(x.get("to"), (23, 59))
+        if a != b:
+            out.append((a, b))
+    return out or [((0, 0), (23, 59))]
+
+
+def next_window(sched: Dict[str, Any], at: datetime) -> datetime:
+    """The first moment at or after `at` inside the days, hours, dates and
+    holidays of an event scenario. A window that never opens answers far away."""
     loc = _paris(at)
-    for i in range(0, 8):
+    best: Optional[datetime] = None
+    for i in range(-1, 15):                   # yesterday: a night slot may still run
         d = (loc + timedelta(days=i)).date()
         if not _day_ok(sched, d):
             continue
-        start, end = _from_paris(d, fh, fm), _from_paris(d, th, tm)
-        if i == 0 and at > end:
-            continue
-        return max(at, start)
-    return at + timedelta(days=3650)
+        for (fh, fm), (th, tm) in slots_of(sched):
+            start = _from_paris(d, fh, fm)
+            end = _from_paris(d, th, tm) if (th, tm) > (fh, fm) else _from_paris(d + timedelta(days=1), th, tm)
+            if (th, tm) == (23, 59):
+                end += timedelta(seconds=59)
+            if end < at:
+                continue
+            cand = max(at, start)
+            if best is None or cand < best:
+                best = cand
+    return best or at + timedelta(days=3650)
+
+
+def in_window(sched: Dict[str, Any], at: datetime) -> bool:
+    return next_window(sched, at) <= at + timedelta(seconds=30)
+
+
+def ended(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
+    """« Terminée »: its period's last day is behind us (Paris)."""
+    raw = (row.get("schedule") or {}).get("valid_to")
+    if not raw:
+        return False
+    try:
+        return _paris(at or _now()).date() > date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return False
+
+
+def running(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
+    """Active and inside its period (not « Terminée », already started)."""
+    if row.get("status") != "active" or ended(row, at):
+        return False
+    return _valid_on(row.get("schedule") or {}, _paris(at or _now()).date())
+
+
+def status_of(row: Dict[str, Any], at: Optional[datetime] = None) -> str:
+    return "ended" if row.get("status") == "active" and ended(row, at) else row.get("status") or "draft"
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +615,20 @@ def _render(text: str, cust: Dict[str, Any], tenant: Dict[str, Any], extra: Dict
         return core.render_template(out, {**cust, "tenant_id": tenant.get("id")}, tenant)
     except Exception:
         return out
+
+
+def _live_offer(tid: str) -> Optional[str]:
+    """{offre}: the shop's latest offer still running (Campagnes)."""
+    if not tid:
+        return None
+    try:
+        from features import campaign_kinds as K
+        for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}).sort("sent_at", -1).limit(20):
+            if c.get("kind") in K.OFFER_KINDS and K.is_live(c, _now()):
+                return (c.get("name") or "").strip() or None
+    except Exception:
+        pass
+    return None
 
 
 def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]:
@@ -569,6 +657,11 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
     if scenario == "geo":
         out["établissement"] = ctx.get("store") or ""
         out["etablissement"] = ctx.get("store") or ""
+        # {distance}: known when the card itself asked; on the lock screen « deux pas »
+        # (written « à {distance} » it reads « à 80 m » / « à deux pas »)
+        d = ctx.get("distance_m")
+        out["distance"] = f"{int(round(float(d) / 10.0) * 10)} m" if d is not None else "deux pas"
+        out["offre"] = _live_offer(cust.get("tenant_id") or ctx.get("tenant_id") or "") or "notre offre du moment"
     if scenario == "inactive":
         last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
         out["jours_absence"] = (_now() - last).days if last else ""
@@ -775,8 +868,18 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
         if _db.automation_log.find_one(q) or _db.automation_queue.find_one(q):
             return False
     elif sc == "geo":
+        from features import geo_automation as GA
+        want = set(tr.get("stores") or [])
+        if want and ctx.get("store_id") and ctx["store_id"] not in want:
+            return False                         # near an establishment this one does not watch
+        if not in_window(row.get("schedule") or {}, at):
+            return False                         # a passer-by does not wait for the window
         last = _db.automation_log.find_one(q, sort=[("sent_at", -1)])
         if last and at - _aware(last["sent_at"]) < timedelta(days=max(1, int(tr.get("cooldown_days") or 7))):
+            return False
+        spot = next((a for a in GA.zone(tid, row) if a["id"] == ctx.get("store_id")), None) or \
+            (GA.zone(tid, row) or [None])[0]
+        if not GA.weather_ok(tid, tr, spot, at):
             return False
     elif sc == "google_review":
         tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "google_review_url": 1, "google_reviews_enabled": 1}) or {}
@@ -878,6 +981,8 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
         base_ctx = ctx
         for row in _active(tid, scenario):
             ctx = dict(base_ctx)                   # each automation reads its own palier
+            if not running(row, at):
+                continue                           # « Terminée », or its period not begun
             try:
                 if not matches(tid, row, cust, at, cache) or not _eligible(tid, row, cust, ctx, at):
                     continue
@@ -965,7 +1070,8 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         _db.automation_queue.delete_one({"id": q["id"]})
         row = _db.automations.find_one({"id": q["automation_id"], "status": "active"}, {"_id": 0})
         cust = _db.customers.find_one({"id": q["customer_id"]}, {"_id": 0})
-        if not row or not cust or not _plan_ok(row["tenant_id"]) or not matches(row["tenant_id"], row, cust, at):
+        if not row or not cust or not _plan_ok(row["tenant_id"]) or not running(row, at) \
+                or not matches(row["tenant_id"], row, cust, at):
             continue
         try:
             if _deliver(row["tenant_id"], row, cust, q.get("ctx") or {}, at):
@@ -980,7 +1086,7 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         tid = row["tenant_id"]
         try:
             sched = row.get("schedule") or {}
-            if not _day_ok(sched, loc_today) or not _plan_ok(tid):
+            if not _day_ok(sched, loc_today) or not _plan_ok(tid) or not running(row, at):
                 continue
             last = _aware(row.get("last_run_at"))
             if last and _paris(last).date() == loc_today:
@@ -1097,6 +1203,10 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     clicks = sum(1 for x in logs if x.get("clicked_at"))
     out = {k: r.get(k) for k in ("id", "scenario", "name", "status", "trigger", "message", "targeting", "schedule",
                                  "store_ids")}
+    out["status"] = status_of(r)                  # « Terminée » once its period is over
+    if r["scenario"] == "geo":
+        from features import geo_automation as GA
+        out["results"] = GA.results(tid, r["id"])
     out.update({"label": meta["label"], "sub": meta["sub"], "icon": meta["icon"], "tone": meta["tone"],
                 "kind": "time" if is_timed(r["scenario"], r.get("trigger")) else "event",
                 "trigger_text": trigger_text(r), "schedule_text": schedule_text(r),
@@ -1189,22 +1299,37 @@ def trigger_text(r: Dict[str, Any]) -> str:
                 else "Au plus une fois par jour" if n == 1 else f"Au plus tous les {n} jours")
     if sc == "geo":
         n = int(tr.get("cooldown_days") or 7)
-        return "Au plus une fois par jour" if n == 1 else f"Au plus tous les {n} jours"
+        base = "Entrée dans la zone · " + ("au plus une fois par jour" if n == 1 else f"au plus tous les {n} jours")
+        w = [GEO_WEATHER[x] for x in tr.get("weather") or [] if x in GEO_WEATHER]
+        return base + (f" · météo : {' ou '.join(w).lower()}" if w else "")
     return SCENARIOS[sc]["trigger_label"]
 
 
 DAY_NAMES = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+GEO_WEATHER = {"sun": "Ensoleillé", "clouds": "Nuageux", "rain": "Pluie", "cold": "Froid", "hot": "Chaud"}
+
+
+def _fr_date(raw: Any) -> str:
+    try:
+        return date.fromisoformat(str(raw)[:10]).strftime("%d/%m/%Y")
+    except ValueError:
+        return ""
 
 
 def schedule_text(r: Dict[str, Any]) -> str:
     s = r.get("schedule") or {}
     days = {"all": "Tous les jours", "weekdays": "Jours ouvrés"}.get(s.get("days") or "all") or \
         ", ".join(DAY_NAMES[int(d)] for d in sorted(s.get("weekdays") or []))
+    period = ""
+    if s.get("valid_from") or s.get("valid_to"):
+        a, b = _fr_date(s.get("valid_from")), _fr_date(s.get("valid_to"))
+        period = f" · du {a} au {b}" if a and b else (f" · à partir du {a}" if a else f" · jusqu'au {b}")
     if is_timed(r["scenario"], r.get("trigger")):
-        return f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}"
+        return f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}{period}"
     if not s.get("window", True):
-        return f"{days} · immédiat"
-    return f"{days} · {s.get('window_from') or '09:00'}–{s.get('window_to') or '21:00'}"
+        return f"{days} · {'toute la journée' if r['scenario'] == 'geo' else 'immédiat'}{period}"
+    hours = " / ".join(f"{a[0]:02d}h{a[1]:02d}–{b[0]:02d}h{b[1]:02d}".replace("h00", "h") for a, b in slots_of(s))
+    return f"{days} · {hours}{period}"
 
 
 def _list(tid: str, token: TokenData) -> Dict[str, Any]:
@@ -1214,7 +1339,8 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
     rows = [_row_view(r, tid) for r in _db.automations.find(q, {"_id": 0}).sort([("order", 1), ("created_at", 1)])]
     active = sum(1 for r in rows if r["status"] == "active")
     counts = {"all": len(rows), "active": active, "paused": sum(1 for r in rows if r["status"] == "paused"),
-              "draft": sum(1 for r in rows if r["status"] == "draft")}
+              "draft": sum(1 for r in rows if r["status"] == "draft"),
+              "ended": sum(1 for r in rows if r["status"] == "ended")}
     from features import campaigns_page as CP
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1, "brand_fields": 1}) or {}
@@ -1240,11 +1366,43 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
         "has_position": CP._has_position(tid),
         "google_review_ready": bool(tenant.get("google_review_url") and tenant.get("google_reviews_enabled")),
         "geo_ready": bool(tenant.get("geo_enabled")),
+        "geo": _geo_page(tid, tenant),
         "shop": tenant.get("campaign_sender_name") or tenant.get("name") or "",
         "logo_url": (tpl.get("brand_fields") or {}).get("logo_url") or tpl.get("logo_url") or "",
         "can_edit": token.role in EDITORS,
         "tick": tick_seen(at),
     }
+
+
+def _geo_page(tid: str, tenant: Dict[str, Any]) -> Dict[str, Any]:
+    """Step 2 of a géolocalisation: the establishments, the shop's radius, what
+    lets it run, and the shop's busy hours (Insights) for « forte affluence »."""
+    from features import geo_automation as GA
+    busy = None
+    try:
+        from features import insights_page as IP
+        hrs = IP._hours(IP.Shop(tid, _now(), None))
+        if hrs:
+            busy = [int(hrs["busy"][0]), int(hrs["busy"][1])]
+    except Exception:
+        pass
+    return {"anchors": GA.anchors(tid), "radius_m": GA.radius_of(tenant), "live": GA.live(tid),
+            "weather": [{"key": k, "label": v} for k, v in GA.WEATHER.items()], "busy": busy,
+            "radii": list(GA.RADII_M)}
+
+
+@router.get("/api/owner/automations/geo/zone")
+def geo_zone(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    """The map's live layer: clients detected near a shop (card opened, rounded,
+    seven days), and the weather now — real data only."""
+    from features import geo_automation as GA
+    tid = token_data.tenant_id
+    at = _now()
+    spots = [a for a in GA.anchors(tid) if a["lat"] is not None]
+    w = GA.weather_now(tid, spots[0]["lat"], spots[0]["lng"], at) if spots else None
+    return {**GA.detections(tid, at),
+            "weather_now": ({"tags": w["tags"], "temp": round(w["temp"]), "labels": [GA.WEATHER[t] for t in w["tags"]]}
+                            if w else None)}
 
 
 @router.get("/api/owner/automations")
@@ -1280,6 +1438,7 @@ class FiltersIn(BaseModel):
 class TargetingIn(BaseModel):
     mode: str = "all"
     segment: Optional[str] = None
+    passants: Optional[str] = "all"
     filters: FiltersIn = FiltersIn()
 
 
@@ -1291,6 +1450,10 @@ class ScheduleIn(BaseModel):
     window: bool = True
     window_from: Optional[str] = "09:00"
     window_to: Optional[str] = "21:00"
+    slots: List[Dict[str, Any]] = []
+    holidays: bool = True
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
 
 
 class AutomationIn(BaseModel):
@@ -1343,6 +1506,20 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["side"] = tr_in["side"]
     elif sc == "geo":
         tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 7), 1, 90, "Délai entre deux messages")
+        weather = tr_in.get("weather") or []
+        if not isinstance(weather, list) or any(w not in GEO_WEATHER for w in weather):
+            raise HTTPException(status_code=400, detail="Météo : valeur inconnue.")
+        tr["weather"] = list(dict.fromkeys(weather))
+        from features import geo_automation as GA
+        spots = {a["id"]: a for a in GA.anchors(tid)}
+        stores = [x for x in dict.fromkeys(tr_in.get("stores") or []) if x in spots]
+        if len(spots) > 1 and tr_in.get("stores") and not stores:
+            raise HTTPException(status_code=400, detail="Cochez au moins un établissement.")
+        tr["stores"] = [] if len(stores) == len(spots) else stores
+        if not draft and not any(spots[x]["lat"] is not None for x in (tr["stores"] or list(spots))):
+            raise HTTPException(status_code=400, detail="La position de votre établissement est inconnue : placez-le sur la carte dans Paramètres › Établissement.")
+        if tr_in.get("radius_m") not in (None, ""):
+            tr["radius_m"] = _int(tr_in.get("radius_m"), 50, 2000, "Rayon de détection (m)")
     elif sc == "google_review":
         if tr_in.get("frequency", "days") not in GR_FREQS:
             raise HTTPException(status_code=400, detail="Fréquence inconnue.")
@@ -1450,6 +1627,9 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     t = body.targeting
     if t.mode not in TARGET_MODES:
         raise HTTPException(status_code=400, detail="Ciblage inconnu.")
+    passants = t.passants or "all"
+    if passants != "all" and passants not in PASSANTS:
+        raise HTTPException(status_code=400, detail="Type de passants inconnu.")
     if t.mode == "segment" and not t.segment:
         raise HTTPException(status_code=400, detail="Choisissez un segment.")
     f = t.filters
@@ -1488,24 +1668,58 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail="Heure d'envoi invalide.")
         hour = hh.group(0)
     wf, wt = (s.window_from or "09:00").strip(), (s.window_to or "21:00").strip()
+    hm = r"([01]\d|2[0-3]):([0-5]\d)"
+    slots: List[Dict[str, str]] = []
     if not timed and s.window:
-        for v in (wf, wt):
-            if not re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", v):
-                raise HTTPException(status_code=400, detail="Plage horaire invalide.")
-        if wt <= wf:
-            raise HTTPException(status_code=400, detail="La fin de la plage horaire doit être après son début.")
+        if s.slots:
+            # « Plages horaires spécifiques » (géolocalisation): several, a night one may pass midnight
+            if len(s.slots) > 6:
+                raise HTTPException(status_code=400, detail="6 plages horaires au maximum.")
+            for x in s.slots:
+                a, b = str((x or {}).get("from") or "").strip(), str((x or {}).get("to") or "").strip()
+                if not re.fullmatch(hm, a) or not re.fullmatch(hm, b):
+                    raise HTTPException(status_code=400, detail="Plage horaire invalide.")
+                if a == b:
+                    raise HTTPException(status_code=400, detail="Une plage horaire commence et finit à la même heure.")
+                if b < a and sc != "geo":
+                    raise HTTPException(status_code=400, detail="La fin de la plage horaire doit être après son début.")
+                if {"from": a, "to": b} not in slots:
+                    slots.append({"from": a, "to": b})
+            slots.sort(key=lambda x: x["from"])
+            wf, wt = slots[0]["from"], slots[0]["to"]
+        else:
+            for v in (wf, wt):
+                if not re.fullmatch(hm, v):
+                    raise HTTPException(status_code=400, detail="Plage horaire invalide.")
+            if wt <= wf:
+                raise HTTPException(status_code=400, detail="La fin de la plage horaire doit être après son début.")
+    valid: Dict[str, Optional[str]] = {}
+    for key, label in (("valid_from", "Date de début"), ("valid_to", "Date de fin")):
+        raw = (getattr(s, key) or "").strip()
+        if not raw:
+            valid[key] = None
+            continue
+        try:
+            valid[key] = date.fromisoformat(raw[:10]).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{label} invalide.")
+    if valid["valid_from"] and valid["valid_to"] and valid["valid_to"] < valid["valid_from"]:
+        raise HTTPException(status_code=400, detail="La date de fin doit être après la date de début.")
+    if not draft and body.status == "active" and valid["valid_to"] and valid["valid_to"] < _paris(_now()).date().isoformat():
+        raise HTTPException(status_code=400, detail="La date de fin est déjà passée : choisissez une nouvelle date pour l'activer.")
     name = re.sub(r"\s+", " ", body.name or "").strip()[:NAME_MAX] or SCENARIOS[sc]["label"]
     return {
         "scenario": sc, "name": name, "status": body.status, "trigger": tr,
         "message": {"title": title, "body": text, "image_url": img, "button": button},
-        "targeting": {"mode": t.mode, "segment": t.segment if t.mode == "segment" else None,
+        "targeting": {"mode": t.mode, "segment": t.segment if t.mode == "segment" else None, "passants": passants,
                       "filters": ({"gender": [], "age": [], "frequency": [], "spent": [], "last_visit": [],
                                    "stores": [], "radius_km": None} if t.mode == "all" else
                                   {**picked, "stores": stores, "radius_km": radius})},
         "schedule": {"days": s.days, "weekdays": weekdays if s.days == "specific" else [0, 1, 2, 3, 4, 5, 6],
                      "hour": hour, "smart": bool(s.smart) if timed else False,
                      "window": bool(s.window) if not timed else False,
-                     "window_from": wf, "window_to": wt},
+                     "window_from": wf, "window_to": wt, "slots": slots,
+                     "holidays": bool(s.holidays), **valid},
     }
 
 
@@ -1523,18 +1737,39 @@ def _guard(token: TokenData, row: Optional[Dict[str, Any]] = None) -> None:
         raise HTTPException(status_code=403, detail="Cette automatisation concerne d'autres établissements.")
 
 
+def _geo_saved(tid: str, data: Optional[Dict[str, Any]]) -> None:
+    """A géolocalisation saved: the shop's one radius follows step 2
+    (Paramètres › Établissement shows the same), and the passes follow."""
+    if data and data.get("scenario") == "geo":
+        r = (data.get("trigger") or {}).pop("radius_m", None)
+        if r:
+            _db.tenants.update_one({"id": tid}, {"$set": {"geo_radius_meters": int(r)}})
+
+
+def _wake_geo(tid: str) -> None:
+    try:
+        from features import geo_automation as GA
+        GA.sync_passes(tids=[tid])
+    except Exception as exc:
+        print(f"automations: geo passes not refreshed ({exc})")
+
+
 @router.post("/api/owner/automations")
 def create_automation(body: AutomationIn, token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id
     _guard(token_data)
     migrate(tid)
     data = clean(body, tid)
+    if data["scenario"] == "geo":
+        _geo_saved(tid, data)
     doc = new_doc(tid, data["scenario"])
     doc.update(data)
     doc["store_ids"] = _own_stores(token_data)
     doc["order"] = _db.automations.count_documents({"tenant_id": tid})
     doc["created_by"] = token_data.email
     _db.automations.insert_one(dict(doc))
+    if doc["scenario"] == "geo":
+        _wake_geo(tid)
     return _row_view(doc, tid)
 
 
@@ -1547,10 +1782,16 @@ def update_automation(aid: str, body: AutomationIn,
     if body.scenario != row["scenario"]:
         raise HTTPException(status_code=400, detail="Le scénario d'une automatisation ne change pas : créez-en une nouvelle.")
     data = clean(body, tid)
+    if data["scenario"] == "geo":
+        r = (data.get("trigger") or {}).pop("radius_m", None)
+        if r:
+            _db.tenants.update_one({"id": tid}, {"$set": {"geo_radius_meters": int(r)}})
     data["updated_at"] = _now()
     _db.automations.update_one({"id": aid}, {"$set": data})
     if data["status"] != "active":
         _db.automation_queue.delete_many({"automation_id": aid})
+    if data["scenario"] == "geo":
+        _wake_geo(tid)
     return _row_view(_own(tid, aid), tid)
 
 
@@ -1566,11 +1807,15 @@ def set_status(aid: str, body: StatusIn, token_data: TokenData = Depends(require
     if body.status not in ("active", "paused"):
         raise HTTPException(status_code=400, detail="Statut inconnu.")
     if body.status == "active":
+        if ended(row):
+            raise HTTPException(status_code=400, detail="Sa période de validité est terminée : modifiez la date de fin pour la réactiver.")
         # a draft is checked as a whole before it may run
         clean(AutomationIn(**{**row, "status": "active"}), tid)
     _db.automations.update_one({"id": aid}, {"$set": {"status": body.status, "updated_at": _now()}})
     if body.status != "active":
         _db.automation_queue.delete_many({"automation_id": aid})
+    if row["scenario"] == "geo":
+        _wake_geo(tid)
     return _row_view(_own(tid, aid), tid)
 
 
@@ -1593,6 +1838,8 @@ def delete_automation(aid: str, token_data: TokenData = Depends(require_role(EDI
     _guard(token_data, row)
     _db.automations.delete_one({"id": aid})
     _db.automation_queue.delete_many({"automation_id": aid})
+    if row["scenario"] == "geo":
+        _wake_geo(tid)
     return {"deleted": aid}
 
 
@@ -1668,10 +1915,16 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
     at = _now()
     cache: Dict[str, Any] = {}
     people = [c for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}) if matches(tid, row, c, at, cache)]
+    # « Clients joignables »: targeted AND reachable — a Wallet card (lock
+    # screen) or notifications switched on (web push)
+    subs = set(_db.push_subscriptions.distinct("customer_id", {"tenant_id": tid}))
+    wallet = sum(1 for c in people if _has_wallet(c))
+    push = sum(1 for c in people if c["id"] in subs)
+    either = sum(1 for c in people if c["id"] in subs or _has_wallet(c))
     sample = None
     if people:
         c = people[0]
         tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "reward_description": 1}) or {}
         sample = {"first_name": (c.get("name") or "").split(" ")[0] or "Sarah", "points": int(c.get("points") or 0),
                   "visits": int(c.get("visits") or 0), "next_reward": tpl.get("reward_description") or "votre récompense"}
-    return {"count": len(people), "sample": sample}
+    return {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}

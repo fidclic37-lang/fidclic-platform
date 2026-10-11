@@ -16,7 +16,7 @@ import { ICONS, TONES, STATUS } from '../components/automations/meta';
  * opens the six-step editor (AutomationEditorPage). The old page stays
  * unrouted as AutomationsPageLegacy.jsx.
  */
-const TABS = [['all', 'Toutes'], ['active', 'Actives'], ['paused', 'En pause'], ['draft', 'Brouillons']];
+const TABS = [['all', 'Toutes'], ['active', 'Actives'], ['paused', 'En pause'], ['draft', 'Brouillons'], ['ended', 'Terminées']];
 const SORTS = [['recent', 'Plus récentes'], ['old', 'Plus anciennes'], ['name', 'Nom (A → Z)'], ['reach', 'Plus de clients touchés']];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
 // the mockup's one-line taglines under each automation's name
@@ -195,6 +195,8 @@ export default function AutomationsPage() {
 
   const can = Boolean(d?.can_edit);
   const toggle = async (row) => {
+    // « Terminée »: its period is over — the end date is changed in Planification
+    if (row.status === 'ended') { navigate(`/dashboard/automations/${row.id}?step=5`); return; }
     setBusyRow(row.id); setError('');
     try {
       await ownerAPI.automationStatus(row.id, row.status === 'active' ? 'paused' : 'active');
@@ -294,7 +296,7 @@ export default function AutomationsPage() {
               </div>
             </div>
             <div className="mb-2 flex flex-wrap gap-1 border-b border-[#EEF2F7]">
-              {TABS.map(([k, l]) => (
+              {TABS.filter(([k]) => k !== 'ended' || d?.counts?.ended).map(([k, l]) => (
                 <button key={k} type="button" onClick={() => setTab(k)}
                         className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-semibold ${tab === k ? 'border-[#1463FF] text-[#1463FF]' : 'border-transparent text-[#475569] hover:text-[#0B1C3F]'}`}>
                   {l} ({nf(d?.counts?.[k])})

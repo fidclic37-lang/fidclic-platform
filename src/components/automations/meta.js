@@ -10,6 +10,7 @@ export const TONES = {
 
 export const STATUS = {
   active: ['Active', '#059669'], paused: ['En pause', '#64748B'], draft: ['Brouillon', '#B45309'],
+  ended: ['Terminée', '#94A3B8'],                 // its « période de validité » is over
 };
 
 // what each {variable} reads as in the chips and in the preview
@@ -19,7 +20,24 @@ export const VAR_LABELS = {
   visites_restantes: 'Visites restantes', visite_s: '« visite » ou « visites »', filleul: 'Prénom du filleul', parrain: 'Prénom du parrain',
   'points_gagnés': 'Points gagnés', visite_ami: '« est venu / est revenu »', 'établissement': 'Établissement le plus proche',
   jours_absence: "Jours d'absence", nom: 'Nom complet du client', 'récompense': 'Récompense du palier',
+  distance: 'Distance', offre: 'Offre en cours',
 };
+// the « + Prénom » chips of the message step (mockups, 2026-10-11)
+export const VAR_SHORT = {
+  'prénom': 'Prénom', nom: 'Nom du client', nom_commerce: 'Nom du commerce', points: 'Points', visites: 'Visites',
+  'prochaine_récompense': 'Prochaine récompense', points_manquants: 'Points manquants', palier: 'Palier',
+  visites_restantes: 'Visites restantes', visite_s: 'visite(s)', filleul: 'Filleul', parrain: 'Parrain',
+  'points_gagnés': 'Points gagnés', visite_ami: 'Venu / revenu', 'établissement': "Nom de l'établissement",
+  jours_absence: "Jours d'absence", 'récompense': 'Récompense', distance: 'Distance', offre: 'Offre',
+};
+// Géolocalisation (mockups 2026-10-11)
+export const PASSANTS = [
+  ['all', 'Tous les passants', 'Aucune restriction', ''], ['new', 'Nouveaux passants', 'Jamais venus', '0 visite'],
+  ['regular', 'Passants réguliers', 'Déjà venus quelques fois', '1 à 10 visites'], ['old', 'Anciens clients', 'Déjà venus plusieurs fois', '11 visites et plus'],
+];
+export const RUSH = [['matin', 'Matin', '08:00', '11:00'], ['midi', 'Midi', '11:00', '14:00'], ['apm', 'Après-midi', '14:00', '17:00'],
+  ['soir', 'Soir', '17:00', '21:00'], ['nuit', 'Nuit', '21:00', '08:00']];
+export const hLabel = (hm) => { const [h, m] = String(hm || '').split(':'); return `${Number(h)}h${m && m !== '00' ? m : ''}`; };
 
 export const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
@@ -68,6 +86,7 @@ export function fill(text, sample, shop, extra = {}) {
     points: String(s.points ?? 120), visites: String(s.visits ?? 5), 'prochaine_récompense': s.next_reward || 'votre récompense',
     points_manquants: '3', palier: 'Or', visites_restantes: '2', visite_s: 'visites', filleul: 'Léa', parrain: 'Marc',
     'points_gagnés': '50', visite_ami: 'est venu', 'établissement': shop || 'votre boutique', jours_absence: '45',
+    distance: '80 m', offre: 'notre offre du moment',
     first_name: s.first_name || 'Sarah', business_name: shop || 'votre commerce', ...extra,
   };
   return String(text || '').replace(/\{([^{}\s]+)\}/g, (m, k) => (k in v ? v[k] : m));
