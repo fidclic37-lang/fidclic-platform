@@ -144,6 +144,23 @@ def welcome(tid: str, cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
 
+def credit_welcome_points(tid: str, cust: Dict[str, Any]) -> int:
+    """The welcome points (Carte de fidélité), credited once. The welcome
+    MESSAGE is an automation now (features/automations, « Bienvenue »)."""
+    try:
+        from features.welcome_bonus import welcome_state
+        state = welcome_state(tid)
+        points = int(state.get("points") or 0) if state.get("active") else 0
+        if points and not _db.welcome_bonus_claims.find_one({"tenant_id": tid, "customer_id": cust["id"]}):
+            _db.customers.update_one({"id": cust["id"]}, {"$inc": {"points": points}})
+            _db.welcome_bonus_claims.insert_one({"tenant_id": tid, "customer_id": cust["id"],
+                                                 "points": points, "created_at": _now()})
+            return points
+    except Exception as exc:
+        print(f"auto_messages: welcome points failed ({exc})")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Avis Google — after a scan
 # ---------------------------------------------------------------------------

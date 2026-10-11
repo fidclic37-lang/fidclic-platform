@@ -855,12 +855,27 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Card not found")
     payload = core._serialize_card_payload(cust)
     _attach_campaign_offer(payload.get("card") or {}, cust)
+    _attach_auto_news(payload.get("card") or {}, cust)
     if isinstance(payload.get("card"), dict) and isinstance(cust.get("points_news"), dict):
         payload["card"]["points_news"] = cust["points_news"]          # features/referrals._announce
     return payload
 
 
 CAMPAIGN_OFFER_DAYS = 30
+
+
+def _attach_auto_news(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
+    """The latest Automatisation message, for the pass (features/automations):
+    the « Dernier message » field — whose change makes Apple raise the
+    lock-screen banner — and the action button's link on the back."""
+    try:
+        from features import automations as AU
+        full = _db.customers.find_one({"id": cust.get("id")}, {"_id": 0, "auto_news": 1}) or {}
+        news = AU.latest_for(full)
+        if news:
+            card["auto_news"] = news
+    except Exception as exc:
+        print(f"wallet: automation message lookup failed (non-fatal): {exc}")
 
 
 def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
@@ -1157,6 +1172,19 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         offer_url = CO.owner_url(_site_url(), serial, query={"offre": str(campaign_id)})
         back.insert(1, {"key": "offer_link", "label": "Voir l'offre", "value": offer_url,
                         "attributedValue": f'<a href="{offer_url}">Voir l\'offre en entier</a>'})
+    # Automatisations (2026-10-11): ALWAYS present — Wallet only rings for a
+    # field that changes, never for one that appears — and its button's link.
+    news = card.get("auto_news") if isinstance(card.get("auto_news"), dict) else None
+    if news:
+        # a parrainage message rides on the points field's banner: shown here, silently
+        back.insert(0, {"key": "news", "label": "Dernier message",
+                        "value": f"{news.get('title') or ''} — {news.get('body') or ''}".strip(" —").replace("%", ""),
+                        **({"changeMessage": "%@"} if news.get("pass", True) else {})})
+    else:
+        back.insert(0, {"key": "news", "label": "Dernier message", "value": "Aucun message pour le moment."})
+    if news and news.get("button_url") and news.get("button_label"):
+        back.insert(1, {"key": "news_link", "label": news["button_label"], "value": news["button_url"],
+                        "attributedValue": f'<a href="{news["button_url"]}">{news["button_label"]}</a>'})
     if card.get("tagline"):
         back.append({"key": "tagline", "label": org, "value": card["tagline"]})
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
@@ -2313,8 +2341,10 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
                     **({"alternateText": serial} if gd["alt_text"] == "card" else {})},
         **({"heroImage": {"sourceUri": {"uri": hero}}} if hero else {}),
         "textModulesData": modules[:10],
-        "linksModuleData": {"uris": [{"uri": f["value"], "description": "Voir l'offre en entier"}
-                                     for f in sc.get("backFields", []) if f["key"] == "offer_link"]
+        "linksModuleData": {"uris": [{"uri": f["value"], "description": f["label"]}       # Automatisations' button
+                                     for f in sc.get("backFields", []) if f["key"] == "news_link"]
+                            + [{"uri": f["value"], "description": "Voir l'offre en entier"}
+                               for f in sc.get("backFields", []) if f["key"] == "offer_link"]
                             + [{"uri": CO.owner_url(_site_url(), cust["barcode_id"]), "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
@@ -2356,7 +2386,7 @@ def google_save_url(payload: Dict[str, Any]) -> str:
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
 # the birthday message. Google allows 3 notifying messages per card per 24 h;
 # past that the message still lands in the card, silently.
-GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward", "tier_up"}
+GOOGLE_NOTIFY = {"campaign", "reward", "birthday", "parrainage", "near_reward", "tier_up", "automation"}
 
 
 def _gw_reason(body: Dict[str, Any]) -> str:
@@ -2405,10 +2435,11 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
                 obj["messages"] = []                   # sent below, with the notification
-            elif kind in ("birthday", "parrainage", "near_reward", "tier_up"):
+            elif kind in ("birthday", "parrainage", "near_reward", "tier_up", "automation"):
                 head = (notify.get("header") or {"birthday": "Joyeux anniversaire !", "parrainage": "Parrainage",
                                                  "near_reward": "Vous y êtes presque !",
-                                                 "tier_up": "Nouveau palier"}[kind]).strip()
+                                                 "tier_up": "Nouveau palier",
+                                                 "automation": "Nouveau message"}[kind]).strip()
                 message = {"id": f"{kind}-{int(time.time())}", "header": head[:60],
                            "body": ((notify.get("body") or "").strip() or head)[:300]}
             elif kind == "reward":

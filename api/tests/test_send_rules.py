@@ -88,7 +88,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a week below the day is refused", bad is False)
     v = SR.overview(token_data=OWNER())
     check("the page reads usage, the plan, the rules and the automatic messages",
-          {"usage", "plan", "rules", "automatic", "preview", "consent"} <= set(v) and len(v["automatic"]) == 5)
+          {"usage", "plan", "rules", "automatic", "preview", "consent"} <= set(v)
+          # one line per Automatisations scenario (redesign 2026-10-11: eight)
+          and [a["key"] for a in v["automatic"]] == ["birthday", "tier_up", "welcome", "near_reward", "referral", "geo",
+                                                     "google_review", "inactive"])
     check("usage counts what really went out this month", v["usage"]["sent"] >= 1)
 
     print(f"\n{passed} passed, {failed} failed")

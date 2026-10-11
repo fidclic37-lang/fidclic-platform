@@ -471,6 +471,21 @@ def _compute_points_to_next_reward(customer: dict, tenant_id: str) -> int:
         return 0
 
 
+def _auto_message_of(cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        from features import automations as _AU
+        return _AU.latest_for(cust)
+    except Exception:
+        return None
+
+
+def _tier_up(old: Optional[str], new: Optional[str]) -> bool:
+    """A palier gained (not lost) — « Atteinte d'un palier » congratulates only that."""
+    from features.loyalty_card import TIER_ORDER
+    o, n = (old or "bronze").lower(), (new or "bronze").lower()
+    return n in TIER_ORDER and TIER_ORDER.index(n) > (TIER_ORDER.index(o) if o in TIER_ORDER else 0)
+
+
 def render_template(content: str, customer: dict, tenant: dict = None) -> str:
     """Replace curly-brace placeholders in a campaign body with per-customer values.
     Missing values are silently replaced with a neutral fallback so the message never
@@ -5200,10 +5215,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception as _e:
         print(f"scan_visit: defis failed (non-fatal): {_e}")
 
-    # Automatic after a scan: the Google review request, at the shop's pace.
+    # Automatisations after a scan (features/automations): « Avis Google », and
+    # « Atteinte d'un palier » when this visit moved the client up.
     try:
-        from features import auto_messages as _AM
-        _AM.after_scan(token_data.tenant_id, cid)
+        from features import automations as _AU
+        _fresh = db.customers.find_one({"id": cid}, {"_id": 0}) or cust
+        if new_tier != previous_tier and _tier_up(previous_tier, new_tier):
+            _AU.fire("tier_up", token_data.tenant_id, _fresh)
+        _AU.fire("google_review", token_data.tenant_id, _fresh)
     except Exception as _e:
         print(f"scan_visit: automatic messages failed (non-fatal): {_e}")
 
@@ -5428,7 +5447,16 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     # once per card cycle — on a points card too.
     try:
         from features import auto_messages as _AM
-        fired["near_reward"] = _AM.near_reward(tenant_id, cust, card_template, cycle_start)
+        from features import automations as _AU
+        _left = _AM.visits_to_reward(tenant_id, cust, card_template)
+        if _left:
+            _said = [x for x in _AU.fire("near_reward", tenant_id, cust,
+                                         {"visits_left": _left,
+                                          "cycle": cycle_start.isoformat() if cycle_start else "first"})
+                     if x.get("title")]
+            # the Wallet card was already told by the automation itself
+            fired["near_reward"] = ({"title": _said[0]["title"], "body": _said[0]["body"], "deferred": True}
+                                    if _said else False)
     except Exception as _e:
         print(f"near_reward: not sent (non-fatal): {_e}")
 
@@ -6508,7 +6536,13 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     welcome = None
     try:
         from features import auto_messages as _AM
-        welcome = _AM.welcome(tid, cust_doc)
+        from features import automations as _AU
+        _pts = _AM.credit_welcome_points(tid, cust_doc)       # Carte de fidélité › points de bienvenue
+        _said = [x for x in _AU.fire("welcome", tid, db.customers.find_one({"id": cust_doc["id"]}, {"_id": 0}) or cust_doc)
+                 if x.get("title")]
+        if _said or _pts:
+            welcome = {"title": _said[0]["title"] if _said else None,
+                       "message": _said[0]["body"] if _said else None, "points": _pts}
     except Exception as _e:
         print(f"join: welcome not sent (non-fatal): {_e}")
     # API & Intégrations: the business's webhooks hear about the new card.
@@ -6872,6 +6906,9 @@ def _serialize_card_payload(cust: dict) -> dict:
         "offers": offers,
         # Campagnes › Défi (features/defis.py): running and won
         "defis": _defis_of(cust),
+        # Automatisations: the latest message and its action button, shown at
+        # the top of the card (a Wallet notification can't carry a button)
+        "auto_message": _auto_message_of(cust),
         "prefs": prefs,
         "notifications": _recent_push_notifications_for(cust["id"], cust["tenant_id"]),
     }
@@ -9951,33 +9988,8 @@ def get_proactive_alerts_multi_store(
         except Exception as _e:
             print(f"alerts: copilot hook failed (non-fatal): {_e}")
 
-    # Automatisations waiting for an OK — for whoever may give it.
-    try:
-        from features import push_wallet as _PW
-        _lots = _PW.pending_lots(token_data, scope)
-        # One alert per establishment (user, 2026-10-03: each shop its own
-        # alerts, never mixed). A batch with no establishment concerns the
-        # whole shop.
-        _names = {b.get("id"): b.get("name") for b in branches}
-        _by_store: Dict[Any, list] = {}
-        for _l in _lots:
-            _by_store.setdefault(_l.get("store_id"), []).append(_l)
-        for _sid, _group in _by_store.items():
-            _n = sum(int(l.get("count") or 0) for l in _group)
-            alerts_combined.append({
-                "id": ("pushwallet:pending:" + (f"{_sid}:" if _sid else "")
-                       + ",".join(sorted(l["id"] for l in _group)))[:160],
-                "severity": "warning",
-                "title": f"{len(_group)} envoi{'s' if len(_group) > 1 else ''} automatique{'s' if len(_group) > 1 else ''} à valider",
-                "body": f"{_n} client{'s' if _n > 1 else ''} au total. Rien ne part sans votre validation.",
-                "metric": str(len(_group)), "action": "/dashboard/automations?tab=pending",
-                "actions": _alert_actions("/dashboard/automations?tab=pending"),
-                "href": "/dashboard/automations?tab=pending",
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "branch_id": _sid, "branch_name": (_names.get(_sid) or _group[0].get("store_name")) if _sid else None,
-                "scope": "branch" if _sid else "shop"})
-    except Exception as _e:
-        print(f"alerts: automations hook failed (non-fatal): {_e}")
+    # Automatisations send by themselves since the redesign (2026-10-11):
+    # nothing waits for an OK, so no « à valider » alert any more.
 
     # A client deleted their card, or removed it from Apple Wallet (2026-10-09):
     # said once for the shop, newest first (features/card_status).
@@ -10995,30 +11007,22 @@ def proximity_ping(req: ProximityPingRequest):
     if not nearest or nearest["distance_m"] > radius_m:
         return {"status": "out_of_range", "distance_m": (nearest["distance_m"] if nearest else None)}
 
-    # In range — fire a push.
-    biz = tenant.get("campaign_sender_name") or tenant.get("name") or "votre boutique"
-    first_name = (cust.get("name") or "").split(" ")[0]
-    title = f"{biz} est juste à côté 👋"
-    body = (
-        f"Bonjour {first_name}, vous êtes tout près de {nearest['name'] or biz}. "
-        "Venez scanner votre carte — une attention vous attend !"
-    )
-    db.push_notifications.insert_one({
-        "customer_id": cust["id"],
-        "tenant_id": tid,
-        "title": title,
-        "body": body,
-        "type": "proximity",
-        "branch_id": nearest.get("id"),
-        "distance_m": int(nearest["distance_m"]),
-        "sent_at": datetime.now(timezone.utc),
-    })
+    # In range — the shop's « Géolocalisation » automation speaks (features/
+    # automations, 2026-10-11): its words, its button, its targeting and pace.
+    from features import automations as _AU
+    said = [x for x in _AU.fire("geo", tid, cust, {"store": nearest.get("name") or ""}) if x.get("title")]
+    if not said:
+        return {"status": "ignored", "reason": "no geolocation automation for this client"}
+    db.push_notifications.update_one({"log_id": said[0]["id"]}, {"$set": {
+        "branch_id": nearest.get("id"), "distance_m": int(nearest["distance_m"])}})
     return {
         "status": "sent",
         "branch_id": nearest.get("id"),
         "distance_m": int(nearest["distance_m"]),
-        "title": title,
-        "body": body,
+        "title": said[0]["title"],
+        "body": said[0]["body"],
+        "button_label": said[0].get("button_label"),
+        "button_url": said[0].get("click_url"),
     }
 
 
@@ -11731,8 +11735,10 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
     # Wrapped: a scenario that blows up must not stop the rest of the cron.
     push_wallet_summary = {"tenants": 0, "sent": 0}
     try:
-        from features.push_wallet import run_all_due
-        push_wallet_summary = run_all_due()
+        # Automatisations (2026-10-11): the new engine; the old Push Wallet
+        # scenarios were carried over and removed (features/automations.migrate)
+        from features.automations import run_due as _auto_run_due
+        push_wallet_summary = _auto_run_due(source="daily")
     except Exception as _e:
         print(f"push wallet runner failed (non-fatal): {_e}")
 

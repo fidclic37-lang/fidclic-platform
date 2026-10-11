@@ -224,7 +224,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           backc.get("offer_link", {}).get("value", "").startswith(f"{WP._site_url()}/card/FT-TEST0001?offre=camp-photo&k=")
           and 'href="' in backc["offer_link"].get("attributedValue", ""))
     check("campaign photo: the link sits right under the offer",
-          [f["key"] for f in pjc["storeCard"]["backFields"]][:2] == ["offer", "offer_link"])
+          (lambda ks: ks.index("offer_link") == ks.index("offer") + 1)([f["key"] for f in pjc["storeCard"]["backFields"]]))
+    check("« Dernier message » (Automatisations) opens the back, always there",
+          pjc["storeCard"]["backFields"][0]["key"] == "news")
     check("campaign photo: banner layout (nothing over the photo)", pjc["storeCard"]["primaryFields"] == [])
     zc = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
     top = _IM.open(io.BytesIO(zc.read("strip@3x.png"))).convert("RGB").getpixel((560, 60))

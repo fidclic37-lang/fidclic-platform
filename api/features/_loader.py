@@ -22,6 +22,7 @@ MODULES = [
     # Loyalty rules / config
     "features.welcome_bonus",
     "features.auto_messages",
+    "features.automations",               # Automatisations redesign (2026-10-11)
     "features.etablissement",
     "features.send_rules",
     "features.settings_versions",
