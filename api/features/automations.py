@@ -59,8 +59,8 @@ _db = None
 
 READERS = ["business_owner", "administrateur", "manager"]
 EDITORS = ["business_owner", "administrateur"]
-TITLE_MAX = 60
-BODY_MAX = 180
+TITLE_MAX = 80                 # the palier mockups (user, 2026-10-11): 80 / 350
+BODY_MAX = 350
 BUTTON_MAX = 30
 NAME_MAX = 60
 
@@ -124,9 +124,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "label": "Atteinte d'un palier", "sub": "Félicitez vos clients lorsqu'ils atteignent un nouveau palier.",
         "icon": "trophy", "tone": "amber", "kind": "event", "trigger_label": "Nouveau palier atteint",
         "push_kind": "tier_up", "google": "tier_up",
-        "title": "Bravo {prénom} ! 🏆",
-        "body": "Vous avez atteint le palier {palier} chez {nom_commerce}. Découvrez vos avantages !",
-        "button": "Voir mes avantages",
+        "title": "🏆 Bravo {prénom} !",
+        "body": "Vous avez atteint {palier} chez {nom_commerce} ! Découvrez votre récompense 🎁",
+        "button": "Voir ma récompense",
     },
     "welcome": {
         "label": "Bienvenue", "sub": "Accueillez chaque client dès son inscription.",
@@ -199,19 +199,31 @@ def is_timed(scenario: str, trigger: Optional[Dict[str, Any]] = None) -> bool:
 REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products", "special_event"}
 
 VARIABLES = {
-    "common": ["prénom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
-    "birthday": [], "tier_up": ["palier"], "welcome": [], "near_reward": ["visites_restantes", "visite_s"],
+    "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
+    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": [], "near_reward": ["visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
     "google_review": [], "inactive": ["jours_absence"], "custom": [],
 }
-LINK_TYPES = ("card", "offer", "google_review", "url")
+LINK_TYPES = ("card", "rewards", "offer", "google_review", "url")
 DAY_MODES = ("all", "specific", "weekdays")
 TARGET_MODES = ("all", "segment", "wallet")
-GENDERS = ("all", "F", "M", "X")
-AGES = {"all": None, "18-24": (18, 24), "25-34": (25, 34), "35-49": (35, 49), "50+": (50, 200)}
-FREQS = {"all": None, "weekly": (4, None), "monthly": (1, 4), "rare": (None, 1)}         # visits / 30 days
-SPENT = {"all": None, "<50": (0, 50), "50-200": (50, 200), "200-500": (200, 500), ">500": (500, None)}
-LAST_VISIT = {"all": None, "7": ("in", 7), "30": ("in", 30), "90": ("in", 90), ">30": ("out", 30), ">90": ("out", 90)}
+# « Filtres avancés » (palier mockups, 2026-10-11 — every automation): ticks
+# inside a group widen it (OR), groups narrow each other (AND); none = Tous.
+GENDERS = ("F", "M", "X")
+AGES = {"<18": (0, 17), "18-25": (18, 25), "26-35": (26, 35), "36-50": (36, 50), "50+": (51, 200)}
+FREQS = {"new": (0, 1), "occasional": (2, 3), "regular": (4, 10), "loyal": (11, None)}   # lifetime visits
+SPENT = {"<50": (0, 50), "50-100": (50, 100), "100-200": (100, 200), ">200": (200, None)}  # € spent, [lo, hi)
+LAST_VISIT = {"<7": (0, 7), "8-30": (8, 30), "1-3m": (31, 90), ">3m": (91, None)}         # days since
+RADII = (1, 2, 5, 10, 20, 50)
+
+
+def as_list(value: Any, allowed: Iterable[str]) -> List[str]:
+    """A filter as a list of known ticks — older single values ("all", "F"…) read too."""
+    allowed = set(allowed)
+    if value in (None, "", "all"):
+        return []
+    vals = value if isinstance(value, (list, tuple)) else [value]
+    return [v for v in dict.fromkeys(str(x) for x in vals) if v in allowed]
 GR_FREQS = ("every_scan", "days", "once")
 
 
@@ -221,15 +233,20 @@ GR_FREQS = ("every_scan", "days", "once")
 def _default_trigger(scenario: str) -> Dict[str, Any]:
     return {
         "birthday": {"offset_days": 0},
-        "tier_up": {},
+        # Atteinte d'un palier (mockups 2026-10-11): an owner threshold on
+        # points (earned since the start) / visits / € spent, or the card's
+        # statut; every multiple, the first time only, or with a minimum
+        # gap; or a list of paliers, each with its own message.
+        "tier_up": {"condition": "points", "threshold": 200, "repeat": "each", "min_days": 7,
+                    "custom_tiers": False, "tiers": []},
         "welcome": {},
         "near_reward": {"visits_left": 1},
         "referral": {"side": "parrain"},
         "geo": {"cooldown_days": 7},
         "google_review": {"frequency": "days", "every_days": 30, "stop_after_click": True},
         "inactive": {"days": 30, "repeat": "once", "every_days": 30},
-        "custom": {"type": "after_visit", "visits": 5, "cooldown_days": 0, "date_mode": "once", "date": None,
-                   "weekday": 0, "monthday": 1},
+        "custom": {"type": "after_visit", "visits": 5, "visits_repeat": "once", "cooldown_days": 0,
+                   "date_mode": "once", "date": None, "weekday": 0, "monthday": 1},
     }[scenario] | {"delay_value": 0, "delay_unit": "hours"}
 
 
@@ -251,8 +268,8 @@ def new_doc(tid: str, scenario: str, **over: Any) -> Dict[str, Any]:
                     "button": {"enabled": False, "label": meta["button"], "link_type": "card",
                                "offer_id": None, "url": None}},
         "targeting": {"mode": "all", "segment": None,
-                      "filters": {"gender": "all", "age": "all", "frequency": "all", "spent": "all",
-                                  "last_visit": "all", "stores": []}},
+                      "filters": {"gender": [], "age": [], "frequency": [], "spent": [], "last_visit": [],
+                                  "stores": [], "radius_km": None}},
         "schedule": _default_schedule(scenario),
         "created_at": now, "updated_at": now, "last_run_at": None, "store_ids": None,
     }
@@ -298,7 +315,7 @@ def migrate(tid: str) -> None:
                        **({"message": msg} if msg else {}), **over)
 
     docs.append(carried("birthday", "birthday"))
-    docs.append(carried("tier_up", "tier_up"))
+    docs.append(carried("tier_up", "tier_up", trigger={"condition": "status"}))
     inactive = old.get("inactive") or {}
     docs.append(carried("inactive", "inactive",
                         trigger={"days": int((inactive.get("config") or {}).get("days") or 30)}))
@@ -410,39 +427,49 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
             return False
     # « Tous mes clients » = everyone: no filter applies (as in Campagnes, 2026-10-10)
     f = {} if mode == "all" else (tg.get("filters") or {})
-    g = f.get("gender") or "all"
-    if g != "all" and (cust.get("gender") or "") != g:
+
+    def within(value: Optional[float], ranges: List[Tuple[Any, Any]], half_open: bool = False) -> bool:
+        if value is None:
+            return False
+        for lo, hi in ranges:
+            if value >= lo and (hi is None or (value < hi if half_open else value <= hi)):
+                return True
         return False
-    age_rng = AGES.get(f.get("age") or "all")
-    if age_rng:
+    g = as_list(f.get("gender"), GENDERS)
+    if g and (cust.get("gender") or "") not in g:
+        return False
+    ages = as_list(f.get("age"), AGES)
+    if ages:
         from services import customer_fields as CF
-        age = CF.age_of(cust.get("birth_date"))
-        if age is None or not (age_rng[0] <= age <= age_rng[1]):
+        if not within(CF.age_of(cust.get("birth_date")), [AGES[a] for a in ages]):
             return False
-    spent_rng = SPENT.get(f.get("spent") or "all")
-    if spent_rng:
-        s = float(cust.get("total_amount_paid") or 0)
-        lo, hi = spent_rng
-        if s < lo or (hi is not None and s >= hi):
-            return False
-    lv = LAST_VISIT.get(f.get("last_visit") or "all")
+    spent = as_list(f.get("spent"), SPENT)
+    if spent and not within(float(cust.get("total_amount_paid") or 0), [SPENT[x] for x in spent], half_open=True):
+        return False
+    lv = as_list(f.get("last_visit"), LAST_VISIT)
     if lv:
-        last = _aware(cust.get("last_visit_date"))
-        days = (at - last).days if last else 10 ** 6
-        if lv[0] == "in" and days > lv[1]:
+        last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
+        if not within((at - last).days if last else None, [LAST_VISIT[x] for x in lv]):
             return False
-        if lv[0] == "out" and days <= lv[1]:
-            return False
-    fr = FREQS.get(f.get("frequency") or "all")
-    if fr:
-        n = _visits_30(tid, cust["id"], at)
-        lo, hi = fr
-        if (lo is not None and n < lo) or (hi is not None and n >= hi):
-            return False
+    fr = as_list(f.get("frequency"), FREQS)
+    if fr and not within(int(cust.get("visits") or 0), [FREQS[x] for x in fr]):
+        return False
     if f.get("stores"):
         key = ("stores", tuple(sorted(f["stores"])))
         if key not in cache:
             cache[key] = _store_people(tid, f["stores"]) or set()
+        if cust["id"] not in cache[key]:
+            return False
+    km = f.get("radius_km")
+    if km:
+        key = ("radius", float(km))
+        if key not in cache:
+            try:
+                from features import campaign_kinds as K
+                everyone = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
+                cache[key] = {c["id"] for c in K.zone_people(tid, everyone, float(km))[0]}
+            except Exception:
+                cache[key] = set()             # no shop position: nobody is « within »
         if cust["id"] not in cache[key]:
             return False
     return True
@@ -519,12 +546,18 @@ def _render(text: str, cust: Dict[str, Any], tenant: Dict[str, Any], extra: Dict
 def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]:
     reward = tpl.get("reward_description") or "votre récompense"
     out: Dict[str, Any] = {"prochaine_récompense": reward, "prochaine_recompense": reward}
+    out["nom"] = cust.get("name") or ""
     if scenario == "tier_up":
-        try:
-            from features.loyalty_card import TIER_LABELS
-            out["palier"] = TIER_LABELS.get((cust.get("tier") or "").lower(), (cust.get("tier") or "").title())
-        except Exception:
-            out["palier"] = (cust.get("tier") or "").title()
+        if ctx.get("palier"):
+            out["palier"] = ctx["palier"]
+        else:
+            try:
+                from features.loyalty_card import TIER_LABELS
+                out["palier"] = TIER_LABELS.get((cust.get("tier") or "").lower(), (cust.get("tier") or "").title())
+            except Exception:
+                out["palier"] = (cust.get("tier") or "").title()
+        # {récompense}: the palier's own reward (paliers personnalisés), else the card's
+        out["récompense"] = out["recompense"] = ctx.get("tier_reward") or reward
     if scenario == "near_reward":
         left = int(ctx.get("visits_left") or 1)
         out.update({"visites_restantes": left, "visite_s": "visite" if left == 1 else "visites",
@@ -554,6 +587,8 @@ def _target_url(tid: str, row: Dict[str, Any], cust: Dict[str, Any]) -> Optional
         return safe_url(btn.get("url"))
     if t == "google_review":
         return f"{public_base()}/api/avis/{serial}"
+    if t == "rewards":                              # « Page Récompenses »: the card's offers and rewards
+        return CO.owner_url(public_base(), serial, path="/offres")
     if t == "offer" and btn.get("offer_id"):
         return CO.owner_url(public_base(), serial, query={"offre": str(btn["offer_id"])})
     return CO.owner_url(public_base(), serial)
@@ -578,8 +613,11 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     extra = _extra(scenario, cust, ctx, tpl)
     msg = row.get("message") or {}
-    title = _render(msg.get("title") or meta["title"], cust, tenant, extra)[:120]
-    body = _render(msg.get("body") or meta["body"], cust, tenant, extra)[:400]
+    # a palier of its own (paliers personnalisés) speaks its own words
+    raw_title = ctx.get("tier_title") or msg.get("title") or meta["title"]
+    raw_body = ctx.get("tier_body") or msg.get("body") or meta["body"]
+    title = _render(raw_title, cust, tenant, extra)[:160]
+    body = _render(raw_body, cust, tenant, extra)[:600]
     target = _target_url(tid, row, cust)
     log_id = str(uuid.uuid4())
     click = f"{public_base()}/api/auto/c/{log_id}" if target else None
@@ -591,6 +629,8 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
            "clicked_at": None, "status": "sent"}
     if ctx.get("cycle"):
         log["cycle"] = ctx["cycle"]
+    if ctx.get("level") is not None:
+        log["level"] = ctx["level"]
     _db.automation_log.insert_one(dict(log))
     _db.push_notifications.insert_one({"tenant_id": tid, "customer_id": cust["id"], "type": meta["push_kind"],
                                        "title": title, "body": body, "sent_at": at, "automatic": True,
@@ -649,6 +689,74 @@ def _plan_ok(tid: str) -> bool:
         return True
 
 
+TIER_CONDITIONS = ("points", "visits", "amount", "status")
+TIER_REPEATS = ("each", "first", "custom")
+TIER_RANK = {"bronze": 0, "silver": 1, "gold": 2, "vip": 3}
+
+
+def lifetime_points(tid: str, cid: str) -> int:
+    """Points earned since the start — never lowered by a reward (user,
+    2026-10-11): visits, welcome bonus and parrainage points."""
+    total = sum(int(v.get("points_awarded") or 0) for v in
+                _db.visits.find({"tenant_id": tid, "customer_id": cid}, {"_id": 0, "points_awarded": 1}))
+    total += sum(int(w.get("points") or 0) for w in
+                 _db.welcome_bonus_claims.find({"tenant_id": tid, "customer_id": cid}, {"_id": 0, "points": 1}))
+    for r in _db.referral_redemptions.find({"tenant_id": tid, "$or": [{"referrer_customer_id": cid},
+                                                                      {"referee_customer_id": cid}]}, {"_id": 0}):
+        if r.get("referrer_customer_id") == cid:
+            total += int(r.get("referrer_points") or 0)
+        if r.get("referee_customer_id") == cid:
+            total += int(r.get("referee_points") or 0)
+    return total
+
+
+def palier_measure(tid: str, cust: Dict[str, Any], condition: str) -> float:
+    if condition == "points":
+        return lifetime_points(tid, cust["id"])
+    if condition == "visits":
+        return int(cust.get("visits") or 0)
+    if condition == "amount":
+        return float(cust.get("total_amount_paid") or 0)
+    return 0
+
+
+def palier_label(condition: str, value: Any) -> str:
+    v = int(value)
+    if condition == "points":
+        return f"{v} point{'s' if v > 1 else ''}"
+    if condition == "visits":
+        return f"{v} visite{'s' if v > 1 else ''}"
+    if condition == "amount":
+        return f"{v} €"
+    return str(value)
+
+
+def _tier_level(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The palier this client just reached for this automation, or None."""
+    tr = row.get("trigger") or {}
+    cond = tr.get("condition") or "status"          # carried-over automations: the statut
+    if cond == "status":
+        if ctx.get("event") != "tier":
+            return None
+        tier = (cust.get("tier") or "bronze").lower()
+        from features.loyalty_card import TIER_LABELS
+        return {"level": TIER_RANK.get(tier, 0), "label": TIER_LABELS.get(tier, tier.title()), "tier": None}
+    if ctx.get("event") != "visit":
+        return None
+    value = palier_measure(tid, cust, cond)
+    if tr.get("custom_tiers") and tr.get("tiers"):
+        reached = [t for t in sorted(tr["tiers"], key=lambda t: t["value"]) if value >= t["value"]]
+        if not reached:
+            return None
+        top = reached[-1]
+        return {"level": top["value"], "label": palier_label(cond, top["value"]), "tier": top}
+    step = int(tr.get("threshold") or 0)
+    if step <= 0 or value < step:
+        return None
+    level = step if tr.get("repeat") == "first" else int(value // step) * step
+    return {"level": level, "label": palier_label(cond, level), "tier": None}
+
+
 def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any], at: datetime) -> bool:
     """The scenario's own rule, on top of the targeting."""
     sc, tr = row["scenario"], row.get("trigger") or {}
@@ -688,6 +796,21 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
     elif sc == "tier_up":
         if _db.automation_queue.find_one(q):
             return False
+        hit = _tier_level(tid, row, cust, ctx)
+        if not hit:
+            return False
+        logs = list(_db.automation_log.find(q, {"_id": 0, "level": 1, "sent_at": 1}))
+        if tr.get("repeat") == "first" and logs:
+            return False                          # « uniquement la première fois »
+        if logs and hit["level"] <= max(int(x.get("level") or 0) for x in logs):
+            return False                          # this palier (or a higher one) was already told
+        if tr.get("repeat") == "custom" and logs:
+            last = max(_aware(x["sent_at"]) for x in logs)
+            if at - last < timedelta(days=max(1, int(tr.get("min_days") or 1))):
+                return False                      # too soon: the next visit past the gap will tell it
+        ctx.update({"level": hit["level"], "palier": hit["label"],
+                    **({"tier_title": hit["tier"].get("title"), "tier_body": hit["tier"].get("body"),
+                        "tier_reward": hit["tier"].get("reward")} if hit.get("tier") else {})})
     elif sc == "custom":
         t = tr.get("type")
         want = {"visits": "visit", "after_visit": "visit", "after_signup": "signup"}.get(t)
@@ -696,7 +819,12 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
         if _db.automation_queue.find_one(q):
             return False                        # one waiting at a time per client
         if t == "visits":
-            if int(cust.get("visits") or 0) != int(tr.get("visits") or 0) or _db.automation_log.find_one(q):
+            n, every = int(cust.get("visits") or 0), int(tr.get("visits") or 0)
+            if tr.get("visits_repeat") == "every":     # « toutes les N visites » (as the palier's multiples)
+                if every <= 0 or n <= 0 or n % every or _db.automation_log.find_one({**q, "level": n}):
+                    return False
+                ctx["level"] = n
+            elif n != every or _db.automation_log.find_one(q):
                 return False
         elif t == "after_signup":
             if _db.automation_log.find_one(q):
@@ -747,7 +875,9 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
             return out
         migrate(tid)
         cache: Dict[str, Any] = {}
+        base_ctx = ctx
         for row in _active(tid, scenario):
+            ctx = dict(base_ctx)                   # each automation reads its own palier
             try:
                 if not matches(tid, row, cust, at, cache) or not _eligible(tid, row, cust, ctx, at):
                     continue
@@ -993,6 +1123,8 @@ def custom_text(tr: Dict[str, Any]) -> str:
     t = tr.get("type")
     if t == "visits":
         n = int(tr.get("visits") or 0)
+        if tr.get("visits_repeat") == "every":
+            return "À chaque visite" if n == 1 else f"Toutes les {n} visites"
         return f"À la {n}{'re' if n == 1 else 'e'} visite"
     if t == "after_signup":
         return "Dès l'inscription" if not int(tr.get("delay_value") or 0) else f"{_span(tr)} après l'inscription"
@@ -1016,8 +1148,25 @@ def custom_text(tr: Dict[str, Any]) -> str:
     return "Déclencheur personnalisé"
 
 
+def tier_text(tr: Dict[str, Any]) -> str:
+    cond = tr.get("condition") or "status"
+    rep_ = tr.get("repeat") or "each"
+    gap = f" · au moins {int(tr.get('min_days') or 1)} j entre deux" if rep_ == "custom" else ""
+    first = " (première fois)" if rep_ == "first" else ""
+    if cond == "status":
+        return ("Nouveau statut (Bronze → Argent → Or → VIP)" if rep_ != "first" else "Premier changement de statut") + gap
+    if tr.get("custom_tiers") and tr.get("tiers"):
+        vals = ", ".join(str(t["value"]) for t in tr["tiers"])
+        unit = {"points": "points", "visits": "visites", "amount": "€"}[cond]
+        return f"Paliers : {vals} {unit}{first}{gap}"
+    label = palier_label(cond, tr.get("threshold") or 0)
+    return (f"À {label}" if rep_ == "first" else f"Tous les {label}") + gap
+
+
 def trigger_text(r: Dict[str, Any]) -> str:
     sc, tr = r["scenario"], r.get("trigger") or {}
+    if sc == "tier_up":
+        return tier_text(tr)
     if sc == "custom":
         return custom_text(tr)
     if sc == "birthday":
@@ -1088,6 +1237,7 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
         "stores": [{"id": s["id"], "name": s.get("name")} for s in T.stores(tid)],
         "offers": offers,
         "best_slot": CP.best_slot(tid),
+        "has_position": CP._has_position(tid),
         "google_review_ready": bool(tenant.get("google_review_url") and tenant.get("google_reviews_enabled")),
         "geo_ready": bool(tenant.get("geo_enabled")),
         "shop": tenant.get("campaign_sender_name") or tenant.get("name") or "",
@@ -1118,12 +1268,13 @@ class MessageIn(BaseModel):
 
 
 class FiltersIn(BaseModel):
-    gender: str = "all"
-    age: str = "all"
-    frequency: str = "all"
-    spent: str = "all"
-    last_visit: str = "all"
+    gender: Any = []
+    age: Any = []
+    frequency: Any = []
+    spent: Any = []
+    last_visit: Any = []
     stores: List[str] = []
+    radius_km: Any = None
 
 
 class TargetingIn(BaseModel):
@@ -1198,6 +1349,43 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["frequency"] = tr_in.get("frequency", "days")
         tr["every_days"] = _int(tr_in.get("every_days", 30), 1, 365, "Fréquence (jours)")
         tr["stop_after_click"] = bool(tr_in.get("stop_after_click", True))
+    elif sc == "tier_up":
+        cond = tr_in.get("condition", "points")
+        if cond not in TIER_CONDITIONS:
+            raise HTTPException(status_code=400, detail="Choisissez la condition d'envoi.")
+        rep_ = tr_in.get("repeat", "each")
+        if rep_ not in TIER_REPEATS:
+            raise HTTPException(status_code=400, detail="Répétition inconnue.")
+        tr.update(condition=cond, repeat=rep_, custom_tiers=False, tiers=[])
+        unit = {"points": "Nombre de points", "visits": "Nombre de visites", "amount": "Montant d'achats (€)"}
+        if rep_ == "custom":
+            tr["min_days"] = _int(tr_in.get("min_days", 7), 1, 365, "Délai minimum entre deux envois (jours)")
+        if cond != "status":
+            tr["threshold"] = _int(tr_in.get("threshold", 200), 1, 1_000_000, unit[cond])
+            if tr_in.get("custom_tiers"):
+                raw = tr_in.get("tiers") or []
+                if not isinstance(raw, list) or not raw:
+                    raise HTTPException(status_code=400, detail="Ajoutez au moins un palier.")
+                if len(raw) > 10:
+                    raise HTTPException(status_code=400, detail="10 paliers au maximum.")
+                tiers, seen = [], set()
+                for i, t_in in enumerate(raw, 1):
+                    t_in = t_in if isinstance(t_in, dict) else {}
+                    v = _int(t_in.get("value"), 1, 1_000_000, f"Palier {i}")
+                    if v in seen:
+                        raise HTTPException(status_code=400, detail=f"Deux paliers ont la même valeur ({v}).")
+                    seen.add(v)
+                    tt = re.sub(r"\s+", " ", str(t_in.get("title") or "")).strip()
+                    tb = re.sub(r"[ \t]+", " ", str(t_in.get("body") or "")).strip()
+                    rw = re.sub(r"\s+", " ", str(t_in.get("reward") or "")).strip()
+                    if not draft and (not tt or not tb):
+                        raise HTTPException(status_code=400, detail=f"Palier {palier_label(cond, v)} : écrivez son titre et son message.")
+                    if len(tt) > TITLE_MAX or len(tb) > BODY_MAX:
+                        raise HTTPException(status_code=400, detail=f"Palier {palier_label(cond, v)} : titre {TITLE_MAX} / message {BODY_MAX} caractères au maximum.")
+                    if len(rw) > 80:
+                        raise HTTPException(status_code=400, detail=f"Palier {palier_label(cond, v)} : récompense de 80 caractères au maximum.")
+                    tiers.append({"value": v, "title": tt, "body": tb, "reward": rw})
+                tr.update(custom_tiers=True, tiers=sorted(tiers, key=lambda t: t["value"]))
     elif sc == "custom":
         t = tr_in.get("type")
         if t not in CUSTOM_TYPES:
@@ -1205,6 +1393,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["type"] = t
         if t == "visits":
             tr["visits"] = _int(tr_in.get("visits", 5), 1, 1000, "Nombre de visites")
+            tr["visits_repeat"] = "every" if tr_in.get("visits_repeat") == "every" else "once"
         if t == "after_visit":
             tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 0), 0, 365, "Au plus une fois tous les")
         if t == "date":
@@ -1264,10 +1453,24 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     if t.mode == "segment" and not t.segment:
         raise HTTPException(status_code=400, detail="Choisissez un segment.")
     f = t.filters
-    for val, allowed, label in ((f.gender, GENDERS, "Genre"), (f.age, AGES, "Âge"), (f.frequency, FREQS, "Fréquence"),
-                                (f.spent, SPENT, "Montant"), (f.last_visit, LAST_VISIT, "Dernière visite")):
-        if val not in allowed:
+    picked: Dict[str, List[str]] = {}
+    for key, val, allowed, label in (("gender", f.gender, GENDERS, "Genre"), ("age", f.age, AGES, "Âge"),
+                                     ("frequency", f.frequency, FREQS, "Fréquence de visite"),
+                                     ("spent", f.spent, SPENT, "Montant total des achats"),
+                                     ("last_visit", f.last_visit, LAST_VISIT, "Dernière visite")):
+        raw = [] if val in (None, "", "all") else (val if isinstance(val, list) else [val])
+        if any(str(x) not in allowed for x in raw):
             raise HTTPException(status_code=400, detail=f"{label} : valeur inconnue.")
+        picked[key] = as_list(raw, allowed)
+    radius = None
+    if f.radius_km not in (None, "", 0, "0"):
+        radius = _int(f.radius_km, 1, 50, "Rayon (km)")
+        if radius not in RADII:
+            raise HTTPException(status_code=400, detail="Rayon (km) : 1, 2, 5, 10, 20 ou 50 km.")
+        if t.mode != "all":
+            from features import campaigns_page as CPG
+            if not CPG._has_position(tid):
+                raise HTTPException(status_code=400, detail="La position de votre établissement est inconnue : placez-la dans Paramètres › Établissement pour filtrer par distance.")
     from features import team_access as T
     known = {s["id"] for s in T.stores(tid)}
     stores = [s for s in dict.fromkeys(f.stores or []) if s in known]
@@ -1296,10 +1499,9 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         "scenario": sc, "name": name, "status": body.status, "trigger": tr,
         "message": {"title": title, "body": text, "image_url": img, "button": button},
         "targeting": {"mode": t.mode, "segment": t.segment if t.mode == "segment" else None,
-                      "filters": ({"gender": "all", "age": "all", "frequency": "all", "spent": "all", "last_visit": "all",
-                                   "stores": []} if t.mode == "all" else
-                                  {"gender": f.gender, "age": f.age, "frequency": f.frequency, "spent": f.spent,
-                                   "last_visit": f.last_visit, "stores": stores})},
+                      "filters": ({"gender": [], "age": [], "frequency": [], "spent": [], "last_visit": [],
+                                   "stores": [], "radius_km": None} if t.mode == "all" else
+                                  {**picked, "stores": stores, "radius_km": radius})},
         "schedule": {"days": s.days, "weekdays": weekdays if s.days == "specific" else [0, 1, 2, 3, 4, 5, 6],
                      "hour": hour, "smart": bool(s.smart) if timed else False,
                      "window": bool(s.window) if not timed else False,

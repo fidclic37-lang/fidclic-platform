@@ -143,8 +143,8 @@ def main():
         check(f"refused: {why} ({r.json().get('detail', '')[:70]})", r.status_code == 400)
     bad({"scenario": "special_offer"}, "a removed scenario")
     bad({"message": {**base["message"], "title": ""}}, "no title")
-    bad({"message": {**base["message"], "title": "x" * 61}}, "title over 60")
-    bad({"message": {**base["message"], "body": "x" * 181}}, "message over 180")
+    bad({"message": {**base["message"], "title": "x" * 81}}, "title over 80")
+    bad({"message": {**base["message"], "body": "x" * 351}}, "message over 350")
     bad({"message": {**base["message"], "button": {"enabled": True, "label": "", "link_type": "card"}}}, "a button without text")
     bad({"message": {**base["message"], "button": {"enabled": True, "label": "Go", "link_type": "url", "url": "javascript:alert(1)"}}},
         "a javascript: link")
@@ -155,7 +155,7 @@ def main():
     bad({"schedule": {"days": "specific", "weekdays": [], "hour": "10:00"}}, "specific days with none ticked")
     bad({"schedule": {"days": "all", "hour": "25:00"}}, "an impossible hour")
     bad({"targeting": {"mode": "segment"}}, "a segment not chosen")
-    bad({"targeting": {"mode": "all", "filters": {"age": "12-15"}}}, "an unknown age band")
+    bad({"targeting": {"mode": "segment", "segment": "x", "filters": {"age": ["12-15"]}}}, "an unknown age band")
     bad({"scenario": "referral", "trigger": {}}, "parrainage without its side")
     bad({"scenario": "geo", "trigger": {"cooldown_days": 0}}, "geo cooldown 0")
     bad({"scenario": "welcome", "schedule": {"days": "all", "window": True, "window_from": "21:00", "window_to": "09:00"}},
@@ -189,10 +189,15 @@ def main():
     check("« Tous mes clients » ignores filters (everyone, as in Campagnes)", pv(mode="all", filters={"gender": "F"})["count"] == 3)
     real_seg = AU._segment_ids
     AU._segment_ids = lambda tid, key, at: {"c1", "c2", "c3"} if key == "tous" else set()      # a segment of the three
-    check("Genre femme: Alice", pv(mode="segment", segment="tous", filters={"gender": "F"})["count"] == 1)
-    check("Âge 18–24: Bruno (born 2004)", pv(mode="segment", segment="tous", filters={"age": "18-24"})["count"] == 1)
-    check("Montant > 200 €: Alice", pv(mode="segment", segment="tous", filters={"spent": "200-500"})["count"] == 1)
-    check("Dernière visite > 30 j: Bruno", pv(mode="segment", segment="tous", filters={"last_visit": ">30"})["count"] == 1)
+    check("Genre femme: Alice", pv(mode="segment", segment="tous", filters={"gender": ["F"]})["count"] == 1)
+    check("Âge 18–25: Bruno (born 2004)", pv(mode="segment", segment="tous", filters={"age": ["18-25"]})["count"] == 1)
+    check("Montant plus de 200 €: Alice", pv(mode="segment", segment="tous", filters={"spent": [">200"]})["count"] == 1)
+    check("Dernière visite entre 1 et 3 mois: Bruno (45 j)", pv(mode="segment", segment="tous", filters={"last_visit": ["1-3m"]})["count"] == 1)
+    check("two ticks in a group widen it (OR): femmes + hommes = Alice, Bruno",
+          pv(mode="segment", segment="tous", filters={"gender": ["F", "M"]})["count"] == 2)
+    check("two groups narrow each other (AND): femmes AND 18–25 = nobody",
+          pv(mode="segment", segment="tous", filters={"gender": ["F"], "age": ["18-25"]})["count"] == 0)
+    check("an older single value still reads (« F » = [F])", pv(mode="segment", segment="tous", filters={"gender": "F"})["count"] == 1)
     check("a segment alone: its clients", pv(mode="segment", segment="tous")["count"] == 3)
     AU._segment_ids = real_seg
     check("a real client fills the preview", pv(mode="all")["sample"]["first_name"] in ("Alice", "Bruno", "Chloé"))
@@ -483,6 +488,135 @@ def main():
     r = http("POST", "/api/owner/automations/ai-draft", json={"objective": "anniversaire"})
     check("assistant down: said plainly, nothing invented", r.status_code == 503 and "FidClic IA" in r.json()["detail"])
     llm._force_complete = None
+
+    print("\n12. Atteinte d'un palier — points, visites, montant, statut")
+    for r in db.automations.find({"tenant_id": "t1", "status": "active"}):
+        db.automations.update_one({"id": r["id"]}, {"$set": {"status": "paused"}})
+    pal = {"scenario": "tier_up", "name": "Palier 200 pts", "status": "active",
+           "message": {"title": "🏆 Bravo {prénom} !", "body": "Vous avez atteint {palier} ! {récompense}",
+                       "button": {"enabled": True, "label": "Voir ma récompense", "link_type": "rewards"}},
+           "targeting": {"mode": "all"}, "schedule": {"days": "all", "window": False}}
+    n0 = db.automations.count_documents({"tenant_id": "t1"})
+    for trig, why in (({"condition": "kg"}, "an unknown condition"), ({"condition": "points", "threshold": 0}, "a 0 threshold"),
+                      ({"condition": "points", "threshold": "abc"}, "a threshold that isn't a number"),
+                      ({"condition": "points", "threshold": True}, "a boolean threshold"),
+                      ({"condition": "points", "repeat": "sometimes"}, "an unknown repetition"),
+                      ({"condition": "points", "repeat": "custom", "min_days": 0}, "a 0-day minimum gap"),
+                      ({"condition": "points", "custom_tiers": True, "tiers": []}, "custom paliers with none"),
+                      ({"condition": "points", "custom_tiers": True, "tiers": [{"value": 100, "title": "a", "body": "b"},
+                                                                              {"value": 100, "title": "c", "body": "d"}]}, "two equal paliers"),
+                      ({"condition": "points", "custom_tiers": True, "tiers": [{"value": 100, "title": "", "body": "b"}]}, "a palier without its title"),
+                      ({"condition": "points", "custom_tiers": True, "tiers": [{"value": 100 + i, "title": "t", "body": "b"} for i in range(11)]}, "11 paliers"),
+                      ({"condition": "points", "custom_tiers": True, "tiers": [{"value": 100, "title": "t", "body": "b", "reward": "x" * 81}]}, "a reward over 80")):
+        r = http("POST", "/api/owner/automations", json={**pal, "trigger": trig})
+        check(f"palier refused: {why} ({r.json().get('detail', '')[:60]})", r.status_code == 400)
+    check("…and none was saved", db.automations.count_documents({"tenant_id": "t1"}) == n0)
+
+    # Hugo: points from visits (150) + welcome bonus (30) + parrainage (20) = 200 earned since the start,
+    # though his card now shows 0 after a reward
+    hugo = person("h1", "Hugo Lambert", points=0, visits=6, total_amount_paid=90)
+    db.visits.insert_many([{"id": f"hv{i}", "tenant_id": "t1", "customer_id": "h1", "points_awarded": 25,
+                            "visit_time": now - dt.timedelta(days=10 - i)} for i in range(6)])
+    db.welcome_bonus_claims.insert_one({"tenant_id": "t1", "customer_id": "h1", "points": 30})
+    db.referral_redemptions.insert_one({"tenant_id": "t1", "referrer_customer_id": "h1", "referee_customer_id": "zz",
+                                        "referrer_points": 20, "referee_points": 5})
+    check("points earned since the start = 200 (a reward never lowers it)", AU.lifetime_points("t1", "h1") == 200)
+    p200 = http("POST", "/api/owner/automations", json={**pal, "trigger": {"condition": "points", "threshold": 200}}).json()
+    check("« Tous les 200 points »", p200["trigger_text"] == "Tous les 200 points")
+    pushed.clear()
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "tier"})
+    check("a statut change doesn't fire a points palier", not pushed)
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})
+    check(f"200 points: « {pushed[0]['body'] if pushed else ''} »", pushed and pushed[0]["body"].startswith("Vous avez atteint 200 points !")
+          and "Un café offert" in pushed[0]["body"])
+    lg = db.automation_log.find_one({"customer_id": "h1", "automation_id": p200["id"]})
+    check("its button opens the « Page Récompenses » (owner link)", "/card/FT-H1/offres?" in lg["target_url"] and "k=" in lg["target_url"])
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})
+    check("the same palier is never told twice", len(pushed) == 1)
+    db.visits.insert_many([{"id": f"hx{i}", "tenant_id": "t1", "customer_id": "h1", "points_awarded": 100,
+                            "visit_time": now} for i in range(3)])            # 500 now: past 400
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})
+    check("jumping 200 → 500: told once, for 400 (the highest multiple)", len(pushed) == 2 and "400 points" in pushed[1]["body"])
+    http("POST", f"/api/owner/automations/{p200['id']}/status", json={"status": "paused"})
+
+    first = http("POST", "/api/owner/automations", json={**pal, "name": "Premier", "trigger": {
+        "condition": "visits", "threshold": 5, "repeat": "first"}}).json()
+    check("« À 5 visites » (première fois)", first["trigger_text"] == "À 5 visites")
+    pushed.clear()
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})   # 6 visits ≥ 5
+    db.customers.update_one({"id": "h1"}, {"$set": {"visits": 11}})
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})
+    check("« uniquement la première fois »: once, never at 10", len(pushed) == 1 and "5 visites" in pushed[0]["body"])
+    http("POST", f"/api/owner/automations/{first['id']}/status", json={"status": "paused"})
+
+    gap = http("POST", "/api/owner/automations", json={**pal, "name": "Montant", "trigger": {
+        "condition": "amount", "threshold": 50, "repeat": "custom", "min_days": 30}}).json()
+    check("« Tous les 50 € · au moins 30 j entre deux »", gap["trigger_text"] == "Tous les 50 € · au moins 30 j entre deux")
+    pushed.clear()
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})   # 90 € → 50
+    db.customers.update_one({"id": "h1"}, {"$set": {"total_amount_paid": 160}})
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"})
+    check("150 € the same day: held by the 30-day gap", len(pushed) == 1)
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "h1"}), {"event": "visit"}, at=now + dt.timedelta(days=31))
+    check("…told at the next visit past the gap, for 150 €", len(pushed) == 2 and "150 €" in pushed[1]["body"])
+    http("POST", f"/api/owner/automations/{gap['id']}/status", json={"status": "paused"})
+
+    tiers = [{"value": 500, "title": "Or atteint {prénom} !", "body": "500 points : {récompense}", "reward": "Un dessert offert"},
+             {"value": 100, "title": "Premier palier !", "body": "100 points : {récompense}", "reward": "Un café offert"}]
+    cp = http("POST", "/api/owner/automations", json={**pal, "name": "Paliers", "trigger": {
+        "condition": "points", "custom_tiers": True, "tiers": tiers}}).json()
+    check("paliers sorted, described « Paliers : 100, 500 points »", [t["value"] for t in cp["trigger"]["tiers"]] == [100, 500]
+          and cp["trigger_text"] == "Paliers : 100, 500 points")
+    ivy = person("i1", "Ivy Moreau")
+    db.visits.insert_one({"id": "iv1", "tenant_id": "t1", "customer_id": "i1", "points_awarded": 120, "visit_time": now})
+    pushed.clear()
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "i1"}), {"event": "visit"})
+    check("100 points: the first palier's own words and reward",
+          pushed and pushed[0]["title"] == "Premier palier !" and pushed[0]["body"] == "100 points : Un café offert")
+    db.visits.insert_one({"id": "iv2", "tenant_id": "t1", "customer_id": "i1", "points_awarded": 400, "visit_time": now})
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "i1"}), {"event": "visit"})
+    check("500 points: the second palier's words", len(pushed) == 2 and pushed[1]["title"] == "Or atteint Ivy !"
+          and pushed[1]["body"] == "500 points : Un dessert offert")
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "i1"}), {"event": "visit"})
+    check("…each palier once", len(pushed) == 2)
+    http("POST", f"/api/owner/automations/{cp['id']}/status", json={"status": "paused"})
+
+    st = http("POST", "/api/owner/automations", json={**pal, "name": "Statut", "trigger": {"condition": "status"}}).json()
+    check("« Nouveau statut (Bronze → Argent → Or → VIP) »", st["trigger_text"].startswith("Nouveau statut"))
+    db.customers.update_one({"id": "i1"}, {"$set": {"tier": "silver"}})
+    pushed.clear()
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "i1"}), {"event": "visit"})
+    check("an ordinary visit doesn't fire a statut palier", not pushed)
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "i1"}), {"event": "tier"})
+    check("Argent: « Vous avez atteint Argent ! »", pushed and pushed[0]["body"].startswith("Vous avez atteint Argent"))
+    AU.fire("tier_up", "t1", db.customers.find_one({"id": "i1"}), {"event": "tier"})
+    check("…not twice for Argent", len(pushed) == 1)
+    old = [r for r in http("GET", "/api/owner/automations").json()["rows"] if r["scenario"] == "tier_up" and r["name"] == "Atteinte d'un palier"]
+    check("the carried-over palier still reads as the statut", old and old[0]["trigger_text"].startswith("Nouveau statut"))
+    http("POST", f"/api/owner/automations/{st['id']}/status", json={"status": "paused"})
+
+    print("\n13. Ajouté à Personnalisée : toutes les N visites")
+    ev = http("POST", "/api/owner/automations", json={**cbase, "name": "Toutes les 3", "trigger": {
+        "type": "visits", "visits": 3, "visits_repeat": "every"}}).json()
+    check("« Toutes les 3 visites »", ev["trigger_text"] == "Toutes les 3 visites")
+    pushed.clear()
+    for n in (2, 3, 3, 4, 6):
+        db.customers.update_one({"id": "i1"}, {"$set": {"visits": n}})
+        AU.fire("custom", "t1", db.customers.find_one({"id": "i1"}), {"event": "visit"})
+    check("at 3 and 6, once each", len(pushed) == 2)
+
+    print("\n14. Rayon autour de l'établissement")
+    db.tenants.update_one({"id": "t1"}, {"$set": {"lat": 47.394, "lng": 0.684}})
+    db.customers.update_one({"id": "c1"}, {"$set": {"latitude": 47.395, "longitude": 0.684}})
+    db.customers.update_one({"id": "c2"}, {"$set": {"latitude": 47.60, "longitude": 0.684}})
+    AU._segment_ids = lambda tid, key, at: {"c1", "c2"}
+    r = http("POST", "/api/owner/automations/preview", json={"scenario": "custom", "targeting": {
+        "mode": "segment", "segment": "x", "filters": {"radius_km": 5}}}).json()
+    check("within 5 km: Alice, not Bruno (23 km)", r["count"] == 1)
+    AU._segment_ids = real_seg
+    bad_r = http("POST", "/api/owner/automations", json={**cbase, "trigger": {"type": "visits", "visits": 2},
+                 "targeting": {"mode": "segment", "segment": "x", "filters": {"radius_km": 7}}})
+    check("a radius outside 1/2/5/10/20/50 is refused", bad_r.status_code == 400)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
