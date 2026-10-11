@@ -289,6 +289,11 @@ class CardSettings(BaseModel):
     logo_round: Optional[bool] = None
     logo_ring: Optional[bool] = None
     logo_ring_color: Optional[str] = None
+    # iOS 27 + every jauge (user, 2026-10-11): the band under the poster's
+    # fields — "" = Apple's blur, "#RRGGBB" = that colour — and the tampons'
+    # shape ("" = bars painted, ● in text; else wallet_passes.STAMP_SHAPES)
+    poster_footer_color: Optional[str] = None
+    stamp_shape: Optional[str] = None
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None
@@ -330,6 +335,11 @@ def _google_design(d):
 def _barcode_formats():
     from features.wallet_passes import BARCODE_FORMATS, NEW_BARCODES
     return [{"format": k, "label": v, "ios27_only": k in NEW_BARCODES} for k, v in BARCODE_FORMATS.items()]
+
+
+def _stamp_shapes():
+    from features.wallet_passes import STAMP_SHAPES
+    return [{"key": k, "label": lbl, "full": f.replace("\ufe0e", ""), "empty": e} for k, (lbl, f, e) in STAMP_SHAPES.items()]
 
 
 def _featured_types():
@@ -386,6 +396,9 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "logo_round": bool(tpl.get("logo_round")),
             "logo_ring": bool(tpl.get("logo_ring")),
             "logo_ring_color": tpl.get("logo_ring_color") or "",
+            "poster_footer_color": tpl.get("poster_footer_color") or "",
+            "stamp_shape": tpl.get("stamp_shape") or "",
+            "stamp_shapes": _stamp_shapes(),
             "google_design": _google_design(tpl.get("google_design")),
             "barcode_formats": _barcode_formats(),
             "show_card_number": tpl.get("show_card_number") is not False,
@@ -464,6 +477,12 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Code de secours inconnu")
     if payload.get("logo_ring_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_ring_color"]):
         raise HTTPException(status_code=400, detail="Couleur de bordure invalide.")
+    if payload.get("poster_footer_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["poster_footer_color"]):
+        raise HTTPException(status_code=400, detail="Couleur du pied invalide.")
+    if payload.get("stamp_shape"):
+        from features.wallet_passes import STAMP_SHAPES
+        if payload["stamp_shape"] not in STAMP_SHAPES:
+            raise HTTPException(status_code=400, detail="Forme de tampon inconnue.")
     if payload.get("google_design") is not None:
         payload["google_design"] = _google_design(payload["google_design"])
     if payload.get("header_field") is not None and payload["header_field"] not in ("auto", "tier", "points", "visits", "none"):

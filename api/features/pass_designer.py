@@ -92,11 +92,13 @@ PLACEHOLDERS = {
     "statut": "tier", "tier": "tier", "recompense": "reward", "reward": "reward",
     "offre": "offer", "offer": "offer", "visites": "visits", "visits": "visits",
     "membre_depuis": "member_since", "member_since": "member_since", "commerce": "shop", "shop": "shop",
+    "jauge": "meter", "meter": "meter",
 }
 # values that change, and so notify the customer when they do. The offer is
 # not here: FidClic's own « Offre du moment » on the back already notifies,
 # and two changed fields would ring twice.
-NOTIFY = {"points": "Vous avez maintenant %@ points", "stamps": "Tampons : %@", "tier": "Nouveau statut : %@"}
+NOTIFY = {"points": "Vous avez maintenant %@ points", "stamps": "Tampons : %@", "meter": "Tampons : %@",
+          "tier": "Nouveau statut : %@"}
 _ONLY = re.compile(r"^\s*\{([^{}]{1,30})\}\s*$")
 
 # The owner's preview: a design not saved yet stands in for the saved one
@@ -494,7 +496,10 @@ def get_starter(token_data: TokenData = Depends(require_role(["business_owner", 
     header = ([{"key": "POINTS", "label": (card.get("points_label") or "Points").upper(), "value": "{points}"}]
               if card.get("show_points") is not False else
               [{"key": "STATUT", "label": "STATUT", "value": "{statut}"}])
-    progress = ({"key": "STAMPS", "label": (card.get("stamps_label") or "Tampons").upper(), "value": "{tampons}"}
+    # the tampons as a jauge under the QR, the count in its label (user, 2026-10-11)
+    # (key JAUGE: a STAMPS key would be filled with « 3 / 10 », see KEY_MAP)
+    progress = ({"key": "JAUGE", "label": (card.get("stamps_label") or "Tampons").upper() + " · {tampons}",
+                 "value": "{jauge}"}
                 if card.get("show_stamps") is not False else
                 {"key": "REWARD", "label": "RÉCOMPENSE", "value": "{recompense}"})
     raw = {
@@ -517,7 +522,7 @@ def get_starter(token_data: TokenData = Depends(require_role(["business_owner", 
         photo = None
         if card.get("poster_image_url"):
             photo = WP._fetch_image(card.get("poster_image_url"))
-        bg = WP.compose_poster(photo or WP._hero_raw(card), colors, 0, 10, False)
+        bg = WP.compose_poster(photo or WP._hero_raw(card), colors)
         if bg:
             images["background@3x.png"] = "data:image/png;base64," + base64.b64encode(bg).decode()
         logo = WP._fetch_image(card.get("logo_url"))

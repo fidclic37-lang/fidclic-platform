@@ -3,7 +3,7 @@ import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
   MapPin, Share2, CalendarClock, Type, ChevronDown, RefreshCw, ArrowLeft, ArrowRight, ChevronRight,
-  Upload,
+  Upload, Move,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
@@ -247,6 +247,21 @@ export default function LoyaltyCardPage() {
   // « Image poster »: the photo is framed by the owner, then fills the card
   const [cropReq, setCropReq] = useState(null);
   const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
+  // a new « Image de fond » while the iOS 27 card has its own framing
+  const [newPhoto, setNewPhoto] = useState(false);
+  // « Ajuster » (iOS 27): the background photo, framed by the owner in the
+  // poster's shape — Wallet ships that frame as is
+  const adjustPoster = async () => {
+    const src = design?.hero_image_url;
+    if (!src) return;
+    try {
+      const blob = await (await fetch(src)).blob();
+      const url = await new Promise((resolve) => setCropReq({ file: blob, resolve, adjust: true }));
+      if (url) { setAdvanced((a) => ({ ...a, poster_image_url: url })); setNewPhoto(false); }
+    } catch (e) {
+      setError("Impossible d'ouvrir la photo pour l'ajuster. Changez l'image puis réessayez.");
+    }
+  };
   // bumped when the card editor saves: the « Vue wallet » preview refetches
   const [pdVersion, setPdVersion] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -401,7 +416,21 @@ export default function LoyaltyCardPage() {
     logo_ring_color: advanced?.logo_ring_color || undefined,
     google_design: advanced?.google_design,
     google_links: advanced?.google_links,
+    // iOS 27's bottom band and the tampons' shape ('' = the default)
+    poster_footer_color: advanced?.poster_footer_color ?? undefined,
+    stamp_shape: advanced?.stamp_shape ?? undefined,
   }), [design, programme, toggles, advanced, pdVersion]);
+  // The server's preview starts from the saved card: a photo the owner has
+  // not changed is not uploaded again on every keystroke (the « Aperçu » was
+  // slow, user 2026-10-11) — only what differs from the saved card is sent.
+  const serverPreviewCard = useMemo(() => {
+    const saved = { ...(data?.design || {}), ...(data?.advanced || {}) };
+    const out = { ...cardForPreview };
+    ['logo_url', 'hero_image_url', 'poster_image_url'].forEach((k) => {
+      if (out[k] && out[k] === saved[k]) delete out[k];
+    });
+    return out;
+  }, [cardForPreview, data]);
 
   const previewCustomer = useMemo(() => ({
     name: 'Marie Love', first_name: 'Marie', tier: 'silver',
@@ -443,8 +472,91 @@ export default function LoyaltyCardPage() {
                       onChange={(v) => {
                         setDesign({ ...design, hero_image_url: v });
                         setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
+                        setNewPhoto(Boolean(v));
                       }} />
         </div>
+        {/* iOS 27 (user, 2026-10-11): the photo covers the whole card, like a
+            real iOS 27 poster; « Ajuster » frames it; the band under the
+            fields is Apple's blur or the owner's colour, as in Pass Designer */}
+        {advanced && advanced.poster_style !== false && (
+          <div className="space-y-3 rounded-xl border border-[#E6EEFB] p-3">
+            <p className="text-[12.5px] font-semibold text-[#334155]">
+              Carte iOS 27 <span className="font-normal text-[#94A3B8]">— la photo couvre toute la carte</span>
+            </p>
+            {(design.hero_image_url || advanced.poster_image_url) && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[12.5px] text-[#475569]">
+                  {advanced.poster_image_url ? 'Cadrage personnalisé' : 'Photo centrée automatiquement'}
+                </span>
+                <span className="flex gap-2">
+                  {advanced.poster_image_url && design.hero_image_url && (
+                    <button type="button" onClick={() => { setAdvanced({ ...advanced, poster_image_url: '' }); setNewPhoto(false); }}
+                            className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-[#64748B] hover:bg-[#F4F7FC]">
+                      Centrer automatiquement
+                    </button>
+                  )}
+                  {design.hero_image_url && (
+                    <button type="button" onClick={adjustPoster}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E1E8F5] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                      <Move size={13} /> Ajuster
+                    </button>
+                  )}
+                </span>
+              </div>
+            )}
+            {newPhoto && advanced.poster_image_url && (
+              <p className="rounded-lg bg-[#FFF7E6] px-2.5 py-2 text-[11.5px] text-[#92400E]">
+                La carte iOS 27 garde le cadrage de l'ancienne photo. « Centrer automatiquement » ou « Ajuster » pour utiliser la nouvelle.
+              </p>
+            )}
+            <div>
+              <Label>Bande du bas (sous le QR code)</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
+                  {[['', 'Flou Apple'], ['color', 'Couleur']].map(([k, l]) => {
+                    const on = k ? Boolean(advanced.poster_footer_color) : !advanced.poster_footer_color;
+                    return (
+                      <button key={l} type="button" aria-pressed={on}
+                              onClick={() => setAdvanced({ ...advanced, poster_footer_color: k ? (advanced.poster_footer_color || design.surface_color || '#1E1B2E') : '' })}
+                              className={`rounded-md px-3 py-1.5 text-[12px] font-semibold ${on ? 'bg-white text-[#2F6BFF] shadow-sm' : 'text-[#64748B]'}`}>
+                        {l}
+                      </button>
+                    );
+                  })}
+                </div>
+                {advanced.poster_footer_color && (
+                  <div className="w-40">
+                    <ColorField value={advanced.poster_footer_color} onChange={(v) => setAdvanced({ ...advanced, poster_footer_color: v })} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {/* the tampons' shape, for every jauge: iOS 27 under the QR, Google
+            Wallet, and the jauge painted in the iOS 26 banner (user, 2026-10-11) */}
+        {advanced && (
+          <div>
+            <Label>Forme des tampons</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {[{ key: '', label: 'Par défaut', sample: '▬▬▭' }, ...(advanced.stamp_shapes || []).map((s) => ({
+                key: s.key, label: s.label, sample: `${s.full}${s.full}${s.empty}` }))].map((s) => {
+                const on = (advanced.stamp_shape || '') === s.key;
+                return (
+                  <button key={s.key || 'defaut'} type="button" aria-pressed={on} title={s.label}
+                          onClick={() => setAdvanced({ ...advanced, stamp_shape: s.key })}
+                          className={`flex flex-col items-center rounded-lg border px-2.5 py-1.5 ${on ? 'border-[#2F6BFF] bg-[#EAF1FF] text-[#2F6BFF]' : 'border-[#E6EEFB] bg-white text-[#334155] hover:border-[#2F6BFF]'}`}>
+                    <span translate="no" className="text-[14px] leading-none tracking-[1px]">{s.sample}</span>
+                    <span className="mt-1 text-[10.5px] font-semibold">{s.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-[#94A3B8]">
+              iPhone (iOS 27 : sous le QR code ; iOS 26 : sur la bannière) et Google Wallet. Par défaut : barres sur la bannière, ronds sous le QR code.
+            </p>
+          </div>
+        )}
         {/* « Logo rond » (user, 2026-10-08): cut to a disc on Apple and Google
             alike, with an optional ring — the preview shows it at once */}
         {advanced && (
@@ -838,7 +950,7 @@ export default function LoyaltyCardPage() {
                   <ImageField label="Image poster (recommandée)" value={advanced.poster_image_url} aspect="345 / 505"
                               downscale={readPoster}
                               onChange={(v) => setAdvanced({ ...advanced, poster_image_url: v })} />
-                  <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond est affichée entière sur un fond flouté.</p>
+                  <p className="mt-1 text-[11px] text-[#94A3B8]">Vous cadrez la photo : elle couvre toute la carte, comme sur Apple Wallet. Sans elle, l'image de fond couvre la carte, centrée (« Ajuster » à l'étape Design).</p>
                 </div>
               )}
               <p className="mt-3 text-[12px] text-[#64748B]">
@@ -1112,7 +1224,7 @@ export default function LoyaltyCardPage() {
             <CardDesigner ref={designerRef} variant="v2" inspectorOverride={step === 2 ? paramsPanel : null} edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
                           actions={advanced.featured_actions || []}
                           onActionsChange={(rows) => setAdvanced((a) => ({ ...a, featured_actions: rows }))}
-                          identityPanel={identityPanel} previewCard={cardForPreview}
+                          identityPanel={identityPanel} previewCard={serverPreviewCard}
                           clientPreview={<WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />}
                           externalDirty={settingsDirty} onSaveAll={save} onDirtyChange={setDesignerDirty}
                           googleDesign={advanced.google_design || {}}
@@ -1204,7 +1316,8 @@ export default function LoyaltyCardPage() {
       {cropReq && (
         <PosterCropper file={cropReq.file}
                        onDone={(d) => { cropReq.resolve(d); setCropReq(null); }}
-                       onCancel={() => { cropReq.resolve(advanced?.poster_image_url || ''); setCropReq(null); }} />
+                       title={cropReq.adjust ? 'Ajuster la photo (iOS 27)' : undefined}
+                       onCancel={() => { cropReq.resolve(cropReq.adjust ? null : (advanced?.poster_image_url || '')); setCropReq(null); }} />
       )}
     </div>
   );

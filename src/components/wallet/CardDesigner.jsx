@@ -278,7 +278,7 @@ const CardDesigner = forwardRef(function CardDesigner({
         design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
         .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); } })
         .catch(() => { if (my === seq.current) setPvState('error'); });
-    }, 450);
+    }, 300);   // the server keeps composed images: a short wait is enough
     return () => clearTimeout(t);
   }, [pvKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
