@@ -202,6 +202,7 @@ const CardDesigner = forwardRef(function CardDesigner({
   edit = true, types = [], formats = [], actions = [], onActionsChange, onSaved,
   identityPanel = null, previewCard = {}, clientPreview = null, externalDirty = false, onSaveAll, onDirtyChange,
   googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange, variant = 'classic', inspectorOverride = null,
+  onPosterDesign,
 }, ref) {
   const v2 = variant === 'v2';
   const [view, setView] = useState('ios27');
@@ -378,7 +379,20 @@ const CardDesigner = forwardRef(function CardDesigner({
       throw e;
     } finally { setBusy(''); }
   };
-  useImperativeHandle(ref, () => ({ save, reset: () => { setDirty(false); return load(); } }));
+  // A poster design (user, 2026-10-12): the page's « Image de fond » and
+  // « Bande du bas » are this design's too — it draws iOS 27 with ITS
+  // background and footer colour, so the page sets them here as well.
+  const posterDesign = Boolean(ready && style === 'posterGeneric');
+  const footerNow = posterDesign ? (d.pass.footerBackgroundColor || '') : null;
+  useEffect(() => {
+    onPosterDesign && onPosterDesign(posterDesign ? { footer: footerNow } : null);
+  }, [posterDesign, footerNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  useImperativeHandle(ref, () => ({
+    save,
+    reset: () => { setDirty(false); return load(); },
+    setPosterBackground: (url) => { if (posterDesign && url) setImage('background', url); },
+    setPosterFooter: (rgb) => { if (posterDesign) setPass({ footerBackgroundColor: rgb || undefined }); },
+  }));
   const remove = async () => {
     if (!window.confirm('Revenir au design FidClic ? Ce design sera retiré des cartes de vos clients.')) return;
     setBusy('remove');

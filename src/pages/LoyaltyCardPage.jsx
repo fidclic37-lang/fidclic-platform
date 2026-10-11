@@ -13,6 +13,7 @@ import InfoTip from '../components/InfoTip';
 import PosterCropper from '../components/PosterCropper';
 import CardDesigner from '../components/wallet/CardDesigner';
 import FeaturedActionsEditor from '../components/wallet/FeaturedActionsEditor';
+import { rgbToHex, hexToRgb } from '../components/wallet/walletLook';
 
 /**
  * Carte de fidélité — the one page where a merchant designs their card, sets
@@ -210,6 +211,24 @@ const readLogo = downscaleTo(320, 320, false);
 const readBanner = downscaleTo(1600, 1600, false, true);
 // (the « Image poster » goes through PosterCropper instead: framed, full card)
 
+// A photo centred over the whole iOS 27 poster (1035 × 1515), as the server
+// does for a card without a design — for a poster design's background.
+const posterCover = (src) => new Promise((resolve, reject) => {
+  if (!src) { reject(new Error('no image')); return; }
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = 1035; c.height = 1515;
+    const k = Math.max(1035 / img.width, 1515 / img.height);
+    const w = img.width * k; const h = img.height * k;
+    c.getContext('2d').drawImage(img, (1035 - w) / 2, (1515 - h) / 2, w, h);
+    resolve(c.toDataURL('image/jpeg', 0.88));
+  };
+  img.onerror = reject;
+  img.src = src;
+});
+
 const PROGRAMME_HINT = {
   points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
   points_visit: 'Chaque passage en caisse crédite le même nombre de points.',
@@ -249,6 +268,11 @@ export default function LoyaltyCardPage() {
   const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
   // a new « Image de fond » while the iOS 27 card has its own framing
   const [newPhoto, setNewPhoto] = useState(false);
+  // the card editor's poster design, when there is one ({ footer }): iOS 27
+  // then draws ITS background and footer, so the photo and the band set here
+  // go to it too (user, 2026-10-12: « ios27 chhod k sab mein changes »)
+  const [tplPoster, setTplPoster] = useState(null);
+  const toDesign = (url) => { if (url && tplPoster) designerRef.current?.setPosterBackground(url); };
   // « Ajuster » (iOS 27): the background photo, framed by the owner in the
   // poster's shape — Wallet ships that frame as is
   const adjustPoster = async () => {
@@ -257,7 +281,7 @@ export default function LoyaltyCardPage() {
     try {
       const blob = await (await fetch(src)).blob();
       const url = await new Promise((resolve) => setCropReq({ file: blob, resolve, adjust: true }));
-      if (url) { setAdvanced((a) => ({ ...a, poster_image_url: url })); setNewPhoto(false); }
+      if (url) { setAdvanced((a) => ({ ...a, poster_image_url: url })); setNewPhoto(false); toDesign(url); }
     } catch (e) {
       setError("Impossible d'ouvrir la photo pour l'ajuster. Changez l'image puis réessayez.");
     }
@@ -439,6 +463,15 @@ export default function LoyaltyCardPage() {
     reward_threshold: programme?.reward_threshold_stamps || 10,
   }), [isPoints, programme]);
 
+  // « Bande du bas »: the design's footer colour when a poster design draws
+  // iOS 27, else the card's own (both kept, so either way the same band)
+  const footerHex = tplPoster ? (tplPoster.footer ? rgbToHex(tplPoster.footer).toUpperCase() : '')
+    : (advanced?.poster_footer_color || '');
+  const setFooter = (hex) => {
+    setAdvanced((a) => ({ ...a, poster_footer_color: hex || '' }));
+    if (tplPoster) designerRef.current?.setPosterFooter(hex ? hexToRgb(hex) : '');
+  };
+
   // The card's identity — the old « Personnalisation de la carte » card — now
   // the editor's first tab.
   const identityPanel = design && (
@@ -473,6 +506,7 @@ export default function LoyaltyCardPage() {
                         setDesign({ ...design, hero_image_url: v });
                         setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
                         setNewPhoto(Boolean(v));
+                        if (v && tplPoster) posterCover(v).then(toDesign).catch(() => {});
                       }} />
         </div>
         {/* iOS 27 (user, 2026-10-11): the photo covers the whole card, like a
@@ -490,7 +524,10 @@ export default function LoyaltyCardPage() {
                 </span>
                 <span className="flex gap-2">
                   {advanced.poster_image_url && design.hero_image_url && (
-                    <button type="button" onClick={() => { setAdvanced({ ...advanced, poster_image_url: '' }); setNewPhoto(false); }}
+                    <button type="button" onClick={() => {
+                              setAdvanced({ ...advanced, poster_image_url: '' }); setNewPhoto(false);
+                              if (tplPoster) posterCover(design.hero_image_url).then(toDesign).catch(() => {});
+                            }}
                             className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-[#64748B] hover:bg-[#F4F7FC]">
                       Centrer automatiquement
                     </button>
@@ -504,7 +541,12 @@ export default function LoyaltyCardPage() {
                 </span>
               </div>
             )}
-            {newPhoto && advanced.poster_image_url && (
+            {tplPoster && (
+              <p className="text-[11.5px] text-[#64748B]">
+                Votre design (onglets Style, Images, Champs) utilise cette photo et cette bande sur iOS 27.
+              </p>
+            )}
+            {newPhoto && advanced.poster_image_url && !tplPoster && (
               <p className="rounded-lg bg-[#FFF7E6] px-2.5 py-2 text-[11.5px] text-[#92400E]">
                 La carte iOS 27 garde le cadrage de l'ancienne photo. « Centrer automatiquement » ou « Ajuster » pour utiliser la nouvelle.
               </p>
@@ -514,19 +556,19 @@ export default function LoyaltyCardPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
                   {[['', 'Flou Apple'], ['color', 'Couleur']].map(([k, l]) => {
-                    const on = k ? Boolean(advanced.poster_footer_color) : !advanced.poster_footer_color;
+                    const on = k ? Boolean(footerHex) : !footerHex;
                     return (
                       <button key={l} type="button" aria-pressed={on}
-                              onClick={() => setAdvanced({ ...advanced, poster_footer_color: k ? (advanced.poster_footer_color || design.surface_color || '#1E1B2E') : '' })}
+                              onClick={() => setFooter(k ? (footerHex || design.surface_color || '#1E1B2E') : '')}
                               className={`rounded-md px-3 py-1.5 text-[12px] font-semibold ${on ? 'bg-white text-[#2F6BFF] shadow-sm' : 'text-[#64748B]'}`}>
                         {l}
                       </button>
                     );
                   })}
                 </div>
-                {advanced.poster_footer_color && (
+                {footerHex && (
                   <div className="w-40">
-                    <ColorField value={advanced.poster_footer_color} onChange={(v) => setAdvanced({ ...advanced, poster_footer_color: v })} />
+                    <ColorField value={footerHex} onChange={setFooter} />
                   </div>
                 )}
               </div>
@@ -1224,7 +1266,7 @@ export default function LoyaltyCardPage() {
             <CardDesigner ref={designerRef} variant="v2" inspectorOverride={step === 2 ? paramsPanel : null} edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
                           actions={advanced.featured_actions || []}
                           onActionsChange={(rows) => setAdvanced((a) => ({ ...a, featured_actions: rows }))}
-                          identityPanel={identityPanel} previewCard={serverPreviewCard}
+                          identityPanel={identityPanel} previewCard={serverPreviewCard} onPosterDesign={setTplPoster}
                           clientPreview={<WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />}
                           externalDirty={settingsDirty} onSaveAll={save} onDirtyChange={setDesignerDirty}
                           googleDesign={advanced.google_design || {}}
