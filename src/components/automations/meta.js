@@ -18,17 +18,26 @@ export const VAR_LABELS = {
   'prochaine_récompense': 'Prochaine récompense', points_manquants: 'Points manquants', palier: 'Palier atteint',
   visites_restantes: 'Visites restantes', visite_s: '« visite » ou « visites »', filleul: 'Prénom du filleul', parrain: 'Prénom du parrain',
   'points_gagnés': 'Points gagnés', visite_ami: '« est venu / est revenu »', 'établissement': 'Établissement le plus proche',
-  jours_absence: "Jours d'absence",
+  jours_absence: "Jours d'absence", nom: 'Nom complet du client', 'récompense': 'Récompense du palier',
 };
 
 export const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-export const GENDERS = [['all', 'Tous'], ['F', 'Femmes'], ['M', 'Hommes'], ['X', 'Autre']];
-export const AGES = [['all', 'Tous'], ['18-24', '18 – 24 ans'], ['25-34', '25 – 34 ans'], ['35-49', '35 – 49 ans'], ['50+', '50 ans et +']];
-export const FREQS = [['all', 'Tous'], ['weekly', 'Chaque semaine (4+ / mois)'], ['monthly', '1 à 3 fois par mois'], ['rare', "Moins d'une fois par mois"]];
-export const SPENT = [['all', 'Tous'], ['<50', 'Moins de 50 €'], ['50-200', '50 € – 200 €'], ['200-500', '200 € – 500 €'], ['>500', 'Plus de 500 €']];
-export const LAST_VISIT = [['all', 'Toutes les périodes'], ['7', 'Moins de 7 jours'], ['30', 'Moins de 30 jours'], ['90', 'Moins de 90 jours'],
-  ['>30', 'Plus de 30 jours'], ['>90', 'Plus de 90 jours']];
+// « Filtres avancés » (palier mockups, 2026-10-11): ticks inside a group
+// widen it, groups narrow each other; nothing ticked = Tous.
+export const GENDERS = [['F', 'Femme'], ['M', 'Homme'], ['X', 'Autre']];
+export const AGES = [['<18', 'Moins de 18 ans'], ['18-25', '18 – 25 ans'], ['26-35', '26 – 35 ans'], ['36-50', '36 – 50 ans'], ['50+', 'Plus de 50 ans']];
+export const FREQS = [['new', 'Nouveau client (1 visite)'], ['occasional', 'Occasionnel (2–3 visites)'], ['regular', 'Régulier (4–10 visites)'], ['loyal', 'Fidèle (+10 visites)']];
+export const SPENT = [['<50', 'Moins de 50 €'], ['50-100', '50 € – 100 €'], ['100-200', '100 € – 200 €'], ['>200', 'Plus de 200 €']];
+export const LAST_VISIT = [['<7', 'Moins de 7 jours'], ['8-30', 'Entre 8 et 30 jours'], ['1-3m', 'Entre 1 et 3 mois'], ['>3m', 'Plus de 3 mois']];
+export const RADII = [1, 2, 5, 10, 20, 50];
+export const EMPTY_FILTERS = { gender: [], age: [], frequency: [], spent: [], last_visit: [], stores: [], radius_km: null };
+// older single values ("all", "F"…) read as lists of known ticks
+export const asList = (v, allowed) => {
+  const ok = new Set(allowed.map((x) => x[0]));
+  if (v == null || v === '' || v === 'all') return [];
+  return [...new Set((Array.isArray(v) ? v : [v]).map(String))].filter((x) => ok.has(x));
+};
 
 // Exemples de messages — ready-made words per scenario (the page's right rail
 // and the « Exemples » page; the user will refine that page from mockups).

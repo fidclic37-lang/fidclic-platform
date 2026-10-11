@@ -5221,7 +5221,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         from features import automations as _AU
         _fresh = db.customers.find_one({"id": cid}, {"_id": 0}) or cust
         if new_tier != previous_tier and _tier_up(previous_tier, new_tier):
-            _AU.fire("tier_up", token_data.tenant_id, _fresh)
+            _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "tier"})     # « Changement de statut »
+        _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "visit"})        # points / visites / montant
         _AU.fire("google_review", token_data.tenant_id, _fresh)
         _AU.fire("custom", token_data.tenant_id, _fresh, {"event": "visit"})    # « Personnalisée »
     except Exception as _e:
