@@ -41,7 +41,7 @@ const fullLink = (raw) => {
 const TRIGGERS = {
   birthday: { offset_days: 0 },
   tier_up: { condition: 'points', threshold: 200, repeat: 'each', min_days: 7, custom_tiers: false, tiers: [] },
-  welcome: {}, near_reward: { visits_left: 1 }, referral: { side: 'parrain' },
+  welcome: {}, near_reward: { visits_left: 1 }, referral: { sides: ['parrain', 'filleul'] },
   geo: { cooldown_days: 7, weather: [], stores: [] },
   google_review: { type: 'after_visit', delay_value: 2, delay_unit: 'hours', frequency: 'once', every_days: 30, visits: 5, date: '', stop_after_click: true },
   inactive: { days: 30, repeat: 'once', every_days: 30 },
@@ -108,12 +108,21 @@ const INACTIVE_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établiss
 // Bienvenue (mockups 2026-10-11): three steps, sent when the card lands in Wallet
 const W_STEPS = [['Déclencheur', ''], ['Message', ''], ['Résumé', '']];
 const WELCOME_VARS = ['prénom', 'nom_commerce', 'offre', 'lien'];
+// Parrainage (mockups 2026-10-11): one automation, the parrain's and the filleul's messages
+const R_STEPS = [['Déclencheur', ''], ['Message', ''], ['Résumé', '']];
+const REF_VARS = ['prénom', 'nom_commerce', 'récompense', 'lien', 'amis_parraines'];
+const REF_LABELS = { 'prénom': 'Prénom', nom_commerce: "Nom de l'établissement", 'récompense': 'Récompense', lien: 'Lien',
+  amis_parraines: "Nombre d'amis parrainés", filleul: "Prénom de l'ami", parrain: "Prénom de l'ami" };
+const FILLEUL_MSG = { title: 'Bienvenue et merci ! 🎉', body: 'Votre première visite est validée ! Vos points de parrainage ont été ajoutés à votre carte. 🎁' };
+const REWARD_MODES = [['once', 'Une fois, à la visite qui valide'], ['every', 'À cette visite, puis à chaque visite'], ['first_then', 'Un bonus, puis un autre montant à chaque visite']];
 // Récompense bientôt disponible (mockups 2026-10-11): its chips, per the card's programme
 const nrVars = (unit) => (unit === 'tampons' ? ['prénom', 'nom_commerce', 'tampons', 'tampons_restants', 'récompense'] : ['prénom', 'nom_commerce', 'points', 'points_restants', 'récompense']);
 const NR_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établissement', points: 'Nombre de points actuels', tampons: 'Tampons actuels',
   points_restants: 'Points restants', tampons_restants: 'Tampons restants', 'récompense': 'Récompense' };
 const WELCOME_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: "Nom de l'établissement", offre: 'Offre', lien: 'Lien' };
 const defaults = (sc, meta) => ({
+  ...(sc === 'referral' ? { message_filleul: { title: FILLEUL_MSG.title, body: FILLEUL_MSG.body, image_url: null,
+    button: { enabled: false, label: meta?.button || 'Voir mes points', link_type: 'card', offer_id: null, url: '' } } } : {}),
   scenario: sc, name: sc === 'google_review' ? "Demande d'avis Google" : sc === 'welcome' ? 'Bienvenue au nouveau client' : meta?.label || '', description: '', status: 'active',
   trigger: { delay_value: 0, delay_unit: 'hours', ...(TRIGGERS[sc] || {}) },
   // Avis Google (mockups 2026-10-11): the ready image and the « Laisser un avis » button
@@ -290,6 +299,10 @@ export default function AutomationEditorPage() {
   const [links, setLinks] = useState({});             // Avis Google: the shop's (or each établissement's) link
   const [menuOpen, setMenuOpen] = useState(false);    // the header's « ••• » (Client inactif mockups)
   const [pvTab, setPvTab] = useState('mobile');       // Bienvenue: « Aperçu sur mobile » / « Aperçu Wallet »
+  const [refSide, setRefSide] = useState('parrain');  // Parrainage: the message being written
+  const [refCfg, setRefCfg] = useState(null);         // Parrainage: the programme's rules (« Récompenses »)
+  const [refEdit, setRefEdit] = useState(false);
+  const [refDirty, setRefDirty] = useState(false);
   const titleRef = useRef(null);
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
@@ -307,6 +320,7 @@ export default function AutomationEditorPage() {
     ownerAPI.automations().then(({ data }) => {
       setPage(data);
       setLinks(data.google?.links || {});
+      if (data.referral) setRefCfg({ ...data.referral });
       const meta = Object.fromEntries(data.scenarios.map((x) => [x.key, x]));
       if (editing) {
         const row = data.rows.find((r) => r.id === id);
@@ -318,6 +332,7 @@ export default function AutomationEditorPage() {
         if (row.scenario === 'tier_up' && !row.trigger?.condition) trig.condition = 'status';
         if (row.scenario === 'tier_up') trig.tiers = (trig.tiers || []).map((t) => ({ ...t, value: String(t.value), reward: t.reward || '' }));
         if (row.scenario === 'geo') geoInit(trig, data);
+        if (row.scenario === 'referral' && !Array.isArray(trig.sides)) trig.sides = [trig.side || 'parrain'];
         if (row.scenario === 'near_reward' && (trig.threshold === undefined || trig.threshold === null)) {
           // saved before the mockups (« X visites »): the seuil is proposed, saving switches to it
           trig.legacy_visits = trig.visits_left || 1;
@@ -329,6 +344,8 @@ export default function AutomationEditorPage() {
         }
         setS({ ...d, name: row.name, description: row.description || '', status: row.status === 'ended' ? 'active' : row.status, trigger: trig,
           message: { ...d.message, ...row.message, button: { ...d.message.button, ...(row.message?.button || {}), url: row.message?.button?.url || '' } },
+          ...(row.scenario === 'referral' ? { message_filleul: { ...d.message_filleul, ...(row.message_filleul || {}),
+            button: { ...d.message_filleul.button, ...(row.message_filleul?.button || {}), url: row.message_filleul?.button?.url || '' } } } : {}),
           targeting: { ...d.targeting, ...row.targeting, filters: {
             gender: asList(rf.gender, GENDERS), age: asList(rf.age, AGES), client_type: asList(rf.client_type, CLIENT_TYPES),
             visits_min: rf.visits_min ?? '', visits_max: rf.visits_max ?? '', age_min: rf.age_min ?? '', age_max: rf.age_max ?? '',
@@ -414,8 +431,9 @@ export default function AutomationEditorPage() {
   const tr = s.trigger;
   const welcomeOn = s.scenario === 'welcome';
   const nrOn = s.scenario === 'near_reward';
+  const refOn = s.scenario === 'referral';
   const near = page.near || { unit: 'points', card_goal: null, card_reward: 'votre récompense', tiers: [] };
-  const lastStep = welcomeOn ? 3 : 6;
+  const lastStep = welcomeOn || s.scenario === 'referral' ? 3 : 6;
   const googleStores = page.google?.stores || [];
   const googleKeys = googleStores.length > 1 ? googleStores.map((b) => b.id) : ['main'];
   const msg = s.message;
@@ -427,10 +445,12 @@ export default function AutomationEditorPage() {
   // paliers personnalisés: each palier writes its own title and message
   const tiered = s.scenario === 'tier_up' && tr.condition !== 'status' && tr.custom_tiers;
   const tabIx = tiered ? Math.min(tierTab, Math.max(0, tr.tiers.length - 1)) : 0;
-  const cur = tiered ? (tr.tiers[tabIx] || { title: '', body: '' }) : msg;
+  const refFil = refOn && refSide === 'filleul';
+  const cur = tiered ? (tr.tiers[tabIx] || { title: '', body: '' }) : refFil ? (s.message_filleul || { title: '', body: '' }) : msg;
   const setCur = (patch) => (tiered
     ? setS((o) => ({ ...o, trigger: { ...o.trigger, tiers: o.trigger.tiers.map((t, i) => (i === tabIx ? { ...t, ...patch } : t)) } }))
-    : setMsg(patch));
+    : refFil ? setS((o) => ({ ...o, message_filleul: { ...o.message_filleul, ...patch } }))
+      : setMsg(patch));
 
   // ---- the summary lines -----------------------------------------------------------
   const triggerText = () => {
@@ -600,14 +620,52 @@ export default function AutomationEditorPage() {
     return '';
   };
   const go = (n) => { setError(''); setStep(n); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const sideMsg = (side) => (side === 'filleul' ? (s.message_filleul || {}) : msg);
+  const refProblem = () => {
+    const sides = tr.sides || [];
+    if (!sides.length) return 'Envoyez au moins un message : au parrain ou au filleul.';
+    for (const side of sides) {
+      const mm = sideMsg(side);
+      const who = side === 'filleul' ? 'Filleul' : 'Parrain';
+      const b = mm.button || {};
+      if (!String(mm.title || '').trim()) return `${who} : écrivez le titre de la notification.`;
+      if (!String(mm.body || '').trim()) return `${who} : écrivez le texte de la notification.`;
+      if (mm.title.length > TITLE_MAX) return `${who} : titre de ${TITLE_MAX} caractères au maximum.`;
+      if (mm.body.length > BODY_MAX) return `${who} : texte de ${BODY_MAX} caractères au maximum.`;
+      if (b.enabled && !String(b.label || '').trim()) return `${who} : indiquez le texte du bouton.`;
+      if (b.enabled && b.link_type === 'url' && !LINK_RE.test(fullLink(b.url))) return `${who} : lien du bouton invalide.`;
+      if (b.enabled && b.link_type === 'offer' && !b.offer_id) return `${who} : choisissez une offre.`;
+    }
+    if (refCfg && refDirty) {
+      for (const k of ['referrer_reward_points', 'referee_reward_points', 'referrer_reward_points_next', 'referee_reward_points_next']) {
+        const v = Number(refCfg[k]);
+        if (!Number.isInteger(v) || v < 0 || v > 10000) return 'Récompenses : des points entre 0 et 10 000.';
+      }
+      const mv = Number(refCfg.minimum_visits_to_earn);
+      if (!Number.isInteger(mv) || mv < 1 || mv > 20) return 'Récompenses : visites du filleul avant validation entre 1 et 20.';
+    }
+    return '';
+  };
   const next = () => {
+    if (refOn) { const p = step === 2 ? refProblem() : ''; if (p) { setError(p); return; } go(step + 1); return; }
     const pn = welcomeOn ? (step === 2 ? 3 : 0) : step;
     const p = pn ? problem(pn) : '';
     if (p) { setError(p); return; }
     go(step + 1);
   };
 
-  const body = (status) => (welcomeOn ? {
+  const body = (status) => (refOn ? {
+    scenario: 'referral', name: s.name, status, description: s.description || '', trigger: { sides: tr.sides || [] },
+    message: { ...msg, title: msg.title.trim(), body: msg.body.trim(),
+      button: { ...btn, url: btn.link_type === 'url' ? fullLink(btn.url) : null, offer_id: btn.link_type === 'offer' ? btn.offer_id : null } },
+    message_filleul: (() => { const mf = s.message_filleul || {}; const bf = mf.button || {};
+      return { ...mf, title: String(mf.title || '').trim(), body: String(mf.body || '').trim(),
+        button: { ...bf, url: bf.link_type === 'url' ? fullLink(bf.url) : null, offer_id: bf.link_type === 'offer' ? bf.offer_id : null } }; })(),
+    targeting: { mode: 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS }, exclusions: { ...EMPTY_EXCLUSIONS } },
+    // when the points are credited: at once
+    schedule: { ...sc, days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6], window: false, slots: [], hour: null, smart: false,
+      valid_from: sc.valid_from || null, valid_to: sc.valid_to || null, daily_limit: null },
+  } : welcomeOn ? {
     scenario: 'welcome', name: s.name, status, description: s.description || '', trigger: {},
     message: { ...msg, title: msg.title.trim(), body: msg.body.trim(),
       button: { ...btn, url: btn.link_type === 'url' ? fullLink(btn.url) : null, offer_id: btn.link_type === 'offer' ? btn.offer_id : null } },
@@ -636,11 +694,17 @@ export default function AutomationEditorPage() {
       daily_limit: sc.daily_limit === null || sc.daily_limit === undefined || sc.daily_limit === '' ? null : Number(sc.daily_limit) },
   });
   const save = async (status) => {
-    if (status !== 'draft') {
+    if (refOn && status !== 'draft') { const p = refProblem(); if (p) { setError(p); setStep(p.startsWith('Récompenses') ? 3 : 2); return; } }
+    if (status !== 'draft' && !refOn) {
       for (let n = 1; n <= 5; n += 1) { const p = problem(n); if (p) { setError(p); setStep(welcomeOn ? (n === 3 ? 2 : 1) : n); return; } }
     }
     setBusy(status); setError('');
     try {
+      if (refOn && refDirty && page.referral?.can_edit) {
+        // « Récompenses » edited here = the Parrainage page's rules (one document, sent whole)
+        const { data: full } = await ownerAPI.referralConfig();
+        await ownerAPI.saveReferralConfig({ ...full, ...Object.fromEntries(Object.entries(refCfg).filter(([k]) => k !== 'can_edit')) });
+      }
       if (editing) await ownerAPI.updateAutomation(id, body(status));
       else await ownerAPI.createAutomation(body(status));
       navigate('/dashboard/automations', { state: { flash: status === 'draft' ? 'Brouillon enregistré.'
@@ -2655,6 +2719,210 @@ export default function AutomationEditorPage() {
     </section>
   );
 
+  // ---- Parrainage (mockups 2026-10-11): Déclencheur, Message (Parrain / Filleul), Résumé ----
+  const sidesOn = tr.sides || [];
+  const setSideOn = (side, on) => setIn('trigger', { sides: ['parrain', 'filleul'].filter((x) => (x === side ? on : sidesOn.includes(x))) });
+  const rc = refCfg || {};
+  const setRc = (patch) => { setRefCfg((o) => ({ ...o, ...patch })); setRefDirty(true); };
+  const enableProgramme = async () => {
+    setBusy('ref'); setError('');
+    try {
+      const { data: full } = await ownerAPI.referralConfig();
+      await ownerAPI.saveReferralConfig({ ...full, enabled: true });
+      setRefCfg((o) => ({ ...o, enabled: true }));
+    } catch (e) { setError(e?.response?.data?.detail || "Le parrainage n'a pas pu être activé."); } finally { setBusy(''); }
+  };
+  const RefOff = refCfg && !rc.enabled && (
+    <p className="mb-3 flex flex-wrap items-start gap-2 rounded-xl bg-[#FFF7ED] px-3 py-2.5 text-[12.5px] text-[#9A3412]"><AlertTriangle size={16} className="mt-0.5 shrink-0" />
+      <span className="min-w-0 flex-1"><b>Le parrainage est désactivé.</b> Aucun point n'est crédité, donc aucun message ne part, même si cette automatisation est active.</span>
+      {rc.can_edit && <button type="button" disabled={!!busy} onClick={enableProgramme} className="rounded-lg bg-[#EA580C] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60">Activer le parrainage</button>}
+    </p>
+  );
+  const RStep1 = (
+    <div className="space-y-4">
+      <Card n={1} title="Déclencheur" sub="Choisissez quand l'automatisation se déclenche.">
+        {RefOff}
+        <div className="flex items-start gap-4 rounded-2xl border border-[#2F6BFF] bg-[#F5F8FF] p-4 shadow-[0_0_0_1px_#2F6BFF]">
+          <Users size={34} className="shrink-0 text-[#1463FF]" />
+          <span className="min-w-0 flex-1"><span className="block text-[15px] font-bold text-[#0B1C3F]">Un client parraine un ami</span>
+            <span className="text-[13px] text-[#475569]">L'automatisation se déclenche lorsque l'un de vos clients partage son QR code de parrainage et que son ami, inscrit grâce à lui, valide sa visite : les points de parrainage sont alors crédités{rc.reward_mode === 'every' ? ' (puis à chacune de ses visites)' : rc.reward_mode === 'first_then' ? ' (un bonus, puis à chacune de ses visites)' : ''}.</span></span>
+          <CheckCircle2 size={22} className="shrink-0 fill-[#1463FF] text-white" />
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {[['parrain', 'Message au parrain', 'Le client qui a invité son ami'], ['filleul', 'Message au filleul', "L'ami invité"]].map(([k, l, h]) => (
+            <div key={k} className="flex items-center gap-3 rounded-xl border border-[#E6EEFB] p-3">
+              <span className="min-w-0 flex-1"><span className="block text-[13px] font-semibold text-[#0B1C3F]">{l}</span><span className="text-[11.5px] text-[#64748B]">{h}</span></span>
+              <Toggle label={l} on={sidesOn.includes(k)} onChange={(v) => setSideOn(k, v)} />
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+  const refBtn = refFil ? ((s.message_filleul || {}).button || {}) : btn;
+  const setRefBtn = (patch) => (refFil ? setS((o) => ({ ...o, message_filleul: { ...o.message_filleul, button: { ...(o.message_filleul?.button || {}), ...patch } } })) : setBtn(patch));
+  const refChips = [...REF_VARS, refFil ? 'parrain' : 'filleul'];
+  const RStep2 = (
+    <Card n={2} title="Message" sub={`Personnalisez le message qui sera envoyé au client ${refFil ? 'filleul' : 'parrain'}.`}>
+      <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-[#F4F7FC] p-1" role="tablist" aria-label="Message">
+        {[['parrain', 'Parrain'], ['filleul', 'Filleul']].map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={refSide === k} onClick={() => setRefSide(k)}
+                  className={`rounded-lg py-2 text-[13px] font-semibold transition ${refSide === k ? 'bg-white text-[#1463FF] shadow-[inset_0_-2px_0_#1463FF]' : 'text-[#475569]'}`}>
+            {l} {!sidesOn.includes(k) && <span className="ml-1 rounded-full bg-[#F1F5F9] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#64748B]">désactivé</span>}</button>
+        ))}
+      </div>
+      <div className="mb-3 flex items-center justify-between rounded-xl border border-[#E6EEFB] px-3 py-2.5">
+        <span className="text-[13px] font-semibold text-[#0B1C3F]">Envoyer ce message au {refFil ? 'filleul' : 'parrain'}</span>
+        <Toggle label={`Envoyer au ${refFil ? 'filleul' : 'parrain'}`} on={sidesOn.includes(refSide)} onChange={(v) => setSideOn(refSide, v)} />
+      </div>
+      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>Titre de la notification</Label>
+      <input ref={titleRef} className={field} value={cur.title || ''} maxLength={TITLE_MAX} onFocus={() => { lastFocus.current = 'title'; }}
+             onChange={(e) => setCur({ title: e.target.value })} placeholder={refFil ? FILLEUL_MSG.title : m.title} />
+      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>Texte de la notification</Label></div>
+      <textarea ref={bodyRef} className={`${field} min-h-[96px] resize-y`} value={cur.body || ''} maxLength={BODY_MAX}
+                onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setCur({ body: e.target.value })} placeholder={refFil ? FILLEUL_MSG.body : m.body} />
+      <p className="mt-3 text-[13.5px] font-bold text-[#0B1C3F]">Variables disponibles</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {refChips.map((v) => (
+          <button key={v} type="button" title={`{${v}}`} onClick={() => insert(`{${v}}`)}
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {REF_LABELS[v]}</button>
+        ))}
+        <span className="relative">
+          <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))} className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8]"><Plus size={12} /> Emoji</button>
+          {emoji && (
+            <span className="absolute left-0 top-8 z-20 grid w-64 grid-cols-8 gap-1 rounded-xl border border-[#E2E8F0] bg-white p-2 shadow-xl">
+              {EMOJIS.map((e) => <button key={e} type="button" className="rounded p-1 text-[16px] hover:bg-[#F1F5F9]" onClick={() => { insert(e); setEmoji(''); }}>{e}</button>)}
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="mt-4 rounded-2xl border border-[#E6EEFB] p-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><Link2 size={18} /></span>
+          <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">Bouton d'action <span className="font-normal text-[#64748B]">(optionnel)</span></span>
+            <span className="text-[12px] text-[#64748B]">S'affiche sur la carte du client quand il ouvre la notification.</span></span>
+          <Toggle label="Bouton d'action" on={Boolean(refBtn.enabled)} onChange={(v) => setRefBtn({ enabled: v })} />
+        </div>
+        {refBtn.enabled && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block"><Label right={`${(refBtn.label || '').length}/${BUTTON_MAX}`}>Texte du bouton</Label>
+              <input className={field} value={refBtn.label || ''} maxLength={BUTTON_MAX} onChange={(e) => setRefBtn({ label: e.target.value })} placeholder="Voir mes points" /></label>
+            <label className="block"><Label>Lien d'action</Label>
+              <Select label="Lien du bouton" value={refBtn.link_type || 'card'} onChange={(v) => setRefBtn({ link_type: v })}
+                      options={[['card', 'La carte du client'], ['rewards', 'Page Récompenses'], ['offer', 'Une de vos offres'], ['url', 'Un lien personnalisé']]} /></label>
+            {refBtn.link_type === 'offer' && (
+              <label className="block sm:col-span-2"><Label>Offre</Label>
+                <Select label="Offre" value={refBtn.offer_id || ''} onChange={(v) => setRefBtn({ offer_id: v || null })}
+                        options={[['', 'Sélectionner une offre'], ...page.offers.map((o) => [o.id, o.name])]} /></label>
+            )}
+            {refBtn.link_type === 'url' && (
+              <label className="block sm:col-span-2"><Label>Adresse du lien</Label>
+                <input className={field} value={refBtn.url || ''} onChange={(e) => setRefBtn({ url: e.target.value })} placeholder="monsite.fr/parrainage" inputMode="url" /></label>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+  const pts = (n) => `+${Number(n) || 0} point${Number(n) > 1 ? 's' : ''}`;
+  const rewardLine = (side) => {
+    const a = side === 'parrain' ? rc.referrer_reward_points : rc.referee_reward_points;
+    const b = side === 'parrain' ? rc.referrer_reward_points_next : rc.referee_reward_points_next;
+    if (rc.reward_mode === 'every') return `${pts(a)} à la visite qui valide, puis à chaque visite du filleul`;
+    if (rc.reward_mode === 'first_then') return `${pts(a)} à la visite qui valide, puis ${pts(b)} à chaque visite du filleul`;
+    return `${pts(a)}, une fois`;
+  };
+  const RRow = ({ icon: I, tone = '#1463FF', title, children, action }) => (
+    <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-4 sm:flex-nowrap">
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl" style={{ background: `${tone}14`, color: tone }}><I size={26} /></span>
+      <span className="min-w-0 flex-1 text-[12.5px] text-[#334155]"><span className="block text-[15px] font-bold text-[#1D4ED8]">{title}</span>{children}</span>
+      {action}
+    </div>
+  );
+  const REdit = (n, side) => can && <button type="button" onClick={() => { if (side) setRefSide(side); go(n); }} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3.5 py-2 text-[13px] font-semibold text-[#1463FF]"><Pencil size={14} /> Modifier</button>;
+  const RStep3 = (
+    <Card n={3} title="Résumé" sub="Vérifiez les informations de votre automatisation avant de l'enregistrer.">
+      {RefOff}
+      <div className="space-y-3">
+        <RRow icon={Users} title="Déclencheur" action={REdit(1)}><b className="block text-[#0B1C3F]">Un client parraine un ami.</b>
+          La récompense est attribuée après le scan valide de la carte du filleul lors d'un achat ou d'une prestation{Number(rc.minimum_visits_to_earn) > 1 ? ` (à sa ${rc.minimum_visits_to_earn}e visite)` : ''}.</RRow>
+        {['parrain', 'filleul'].map((side) => {
+          const mm = sideMsg(side);
+          return (
+            <RRow key={side} icon={side === 'parrain' ? Award : Star} tone={side === 'parrain' ? '#F59E0B' : '#E11D48'} title={`Message — ${side === 'parrain' ? 'Parrain' : 'Filleul'}`}
+                  action={REdit(2, side)}>
+              {sidesOn.includes(side) ? (<>
+                <span className="block"><b className="text-[#0B1C3F]">Titre :</b> {mm.title || '—'}</span>
+                <span className="block"><b className="text-[#0B1C3F]">Texte :</b> {mm.body || '—'}</span></>)
+                : <span className="text-[#94A3B8]">Désactivé : aucun message au {side}.</span>}
+            </RRow>
+          );
+        })}
+        <RRow icon={Euro} tone="#2563EB" title="Récompenses"
+              action={rc.can_edit ? <button type="button" onClick={() => setRefEdit((v) => !v)} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3.5 py-2 text-[13px] font-semibold text-[#1463FF]"><Pencil size={14} /> {refEdit ? 'Fermer' : 'Modifier'}</button> : null}>
+          <span className="block"><b className="text-[#0B1C3F]">Parrain :</b> {rewardLine('parrain')}</span>
+          <span className="block"><b className="text-[#0B1C3F]">Filleul :</b> {rewardLine('filleul')}</span>
+          {!rc.can_edit && <span className="mt-1 block text-[11.5px] text-[#64748B]">Seul le propriétaire peut modifier les récompenses de parrainage.</span>}
+          {refEdit && rc.can_edit && (
+            <span className="mt-3 grid gap-3 rounded-xl bg-[#F8FAFF] p-3 sm:grid-cols-2">
+              <label className="block"><Label>Points du parrain</Label><Num value={String(rc.referrer_reward_points ?? '')} digits={5} min={0} max={10000} label="Points du parrain" onChange={(v) => setRc({ referrer_reward_points: v })} /></label>
+              <label className="block"><Label>Points du filleul</Label><Num value={String(rc.referee_reward_points ?? '')} digits={5} min={0} max={10000} label="Points du filleul" onChange={(v) => setRc({ referee_reward_points: v })} /></label>
+              <label className="block sm:col-span-2"><Label>Quand créditer</Label>
+                <Select label="Quand créditer" value={rc.reward_mode || 'once'} onChange={(v) => setRc({ reward_mode: v })} options={REWARD_MODES} /></label>
+              {rc.reward_mode === 'first_then' && (<>
+                <label className="block"><Label>Ensuite, parrain (par visite)</Label><Num value={String(rc.referrer_reward_points_next ?? '')} digits={5} min={0} max={10000} label="Ensuite, parrain" onChange={(v) => setRc({ referrer_reward_points_next: v })} /></label>
+                <label className="block"><Label>Ensuite, filleul (par visite)</Label><Num value={String(rc.referee_reward_points_next ?? '')} digits={5} min={0} max={10000} label="Ensuite, filleul" onChange={(v) => setRc({ referee_reward_points_next: v })} /></label>
+              </>)}
+              <label className="block sm:col-span-2"><Label>Visites du filleul avant validation</Label>
+                <Num value={String(rc.minimum_visits_to_earn ?? '')} min={1} max={20} label="Visites du filleul avant validation" onChange={(v) => setRc({ minimum_visits_to_earn: v })} /></label>
+              <span className="text-[11.5px] text-[#64748B] sm:col-span-2">Les mêmes règles que la page Parrainage : elles y sont mises à jour à l'enregistrement.</span>
+            </span>
+          )}
+        </RRow>
+        <RRow icon={Power} tone="#059669" title="Statut" action={<Toggle label="Activer l'automatisation" on={s.status !== 'paused'} disabled={!can} onChange={(v) => set({ status: v ? 'active' : 'paused' })} />}>
+          <span className="flex flex-wrap items-center gap-2">{StatusPill}{s.status !== 'paused' ? 'Cette automatisation sera active dès son enregistrement.' : 'En pause : aucun message ne part.'}</span>
+        </RRow>
+      </div>
+    </Card>
+  );
+  const refExtra = (side) => ({ 'récompense': pts(side === 'parrain' ? rc.referrer_reward_points : rc.referee_reward_points).slice(1),
+    lien: 'fidclic.com/c/…', amis_parraines: '3', filleul: 'Marie', parrain: 'Lucas', points_gagnés: String(side === 'parrain' ? rc.referrer_reward_points : rc.referee_reward_points),
+    visite_ami: 'est venu' });
+  // Apple Wallet: the parrainage rides on the points field's banner (features/automations._deliver)
+  const refWallet = (t, b) => `${b} Vous avez maintenant 120 points.`;
+  const RPreview = (
+    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <p className="mb-3 text-[14.5px] font-bold text-[#0B1C3F]">Aperçu de la notification</p>
+      <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-[#F4F7FC] p-1" role="tablist">
+        {[['mobile', 'Aperçu sur mobile'], ['wallet', 'Aperçu Wallet']].map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={pvTab === k} onClick={() => setPvTab(k)}
+                  className={`rounded-lg py-2 text-[13px] font-semibold transition ${pvTab === k ? 'bg-white text-[#1463FF] shadow-[inset_0_-2px_0_#1463FF]' : 'text-[#475569]'}`}>{l}</button>
+        ))}
+      </div>
+      <LockScreenPreview bare variant={pvTab} shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={null}
+                         button={refBtn.enabled ? refBtn.label : ''} sample={preview?.sample} extra={refExtra(refSide)} walletText={refWallet} />
+    </section>
+  );
+  const RBoth = (
+    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <p className="mb-3 text-[14.5px] font-bold text-[#0B1C3F]">Aperçu des notifications</p>
+      <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-[#F4F7FC] p-1" role="tablist">
+        {[['parrain', 'Parrain'], ['filleul', 'Filleul']].map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={refSide === k} onClick={() => setRefSide(k)}
+                  className={`rounded-lg py-2 text-[13px] font-semibold transition ${refSide === k ? 'bg-white text-[#1463FF] shadow-[inset_0_-2px_0_#1463FF]' : 'text-[#475569]'}`}>{l}</button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {['parrain', 'filleul'].map((side) => (
+          <div key={side} className={`${refSide === side ? '' : 'opacity-60'} ${sidesOn.includes(side) ? '' : 'grayscale'}`}>
+            <LockScreenPreview bare compact shop={page.shop} logo={page.logo_url} title={sideMsg(side).title} body={sideMsg(side).body}
+                               sample={preview?.sample} extra={refExtra(side)} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
   // ---- Client inactif: the right column of each step (mockups) -----------------------
   const Delta = ({ v, label = 'par rapport au mois dernier' }) => (v === null || v === undefined ? null : (
     <span className="flex items-start gap-2 border-l border-[#E6EEFB] pl-4">
@@ -2800,7 +3068,8 @@ export default function AutomationEditorPage() {
   const geoNew = s.scenario === 'geo' && !editing;
   const avisNew = s.scenario === 'google_review' && !editing;
   const createLabel = geoNew ? "Activer l'automatisation" : s.scenario === 'google_review' ? "Enregistrer l'automatisation" : "Créer l'automatisation";
-  const content = welcomeOn ? [null, WStep1, Step3, WStep3][Math.min(step, 3)]
+  const content = refOn ? [null, RStep1, RStep2, RStep3][Math.min(step, 3)]
+    : welcomeOn ? [null, WStep1, Step3, WStep3][Math.min(step, 3)]
     : nrOn ? [null, Step1, Step2NR, Step3, Step4NR, Step5NR, Step6NR][step]
     : inactiveOn ? [null, Step1, Step2Inactive, Step3, Step4Inactive, Step5Inactive, Step6Inactive][step]
     : [null, Step1, s.scenario === 'geo' ? Step2Geo : s.scenario === 'google_review' ? Step2Avis : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : s.scenario === 'google_review' ? Step5Avis : Step5, Step6][step];
@@ -2862,7 +3131,7 @@ export default function AutomationEditorPage() {
   );
   return (
     <div className="pb-10">
-      {inactiveOn || welcomeOn || nrOn ? InactiveHeader : (
+      {inactiveOn || welcomeOn || nrOn || refOn ? InactiveHeader : (
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-4">
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
@@ -2888,11 +3157,11 @@ export default function AutomationEditorPage() {
       )}
 
       <ol className="mb-5 flex items-start overflow-x-auto pb-1">
-        {(welcomeOn ? W_STEPS : STEPS).map(([label0, sub], i, list) => {
+        {(welcomeOn ? W_STEPS : refOn ? R_STEPS : STEPS).map(([label0, sub], i, list) => {
           const n = i + 1;
           const label = n === 2 && s.scenario === 'geo' ? 'Zone de détection' : label0;
           const done = n < step;
-          const subText = inactiveOn || welcomeOn || nrOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
+          const subText = inactiveOn || welcomeOn || nrOn || refOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
           return (
             <li key={label} className="flex min-w-0 flex-1 items-start last:flex-none">
               <button type="button" onClick={() => (done ? go(n) : null)} disabled={!done && n !== step}
@@ -2914,8 +3183,9 @@ export default function AutomationEditorPage() {
         <fieldset disabled={!can} className="m-0 min-w-0 border-0 p-0">{content}</fieldset>
         <aside className="space-y-4">
           {welcomeOn && WPreview}
+          {refOn && (Math.min(step, 3) === 3 ? RBoth : RPreview)}
           {nrOn && step === 3 && PreviewTabs(nrExtra, 'Aperçu du message')}
-          {!welcomeOn && !nrOn && (!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
+          {!welcomeOn && !nrOn && !refOn && (!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
                              button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4 && s.scenario !== 'google_review'}
                              bigImage={s.scenario === 'google_review' && step === 3}
                              note={s.scenario === 'geo' ? "Sur l'écran verrouillé, Apple affiche ce message près de votre établissement (Google Wallet, son propre texte). Un appui ouvre la carte, où le message et son bouton s'affichent." : undefined}
@@ -2925,7 +3195,7 @@ export default function AutomationEditorPage() {
                                : s.scenario === 'geo' ? { 'établissement': zoneSpots[0]?.name || page.shop }
                                : inactiveOn ? inPreviewExtra : {}} />}
           {nrOn && step === 1 && PreviewTabs(nrExtra)}
-          {welcomeOn ? null : nrOn ? (step >= 2 ? nrPanel : Recap) : inactiveOn && step >= 2 ? inactivePanel : stepPanel}
+          {welcomeOn || refOn ? null : nrOn ? (step >= 2 ? nrPanel : Recap) : inactiveOn && step >= 2 ? inactivePanel : stepPanel}
           {Conseil}
           {BonnesPratiques}
           {NRPratiques}
@@ -2934,7 +3204,7 @@ export default function AutomationEditorPage() {
 
       {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">{error}</p>}
       <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E6EEFB] bg-white p-4">
-        {inactiveOn || welcomeOn || nrOn ? (
+        {inactiveOn || welcomeOn || nrOn || refOn ? (
           <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
             <button type="button" onClick={() => navigate('/dashboard/automations')}
                     className="rounded-xl border border-[#BFD3FF] px-6 py-2.5 text-[13px] font-semibold text-[#1463FF]">Annuler</button>
@@ -2955,7 +3225,7 @@ export default function AutomationEditorPage() {
         ) : can && (
           <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-7 py-3 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
-            {busy ? <Loader2 size={17} className="animate-spin" /> : !welcomeOn && !nrOn && <Check size={17} />} {editing && !nrOn ? 'Enregistrer les modifications' : welcomeOn || nrOn ? "Enregistrer l'automatisation" : createLabel}
+            {busy ? <Loader2 size={17} className="animate-spin" /> : !welcomeOn && !nrOn && !refOn && <Check size={17} />} {editing && !nrOn && !refOn ? 'Enregistrer les modifications' : welcomeOn || nrOn || refOn ? "Enregistrer l'automatisation" : createLabel}
           </button>
         )}
       </footer>

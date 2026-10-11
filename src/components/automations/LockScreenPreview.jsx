@@ -21,7 +21,7 @@ const parisNow = () => {
  * message » field's text, « titre — texte » (features/wallet_passes). `bare`
  * drops the card and its heading (the page draws its own, with tabs).
  */
-export default function LockScreenPreview({ shop, logo, title, body, image, button, sample, extra, note, compact, bigImage, variant = 'mobile', bare = false }) {
+export default function LockScreenPreview({ shop, logo, title, body, image, button, sample, extra, note, compact, bigImage, variant = 'mobile', bare = false, walletText }) {
   const [logoOk, setLogoOk] = useState(true);
   const [now, setNow] = useState(parisNow);
   useEffect(() => setLogoOk(true), [logo]);
@@ -52,7 +52,7 @@ export default function LockScreenPreview({ shop, logo, title, body, image, butt
               <span className="text-[11px] text-[#64748B]">maintenant</span>
             </div>
             {wallet ? (
-              <p className="break-words text-[12.5px] leading-snug text-[#0B1C3F]">{[t, b].filter(Boolean).join(' — ') || 'Votre message apparaîtra ici.'}</p>
+              <p className="break-words text-[12.5px] leading-snug text-[#0B1C3F]">{(walletText ? walletText(t, b) : [t, b].filter(Boolean).join(' — ')) || 'Votre message apparaîtra ici.'}</p>
             ) : (
             <div className="flex gap-2.5">
               <div className="min-w-0 flex-1">

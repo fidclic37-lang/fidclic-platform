@@ -80,6 +80,12 @@ def main():
 
     me = join("Akshansh Test", "0611111111").json()["barcode_id"]
     db.customers.update_one({"barcode_id": me}, {"$set": {"points": 0}})
+    # the defaults follow the mockups (no names, 2026-10-11); this owner names the
+    # friend with the « Prénom de l'ami » chip — the names must reach both sides
+    http("GET", "/api/owner/automations", headers=H)
+    db.automations.update_one({"tenant_id": "t1", "scenario": "referral"}, {"$set": {
+        "message.body": "Votre ami {filleul} {visite_ami} chez {nom_commerce} : +{points_gagnés} points.",
+        "message_filleul.body": "Merci d'être venu grâce à {parrain} : +{points_gagnés} points de parrainage."}})
 
     print("1. Chaque ami paie le parrain, pas seulement le premier")
     friends = []

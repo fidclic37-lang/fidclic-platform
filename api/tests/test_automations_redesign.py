@@ -118,8 +118,9 @@ def main():
           by["near_reward"][0]["trigger"]["visits_left"] == 2 and "{visites_restantes}" in by["near_reward"][0]["message"]["title"])
     check("Avis Google keeps every 10 days, with its review button",
           by["google_review"][0]["trigger"]["every_days"] == 10 and by["google_review"][0]["message"]["button"]["link_type"] == "google_review")
-    check("Parrainage: one for the parrain, one for the filleul",
-          sorted(r["trigger"]["side"] for r in by["referral"]) == ["filleul", "parrain"])
+    check("Parrainage: ONE automation, the parrain's and the filleul's messages (mockups 2026-10-11)",
+          len(by["referral"]) == 1 and by["referral"][0]["trigger"]["sides"] == ["parrain", "filleul"]
+          and by["referral"][0]["message_filleul"]["body"].startswith("Votre première visite est validée !"))
     check("Offre spéciale, Relance panier and the shop's own « Plage horaire » are gone, data included",
           db.push_scenarios.count_documents({"tenant_id": "t1"}) == 0
           and not db.push_wallet_log.find_one({"id": "l1"}) and db.push_wallet_log.find_one({"id": "l2"}))
@@ -346,9 +347,10 @@ def main():
     from features import referrals as RF
     RF._announce("t1", "c1", db.customers.find_one({"id": "c2"}), "first", 50, 25)
     who = {p["cid"]: p["body"] for p in pushed if p["kind"] == "parrainage"}
-    check("the parrain hears his friend came, with his points",
-          "Bruno" in who.get("c1", "") and "+50" in who.get("c1", ""))
-    check("the filleul hears whom he owes it to", "Alice" in who.get("c2", "") and "+25" in who.get("c2", ""))
+    check("the parrain gets the parrain's message",
+          who.get("c1", "").startswith("Votre ami a rejoint notre établissement grâce à vous."))
+    check("the filleul gets the filleul's message",
+          who.get("c2", "").startswith("Votre première visite est validée !"))
     check("the parrainage rides on the points banner, not a second one",
           (db.customers.find_one({"id": "c1"})["auto_news"].get("pass") is False)
           and "%@" in db.customers.find_one({"id": "c1"})["points_news"]["text"])

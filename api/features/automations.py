@@ -150,12 +150,14 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "body": "Plus que {points_restants} avant votre prochaine récompense, {prénom} : {récompense} !",
         "button": "Voir ma récompense",
     },
+    # Parrainage (mockups 2026-10-11): ONE automation, the parrain's message
+    # and the filleul's (FILLEUL_DEFAULT), sent when the points are credited
     "referral": {
         "label": "Parrainage", "sub": "Remerciez parrains et filleuls quand la récompense est gagnée.",
-        "icon": "users", "tone": "green", "kind": "event", "trigger_label": "Récompense de parrainage gagnée",
+        "icon": "users", "tone": "green", "kind": "event", "trigger_label": "Un client parraine un ami",
         "push_kind": "parrainage", "google": "parrainage",
-        "title": "Parrainage réussi 🎉",
-        "body": "Votre ami {filleul} {visite_ami} chez {nom_commerce} : +{points_gagnés} points.",
+        "title": "Merci pour votre parrainage ! 🎁",
+        "body": "Votre ami a rejoint notre établissement grâce à vous. Merci ! Profitez de votre récompense de parrainage. 🎉",
         "button": "Voir mes points",
     },
     "geo": {
@@ -192,6 +194,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "title": "", "body": "", "button": "En savoir plus",
     },
 }
+FILLEUL_DEFAULT = {"title": "Bienvenue et merci ! 🎉",
+                   "body": "Votre première visite est validée ! Vos points de parrainage ont été ajoutés à votre carte. 🎁"}
+SIDES = ("parrain", "filleul")
 ORDER = ["custom", "birthday", "tier_up", "welcome", "near_reward", "referral", "geo", "google_review", "inactive"]
 CUSTOM_TYPES = ("visits", "after_signup", "after_visit", "date")
 DATE_MODES = ("once", "weekly", "monthly", "yearly")
@@ -207,7 +212,7 @@ REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products"
 VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
     "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["points_restants", "tampons_restants", "tampons", "récompense", "visites_restantes", "visite_s"],
-    "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
+    "referral": ["filleul", "parrain", "points_gagnés", "visite_ami", "récompense", "lien", "amis_parraines"], "geo": ["établissement"],
     "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": [],
 }
 VARIABLES["geo"] = ["établissement", "distance", "offre"]
@@ -276,7 +281,7 @@ def _default_trigger(scenario: str) -> Dict[str, Any]:
         # a row with « threshold » (X points / tampons, mockups 2026-10-11) is the
         # new rule; one with only « visits_left » keeps the old one until re-saved
         "near_reward": {"visits_left": 1},
-        "referral": {"side": "parrain"},
+        "referral": {"sides": ["parrain", "filleul"]},
         # Géolocalisation (mockups 2026-10-11): the gap per client, the weather
         # asked (none = any), the establishments watched (none = all)
         "geo": {"cooldown_days": 7, "weather": [], "stores": []},
@@ -312,6 +317,10 @@ def new_doc(tid: str, scenario: str, **over: Any) -> Dict[str, Any]:
         "schedule": _default_schedule(scenario),
         "created_at": now, "updated_at": now, "last_run_at": None, "store_ids": None,
     }
+    if scenario == "referral":
+        doc["message_filleul"] = {"title": FILLEUL_DEFAULT["title"], "body": FILLEUL_DEFAULT["body"], "image_url": None,
+                                  "button": {"enabled": False, "label": meta["button"], "link_type": "card",
+                                             "offer_id": None, "url": None}}
     for k, v in over.items():
         if isinstance(v, dict) and isinstance(doc.get(k), dict):
             doc[k] = {**doc[k], **v}
@@ -381,12 +390,8 @@ def migrate(tid: str) -> None:
                                  "button": {"enabled": True, "label": "Laisser un avis",
                                             "link_type": "google_review", "offer_id": None, "url": None}}))
     ref_on = bool((_db.referral_config.find_one({"tenant_id": tid}) or {}).get("enabled"))
-    docs.append(new_doc(tid, "referral", name="Parrainage — parrain", status="active" if ref_on else "paused",
-                        trigger={"side": "parrain"}))
-    docs.append(new_doc(tid, "referral", name="Parrainage — filleul", status="active" if ref_on else "paused",
-                        trigger={"side": "filleul"},
-                        message={"title": "Parrainage 🎉",
-                                 "body": "Merci d'être venu grâce à {parrain} : +{points_gagnés} points de parrainage."}))
+    # one automation, both messages, the mockup's words (user, 2026-10-11)
+    docs.append(new_doc(tid, "referral", name="Parrainage", status="active" if ref_on else "paused"))
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "geo_enabled": 1, "geo_cooldown_days": 1}) or {}
     docs.append(new_doc(tid, "geo", status="active" if tenant.get("geo_enabled") else "paused",
                         trigger={"cooldown_days": int(tenant.get("geo_cooldown_days") or 7)}))
@@ -821,6 +826,16 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
         out.update({"visite_ami": "est revenu" if ctx.get("kind") == "next" else "est venu",
                     "filleul": ctx.get("filleul") or "votre ami", "parrain": ctx.get("parrain") or "votre parrain",
                     "points_gagnés": ctx.get("points") or 0, "points_gagnes": ctx.get("points") or 0})
+        # mockup chips « Récompense », « Lien », « Nombre d'amis parrainés » (validated ones)
+        pts = int(ctx.get("points") or 0)
+        out["récompense"] = out["recompense"] = f"{pts} point{'s' if pts > 1 else ''}" if pts else "votre récompense"
+        try:
+            from services import card_owner as CO
+            out["lien"] = CO.owner_url(public_base(), cust.get("barcode_id") or "")
+        except Exception:
+            out["lien"] = ""
+        out["amis_parraines"] = _db.referral_redemptions.count_documents(
+            {"referrer_customer_id": cust.get("id"), "referrer_pending": False})
     if scenario == "geo":
         out["établissement"] = ctx.get("store") or ""
         out["etablissement"] = ctx.get("store") or ""
@@ -853,7 +868,10 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
 def _target_url(tid: str, row: Dict[str, Any], cust: Dict[str, Any],
                 ctx: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Where the action button goes — any link the owner put."""
-    btn = ((row.get("message") or {}).get("button") or {})
+    msg = row.get("message") or {}
+    if row.get("scenario") == "referral" and (ctx or {}).get("side") == "filleul" and row.get("message_filleul"):
+        msg = row["message_filleul"]                  # the filleul's own button
+    btn = (msg.get("button") or {})
     if not btn.get("enabled"):
         return None
     from services import card_owner as CO
@@ -890,6 +908,8 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     extra = _extra(scenario, cust, ctx, tpl)
     msg = row.get("message") or {}
+    if scenario == "referral" and ctx.get("side") == "filleul" and row.get("message_filleul"):
+        msg = row["message_filleul"]                  # one automation, each side its own words
     # a palier of its own (paliers personnalisés) speaks its own words
     raw_title = ctx.get("tier_title") or msg.get("title") or meta["title"]
     raw_body = ctx.get("tier_body") or msg.get("body") or meta["body"]
@@ -1110,8 +1130,9 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
                 _db.automation_queue.find_one({**q, **({"ctx.cycle": cyc} if cyc else {})}):
             return False
     elif sc == "referral":
-        if (tr.get("side") or "parrain") != ctx.get("side"):
-            return False
+        sides = tr.get("sides") if isinstance(tr.get("sides"), list) else [tr.get("side") or "parrain"]
+        if ctx.get("side") not in sides:
+            return False                          # that side's message is switched off
     elif sc == "welcome":
         if ctx.get("event") != "wallet":
             return False                         # only the card landing in a Wallet (2026-10-11)
@@ -1633,7 +1654,7 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     opened = _opened(tid, logs) if logs else 0
     clicks = sum(1 for x in logs if x.get("clicked_at"))
     out = {k: r.get(k) for k in ("id", "scenario", "name", "description", "status", "trigger", "message", "targeting",
-                                 "schedule", "store_ids")}
+                                 "schedule", "store_ids", "message_filleul")}
     out["status"] = status_of(r)                  # « Terminée » once its period is over
     if r["scenario"] == "geo":
         from features import geo_automation as GA
@@ -1748,7 +1769,9 @@ def trigger_text(r: Dict[str, Any]) -> str:
         return f"Après {n} jours sans visite" + (" · puis tous les " + str(int(tr.get('every_days') or 30)) + " j"
                                                 if tr.get("repeat") == "every" else "")
     if sc == "referral":
-        return "Au parrain" if (tr.get("side") or "parrain") == "parrain" else "Au filleul"
+        sides = tr.get("sides") if isinstance(tr.get("sides"), list) else [tr.get("side") or "parrain"]
+        who = " et ".join({"parrain": "au parrain", "filleul": "au filleul"}[x] for x in SIDES if x in sides) or "à personne"
+        return f"Un client parraine un ami · points crédités · message {who}"
     if sc == "welcome":
         return "Après l'ajout de la carte dans Wallet"
     if sc == "google_review":
@@ -1796,6 +1819,57 @@ def schedule_text(r: Dict[str, Any]) -> str:
 OLD_NEAR_LABEL = "Proche de la récompense"
 
 
+def merge_referrals(tid: str) -> None:
+    """Parrainage is ONE automation with both messages (user, 2026-10-11).
+    The older rows — one per side (« Parrainage — parrain / — filleul ») —
+    become that: each side keeps its words and its on/off; the first parrain
+    row and the first filleul row merge (the filleul's sends counted under
+    the merged one); any further one stays, holding its own side only."""
+    rows = list(_db.automations.find({"tenant_id": tid, "scenario": "referral", "trigger.side": {"$exists": True}},
+                                     {"_id": 0}).sort([("order", 1), ("created_at", 1)]))
+    if not rows:
+        return
+    parrains = [r for r in rows if (r["trigger"].get("side") or "parrain") == "parrain"]
+    filleuls = [r for r in rows if r["trigger"].get("side") == "filleul"]
+    for r in rows:                                 # each on its own first: one side, its words, its status
+        side = r["trigger"].get("side") or "parrain"
+        upd = {"trigger": {**{k: v for k, v in r["trigger"].items() if k != "side"}, "sides": [side]},
+               "message_filleul": r.get("message") if side == "filleul" else
+               {"title": FILLEUL_DEFAULT["title"], "body": FILLEUL_DEFAULT["body"], "image_url": None,
+                "button": {"enabled": False, "label": SCENARIOS["referral"]["button"], "link_type": "card",
+                           "offer_id": None, "url": None}}}
+        if side == "filleul":
+            upd["message"] = {**(r.get("message") or {}), "title": SCENARIOS["referral"]["title"],
+                              "body": SCENARIOS["referral"]["body"]}
+        _db.automations.update_one({"id": r["id"]}, {"$set": upd})
+    if parrains and filleuls:
+        p_row, f_row = parrains[0], filleuls[0]
+        p_on, f_on = p_row.get("status") == "active", f_row.get("status") == "active"
+        sides = [x for x, on in (("parrain", p_on), ("filleul", f_on)) if on]
+        _db.automations.update_one({"id": p_row["id"]}, {"$set": {
+            "name": "Parrainage" if p_row.get("name") in ("Parrainage — parrain", "Parrainage") else p_row.get("name"),
+            "trigger": {**{k: v for k, v in p_row["trigger"].items() if k != "side"},
+                        # both sides were off: the automation is paused, each message ready
+                        "sides": sides or ["parrain", "filleul"]},
+            "status": "active" if sides else p_row.get("status"),
+            "message_filleul": f_row.get("message"), "updated_at": _now()}})
+        _db.automation_log.update_many({"automation_id": f_row["id"]}, {"$set": {"automation_id": p_row["id"]}})
+        _db.automation_queue.update_many({"automation_id": f_row["id"]}, {"$set": {"automation_id": p_row["id"]}})
+        _db.automations.delete_one({"id": f_row["id"]})
+
+
+def referral_page(tid: str) -> Dict[str, Any]:
+    """The Parrainage programme's rules, for the editor's « Récompenses »."""
+    cfg = _db.referral_config.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    return {"enabled": bool(cfg.get("enabled")),
+            "referrer_reward_points": int(cfg.get("referrer_reward_points", 50) or 0),
+            "referee_reward_points": int(cfg.get("referee_reward_points", 25) or 0),
+            "reward_mode": cfg.get("reward_mode") or "once",
+            "referrer_reward_points_next": int(cfg.get("referrer_reward_points_next") or 0),
+            "referee_reward_points_next": int(cfg.get("referee_reward_points_next") or 0),
+            "minimum_visits_to_earn": int(cfg.get("minimum_visits_to_earn") or 1)}
+
+
 def near_page(tid: str) -> Dict[str, Any]:
     """What the Récompense bientôt disponible editor needs of the card: the
     programme's unit and the card's own reward (its « exemple de scénario »)."""
@@ -1816,6 +1890,7 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
     # the scenario's new name (user, 2026-10-11) on the rows that kept the default one
     _db.automations.update_many({"tenant_id": tid, "scenario": "near_reward", "name": OLD_NEAR_LABEL},
                                 {"$set": {"name": SCENARIOS["near_reward"]["label"]}})
+    merge_referrals(tid)
     q: Dict[str, Any] = {"tenant_id": tid}
     rows = [_row_view(r, tid) for r in _db.automations.find(q, {"_id": 0}).sort([("order", 1), ("created_at", 1)])]
     active = sum(1 for r in rows if r["status"] == "active")
@@ -1856,6 +1931,7 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
         "can_edit": token.role in EDITORS,
         "tick": tick_seen(at),
         "near": near_page(tid),
+        "referral": {**referral_page(tid), "can_edit": token.role == "business_owner"},
         "statuses": _statuses(tid),
     }
 
@@ -1976,6 +2052,7 @@ class AutomationIn(BaseModel):
     status: str = "active"
     trigger: Dict[str, Any] = {}
     message: MessageIn
+    message_filleul: Optional[MessageIn] = None      # Parrainage: the filleul's own words
     targeting: TargetingIn = TargetingIn()
     schedule: ScheduleIn = ScheduleIn()
 
@@ -1990,6 +2067,54 @@ def _int(v: Any, lo: int, hi: int, label: str) -> int:
     if not (lo <= n <= hi):
         raise HTTPException(status_code=400, detail=f"{label} : entre {lo} et {hi}.")
     return n
+
+
+def clean_message(m: "MessageIn", sc: str, tid: str, required: bool, who: str = "") -> Dict[str, Any]:
+    """One message of an automation, checked (the parrain's and the filleul's
+    go through the same rules). `who` prefixes the errors (« Filleul : … »)."""
+    try:
+        return _clean_message(m, sc, tid, required)
+    except HTTPException as exc:
+        if who:
+            raise HTTPException(status_code=exc.status_code, detail=f"{who} : {exc.detail}")
+        raise
+
+
+def _clean_message(m: "MessageIn", sc: str, tid: str, required: bool) -> Dict[str, Any]:
+    title, text = re.sub(r"\s+", " ", m.title or "").strip(), re.sub(r"[ \t]+", " ", m.body or "").strip()
+    if required and (not title or not text):
+        raise HTTPException(status_code=400, detail="Le titre et le message sont obligatoires.")
+    if len(title) > TITLE_MAX:
+        raise HTTPException(status_code=400, detail=f"Titre : {TITLE_MAX} caractères au maximum.")
+    if len(text) > BODY_MAX:
+        raise HTTPException(status_code=400, detail=f"Message : {BODY_MAX} caractères au maximum.")
+    img = (m.image_url or "").strip() or None
+    # FidClic's own ready images (public/automations/…) are allowed by their path
+    if img and not (img.startswith("data:image/") or img.startswith("https://") or img in READY_IMAGES):
+        raise HTTPException(status_code=400, detail="Image invalide.")
+    if img and len(img) > 2_800_000:
+        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
+    b = m.button
+    button = {"enabled": bool(b.enabled), "label": (b.label or "").strip()[:BUTTON_MAX] or SCENARIOS[sc]["button"],
+              "link_type": b.link_type if b.link_type in LINK_TYPES else "card", "offer_id": None, "url": None}
+    if b.enabled:
+        if not (b.label or "").strip():
+            raise HTTPException(status_code=400, detail="Indiquez le texte du bouton.")
+        if len((b.label or "").strip()) > BUTTON_MAX:
+            raise HTTPException(status_code=400, detail=f"Texte du bouton : {BUTTON_MAX} caractères au maximum.")
+        if button["link_type"] == "url":
+            u = safe_url(b.url)
+            if not u:
+                raise HTTPException(status_code=400, detail="Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.")
+            button["url"] = u
+        if button["link_type"] == "offer":
+            if not b.offer_id or not _db.campaigns.find_one({"tenant_id": tid, "id": b.offer_id}):
+                raise HTTPException(status_code=400, detail="Choisissez une offre.")
+            button["offer_id"] = b.offer_id
+        if button["link_type"] == "google_review" and sc != "google_review" \
+                and not any(current_links(tid).values()):
+            raise HTTPException(status_code=400, detail="Ajoutez d'abord votre lien Google (Insights › Avis Google).")
+    return {"title": title, "body": text, "image_url": img, "button": button}
 
 
 def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
@@ -2028,9 +2153,15 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["repeat"] = "every" if tr_in.get("repeat") == "every" else "once"
         tr["every_days"] = _int(tr_in.get("every_days", 30), 7, 365, "Répéter tous les")
     elif sc == "referral":
-        if tr_in.get("side") not in ("parrain", "filleul"):
-            raise HTTPException(status_code=400, detail="Choisissez qui reçoit le message : parrain ou filleul.")
-        tr["side"] = tr_in["side"]
+        raw = tr_in.get("sides")
+        if raw is None and tr_in.get("side") in SIDES:          # an older client
+            raw = [tr_in["side"]]
+        if not isinstance(raw, list) or any(x not in SIDES for x in raw):
+            raise HTTPException(status_code=400, detail="Choisissez qui reçoit le message : parrain et/ou filleul.")
+        tr.pop("side", None)
+        tr["sides"] = [x for x in SIDES if x in raw]
+        if not tr["sides"] and not draft:
+            raise HTTPException(status_code=400, detail="Envoyez au moins un message : au parrain ou au filleul.")
     elif sc == "geo":
         tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 7), 1, 90, "Délai entre deux messages")
         weather = tr_in.get("weather") or []
@@ -2137,40 +2268,13 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
                 tr["weekday"] = _int(tr_in.get("weekday", 0), 0, 6, "Jour de la semaine")
             if mode == "monthly":
                 tr["monthday"] = _int(tr_in.get("monthday", 1), 1, 31, "Jour du mois")
-    m = body.message
-    title, text = re.sub(r"\s+", " ", m.title or "").strip(), re.sub(r"[ \t]+", " ", m.body or "").strip()
-    if not draft and (not title or not text):
-        raise HTTPException(status_code=400, detail="Le titre et le message sont obligatoires.")
-    if len(title) > TITLE_MAX:
-        raise HTTPException(status_code=400, detail=f"Titre : {TITLE_MAX} caractères au maximum.")
-    if len(text) > BODY_MAX:
-        raise HTTPException(status_code=400, detail=f"Message : {BODY_MAX} caractères au maximum.")
-    img = (m.image_url or "").strip() or None
-    # FidClic's own ready images (public/automations/…) are allowed by their path
-    if img and not (img.startswith("data:image/") or img.startswith("https://") or img in READY_IMAGES):
-        raise HTTPException(status_code=400, detail="Image invalide.")
-    if img and len(img) > 2_800_000:
-        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
-    b = m.button
-    button = {"enabled": bool(b.enabled), "label": (b.label or "").strip()[:BUTTON_MAX] or SCENARIOS[sc]["button"],
-              "link_type": b.link_type if b.link_type in LINK_TYPES else "card", "offer_id": None, "url": None}
-    if b.enabled:
-        if not (b.label or "").strip():
-            raise HTTPException(status_code=400, detail="Indiquez le texte du bouton.")
-        if len((b.label or "").strip()) > BUTTON_MAX:
-            raise HTTPException(status_code=400, detail=f"Texte du bouton : {BUTTON_MAX} caractères au maximum.")
-        if button["link_type"] == "url":
-            u = safe_url(b.url)
-            if not u:
-                raise HTTPException(status_code=400, detail="Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.")
-            button["url"] = u
-        if button["link_type"] == "offer":
-            if not b.offer_id or not _db.campaigns.find_one({"tenant_id": tid, "id": b.offer_id}):
-                raise HTTPException(status_code=400, detail="Choisissez une offre.")
-            button["offer_id"] = b.offer_id
-        if button["link_type"] == "google_review" and sc != "google_review" \
-                and not any(current_links(tid).values()):
-            raise HTTPException(status_code=400, detail="Ajoutez d'abord votre lien Google (Insights › Avis Google).")
+    sides_on = (tr.get("sides") or []) if sc == "referral" else None
+    message = clean_message(body.message, sc, tid, not draft and (sc != "referral" or "parrain" in sides_on),
+                            "Parrain" if sc == "referral" else "")
+    message_filleul = None
+    if sc == "referral":
+        mf = body.message_filleul or MessageIn(title=FILLEUL_DEFAULT["title"], body=FILLEUL_DEFAULT["body"])
+        message_filleul = clean_message(mf, sc, tid, not draft and "filleul" in sides_on, "Filleul")
     t = body.targeting
     if t.mode not in TARGET_MODES:
         raise HTTPException(status_code=400, detail="Ciblage inconnu.")
@@ -2307,7 +2411,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     links = _clean_links(tid, body.google_links, draft) if sc == "google_review" else None
     out = {
         "scenario": sc, "name": name, "description": desc, "status": body.status, "trigger": tr,
-        "message": {"title": title, "body": text, "image_url": img, "button": button},
+        "message": message,
         "targeting": {"mode": t.mode, "segment": t.segment if t.mode == "segment" else None, "passants": passants,
                       "filters": ({"gender": [], "age": [], "spent": [], "last_visit": [], "client_type": [],
                                    "stores": [], "radius_km": None, "visits_min": None, "visits_max": None,
@@ -2325,6 +2429,8 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     }
     if links is not None:
         out["google_links"] = links
+    if message_filleul is not None:
+        out["message_filleul"] = message_filleul
     return out
 
 

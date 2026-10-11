@@ -510,6 +510,7 @@ export const ownerAPI = {
   // every parrainage of the period, 20 per page, searchable (QA R5 F25)
   referralList: (params) => api.get('/owner/referrals/list', { params }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
+  referralConfig: () => api.get('/owner/referrals/config'),
   // Automatisations · Push Wallet — the scenarios, their figures, and firing
   // one by hand.
   pushWalletScenarios: () => api.get('/owner/push-wallet/scenarios'),
