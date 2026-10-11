@@ -1,3 +1,4 @@
+import { fitRect, viewW, viewH } from '../lib/fit';
 /**
  * NotificationBell — the bell of the top bar and its panel (design validated
  * by the user, 2026-10-03), plus the parts the full page reuses
@@ -300,12 +301,12 @@ function DescTip({ text, title }) {
   const [pos, setPos] = useState(null);
   const btn = useRef(null);
   const show = () => {
-    const r = btn.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.min(300, window.innerWidth - 24);
-    const left = Math.max(12, Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - 12));
+    if (!btn.current) return;
+    const r = fitRect(btn.current);                 // the app's pixels, even when it is scaled to fit
+    const width = Math.min(300, viewW() - 24);
+    const left = Math.max(12, Math.min(r.left + r.width / 2 - width / 2, viewW() - width - 12));
     const below = r.bottom + 8;
-    setPos({ left, width, top: below + 140 > window.innerHeight ? null : below, bottom: below + 140 > window.innerHeight ? window.innerHeight - r.top + 8 : null });
+    setPos({ left, width, top: below + 140 > viewH() ? null : below, bottom: below + 140 > viewH() ? viewH() - r.top + 8 : null });
   };
   const hide = () => setPos(null);
   useEffect(() => {
@@ -432,10 +433,10 @@ const NotificationBell = ({ platformAdmin = false }) => {
   const unreadAll = n.alerts.filter(n.isUnread).length;
 
   const place = useCallback(() => {
-    const r = btn.current?.getBoundingClientRect();
-    if (!r) return;
-    const width = Math.min(PANEL_W, window.innerWidth - 16);
-    setPos({ top: r.bottom + 10, left: Math.max(8, Math.min(r.right - width + 4, window.innerWidth - width - 8)), width });
+    if (!btn.current) return;
+    const r = fitRect(btn.current);
+    const width = Math.min(PANEL_W, viewW() - 16);
+    setPos({ top: r.bottom + 10, left: Math.max(8, Math.min(r.right - width + 4, viewW() - width - 8)), width });
   }, []);
   useEffect(() => {
     if (!open) return undefined;

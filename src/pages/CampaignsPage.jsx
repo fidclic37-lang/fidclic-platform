@@ -1,3 +1,4 @@
+import { vh } from '../lib/fit';
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Plus, Filter, Users, MessageSquare, Clock, CheckCircle2, AlertCircle, Megaphone, Eye, AlertTriangle, TrendingUp, Zap, ChevronDown, ChevronUp, CalendarClock, Trash2, Pencil, X, Sparkles, BellRing } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -70,7 +71,7 @@ function ReEnableNotificationsButton() {
         >
           <div style={{
             background: 'var(--flc-card, #FFFFFF)', borderRadius: 16,
-            width: 'min(520px, 100%)', maxHeight: 'calc(100vh - 32px)', overflow: 'auto',
+            width: 'min(520px, 100%)', maxHeight: `calc(${vh(100)} - 32px)`, overflow: 'auto',
             border: '1px solid #E9E5E0',
             boxShadow: '0 24px 60px -20px rgba(28,25,23,.25)',
           }}>

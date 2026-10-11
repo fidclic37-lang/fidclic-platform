@@ -28,6 +28,47 @@
          This is the difference between the home-screen icon opening the
          actual card vs opening the landing page. -->
     <script>
+      // « Même affichage partout » (user, 2026-10-11): the app is designed at
+      // 1536 px. On a desktop screen (1024 px and wider) the whole app is
+      // scaled to the window — down to 80 %, up to 125 % — so every computer
+      // and every browser shows the same layout, whatever its display
+      // settings (Mac « More space », Windows 125 / 150 %). The scale reads
+      // the WINDOW's size (outerWidth), not the page's, so the user's own
+      // browser zoom (Ctrl / ⌘ +) still works on top. Below 1024 px (tablets
+      // in portrait, phones) nothing is scaled: the responsive layout stays.
+      // vh / vw units are rebuilt on --fit-vh / --fit-vw, and the width
+      // breakpoints (Tailwind sm…2xl, index.css) become container queries on
+      // <body> (postcss.config.js), so they follow the scaled width — a
+      // 1280 px window lays out exactly like a 1536 px one, only smaller.
+      (function () {
+        var DESIGN = 1536, MIN = 0.8, MAX = 1.25, FROM = 1024;
+        function apply() {
+          var de = document.documentElement;
+          var inner = window.innerWidth, W = window.outerWidth || 0;
+          // an embedded frame or an odd browser: fall back on the page width
+          if (!W || W < inner * 0.5) W = inner;
+          // no browser zoom (the window is the page, give or take borders):
+          // measure the page without its scrollbar, so the design width
+          // comes out exact on Windows too
+          var gap = W - inner;
+          if (gap >= 0 && gap <= 40) W = de.clientWidth || inner;
+          var z = inner >= FROM ? Math.min(MAX, Math.max(MIN, W / DESIGN)) : 1;
+          // rounded down, so the scaled width never falls a pixel short
+          z = Math.floor(z * 1000) / 1000;
+          de.style.zoom = z === 1 ? '' : String(z);
+          de.style.setProperty('--fit-z', String(z));
+          de.style.setProperty('--fit-vh', (window.innerHeight / z / 100) + 'px');
+          de.style.setProperty('--fit-vw', (inner / z / 100) + 'px');
+          // past 125 % (very wide screens) the layout keeps its width, centred
+          de.classList.toggle('fit-wide', (de.clientWidth || inner) / z > DESIGN + 1);
+          window.__fitZoom = z;
+        }
+        apply();
+        window.addEventListener('resize', apply);
+        window.__applyFit = apply;
+      })();
+    </script>
+    <script>
       // ──────────────────────────────────────────────────────────────────
       // PWA bootstrap — runs SYNCHRONOUSLY in <head>, before any module
       // loads. Two responsibilities, both critical:
