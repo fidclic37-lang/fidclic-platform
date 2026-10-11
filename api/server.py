@@ -6696,6 +6696,21 @@ def _active_override_for(customer_id: str, tenant_id: str) -> dict:
 
 
 def _serialize_card_payload(cust: dict) -> dict:
+    """The card as every surface reads it (pass, Google, the web card), with
+    the programme deciding points OR tampons (wallet_passes.apply_programme_rules,
+    user 2026-10-12)."""
+    payload = _serialize_card_payload_raw(cust)
+    card = payload.get("card") if isinstance(payload, dict) else None
+    if isinstance(card, dict):
+        try:
+            from features import wallet_passes as _WP
+            _WP.apply_programme_rules(card)
+        except Exception as exc:
+            print(f"card payload: programme rules not applied (non-fatal): {exc}")
+    return payload
+
+
+def _serialize_card_payload_raw(cust: dict) -> dict:
     t = db.tenants.find_one({"id": cust["tenant_id"]}) or {}
     tpl = db.card_templates.find_one({"tenant_id": cust["tenant_id"]}) or {}
     prefs = _card_prefs_for(cust["id"])
@@ -6799,6 +6814,12 @@ def _serialize_card_payload(cust: dict) -> dict:
             **{k: v for k, v in brand_fields.items() if v is not None},
             "logo_url": tpl.get("logo_url"),
             "reward_description": tpl.get("reward_description", "Une récompense fidélité"),
+            # the programme (points OR tampons) and the reward's place on the card
+            "programme": tpl.get("programme"),
+            "points_mode": tpl.get("points_mode"),
+            "reward_points": tpl.get("reward_points"),
+            "reward_on_card": tpl.get("reward_on_card"),
+            "reward_place": tpl.get("reward_place"),
             "reward_threshold": reward_threshold,
             "stamps_earned": stamps,
             "points_per_visit": tpl.get("points_per_visit", 10),

@@ -176,8 +176,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           == ["viewOffersRewards", "bookAppointment"])
     p = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     pg = p["posterGeneric"]
-    check("each customer's own values", pg["headerFields"][0]["value"] == "70" and pg["primaryFields"][0]["value"] == "Marie")
-    check("their points notify when they change", pg["headerFields"][0].get("changeMessage"))
+    check("each customer's own values", pg["primaryFields"][0]["value"] == "Marie")
+    # points OR tampons, by the programme (user, 2026-10-12): a tampons
+    # programme leaves the design's {points} field out
+    check("tampons programme: the design's POINTS field is left out", pg["headerFields"] == [])
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": "points_visit"}})
+    pgp = WP.build_pass_json(WP._card_payload("FT-TEST0001"))["posterGeneric"]
+    check("points programme: the balance, notifying when it changes, and no tampons",
+          pgp["headerFields"][0]["value"] == "70" and pgp["headerFields"][0].get("changeMessage")
+          and not any(f["key"] in ("prog", "jauge", "stamps") for f in pgp["primaryFields"]))
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"programme": ""}})
     check("no campaign running → no empty « OFFRE » row", [f["key"] for f in pg["footerFields"]] == ["shop"])
     check("the design's back, then FidClic's (offer that notifies, links…)",
           pg["backFields"][0]["key"] == "hours" and any(f["key"] == "offer" and f.get("changeMessage") for f in pg["backFields"]))
