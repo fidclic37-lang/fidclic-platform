@@ -1185,6 +1185,23 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     if news and news.get("button_url") and news.get("button_label"):
         back.insert(1, {"key": "news_link", "label": news["button_label"], "value": news["button_url"],
                         "attributedValue": f'<a href="{news["button_url"]}">{news["button_label"]}</a>'})
+    # Géolocalisation (features/geo_automation): while this client's automation
+    # allows it, the pass carries the shop's locations (below) and its message
+    # here, so the card the lock screen opens says it — quietly, no banner.
+    geo, geo_rules = None, False
+    try:
+        from features import geo_automation as GA
+        geo_rules = GA.governs(tenant.get("id"))
+        if geo_rules:
+            full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0}) or {}
+            geo = GA.for_pass({**full, "tenant_id": full.get("tenant_id") or tenant.get("id")})
+    except Exception as exc:
+        print(f"wallet: geolocation lookup failed (non-fatal): {exc}")
+    if geo:
+        back.insert(1, {"key": "geo_msg", "label": "Près de chez vous", "value": geo["text"]})
+        if geo.get("button_url") and geo.get("button_label"):
+            back.insert(2, {"key": "geo_link", "label": geo["button_label"], "value": geo["button_url"],
+                            "attributedValue": f'<a href="{geo["button_url"]}">{geo["button_label"]}</a>'})
     if card.get("tagline"):
         back.append({"key": "tagline", "label": org, "value": card["tagline"]})
     for k, lbl in (("address", "Adresse"), ("phone", "Téléphone"), ("website", "Site web")):
@@ -1261,8 +1278,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
 
     # One radius for the shop (Paramètres › Établissement), and every open
-    # establishment with a pin — Apple takes up to ten.
-    if card.get("location_reminder") is not False:
+    # establishment with a pin — Apple takes up to ten. With an active
+    # Géolocalisation automation, IT decides: its message, its establishments,
+    # only while its rules hold for this client (none → no locations).
+    if geo_rules:
+        if geo:
+            pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": geo["radius"],
+                                       "relevantText": geo["text"]} for la, lo in geo["spots"][:10]]
+    elif card.get("location_reminder") is not False:
         radius = int(tenant_doc.get("geo_radius_meters") or card.get("location_radius_m") or 200)
         text = card.get("location_text") or f"Vous êtes près de {org} — pensez à scanner votre carte."
         spots = []
@@ -2313,7 +2336,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     code_type = gd["barcode"] if code_value else "QR_CODE"       # a code the card id cannot fill → QR
     # Apple's back of the pass = Google's details: offer, reward, statut…
     back = [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
-            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link")]
+            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link", "geo_link")]
     # the values a row of the card can show (classTemplateInfo), as modules
     tier_v = next((f["value"] for f in sc.get("backFields", []) if f["key"] == "tier_back"), None) \
         or by_key.get("tier", {}).get("value")
@@ -2342,13 +2365,18 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
         **({"heroImage": {"sourceUri": {"uri": hero}}} if hero else {}),
         "textModulesData": modules[:10],
         "linksModuleData": {"uris": [{"uri": f["value"], "description": f["label"]}       # Automatisations' button
-                                     for f in sc.get("backFields", []) if f["key"] == "news_link"]
+                                     for f in sc.get("backFields", []) if f["key"] in ("news_link", "geo_link")]
                             + [{"uri": f["value"], "description": "Voir l'offre en entier"}
                                for f in sc.get("backFields", []) if f["key"] == "offer_link"]
                             + [{"uri": CO.owner_url(_site_url(), cust["barcode_id"]), "description": "Ma carte en ligne"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
     }
+    # Google « Nearby passes »: the same locations as Apple's (Google writes
+    # the lock-screen words itself and decides the distance)
+    if pj.get("locations"):
+        obj["merchantLocations"] = [{"latitude": l["latitude"], "longitude": l["longitude"]}
+                                    for l in pj["locations"][:10]]
     if points:
         obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": {"int": int(points["value"] or 0)}}
     if progress:

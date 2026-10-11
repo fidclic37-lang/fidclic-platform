@@ -10950,7 +10950,8 @@ def proximity_ping(req: ProximityPingRequest):
 
     Public endpoint intentionally — called from the customer's own device,
     before/after login matters less than the customer_id matching a real
-    record. Rate-limited by the geo_cooldown_days window per customer.
+    record. Each Géolocalisation automation keeps its own gap per client
+    (« une fois tous les X jours », features/automations).
     """
     cust = db.customers.find_one({"id": req.customer_id})
     if not cust:
@@ -10975,34 +10976,14 @@ def proximity_ping(req: ProximityPingRequest):
         if (cust.get("tier") or "").lower() != "vip":
             return {"status": "ignored", "reason": "vip_only: customer not VIP"}
 
-    radius_m = float(tenant.get("geo_radius_meters") or 200)   # one radius: Paramètres › Établissement
-    cooldown_days = int(tenant.get("geo_cooldown_days") or 1)
-    cutoff = datetime.now(timezone.utc) - timedelta(days=cooldown_days)
-
-    # Last proximity push for this customer — cooldown enforcement.
-    last = db.push_notifications.find_one(
-        {"customer_id": cust["id"], "tenant_id": tid, "type": "proximity"},
-        sort=[("sent_at", -1)],
-    )
-    if last and last.get("sent_at") and last["sent_at"] >= cutoff:
-        return {"status": "cooldown", "next_eligible_at": (last["sent_at"] + timedelta(days=cooldown_days)).isoformat()}
-
-    # Figure out which branch (or the tenant address) they're nearest to.
-    anchors = []
-    for b in tenant.get("branches") or []:
-        # Branches often lack raw lat/lng — resolve from postal_code when needed.
-        blat, blng = b.get("latitude"), b.get("longitude")
-        if blat is None or blng is None:
-            blat, blng = get_postal_coords(b.get("postal_code") or "")
-        if blat is not None:
-            anchors.append({"id": b.get("id"), "name": b.get("name", ""), "lat": blat, "lng": blng})
-    if not anchors:
-        # Fall back to tenant-level address coords
-        tl, tn = get_postal_coords((tenant.get("address") or "").split(",")[-1].strip().split()[0] if tenant.get("address") else "")
-        anchors = [{"id": tid, "name": tenant.get("name", ""), "lat": tl, "lng": tn}]
-
+    # The shop's establishments (features/geo_automation.anchors — the same
+    # ids an automation's « établissements » use) and its one radius.
+    from features import geo_automation as _GA
+    radius_m = float(_GA.radius_of(tenant))
     nearest = None
-    for a in anchors:
+    for a in _GA.anchors(tid):
+        if a["lat"] is None:
+            continue
         dist = _haversine_meters(req.latitude, req.longitude, a["lat"], a["lng"])
         if nearest is None or dist < nearest["distance_m"]:
             nearest = {**a, "distance_m": dist}
@@ -11010,14 +10991,27 @@ def proximity_ping(req: ProximityPingRequest):
     if not nearest or nearest["distance_m"] > radius_m:
         return {"status": "out_of_range", "distance_m": (nearest["distance_m"] if nearest else None)}
 
-    # In range — the shop's « Géolocalisation » automation speaks (features/
-    # automations, 2026-10-11): its words, its button, its targeting and pace.
+    # The owner's map: this client was near the shop (rounded ~50 m, kept 30 days).
+    try:
+        _GA.record(tid, cust, nearest, req.latitude, req.longitude, nearest["distance_m"])
+    except Exception as exc:
+        print(f"proximity: detection not kept ({exc})")
+
+    # In range — the shop's « Géolocalisation » automations speak (features/
+    # automations, 2026-10-11): their words, button, targeting, hours, weather
+    # and the gap per client (« une fois tous les X jours »).
     from features import automations as _AU
-    said = [x for x in _AU.fire("geo", tid, cust, {"store": nearest.get("name") or ""}) if x.get("title")]
+    said = [x for x in _AU.fire("geo", tid, cust, {"store": nearest.get("name") or "", "store_id": nearest.get("id"),
+                                                     "distance_m": int(nearest["distance_m"])}) if x.get("title")]
     if not said:
         return {"status": "ignored", "reason": "no geolocation automation for this client"}
     db.push_notifications.update_one({"log_id": said[0]["id"]}, {"$set": {
         "branch_id": nearest.get("id"), "distance_m": int(nearest["distance_m"])}})
+    # told here: the Wallet pass goes quiet for the same gap
+    try:
+        _GA.refresh_one(db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust)
+    except Exception as exc:
+        print(f"proximity: pass not refreshed ({exc})")
     return {
         "status": "sent",
         "branch_id": nearest.get("id"),
@@ -11744,6 +11738,15 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         push_wallet_summary = _auto_run_due(source="daily")
     except Exception as _e:
         print(f"push wallet runner failed (non-fatal): {_e}")
+    # Géolocalisation: each Wallet pass carries the shop's locations only while
+    # its automation's days, period, weather and targeting allow; the map's
+    # detections are forgotten after 30 days.
+    try:
+        from features import geo_automation as _GA
+        push_wallet_summary["geo_passes"] = _GA.sync_passes(now)
+        push_wallet_summary["geo_purged"] = _GA.purge(now)
+    except Exception as _e:
+        print(f"geo passes runner failed (non-fatal): {_e}")
 
     # FidClic IA Autopilot — prepares (never sends) the week's campaign steps
     # for the shops that switched it on. Sending waits for the merchant's OK.
