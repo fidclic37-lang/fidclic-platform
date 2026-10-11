@@ -389,6 +389,101 @@ def main():
     check("each row says how many clients it reached", any(r["reach"] for r in p["rows"]))
     check("the live offers are offered to the button", [o["id"] for o in p["offers"]] == ["off1"])
 
+    print("\n10. Personnalisée — le message et le moment du commerçant")
+    cbase = {"scenario": "custom", "name": "Merci 5e visite", "status": "active",
+             "message": {"title": "Merci {prénom} !", "body": "Déjà 5 visites chez {nom_commerce}, merci !",
+                         "button": {"enabled": False}},
+             "targeting": {"mode": "all"}, "schedule": {"days": "all", "window": False}}
+    page = http("GET", "/api/owner/automations").json()
+    check("« Personnalisée » is offered first", page["scenarios"][0]["key"] == "custom")
+    n0 = db.automations.count_documents({"tenant_id": "t1"})
+    for trig, why in (({}, "no trigger type"), ({"type": "weird"}, "an unknown type"),
+                      ({"type": "visits", "visits": 0}, "0 visits"),
+                      ({"type": "date", "date_mode": "once"}, "a date not chosen"),
+                      ({"type": "date", "date_mode": "once", "date": "2020-01-01"}, "a past date"),
+                      ({"type": "date", "date_mode": "monthly", "monthday": 32}, "the 32nd"),
+                      ({"type": "date", "date_mode": "weekly", "weekday": 7}, "an 8th weekday"),
+                      ({"type": "date", "date_mode": "fortnightly"}, "an unknown recurrence")):
+        r = http("POST", "/api/owner/automations", json={**cbase, "trigger": trig})
+        check(f"custom refused: {why} ({r.json().get('detail', '')[:60]})", r.status_code == 400)
+    r = http("POST", "/api/owner/automations", json={**cbase, "message": {**cbase["message"], "title": ""},
+                                                     "trigger": {"type": "visits", "visits": 5}})
+    check("custom refused: no title (the owner writes the message)", r.status_code == 400)
+    check("…and none was saved", db.automations.count_documents({"tenant_id": "t1"}) == n0)
+
+    v5 = http("POST", "/api/owner/automations", json={**cbase, "trigger": {"type": "visits", "visits": 5}}).json()
+    check("« À la 5e visite »", v5["trigger_text"] == "À la 5e visite")
+    db.customers.update_one({"id": "c2"}, {"$set": {"visits": 4}})
+    pushed.clear()
+    AU.fire("custom", "t1", db.customers.find_one({"id": "c2"}), {"event": "visit"})
+    check("4th visit: nothing", not pushed)
+    db.customers.update_one({"id": "c2"}, {"$set": {"visits": 5}})
+    AU.fire("custom", "t1", db.customers.find_one({"id": "c2"}), {"event": "visit"})
+    check("5th visit: the owner's message", [p["title"] for p in pushed] == ["Merci Bruno !"])
+    AU.fire("custom", "t1", db.customers.find_one({"id": "c2"}), {"event": "visit"})
+    check("…once only", len(pushed) == 1)
+    AU.fire("custom", "t1", db.customers.find_one({"id": "c2"}), {"event": "signup"})
+    check("a signup doesn't fire a « visits » automation", len(pushed) == 1)
+    http("POST", f"/api/owner/automations/{v5['id']}/status", json={"status": "paused"})
+
+    j7 = http("POST", "/api/owner/automations", json={**cbase, "name": "J+7", "trigger": {
+        "type": "after_signup", "delay_value": 7, "delay_unit": "days"}}).json()
+    check("« 7 jours après l'inscription »", j7["trigger_text"] == "7 jours après l'inscription")
+    pushed.clear()
+    t0 = dt.datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
+    zed = person("c9", "Zed Nouveau")
+    AU.fire("custom", "t1", zed, {"event": "signup"}, at=t0)
+    q = db.automation_queue.find_one({"customer_id": "c9", "automation_id": j7["id"]})
+    check("it waits 7 days", not pushed and q and q["due_at"].replace(tzinfo=UTC) == t0 + dt.timedelta(days=7))
+    AU.run_due(t0 + dt.timedelta(days=6), source="tick")
+    check("not on day 6", not pushed)
+    AU.run_due(t0 + dt.timedelta(days=7, minutes=1), source="tick")
+    check("sent on day 7", [p["cid"] for p in pushed] == ["c9"])
+    http("POST", f"/api/owner/automations/{j7['id']}/status", json={"status": "paused"})
+
+    av = http("POST", "/api/owner/automations", json={**cbase, "name": "Merci", "trigger": {
+        "type": "after_visit", "delay_value": 0, "delay_unit": "hours", "cooldown_days": 14}}).json()
+    check("« Après chaque visite · au plus tous les 14 j »", av["trigger_text"] == "Après chaque visite · au plus tous les 14 j")
+    pushed.clear()
+    AU.fire("custom", "t1", db.customers.find_one({"id": "c1"}), {"event": "visit"})
+    AU.fire("custom", "t1", db.customers.find_one({"id": "c1"}), {"event": "visit"})
+    check("after a visit, then not again within 14 days", len([p for p in pushed if p["cid"] == "c1"]) == 1)
+    http("POST", f"/api/owner/automations/{av['id']}/status", json={"status": "paused"})
+
+    mo = http("POST", "/api/owner/automations", json={**cbase, "name": "Fin de mois", "trigger": {
+        "type": "date", "date_mode": "monthly", "monthday": 31}, "schedule": {"days": "all", "hour": "11:00"}}).json()
+    check("« Le 31 de chaque mois », at 11:00", mo["trigger_text"] == "Le 31 de chaque mois" and mo["schedule"]["hour"] == "11:00")
+    check("« le 31 » = the last day of a 30-day month", AU.date_due(mo["trigger"], dt.date(2026, 11, 30))
+          and not AU.date_due(mo["trigger"], dt.date(2026, 11, 29)))
+    check("a yearly 29 February lands on the 28th in a common year",
+          AU.date_due({"date_mode": "yearly", "date": "2024-02-29"}, dt.date(2027, 2, 28)))
+    db.automation_meta.update_one({"_id": "tick"}, {"$set": {"at": dt.datetime(2026, 10, 31, 8, 0, tzinfo=UTC)}}, upsert=True)
+    pushed.clear()
+    AU.run_due(dt.datetime(2026, 10, 31, 8, 30, tzinfo=UTC), source="tick")       # 09:30 Paris
+    check("31 October, 09:30: not before 11:00", not [p for p in pushed if p["title"].startswith("Merci")])
+    AU.run_due(dt.datetime(2026, 10, 31, 10, 0, tzinfo=UTC), source="tick")       # 11:00 Paris
+    sent_to = {p["cid"] for p in pushed if p["kind"] == "automation"}
+    check(f"at 11:00 everyone targeted gets it ({len(sent_to)})", {"c1", "c2", "c3"} <= sent_to)
+    AU.run_due(dt.datetime(2026, 10, 31, 11, 0, tzinfo=UTC), source="tick")
+    check("…once that day", len([p for p in pushed if p["kind"] == "automation"]) == len(sent_to))
+
+    print("\n11. Besoin d'inspiration ? — FidClic IA")
+    from services import llm
+    llm._force_complete = lambda system, user: "TITRE: On vous attend mardi 🥐\nMESSAGE: {prénom}, mardi chez {nom_commerce} c'est croissant offert !"
+    r = http("POST", "/api/owner/automations/ai-draft", json={"objective": "faire revenir les clients le mardi"})
+    d = r.json()
+    check("FidClic IA writes the title and the message", r.status_code == 200 and d["title"].startswith("On vous attend")
+          and "{prénom}" in d["body"])
+    check("…and points to « Client inactif » for « faire revenir »", d["scenario"] == "inactive")
+    check("an objective with no hint → « Personnalisée »",
+          http("POST", "/api/owner/automations/ai-draft", json={"objective": "annoncer notre fermeture estivale"}).json()["scenario"] == "custom")
+    check("an empty objective is refused", http("POST", "/api/owner/automations/ai-draft", json={"objective": "  "}).status_code == 400)
+    check("a manager can't use it", http("POST", "/api/owner/automations/ai-draft", headers=MGR, json={"objective": "x"}).status_code == 403)
+    llm._force_complete = lambda system, user: (_ for _ in ()).throw(RuntimeError("down"))
+    r = http("POST", "/api/owner/automations/ai-draft", json={"objective": "anniversaire"})
+    check("assistant down: said plainly, nothing invented", r.status_code == 503 and "FidClic IA" in r.json()["detail"])
+    llm._force_complete = None
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 

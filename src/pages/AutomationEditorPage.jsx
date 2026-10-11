@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, ArrowRight, Check, Pencil, Info, CalendarDays, Clock, Users, Tags, Wallet, User, Smile, Image as ImageIcon,
+  ArrowLeft, ArrowRight, Check, Pencil, Info, CalendarDays, Clock, Users, Tags, Wallet, User, Smile, Image as ImageIcon, Hash, UserPlus,
   X, Loader2, Sparkles, Lightbulb, Power, MessageSquare, RefreshCw, MousePointerClick, MapPin, Euro, Repeat,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
@@ -35,6 +35,29 @@ const TRIGGERS = {
   birthday: { offset_days: 0 }, tier_up: {}, welcome: {}, near_reward: { visits_left: 1 }, referral: { side: 'parrain' },
   geo: { cooldown_days: 7 }, google_review: { frequency: 'days', every_days: 30, stop_after_click: true },
   inactive: { days: 30, repeat: 'once', every_days: 30 },
+  custom: { type: 'after_visit', visits: 5, cooldown_days: 0, date_mode: 'once', date: '', weekday: 0, monthday: 1 },
+};
+const WEEKDAYS_FR = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+const MONTHS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const UNIT = { minutes: ['minute', 'minutes'], hours: ['heure', 'heures'], days: ['jour', 'jours'] };
+const span = (tr) => { const v = Number(tr.delay_value || 0); const [one, many] = UNIT[tr.delay_unit] || UNIT.hours; return `${v} ${v === 1 ? one : many}`; };
+// the server's custom_text (features/automations.py), word for word
+export const customText = (tr) => {
+  if (tr.type === 'visits') { const n = Number(tr.visits || 0); return `À la ${n}${n === 1 ? 're' : 'e'} visite`; }
+  if (tr.type === 'after_signup') return Number(tr.delay_value) ? `${span(tr)} après l'inscription` : "Dès l'inscription";
+  if (tr.type === 'after_visit') {
+    const base = Number(tr.delay_value) ? `${span(tr)} après chaque visite` : 'Après chaque visite';
+    return base + (Number(tr.cooldown_days) ? ` · au plus tous les ${tr.cooldown_days} j` : '');
+  }
+  if (tr.type === 'date') {
+    if (tr.date_mode === 'weekly') return `Chaque ${WEEKDAYS_FR[Number(tr.weekday || 0)]}`;
+    if (tr.date_mode === 'monthly') { const n = Number(tr.monthday || 1); return `Le ${n}${n === 1 ? 'er' : ''} de chaque mois`; }
+    if (!tr.date) return 'Date à choisir';
+    const [y, mo, d] = tr.date.split('-').map(Number);
+    const day = `${d}${d === 1 ? 'er' : ''} ${MONTHS_FR[mo - 1]}`;
+    return tr.date_mode === 'yearly' ? `Chaque année le ${day}` : `Le ${day} ${y}`;
+  }
+  return 'Déclencheur personnalisé';
 };
 const defaults = (sc, meta) => ({
   scenario: sc, name: meta?.label || '', status: 'active',
@@ -58,17 +81,17 @@ const Radio = ({ on }) => (
   </span>
 );
 const Label = ({ children, right }) => (
-  <span className="mb-1.5 flex items-center justify-between text-[14px] font-semibold text-[#0B1C3F]">
-    <span>{children}</span>{right && <span className="text-[12px] font-normal text-[#64748B]">{right}</span>}
+  <span className="mb-1.5 flex items-center justify-between text-[13px] font-semibold text-[#0B1C3F]">
+    <span>{children}</span>{right && <span className="text-[11.5px] font-normal text-[#64748B]">{right}</span>}
   </span>
 );
 function Card({ n, title, sub, children }) {
   return (
-    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
       <header className="mb-4 flex items-start gap-3">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#1463FF] text-[18px] font-bold text-white">{n}</span>
-        <div><h2 className="text-[21px] font-extrabold text-[#0B1C3F]">{title}</h2>
-          {sub && <p className="text-[14px] text-[#475569]">{sub}</p>}</div>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1463FF] text-[16px] font-bold text-white">{n}</span>
+        <div><h2 className="text-[18px] font-extrabold text-[#0B1C3F]">{title}</h2>
+          {sub && <p className="text-[13px] text-[#475569]">{sub}</p>}</div>
       </header>
       {children}
     </section>
@@ -78,9 +101,9 @@ function Option({ on, onClick, icon: I, title, sub, children, disabled }) {
   return (
     <div className={`rounded-2xl border p-4 transition ${on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0] bg-white hover:border-[#BFD3FF]'}`}>
       <button type="button" disabled={disabled} onClick={onClick} className="flex w-full items-start gap-3 text-left">
-        {I && <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={22} /></span>}
-        <span className="min-w-0 flex-1"><span className="block text-[15px] font-bold text-[#0B1C3F]">{title}</span>
-          {sub && <span className="block text-[13px] text-[#64748B]">{sub}</span>}</span>
+        {I && <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={18} /></span>}
+        <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">{title}</span>
+          {sub && <span className="block text-[12px] text-[#64748B]">{sub}</span>}</span>
         <Radio on={on} />
       </button>
       {on && children && <div className="mt-3">{children}</div>}
@@ -101,7 +124,7 @@ function Num({ value, onChange, min, max, label, disabled }) {
     <input inputMode="numeric" aria-label={label} disabled={disabled} value={value ?? ''}
            onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 3))}
            onBlur={() => { const n = Number(value); if (value !== '' && Number.isFinite(n)) onChange(String(Math.min(max, Math.max(min, n)))); }}
-           className={`${field} w-24 text-center`} />
+           className={`${field} !w-20 shrink-0 text-center`} />
   );
 }
 
@@ -138,8 +161,11 @@ export default function AutomationEditorPage() {
         if (q.get('step')) setStep(Math.min(6, Math.max(1, Number(q.get('step')) || 1)));
       } else {
         const q = new URLSearchParams(location.search);
-        const sc = meta[q.get('scenario')] ? q.get('scenario') : 'birthday';
+        const sc = meta[q.get('scenario')] ? q.get('scenario') : 'custom';
         const d = defaults(sc, meta[sc]);
+        const ai = location.state?.ai;
+        if (ai?.title) d.message = { ...d.message, title: ai.title.slice(0, TITLE_MAX), body: (ai.body || '').slice(0, BODY_MAX) };
+        if (ai?.title && sc === 'custom') d.name = ai.title.replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || d.name;
         const ex = EXAMPLES[Number(q.get('ex'))];
         if (ex && ex.scenario === sc) d.message = { ...d.message, title: ex.title, body: ex.body, button: { ...d.message.button, label: ex.button } };
         setS(d);
@@ -151,7 +177,7 @@ export default function AutomationEditorPage() {
   const meta = useMemo(() => Object.fromEntries((page?.scenarios || []).map((x) => [x.key, x])), [page]);
   const m = s ? meta[s.scenario] : null;
   const can = Boolean(page?.can_edit);
-  const timed = m?.kind === 'time';
+  const timed = m?.kind === 'time' || (s?.scenario === 'custom' && s?.trigger?.type === 'date');
   const set = (patch) => setS((o) => ({ ...o, ...patch }));
   const setIn = (key, patch) => setS((o) => ({ ...o, [key]: { ...o[key], ...patch } }));
   const setMsg = (patch) => setS((o) => ({ ...o, message: { ...o.message, ...patch } }));
@@ -171,9 +197,9 @@ export default function AutomationEditorPage() {
     return () => { alive = false; clearTimeout(t0); };
   }, [tKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (error && !s) return <p role="alert" className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[14px] text-[#B91C1C]">{error}</p>;
+  if (error && !s) return <p role="alert" className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] text-[#B91C1C]">{error}</p>;
   if (!s || !page || !m) {
-    return <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[14px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
+    return <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
   }
 
   const tr = s.trigger;
@@ -195,9 +221,10 @@ export default function AutomationEditorPage() {
     if (s.scenario === 'referral') return `Récompense de parrainage gagnée · ${tr.side === 'filleul' ? 'au filleul' : 'au parrain'}`;
     if (s.scenario === 'google_review') return tr.frequency === 'every_scan' ? 'Après chaque visite' : tr.frequency === 'once' ? 'Après une visite (une seule fois)' : `Après une visite (au plus tous les ${tr.every_days || 30} j)`;
     if (s.scenario === 'geo') return `Entrée dans la zone (au plus tous les ${tr.cooldown_days || 7} j)`;
+    if (s.scenario === 'custom') return customText(tr);
     return m.trigger_label;
   };
-  const delayText = () => (!timed && s.scenario !== 'geo' && Number(tr.delay_value) > 0
+  const delayText = () => (!timed && !['geo', 'custom'].includes(s.scenario) && Number(tr.delay_value) > 0
     ? ` · ${tr.delay_value} ${{ minutes: 'min', hours: 'h', days: 'j' }[tr.delay_unit] || 'h'} après` : '');
   const targetText = () => {
     const base = tg.mode === 'wallet' ? 'Clients avec carte Wallet'
@@ -224,6 +251,18 @@ export default function AutomationEditorPage() {
       if (s.scenario === 'inactive') return num(tr.days, 7, 365, 'Jours sans visite') || (tr.repeat === 'every' ? num(tr.every_days, 7, 365, 'Répéter tous les') : '');
       if (s.scenario === 'geo') return num(tr.cooldown_days, 1, 90, 'Délai entre deux messages');
       if (s.scenario === 'google_review' && tr.frequency === 'days') return num(tr.every_days, 1, 365, 'Fréquence');
+      if (s.scenario === 'custom') {
+        if (!tr.type) return 'Choisissez quand envoyer ce message.';
+        if (tr.type === 'visits') return num(tr.visits, 1, 1000, 'Nombre de visites');
+        if (tr.type === 'after_signup') return num(tr.delay_value || 0, 0, 365, 'Délai');
+        if (tr.type === 'after_visit') return num(tr.delay_value || 0, 0, 365, 'Délai') || num(tr.cooldown_days || 0, 0, 365, 'Au plus une fois tous les');
+        if (tr.type === 'date') {
+          if (['once', 'yearly'].includes(tr.date_mode) && !tr.date) return "Choisissez la date d'envoi.";
+          if (tr.date_mode === 'once' && tr.date < new Date().toISOString().slice(0, 10)) return 'Cette date est déjà passée.';
+          if (tr.date_mode === 'monthly') return num(tr.monthday, 1, 31, 'Jour du mois');
+        }
+        return '';
+      }
       if (!timed && s.scenario !== 'geo') return num(tr.delay_value || 0, 0, 365, "Délai d'envoi");
     }
     if (n === 3) {
@@ -302,7 +341,7 @@ export default function AutomationEditorPage() {
   // ---- the six steps --------------------------------------------------------------
   const Step1 = (
     <Card n={1} title="Choisir un scénario" sub="Sélectionnez le type d'automatisation que vous souhaitez utiliser.">
-      {editing && <p className="mb-3 flex items-center gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2 text-[13px] text-[#334155]"><Info size={15} className="text-[#1463FF]" /> Le scénario d'une automatisation existante ne change pas : dupliquez-la ou créez-en une nouvelle.</p>}
+      {editing && <p className="mb-3 flex items-center gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2 text-[12px] text-[#334155]"><Info size={15} className="text-[#1463FF]" /> Le scénario d'une automatisation existante ne change pas : dupliquez-la ou créez-en une nouvelle.</p>}
       <div className="grid gap-3 sm:grid-cols-2">
         {page.scenarios.map((x) => {
           const I = ICONS[x.icon] || MessageSquare;
@@ -310,11 +349,17 @@ export default function AutomationEditorPage() {
           const on = s.scenario === x.key;
           return (
             <button key={x.key} type="button" disabled={editing && !on}
-                    onClick={() => { if (!editing && !on) setS({ ...defaults(x.key, x), name: x.label }); }}
+                    onClick={() => {
+                      if (editing || on) return;
+                      // words the owner (or FidClic IA) already wrote are kept
+                      const own = s.message.title.trim() && s.message.title !== m.title;
+                      const d = defaults(x.key, x);
+                      setS({ ...d, name: x.label, ...(own ? { message: { ...d.message, title: s.message.title, body: s.message.body } } : {}) });
+                    }}
                     className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition disabled:opacity-50 ${on ? 'border-[#2F6BFF] bg-[#F5F8FF] shadow-[0_0_0_1px_#2F6BFF]' : 'border-[#E2E8F0] bg-white hover:border-[#BFD3FF]'}`}>
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={24} /></span>
-              <span className="min-w-0 flex-1"><span className="block text-[15.5px] font-bold text-[#0B1C3F]">{x.label}</span>
-                <span className="block text-[13px] leading-snug text-[#64748B]">{x.sub}</span></span>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={20} /></span>
+              <span className="min-w-0 flex-1"><span className="block text-[14px] font-bold text-[#0B1C3F]">{x.label}</span>
+                <span className="block text-[12px] leading-snug text-[#64748B]">{x.sub}</span></span>
               <Radio on={on} />
             </button>
           );
@@ -325,24 +370,24 @@ export default function AutomationEditorPage() {
     </Card>
   );
 
-  const delayBlock = !timed && s.scenario !== 'geo' && (
+  const delayBlock = !timed && !['geo', 'custom'].includes(s.scenario) && (
     <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4">
-      <span className="flex items-center gap-2 text-[14px] font-semibold text-[#0B1C3F]">Délai d'envoi <span className="font-normal text-[#64748B]">(optionnel)</span>
+      <span className="flex items-center gap-2 text-[13px] font-semibold text-[#0B1C3F]">Délai d'envoi <span className="font-normal text-[#64748B]">(optionnel)</span>
         <span title="Attendre un peu après l'événement avant d'envoyer (ex. 2 h après la visite pour un avis Google)."><Info size={14} className="text-[#64748B]" /></span></span>
       <span className="flex flex-1 items-center justify-end gap-2">
         <Num value={tr.delay_value ?? 0} min={0} max={365} label="Délai d'envoi" onChange={(v) => setIn('trigger', { delay_value: v })} />
         <span className="w-36"><Select label="Unité du délai" value={tr.delay_unit || 'hours'} onChange={(v) => setIn('trigger', { delay_unit: v })}
                 options={[['minutes', 'minute(s)'], ['hours', 'heure(s)'], ['days', 'jour(s)']]} /></span>
-        <span className="text-[13px] text-[#64748B]">{Number(tr.delay_value) > 0 ? 'après' : 'Immédiat'}</span>
+        <span className="text-[12px] text-[#64748B]">{Number(tr.delay_value) > 0 ? 'après' : 'Immédiat'}</span>
       </span>
     </div>
   );
   const Step2 = (
     <Card n={2} title="Déclencheur" sub="Définissez quand cette notification doit être envoyée.">
       <div className="mb-3 flex items-start gap-3 rounded-2xl border border-[#2F6BFF] bg-[#F5F8FF] p-4">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-[#1463FF]"><ScIcon size={22} /></span>
-        <span><span className="block text-[15.5px] font-bold text-[#0B1C3F]">{m.trigger_label}</span>
-          <span className="text-[13.5px] text-[#475569]">{{
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#1463FF]"><ScIcon size={18} /></span>
+        <span><span className="block text-[14px] font-bold text-[#0B1C3F]">{m.trigger_label}</span>
+          <span className="text-[12.5px] text-[#475569]">{{
             birthday: "Le message part automatiquement autour de la date d'anniversaire du client.",
             tier_up: 'Envoyé quand une visite fait passer le client à un palier supérieur (Argent, Or, VIP).',
             welcome: "Envoyé à chaque nouveau client, juste après son inscription.",
@@ -351,23 +396,24 @@ export default function AutomationEditorPage() {
             geo: "Envoyé quand la carte du client voit qu'il passe près de l'un de vos établissements.",
             google_review: 'Envoyé après une visite, pour demander un avis sur votre page Google.',
             inactive: "Envoyé aux clients qui ne sont pas venus depuis X jours.",
+            custom: 'Choisissez vous-même le moment : un nombre de visites, après l\'inscription, après chaque visite, ou une date.',
           }[s.scenario]}</span></span>
       </div>
       {s.scenario === 'birthday' && (
         <div className="space-y-3">
           <Option on={Number(tr.offset_days) === 0} onClick={() => setIn('trigger', { offset_days: 0 })} icon={CalendarDays} title="Le jour même" sub="Le jour de l'anniversaire du client.">
-            <p className="flex items-center gap-2 rounded-xl bg-[#EEF4FF] px-3 py-2 text-[13px] text-[#1E3A8A]"><Repeat size={14} /> Répétition annuelle : envoyée automatiquement tous les ans à la même date.</p>
+            <p className="flex items-center gap-2 rounded-xl bg-[#EEF4FF] px-3 py-2 text-[12px] text-[#1E3A8A]"><Repeat size={14} /> Répétition annuelle : envoyée automatiquement tous les ans à la même date.</p>
           </Option>
           <Option on={Number(tr.offset_days) < 0} onClick={() => setIn('trigger', { offset_days: -3 })} icon={Clock} title="X jours avant l'anniversaire" sub="Envoyez le message quelques jours avant la date d'anniversaire.">
-            <span className="flex items-center gap-2 text-[14px]"><Num value={String(Math.abs(Number(tr.offset_days)))} min={1} max={30} label="Jours avant" onChange={(v) => setIn('trigger', { offset_days: -Math.max(1, Number(v) || 1) })} /> jour(s) avant</span>
+            <span className="flex items-center gap-2 text-[13px]"><Num value={String(Math.abs(Number(tr.offset_days)))} min={1} max={30} label="Jours avant" onChange={(v) => setIn('trigger', { offset_days: -Math.max(1, Number(v) || 1) })} /> jour(s) avant</span>
           </Option>
           <Option on={Number(tr.offset_days) > 0} onClick={() => setIn('trigger', { offset_days: 3 })} icon={CalendarDays} title="X jours après l'anniversaire" sub="Envoyez le message quelques jours après la date d'anniversaire.">
-            <span className="flex items-center gap-2 text-[14px]"><Num value={String(Math.abs(Number(tr.offset_days)))} min={1} max={30} label="Jours après" onChange={(v) => setIn('trigger', { offset_days: Math.max(1, Number(v) || 1) })} /> jour(s) après</span>
+            <span className="flex items-center gap-2 text-[13px]"><Num value={String(Math.abs(Number(tr.offset_days)))} min={1} max={30} label="Jours après" onChange={(v) => setIn('trigger', { offset_days: Math.max(1, Number(v) || 1) })} /> jour(s) après</span>
           </Option>
         </div>
       )}
       {s.scenario === 'near_reward' && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[14px]">
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[13px]">
           <span className="font-semibold text-[#0B1C3F]">Envoyer quand il reste</span>
           <Num value={tr.visits_left} min={1} max={50} label="Visites restantes" onChange={(v) => setIn('trigger', { visits_left: v })} />
           <span>visite(s) avant la récompense</span>
@@ -375,13 +421,13 @@ export default function AutomationEditorPage() {
       )}
       {s.scenario === 'inactive' && (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[14px]">
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[13px]">
             <span className="font-semibold text-[#0B1C3F]">Aucune visite depuis</span>
             <Num value={tr.days} min={7} max={365} label="Jours sans visite" onChange={(v) => setIn('trigger', { days: v })} /> <span>jours</span>
           </div>
           <Option on={tr.repeat !== 'every'} onClick={() => setIn('trigger', { repeat: 'once' })} icon={RefreshCw} title="Une seule fois par absence" sub="Un message, puis plus rien tant que le client ne revient pas." />
           <Option on={tr.repeat === 'every'} onClick={() => setIn('trigger', { repeat: 'every' })} icon={Repeat} title="Relancer régulièrement" sub="Tant que le client ne revient pas.">
-            <span className="flex items-center gap-2 text-[14px]">Tous les <Num value={tr.every_days} min={7} max={365} label="Répéter tous les" onChange={(v) => setIn('trigger', { every_days: v })} /> jours</span>
+            <span className="flex items-center gap-2 text-[13px]">Tous les <Num value={tr.every_days} min={7} max={365} label="Répéter tous les" onChange={(v) => setIn('trigger', { every_days: v })} /> jours</span>
           </Option>
         </div>
       )}
@@ -393,8 +439,8 @@ export default function AutomationEditorPage() {
       )}
       {s.scenario === 'geo' && (
         <div className="space-y-3">
-          {!page.geo_ready && <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[13px] text-[#9A3412]">Le rappel de proximité est désactivé : activez-le dans Paramètres › Établissement pour que ce message parte.</p>}
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[14px]">
+          {!page.geo_ready && <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412]">Le rappel de proximité est désactivé : activez-le dans Paramètres › Établissement pour que ce message parte.</p>}
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E2E8F0] p-4 text-[13px]">
             <span className="font-semibold text-[#0B1C3F]">Au plus un message tous les</span>
             <Num value={tr.cooldown_days} min={1} max={90} label="Délai entre deux messages" onChange={(v) => setIn('trigger', { cooldown_days: v })} /> <span>jours par client</span>
           </div>
@@ -402,17 +448,54 @@ export default function AutomationEditorPage() {
       )}
       {s.scenario === 'google_review' && (
         <div className="space-y-3">
-          {!page.google_review_ready && <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[13px] text-[#9A3412]">Votre lien Google n'est pas encore activé (Insights › Avis Google) : aucune demande ne part sans lui.</p>}
+          {!page.google_review_ready && <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412]">Votre lien Google n'est pas encore activé (Insights › Avis Google) : aucune demande ne part sans lui.</p>}
           <Option on={tr.frequency === 'every_scan'} onClick={() => setIn('trigger', { frequency: 'every_scan' })} title="Après chaque visite" />
           <Option on={tr.frequency === 'days'} onClick={() => setIn('trigger', { frequency: 'days' })} title="Au plus une fois tous les X jours">
-            <span className="flex items-center gap-2 text-[14px]">Tous les <Num value={tr.every_days} min={1} max={365} label="Tous les X jours" onChange={(v) => setIn('trigger', { every_days: v })} /> jours</span>
+            <span className="flex items-center gap-2 text-[13px]">Tous les <Num value={tr.every_days} min={1} max={365} label="Tous les X jours" onChange={(v) => setIn('trigger', { every_days: v })} /> jours</span>
           </Option>
           <Option on={tr.frequency === 'once'} onClick={() => setIn('trigger', { frequency: 'once' })} title="Une seule fois par client" />
           <div className="flex items-center justify-between rounded-2xl border border-[#E2E8F0] p-4">
-            <span><span className="block text-[14px] font-semibold text-[#0B1C3F]">Arrêter après un clic</span>
-              <span className="text-[13px] text-[#64748B]">Ne plus demander à un client qui a déjà ouvert votre page d'avis.</span></span>
+            <span><span className="block text-[13px] font-semibold text-[#0B1C3F]">Arrêter après un clic</span>
+              <span className="text-[12px] text-[#64748B]">Ne plus demander à un client qui a déjà ouvert votre page d'avis.</span></span>
             <Toggle label="Arrêter après un clic" on={tr.stop_after_click !== false} onChange={(v) => setIn('trigger', { stop_after_click: v })} />
           </div>
+        </div>
+      )}
+      {s.scenario === 'custom' && (
+        <div className="space-y-3">
+          <Option on={tr.type === 'visits'} onClick={() => setIn('trigger', { type: 'visits' })} icon={Hash} title="Après X visites" sub="Quand le client atteint un nombre de visites (une seule fois).">
+            <span className="flex flex-wrap items-center gap-2 text-[12px]">À la <Num value={tr.visits} min={1} max={1000} label="Nombre de visites" onChange={(v) => setIn('trigger', { visits: v })} /> e visite</span>
+          </Option>
+          <Option on={tr.type === 'after_signup'} onClick={() => setIn('trigger', { type: 'after_signup', delay_value: Number(tr.delay_value) || 7, delay_unit: tr.delay_unit === 'minutes' ? 'days' : (tr.delay_unit || 'days') })}
+                  icon={UserPlus} title="Après l'inscription" sub="Un temps après l'inscription du client (une seule fois).">
+            <span className="flex flex-wrap items-center gap-2 text-[12px]"><Num value={tr.delay_value ?? 0} min={0} max={365} label="Délai après l'inscription" onChange={(v) => setIn('trigger', { delay_value: v })} />
+              <span className="w-32"><Select label="Unité" value={tr.delay_unit || 'days'} onChange={(v) => setIn('trigger', { delay_unit: v })} options={[['minutes', 'minute(s)'], ['hours', 'heure(s)'], ['days', 'jour(s)']]} /></span> après l'inscription
+              <span className="w-full text-[11.5px] text-[#64748B]">0 = dès l'inscription.</span></span>
+          </Option>
+          <Option on={tr.type === 'after_visit'} onClick={() => setIn('trigger', { type: 'after_visit' })} icon={RefreshCw} title="Après chaque visite" sub="Un temps après chaque visite (ex. remercier, demander un retour).">
+            <span className="flex flex-wrap items-center gap-2 text-[12px]"><Num value={tr.delay_value ?? 0} min={0} max={365} label="Délai après la visite" onChange={(v) => setIn('trigger', { delay_value: v })} />
+              <span className="w-32"><Select label="Unité" value={tr.delay_unit || 'hours'} onChange={(v) => setIn('trigger', { delay_unit: v })} options={[['minutes', 'minute(s)'], ['hours', 'heure(s)'], ['days', 'jour(s)']]} /></span> après la visite</span>
+            <span className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">Au plus une fois tous les <Num value={tr.cooldown_days ?? 0} min={0} max={365} label="Au plus une fois tous les" onChange={(v) => setIn('trigger', { cooldown_days: v })} /> jours
+              <span className="w-full text-[11.5px] text-[#64748B]">0 = à chaque visite.</span></span>
+          </Option>
+          <Option on={tr.type === 'date'} onClick={() => setIn('trigger', { type: 'date' })} icon={CalendarDays} title="À une date ou régulièrement" sub="Une date précise, ou chaque semaine, chaque mois, chaque année.">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Select label="Récurrence" value={tr.date_mode || 'once'} onChange={(v) => setIn('trigger', { date_mode: v })}
+                      options={[['once', 'Une seule fois'], ['weekly', 'Chaque semaine'], ['monthly', 'Chaque mois'], ['yearly', 'Chaque année']]} />
+              {['once', 'yearly'].includes(tr.date_mode || 'once') && (
+                <input type="date" aria-label="Date d'envoi" className={field} value={tr.date || ''} min={tr.date_mode === 'once' ? new Date().toISOString().slice(0, 10) : undefined}
+                       onChange={(e) => setIn('trigger', { date: e.target.value })} />
+              )}
+              {tr.date_mode === 'weekly' && (
+                <Select label="Jour de la semaine" value={String(tr.weekday ?? 0)} onChange={(v) => setIn('trigger', { weekday: Number(v) })}
+                        options={WEEKDAYS_FR.map((d, i) => [String(i), d.charAt(0).toUpperCase() + d.slice(1)])} />
+              )}
+              {tr.date_mode === 'monthly' && (
+                <span className="flex items-center gap-2 text-[12px]">Le <Num value={tr.monthday} min={1} max={31} label="Jour du mois" onChange={(v) => setIn('trigger', { monthday: v })} /> du mois</span>
+              )}
+            </div>
+            <p className="mt-2 text-[11.5px] text-[#64748B]">L'heure d'envoi se choisit à l'étape Planification. « Le 31 » part le dernier jour des mois plus courts.</p>
+          </Option>
         </div>
       )}
       {delayBlock}
@@ -421,25 +504,25 @@ export default function AutomationEditorPage() {
 
   const Step3 = (
     <Card n={3} title="Message" sub="Personnalisez le contenu de votre notification.">
-      <p className="mb-3 inline-flex rounded-xl border border-[#2F6BFF] bg-[#F5F8FF] px-4 py-2 text-[14px] font-semibold text-[#1463FF]">Notification Wallet</p>
+      <p className="mb-3 inline-flex rounded-xl border border-[#2F6BFF] bg-[#F5F8FF] px-4 py-2 text-[13px] font-semibold text-[#1463FF]">Notification Wallet</p>
       <label className="block"><Label right={`${msg.title.length}/${TITLE_MAX}`}>Titre de la notification</Label>
         <input ref={titleRef} className={field} value={msg.title} maxLength={TITLE_MAX} onFocus={() => { lastFocus.current = 'title'; }}
-               onChange={(e) => setMsg({ title: e.target.value })} placeholder={m.title} /></label>
+               onChange={(e) => setMsg({ title: e.target.value })} placeholder={m.title || 'Le titre de votre notification'} /></label>
       <label className="mt-3 block"><Label right={`${msg.body.length}/${BODY_MAX}`}>Message</Label>
         <textarea ref={bodyRef} className={`${field} min-h-[96px] resize-y`} value={msg.body} maxLength={BODY_MAX}
-                  onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setMsg({ body: e.target.value })} placeholder={m.body} /></label>
+                  onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setMsg({ body: e.target.value })} placeholder={m.body || 'Votre message, par exemple : Bonjour {prénom}, merci pour votre fidélité !'} /></label>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="text-[13px] text-[#475569]">Variables disponibles :</span>
+        <span className="text-[12px] text-[#475569]">Variables disponibles :</span>
         {variables.map((v) => (
           <button key={v} type="button" title={VAR_LABELS[v] || v} onClick={() => insert(`{${v}}`)}
-                  className="rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12.5px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]">{`{${v}}`}</button>
+                  className="rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]">{`{${v}}`}</button>
         ))}
         <span className="relative">
           <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))} aria-label="Ajouter un emoji"
                   className="rounded-lg border border-[#E2E8F0] p-1.5 text-[#475569] hover:bg-[#F8FAFC]"><Smile size={16} /></button>
           {emoji && (
             <span className="absolute left-0 top-9 z-20 grid w-64 grid-cols-8 gap-1 rounded-xl border border-[#E2E8F0] bg-white p-2 shadow-xl">
-              {EMOJIS.map((e) => <button key={e} type="button" className="rounded p-1 text-[18px] hover:bg-[#F1F5F9]" onClick={() => { insert(e); setEmoji(''); }}>{e}</button>)}
+              {EMOJIS.map((e) => <button key={e} type="button" className="rounded p-1 text-[16px] hover:bg-[#F1F5F9]" onClick={() => { insert(e); setEmoji(''); }}>{e}</button>)}
             </span>
           )}
         </span>
@@ -449,23 +532,23 @@ export default function AutomationEditorPage() {
         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={pickImage} />
         {msg.image_url ? (
           <span className="flex items-center gap-3 rounded-xl border border-[#D9E2F2] p-2">
-            <img src={msg.image_url} alt="" className="h-14 w-14 rounded-lg object-cover" />
-            <span className="flex-1 text-[13.5px] text-[#0B1C3F]">Image ajoutée</span>
+            <img src={msg.image_url} alt="" className="h-11 w-11 rounded-lg object-cover" />
+            <span className="flex-1 text-[12.5px] text-[#0B1C3F]">Image ajoutée</span>
             <button type="button" onClick={() => setMsg({ image_url: null })} className="rounded-lg p-2 text-[#64748B] hover:bg-[#F1F5F9]" aria-label="Retirer l'image"><X size={16} /></button>
           </span>
         ) : (
           <button type="button" onClick={() => fileRef.current?.click()}
                   className="flex w-full items-center justify-center gap-3 rounded-xl border border-dashed border-[#BFD3FF] bg-[#F8FAFF] py-5 text-[#1463FF]">
-            <ImageIcon size={22} /><span className="text-left"><span className="block text-[14px] font-semibold">Ajouter une image</span>
-              <span className="text-[12px] text-[#64748B]">PNG, JPG (max 2 Mo)</span></span>
+            <ImageIcon size={18} /><span className="text-left"><span className="block text-[13px] font-semibold">Ajouter une image</span>
+              <span className="text-[11.5px] text-[#64748B]">PNG, JPG (max 2 Mo)</span></span>
           </button>
         )}
       </div>
       <div className="mt-4 rounded-2xl border border-[#E6EEFB] p-4">
         <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F1EAFF] text-[#7C3AED]"><MousePointerClick size={20} /></span>
-          <span className="min-w-0 flex-1"><span className="block text-[15px] font-bold text-[#0B1C3F]">Bouton d'action <span className="font-normal text-[#64748B]">(optionnel)</span></span>
-            <span className="text-[13px] text-[#64748B]">Un bouton qui ouvre directement le lien de votre choix : une offre, la carte, votre page d'avis, votre site…</span></span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#F1EAFF] text-[#7C3AED]"><MousePointerClick size={20} /></span>
+          <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">Bouton d'action <span className="font-normal text-[#64748B]">(optionnel)</span></span>
+            <span className="text-[12px] text-[#64748B]">Un bouton qui ouvre directement le lien de votre choix : une offre, la carte, votre page d'avis, votre site…</span></span>
           <Toggle label="Bouton d'action" on={btn.enabled} onChange={(v) => setBtn({ enabled: v })} />
         </div>
         {btn.enabled && (
@@ -480,7 +563,7 @@ export default function AutomationEditorPage() {
                 {page.offers.length ? (
                   <Select label="Offre" value={btn.offer_id || ''} onChange={(v) => setBtn({ offer_id: v || null })}
                           options={[['', 'Sélectionner une offre'], ...page.offers.map((o) => [o.id, o.terms ? `${o.name} — ${o.terms}` : o.name])]} />
-                ) : <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[13px] text-[#9A3412]">Aucune offre en cours : créez-en une dans Campagnes, ou choisissez un autre lien.</p>}
+                ) : <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412]">Aucune offre en cours : créez-en une dans Campagnes, ou choisissez un autre lien.</p>}
               </label>
             )}
             {btn.link_type === 'url' && (
@@ -488,7 +571,7 @@ export default function AutomationEditorPage() {
                 <input className={field} value={btn.url || ''} onChange={(e) => setBtn({ url: e.target.value })} placeholder="monsite.fr/reservation" inputMode="url" /></label>
             )}
             {btn.link_type === 'google_review' && !page.google_review_ready && (
-              <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[13px] text-[#9A3412] sm:col-span-2">Ajoutez d'abord votre lien Google dans Insights › Avis Google.</p>
+              <p className="rounded-xl bg-[#FFF7ED] px-3 py-2 text-[12px] text-[#9A3412] sm:col-span-2">Ajoutez d'abord votre lien Google dans Insights › Avis Google.</p>
             )}
           </div>
         )}
@@ -504,8 +587,8 @@ export default function AutomationEditorPage() {
         {MODES.map(([k, l, h, I]) => (
           <button key={k} type="button" onClick={() => setIn('targeting', { mode: k })}
                   className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition ${tg.mode === k ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={20} /></span>
-            <span className="min-w-0 flex-1"><span className="block text-[14.5px] font-bold text-[#0B1C3F]">{l}</span><span className="text-[12.5px] text-[#64748B]">{h}</span></span>
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={20} /></span>
+            <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold text-[#0B1C3F]">{l}</span><span className="text-[12px] text-[#64748B]">{h}</span></span>
             <Radio on={tg.mode === k} />
           </button>
         ))}
@@ -515,21 +598,21 @@ export default function AutomationEditorPage() {
           {page.segments.map((x) => (
             <label key={x.key} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 ${tg.segment === x.key ? 'border-[#2F6BFF] bg-[#F1F6FF]' : 'border-[#E2E8F0]'}`}>
               <input type="radio" name="au-seg" checked={tg.segment === x.key} onChange={() => setIn('targeting', { segment: x.key })} className="accent-[#1463FF]" />
-              <span className="flex-1"><span className="block text-[14px] font-semibold text-[#0B1C3F]">{x.label}</span><span className="text-[12px] text-[#64748B]">{x.hint}</span></span>
-              <span className="text-[13px] font-semibold tabular-nums text-[#475569]">{(x.count ?? 0).toLocaleString('fr-FR')}</span>
+              <span className="flex-1"><span className="block text-[13px] font-semibold text-[#0B1C3F]">{x.label}</span><span className="text-[11.5px] text-[#64748B]">{x.hint}</span></span>
+              <span className="text-[12px] font-semibold tabular-nums text-[#475569]">{(x.count ?? 0).toLocaleString('fr-FR')}</span>
             </label>
           ))}
         </div>
       )}
       <div className="mt-4 flex items-center gap-3 rounded-2xl bg-[#F1F6FF] p-4">
         <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1463FF] text-white"><Users size={18} /></span>
-        <span className="flex-1 text-[14px] font-semibold text-[#0B1C3F]">Clients ciblés aujourd'hui</span>
-        <span className="text-[24px] font-extrabold tabular-nums text-[#1463FF]">{preview ? preview.count.toLocaleString('fr-FR') : '…'}</span>
+        <span className="flex-1 text-[13px] font-semibold text-[#0B1C3F]">Clients ciblés aujourd'hui</span>
+        <span className="text-[20px] font-extrabold tabular-nums text-[#1463FF]">{preview ? preview.count.toLocaleString('fr-FR') : '…'}</span>
       </div>
       {tg.mode !== 'all' && (
         <div className="mt-4 rounded-2xl bg-[#F8FAFC] p-4">
-          <p className="text-[15px] font-bold text-[#0B1C3F]">Filtres optionnels</p>
-          <p className="mb-3 text-[13px] text-[#64748B]">Affinez votre ciblage en ajoutant des critères (optionnel).</p>
+          <p className="text-[13.5px] font-bold text-[#0B1C3F]">Filtres optionnels</p>
+          <p className="mb-3 text-[12px] text-[#64748B]">Affinez votre ciblage en ajoutant des critères (optionnel).</p>
           <div className="divide-y divide-[#EEF2F7] rounded-xl border border-[#E6EEFB] bg-white">
             {[[User, 'Genre', <Select key="g" label="Genre" value={f.gender} onChange={(v) => setF({ gender: v })} options={GENDERS} />,
               'Renseigné par le client à son inscription.'],
@@ -541,8 +624,8 @@ export default function AutomationEditorPage() {
                 onChange={(v) => setF({ stores: v ? [v] : [] })} options={[['', 'Tous mes établissements'], ...page.stores.map((x) => [x.id, x.name])]} />]] : []),
             ].map(([I, l, ctl, hint]) => (
               <div key={l} className="grid items-center gap-2 px-4 py-3 sm:grid-cols-[1fr_1.1fr]">
-                <span className="flex items-center gap-3 text-[14px] text-[#0B1C3F]"><I size={18} className="text-[#475569]" />
-                  <span>{l}{hint && <span className="block text-[11.5px] text-[#94A3B8]">{hint}</span>}</span></span>
+                <span className="flex items-center gap-3 text-[13px] text-[#0B1C3F]"><I size={18} className="text-[#475569]" />
+                  <span>{l}{hint && <span className="block text-[11px] text-[#94A3B8]">{hint}</span>}</span></span>
                 {ctl}
               </div>
             ))}
@@ -555,11 +638,11 @@ export default function AutomationEditorPage() {
   const Step5 = (
     <Card n={5} title="Planification" sub="Définissez quand et comment envoyer cette automatisation.">
       <div className="rounded-2xl border border-[#E6EEFB] p-4">
-        <p className="flex items-center gap-3 text-[15px] font-bold text-[#0B1C3F]"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><CalendarDays size={20} /></span>
-          <span>Période d'envoi<span className="block text-[13px] font-normal text-[#64748B]">Choisissez les jours{timed ? " et l'heure" : ' et les horaires'} d'envoi.</span></span></p>
+        <p className="flex items-center gap-3 text-[13.5px] font-bold text-[#0B1C3F]"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><CalendarDays size={20} /></span>
+          <span>Période d'envoi<span className="block text-[12px] font-normal text-[#64748B]">Choisissez les jours{timed ? " et l'heure" : ' et les horaires'} d'envoi.</span></span></p>
         <div className="mt-3 flex flex-wrap gap-4">
           {[['all', 'Tous les jours'], ['specific', 'Jours spécifiques'], ['weekdays', 'Jours ouvrés uniquement']].map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setIn('schedule', { days: k })} className="flex items-center gap-2 text-[14px] text-[#0B1C3F]">
+            <button key={k} type="button" onClick={() => setIn('schedule', { days: k })} className="flex items-center gap-2 text-[13px] text-[#0B1C3F]">
               <Radio on={sc.days === k} /> {l}
             </button>
           ))}
@@ -570,7 +653,7 @@ export default function AutomationEditorPage() {
               const on = sc.weekdays.includes(i);
               return (
                 <button key={d} type="button" onClick={() => setIn('schedule', { weekdays: on ? sc.weekdays.filter((x) => x !== i) : [...sc.weekdays, i].sort() })}
-                        className={`rounded-xl border px-3.5 py-2 text-[13.5px] font-semibold ${on ? 'border-[#2F6BFF] bg-[#1463FF] text-white' : 'border-[#E2E8F0] text-[#334155]'}`}>{d}</button>
+                        className={`rounded-xl border px-3.5 py-2 text-[12.5px] font-semibold ${on ? 'border-[#2F6BFF] bg-[#1463FF] text-white' : 'border-[#E2E8F0] text-[#334155]'}`}>{d}</button>
               );
             })}
           </div>
@@ -585,8 +668,8 @@ export default function AutomationEditorPage() {
         ) : (
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] p-3">
-              <span><span className="block text-[14px] font-semibold text-[#0B1C3F]">Envoi immédiat, dans une plage horaire</span>
-                <span className="text-[12.5px] text-[#64748B]">Un événement en dehors de la plage (la nuit…) attend son ouverture.</span></span>
+              <span><span className="block text-[13px] font-semibold text-[#0B1C3F]">Envoi immédiat, dans une plage horaire</span>
+                <span className="text-[12px] text-[#64748B]">Un événement en dehors de la plage (la nuit…) attend son ouverture.</span></span>
               <Toggle label="Limiter à une plage horaire" on={sc.window} onChange={(v) => setIn('schedule', { window: v })} />
             </div>
             {sc.window && (
@@ -599,8 +682,8 @@ export default function AutomationEditorPage() {
         )}
       </div>
       <div className="mt-3 rounded-2xl border border-[#E6EEFB] p-4">
-        <p className="flex items-center gap-3 text-[15px] font-bold text-[#0B1C3F]"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><RefreshCw size={20} /></span>
-          <span>Fréquence<span className="block text-[13px] font-normal text-[#64748B]">{{
+        <p className="flex items-center gap-3 text-[13.5px] font-bold text-[#0B1C3F]"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><RefreshCw size={20} /></span>
+          <span>Fréquence<span className="block text-[12px] font-normal text-[#64748B]">{{
             birthday: 'Une fois par an, pour chaque client (répétition annuelle).',
             tier_up: 'À chaque nouveau palier atteint.',
             welcome: 'Une seule fois par client, à son inscription.',
@@ -609,23 +692,26 @@ export default function AutomationEditorPage() {
             geo: `Au plus une fois tous les ${tr.cooldown_days || 7} jours par client.`,
             google_review: tr.frequency === 'every_scan' ? 'Après chaque visite.' : tr.frequency === 'once' ? 'Une seule fois par client.' : `Au plus une fois tous les ${tr.every_days || 30} jours.`,
             inactive: tr.repeat === 'every' ? `Tous les ${tr.every_days || 30} jours tant que le client ne revient pas.` : 'Une fois par absence.',
+            custom: { visits: 'Une seule fois par client, à cette visite.', after_signup: 'Une seule fois par client.',
+              after_visit: Number(tr.cooldown_days) ? `Au plus une fois tous les ${tr.cooldown_days} jours par client.` : 'À chaque visite.',
+              date: { once: 'Une seule fois, à cette date.', weekly: 'Chaque semaine.', monthly: 'Chaque mois.', yearly: 'Chaque année.' }[tr.date_mode || 'once'] }[tr.type] || '',
           }[s.scenario]}</span></span></p>
       </div>
       {timed && (
         <div className="mt-3 rounded-2xl border border-[#E6EEFB] p-4">
           <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F1EAFF] text-[#7C3AED]"><Sparkles size={20} /></span>
-            <span className="min-w-0 flex-1"><span className="block text-[15px] font-bold text-[#0B1C3F]">Plage d'envoi intelligente <span className="font-normal text-[#64748B]">(recommandé)</span></span>
-              <span className="text-[13px] text-[#64748B]">FidClic envoie le message au moment de la journée où vos clients viennent le plus.</span></span>
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#F1EAFF] text-[#7C3AED]"><Sparkles size={20} /></span>
+            <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">Plage d'envoi intelligente <span className="font-normal text-[#64748B]">(recommandé)</span></span>
+              <span className="text-[12px] text-[#64748B]">FidClic envoie le message au moment de la journée où vos clients viennent le plus.</span></span>
             <Toggle label="Plage d'envoi intelligente" disabled={!page.best_slot} on={sc.smart && Boolean(page.best_slot)} onChange={(v) => setIn('schedule', { smart: v })} />
           </div>
-          <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2 text-[13px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+          <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2 text-[12px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
             {page.best_slot ? `D'après vos visites, le créneau ${page.best_slot.label} est celui où vos clients viennent le plus.`
               : "Pas encore assez de visites pour trouver votre meilleur créneau : l'heure choisie s'applique."}</p>
         </div>
       )}
       {!page.tick && (
-        <p className="mt-3 flex items-start gap-2 text-[12px] text-[#94A3B8]"><Info size={13} className="mt-0.5 shrink-0" />
+        <p className="mt-3 flex items-start gap-2 text-[11.5px] text-[#94A3B8]"><Info size={13} className="mt-0.5 shrink-0" />
           L'envoi à l'heure exacte arrive avec l'envoi programmé toutes les 15 minutes ; en attendant, les messages du jour partent avec l'envoi quotidien du matin.</p>
       )}
     </Card>
@@ -633,10 +719,10 @@ export default function AutomationEditorPage() {
 
   const Row = ({ icon: I, title, sub, children, n }) => (
     <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-[#E6EEFB] p-4 sm:flex-nowrap">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={22} /></span>
-      <span className="min-w-0 flex-1 sm:w-40 sm:flex-none"><span className="block text-[15px] font-bold text-[#0B1C3F]">{title}</span><span className="text-[13px] text-[#64748B]">{sub}</span></span>
-      <span className="order-last w-full min-w-0 break-words text-[13.5px] text-[#334155] sm:order-none sm:w-auto sm:flex-1">{children}</span>
-      {can && <button type="button" onClick={() => go(n)} aria-label={`Modifier : ${title}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3 py-2 text-[13.5px] font-semibold text-[#1463FF]"><Pencil size={14} /> <span className="hidden sm:inline">Modifier</span></button>}
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={18} /></span>
+      <span className="min-w-0 flex-1 sm:w-40 sm:flex-none"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">{title}</span><span className="text-[12px] text-[#64748B]">{sub}</span></span>
+      <span className="order-last w-full min-w-0 break-words text-[12.5px] text-[#334155] sm:order-none sm:w-auto sm:flex-1">{children}</span>
+      {can && <button type="button" onClick={() => go(n)} aria-label={`Modifier : ${title}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3 py-2 text-[12.5px] font-semibold text-[#1463FF]"><Pencil size={14} /> <span className="hidden sm:inline">Modifier</span></button>}
     </div>
   );
   const Step6 = (
@@ -650,9 +736,9 @@ export default function AutomationEditorPage() {
           {targetText()}<span className="block text-[#64748B]">{preview ? `${preview.count.toLocaleString('fr-FR')} client(s) ciblé(s) aujourd'hui` : ''}</span></Row>
         <Row n={5} icon={Clock} title="Planification" sub={timed ? 'À heure fixe' : 'Dès l\'événement'}>{planText()}</Row>
         <div className="flex items-center gap-3 rounded-2xl bg-[#F1FBF5] p-4">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#DCFCE7] text-[#059669]"><Power size={22} /></span>
-          <span className="flex-1"><span className="block text-[15px] font-bold text-[#0B1C3F]">Activer l'automatisation</span>
-            <span className="text-[13px] text-[#475569]">Les notifications seront envoyées automatiquement selon les paramètres définis.</span></span>
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#DCFCE7] text-[#059669]"><Power size={18} /></span>
+          <span className="flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">Activer l'automatisation</span>
+            <span className="text-[12px] text-[#475569]">Les notifications seront envoyées automatiquement selon les paramètres définis.</span></span>
           <Toggle label="Activer l'automatisation" on={s.status !== 'paused'} onChange={(v) => set({ status: v ? 'active' : 'paused' })} disabled={!can} />
         </div>
       </div>
@@ -668,13 +754,13 @@ export default function AutomationEditorPage() {
 
   const Recap = (
     <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
-      <p className="mb-2 text-[16px] font-bold text-[#0B1C3F]">Récapitulatif de l'automatisation</p>
+      <p className="mb-2 text-[14.5px] font-bold text-[#0B1C3F]">Récapitulatif de l'automatisation</p>
       {[[ScIcon, 'Scénario', s.name || m.label, tone[1]], [CalendarDays, 'Déclencheur', triggerText() + delayText()], [Users, 'Ciblage', targetText()],
         [MessageSquare, 'Message', msg.title || '—'], [Clock, step >= 5 ? 'Planification' : 'Envoi', step >= 5 ? planText() : (timed ? `À ${sc.hour}` : 'Immédiat')]].map(([I, l, v, c]) => (
         <div key={l} className="flex items-start gap-3 border-t border-[#EEF2F7] py-2.5 first:border-t-0">
           <I size={18} className="mt-0.5 shrink-0" style={{ color: c || '#475569' }} />
-          <span className="w-28 shrink-0 text-[13.5px] text-[#475569]">{l}</span>
-          <span className="min-w-0 flex-1 break-words text-[13.5px] font-medium text-[#0B1C3F]">{v}</span>
+          <span className="w-28 shrink-0 text-[12.5px] text-[#475569]">{l}</span>
+          <span className="min-w-0 flex-1 break-words text-[12.5px] font-medium text-[#0B1C3F]">{v}</span>
         </div>
       ))}
     </section>
@@ -686,19 +772,19 @@ export default function AutomationEditorPage() {
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-4">
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><ArrowLeft size={22} /></button>
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><ArrowLeft size={18} /></button>
           <div>
-            <h1 className="text-[30px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? 'Modifier une automatisation' : 'Créer une automatisation'}</h1>
-            <p className="text-[15px] text-[#475569]">{editing ? 'Modifiez les paramètres de cette automatisation pour mettre à jour vos notifications.' : 'Une notification qui part toute seule, au bon moment, pour fidéliser vos clients.'}</p>
+            <h1 className="text-[25px] font-extrabold leading-tight text-[#0B1C3F]">{editing ? 'Modifier une automatisation' : 'Créer une automatisation'}</h1>
+            <p className="text-[13.5px] text-[#475569]">{editing ? 'Modifiez les paramètres de cette automatisation pour mettre à jour vos notifications.' : 'Une notification qui part toute seule, au bon moment, pour fidéliser vos clients.'}</p>
           </div>
         </div>
         {can && (
           <div className="flex flex-wrap gap-2">
             <button type="button" disabled={!!busy} onClick={() => save('draft')}
-                    className="rounded-xl border border-[#BFD3FF] bg-white px-5 py-3 text-[14.5px] font-semibold text-[#1463FF] disabled:opacity-60">
+                    className="rounded-xl border border-[#BFD3FF] bg-white px-5 py-3 text-[13px] font-semibold text-[#1463FF] disabled:opacity-60">
               {busy === 'draft' ? 'Enregistrement…' : 'Enregistrer en brouillon'}</button>
             <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
-                    className="rounded-xl bg-[#1463FF] px-5 py-3 text-[14.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
+                    className="rounded-xl bg-[#1463FF] px-5 py-3 text-[13px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
               {busy && busy !== 'draft' ? 'Enregistrement…' : editing ? 'Enregistrer les modifications' : "Créer l'automatisation"}</button>
           </div>
         )}
@@ -713,14 +799,14 @@ export default function AutomationEditorPage() {
             <li key={label} className="flex min-w-0 flex-1 items-start last:flex-none">
               <button type="button" onClick={() => (done ? go(n) : null)} disabled={!done && n !== step}
                       className="flex shrink-0 items-start gap-2 text-left">
-                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[16px] font-bold ${n === step ? 'bg-[#1463FF] text-white' : done ? 'bg-[#1463FF] text-white' : 'bg-[#EEF3FB] text-[#1463FF]'}`}>
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[14.5px] font-bold ${n === step ? 'bg-[#1463FF] text-white' : done ? 'bg-[#1463FF] text-white' : 'bg-[#EEF3FB] text-[#1463FF]'}`}>
                   {done ? <Check size={18} /> : n}</span>
                 <span className={`hidden pt-1 sm:block ${n === step ? '' : ''}`}>
-                  <span className={`block text-[14px] ${n === step ? 'font-bold text-[#1463FF]' : 'font-semibold text-[#0B1C3F]'}`}>{label}</span>
-                  {subText && <span className="block max-w-[120px] truncate text-[12px] text-[#64748B]">{subText}</span>}
+                  <span className={`block text-[13px] ${n === step ? 'font-bold text-[#1463FF]' : 'font-semibold text-[#0B1C3F]'}`}>{label}</span>
+                  {subText && <span className="block max-w-[120px] truncate text-[11.5px] text-[#64748B]">{subText}</span>}
                 </span>
               </button>
-              {n < STEPS.length && <span className={`mx-2 mt-5 h-[2px] min-w-[12px] flex-1 ${n < step ? 'bg-[#1463FF]' : 'bg-[#DCE5F3]'}`} />}
+              {n < STEPS.length && <span className={`mx-2 mt-4 h-[2px] min-w-[12px] flex-1 ${n < step ? 'bg-[#1463FF]' : 'bg-[#DCE5F3]'}`} />}
             </li>
           );
         })}
@@ -735,15 +821,15 @@ export default function AutomationEditorPage() {
           {step < 6 ? Recap : (
             <>
               <section className="rounded-2xl border border-[#BBF7D0] bg-[#F0FDF4] p-4">
-                <p className="mb-2 flex items-center gap-2 text-[16px] font-bold text-[#047857]"><Lightbulb size={18} /> Conseils FidClic AI</p>
+                <p className="mb-2 flex items-center gap-2 text-[14.5px] font-bold text-[#047857]"><Lightbulb size={18} /> Conseils FidClic AI</p>
                 {tips.map(([ok, t]) => (
-                  <p key={t} className={`flex items-start gap-2 py-1 text-[13.5px] ${ok ? 'text-[#14532D]' : 'text-[#9A3412]'}`}>
+                  <p key={t} className={`flex items-start gap-2 py-1 text-[12.5px] ${ok ? 'text-[#14532D]' : 'text-[#9A3412]'}`}>
                     {ok ? <Check size={16} className="mt-0.5 shrink-0 text-[#16A34A]" /> : <Info size={16} className="mt-0.5 shrink-0" />} {t}</p>
                 ))}
               </section>
               <section className="rounded-2xl border border-[#BFD3FF] bg-[#F5F8FF] p-4">
-                <p className="mb-1 flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]"><Info size={17} className="text-[#1463FF]" /> Prêt à enregistrer ?</p>
-                <p className="text-[13.5px] text-[#475569]">{editing ? 'Votre automatisation sera mise à jour et remplacera l\'ancienne version. Les prochaines notifications seront envoyées selon ces nouveaux paramètres.'
+                <p className="mb-1 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Info size={17} className="text-[#1463FF]" /> Prêt à enregistrer ?</p>
+                <p className="text-[12.5px] text-[#475569]">{editing ? 'Votre automatisation sera mise à jour et remplacera l\'ancienne version. Les prochaines notifications seront envoyées selon ces nouveaux paramètres.'
                   : s.status !== 'paused' ? 'Votre automatisation partira toute seule dès son prochain déclencheur.' : 'Votre automatisation sera enregistrée en pause : activez-la quand vous voulez.'}</p>
               </section>
             </>
@@ -751,20 +837,20 @@ export default function AutomationEditorPage() {
         </aside>
       </div>
 
-      {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[14px] font-medium text-[#B91C1C]">{error}</p>}
+      {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">{error}</p>}
       <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E6EEFB] bg-white p-4">
         <button type="button" onClick={() => (step === 1 ? navigate('/dashboard/automations') : go(step - 1))}
-                className="inline-flex items-center gap-2 rounded-xl border border-[#BFD3FF] px-6 py-3 text-[15px] font-semibold text-[#1463FF]">
+                className="inline-flex items-center gap-2 rounded-xl border border-[#BFD3FF] px-5 py-2.5 text-[13px] font-semibold text-[#1463FF]">
           {step === 1 ? 'Annuler' : <><ArrowLeft size={17} /> Précédent</>}
         </button>
         {step < 6 ? (
           <button type="button" onClick={next}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-8 py-3 text-[15px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)]">
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-6 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)]">
             Suivant <ArrowRight size={17} />
           </button>
         ) : can && (
           <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-7 py-3 text-[15px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-7 py-3 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
             {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editing ? 'Enregistrer les modifications' : "Créer l'automatisation"}
           </button>
         )}

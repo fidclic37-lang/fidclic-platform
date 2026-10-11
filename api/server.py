@@ -5223,6 +5223,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         if new_tier != previous_tier and _tier_up(previous_tier, new_tier):
             _AU.fire("tier_up", token_data.tenant_id, _fresh)
         _AU.fire("google_review", token_data.tenant_id, _fresh)
+        _AU.fire("custom", token_data.tenant_id, _fresh, {"event": "visit"})    # « Personnalisée »
     except Exception as _e:
         print(f"scan_visit: automatic messages failed (non-fatal): {_e}")
 
@@ -6538,8 +6539,9 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         from features import auto_messages as _AM
         from features import automations as _AU
         _pts = _AM.credit_welcome_points(tid, cust_doc)       # Carte de fidélité › points de bienvenue
-        _said = [x for x in _AU.fire("welcome", tid, db.customers.find_one({"id": cust_doc["id"]}, {"_id": 0}) or cust_doc)
-                 if x.get("title")]
+        _fresh = db.customers.find_one({"id": cust_doc["id"]}, {"_id": 0}) or cust_doc
+        _said = [x for x in _AU.fire("welcome", tid, _fresh) if x.get("title")]
+        _AU.fire("custom", tid, _fresh, {"event": "signup"})                    # « Personnalisée »
         if _said or _pts:
             welcome = {"title": _said[0]["title"] if _said else None,
                        "message": _said[0]["body"] if _said else None, "points": _pts}

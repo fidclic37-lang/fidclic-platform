@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Zap, Plus, Send, Users, Mail, ArrowUp, ArrowDown, Bot, Check, Search, MoreHorizontal, MessageSquare, ChevronRight,
-  Lightbulb, ArrowRight, CheckCircle2, Loader2, X, CalendarDays, Lock, Settings2,
+  Zap, Plus, Send, Users, Mail, ArrowUp, ArrowDown, Bot, Check, Search, MoreHorizontal, MessageSquare,
+  CheckCircle2, Loader2, X, CalendarDays, Lock, Settings2, Sparkles,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { confirmImportant } from '../lib/prefs';
 import AutopilotPanel from '../components/AutopilotPanel';
-import { ICONS, TONES, STATUS, EXAMPLES, fill } from '../components/automations/meta';
+import { ICONS, TONES, STATUS } from '../components/automations/meta';
 
 /**
  * Automatisations — redesigned from the user's mockups (2026-10-11): three
@@ -24,20 +24,21 @@ const TAGLINE = {
   birthday: 'Souhaitez un joyeux anniversaire', tier_up: 'Félicitez vos clients', welcome: 'Accueillez les nouveaux clients',
   near_reward: 'Motivez la dernière visite', referral: 'Remerciez parrains et filleuls', geo: 'Attirez les clients à proximité',
   google_review: 'Demandez un avis', inactive: 'Relancez les clients inactifs',
+  custom: 'Votre message, votre moment',
 };
 
 function Kpi({ tone, icon: I, value, label, sub, delta, unit = '%' }) {
   const [bg, fg, tile] = tone;
   const up = (delta ?? 0) >= 0;
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-[#E6EEFB] p-5" style={{ background: bg }}>
-      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl" style={{ background: tile, color: fg }}><I size={28} /></span>
+    <div className="flex items-center gap-4 rounded-2xl border border-[#E6EEFB] p-4" style={{ background: bg }}>
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl" style={{ background: tile, color: fg }}><I size={22} /></span>
       <div className="min-w-0">
-        <p className="text-[28px] font-extrabold leading-none tabular-nums text-[#0B1C3F]">{value}</p>
-        <p className="mt-1 text-[15px] font-medium text-[#334155]">{label}</p>
-        {sub && <p className="text-[13px] text-[#64748B]">{sub}</p>}
+        <p className="text-[23px] font-extrabold leading-none tabular-nums text-[#0B1C3F]">{value}</p>
+        <p className="mt-1 text-[13.5px] font-medium text-[#334155]">{label}</p>
+        {sub && <p className="text-[12px] text-[#64748B]">{sub}</p>}
         {delta !== undefined && delta !== null && (
-          <p className={`mt-0.5 flex items-center gap-1 text-[13.5px] font-semibold ${up ? 'text-[#047857]' : 'text-[#B91C1C]'}`}>
+          <p className={`mt-0.5 flex items-center gap-1 text-[12.5px] font-semibold ${up ? 'text-[#047857]' : 'text-[#B91C1C]'}`}>
             {up ? <ArrowUp size={14} /> : <ArrowDown size={14} />}{up ? '+' : ''}{String(delta).replace('.', ',')}{unit}
           </p>
         )}
@@ -64,32 +65,97 @@ function AutopilotBanner({ onOpen }) {
     finally { setBusy(false); }
   };
   return (
-    <section className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
-      <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[#F1EAFF] text-[#7C3AED]"><Bot size={34} /></span>
+    <section className="mb-5 flex flex-wrap items-center gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F1EAFF] text-[#7C3AED]"><Bot size={28} /></span>
       <div className="min-w-0 flex-1">
-        <p className="flex flex-wrap items-center gap-2 text-[19px] font-extrabold text-[#0B1C3F]">Mode automatique (Autopilot)
-          <span className="rounded-lg bg-[#F1EAFF] px-2.5 py-0.5 text-[13px] font-bold text-[#7C3AED]">Pro AI</span></p>
-        <p className="text-[14.5px] text-[#475569]">Laissez FIDCLIC préparer automatiquement des messages selon le comportement de vos clients.</p>
-        <p className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-[13.5px] text-[#334155]">
+        <p className="flex flex-wrap items-center gap-2 text-[16px] font-extrabold text-[#0B1C3F]">Mode automatique (Autopilot)
+          <span className="rounded-lg bg-[#F1EAFF] px-2.5 py-0.5 text-[12px] font-bold text-[#7C3AED]">Pro AI</span></p>
+        <p className="text-[13px] text-[#475569]">Laissez FIDCLIC préparer automatiquement des messages selon le comportement de vos clients.</p>
+        <p className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-[12.5px] text-[#334155]">
           {['Messages prêts à l\'emploi', 'Basés sur les bonnes pratiques', 'Activables en 1 clic'].map((t) => (
             <span key={t} className="flex items-center gap-1.5"><Check size={15} className="text-[#2F6BFF]" /> {t}</span>))}
         </p>
-        {err && <p className="mt-1 text-[12.5px] text-[#B91C1C]">{err}</p>}
+        {err && <p className="mt-1 text-[12px] text-[#B91C1C]">{err}</p>}
       </div>
       <div className="flex flex-col items-center gap-1">
         {d && !d.plan_ok ? (
-          <span className="flex items-center gap-1.5 rounded-xl bg-[#F8FAFC] px-3 py-2 text-[13px] font-semibold text-[#64748B]"><Lock size={14} /> Offre Pro AI</span>
+          <span className="flex items-center gap-1.5 rounded-xl bg-[#F8FAFC] px-3 py-2 text-[12px] font-semibold text-[#64748B]"><Lock size={14} /> Offre Pro AI</span>
         ) : (
           <>
             <button type="button" role="switch" aria-checked={on} aria-label="Mode automatique" disabled={!can || busy} onClick={() => toggle(!on)}
-                    className={`relative h-9 w-16 rounded-full transition disabled:opacity-60 ${on ? 'bg-[#1463FF]' : 'bg-[#D6DEEA]'}`}>
-              <span className={`absolute top-1 h-7 w-7 rounded-full bg-white shadow transition ${on ? 'left-8' : 'left-1'}`} />
+                    className={`relative h-7 w-12 rounded-full transition disabled:opacity-60 ${on ? 'bg-[#1463FF]' : 'bg-[#D6DEEA]'}`}>
+              <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${on ? 'left-6' : 'left-1'}`} />
             </button>
-            <span className={`text-[14px] font-semibold ${on ? 'text-[#1463FF]' : 'text-[#64748B]'}`}>{on ? 'Activé' : 'Désactivé'}</span>
+            <span className={`text-[13px] font-semibold ${on ? 'text-[#1463FF]' : 'text-[#64748B]'}`}>{on ? 'Activé' : 'Désactivé'}</span>
           </>
         )}
-        {d?.plan_ok && <button type="button" onClick={onOpen} className="mt-1 inline-flex items-center gap-1 text-[12.5px] font-semibold text-[#1463FF]"><Settings2 size={13} /> Réglages</button>}
+        {d?.plan_ok && <button type="button" onClick={onOpen} className="mt-1 inline-flex items-center gap-1 text-[12px] font-semibold text-[#1463FF]"><Settings2 size={13} /> Réglages</button>}
       </div>
+    </section>
+  );
+}
+
+const IDEAS = ['Faire revenir les clients le mardi', 'Remercier après la 5e visite', 'Annoncer notre nouveau menu'];
+
+/* « Besoin d'inspiration ? » — FidClic IA writes the message from the owner's
+   objective; « Créer avec ce message » opens the editor on the scenario those
+   words point to (user, 2026-10-11 — replaces the « Exemples » rail). */
+function InspirationCard({ can, onUse }) {
+  const [goal, setGoal] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [res, setRes] = useState(null);
+  const write = async (text) => {
+    const g = (text ?? goal).trim();
+    if (!g) { setErr('Décrivez ce que vous voulez en une phrase.'); return; }
+    setGoal(g); setBusy(true); setErr(''); setRes(null);
+    try { const { data } = await ownerAPI.automationAiDraft(g); setRes(data); }
+    catch (e) { setErr(e?.response?.data?.detail || "FidClic IA ne répond pas pour le moment."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="rounded-2xl border border-[#D6E4FF] bg-[#F3F7FF] p-4">
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1463FF] text-white"><Sparkles size={18} /></span>
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]">Besoin d'inspiration ?
+            <span className="rounded-md bg-[#E6EEFF] px-1.5 py-0.5 text-[11px] font-bold text-[#1463FF]">FidClic IA</span></p>
+          <p className="text-[12px] leading-snug text-[#475569]">Dites ce que vous voulez : FidClic IA écrit le message et prépare l'automatisation.</p>
+        </div>
+      </div>
+      {can ? (
+        <>
+          <textarea value={goal} maxLength={200} rows={2} onChange={(e) => { setGoal(e.target.value); setErr(''); }}
+                    placeholder="Ex. faire revenir les clients le mardi"
+                    className="mt-3 w-full resize-none rounded-xl border border-[#D9E2F2] bg-white px-3 py-2 !text-[14px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {IDEAS.map((i) => (
+              <button key={i} type="button" onClick={() => write(i)} disabled={busy}
+                      className="rounded-lg border border-[#D6E4FF] bg-white px-2 py-1 text-[11px] text-[#1D4ED8] hover:bg-[#EEF4FF]">{i}</button>
+            ))}
+          </div>
+          {err && <p role="alert" className="mt-2 text-[12px] text-[#B91C1C]">{err}</p>}
+          <button type="button" onClick={() => write()} disabled={busy}
+                  className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-2.5 text-[12.5px] font-semibold text-white disabled:opacity-60">
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} {busy ? 'FidClic IA écrit…' : 'Écrire avec FidClic IA'}
+          </button>
+          {res && (
+            <div className="mt-3 rounded-xl border border-[#E6EEFB] bg-white p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#64748B]">Proposition · {res.scenario_label}</p>
+              <p className="mt-1 text-[12.5px] font-bold text-[#0B1C3F]">{res.title}</p>
+              <p className="text-[12px] leading-snug text-[#334155]">{res.body}</p>
+              <div className="mt-2.5 flex gap-2">
+                <button type="button" onClick={() => onUse(res)}
+                        className="flex-1 rounded-lg bg-[#1463FF] py-2 text-[12px] font-semibold text-white">Créer avec ce message</button>
+                <button type="button" onClick={() => write()} disabled={busy}
+                        className="rounded-lg border border-[#BFD3FF] px-3 py-2 text-[12px] font-semibold text-[#1463FF]">Autre idée</button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="mt-3 text-[12px] text-[#64748B]">Seuls le propriétaire et les administrateurs créent des automatisations.</p>
+      )}
     </section>
   );
 }
@@ -152,7 +218,6 @@ export default function AutomationsPage() {
   };
 
   const st = d?.stats;
-  const rail = [0, 2, 6].map((i) => ({ ...EXAMPLES[i], i }));
 
   return (
     <div className="pb-10" onClick={() => setMenu(null)}>
@@ -160,7 +225,7 @@ export default function AutomationsPage() {
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B1C3F]/45 p-3 sm:p-8" onClick={() => setAutopilot(false)}>
           <div className="w-full max-w-4xl rounded-3xl bg-white p-4 shadow-2xl sm:p-6" onClick={(e) => e.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-[20px] font-extrabold text-[#0B1C3F]">Réglages de l'Autopilot</h2>
+              <h2 className="text-[17px] font-extrabold text-[#0B1C3F]">Réglages de l'Autopilot</h2>
               <button type="button" aria-label="Fermer" onClick={() => setAutopilot(false)} className="rounded-full p-2 hover:bg-[#F1F5F9]"><X size={20} /></button>
             </div>
             <AutopilotPanel />
@@ -170,29 +235,29 @@ export default function AutomationsPage() {
 
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-4">
-          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#EEF4FF] text-[#1463FF]"><Zap size={28} /></span>
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#EEF4FF] text-[#1463FF]"><Zap size={22} /></span>
           <div>
-            <h1 className="text-[32px] font-extrabold leading-tight text-[#0B1C3F]">Automatisations</h1>
-            <p className="text-[15px] text-[#475569]">Créez des notifications automatiques pour fidéliser vos clients.</p>
+            <h1 className="text-[26px] font-extrabold leading-tight text-[#0B1C3F]">Automatisations</h1>
+            <p className="text-[13.5px] text-[#475569]">Créez des notifications automatiques pour fidéliser vos clients.</p>
           </div>
         </div>
         {can && (
           <button type="button" onClick={() => navigate('/dashboard/automations/nouvelle')}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-6 py-3.5 text-[15px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-5 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
             <Plus size={19} /> Créer une automatisation
           </button>
         )}
       </header>
 
       {flash && (
-        <p role="status" className="mb-4 flex items-center gap-2 rounded-xl bg-[#E3F6EC] px-4 py-3 text-[14px] font-medium text-[#047857]">
+        <p role="status" className="mb-4 flex items-center gap-2 rounded-xl bg-[#E3F6EC] px-4 py-3 text-[13px] font-medium text-[#047857]">
           <CheckCircle2 size={16} /> {flash}
-          <button type="button" onClick={() => setFlash('')} className="ml-auto text-[13px] underline">Fermer</button>
+          <button type="button" onClick={() => setFlash('')} className="ml-auto text-[12px] underline">Fermer</button>
         </p>
       )}
-      {error && <p role="alert" className="mb-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[14px] text-[#B91C1C]">{error}</p>}
+      {error && <p role="alert" className="mb-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] text-[#B91C1C]">{error}</p>}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0">
           <div className="mb-5 grid gap-4 md:grid-cols-3">
             {!d && [0, 1, 2].map((i) => <div key={i} className="h-[112px] animate-pulse rounded-2xl bg-white" />)}
@@ -208,9 +273,14 @@ export default function AutomationsPage() {
 
           <AutopilotBanner onOpen={() => setAutopilot(true)} />
 
-          <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+          {/* below 1536 px the card sits above the table, full width (no side rail squeezing it) */}
+          <div className="mb-5 2xl:hidden">
+            <InspirationCard can={can} onUse={(d2) => navigate(`/dashboard/automations/nouvelle?scenario=${d2.scenario}`, { state: { ai: d2 } })} />
+          </div>
+
+          <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-[22px] font-extrabold text-[#0B1C3F]">Mes automatisations</h2>
+              <h2 className="text-[18px] font-extrabold text-[#0B1C3F]">Mes automatisations</h2>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="flex w-[260px] max-w-full items-center gap-2 rounded-xl border border-[#E2E8F0] px-3">
                   <Search size={16} className="text-[#64748B]" />
@@ -218,7 +288,7 @@ export default function AutomationsPage() {
                          className="min-w-0 flex-1 !border-0 bg-transparent py-2.5 !text-[14.5px] !shadow-none !outline-none !ring-0" />
                 </span>
                 <select aria-label="Trier" value={sort} onChange={(e) => setSort(e.target.value)}
-                        className="rounded-xl border border-[#E2E8F0] px-3 py-2.5 text-[14px] font-semibold text-[#0B1C3F]">
+                        className="rounded-xl border border-[#E2E8F0] px-3 py-2.5 text-[13px] font-semibold text-[#0B1C3F]">
                   {SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select>
               </div>
@@ -226,24 +296,24 @@ export default function AutomationsPage() {
             <div className="mb-2 flex flex-wrap gap-1 border-b border-[#EEF2F7]">
               {TABS.map(([k, l]) => (
                 <button key={k} type="button" onClick={() => setTab(k)}
-                        className={`-mb-px border-b-2 px-3 py-2.5 text-[14.5px] font-semibold ${tab === k ? 'border-[#1463FF] text-[#1463FF]' : 'border-transparent text-[#475569] hover:text-[#0B1C3F]'}`}>
+                        className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-semibold ${tab === k ? 'border-[#1463FF] text-[#1463FF]' : 'border-transparent text-[#475569] hover:text-[#0B1C3F]'}`}>
                   {l} ({nf(d?.counts?.[k])})
                 </button>
               ))}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] table-fixed border-collapse">
+              <table className="w-full min-w-[720px] table-fixed border-collapse">
                 <thead>
-                  <tr className="text-left text-[13px] text-[#475569]">
-                    {[["Nom de l'automatisation", 'w-[24%]'], ['Déclencheur', 'w-[16%]'], ['Message', 'w-[28%]'], ['Statut', 'w-[13%]'],
-                      ['Clients touchés', 'w-[8%]'], ['Ouverture', 'w-[7%]'], ['', 'w-[4%]']].map(([h, w]) => (
+                  <tr className="text-left text-[12px] text-[#475569]">
+                    {[["Nom de l'automatisation", 'w-[24%]'], ['Déclencheur', 'w-[16%]'], ['Message', 'w-[25%]'], ['Statut', 'w-[14%]'],
+                      ['Clients touchés', 'w-[9%]'], ['Ouverture', 'w-[8%]'], ['', 'w-[4%]']].map(([h, w]) => (
                       <th key={h || 'actions'} className={`px-2 py-3 font-medium ${w}`}>{h}</th>))}
                   </tr>
                 </thead>
                 <tbody>
-                  {!d && <tr><td colSpan={7} className="py-10 text-center text-[13px] text-[#64748B]"><Loader2 size={16} className="inline animate-spin" /> Chargement…</td></tr>}
+                  {!d && <tr><td colSpan={7} className="py-10 text-center text-[12px] text-[#64748B]"><Loader2 size={16} className="inline animate-spin" /> Chargement…</td></tr>}
                   {d && !rows.length && (
-                    <tr><td colSpan={7} className="py-10 text-center text-[14px] text-[#64748B]">
+                    <tr><td colSpan={7} className="py-10 text-center text-[13px] text-[#64748B]">
                       {search || tab !== 'all' ? 'Aucune automatisation ne correspond.' : 'Aucune automatisation : créez la première.'}</td></tr>
                   )}
                   {rows.map((r) => {
@@ -257,16 +327,16 @@ export default function AutomationsPage() {
                           className="cursor-pointer border-t border-[#EEF2F7] transition hover:bg-[#F8FAFF] focus:bg-[#F8FAFF] focus:outline-none">
                         <td className="px-2 py-3">
                           <span className="flex items-center gap-3">
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={20} /></span>
-                            <span className="min-w-0"><span className="block truncate text-[14px] font-bold text-[#0B1C3F]">{r.name}</span>
-                              <span className="block truncate text-[12px] text-[#64748B]">{TAGLINE[r.scenario] || r.label}</span></span>
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={20} /></span>
+                            <span className="min-w-0"><span className="block truncate text-[13px] font-bold text-[#0B1C3F]">{r.name}</span>
+                              <span className="block truncate text-[11.5px] text-[#64748B]">{TAGLINE[r.scenario] || r.label}</span></span>
                           </span>
                         </td>
-                        <td className="px-2 py-3"><span className="flex items-center gap-2 text-[13px] leading-snug text-[#475569]">
+                        <td className="px-2 py-3"><span className="flex items-center gap-2 text-[12px] leading-snug text-[#475569]">
                           <CalendarDays size={16} className="shrink-0 text-[#64748B]" /><span className="min-w-0">{r.trigger_text}</span></span></td>
                         <td className="px-2 py-3"><span className="block min-w-0">
-                          <span className="block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.message?.title || '—'}</span>
-                          <span className="block truncate text-[12.5px] text-[#64748B]">{r.message?.body}</span></span></td>
+                          <span className="block truncate text-[12.5px] font-semibold text-[#0B1C3F]">{r.message?.title || '—'}</span>
+                          <span className="block truncate text-[12px] text-[#64748B]">{r.message?.body}</span></span></td>
                         <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
                           <span className="flex items-center gap-2 whitespace-nowrap">
                             <button type="button" role="switch" aria-checked={r.status === 'active'} aria-label={`Activer ${r.name}`}
@@ -274,19 +344,19 @@ export default function AutomationsPage() {
                                     className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-60 ${r.status === 'active' ? 'bg-[#1463FF]' : 'bg-[#D6DEEA]'}`}>
                               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${r.status === 'active' ? 'left-[22px]' : 'left-0.5'}`} />
                             </button>
-                            <span className="text-[13px] font-semibold" style={{ color: sc }}>{sl}</span>
+                            <span className="text-[12px] font-semibold" style={{ color: sc }}>{sl}</span>
                           </span>
                         </td>
-                        <td className="px-2 py-3 text-[14px] font-semibold tabular-nums text-[#0B1C3F]">{nf(r.reach)}</td>
-                        <td className="px-2 py-3 text-[14px] font-semibold tabular-nums text-[#0B1C3F]">{r.open_rate == null ? <span className="text-[#94A3B8]">—</span> : `${r.open_rate}%`}</td>
+                        <td className="px-2 py-3 text-[13px] font-semibold tabular-nums text-[#0B1C3F]">{nf(r.reach)}</td>
+                        <td className="px-2 py-3 text-[13px] font-semibold tabular-nums text-[#0B1C3F]">{r.open_rate == null ? <span className="text-[#94A3B8]">—</span> : `${r.open_rate}%`}</td>
                         <td className="relative px-1 py-3" onClick={(e) => e.stopPropagation()}>
                           <button type="button" aria-label="Plus d'actions" onClick={() => setMenu(menu === r.id ? null : r.id)}
                                   className="rounded-lg p-1.5 text-[#1463FF] hover:bg-[#F1F5F9]"><MoreHorizontal size={20} /></button>
                           {menu === r.id && (
                             <div className="absolute right-2 top-11 z-20 w-48 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
-                              <button type="button" onClick={() => navigate(`/dashboard/automations/${r.id}`)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">{can ? 'Modifier' : 'Voir'}</button>
-                              {can && <button type="button" onClick={() => duplicate(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Dupliquer</button>}
-                              {can && <button type="button" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}
+                              <button type="button" onClick={() => navigate(`/dashboard/automations/${r.id}`)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]">{can ? 'Modifier' : 'Voir'}</button>
+                              {can && <button type="button" onClick={() => duplicate(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]">Dupliquer</button>}
+                              {can && <button type="button" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}
                             </div>
                           )}
                         </td>
@@ -299,50 +369,8 @@ export default function AutomationsPage() {
           </section>
         </div>
 
-        <aside className="space-y-5">
-          <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
-            <div className="mb-3 flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><MessageSquare size={20} /></span>
-              <div>
-                <p className="text-[16px] font-bold text-[#0B1C3F]">Exemples de messages</p>
-                <button type="button" onClick={() => navigate('/dashboard/automations/exemples')} className="inline-flex items-center gap-1 text-[14px] font-semibold text-[#1463FF]">
-                  Voir tous les exemples <ArrowRight size={15} /></button>
-                <p className="text-[12.5px] text-[#64748B]">Des modèles prêts à l'emploi pour vos automatisations.</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              {rail.map((ex) => {
-                const sc = d?.scenarios?.find((x) => x.key === ex.scenario);
-                const I = ICONS[sc?.icon] || MessageSquare;
-                const [bg, fg] = TONES[sc?.tone] || TONES.blue;
-                return (
-                  <button key={ex.i} type="button" disabled={!can}
-                          onClick={() => navigate(`/dashboard/automations/nouvelle?scenario=${ex.scenario}&ex=${ex.i}`)}
-                          className="flex w-full items-start gap-3 rounded-2xl border border-[#E6EEFB] p-3 text-left transition hover:border-[#BFD3FF] disabled:cursor-default">
-                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ background: bg, color: fg }}><I size={24} /></span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[14px] font-bold text-[#0B1C3F]">{sc?.label || ''}</span>
-                      <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">{fill(ex.title, null, d?.shop)}</span>
-                      <span className="line-clamp-2 block text-[12.5px] text-[#64748B]">{fill(ex.body, null, d?.shop)}</span>
-                    </span>
-                    <ChevronRight size={18} className="mt-3 shrink-0 text-[#94A3B8]" />
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-          <section className="rounded-2xl border border-[#D6E4FF] bg-[#EEF4FF] p-5">
-            <div className="flex items-start gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#1463FF] text-white"><Lightbulb size={22} /></span>
-              <div>
-                <p className="text-[16px] font-bold text-[#0B1C3F]">Besoin d'inspiration ?</p>
-                <p className="text-[13.5px] text-[#475569]">Découvrez tous nos modèles de messages et personnalisez-les selon votre activité.</p>
-              </div>
-            </div>
-            <button type="button" onClick={() => navigate('/dashboard/automations/exemples')}
-                    className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#BFD3FF] bg-white py-3 text-[14.5px] font-semibold text-[#1463FF]">
-              Voir tous les exemples <ArrowRight size={16} /></button>
-          </section>
+        <aside className="hidden space-y-4 2xl:block">
+          <InspirationCard can={can} onUse={(d2) => navigate(`/dashboard/automations/nouvelle?scenario=${d2.scenario}`, { state: { ai: d2 } })} />
         </aside>
       </div>
     </div>
