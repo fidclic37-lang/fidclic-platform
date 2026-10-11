@@ -604,16 +604,29 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
         img = Image.composite(sheen, img, diag.point(lambda v: 255 - v)).filter(ImageFilter.GaussianBlur(18))
 
     light = raw is None and _lum(surface) > 0.45
+    _paint_poster_meter(img, brand, stamps, threshold if with_meter else 0, light)
+    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    return buf.getvalue()
+
+
+def _paint_poster_meter(img: Any, brand: Tuple[int, int, int], stamps: int, threshold: int,
+                        light: bool = False) -> None:
+    """The top scrim (logo + header read on any photo) and, when threshold > 0,
+    the segmented meter under them — one segment per stamp. Drawn in place,
+    sized from the image's own width so any poster size gets the same look."""
+    from PIL import ImageDraw
+    W, H = img.size
+    k = W / POSTER_W
     scrim = (255, 255, 255) if light else (0, 0, 0)
     d = ImageDraw.Draw(img, "RGBA")
-    band = int(POSTER_H * 0.30)
+    band = int(H * 0.30)
     for i in range(band):                          # top scrim: logo + header + meter
         a = int((120 if light else 150) * (1 - i / band) ** 1.4)
-        d.line([(0, i), (POSTER_W, i)], fill=scrim + (a,))
-    if with_meter and threshold > 0:
-        pad, bar_h, gap = 60, 24, 10
-        y0 = int(POSTER_H * 0.205)
-        inner = POSTER_W - 2 * pad
+        d.line([(0, i), (W, i)], fill=scrim + (a,))
+    if threshold > 0:
+        pad, bar_h, gap = 60 * k, max(2, round(24 * k)), 10 * k
+        y0 = int(H * 0.205)
+        inner = W - 2 * pad
         seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
         done = max(0, min(threshold, stamps))
         empty_fill = (0, 0, 0, 38) if light else (255, 255, 255, 52)
@@ -625,9 +638,7 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
                 d.rounded_rectangle(box, radius=bar_h // 2, fill=brand + (255,))
             else:
                 d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
-                d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
-    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
-    return buf.getvalue()
+                d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=max(1, round(2 * k)))
 
 
 def _poster_variants(png3x: bytes) -> Dict[str, bytes]:
@@ -1397,14 +1408,49 @@ def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
                          title=title, subtitle=sub)
 
 
-def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
-    """The iOS 27 poster background (1035×1515): same photo as the strip — the
-    live campaign's, else the merchant's banner, else the brand gradient."""
+def _stamp_state(payload: Dict[str, Any]) -> Tuple[int, int]:
+    """(stamps on the card now, stamps for the reward) — what every meter draws."""
     card, cust = payload["card"], payload["customer"]
     threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
     visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
     stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
                  else int(cust.get("visits") or 0) // visits_per_stamp)
+    return stamps, threshold
+
+
+def template_poster_with_meter(files: Dict[str, bytes], payload: Dict[str, Any]) -> Dict[str, bytes]:
+    """A Pass Designer template ships its own poster background; the progress
+    meter is painted onto it, every size, as on the FidClic design — so iOS 27
+    shows the tampons too, and the next visit's pass carries the new count.
+    The meter follows the business's switch (show_meter): off → the template's
+    background goes out untouched. Returns only the files it replaced."""
+    card = payload["card"]
+    if card.get("show_meter") is False or int(card.get("reward_threshold") or 0) <= 0:
+        return {}
+    try:
+        if "posterGeneric" not in json.loads(files.get("pass.json") or b"{}"):
+            return {}
+        from PIL import Image
+    except Exception:
+        return {}
+    stamps, threshold = _stamp_state(payload)
+    brand = _rgb(card.get("brand_color")) or (184, 92, 56)
+    out: Dict[str, bytes] = {}
+    for name in [n for n in files if n.startswith("background") and n.endswith(".png")]:
+        try:
+            img = Image.open(io.BytesIO(files[name])).convert("RGB")
+            _paint_poster_meter(img, brand, stamps, threshold)
+            b = io.BytesIO(); img.save(b, "PNG", optimize=True); out[name] = b.getvalue()
+        except Exception:
+            continue
+    return out
+
+
+def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
+    """The iOS 27 poster background (1035×1515): same photo as the strip — the
+    live campaign's, else the merchant's banner, else the brand gradient."""
+    card = payload["card"]
+    stamps, threshold = _stamp_state(payload)
     with_meter = card.get("show_meter") is not False
     raw = None
     if not _campaign_photo(card) and card.get("poster_image_url"):
@@ -1522,6 +1568,7 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
         tpl = None
     if tpl:
         files.update(_template_files(tpl, card))
+        files.update(template_poster_with_meter(files, payload))   # iOS 27: the tampons on the poster
         if "storeCard" in json.loads(files["pass.json"]):   # iOS 26: the card as before, strip in
             strip3x = strip_png(payload)
             for suffix, png in (_strip_variants(strip3x) if strip3x else {}).items():
@@ -1889,6 +1936,9 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
     if tpl:                                   # a Pass Designer template: its own images
         imgs = PD.images(tpl)
         bg2x = PD.best(imgs, "background")
+        if bg2x:                              # the tampons, as the pass carries them
+            bg2x = template_poster_with_meter({"pass.json": json.dumps(pj).encode(),
+                                               "background@2x.png": bg2x}, payload).get("background@2x.png", bg2x)
         logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
     else:
         bg3x = poster_png(payload)
