@@ -535,6 +535,9 @@ export const ownerAPI = {
   automationPreview: (body) => api.post('/owner/automations/preview', body),
   automationAiDraft: (objective) => api.post('/owner/automations/ai-draft', { objective }),
   automationGeoZone: () => api.get('/owner/automations/geo/zone'),
+  // Nouvelle automatisation (2026-10-11): « Adresse ou établissement », the till's « Offre utilisée »
+  automationAddress: (q) => api.get('/owner/automations/address-search', { params: { q } }),
+  useOffer: (campaignId, body) => api.post(`/owner/offers/${encodeURIComponent(campaignId)}/use`, body),
   autoMessages: () => api.get('/owner/auto-messages'),
   saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
   // Paramètres › Établissement

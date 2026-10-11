@@ -278,9 +278,19 @@ def for_pass(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[Di
         return None
     rows = list(_db.automations.find({"tenant_id": tid, "scenario": "geo", "status": "active"},
                                      {"_id": 0}).sort("order", 1))
+    from features import custom_rules as CR
+    rows += CR.geo_rows(tid)                  # Nouvelle automatisation › Géolocalisation (its own address)
     tenant = None
     cache: Dict[str, Any] = {}
     for row in rows:
+        if row.get("scenario") == "custom":
+            try:
+                got = CR.pass_geo(row, cust, at, cache)
+                if got:
+                    return got
+            except Exception as exc:
+                print(f"geo: custom pass rule {row.get('id')} failed ({exc})")
+            continue
         try:
             if not AU.running(row, at) or not AU.in_window(row.get("schedule") or {}, at):
                 continue
@@ -314,7 +324,9 @@ def for_pass(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[Di
 def governs(tid: str) -> bool:
     """An active geolocation automation decides the pass's locations; without
     one the card designer's own « rappel de proximité » stays as it was."""
-    return bool(_db.automations.find_one({"tenant_id": tid, "scenario": "geo", "status": "active"}, {"_id": 1}))
+    return bool(_db.automations.find_one({"tenant_id": tid, "scenario": "geo", "status": "active"}, {"_id": 1})) or \
+        bool(_db.automations.find_one({"tenant_id": tid, "scenario": "custom", "status": "active",
+                                       "trigger.type": "geo", "trigger.lat": {"$ne": None}}, {"_id": 1}))
 
 
 def _key(state: Optional[Dict[str, Any]]) -> str:
@@ -337,6 +349,7 @@ def sync_passes(at: Optional[datetime] = None, tids: Optional[Iterable[str]] = N
     at = at or _now()
     if tids is None:
         tids = set(_db.automations.distinct("tenant_id", {"scenario": "geo"}))
+        tids |= set(_db.automations.distinct("tenant_id", {"scenario": "custom", "trigger.type": "geo"}))
         tids |= set(_db.customers.distinct("tenant_id", {"geo_pass_key": {"$nin": [None, "off"]}}))
     out = {"tenants": 0, "checked": 0, "changed": 0}
     for tid in tids:
