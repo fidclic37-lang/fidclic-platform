@@ -5451,15 +5451,16 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     try:
         from features import auto_messages as _AM
         from features import automations as _AU
+        # « Récompense bientôt disponible » (2026-10-11): the X points / tampons
+        # rule needs no visits estimate; a row saved before reads visits_left
         _left = _AM.visits_to_reward(tenant_id, cust, card_template)
-        if _left:
-            _said = [x for x in _AU.fire("near_reward", tenant_id, cust,
-                                         {"visits_left": _left,
-                                          "cycle": cycle_start.isoformat() if cycle_start else "first"})
-                     if x.get("title")]
-            # the Wallet card was already told by the automation itself
-            fired["near_reward"] = ({"title": _said[0]["title"], "body": _said[0]["body"], "deferred": True}
-                                    if _said else False)
+        _said = [x for x in _AU.fire("near_reward", tenant_id, cust,
+                                     {"visits_left": _left or -1,
+                                      "cycle": cycle_start.isoformat() if cycle_start else "first"})
+                 if x.get("title")]
+        # the Wallet card was already told by the automation itself
+        fired["near_reward"] = ({"title": _said[0]["title"], "body": _said[0]["body"], "deferred": True}
+                                if _said else False)
     except Exception as _e:
         print(f"near_reward: not sent (non-fatal): {_e}")
 

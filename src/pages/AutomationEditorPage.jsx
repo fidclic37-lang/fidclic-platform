@@ -5,7 +5,7 @@ import {
   X, Loader2, Sparkles, Lightbulb, Power, MessageSquare, RefreshCw, MousePointerClick, MapPin, Euro, Repeat,
   Trophy, Plus, Trash2, Settings2, Briefcase, Link2, BarChart3, Globe, RotateCcw, ChevronDown, PlusCircle, Award,
   Footprints, CloudSun, Flag, Store, Star, Navigation, CheckCircle2, AlertTriangle, Eye, Bell,
-  MoreHorizontal, Pause, Play, Copy, Filter, Hourglass, Smartphone, UserX, ArrowUp, Ban, Target, TrendingUp, Zap,
+  MoreHorizontal, Pause, Play, Copy, Filter, Hourglass, Smartphone, UserX, ArrowUp, Ban, Target, TrendingUp, Zap, List as ListIcon,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import LockScreenPreview from '../components/automations/LockScreenPreview';
@@ -108,6 +108,10 @@ const INACTIVE_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établiss
 // Bienvenue (mockups 2026-10-11): three steps, sent when the card lands in Wallet
 const W_STEPS = [['Déclencheur', ''], ['Message', ''], ['Résumé', '']];
 const WELCOME_VARS = ['prénom', 'nom_commerce', 'offre', 'lien'];
+// Récompense bientôt disponible (mockups 2026-10-11): its chips, per the card's programme
+const nrVars = (unit) => (unit === 'tampons' ? ['prénom', 'nom_commerce', 'tampons', 'tampons_restants', 'récompense'] : ['prénom', 'nom_commerce', 'points', 'points_restants', 'récompense']);
+const NR_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établissement', points: 'Nombre de points actuels', tampons: 'Tampons actuels',
+  points_restants: 'Points restants', tampons_restants: 'Tampons restants', 'récompense': 'Récompense' };
 const WELCOME_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: "Nom de l'établissement", offre: 'Offre', lien: 'Lien' };
 const defaults = (sc, meta) => ({
   scenario: sc, name: sc === 'google_review' ? "Demande d'avis Google" : sc === 'welcome' ? 'Bienvenue au nouveau client' : meta?.label || '', description: '', status: 'active',
@@ -117,9 +121,12 @@ const defaults = (sc, meta) => ({
     button: { enabled: sc === 'google_review', label: meta?.button || '', link_type: sc === 'tier_up' ? 'rewards' : sc === 'google_review' ? 'google_review' : 'card', offer_id: null, url: '' } },
   // a géolocalisation targets passers-by through its filters (« filtered »);
   // Client inactif's « Tous mes clients » keeps its filters (mockups 2026-10-11)
-  targeting: { mode: ['geo', 'inactive'].includes(sc) ? 'filtered' : 'all', segment: null, passants: 'all',
+  targeting: { mode: ['geo', 'inactive', 'near_reward'].includes(sc) ? 'filtered' : 'all', segment: null, passants: 'all',
     filters: { ...EMPTY_FILTERS }, exclusions: { ...EMPTY_EXCLUSIONS } },
-  schedule: sc === 'inactive'
+  schedule: sc === 'near_reward'
+    ? { days: 'specific', weekdays: [0, 1, 2, 3, 4], hour: null, smart: false, window: true, window_from: '11:00', window_to: '20:00',
+      slots: [], holidays: true, valid_from: '', valid_to: '', daily_limit: null }
+    : sc === 'inactive'
     // the mockup's defaults: Lun – Ven, 11:00 – 20:00, at 14:00 from today, 200 per day at most
     ? { days: 'specific', weekdays: [0, 1, 2, 3, 4], hour: '14:00', smart: false, window: true, window_from: '11:00', window_to: '20:00',
       slots: [], holidays: true, valid_from: new Date().toISOString().slice(0, 10), valid_to: '', daily_limit: 200 }
@@ -311,6 +318,11 @@ export default function AutomationEditorPage() {
         if (row.scenario === 'tier_up' && !row.trigger?.condition) trig.condition = 'status';
         if (row.scenario === 'tier_up') trig.tiers = (trig.tiers || []).map((t) => ({ ...t, value: String(t.value), reward: t.reward || '' }));
         if (row.scenario === 'geo') geoInit(trig, data);
+        if (row.scenario === 'near_reward' && (trig.threshold === undefined || trig.threshold === null)) {
+          // saved before the mockups (« X visites »): the seuil is proposed, saving switches to it
+          trig.legacy_visits = trig.visits_left || 1;
+          trig.threshold = data.near?.unit === 'tampons' ? String(trig.visits_left || 1) : '10';
+        }
         if (row.scenario === 'google_review') {                     // before the mockups: « après chaque visite »
           trig.type = trig.type || 'after_visit';
           if (trig.frequency === 'every_scan') { trig.frequency = 'days'; trig.every_days = 1; }
@@ -322,14 +334,17 @@ export default function AutomationEditorPage() {
             visits_min: rf.visits_min ?? '', visits_max: rf.visits_max ?? '', age_min: rf.age_min ?? '', age_max: rf.age_max ?? '',
             spent: asList(rf.spent, SPENT), last_visit: asList(rf.last_visit, LAST_VISIT), stores: rf.stores || [],
             radius_km: rf.radius_km || null, past_freq: asList(rf.past_freq, PAST_FREQS), tiers: asList(rf.tiers, TIERS),
-            origin: asList(rf.origin, ORIGINS), last_offer: asList(rf.last_offer, LAST_OFFER) },
+            origin: asList(rf.origin, ORIGINS), last_offer: asList(rf.last_offer, LAST_OFFER),
+            activity: rf.activity || [], signed_since: rf.signed_since || '' },
             exclusions: { ...EMPTY_EXCLUSIONS, ...(row.targeting?.exclusions || {}) },
-            // a Client inactif saved as « Tous mes clients » (before its mockups) reads its filters now
-            ...(row.scenario === 'inactive' && (row.targeting?.mode || 'all') === 'all' ? { mode: 'filtered' } : {}) },
+            // a Client inactif / Récompense bientôt disponible saved as « Tous mes clients » reads its filters now
+            ...(['inactive', 'near_reward'].includes(row.scenario) && (row.targeting?.mode || 'all') === 'all' ? { mode: 'filtered' } : {}) },
           schedule: { ...d.schedule, ...row.schedule, hour: row.schedule?.hour || '10:00', slots: row.schedule?.slots || [],
             valid_from: row.schedule?.valid_from || '', valid_to: row.schedule?.valid_to || '',
             holidays: row.schedule?.holidays !== false, daily_limit: row.schedule?.daily_limit ?? null,
             // Client inactif before its mockups: no plage — the whole day around its hour
+            // an event automation sent at once before: the whole day, so nothing changes
+            ...(row.scenario === 'near_reward' && !row.schedule?.window ? { window: true, window_from: '00:00', window_to: '23:59' } : {}),
             ...(row.scenario === 'inactive' && !row.schedule?.window ? (() => {
               const h = row.schedule?.hour || '10:00';
               return { window: true, window_from: h < '08:00' ? h : '08:00', window_to: h >= '21:00' ? '23:59' : '21:00' };
@@ -345,6 +360,11 @@ export default function AutomationEditorPage() {
         if (ai?.title) d.message = { ...d.message, title: ai.title.slice(0, TITLE_MAX), body: (ai.body || '').slice(0, BODY_MAX) };
         if (ai?.title && sc === 'custom') d.name = ai.title.replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || d.name;
         if (sc === 'geo') geoInit(d.trigger, data);
+        if (sc === 'near_reward') {
+          d.trigger = { ...d.trigger, threshold: data.near?.unit === 'tampons' ? '1' : '10' };
+          // a stamps card speaks of tampons
+          if (data.near?.unit === 'tampons') d.message = { ...d.message, title: d.message.title.replace('points', 'tampons'), body: d.message.body.replace('{points_restants}', '{tampons_restants}') };
+        }
         const ex = EXAMPLES[Number(q.get('ex'))];
         if (ex && ex.scenario === sc) d.message = { ...d.message, title: ex.title, body: ex.body, button: { ...d.message.button, label: ex.button } };
         setS(d);
@@ -365,14 +385,15 @@ export default function AutomationEditorPage() {
   const pick = (key) => (v) => { if (v !== '__multi') setF({ [key]: v ? [v] : [] }); };
 
   // ---- the live count (step 4) ---------------------------------------------------
-  const tKey = s ? JSON.stringify([s.scenario, s.targeting, s.scenario === 'inactive' ? s.trigger.days : 0]) : '';
+  const tKey = s ? JSON.stringify([s.scenario, s.targeting, s.scenario === 'inactive' ? s.trigger.days : s.scenario === 'near_reward' ? s.trigger.threshold : 0]) : '';
   useEffect(() => {
     if (!s) return undefined;
     let alive = true;
     const t0 = setTimeout(() => {
       if (s.targeting.mode === 'segment' && !s.targeting.segment) { setPreview({ count: 0, sample: preview?.sample }); return; }
       ownerAPI.automationPreview({ scenario: s.scenario, targeting: s.targeting,
-        ...(s.scenario === 'inactive' ? { trigger: { days: Number(s.trigger.days) || 30 } } : {}) })
+        ...(s.scenario === 'inactive' ? { trigger: { days: Number(s.trigger.days) || 30 } }
+          : s.scenario === 'near_reward' ? { trigger: { threshold: Number(s.trigger.threshold) || 10 } } : {}) })
         .then(({ data }) => { if (alive) setPreview(data); }).catch(() => { if (alive) setPreview(null); });
     }, 250);
     return () => { alive = false; clearTimeout(t0); };
@@ -392,6 +413,8 @@ export default function AutomationEditorPage() {
 
   const tr = s.trigger;
   const welcomeOn = s.scenario === 'welcome';
+  const nrOn = s.scenario === 'near_reward';
+  const near = page.near || { unit: 'points', card_goal: null, card_reward: 'votre récompense', tiers: [] };
   const lastStep = welcomeOn ? 3 : 6;
   const googleStores = page.google?.stores || [];
   const googleKeys = googleStores.length > 1 ? googleStores.map((b) => b.id) : ['main'];
@@ -486,7 +509,13 @@ export default function AutomationEditorPage() {
     if (n === 2) {
       const num = (v, lo, hi, l) => (!Number.isInteger(Number(v)) || Number(v) < lo || Number(v) > hi ? `${l} : entre ${lo} et ${hi}.` : '');
       if (s.scenario === 'birthday') return num(Math.abs(Number(tr.offset_days || 0)), 0, 30, 'Jours');
-      if (s.scenario === 'near_reward') return num(tr.visits_left, 1, 50, 'Visites avant la récompense');
+      if (s.scenario === 'near_reward') {
+        const lbl = near.unit === 'tampons' ? 'Seuil (tampons)' : near.unit === '€' ? 'Seuil (€)' : 'Seuil (points)';
+        const bad = num(tr.threshold, 1, 100000, lbl);
+        if (bad) return bad;
+        if (near.card_goal && Number(tr.threshold) >= near.card_goal) return `Le seuil doit être inférieur à la récompense de la carte (${near.card_goal} ${near.unit}).`;
+        return '';
+      }
       if (s.scenario === 'inactive') return num(tr.days, 7, 365, 'Jours sans visite') || (tr.repeat === 'every' ? num(tr.every_days, 7, 365, 'Répéter tous les') : '');
       if (s.scenario === 'geo') {
         if (!(tr.stores || []).length) return 'Cochez au moins un établissement.';
@@ -561,6 +590,10 @@ export default function AutomationEditorPage() {
           if (!Number.isInteger(n) || n < 1 || n > 100000) return "Limite d'envoi par jour : entre 1 et 100 000.";
         }
       } else if (!timed && sc.window && sc.window_to <= sc.window_from) return 'La fin de la plage horaire doit être après son début.';
+      if (s.scenario === 'near_reward' && sc.daily_limit !== null && sc.daily_limit !== undefined) {
+        const n = Number(sc.daily_limit);
+        if (!Number.isInteger(n) || n < 1 || n > 100000) return "Limite d'envoi quotidienne : entre 1 et 100 000.";
+      }
       if (sc.valid_from && sc.valid_to && sc.valid_to < sc.valid_from) return 'La date de fin doit être après la date de début.';
       if (sc.valid_to && sc.valid_to < new Date().toISOString().slice(0, 10) && s.status !== 'paused') return 'La date de fin est déjà passée : choisissez une nouvelle date.';
     }
@@ -585,7 +618,7 @@ export default function AutomationEditorPage() {
   } : {
     scenario: s.scenario, name: s.name, status, description: s.scenario === 'google_review' ? '' : (s.description || ''),
     ...(s.scenario === 'google_review' ? { google_links: Object.fromEntries(Object.entries(links).map(([k, v]) => [k, fullLink(v)])) } : {}),
-    trigger: { ...tr, offset_days: Number(tr.offset_days || 0),
+    trigger: s.scenario === 'near_reward' ? { threshold: Number(tr.threshold) } : { ...tr, offset_days: Number(tr.offset_days || 0),
       ...(s.scenario === 'tier_up' ? { threshold: Number(tr.threshold) || 0, min_days: Number(tr.min_days) || 7,
         custom_tiers: tiered, tiers: tiered ? tr.tiers.map((t) => ({ value: Number(t.value), title: String(t.title || '').trim(),
           body: String(t.body || '').trim(), reward: String(t.reward || '').trim() })) : [] } : {}) },
@@ -1353,19 +1386,19 @@ export default function AutomationEditorPage() {
           </div>
         </div>
       )}
-      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>{['inactive', 'welcome'].includes(s.scenario) ? 'Titre de la notification' : 'Titre'}{tiered ? ` — palier ${palierLabel(tr.condition, cur.value)}` : ''}</Label>
+      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>{['inactive', 'welcome', 'near_reward'].includes(s.scenario) ? 'Titre de la notification' : 'Titre'}{tiered ? ` — palier ${palierLabel(tr.condition, cur.value)}` : ''}</Label>
       <div className="flex items-center gap-2">
         <input ref={titleRef} className={field} value={cur.title || ''} maxLength={TITLE_MAX} onFocus={() => { lastFocus.current = 'title'; }}
                onChange={(e) => setCur({ title: e.target.value })} placeholder={m.title || 'Le titre de votre notification'} />
         <VarMenu which="title" />
       </div>
-      {s.scenario === 'inactive' && (
-        <div className="mt-2 flex flex-wrap gap-2">{INACTIVE_VARS.filter((v) => v !== 'lien').map((v) => (
+      {['inactive', 'near_reward'].includes(s.scenario) && (
+        <div className="mt-2 flex flex-wrap gap-2">{(s.scenario === 'near_reward' ? nrVars(near.unit) : INACTIVE_VARS.filter((v) => v !== 'lien')).map((v) => (
           <button key={v} type="button" onMouseDown={() => { lastFocus.current = 'title'; }} onClick={() => { lastFocus.current = 'title'; insert(`{${v}}`); }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[#DCE5F3] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {INACTIVE_VAR_LABELS[v]}</button>
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#DCE5F3] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {(s.scenario === 'near_reward' ? NR_VAR_LABELS : INACTIVE_VAR_LABELS)[v]}</button>
         ))}</div>
       )}
-      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>{['inactive', 'welcome'].includes(s.scenario) ? 'Texte de la notification' : 'Message'}</Label></div>
+      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>{['inactive', 'welcome', 'near_reward'].includes(s.scenario) ? 'Texte de la notification' : 'Message'}</Label></div>
       <div className="flex items-start gap-2">
         <textarea ref={bodyRef} className={`${field} min-h-[96px] resize-y`} value={cur.body || ''} maxLength={BODY_MAX}
                   onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setCur({ body: e.target.value })}
@@ -1376,10 +1409,10 @@ export default function AutomationEditorPage() {
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {(s.scenario === 'geo' ? ['prénom', 'établissement', 'offre', 'distance', ...variables.filter((v) => !['prénom', 'établissement', 'offre', 'distance'].includes(v))]
           : s.scenario === 'google_review' ? ['nom', 'prénom', 'établissement', 'lien_avis']
-          : s.scenario === 'inactive' ? INACTIVE_VARS : s.scenario === 'welcome' ? WELCOME_VARS : variables).map((v) => (
+          : s.scenario === 'inactive' ? INACTIVE_VARS : s.scenario === 'welcome' ? WELCOME_VARS : s.scenario === 'near_reward' ? nrVars(near.unit) : variables).map((v) => (
           <button key={v} type="button" title={`${VAR_LABELS[v] || v} — {${v}}`} onMouseDown={() => { if (s.scenario === 'inactive') lastFocus.current = 'body'; }}
                   onClick={() => { if (s.scenario === 'inactive') lastFocus.current = 'body'; insert(`{${v}}`); }}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {(s.scenario === 'inactive' && INACTIVE_VAR_LABELS[v]) || (s.scenario === 'welcome' && WELCOME_VAR_LABELS[v]) || VAR_SHORT[v] || v}</button>
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {(s.scenario === 'inactive' && INACTIVE_VAR_LABELS[v]) || (s.scenario === 'welcome' && WELCOME_VAR_LABELS[v]) || (s.scenario === 'near_reward' && NR_VAR_LABELS[v]) || VAR_SHORT[v] || v}</button>
         ))}
         <span className="relative">
           <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))} aria-label="Ajouter un emoji"
@@ -1392,6 +1425,15 @@ export default function AutomationEditorPage() {
         </span>
       </div>
       {tiered && <p className="mt-2 text-[11.5px] text-[#64748B]">L'image et le bouton ci-dessous sont communs à tous les paliers.</p>}
+      {s.scenario === 'near_reward' && (
+        <div className="mt-3 flex items-start gap-3 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12.5px] text-[#334155]"><Info size={17} className="mt-0.5 shrink-0 text-[#1463FF]" />
+          <span><b className="block text-[#0B1C3F]">Exemple de variables :</b>
+            <span className="block">{'{prénom}'} → le prénom du client</span>
+            <span className="block">{near.unit === 'tampons' ? '{tampons} → le nombre de tampons sur la carte' : '{points} → le nombre de points actuels'}</span>
+            <span className="block">{near.unit === 'tampons' ? '{tampons_restants} → les tampons restants avant la récompense (ex. « 1 tampon »)' : '{points_restants} → les points restants avant la récompense (ex. « 10 points »)'}</span>
+            <span className="block">{'{récompense}'} → le nom de la récompense (celle de la carte, ou du prochain palier)</span></span>
+        </div>
+      )}
       {s.scenario === 'geo' && (
         <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
           <span>Sur l'écran verrouillé, l'iPhone affiche ce message près de votre établissement ; Google Wallet y écrit son propre texte. Un appui ouvre la carte, où votre message et son bouton s'affichent. {'{distance}'} n'est connue que si la carte est ouverte : écrivez « à {'{distance}'} », cela donne « à 80 m », ou « à deux pas » sur l'écran verrouillé.</span></p>
@@ -1777,6 +1819,37 @@ export default function AutomationEditorPage() {
           : [false, "Activez la plage d'envoi intelligente : en journée (8h – 20h), les clients répondent davantage."]);
         out.push(tr.frequency !== 'days' || Number(tr.every_days) >= 30 ? [true, 'Vos clients ne sont pas sollicités trop souvent.']
           : [false, 'Ne redemandez pas un avis trop souvent : 30 jours ou plus entre deux demandes.']);
+      }
+      return out;
+    }
+    if (s.scenario === 'near_reward') {
+      const sv = Number(tr.threshold) || 0;
+      const [lo, hi] = near.unit === 'tampons' ? [1, 2] : near.unit === '€' ? [5, 20] : [5, 15];
+      const u = near.unit === 'tampons' ? 'tampons' : near.unit === '€' ? '€' : 'points';
+      const out = [];
+      if ([2, 6].includes(n)) {
+        out.push(sv >= lo && sv <= hi ? [true, `Un seuil de ${lo} à ${hi} ${u} fonctionne très bien pour inciter les clients à revenir.`]
+          : [false, `Un seuil de ${lo} à ${hi} ${u} fonctionne le mieux : assez proche pour motiver, sans prévenir trop tôt.`]);
+        out.push([true, 'Utilisez un message court et motivant.']);
+        out.push([Boolean(msg.image_url || /\{récompense\}|offert|cadeau|🎁/.test(words)), msg.image_url || /\{récompense\}|offert|cadeau|🎁/.test(words)
+          ? 'La récompense est mise en avant : de quoi donner envie de revenir.' : 'Ajoutez une offre ou un visuel attractif pour augmenter le taux de retour.']);
+      }
+      if ([3, 6].includes(n)) {
+        out.push(/\{pr[ée]nom\}/.test(words) ? [true, 'Message personnalisé avec le prénom du client.'] : [false, 'Ajoutez {prénom} : un message personnalisé est plus ouvert.']);
+        out.push(/\{(points|tampons)_restants\}|\{récompense\}/.test(words) ? [true, 'Le client voit ce qu\'il lui manque et ce qu\'il va gagner.']
+          : [false, `Indiquez ce qui reste ({${near.unit === 'tampons' ? 'tampons' : 'points'}_restants}) et la récompense ({récompense}).`]);
+      }
+      if ([4, 6].includes(n)) {
+        out.push(preview?.near ? (preview.near.count ? [true, 'Cette notification fonctionne particulièrement bien pour les clients actifs qui viennent régulièrement.']
+          : [false, "Aucun client n'est dans le seuil aujourd'hui : il se remplira au fil des passages."]) : tips[2]);
+        out.push(Number(f.visits_min) >= 2 ? [true, `Filtre « au moins ${f.visits_min} visites » : vous ciblez les clients les plus engagés.`]
+          : [false, 'Vous pouvez ajouter un filtre sur le nombre de visites (ex : au moins 2 visites) pour cibler les clients les plus engagés.']);
+      }
+      if ([5, 6].includes(n)) {
+        const best = page.best_slot;
+        out.push(!best || (sc.window_from <= best.from && best.from < sc.window_to) ? [true, `Le créneau ${sc.window_from} - ${sc.window_to} est idéal pour ce type de notification${best ? ` : vos clients viennent surtout vers ${best.from}` : ''}.`]
+          : [false, `Vos clients viennent surtout vers ${best.from} (d'après vos visites) : incluez ce moment dans la plage horaire.`]);
+        out.push([true, 'Vous pouvez tester différents créneaux horaires pour identifier ceux qui génèrent le plus d\'engagement.']);
       }
       return out;
     }
@@ -2287,9 +2360,9 @@ export default function AutomationEditorPage() {
       </div>
     </Card>
   );
-  const WPreview = (
+  const PreviewTabs = (extraVars, heading = 'Aperçu de la notification') => (
     <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
-      <p className="mb-3 text-[14.5px] font-bold text-[#0B1C3F]">Aperçu de la notification</p>
+      <p className="mb-3 text-[14.5px] font-bold text-[#0B1C3F]">{heading}</p>
       <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-[#F4F7FC] p-1" role="tablist">
         {[['mobile', 'Aperçu sur mobile'], ['wallet', 'Aperçu Wallet']].map(([k, l]) => (
           <button key={k} type="button" role="tab" aria-selected={pvTab === k} onClick={() => setPvTab(k)}
@@ -2298,7 +2371,287 @@ export default function AutomationEditorPage() {
       </div>
       <LockScreenPreview bare variant={pvTab} shop={page.shop} logo={page.logo_url} title={msg.title} body={msg.body} image={msg.image_url}
                          button={btn.enabled ? btn.label : ''} sample={preview?.sample}
-                         extra={{ offre: page.offers[0]?.name || 'notre offre du moment', lien: 'fidclic.com/c/…' }} />
+                         extra={extraVars} />
+    </section>
+  );
+  const WPreview = PreviewTabs({ offre: page.offers[0]?.name || 'notre offre du moment', lien: 'fidclic.com/c/…' });
+
+  // ---- Récompense bientôt disponible (mockups 2026-10-11) -----------------------------
+  const nr = preview?.near;
+  const unitWord = (n) => (near.unit === 'tampons' ? (Number(n) === 1 ? 'tampon' : 'tampons') : near.unit === '€' ? '€' : (Number(n) === 1 ? 'point' : 'points'));
+  const seuil = Number(tr.threshold) || 0;
+  const eventLabel = near.unit === 'tampons' ? 'Carte de tampons presque complète' : near.unit === '€' ? 'Prochain palier presque atteint' : 'Seuil de points presque atteint';
+  const eventShort = near.unit === 'tampons' ? 'tampons presque complets' : near.unit === '€' ? 'palier presque atteint' : 'points presque atteints';
+  const exGoal = near.card_goal || (near.tiers.find((t) => t.reward && t.min > 0) || {}).min || 200;
+  const NR_VARS = near.unit === 'tampons' ? ['prénom', 'nom_commerce', 'tampons', 'tampons_restants', 'récompense'] : ['prénom', 'nom_commerce', 'points', 'points_restants', 'récompense'];
+  const NR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établissement', points: 'Nombre de points actuels', tampons: 'Tampons actuels',
+    points_restants: 'Points restants', tampons_restants: 'Tampons restants', 'récompense': 'Récompense' };
+  const nrExtra = { points_restants: `${seuil} ${unitWord(seuil)}`, tampons_restants: `${seuil} ${unitWord(seuil)}`, 'récompense': near.card_reward,
+    points: String(Math.max(0, exGoal - seuil)), tampons: String(Math.max(0, exGoal - seuil)) };
+  const Step2NR = (
+    <Card n={2} title="Déclencheur" sub="Définissez quand l'automatisation se déclenche.">
+      {tr.legacy_visits && (
+        <p className="mb-3 flex items-start gap-2 rounded-xl bg-[#FFF7ED] px-3 py-2.5 text-[12px] text-[#9A3412]"><Info size={15} className="mt-0.5 shrink-0" />
+          <span>Cette automatisation partait à {tr.legacy_visits} visite{tr.legacy_visits > 1 ? 's' : ''} de la récompense. En l'enregistrant, elle passe au seuil ci-dessous ({seuil} {unitWord(seuil)}).</span></p>
+      )}
+      <div className="rounded-2xl border border-[#E6EEFB] p-4">
+        <p className="mb-3 flex items-start gap-3"><Trophy size={28} className="shrink-0 text-[#1463FF]" />
+          <span><span className="block text-[14px] font-bold text-[#0B1C3F]">Événement de déclenchement</span>
+            <span className="text-[12.5px] text-[#475569]">Choisissez la condition qui déclenche l'envoi de la notification.</span></span></p>
+        <Select label="Événement de déclenchement" value="seuil" onChange={() => {}} options={[['seuil', eventLabel]]} />
+        <p className="mt-3 flex items-start gap-2.5 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12.5px] text-[#1E3A8A]"><Info size={18} className="mt-0.5 shrink-0 text-[#1463FF]" />
+          {near.unit === 'tampons' ? 'La notification sera envoyée automatiquement lorsqu\'il ne manque plus que quelques tampons au client pour compléter sa carte, ou pour atteindre son prochain palier.'
+            : near.unit === '€' ? 'Votre carte est une cagnotte : la notification part quand le client approche de son prochain palier (Bronze → Argent → Or → VIP) et de sa récompense.'
+            : 'La notification sera envoyée automatiquement lorsqu\'un client atteint un nombre de points proche du seuil de sa prochaine récompense.'}</p>
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="w-full text-[13.5px] font-bold text-[#0B1C3F]">Seuil de déclenchement</span>
+          <Num value={tr.threshold} digits={6} min={1} max={100000} label="Seuil de déclenchement" onChange={(v) => setIn('trigger', { threshold: v })} />
+          <span className="text-[13px] text-[#0B1C3F]">{unitWord(seuil)} avant la prochaine récompense
+            <span className="block text-[12px] text-[#64748B]">(ex : si la récompense est à {exGoal} {unitWord(exGoal)}, l'envoi se fera à {Math.max(0, exGoal - seuil)} {unitWord(exGoal)}).</span></span>
+        </div>
+      </div>
+      <div className="mt-3 rounded-2xl bg-[#F5F8FF] p-4">
+        <p className="mb-1 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Target size={18} className="text-[#1463FF]" /> Exemple de scénario</p>
+        <p className="text-[12.5px] text-[#334155]">Exemple : si votre prochaine récompense est à {exGoal} {unitWord(exGoal)} et que le seuil est fixé à {seuil} {unitWord(seuil)}, le message sera envoyé automatiquement lorsque le client atteint {Math.max(0, exGoal - seuil)} {unitWord(exGoal)}.</p>
+        <p className="mt-2 text-[11.5px] text-[#64748B]">La « prochaine récompense » est celle qui arrive en premier pour chaque client : la récompense de la carte ({near.card_reward}){near.tiers.some((t) => t.reward) ? ', ou celle de son prochain palier' : ''}. Une fois par récompense : après l'avoir utilisée, le client sera prévenu à nouveau pour la suivante.</p>
+      </div>
+    </Card>
+  );
+
+  const Step4NR = (
+    <Card n={4} title="Ciblage" sub="Choisissez les clients qui recevront cette notification.">
+      <Sec title="Type de clients" sub="Cette automatisation sera envoyée uniquement aux clients qui remplissent les conditions suivantes.">
+        <div className={`grid gap-3 ${tg.mode === 'wallet' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+          {[['filtered', 'Tous les clients éligibles', 'Tous les clients qui atteignent le seuil défini.', Users], ['segment', 'Segments spécifiques', 'Envoyer uniquement à certains segments de clients.', Filter],
+            ...(tg.mode === 'wallet' ? [['wallet', 'Clients avec carte Wallet', 'Uniquement les clients ayant ajouté leur carte', Wallet]] : [])].map(([k, l, h, I]) => (
+            <button key={k} type="button" onClick={() => setIn('targeting', { mode: k })}
+                    className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition ${tg.mode === k ? 'border-[#2F6BFF] bg-[#F5F8FF] shadow-[0_0_0_1px_#2F6BFF]' : 'border-[#E2E8F0] hover:border-[#BFD3FF]'}`}>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={20} /></span>
+              <span className="min-w-0 flex-1"><span className="block text-[13.5px] font-bold text-[#0B1C3F]">{l}</span><span className="text-[12px] text-[#64748B]">{h}</span></span>
+              <Ticked on={tg.mode === k} />
+            </button>
+          ))}
+        </div>
+        {tg.mode === 'segment' && (
+          <div className="mt-3 max-h-[220px] space-y-1.5 overflow-y-auto">
+            {page.segments.map((x) => (
+              <label key={x.key} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 ${tg.segment === x.key ? 'border-[#2F6BFF] bg-[#F1F6FF]' : 'border-[#E2E8F0]'}`}>
+                <input type="radio" name="au-seg-nr" checked={tg.segment === x.key} onChange={() => setIn('targeting', { segment: x.key })} className="accent-[#1463FF]" />
+                <span className="flex-1"><span className="block text-[13px] font-semibold text-[#0B1C3F]">{x.label}</span><span className="text-[11.5px] text-[#64748B]">{x.hint}</span></span>
+                <span className="text-[12px] font-semibold tabular-nums text-[#475569]">{(x.count ?? 0).toLocaleString('fr-FR')}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </Sec>
+      <Sec title="Filtres supplémentaires (optionnel)" sub="Affinez votre cible en ajoutant des critères."
+           right={<button type="button" onClick={() => setF({ activity: [], visits_min: '', signed_since: '', last_visit: [], stores: [] })} className="inline-flex items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3 py-1.5 text-[12px] font-semibold text-[#1463FF]"><RotateCcw size={13} /> Réinitialiser</button>}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <FilterTile icon={User} label="Statut client" wide>
+            <Select label="Statut client" value={one(f.activity || [])} onChange={pick('activity')}
+                    options={withMulti(f.activity || [], [['', 'Tous les statuts'], ...(page.statuses || []).map((x) => [x.key, x.label])])} />
+          </FilterTile>
+          <FilterTile icon={ListIcon} label="Nombre de visites" wide>
+            <Select label="Nombre de visites" value={String(f.visits_min ?? '')} onChange={(v) => setF({ visits_min: v })}
+                    options={[['', 'Tous'], ...visitsOpts.filter(([k]) => k)]} />
+          </FilterTile>
+          <FilterTile icon={CalendarDays} label="Inscription depuis" wide>
+            <span className="flex items-center gap-2">
+              <input type="date" aria-label="Inscription depuis" className={`${field} !py-2`} value={f.signed_since || ''} max={new Date().toISOString().slice(0, 10)}
+                     onChange={(e) => setF({ signed_since: e.target.value })} />
+              {f.signed_since && <button type="button" onClick={() => setF({ signed_since: '' })} aria-label="Toutes les dates" className="rounded-lg p-2 text-[#64748B] hover:bg-[#F1F5F9]"><X size={15} /></button>}
+            </span>
+            <span className="mt-1 block text-[11px] text-[#94A3B8]">{f.signed_since ? `Inscrits depuis le ${frDate(f.signed_since)}` : 'Toutes les dates'}</span>
+          </FilterTile>
+          <FilterTile icon={CalendarDays} label="Dernière visite" wide>
+            <Select label="Dernière visite" value={one(f.last_visit)} onChange={pick('last_visit')} options={withMulti(f.last_visit, [['', 'Toutes les dates'], ...LAST_VISIT])} />
+          </FilterTile>
+          {page.stores.length > 1 && (
+            <div className="md:col-span-2"><FilterTile icon={Store} label="Secteur / Point de vente (si plusieurs établissements)" wide>
+              <Select label="Point de vente" value={f.stores.length === 1 ? f.stores[0] : f.stores.length ? 'multi' : ''}
+                      onChange={(v) => v !== 'multi' && setF({ stores: v ? [v] : [] })}
+                      options={[['', 'Tous les établissements'], ...(f.stores.length > 1 ? [['multi', `${f.stores.length} établissements`]] : []), ...page.stores.map((x) => [x.id, x.name])]} />
+            </FilterTile></div>
+          )}
+        </div>
+        <p className="mt-3 flex items-start gap-2.5 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12.5px] text-[#1E3A8A]"><Info size={17} className="mt-0.5 shrink-0 text-[#1463FF]" />
+          Seuls les clients qui atteignent le seuil défini dans le déclencheur recevront cette notification, et qui correspondent aux filtres sélectionnés.</p>
+      </Sec>
+    </Card>
+  );
+
+  const nrLimitOn = sc.daily_limit !== null && sc.daily_limit !== undefined && sc.daily_limit !== '';
+  const Step5NR = (
+    <Card n={5} title="Planification" sub="Définissez quand la notification sera envoyée.">
+      <Sec title="Jours et horaires d'envoi" sub="Choisissez les jours de la semaine et les plages horaires pendant lesquelles la notification sera envoyée.">
+        <div className="flex flex-wrap items-end gap-4">
+          <div><span className="mb-1.5 block text-[12.5px] font-semibold text-[#0B1C3F]">Jours de la semaine</span>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Jours de la semaine">
+              {DAY_NAMES.map((d, i) => {
+                const on = dayList.includes(i);
+                return <button key={d} type="button" aria-pressed={on} onClick={() => setInDays(on ? dayList.filter((x) => x !== i) : [...dayList, i])}
+                               className={`min-w-[52px] rounded-xl border px-3 py-2.5 text-[13px] font-semibold transition ${on ? 'border-[#1463FF] bg-[#1463FF] text-white' : 'border-[#DCE5F3] bg-white text-[#334155] hover:border-[#BFD3FF]'}`}>{d}</button>;
+              })}
+            </div></div>
+          <div><span className="mb-1.5 block text-[12.5px] font-semibold text-[#0B1C3F]">Plage horaire</span>
+            <span className="flex items-center gap-2">
+              <span className="w-28"><Select label="Début de la plage" value={sc.window_from} onChange={(v) => setIn('schedule', { window: true, window_from: v })} options={HOURS.map((h) => [h, h])} /></span>
+              <span className="text-[#64748B]">–</span>
+              <span className="w-28"><Select label="Fin de la plage" value={sc.window_to} onChange={(v) => setIn('schedule', { window: true, window_to: v })} options={[...HOURS, '23:59'].map((h) => [h, h])} /></span>
+            </span></div>
+        </div>
+      </Sec>
+      <Sec title="Limite d'envoi quotidienne (optionnelle)" sub="Définissez un nombre maximum de notifications à envoyer par jour.">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-[#0B1C3F]">
+          <button type="button" onClick={() => setIn('schedule', { daily_limit: null })} className="flex items-center gap-2"><Radio on={!nrLimitOn} /> Aucune limite</button>
+          <span className="flex items-center gap-2">
+            <button type="button" onClick={() => setIn('schedule', { daily_limit: sc.daily_limit || 500 })} className="flex items-center gap-2"><Radio on={nrLimitOn} /> Limiter à</button>
+            <Num value={nrLimitOn ? sc.daily_limit : '500'} digits={6} min={1} max={100000} label="Notifications par jour" disabled={!nrLimitOn} onChange={(v) => setIn('schedule', { daily_limit: v })} />
+            notifications par jour</span>
+        </div>
+        {nrLimitOn && <p className="mt-2 text-[11.5px] text-[#64748B]">Au-delà, les clients suivants reçoivent la leur le prochain jour d'envoi, au début de la plage horaire : personne n'est oublié.</p>}
+      </Sec>
+      <Sec title="Fuseau horaire" sub="Les notifications seront envoyées selon le fuseau horaire de votre établissement.">
+        <span className={`${field} flex max-w-[420px] items-center gap-2.5 bg-[#F8FAFC]`}><Globe size={17} className="text-[#64748B]" /> Europe/Paris ({parisOffset()})</span>
+      </Sec>
+      <div className="mt-5 rounded-2xl bg-[#F8FAFF] p-4">
+        <p className="mb-3 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><CalendarDays size={18} className="text-[#1463FF]" /> Aperçu du planning hebdomadaire</p>
+        <div className="grid grid-cols-7 gap-1.5 text-center">
+          {DAY_FULL.map((d, i) => {
+            const on = dayList.includes(i);
+            return (
+              <div key={d}><p className="mb-1 text-[11.5px] font-semibold text-[#0B1C3F]">{d}</p>
+                <div className={`rounded-xl border px-1 py-2 ${on ? 'border-[#BBF7D0] bg-[#F0FDF4]' : 'border-[#E2E8F0] bg-[#F1F5F9]'}`}>
+                  <p className="text-[11px] font-semibold text-[#0B1C3F]">{on ? `${sc.window_from} - ${sc.window_to}` : '—'}</p>
+                  <p className={`mt-0.5 flex items-center justify-center gap-1 text-[10.5px] ${on ? 'text-[#15803D]' : 'text-[#94A3B8]'}`}><span className={`h-1.5 w-1.5 rounded-full ${on ? 'bg-[#16A34A]' : 'bg-[#94A3B8]'}`} />{on ? 'Actif' : 'Inactif'}</p>
+                </div></div>
+            );
+          })}
+        </div>
+      </div>
+    </Card>
+  );
+
+  const nrTarget = tg.mode === 'segment' ? `Segment : ${(page.segments.find((x) => x.key === tg.segment) || {}).label || '—'}` : tg.mode === 'wallet' ? 'Clients avec carte Wallet' : 'Tous les clients éligibles';
+  const nrChips = [...names(f.activity || [], (page.statuses || []).map((x) => [x.key, x.label]), '').split(', '),
+    f.visits_min ? `Au moins ${f.visits_min} visite${Number(f.visits_min) > 1 ? 's' : ''}` : '', f.signed_since ? `Inscrits depuis le ${frDate(f.signed_since)}` : '',
+    ...names(f.last_visit, LAST_VISIT, '').split(', ').map((x) => (x ? `Dernière visite : ${x.toLowerCase()}` : '')),
+    ...page.stores.filter((x) => f.stores.includes(x.id)).map((x) => x.name)].filter(Boolean);
+  const nrWhen = `${inDaysText}, ${sc.window_from} - ${sc.window_to}`;
+  const NRRow = ({ n, icon: I, title, children }) => (
+    <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-4 sm:flex-nowrap">
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#EEF4FF] text-[#1463FF]"><I size={22} /></span>
+      <span className="min-w-0 flex-1 text-[12.5px] text-[#334155]"><span className="block text-[14px] font-bold text-[#0B1C3F]">{title}</span>{children}</span>
+      {can && <button type="button" onClick={() => go(n)} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3.5 py-2 text-[13px] font-semibold text-[#1463FF]"><Pencil size={14} /> Modifier</button>}
+    </div>
+  );
+  const Step6NR = (
+    <Card n={6} title="Résumé" sub="Vérifiez les paramètres de votre automatisation avant de l'enregistrer.">
+      <div className="space-y-3">
+        <NRRow n={1} icon={MessageSquare} title="Scénario"><b className="block text-[#0B1C3F]">{s.name || m.label}</b>
+          {s.description || 'Notifier automatiquement les clients lorsqu\'ils approchent du seuil de leur prochaine récompense.'}</NRRow>
+        <NRRow n={2} icon={Zap} title="Déclencheur"><b className="block text-[#0B1C3F]">{eventLabel}</b>
+          La notification est envoyée lorsque le client a atteint le nombre de {near.unit === 'tampons' ? 'tampons' : near.unit === '€' ? '€' : 'points'} défini (ex : {seuil} {unitWord(seuil)} avant la récompense).</NRRow>
+        <NRRow n={3} icon={MessageSquare} title="Message"><span className="block"><b className="text-[#0B1C3F]">Titre :</b> {msg.title || '—'}</span>
+          <span className="block"><b className="text-[#0B1C3F]">Texte :</b> {msg.body || '—'}</span>
+          {btn.enabled && <span className="block"><b className="text-[#0B1C3F]">Bouton :</b> {btn.label}</span>}</NRRow>
+        <NRRow n={4} icon={Users} title="Ciblage"><b className="block text-[#0B1C3F]">{nrTarget}</b>
+          {nrChips.length ? <span className="mt-1 flex flex-wrap gap-1.5">{nrChips.map((c) => <span key={c} className="rounded-lg bg-[#F1F5F9] px-2 py-0.5 text-[11.5px]">{c}</span>)}</span> : 'Sans filtre supplémentaire.'}</NRRow>
+        <NRRow n={5} icon={CalendarDays} title="Planification"><span className="block"><b className="text-[#0B1C3F]">Envoi :</b> {inDaysText} de {sc.window_from} à {sc.window_to}</span>
+          <span className="block"><b className="text-[#0B1C3F]">Limite quotidienne :</b> {nrLimitOn ? `${Number(sc.daily_limit).toLocaleString('fr-FR')} notifications` : 'Aucune limite'}</span>
+          <span className="block"><b className="text-[#0B1C3F]">Fuseau horaire :</b> Europe/Paris ({parisOffset()})</span></NRRow>
+      </div>
+    </Card>
+  );
+  const NRGroup = ({ icon: I, tone, label, n, pctv }) => (
+    <div className="flex items-start gap-3 rounded-xl border border-[#E6EEFB] p-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: `${tone}1A`, color: tone }}><I size={18} /></span>
+      <span><span className="block text-[12.5px] text-[#475569]">{label}</span><b className="block text-[20px] leading-tight text-[#0B1C3F]">{nf(n)}</b><span className="text-[11.5px] text-[#64748B]">{pctv}%</span></span>
+    </div>
+  );
+  const grp = (k) => (nr?.groups || []).find((x) => x.key === k) || { n: 0, pct: 0 };
+  const NRAudience = ({ label }) => (
+    <div className="flex flex-wrap items-center gap-4 pt-1">
+      <span className="flex items-center gap-3"><Users size={34} className="text-[#1463FF]" />
+        <span><b className="block text-[28px] font-extrabold leading-none text-[#0B1C3F]">{nr ? nf(nr.count) : '…'}</b><span className="text-[12.5px] text-[#475569]">{label}</span></span></span>
+      <Delta v={nr?.delta} />
+    </div>
+  );
+  const nrPanel = (() => {
+    if (step === 2) {
+      return (
+        <>
+          <Panel icon={Trophy} title="Aperçu du déclencheur">
+            <div className="mt-2 flex items-start gap-4 rounded-xl bg-[#F8FAFF] p-3">
+              <Trophy size={44} className="shrink-0 text-[#7C3AED]" />
+              <span className="text-[12.5px] text-[#475569]"><b className="block text-[14px] text-[#1D4ED8]">Déclenchement</b>
+                Lorsqu'un client atteint le seuil défini : <b className="text-[#0B1C3F]">« {eventShort} »</b> ({seuil} {unitWord(seuil)} avant sa récompense).</span>
+            </div>
+          </Panel>
+          <Panel icon={Users} title="Estimation de l'audience"><NRAudience label="clients potentiellement concernés" /></Panel>
+        </>
+      );
+    }
+    if (step === 3) {
+      return (
+        <Panel icon={Hash} title="Variables disponibles">
+          <div className="flex flex-wrap gap-2 pt-1">{NR_VARS.map((v) => (
+            <button key={v} type="button" onClick={() => insert(`{${v}}`)} className="inline-flex items-center gap-1 rounded-xl border border-[#DCE5F3] px-2.5 py-1.5 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {NR_LABELS[v]}</button>
+          ))}</div>
+        </Panel>
+      );
+    }
+    if (step === 4) {
+      return (
+        <>
+          <Panel icon={Users} title="Aperçu de l'audience"><NRAudience label="clients concernés" />
+            <p className="mt-1 text-[11.5px] text-[#64748B]">Estimation basée sur vos clients actuels</p></Panel>
+          <Panel icon={BarChart3} title="Répartition estimée">
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <NRGroup icon={CheckCircle2} tone="#059669" label="Actifs" n={grp('active').n} pctv={grp('active').pct} />
+              <NRGroup icon={Clock} tone="#F59E0B" label="À risque" n={grp('risk').n} pctv={grp('risk').pct} />
+              <NRGroup icon={Hourglass} tone="#7C3AED" label="Inactifs" n={grp('inactive').n} pctv={grp('inactive').pct} />
+              <NRGroup icon={Sparkles} tone="#7C3AED" label="Nouveaux" n={grp('new').n} pctv={grp('new').pct} />
+            </div>
+            {grp('other').n > 0 && <p className="mt-2 text-[11.5px] text-[#64748B]">Autres statuts (vos statuts personnalisés) : {nf(grp('other').n)} ({grp('other').pct}%)</p>}
+          </Panel>
+        </>
+      );
+    }
+    if (step === 5) {
+      return (
+        <Panel icon={CalendarDays} title="Récapitulatif de la planification">
+          {[[CalendarDays, "Jours d'envoi", dayList.map((d) => DAY_FULL[d]).join(', ') || '—'], [Clock, 'Plage horaire', `${sc.window_from} - ${sc.window_to}`],
+            [BarChart3, 'Limite quotidienne', nrLimitOn ? `${Number(sc.daily_limit).toLocaleString('fr-FR')} par jour` : 'Aucune limite'], [Globe, 'Fuseau horaire', `Europe/Paris (${parisOffset()})`]].map(([I, k, v]) => (
+            <span key={k} className="flex items-start gap-3 border-t border-[#EEF2F7] py-2.5 first:border-t-0"><I size={20} className="mt-0.5 shrink-0 text-[#64748B]" />
+              <span className="text-[12.5px]"><b className="block text-[#0B1C3F]">{k}</b><span className="text-[#475569]">{v}</span></span></span>
+          ))}
+        </Panel>
+      );
+    }
+    if (step === 6) {
+      return (
+        <>
+          {PreviewTabs(nrExtra)}
+          <Panel icon={Info} title="Informations complémentaires">
+            {[[Users, 'Clients concernés', nr ? `${nf(nr.count)} aujourd'hui, selon les filtres sélectionnés` : 'Selon les filtres sélectionnés'], [Clock, "Moment d'envoi", nrWhen],
+              [BarChart3, 'Limite quotidienne', nrLimitOn ? `${Number(sc.daily_limit).toLocaleString('fr-FR')} par jour` : 'Aucune limite'], [Globe, 'Fuseau horaire', `Europe/Paris (${parisOffset()})`]].map(([I, k, v]) => (
+              <span key={k} className="flex items-start gap-3 border-t border-[#EEF2F7] py-2.5 first:border-t-0"><I size={20} className="mt-0.5 shrink-0 text-[#1463FF]" />
+                <span className="text-[12.5px]"><b className="block text-[#0B1C3F]">{k}</b><span className="text-[#475569]">{v}</span></span></span>
+            ))}
+          </Panel>
+        </>
+      );
+    }
+    return null;
+  })();
+  const NRPratiques = nrOn && step === 5 && (
+    <section className="rounded-2xl border border-[#D9F2E3] bg-[#F3FBF6] p-4">
+      <p className="mb-2 flex items-center gap-2 text-[14px] font-bold text-[#0B1C3F]"><Lightbulb size={17} className="text-[#059669]" /> Bonnes pratiques</p>
+      {['Privilégiez les heures où vos clients sont habituellement actifs.', 'Évitez d\'envoyer trop tôt le matin ou trop tard le soir.',
+        'Vous pouvez ajuster les jours et horaires en fonction des performances.', 'Surveillez les résultats et modifiez le planning si besoin.'].map((t) => (
+        <p key={t} className="flex items-start gap-2 py-1 text-[12.5px] text-[#14532D]"><Check size={15} className="mt-0.5 shrink-0 text-[#16A34A]" /> {t}</p>
+      ))}
     </section>
   );
 
@@ -2448,6 +2801,7 @@ export default function AutomationEditorPage() {
   const avisNew = s.scenario === 'google_review' && !editing;
   const createLabel = geoNew ? "Activer l'automatisation" : s.scenario === 'google_review' ? "Enregistrer l'automatisation" : "Créer l'automatisation";
   const content = welcomeOn ? [null, WStep1, Step3, WStep3][Math.min(step, 3)]
+    : nrOn ? [null, Step1, Step2NR, Step3, Step4NR, Step5NR, Step6NR][step]
     : inactiveOn ? [null, Step1, Step2Inactive, Step3, Step4Inactive, Step5Inactive, Step6Inactive][step]
     : [null, Step1, s.scenario === 'geo' ? Step2Geo : s.scenario === 'google_review' ? Step2Avis : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : s.scenario === 'google_review' ? Step5Avis : Step5, Step6][step];
   // the header's « Désactiver / Activer » and « ••• » (Client inactif mockups)
@@ -2508,7 +2862,7 @@ export default function AutomationEditorPage() {
   );
   return (
     <div className="pb-10">
-      {inactiveOn || welcomeOn ? InactiveHeader : (
+      {inactiveOn || welcomeOn || nrOn ? InactiveHeader : (
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-4">
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
@@ -2538,7 +2892,7 @@ export default function AutomationEditorPage() {
           const n = i + 1;
           const label = n === 2 && s.scenario === 'geo' ? 'Zone de détection' : label0;
           const done = n < step;
-          const subText = inactiveOn || welcomeOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
+          const subText = inactiveOn || welcomeOn || nrOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
           return (
             <li key={label} className="flex min-w-0 flex-1 items-start last:flex-none">
               <button type="button" onClick={() => (done ? go(n) : null)} disabled={!done && n !== step}
@@ -2560,7 +2914,8 @@ export default function AutomationEditorPage() {
         <fieldset disabled={!can} className="m-0 min-w-0 border-0 p-0">{content}</fieldset>
         <aside className="space-y-4">
           {welcomeOn && WPreview}
-          {!welcomeOn && (!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
+          {nrOn && step === 3 && PreviewTabs(nrExtra, 'Aperçu du message')}
+          {!welcomeOn && !nrOn && (!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
                              button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4 && s.scenario !== 'google_review'}
                              bigImage={s.scenario === 'google_review' && step === 3}
                              note={s.scenario === 'geo' ? "Sur l'écran verrouillé, Apple affiche ce message près de votre établissement (Google Wallet, son propre texte). Un appui ouvre la carte, où le message et son bouton s'affichent." : undefined}
@@ -2569,15 +2924,17 @@ export default function AutomationEditorPage() {
                                  'récompense': (tiered && cur.reward) || preview?.sample?.next_reward || 'votre récompense' }
                                : s.scenario === 'geo' ? { 'établissement': zoneSpots[0]?.name || page.shop }
                                : inactiveOn ? inPreviewExtra : {}} />}
-          {welcomeOn ? null : inactiveOn && step >= 2 ? inactivePanel : stepPanel}
+          {nrOn && step === 1 && PreviewTabs(nrExtra)}
+          {welcomeOn ? null : nrOn ? (step >= 2 ? nrPanel : Recap) : inactiveOn && step >= 2 ? inactivePanel : stepPanel}
           {Conseil}
           {BonnesPratiques}
+          {NRPratiques}
         </aside>
       </div>
 
       {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">{error}</p>}
       <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E6EEFB] bg-white p-4">
-        {inactiveOn || welcomeOn ? (
+        {inactiveOn || welcomeOn || nrOn ? (
           <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
             <button type="button" onClick={() => navigate('/dashboard/automations')}
                     className="rounded-xl border border-[#BFD3FF] px-6 py-2.5 text-[13px] font-semibold text-[#1463FF]">Annuler</button>
@@ -2598,7 +2955,7 @@ export default function AutomationEditorPage() {
         ) : can && (
           <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-7 py-3 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
-            {busy ? <Loader2 size={17} className="animate-spin" /> : !welcomeOn && <Check size={17} />} {editing ? 'Enregistrer les modifications' : welcomeOn ? "Enregistrer l'automatisation" : createLabel}
+            {busy ? <Loader2 size={17} className="animate-spin" /> : !welcomeOn && !nrOn && <Check size={17} />} {editing && !nrOn ? 'Enregistrer les modifications' : welcomeOn || nrOn ? "Enregistrer l'automatisation" : createLabel}
           </button>
         )}
       </footer>
