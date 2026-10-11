@@ -1,8 +1,8 @@
-import { Cake, Trophy, PartyPopper, Gift, Users, MapPin, Star, RefreshCw } from 'lucide-react';
+import { Cake, Trophy, PartyPopper, Gift, Users, MapPin, Star, RefreshCw, Sparkles } from 'lucide-react';
 
 // The eight scenarios of the Automatisations redesign (2026-10-11) — the
 // server's features/automations.py SCENARIOS, with the page's icons and colours.
-export const ICONS = { cake: Cake, trophy: Trophy, hand: PartyPopper, gift: Gift, users: Users, pin: MapPin, star: Star, refresh: RefreshCw };
+export const ICONS = { sparkles: Sparkles, cake: Cake, trophy: Trophy, hand: PartyPopper, gift: Gift, users: Users, pin: MapPin, star: Star, refresh: RefreshCw };
 export const TONES = {
   rose: ['#FFECEF', '#E11D48'], amber: ['#FFF4E0', '#F59E0B'], blue: ['#EAF1FF', '#2F6BFF'],
   violet: ['#F1EAFF', '#7C3AED'], green: ['#E3F6EC', '#059669'], red: ['#FFECEC', '#EF4444'],

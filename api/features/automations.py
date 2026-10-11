@@ -176,8 +176,25 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "body": "Bonjour {prénom}, nous serions ravis de vous retrouver chez {nom_commerce} ! Une attention vous attend.",
         "button": "Voir mon offre",
     },
+    # « Personnalisée » (user, 2026-10-11): the owner's own message, sent when
+    # THEY decide — after X visits, X days after signup, after each visit, or
+    # on a date / every week / month / year.
+    "custom": {
+        "label": "Personnalisée", "sub": "Votre propre message, au moment que vous choisissez.",
+        "icon": "sparkles", "tone": "blue", "kind": "custom", "trigger_label": "Déclencheur personnalisé",
+        "push_kind": "automation", "google": "automation",
+        "title": "", "body": "", "button": "En savoir plus",
+    },
 }
-ORDER = ["birthday", "tier_up", "welcome", "near_reward", "referral", "geo", "google_review", "inactive"]
+ORDER = ["custom", "birthday", "tier_up", "welcome", "near_reward", "referral", "geo", "google_review", "inactive"]
+CUSTOM_TYPES = ("visits", "after_signup", "after_visit", "date")
+DATE_MODES = ("once", "weekly", "monthly", "yearly")
+
+
+def is_timed(scenario: str, trigger: Optional[Dict[str, Any]] = None) -> bool:
+    """Sent at an hour (daily run / tick) rather than on an event."""
+    kind = SCENARIOS[scenario]["kind"]
+    return kind == "time" or (kind == "custom" and (trigger or {}).get("type") == "date")
 # Removed by the user (2026-10-11) — with their data.
 REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products", "special_event"}
 
@@ -185,7 +202,7 @@ VARIABLES = {
     "common": ["prénom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
     "birthday": [], "tier_up": ["palier"], "welcome": [], "near_reward": ["visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
-    "google_review": [], "inactive": ["jours_absence"],
+    "google_review": [], "inactive": ["jours_absence"], "custom": [],
 }
 LINK_TYPES = ("card", "offer", "google_review", "url")
 DAY_MODES = ("all", "specific", "weekdays")
@@ -211,11 +228,13 @@ def _default_trigger(scenario: str) -> Dict[str, Any]:
         "geo": {"cooldown_days": 7},
         "google_review": {"frequency": "days", "every_days": 30, "stop_after_click": True},
         "inactive": {"days": 30, "repeat": "once", "every_days": 30},
+        "custom": {"type": "after_visit", "visits": 5, "cooldown_days": 0, "date_mode": "once", "date": None,
+                   "weekday": 0, "monthday": 1},
     }[scenario] | {"delay_value": 0, "delay_unit": "hours"}
 
 
 def _default_schedule(scenario: str) -> Dict[str, Any]:
-    timed = SCENARIOS[scenario]["kind"] == "time"
+    timed = is_timed(scenario, _default_trigger(scenario))
     return {"days": "all", "weekdays": [0, 1, 2, 3, 4, 5, 6],
             "hour": "10:00" if timed else None, "smart": False,
             "window_from": "09:00", "window_to": "21:00", "window": not timed}
@@ -669,7 +688,45 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
     elif sc == "tier_up":
         if _db.automation_queue.find_one(q):
             return False
+    elif sc == "custom":
+        t = tr.get("type")
+        want = {"visits": "visit", "after_visit": "visit", "after_signup": "signup"}.get(t)
+        if not want or ctx.get("event") != want:
+            return False
+        if _db.automation_queue.find_one(q):
+            return False                        # one waiting at a time per client
+        if t == "visits":
+            if int(cust.get("visits") or 0) != int(tr.get("visits") or 0) or _db.automation_log.find_one(q):
+                return False
+        elif t == "after_signup":
+            if _db.automation_log.find_one(q):
+                return False
+        elif t == "after_visit":
+            cool = int(tr.get("cooldown_days") or 0)
+            last = _db.automation_log.find_one(q, sort=[("sent_at", -1)])
+            if cool and last and at - _aware(last["sent_at"]) < timedelta(days=cool):
+                return False
     return True
+
+
+def date_due(tr: Dict[str, Any], d: date) -> bool:
+    """A « Personnalisée » on a date: is it today (Paris)?"""
+    mode = tr.get("date_mode") or "once"
+    if mode == "weekly":
+        return d.weekday() == int(tr.get("weekday") or 0)
+    if mode == "monthly":
+        import calendar
+        want = int(tr.get("monthday") or 1)
+        return d.day == min(want, calendar.monthrange(d.year, d.month)[1])     # « le 31 » = last day
+    try:
+        on = date.fromisoformat(str(tr.get("date") or "")[:10])
+    except ValueError:
+        return False
+    if mode == "yearly":
+        if on.month == 2 and on.day == 29 and not (d.year % 4 == 0 and (d.year % 100 or d.year % 400 == 0)):
+            return d.month == 2 and d.day == 28
+        return (d.month, d.day) == (on.month, on.day)
+    return d == on
 
 
 def _delay(tr: Dict[str, Any]) -> timedelta:
@@ -786,8 +843,10 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         except Exception:
             summary["errors"] += 1
     # 2. the time scenarios, once a day each, at their hour
-    for row in list(_db.automations.find({"status": "active", "scenario": {"$in": ["birthday", "inactive"]}},
+    for row in list(_db.automations.find({"status": "active", "scenario": {"$in": ["birthday", "inactive", "custom"]}},
                                          {"_id": 0})):
+        if row["scenario"] == "custom" and (row.get("trigger") or {}).get("type") != "date":
+            continue
         tid = row["tenant_id"]
         try:
             sched = row.get("schedule") or {}
@@ -799,7 +858,12 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             hh, mm = _send_hour(tid, sched)
             if strict and at < _from_paris(loc_today, hh, mm):
                 continue
-            people = _birthday_due(tid, row, at) if row["scenario"] == "birthday" else _inactive_due(tid, row, at)
+            if row["scenario"] == "custom":
+                if not date_due(row.get("trigger") or {}, loc_today):
+                    continue
+                people = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
+            else:
+                people = _birthday_due(tid, row, at) if row["scenario"] == "birthday" else _inactive_due(tid, row, at)
             cache: Dict[str, Any] = {}
             for c in people:
                 if matches(tid, row, c, at, cache) and _deliver(tid, row, c, {}, at):
@@ -904,7 +968,8 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     out = {k: r.get(k) for k in ("id", "scenario", "name", "status", "trigger", "message", "targeting", "schedule",
                                  "store_ids")}
     out.update({"label": meta["label"], "sub": meta["sub"], "icon": meta["icon"], "tone": meta["tone"],
-                "kind": meta["kind"], "trigger_text": trigger_text(r), "schedule_text": schedule_text(r),
+                "kind": "time" if is_timed(r["scenario"], r.get("trigger")) else "event",
+                "trigger_text": trigger_text(r), "schedule_text": schedule_text(r),
                 "reach": reach, "sent": len(logs), "open_rate": round(opened / len(logs) * 100) if logs else None,
                 "clicks": clicks,
                 "updated_at": (_aware(r.get("updated_at")) or _now()).isoformat(),
@@ -912,8 +977,49 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     return out
 
 
+UNITS = {"minutes": ("minute", "minutes"), "hours": ("heure", "heures"), "days": ("jour", "jours")}
+MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+             "novembre", "décembre"]
+WEEKDAYS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def _span(tr: Dict[str, Any]) -> str:
+    v = int(tr.get("delay_value") or 0)
+    one, many = UNITS.get(tr.get("delay_unit") or "hours", UNITS["hours"])
+    return f"{v} {one if v == 1 else many}"
+
+
+def custom_text(tr: Dict[str, Any]) -> str:
+    t = tr.get("type")
+    if t == "visits":
+        n = int(tr.get("visits") or 0)
+        return f"À la {n}{'re' if n == 1 else 'e'} visite"
+    if t == "after_signup":
+        return "Dès l'inscription" if not int(tr.get("delay_value") or 0) else f"{_span(tr)} après l'inscription"
+    if t == "after_visit":
+        base = "Après chaque visite" if not int(tr.get("delay_value") or 0) else f"{_span(tr)} après chaque visite"
+        cool = int(tr.get("cooldown_days") or 0)
+        return base + (f" · au plus tous les {cool} j" if cool else "")
+    if t == "date":
+        mode = tr.get("date_mode") or "once"
+        if mode == "weekly":
+            return f"Chaque {WEEKDAYS_FR[int(tr.get('weekday') or 0)]}"
+        if mode == "monthly":
+            n = int(tr.get("monthday") or 1)
+            return f"Le {n}{'er' if n == 1 else ''} de chaque mois"
+        try:
+            on = date.fromisoformat(str(tr.get("date") or "")[:10])
+        except ValueError:
+            return "Date à choisir"
+        day = f"{on.day}{'er' if on.day == 1 else ''} {MONTHS_FR[on.month - 1]}"
+        return f"Chaque année le {day}" if mode == "yearly" else f"Le {day} {on.year}"
+    return "Déclencheur personnalisé"
+
+
 def trigger_text(r: Dict[str, Any]) -> str:
     sc, tr = r["scenario"], r.get("trigger") or {}
+    if sc == "custom":
+        return custom_text(tr)
     if sc == "birthday":
         off = int(tr.get("offset_days") or 0)
         return "Le jour même" if off == 0 else (f"{-off} jour{'s' if off < -1 else ''} avant" if off < 0
@@ -945,7 +1051,7 @@ def schedule_text(r: Dict[str, Any]) -> str:
     s = r.get("schedule") or {}
     days = {"all": "Tous les jours", "weekdays": "Jours ouvrés"}.get(s.get("days") or "all") or \
         ", ".join(DAY_NAMES[int(d)] for d in sorted(s.get("weekdays") or []))
-    if SCENARIOS[r["scenario"]]["kind"] == "time":
+    if is_timed(r["scenario"], r.get("trigger")):
         return f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}"
     if not s.get("window", True):
         return f"{days} · immédiat"
@@ -1092,6 +1198,32 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["frequency"] = tr_in.get("frequency", "days")
         tr["every_days"] = _int(tr_in.get("every_days", 30), 1, 365, "Fréquence (jours)")
         tr["stop_after_click"] = bool(tr_in.get("stop_after_click", True))
+    elif sc == "custom":
+        t = tr_in.get("type")
+        if t not in CUSTOM_TYPES:
+            raise HTTPException(status_code=400, detail="Choisissez quand envoyer ce message.")
+        tr["type"] = t
+        if t == "visits":
+            tr["visits"] = _int(tr_in.get("visits", 5), 1, 1000, "Nombre de visites")
+        if t == "after_visit":
+            tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 0), 0, 365, "Au plus une fois tous les")
+        if t == "date":
+            mode = tr_in.get("date_mode", "once")
+            if mode not in DATE_MODES:
+                raise HTTPException(status_code=400, detail="Récurrence inconnue.")
+            tr["date_mode"] = mode
+            if mode in ("once", "yearly"):
+                try:
+                    on = date.fromisoformat(str(tr_in.get("date") or "")[:10])
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Choisissez la date d'envoi.")
+                if mode == "once" and not draft and on < _paris(_now()).date():
+                    raise HTTPException(status_code=400, detail="Cette date est déjà passée.")
+                tr["date"] = on.isoformat()
+            if mode == "weekly":
+                tr["weekday"] = _int(tr_in.get("weekday", 0), 0, 6, "Jour de la semaine")
+            if mode == "monthly":
+                tr["monthday"] = _int(tr_in.get("monthday", 1), 1, 31, "Jour du mois")
     m = body.message
     title, text = re.sub(r"\s+", " ", m.title or "").strip(), re.sub(r"[ \t]+", " ", m.body or "").strip()
     if not draft and (not title or not text):
@@ -1145,7 +1277,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     weekdays = sorted({_int(d, 0, 6, "Jour") for d in (s.weekdays or [])})
     if s.days == "specific" and not weekdays:
         raise HTTPException(status_code=400, detail="Cochez au moins un jour d'envoi.")
-    timed = SCENARIOS[sc]["kind"] == "time"
+    timed = is_timed(sc, tr)
     hour = None
     if timed:
         hh = re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)", (s.hour or "10:00").strip())
@@ -1260,6 +1392,62 @@ def delete_automation(aid: str, token_data: TokenData = Depends(require_role(EDI
     _db.automations.delete_one({"id": aid})
     _db.automation_queue.delete_many({"automation_id": aid})
     return {"deleted": aid}
+
+
+class IdeaIn(BaseModel):
+    objective: str
+
+
+# what the owner's words point to — the editor opens on that scenario
+_HINTS = [
+    ("birthday", ("anniversaire", "birthday")),
+    ("google_review", ("avis", "google", "note", "review")),
+    ("referral", ("parrain", "filleul", "ami", "recommand")),
+    ("welcome", ("bienvenue", "inscri", "nouveau client", "nouveaux clients")),
+    ("tier_up", ("palier", "niveau", "vip", "statut")),
+    ("near_reward", ("récompense", "recompense", "tampon", "presque")),
+    ("geo", ("proximité", "proximite", "passe", "à côté", "autour", "quartier")),
+    ("inactive", ("inactif", "revenir", "revien", "absent", "plus vu", "relanc", "perdu")),
+]
+
+
+def suggest(objective: str) -> str:
+    low = (objective or "").lower()
+    for key, words in _HINTS:
+        if any(w in low for w in words):
+            return key
+    return "custom"
+
+
+@router.post("/api/owner/automations/ai-draft")
+def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    """« Besoin d'inspiration ? » — the owner says what they want, FidClic IA
+    writes the title and the message, and the editor opens on the scenario
+    those words point to (« Personnalisée » when none). Nothing is saved or
+    sent here; an unavailable assistant says so plainly."""
+    from features import campaigns_page as CP
+    objective = CP._clean(body.objective, 200)
+    if not objective:
+        raise HTTPException(status_code=400, detail="Décrivez ce que vous voulez en une phrase.")
+    tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
+    user = (f"Commerce : {tenant.get('name') or 'un commerce'} ({tenant.get('sector') or 'commerce'}). "
+            f"Message automatique de fidélité. Objectif : {objective}. "
+            "Tu peux utiliser {prénom} pour le prénom du client et {nom_commerce} pour le commerce.")
+    try:
+        from services import llm
+        if llm._force_complete is None and not llm.is_configured():
+            raise HTTPException(status_code=503, detail="FidClic IA n'est pas configurée sur cette installation.")
+        raw = llm.complete(CP._SYSTEM, user, max_tokens=180, temperature=0.7)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"automations: ai-draft failed ({exc})")
+        raise HTTPException(status_code=503, detail="FidClic IA ne répond pas pour le moment. Réessayez dans un instant.")
+    title, message = CP._parse(raw)
+    if not title or not message:
+        raise HTTPException(status_code=502, detail="FidClic IA n'a pas trouvé de message. Reformulez votre objectif.")
+    return {"title": title[:TITLE_MAX], "body": message[:BODY_MAX], "scenario": suggest(objective),
+            "scenario_label": SCENARIOS[suggest(objective)]["label"]}
 
 
 class PreviewIn(BaseModel):
