@@ -6,7 +6,7 @@ spécial, Relance panier, Heures creuses and Nouveaux produits, data included):
 
     birthday       Anniversaire               time   the day of the birthday (± X days)
     tier_up        Atteinte d'un palier       event  the scan that moves the client up
-    welcome        Bienvenue                  event  the signup
+    welcome        Bienvenue                  event  the card added to Apple / Google Wallet
     near_reward    Proche de la récompense    event  the scan that leaves X visits to go
     referral       Parrainage                 event  a parrainage reward is earned
     geo            Géolocalisation            event  the card sees the client near a shop
@@ -131,8 +131,10 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "button": "Voir ma récompense",
     },
     "welcome": {
-        "label": "Bienvenue", "sub": "Accueillez chaque client dès son inscription.",
-        "icon": "hand", "tone": "blue", "kind": "event", "trigger_label": "Inscription du client",
+        # Bienvenue (mockups 2026-10-11): sent when the card lands in Apple /
+        # Google Wallet — never at the web signup (user: « sirf Wallet add pe »)
+        "label": "Bienvenue", "sub": "Accueillez chaque client dès qu'il ajoute sa carte dans Wallet.",
+        "icon": "hand", "tone": "blue", "kind": "event", "trigger_label": "Après l'ajout de la carte dans Wallet",
         "push_kind": "welcome", "google": "automation",
         "title": "Bienvenue chez {nom_commerce} 🎉",
         "body": "Merci {prénom} ! Votre carte de fidélité est prête : à chaque visite, vous vous rapprochez de votre récompense.",
@@ -202,7 +204,7 @@ REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products"
 
 VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
-    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": [], "near_reward": ["visites_restantes", "visite_s"],
+    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
     "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": [],
 }
@@ -808,6 +810,7 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
     if scenario == "inactive":
         last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
         out["jours_absence"] = (_now() - last).days if last else ""
+    if scenario in ("inactive", "welcome"):
         # mockup chips « Offre » and « Lien »: the offer running now, the client's card
         out["offre"] = _live_offer(cust.get("tenant_id") or ctx.get("tenant_id") or "") or "notre offre du moment"
         try:
@@ -1017,8 +1020,10 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
         if (tr.get("side") or "parrain") != ctx.get("side"):
             return False
     elif sc == "welcome":
+        if ctx.get("event") != "wallet":
+            return False                         # only the card landing in a Wallet (2026-10-11)
         if _db.automation_log.find_one(q) or _db.automation_queue.find_one(q):
-            return False
+            return False                         # once per client: a re-add or a 2nd phone says nothing
     elif sc == "geo":
         from features import geo_automation as GA
         want = set(tr.get("stores") or [])
@@ -1244,6 +1249,15 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
     except Exception as exc:
         print(f"automations: fire {scenario} failed ({exc})")
     return out
+
+
+def wallet_added(tid: str, cust: Dict[str, Any], wallet: str) -> List[Dict[str, Any]]:
+    """The card just landed in a Wallet (Apple: the device registered the
+    pass; Google: its « save » callback): the Bienvenue goes, once per client."""
+    if not tid or not cust or not cust.get("id"):
+        return []
+    fresh = _db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust
+    return fire("welcome", tid, fresh, {"event": "wallet", "wallet": wallet})
 
 
 # ---------------------------------------------------------------------------
@@ -1600,6 +1614,8 @@ def trigger_text(r: Dict[str, Any]) -> str:
                                                 if tr.get("repeat") == "every" else "")
     if sc == "referral":
         return "Au parrain" if (tr.get("side") or "parrain") == "parrain" else "Au filleul"
+    if sc == "welcome":
+        return "Après l'ajout de la carte dans Wallet"
     if sc == "google_review":
         return review_text(tr)
     if sc == "geo":
@@ -2292,7 +2308,7 @@ _HINTS = [
     ("birthday", ("anniversaire", "birthday")),
     ("google_review", ("avis", "google", "note", "review")),
     ("referral", ("parrain", "filleul", "ami", "recommand")),
-    ("welcome", ("bienvenue", "inscri", "nouveau client", "nouveaux clients")),
+    ("welcome", ("bienvenue", "inscri", "nouveau client", "nouveaux clients", "wallet", "ajout de la carte")),
     ("tier_up", ("palier", "niveau", "vip", "statut")),
     ("near_reward", ("récompense", "recompense", "tampon", "presque")),
     ("geo", ("proximité", "proximite", "passe", "à côté", "autour", "quartier")),

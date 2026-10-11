@@ -105,8 +105,12 @@ const AVIS_IMAGE = '/automations/avis-google.png';
 // Client inactif (mockups 2026-10-11): its chips, in the mockup's words
 const INACTIVE_VARS = ['prénom', 'nom_commerce', 'offre', 'jours_absence', 'lien'];
 const INACTIVE_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: 'Nom établissement', offre: 'Offre', jours_absence: "Jours d'inactivité", lien: 'Lien' };
+// Bienvenue (mockups 2026-10-11): three steps, sent when the card lands in Wallet
+const W_STEPS = [['Déclencheur', ''], ['Message', ''], ['Résumé', '']];
+const WELCOME_VARS = ['prénom', 'nom_commerce', 'offre', 'lien'];
+const WELCOME_VAR_LABELS = { 'prénom': 'Prénom', nom_commerce: "Nom de l'établissement", offre: 'Offre', lien: 'Lien' };
 const defaults = (sc, meta) => ({
-  scenario: sc, name: sc === 'google_review' ? "Demande d'avis Google" : meta?.label || '', description: '', status: 'active',
+  scenario: sc, name: sc === 'google_review' ? "Demande d'avis Google" : sc === 'welcome' ? 'Bienvenue au nouveau client' : meta?.label || '', description: '', status: 'active',
   trigger: { delay_value: 0, delay_unit: 'hours', ...(TRIGGERS[sc] || {}) },
   // Avis Google (mockups 2026-10-11): the ready image and the « Laisser un avis » button
   message: { title: meta?.title || '', body: meta?.body || '', image_url: sc === 'google_review' ? AVIS_IMAGE : null,
@@ -278,6 +282,7 @@ export default function AutomationEditorPage() {
   const [zone, setZone] = useState(null);             // géolocalisation: detections + weather now
   const [links, setLinks] = useState({});             // Avis Google: the shop's (or each établissement's) link
   const [menuOpen, setMenuOpen] = useState(false);    // the header's « ••• » (Client inactif mockups)
+  const [pvTab, setPvTab] = useState('mobile');       // Bienvenue: « Aperçu sur mobile » / « Aperçu Wallet »
   const titleRef = useRef(null);
   const bodyRef = useRef(null);
   const fileRef = useRef(null);
@@ -386,6 +391,8 @@ export default function AutomationEditorPage() {
   }
 
   const tr = s.trigger;
+  const welcomeOn = s.scenario === 'welcome';
+  const lastStep = welcomeOn ? 3 : 6;
   const googleStores = page.google?.stores || [];
   const googleKeys = googleStores.length > 1 ? googleStores.map((b) => b.id) : ['main'];
   const msg = s.message;
@@ -560,9 +567,22 @@ export default function AutomationEditorPage() {
     return '';
   };
   const go = (n) => { setError(''); setStep(n); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const next = () => { const p = problem(step); if (p) { setError(p); return; } go(step + 1); };
+  const next = () => {
+    const pn = welcomeOn ? (step === 2 ? 3 : 0) : step;
+    const p = pn ? problem(pn) : '';
+    if (p) { setError(p); return; }
+    go(step + 1);
+  };
 
-  const body = (status) => ({
+  const body = (status) => (welcomeOn ? {
+    scenario: 'welcome', name: s.name, status, description: s.description || '', trigger: {},
+    message: { ...msg, title: msg.title.trim(), body: msg.body.trim(),
+      button: { ...btn, url: btn.link_type === 'url' ? fullLink(btn.url) : null, offer_id: btn.link_type === 'offer' ? btn.offer_id : null } },
+    targeting: { mode: 'all', segment: null, passants: 'all', filters: { ...EMPTY_FILTERS }, exclusions: { ...EMPTY_EXCLUSIONS } },
+    // « dès qu'un client ajoute sa carte »: at once, any day, any hour
+    schedule: { ...sc, days: 'all', weekdays: [0, 1, 2, 3, 4, 5, 6], window: false, slots: [], hour: null, smart: false,
+      valid_from: sc.valid_from || null, valid_to: sc.valid_to || null, daily_limit: null },
+  } : {
     scenario: s.scenario, name: s.name, status, description: s.scenario === 'google_review' ? '' : (s.description || ''),
     ...(s.scenario === 'google_review' ? { google_links: Object.fromEntries(Object.entries(links).map(([k, v]) => [k, fullLink(v)])) } : {}),
     trigger: { ...tr, offset_days: Number(tr.offset_days || 0),
@@ -584,7 +604,7 @@ export default function AutomationEditorPage() {
   });
   const save = async (status) => {
     if (status !== 'draft') {
-      for (let n = 1; n <= 5; n += 1) { const p = problem(n); if (p) { setError(p); setStep(n); return; } }
+      for (let n = 1; n <= 5; n += 1) { const p = problem(n); if (p) { setError(p); setStep(welcomeOn ? (n === 3 ? 2 : 1) : n); return; } }
     }
     setBusy(status); setError('');
     try {
@@ -1315,8 +1335,8 @@ export default function AutomationEditorPage() {
   );
 
   const Step3 = (
-    <Card n={3} title="Message" sub="Personnalisez le contenu de votre notification.">
-      {s.scenario !== 'google_review' && <p className="mb-3 inline-flex rounded-xl border border-[#2F6BFF] bg-[#F5F8FF] px-4 py-2 text-[13px] font-semibold text-[#1463FF]">Notification Wallet</p>}
+    <Card n={welcomeOn ? 2 : 3} title="Message" sub={welcomeOn ? 'Personnalisez le message qui sera envoyé à vos clients.' : 'Personnalisez le contenu de votre notification.'}>
+      {!['google_review', 'welcome'].includes(s.scenario) && <p className="mb-3 inline-flex rounded-xl border border-[#2F6BFF] bg-[#F5F8FF] px-4 py-2 text-[13px] font-semibold text-[#1463FF]">Notification Wallet</p>}
       {tiered && (
         <div className="mb-3">
           <p className="mb-1.5 text-[12px] text-[#64748B]">Un message par palier — choisissez le palier à rédiger :</p>
@@ -1333,7 +1353,7 @@ export default function AutomationEditorPage() {
           </div>
         </div>
       )}
-      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>{s.scenario === 'inactive' ? 'Titre de la notification' : 'Titre'}{tiered ? ` — palier ${palierLabel(tr.condition, cur.value)}` : ''}</Label>
+      <Label right={`${(cur.title || '').length}/${TITLE_MAX}`}>{['inactive', 'welcome'].includes(s.scenario) ? 'Titre de la notification' : 'Titre'}{tiered ? ` — palier ${palierLabel(tr.condition, cur.value)}` : ''}</Label>
       <div className="flex items-center gap-2">
         <input ref={titleRef} className={field} value={cur.title || ''} maxLength={TITLE_MAX} onFocus={() => { lastFocus.current = 'title'; }}
                onChange={(e) => setCur({ title: e.target.value })} placeholder={m.title || 'Le titre de votre notification'} />
@@ -1345,20 +1365,21 @@ export default function AutomationEditorPage() {
                   className="inline-flex items-center gap-1 rounded-lg border border-[#DCE5F3] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {INACTIVE_VAR_LABELS[v]}</button>
         ))}</div>
       )}
-      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>{s.scenario === 'inactive' ? 'Texte de la notification' : 'Message'}</Label></div>
+      <div className="mt-3"><Label right={`${(cur.body || '').length}/${BODY_MAX}`}>{['inactive', 'welcome'].includes(s.scenario) ? 'Texte de la notification' : 'Message'}</Label></div>
       <div className="flex items-start gap-2">
         <textarea ref={bodyRef} className={`${field} min-h-[96px] resize-y`} value={cur.body || ''} maxLength={BODY_MAX}
                   onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setCur({ body: e.target.value })}
                   placeholder={m.body || 'Votre message, par exemple : Bonjour {prénom}, merci pour votre fidélité !'} />
         <VarMenu which="body" />
       </div>
+      {s.scenario === 'welcome' && <p className="mt-3 text-[13.5px] font-bold text-[#0B1C3F]">Variables disponibles</p>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {(s.scenario === 'geo' ? ['prénom', 'établissement', 'offre', 'distance', ...variables.filter((v) => !['prénom', 'établissement', 'offre', 'distance'].includes(v))]
           : s.scenario === 'google_review' ? ['nom', 'prénom', 'établissement', 'lien_avis']
-          : s.scenario === 'inactive' ? INACTIVE_VARS : variables).map((v) => (
+          : s.scenario === 'inactive' ? INACTIVE_VARS : s.scenario === 'welcome' ? WELCOME_VARS : variables).map((v) => (
           <button key={v} type="button" title={`${VAR_LABELS[v] || v} — {${v}}`} onMouseDown={() => { if (s.scenario === 'inactive') lastFocus.current = 'body'; }}
                   onClick={() => { if (s.scenario === 'inactive') lastFocus.current = 'body'; insert(`{${v}}`); }}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {(s.scenario === 'inactive' && INACTIVE_VAR_LABELS[v]) || VAR_SHORT[v] || v}</button>
+                  className="inline-flex items-center gap-1 rounded-lg bg-[#EEF4FF] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#E0EAFF]"><Plus size={12} /> {(s.scenario === 'inactive' && INACTIVE_VAR_LABELS[v]) || (s.scenario === 'welcome' && WELCOME_VAR_LABELS[v]) || VAR_SHORT[v] || v}</button>
         ))}
         <span className="relative">
           <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))} aria-label="Ajouter un emoji"
@@ -1758,6 +1779,14 @@ export default function AutomationEditorPage() {
           : [false, 'Ne redemandez pas un avis trop souvent : 30 jours ou plus entre deux demandes.']);
       }
       return out;
+    }
+    if (s.scenario === 'welcome') {
+      if (n !== 3) return [];
+      return [
+        /\{pr[ée]nom\}/.test(words) || (msg.title + msg.body).length <= 160 ? [true, 'Ce message de bienvenue est clair et engageant.'] : [false, 'Faites court et chaleureux : un titre et une phrase suffisent.'],
+        [true, "Il est envoyé immédiatement après l'ajout de la carte, ce qui augmente l'activation et la première visite."],
+        ...(/\{pr[ée]nom\}/.test(words) ? [] : [[false, 'Ajoutez {prénom} : un accueil personnalisé est plus chaleureux.']]),
+      ];
     }
     if (s.scenario === 'inactive') {
       const d = Number(tr.days) || 30;
@@ -2187,6 +2216,92 @@ export default function AutomationEditorPage() {
     return s.scenario === 'geo' ? null : Recap;
   })();
 
+
+  // ---- Bienvenue (mockups 2026-10-11): Déclencheur, Message, Résumé ---------------------
+  const WTrigger = (
+    <Card n={1} title="Déclencheur" sub="Choisissez quand l'automatisation se déclenche.">
+      <div className="flex items-start gap-4 rounded-2xl border border-[#2F6BFF] bg-[#F5F8FF] p-4 shadow-[0_0_0_1px_#2F6BFF]">
+        <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white text-[#1463FF]"><Wallet size={26} />
+          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#1463FF] text-white"><Plus size={12} /></span></span>
+        <span className="min-w-0 flex-1"><span className="block text-[15px] font-bold text-[#0B1C3F]">Après l'ajout de la carte dans Wallet</span>
+          <span className="text-[13px] text-[#475569]">La notification est envoyée automatiquement lorsqu'un client ajoute votre carte de fidélité dans Apple Wallet ou Google Wallet.</span></span>
+        <CheckCircle2 size={22} className="shrink-0 fill-[#1463FF] text-white" />
+      </div>
+      <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+        <span>Une seule fois par client : ajouter la carte sur un deuxième téléphone, ou la remettre après l'avoir retirée, n'envoie rien de plus. Un client qui garde seulement sa carte en ligne ne reçoit pas ce message.</span></p>
+    </Card>
+  );
+  const WMessageMini = (
+    <Card n={2} title="Message" sub="Personnalisez le message qui sera envoyé à vos clients.">
+      <Label right={`${msg.title.length}/${TITLE_MAX}`}>Titre de la notification</Label>
+      <input ref={titleRef} className={field} value={msg.title} maxLength={TITLE_MAX} onFocus={() => { lastFocus.current = 'title'; }}
+             onChange={(e) => setMsg({ title: e.target.value })} placeholder="Bienvenue chez nous 👋 !" />
+      <div className="mt-3"><Label right={`${msg.body.length}/${BODY_MAX}`}>Message de la notification</Label></div>
+      <textarea ref={bodyRef} className={`${field} min-h-[96px] resize-y`} value={msg.body} maxLength={BODY_MAX}
+                onFocus={() => { lastFocus.current = 'body'; }} onChange={(e) => setMsg({ body: e.target.value })}
+                placeholder="Votre carte de fidélité est prête. Profitez pleinement de vos avantages." />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {['prénom', 'nom_commerce', 'offre'].map((v) => (
+          <button key={v} type="button" onClick={() => insert(`{${v}}`)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#DCE5F3] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> {WELCOME_VAR_LABELS[v]}</button>
+        ))}
+        <span className="relative">
+          <button type="button" onClick={() => setEmoji((x) => (x ? '' : 'open'))}
+                  className="inline-flex items-center gap-1 rounded-lg border border-[#DCE5F3] px-2.5 py-1 text-[12px] font-semibold text-[#1D4ED8] hover:bg-[#F5F8FF]"><Plus size={12} /> Emoji</button>
+          {emoji && (
+            <span className="absolute left-0 top-8 z-20 grid w-64 grid-cols-8 gap-1 rounded-xl border border-[#E2E8F0] bg-white p-2 shadow-xl">
+              {EMOJIS.map((e) => <button key={e} type="button" className="rounded p-1 text-[16px] hover:bg-[#F1F5F9]" onClick={() => { insert(e); setEmoji(''); }}>{e}</button>)}
+            </span>
+          )}
+        </span>
+      </div>
+    </Card>
+  );
+  const WStep1 = <div className="space-y-4">{WTrigger}{WMessageMini}</div>;
+  const WRow = ({ n, icon: I, title, children, action }) => (
+    <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-4 sm:flex-nowrap">
+      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#EEF4FF] text-[#1463FF]"><I size={26} /></span>
+      <span className="min-w-0 flex-1"><span className="block text-[15px] font-bold text-[#1D4ED8]">{n}. {title}</span>{children}</span>
+      {action}
+    </div>
+  );
+  const WEdit = (n) => can && <button type="button" onClick={() => go(n)} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#BFD3FF] px-3.5 py-2 text-[13px] font-semibold text-[#1463FF]"><Pencil size={14} /> Modifier</button>;
+  const WStep3 = (
+    <Card n={3} title="Résumé" sub="Vérifiez les informations de votre automatisation avant de l'enregistrer.">
+      <div className="space-y-3">
+        <WRow n={1} icon={Wallet} title="Déclencheur" action={WEdit(1)}>
+          <b className="block text-[13.5px] text-[#0B1C3F]">Après l'ajout de la carte dans Wallet</b>
+          <span className="text-[12.5px] text-[#475569]">La notification est envoyée automatiquement lorsqu'un client ajoute votre carte de fidélité dans Apple Wallet ou Google Wallet.</span>
+        </WRow>
+        <WRow n={2} icon={MessageSquare} title="Message" action={WEdit(2)}>
+          <span className="mt-1.5 block rounded-xl bg-[#F8FAFF] p-3 text-[12.5px]">
+            <b className="block text-[#0B1C3F]">Titre de la notification</b><span className="text-[#334155]">{msg.title || '—'}</span>
+            <b className="mt-2 block text-[#0B1C3F]">Texte de la notification</b><span className="text-[#334155]">{msg.body || '—'}</span>
+            {btn.enabled && <span className="mt-2 block text-[#334155]"><b className="text-[#0B1C3F]">Bouton :</b> {btn.label}</span>}
+          </span>
+        </WRow>
+        <WRow n={3} icon={Power} title="Statut" action={<Toggle label="Activer l'automatisation" on={s.status !== 'paused'} disabled={!can} onChange={(v) => set({ status: v ? 'active' : 'paused' })} />}>
+          <span className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-[#475569]">{StatusPill}
+            {s.status !== 'paused' ? "La notification sera envoyée automatiquement dès qu'un client ajoute sa carte." : "En pause : aucune notification ne part tant que vous ne l'activez pas."}</span>
+        </WRow>
+      </div>
+    </Card>
+  );
+  const WPreview = (
+    <section className="rounded-2xl border border-[#E6EEFB] bg-white p-4 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
+      <p className="mb-3 text-[14.5px] font-bold text-[#0B1C3F]">Aperçu de la notification</p>
+      <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-[#F4F7FC] p-1" role="tablist">
+        {[['mobile', 'Aperçu sur mobile'], ['wallet', 'Aperçu Wallet']].map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={pvTab === k} onClick={() => setPvTab(k)}
+                  className={`rounded-lg py-2 text-[13px] font-semibold transition ${pvTab === k ? 'bg-white text-[#1463FF] shadow-[inset_0_-2px_0_#1463FF]' : 'text-[#475569]'}`}>{l}</button>
+        ))}
+      </div>
+      <LockScreenPreview bare variant={pvTab} shop={page.shop} logo={page.logo_url} title={msg.title} body={msg.body} image={msg.image_url}
+                         button={btn.enabled ? btn.label : ''} sample={preview?.sample}
+                         extra={{ offre: page.offers[0]?.name || 'notre offre du moment', lien: 'fidclic.com/c/…' }} />
+    </section>
+  );
+
   // ---- Client inactif: the right column of each step (mockups) -----------------------
   const Delta = ({ v, label = 'par rapport au mois dernier' }) => (v === null || v === undefined ? null : (
     <span className="flex items-start gap-2 border-l border-[#E6EEFB] pl-4">
@@ -2332,7 +2447,8 @@ export default function AutomationEditorPage() {
   const geoNew = s.scenario === 'geo' && !editing;
   const avisNew = s.scenario === 'google_review' && !editing;
   const createLabel = geoNew ? "Activer l'automatisation" : s.scenario === 'google_review' ? "Enregistrer l'automatisation" : "Créer l'automatisation";
-  const content = inactiveOn ? [null, Step1, Step2Inactive, Step3, Step4Inactive, Step5Inactive, Step6Inactive][step]
+  const content = welcomeOn ? [null, WStep1, Step3, WStep3][Math.min(step, 3)]
+    : inactiveOn ? [null, Step1, Step2Inactive, Step3, Step4Inactive, Step5Inactive, Step6Inactive][step]
     : [null, Step1, s.scenario === 'geo' ? Step2Geo : s.scenario === 'google_review' ? Step2Avis : Step2, Step3, s.scenario === 'geo' ? Step4Geo : Step4, s.scenario === 'geo' ? Step5Geo : s.scenario === 'google_review' ? Step5Avis : Step5, Step6][step];
   // the header's « Désactiver / Activer » and « ••• » (Client inactif mockups)
   const fmtWhen = (iso) => { try { const d = new Date(iso); return `${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`; } catch { return ''; } };
@@ -2392,7 +2508,7 @@ export default function AutomationEditorPage() {
   );
   return (
     <div className="pb-10">
-      {inactiveOn ? InactiveHeader : (
+      {inactiveOn || welcomeOn ? InactiveHeader : (
       <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-4">
           <button type="button" onClick={() => navigate('/dashboard/automations')} aria-label="Retour aux automatisations"
@@ -2418,11 +2534,11 @@ export default function AutomationEditorPage() {
       )}
 
       <ol className="mb-5 flex items-start overflow-x-auto pb-1">
-        {STEPS.map(([label0, sub], i) => {
+        {(welcomeOn ? W_STEPS : STEPS).map(([label0, sub], i, list) => {
           const n = i + 1;
           const label = n === 2 && s.scenario === 'geo' ? 'Zone de détection' : label0;
           const done = n < step;
-          const subText = inactiveOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
+          const subText = inactiveOn || welcomeOn ? '' : n === 1 && done ? m.label : n === 2 && done ? triggerText() : n === 4 && done ? (tg.mode === 'all' ? 'Tous mes clients' : 'Ciblé') : sub;
           return (
             <li key={label} className="flex min-w-0 flex-1 items-start last:flex-none">
               <button type="button" onClick={() => (done ? go(n) : null)} disabled={!done && n !== step}
@@ -2434,7 +2550,7 @@ export default function AutomationEditorPage() {
                   {subText && <span className="block max-w-[120px] truncate text-[11.5px] text-[#64748B]">{subText}</span>}
                 </span>
               </button>
-              {n < STEPS.length && <span className={`mx-2 mt-4 h-[2px] min-w-[12px] flex-1 ${n < step ? 'bg-[#1463FF]' : 'bg-[#DCE5F3]'}`} />}
+              {n < list.length && <span className={`mx-2 mt-4 h-[2px] min-w-[12px] flex-1 ${n < step ? 'bg-[#1463FF]' : 'bg-[#DCE5F3]'}`} />}
             </li>
           );
         })}
@@ -2443,7 +2559,8 @@ export default function AutomationEditorPage() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <fieldset disabled={!can} className="m-0 min-w-0 border-0 p-0">{content}</fieldset>
         <aside className="space-y-4">
-          {(!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
+          {welcomeOn && WPreview}
+          {!welcomeOn && (!inactiveOn || [1, 3].includes(step)) && <LockScreenPreview shop={page.shop} logo={page.logo_url} title={cur.title} body={cur.body} image={msg.image_url}
                              button={btn.enabled ? btn.label : ''} sample={preview?.sample} compact={step >= 4 && s.scenario !== 'google_review'}
                              bigImage={s.scenario === 'google_review' && step === 3}
                              note={s.scenario === 'geo' ? "Sur l'écran verrouillé, Apple affiche ce message près de votre établissement (Google Wallet, son propre texte). Un appui ouvre la carte, où le message et son bouton s'affichent." : undefined}
@@ -2452,7 +2569,7 @@ export default function AutomationEditorPage() {
                                  'récompense': (tiered && cur.reward) || preview?.sample?.next_reward || 'votre récompense' }
                                : s.scenario === 'geo' ? { 'établissement': zoneSpots[0]?.name || page.shop }
                                : inactiveOn ? inPreviewExtra : {}} />}
-          {inactiveOn && step >= 2 ? inactivePanel : stepPanel}
+          {welcomeOn ? null : inactiveOn && step >= 2 ? inactivePanel : stepPanel}
           {Conseil}
           {BonnesPratiques}
         </aside>
@@ -2460,7 +2577,7 @@ export default function AutomationEditorPage() {
 
       {error && <p role="alert" className="mt-4 rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] font-medium text-[#B91C1C]">{error}</p>}
       <footer className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E6EEFB] bg-white p-4">
-        {inactiveOn ? (
+        {inactiveOn || welcomeOn ? (
           <span className="flex flex-1 flex-wrap items-center justify-between gap-3">
             <button type="button" onClick={() => navigate('/dashboard/automations')}
                     className="rounded-xl border border-[#BFD3FF] px-6 py-2.5 text-[13px] font-semibold text-[#1463FF]">Annuler</button>
@@ -2473,7 +2590,7 @@ export default function AutomationEditorPage() {
           {step === 1 ? 'Annuler' : <><ArrowLeft size={17} /> Précédent</>}
         </button>
         )}
-        {step < 6 ? (
+        {step < lastStep ? (
           <button type="button" onClick={next}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-6 py-2.5 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)]">
             Suivant <ArrowRight size={17} />
@@ -2481,7 +2598,7 @@ export default function AutomationEditorPage() {
         ) : can && (
           <button type="button" disabled={!!busy} onClick={() => save(s.status === 'paused' ? 'paused' : 'active')}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-7 py-3 text-[13.5px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] disabled:opacity-60">
-            {busy ? <Loader2 size={17} className="animate-spin" /> : <Check size={17} />} {editing ? 'Enregistrer les modifications' : createLabel}
+            {busy ? <Loader2 size={17} className="animate-spin" /> : !welcomeOn && <Check size={17} />} {editing ? 'Enregistrer les modifications' : welcomeOn ? "Enregistrer l'automatisation" : createLabel}
           </button>
         )}
       </footer>
