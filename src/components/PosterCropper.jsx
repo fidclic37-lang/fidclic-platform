@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, ZoomIn } from 'lucide-react';
+import { fitZoom } from '../lib/fit';
 
 /**
  * PosterCropper — frame a photo for the iOS 27 poster (user, 2026-10-06:
@@ -61,7 +62,8 @@ export default function PosterCropper({ file, onDone, onCancel, outW = 1035, out
   const move = (e) => {
     if (!drag.current) return;
     const d = drag.current;
-    setPos(clamp({ x: d.ox + e.clientX - d.sx, y: d.oy + e.clientY - d.sy }));
+    const k = fitZoom();                          // the pointer moves in screen pixels
+    setPos(clamp({ x: d.ox + (e.clientX - d.sx) / k, y: d.oy + (e.clientY - d.sy) / k }));
   };
   const up = () => { drag.current = null; };
 

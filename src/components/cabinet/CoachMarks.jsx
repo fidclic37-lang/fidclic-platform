@@ -1,3 +1,4 @@
+import { fitRect, viewW, viewH } from '../../lib/fit';
 /**
  * CoachMarks — a spotlight tour over the REAL interface.
  *
@@ -49,7 +50,7 @@ export default function CoachMarks({ steps = [], storageKey, onClose }) {
     if (!found.el) { setRect(null); return; }
     found.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     const measure = () => {
-      const r = found.el.getBoundingClientRect();
+      const r = fitRect(found.el);                 // the app's pixels, even when it is scaled to fit
       setRect({ top: r.top - PAD, left: r.left - PAD, width: r.width + PAD * 2, height: r.height + PAD * 2 });
     };
     measure();
@@ -83,10 +84,10 @@ export default function CoachMarks({ steps = [], storageKey, onClose }) {
   if (rect) {
     const below = rect.top + rect.height + 14;
     const above = rect.top - 14;
-    const placeBelow = below + 190 < window.innerHeight;
+    const placeBelow = below + 190 < viewH();
     tipStyle = {
       top: placeBelow ? below : Math.max(12, above - 178),
-      left: Math.min(Math.max(12, rect.left + rect.width / 2 - tipW / 2), window.innerWidth - tipW - 12),
+      left: Math.min(Math.max(12, rect.left + rect.width / 2 - tipW / 2), viewW() - tipW - 12),
     };
   } else {
     tipStyle = { top: '50%', left: '50%', transform: 'translate(-50%,-50%)' };
