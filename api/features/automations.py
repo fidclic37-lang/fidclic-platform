@@ -809,6 +809,11 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
         left = int(ctx.get("visits_left") or 1)
         out.update({"visites_restantes": left, "visite_s": "visite" if left == 1 else "visites",
                     "visits_left": left})
+        # a row saved before the mockups (« X visites ») speaks the new words too:
+        # its seuil is in visits, and the reward is the card's
+        word = "visite" if left == 1 else "visites"
+        out["points_restants"] = out["tampons_restants"] = f"{left} {word}"
+        out["récompense"] = out["recompense"] = reward
         if ctx.get("remaining") is not None:
             unit = reward_unit(tpl)
             n = int(ctx["remaining"])
