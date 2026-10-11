@@ -21,6 +21,7 @@ export const VAR_LABELS = {
   'points_gagnés': 'Points gagnés', visite_ami: '« est venu / est revenu »', 'établissement': 'Établissement le plus proche',
   jours_absence: "Jours d'absence", nom: 'Nom complet du client', 'récompense': 'Récompense du palier',
   distance: 'Distance', offre: 'Offre en cours', lien_avis: 'Lien de votre page Google Avis', lien: 'Lien vers la carte du client',
+  points_restants: 'Points restants avant la récompense', tampons_restants: 'Tampons restants avant la récompense', tampons: 'Tampons sur la carte',
 };
 // the « + Prénom » chips of the message step (mockups, 2026-10-11)
 export const VAR_SHORT = {
@@ -29,7 +30,7 @@ export const VAR_SHORT = {
   visites_restantes: 'Visites restantes', visite_s: 'visite(s)', filleul: 'Filleul', parrain: 'Parrain',
   'points_gagnés': 'Points gagnés', visite_ami: 'Venu / revenu', 'établissement': "Nom de l'établissement",
   jours_absence: "Jours d'absence", 'récompense': 'Récompense', distance: 'Distance', offre: 'Offre', lien_avis: 'Lien Google Avis',
-  lien: 'Lien',
+  lien: 'Lien', points_restants: 'Points restants', tampons_restants: 'Tampons restants', tampons: 'Tampons actuels',
 };
 // Géolocalisation (mockups 2026-10-11)
 export const PASSANTS = [
@@ -54,7 +55,8 @@ export const RADII = [1, 2, 5, 10, 20, 50];
 export const CLIENT_TYPES = [['new', 'Nouveaux (Bronze)'], ['regular', 'Réguliers (Argent)'], ['loyal', 'Fidèles (Or, VIP)']];
 export const AGE_STEPS = [16, 18, 21, 25, 30, 35, 40, 45, 50, 55, 60, 65];
 export const EMPTY_FILTERS = { gender: [], age: [], spent: [], last_visit: [], client_type: [], stores: [], radius_km: null,
-  visits_min: '', visits_max: '', age_min: '', age_max: '', past_freq: [], tiers: [], origin: [], last_offer: [] };
+  visits_min: '', visits_max: '', age_min: '', age_max: '', past_freq: [], tiers: [], origin: [], last_offer: [],
+  activity: [], signed_since: '' };
 export const EMPTY_EXCLUSIONS = { recent_contact: false, active_offer: false };
 
 // Client inactif (mockups, 2026-10-11) — the server's features/automations.py

@@ -7,7 +7,7 @@ spécial, Relance panier, Heures creuses and Nouveaux produits, data included):
     birthday       Anniversaire               time   the day of the birthday (± X days)
     tier_up        Atteinte d'un palier       event  the scan that moves the client up
     welcome        Bienvenue                  event  the card added to Apple / Google Wallet
-    near_reward    Proche de la récompense    event  the scan that leaves X visits to go
+    near_reward    Récompense bientôt dispo.  event  the scan that leaves X points / tampons to the next reward
     referral       Parrainage                 event  a parrainage reward is earned
     geo            Géolocalisation            event  the card sees the client near a shop
     google_review  Avis Google                event  after a visit
@@ -141,11 +141,13 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "button": "Voir ma carte",
     },
     "near_reward": {
-        "label": "Proche de la récompense", "sub": "Prévenez vos clients quand la récompense est toute proche.",
-        "icon": "gift", "tone": "violet", "kind": "event", "trigger_label": "À X visites de la récompense",
+        # Récompense bientôt disponible (mockups 2026-10-11): X points (or
+        # tampons) before the nearest reward — the card's, or the next palier's
+        "label": "Récompense bientôt disponible", "sub": "Prévenez vos clients quand leur prochaine récompense est presque atteinte.",
+        "icon": "gift", "tone": "violet", "kind": "event", "trigger_label": "Seuil presque atteint",
         "push_kind": "near_reward", "google": "near_reward",
-        "title": "Plus que {visites_restantes} {visite_s}, {prénom} !",
-        "body": "Encore {visites_restantes} {visite_s} chez {nom_commerce} et {prochaine_récompense} est à vous.",
+        "title": "Plus que quelques points ! 🎁",
+        "body": "Plus que {points_restants} avant votre prochaine récompense, {prénom} : {récompense} !",
         "button": "Voir ma récompense",
     },
     "referral": {
@@ -204,7 +206,7 @@ REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products"
 
 VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
-    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["visites_restantes", "visite_s"],
+    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["points_restants", "tampons_restants", "tampons", "récompense", "visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
     "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": [],
 }
@@ -271,6 +273,8 @@ def _default_trigger(scenario: str) -> Dict[str, Any]:
         "tier_up": {"condition": "points", "threshold": 200, "repeat": "each", "min_days": 7,
                     "custom_tiers": False, "tiers": []},
         "welcome": {},
+        # a row with « threshold » (X points / tampons, mockups 2026-10-11) is the
+        # new rule; one with only « visits_left » keeps the old one until re-saved
         "near_reward": {"visits_left": 1},
         "referral": {"side": "parrain"},
         # Géolocalisation (mockups 2026-10-11): the gap per client, the weather
@@ -605,6 +609,23 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
                 cache[key] = set()             # no shop position: nobody is « within »
         if cust["id"] not in cache[key]:
             return False
+    # « Statut client » (Récompense bientôt disponible): the shop's Règles clients
+    acts = [str(x) for x in (f.get("activity") or []) if x]
+    if acts:
+        if "rules" not in cache:
+            from features import customer_rules as R
+            cache["rules"] = R.load(tid)
+        from features import clients_page as CPg
+        if CPg.status_of(cust, at, cache["rules"]) not in acts:
+            return False
+    since = f.get("signed_since")
+    if since:
+        joined = _aware(cust.get("created_at"))
+        try:
+            if not joined or _paris(joined).date() < date.fromisoformat(str(since)[:10]):
+                return False
+        except ValueError:
+            pass
     # Client inactif's filters (mockups, 2026-10-11) — every automation reads them
     pf = as_list(f.get("past_freq"), PAST_FREQS)
     if pf and not within(visits_per_month(cust, at), [PAST_FREQS[x] for x in pf], half_open=True):
@@ -788,6 +809,14 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
         left = int(ctx.get("visits_left") or 1)
         out.update({"visites_restantes": left, "visite_s": "visite" if left == 1 else "visites",
                     "visits_left": left})
+        if ctx.get("remaining") is not None:
+            unit = reward_unit(tpl)
+            n = int(ctx["remaining"])
+            word = {"points": "point" if n == 1 else "points", "tampons": "tampon" if n == 1 else "tampons"}.get(unit, unit)
+            out["points_restants"] = out["tampons_restants"] = f"{n} {word}"
+            out["récompense"] = out["recompense"] = ctx.get("reward") or reward
+        per_stamp = max(1, int(tpl.get("visits_per_stamp") or 1))
+        out["tampons"] = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0)) // per_stamp
     if scenario == "referral":
         out.update({"visite_ami": "est revenu" if ctx.get("kind") == "next" else "est venu",
                     "filleul": ctx.get("filleul") or "votre ami", "parrain": ctx.get("parrain") or "votre parrain",
@@ -1005,11 +1034,75 @@ def _tier_level(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[s
     return {"level": level, "label": palier_label(cond, level), "tier": None}
 
 
+# Récompense bientôt disponible (mockups, 2026-10-11) -------------------------
+def reward_unit(tpl: Dict[str, Any]) -> str:
+    """The seuil's unit, from the card's programme: « points » (points per euro
+    / per visit), « tampons » (stamps), « € » (cagnotte: paliers only)."""
+    from features import loyalty_card as LC
+    prog = LC._programme(tpl)
+    return "tampons" if prog == "stamps" else ("€" if prog == "cashback" else "points")
+
+
+def reward_targets(tid: str, cust: Dict[str, Any], tpl: Optional[Dict[str, Any]] = None,
+                   cycle: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The rewards ahead of this client, in the seuil's unit (user's answer:
+    « jo pehle aaye »): the card's own reward — redeemable, its cycle restarting
+    at each redemption — and the next palier, when the owner wrote a reward
+    for it. Each: {kind, key, remaining, reward}. Nothing already reached."""
+    from features import loyalty_card as LC
+    tpl = tpl if tpl is not None else (_db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {})
+    prog = LC._programme(tpl)
+    per_stamp = max(1, int(tpl.get("visits_per_stamp") or 1))
+    visits = int(cust.get("visits") or 0)
+    in_cycle = max(0, visits - int(cust.get("visits_at_last_redemption") or 0))
+    cyc = cycle or "first"
+    out: List[Dict[str, Any]] = []
+    if prog in ("points_euro", "points_visit"):
+        goal = int(tpl.get("reward_points") or 100)
+        left = goal - int(cust.get("points") or 0)
+        if left > 0:
+            out.append({"kind": "card", "key": f"card:{cyc}", "remaining": left,
+                        "reward": (tpl.get("reward_description") or "").strip() or "votre récompense"})
+    elif prog == "stamps":
+        goal = max(1, int(tpl.get("reward_threshold_stamps") or 10))
+        left = goal - in_cycle // per_stamp
+        if left > 0:
+            out.append({"kind": "card", "key": f"card:{cyc}", "remaining": left,
+                        "reward": (tpl.get("reward_description") or "").strip() or "votre récompense"})
+    # the next palier — measured as tier_of measures it (points, or visits on a stamps card)
+    value = visits if prog == "stamps" else int(cust.get("points") or 0)
+    # the first palier above with a reward written (one without is not a reward)
+    for t in LC.tiers_for(tid):
+        if t["min"] > value and t.get("reward"):
+            gap = t["min"] - value
+            left = -(-gap // per_stamp) if prog == "stamps" else gap      # visits → tampons
+            out.append({"kind": "tier", "key": f"tier:{t['key']}:{cyc}", "remaining": left,
+                        "reward": t["reward"], "tier": t["key"], "tier_label": t["label"]})
+            break
+    out.sort(key=lambda x: (x["remaining"], 0 if x["kind"] == "card" else 1))
+    return out
+
+
+def nearest_reward(tid: str, cust: Dict[str, Any], tpl: Optional[Dict[str, Any]] = None,
+                   cycle: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    got = reward_targets(tid, cust, tpl, cycle)
+    return got[0] if got else None
+
+
 def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any], at: datetime) -> bool:
     """The scenario's own rule, on top of the targeting."""
     sc, tr = row["scenario"], row.get("trigger") or {}
     q = {"tenant_id": tid, "automation_id": row["id"], "customer_id": cust["id"]}
-    if sc == "near_reward":
+    if sc == "near_reward" and tr.get("threshold") is not None:
+        # X points / tampons before the nearest reward, once per reward and cycle
+        hit = nearest_reward(tid, cust, None, ctx.get("cycle"))
+        if not hit or not (0 < hit["remaining"] <= int(tr["threshold"])):
+            return False
+        if _db.automation_log.find_one({**q, "cycle": hit["key"]}) or \
+                _db.automation_queue.find_one({**q, "ctx.cycle": hit["key"]}):
+            return False
+        ctx.update({"cycle": hit["key"], "remaining": hit["remaining"], "reward": hit["reward"]})
+    elif sc == "near_reward":                     # saved before the mockups: X visits
         if int(ctx.get("visits_left") or -1) != int(tr.get("visits_left") or 1):
             return False
         cyc = ctx.get("cycle")
@@ -1210,6 +1303,33 @@ def _delay(tr: Dict[str, Any]) -> timedelta:
     return timedelta(minutes=v) if unit == "minutes" else timedelta(days=v) if unit == "days" else timedelta(hours=v)
 
 
+def _sent_on(row: Dict[str, Any], day: date) -> int:
+    """Messages this automation sent on that Paris day (its daily limit)."""
+    a = _from_paris(day, 0, 0)
+    return _db.automation_log.count_documents({"automation_id": row["id"], "status": {"$ne": "deferred"},
+                                               "sent_at": {"$gte": a, "$lt": a + timedelta(days=1)}})
+
+
+def _over_limit(row: Dict[str, Any], due: datetime) -> Optional[datetime]:
+    """« Limite d'envoi quotidienne » of an event automation: when that day is
+    full (sent + already waiting for it), the first moment of the next day's
+    plage — nobody is dropped (user, 2026-10-11). None = room that day."""
+    sched = row.get("schedule") or {}
+    limit = sched.get("daily_limit")
+    if not limit:
+        return None
+    moved = None
+    for _ in range(60):                       # the first day with room, two months at most
+        day = _paris(due).date()
+        a = _from_paris(day, 0, 0)
+        waiting = _db.automation_queue.count_documents({"automation_id": row["id"],
+                                                        "due_at": {"$gte": a, "$lt": a + timedelta(days=1)}})
+        if _sent_on(row, day) + waiting < int(limit):
+            return moved
+        due = moved = next_window(sched, _from_paris(day + timedelta(days=1), 0, 0))
+    return moved
+
+
 def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None,
          at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """An event happened to a client: every active automation of that scenario
@@ -1235,6 +1355,8 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
                     due = smart_due(tid, cust, row.get("schedule") or {}, due)   # the client's own time
                 elif scenario != "geo":
                     due = next_window(row.get("schedule") or {}, due)
+                if scenario != "geo":
+                    due = _over_limit(row, due) or due      # the day is full: the next one
                 if due <= at + timedelta(seconds=30):
                     said = _deliver(tid, row, cust, ctx, at)
                     if said:
@@ -1348,6 +1470,13 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         cust = _db.customers.find_one({"id": q["customer_id"]}, {"_id": 0})
         if not row or not cust or not _plan_ok(row["tenant_id"]) or not running(row, at) \
                 or not matches(row["tenant_id"], row, cust, at):
+            continue
+        limit = (row.get("schedule") or {}).get("daily_limit")
+        if limit and not is_timed(row["scenario"], row.get("trigger")) \
+                and _sent_on(row, _paris(at).date()) >= int(limit):
+            # today is full: the next day with room, at its plage (nobody dropped)
+            nxt = next_window(row.get("schedule") or {}, _from_paris(_paris(at).date() + timedelta(days=1), 0, 0))
+            _db.automation_queue.insert_one({**q, "due_at": _over_limit(row, nxt) or nxt})
             continue
         if row["scenario"] == "inactive":         # came back while waiting: nothing to say
             last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
@@ -1606,6 +1735,12 @@ def trigger_text(r: Dict[str, Any]) -> str:
         return "Le jour même" if off == 0 else (f"{-off} jour{'s' if off < -1 else ''} avant" if off < 0
                                                  else f"{off} jour{'s' if off > 1 else ''} après")
     if sc == "near_reward":
+        if tr.get("threshold") is not None:
+            n = int(tr["threshold"])
+            unit = reward_unit(_db.card_templates.find_one({"tenant_id": r.get("tenant_id")}, {"_id": 0}) or {}) \
+                if r.get("tenant_id") else (tr.get("unit") or "points")
+            word = {"points": "point" if n == 1 else "points", "tampons": "tampon" if n == 1 else "tampons"}.get(unit, unit)
+            return f"Seuil presque atteint · {n} {word} avant la récompense"
         n = int(tr.get("visits_left") or 1)
         return f"À {n} visite{'s' if n > 1 else ''} de la récompense"
     if sc == "inactive":
@@ -1658,9 +1793,29 @@ def schedule_text(r: Dict[str, Any]) -> str:
     return f"{days} · {hours}{period}"
 
 
+OLD_NEAR_LABEL = "Proche de la récompense"
+
+
+def near_page(tid: str) -> Dict[str, Any]:
+    """What the Récompense bientôt disponible editor needs of the card: the
+    programme's unit and the card's own reward (its « exemple de scénario »)."""
+    from features import loyalty_card as LC
+    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    prog = LC._programme(tpl)
+    goal = int(tpl.get("reward_points") or 100) if prog in ("points_euro", "points_visit") else \
+        (max(1, int(tpl.get("reward_threshold_stamps") or 10)) if prog == "stamps" else None)
+    return {"programme": prog, "unit": reward_unit(tpl), "card_goal": goal,
+            "card_reward": (tpl.get("reward_description") or "").strip() or "votre récompense",
+            "tiers": [{"key": t["key"], "label": t["label"], "min": t["min"], "reward": t.get("reward") or ""}
+                      for t in LC.tiers_for(tid)]}
+
+
 def _list(tid: str, token: TokenData) -> Dict[str, Any]:
     migrate(tid)
     at = _now()
+    # the scenario's new name (user, 2026-10-11) on the rows that kept the default one
+    _db.automations.update_many({"tenant_id": tid, "scenario": "near_reward", "name": OLD_NEAR_LABEL},
+                                {"$set": {"name": SCENARIOS["near_reward"]["label"]}})
     q: Dict[str, Any] = {"tenant_id": tid}
     rows = [_row_view(r, tid) for r in _db.automations.find(q, {"_id": 0}).sort([("order", 1), ("created_at", 1)])]
     active = sum(1 for r in rows if r["status"] == "active")
@@ -1700,7 +1855,17 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
         "logo_url": (tpl.get("brand_fields") or {}).get("logo_url") or tpl.get("logo_url") or "",
         "can_edit": token.role in EDITORS,
         "tick": tick_seen(at),
+        "near": near_page(tid),
+        "statuses": _statuses(tid),
     }
+
+
+def _statuses(tid: str) -> List[Dict[str, str]]:
+    try:
+        from features import customer_rules as R
+        return R.statuses(R.load(tid))
+    except Exception:
+        return []
 
 
 def _geo_page(tid: str, tenant: Dict[str, Any]) -> Dict[str, Any]:
@@ -1771,6 +1936,8 @@ class FiltersIn(BaseModel):
     tiers: Any = []                     # « Programme de fidélité » (statut)
     origin: Any = []                    # « Origine du client »
     last_offer: Any = []                # « Dernière offre reçue »
+    activity: Any = []                  # « Statut client » (Règles clients keys)
+    signed_since: Optional[str] = None  # « Inscription depuis » (a date)
 
 
 class ExclusionsIn(BaseModel):
@@ -1842,7 +2009,20 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     if sc == "birthday":
         tr["offset_days"] = _int(tr_in.get("offset_days", 0), -30, 30, "Jours avant / après")
     elif sc == "near_reward":
-        tr["visits_left"] = _int(tr_in.get("visits_left", 1), 1, 50, "Visites avant la récompense")
+        if tr_in.get("threshold") is not None:                # the mockups' seuil
+            tr.pop("visits_left", None)
+            tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+            unit = reward_unit(tpl)
+            label = {"points": "Seuil (points)", "tampons": "Seuil (tampons)"}.get(unit, "Seuil (€)")
+            tr["threshold"] = _int(tr_in["threshold"], 1, 100000, label)
+            from features import loyalty_card as LC
+            prog = LC._programme(tpl)
+            goal = int(tpl.get("reward_points") or 100) if prog in ("points_euro", "points_visit") else \
+                (max(1, int(tpl.get("reward_threshold_stamps") or 10)) if prog == "stamps" else None)
+            if goal and tr["threshold"] >= goal:
+                raise HTTPException(status_code=400, detail=f"Le seuil doit être inférieur à la récompense de la carte ({goal} {unit}).")
+        else:
+            tr["visits_left"] = _int(tr_in.get("visits_left", 1), 1, 50, "Visites avant la récompense")
     elif sc == "inactive":
         tr["days"] = _int(tr_in.get("days", 30), 7, 365, "Jours sans visite")
         tr["repeat"] = "every" if tr_in.get("repeat") == "every" else "once"
@@ -2035,6 +2215,19 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     from features import team_access as T
     known = {s["id"] for s in T.stores(tid)}
     stores = [s for s in dict.fromkeys(f.stores or []) if s in known]
+    acts = [] if f.activity in (None, "", "all") else (f.activity if isinstance(f.activity, list) else [f.activity])
+    if acts:
+        from features import customer_rules as R
+        allowed_acts = {x["key"] for x in R.statuses(R.load(tid))}
+        if any(str(x) not in allowed_acts for x in acts):
+            raise HTTPException(status_code=400, detail="Statut client : valeur inconnue.")
+        acts = list(dict.fromkeys(str(x) for x in acts))
+    signed = None
+    if f.signed_since not in (None, ""):
+        try:
+            signed = date.fromisoformat(str(f.signed_since)[:10]).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Inscription depuis : date invalide.")
     s = body.schedule
     if s.days not in DAY_MODES:
         raise HTTPException(status_code=400, detail="Jours d'envoi inconnus.")
@@ -2119,8 +2312,9 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
                       "filters": ({"gender": [], "age": [], "spent": [], "last_visit": [], "client_type": [],
                                    "stores": [], "radius_km": None, "visits_min": None, "visits_max": None,
                                    "age_min": None, "age_max": None, "past_freq": [], "tiers": [], "origin": [],
-                                   "last_offer": []} if t.mode == "all" else
-                                  {**picked, **nums, "stores": stores, "radius_km": radius}),
+                                   "last_offer": [], "activity": [], "signed_since": None} if t.mode == "all" else
+                                  {**picked, **nums, "stores": stores, "radius_km": radius,
+                                   "activity": acts, "signed_since": signed}),
                       "exclusions": {"recent_contact": bool(t.exclusions.recent_contact),
                                      "active_offer": bool(t.exclusions.active_offer)}},
         "schedule": {"days": day_mode, "weekdays": weekdays if day_mode == "specific" else [0, 1, 2, 3, 4, 5, 6],
@@ -2402,6 +2596,58 @@ def _reactivation(tid: str, at: datetime) -> Optional[Dict[str, Any]]:
     return None
 
 
+# the 4 boxes of « Répartition estimée » over the shop's own statuses (user, 2026-10-11)
+ACTIVITY_GROUPS = {"actif": "active", "regulier": "active", "fidele": "active", "vip": "active",
+                   "bientot_perdu": "risk", "dormant": "inactive", "inactif": "inactive", "nouveau": "new"}
+
+
+def near_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, Any]:
+    """Récompense bientôt disponible's right panels, real data only: the
+    clients within the seuil of their nearest reward now (and a month ago,
+    from the points / visits on record), and their statuts in four boxes."""
+    from features import clients_page as CPg
+    from features import customer_rules as R
+    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    tr = row.get("trigger") or {}
+    seuil = max(1, min(100000, int(tr.get("threshold") or 10)))
+    own = _store_people(tid, row["store_ids"]) if row.get("store_ids") else None
+    people = [c for c in _db.customers.find({"tenant_id": tid, "deleted_at": None}, {"_id": 0})
+              if own is None or c["id"] in own]
+    cache: Dict[str, Any] = {}
+
+    def within(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        hit = nearest_reward(tid, c, tpl)
+        return hit if hit and 0 < hit["remaining"] <= seuil else None
+    now_in = [c for c in people if within(c) and matches(tid, row, c, at, cache)]
+    # a month ago: points / visits then = now minus what came since; a client
+    # who redeemed since is left out of that count (their balance then is unknown)
+    then = at - timedelta(days=30)
+    since_pts: Dict[str, int] = {}
+    since_vis: Dict[str, int] = {}
+    for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": then}}, {"_id": 0, "customer_id": 1, "points_awarded": 1}):
+        since_pts[v["customer_id"]] = since_pts.get(v["customer_id"], 0) + int(v.get("points_awarded") or 0)
+        since_vis[v["customer_id"]] = since_vis.get(v["customer_id"], 0) + 1
+    redeemed = set(_db.rewards_redeemed.distinct("customer_id", {"tenant_id": tid, "redeemed_at": {"$gte": then}}))
+    was = 0
+    for c in people:
+        joined = _aware(c.get("created_at"))
+        if c["id"] in redeemed or not joined or joined > then:
+            continue
+        past = {**c, "points": int(c.get("points") or 0) - since_pts.get(c["id"], 0),
+                "visits": int(c.get("visits") or 0) - since_vis.get(c["id"], 0)}
+        if within(past):
+            was += 1
+    rules = R.load(tid)
+    boxes = {"active": 0, "risk": 0, "inactive": 0, "new": 0, "other": 0}
+    for c in now_in:
+        boxes[ACTIVITY_GROUPS.get(CPg.status_of(c, at, rules), "other")] += 1
+    n = len(now_in)
+    pct = lambda k: round(boxes[k] / n * 100) if n else 0  # noqa: E731
+    return {"threshold": seuil, "unit": reward_unit(tpl), "count": n, "month_ago": was,
+            "delta": (round((n - was) / was * 100) if was else None),
+            "groups": [{"key": k, "n": boxes[k], "pct": pct(k)} for k in ("active", "risk", "inactive", "new", "other")]}
+
+
 def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, Any]:
     """The Client inactif editor's right panels, from real data only:
     « Estimation de l'audience » (now, and a month ago), the inactive clients
@@ -2493,4 +2739,6 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
     out = {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}
     if body.scenario == "inactive":
         out["inactive"] = inactive_insights(tid, row, at)
+    if body.scenario == "near_reward":
+        out["near"] = near_insights(tid, row, at)
     return out
