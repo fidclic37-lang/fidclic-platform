@@ -65,16 +65,28 @@ export function VersionSwitch({ views, value, onChange }) {
   );
 }
 
-/** An iPhone around the pass: status bar, Dynamic Island, and — like Wallet's
- *  pass screen on iOS 26 — the « OK · ⋯ » bar when asked. */
-export function IphoneFrame({ children, width = 300, walletBar = false }) {
+/** An iPhone around the pass, at a real iPhone's proportions (393 × 852 pt).
+ *  `chrome="ios26"` draws Wallet's pass screen as iOS 26 shows it (checked on
+ *  device screenshots, 2026-10-11): dark background, a round glass « ✕ » at
+ *  the top left, share and « ••• » top right, the pass at ~88 % of the screen
+ *  width right under them. `screenW` tells the caller how wide the screen is. */
+export const screenWidth = (width) => width - 2 * (9 * width / 300);
+
+export function IphoneFrame({ children, width = 300, chrome = 'none', dark = false }) {
   const s = width / 300;
+  const pad = 9 * s;
+  const screenW = width - 2 * pad;
+  const screenH = screenW * (852 / 393);
+  const night = dark || chrome === 'ios26';
+  const ink = night ? '#FFFFFF' : '#0B0B0F';
+  const glass = { background: 'rgba(255,255,255,.14)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+    boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,.22)' };
   return (
     <div className="relative mx-auto" style={{ width }}>
-      <div className="relative rounded-[46px] bg-[#1B1D22] shadow-[0_30px_60px_-30px_rgba(11,28,63,.55)]" style={{ padding: 9 * s }}>
-        <div className="relative overflow-hidden rounded-[38px] bg-[#F2F2F7]" style={{ minHeight: 560 * s }}>
-          <div className="flex items-center justify-between font-semibold text-[#0B0B0F]"
-               style={{ height: 46 * s, padding: `0 ${26 * s}px`, fontSize: 14 * s }}>
+      <div className="relative rounded-[48px] bg-[#1B1D22] shadow-[0_30px_60px_-30px_rgba(11,28,63,.55)]" style={{ padding: pad }}>
+        <div className="relative overflow-hidden" style={{ height: screenH, borderRadius: 40 * s, background: night ? '#000' : '#F2F2F7' }}>
+          <div className="flex items-center justify-between font-semibold"
+               style={{ height: 46 * s, padding: `0 ${26 * s}px`, fontSize: 14 * s, color: ink }}>
             <span>9:41</span>
             <span className="flex items-center gap-1" aria-hidden="true">
               <svg width={17 * s} height={11 * s} viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx=".7" /><rect x="4.5" y="5" width="3" height="6" rx=".7" /><rect x="9" y="2.5" width="3" height="8.5" rx=".7" /><rect x="13.5" y="0" width="3" height="11" rx=".7" /></svg>
@@ -83,13 +95,18 @@ export function IphoneFrame({ children, width = 300, walletBar = false }) {
             </span>
           </div>
           <div className="absolute left-1/2 -translate-x-1/2 rounded-full bg-black" style={{ top: 10 * s, width: 96 * s, height: 28 * s }} />
-          {walletBar && (
-            <div className="flex items-center justify-between text-[#0B0B0F]" style={{ padding: `${4 * s}px ${18 * s}px ${8 * s}px`, fontSize: 16 * s }}>
-              <span className="font-semibold">OK</span>
-              <span className="flex items-center justify-center rounded-full border-2 border-current font-bold leading-none" style={{ width: 22 * s, height: 22 * s, fontSize: 11 * s }}>⋯</span>
+          {chrome === 'ios26' && (
+            <div className="flex items-center justify-between" style={{ padding: `${2 * s}px ${14 * s}px ${8 * s}px`, color: '#fff' }} aria-hidden="true">
+              <span className="flex items-center justify-center rounded-full" style={{ width: 38 * s, height: 38 * s, ...glass }}>
+                <svg width={15 * s} height={15 * s} viewBox="0 0 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13" /></svg>
+              </span>
+              <span className="flex items-center rounded-full" style={{ height: 38 * s, padding: `0 ${13 * s}px`, gap: 16 * s, ...glass }}>
+                <svg width={15 * s} height={17 * s} viewBox="0 0 16 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 11V1.5M4.5 5 8 1.5 11.5 5M5 7.5H3.5A1.5 1.5 0 0 0 2 9v6.5A1.5 1.5 0 0 0 3.5 17h9a1.5 1.5 0 0 0 1.5-1.5V9a1.5 1.5 0 0 0-1.5-1.5H11" /></svg>
+                <svg width={17 * s} height={4 * s} viewBox="0 0 17 4" fill="currentColor"><circle cx="2" cy="2" r="1.8" /><circle cx="8.5" cy="2" r="1.8" /><circle cx="15" cy="2" r="1.8" /></svg>
+              </span>
             </div>
           )}
-          <div className="flex justify-center" style={{ padding: `${(walletBar ? 0 : 6) * s}px ${12 * s}px ${18 * s}px` }}>
+          <div className="flex justify-center" style={{ padding: `${(chrome === 'ios26' ? 2 : 8) * s}px 0 ${18 * s}px` }}>
             {children}
           </div>
         </div>

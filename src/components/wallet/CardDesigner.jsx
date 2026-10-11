@@ -10,7 +10,8 @@ import FeaturedActionsEditor from './FeaturedActionsEditor';
 import GoogleDesignEditor from './GoogleDesignEditor';
 import GoogleWalletPreview from './GoogleWalletPreview';
 import PosterCropper from '../PosterCropper';
-import { WalletSwitch, VersionSwitch, IphoneFrame, Dots } from './PreviewStage';
+import { WalletSwitch, VersionSwitch, IphoneFrame, Dots, screenWidth } from './PreviewStage';
+import { fitRect } from '../../lib/fit';
 import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHex, hexToRgb } from './walletLook';
 
 /**
@@ -39,8 +40,12 @@ import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHe
  * the preview each in their own card, the Apple / Google switch as two big
  * buttons, and one iPhone at a time chosen with « iOS 27 / iOS 26 et avant »
  * (the customer's web card is the third view). Same editor, same data.
+ * `inspectorOverride` (v2): another step's content in the left column while
+ * the editor stays mounted, hidden — the live preview keeps showing, and the
+ * design's unsaved edits survive the step change (user, 2026-10-11).
  */
 const STYLE_KEYS = STYLES.map((s) => s.key);
+const PHONE_W = 340;      // the v2 preview's iPhone
 const styleOf = (p) => STYLE_KEYS.find((k) => p && typeof p[k] === 'object');
 const IMG_RE = /^(background|primaryLogo|logo|icon|thumbnail|strip|footer)(@[23]x)?\.png$/;
 const baseOf = (name) => name.replace(/(@[23]x)?\.png$/, '');
@@ -196,10 +201,36 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
 const CardDesigner = forwardRef(function CardDesigner({
   edit = true, types = [], formats = [], actions = [], onActionsChange, onSaved,
   identityPanel = null, previewCard = {}, clientPreview = null, externalDirty = false, onSaveAll, onDirtyChange,
-  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange, variant = 'classic',
+  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange, variant = 'classic', inspectorOverride = null,
 }, ref) {
   const v2 = variant === 'v2';
   const [view, setView] = useState('ios27');
+  // v2: the preview follows the scroll beside a long column (Paramètres).
+  // CSS sticky cannot: the layout's <main> is overflow:auto but the window
+  // scrolls, so the preview is moved by hand, within its column.
+  const gridRef = useRef(null);
+  const stageRef = useRef(null);
+  useEffect(() => {
+    if (!v2) return undefined;
+    let raf = 0;
+    const place = () => {
+      raf = 0;
+      const grid = gridRef.current; const st = stageRef.current;
+      if (!grid || !st) return;
+      const g = fitRect(grid);
+      const side = fitRect(st).left - g.left > 40;            // two columns, not stacked
+      const room = grid.offsetHeight - st.offsetHeight;
+      const y = side && room > 0 ? Math.max(0, Math.min(room, 16 - g.top)) : 0;
+      st.style.transform = y ? `translateY(${Math.round(y)}px)` : '';
+    };
+    const on = () => { if (!raf) raf = requestAnimationFrame(place); };
+    window.addEventListener('scroll', on, true);
+    window.addEventListener('resize', on);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(on) : null;
+    if (ro && gridRef.current) ro.observe(gridRef.current);
+    on();
+    return () => { window.removeEventListener('scroll', on, true); window.removeEventListener('resize', on); ro && ro.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [v2]);
   // Apple and Google build their cards differently: one switch, two editors
   // (user, 2026-10-08), the identity tab and the save shared
   const [wallet, setWallet] = useState('apple');
@@ -449,7 +480,7 @@ const CardDesigner = forwardRef(function CardDesigner({
       render: (w) => <PassPreview pj={pj} style={poster ? 'posterGeneric' : styles[0]} images={preview.images} actions={poster ? preview.actions : []} width={w} /> });
     const old = poster ? fbStyle : styles[0];
     if (old) {
-      appleViews.push({ key: 'ios26', title: 'iOS 26 et avant', sub: newCode ? 'Code de secours' : 'Design classique', walletBar: true,
+      appleViews.push({ key: 'ios26', title: 'iOS 26 et avant', sub: newCode ? 'Code de secours' : 'Design classique', chrome: 'ios26',
         render: (w) => <PassPreview pj={pj} style={old} images={preview.images} width={w} legacy={poster || newCode} /> });
     }
   }
@@ -457,7 +488,7 @@ const CardDesigner = forwardRef(function CardDesigner({
   const current = dotViews.find((x) => x.key === view) || dotViews[0];
   const stageState = wallet === 'google' ? gState : pvState;
   const stage = (
-    <div className="min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6">
+    <div ref={stageRef} className="min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6">
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-[19px] font-bold tracking-[-0.01em] text-[#0B1C3F]">
@@ -491,8 +522,11 @@ const CardDesigner = forwardRef(function CardDesigner({
         <>
           {appleViews.length > 0 && <VersionSwitch views={appleViews} value={current.key} onChange={setView} />}
           <div className="mt-5">
-            <IphoneFrame width={320} walletBar={!!current.walletBar}>
-              {current.key === 'web' ? <div style={{ width: 268 }}>{current.render()}</div> : current.render(272)}
+            {/* the pass at ~88 % of the screen's width, as Wallet shows it */}
+            <IphoneFrame width={PHONE_W} chrome={current.chrome || 'none'}>
+              {current.key === 'web'
+                ? <div style={{ width: Math.round(screenWidth(PHONE_W) * 0.9) }}>{current.render()}</div>
+                : current.render(Math.round(screenWidth(PHONE_W) * 0.88))}
             </IphoneFrame>
             <Dots views={dotViews} value={current.key} onChange={setView} />
             <p className="mt-2 text-center text-[11.5px] font-semibold text-[#64748B]">{current.title}</p>
@@ -517,9 +551,10 @@ const CardDesigner = forwardRef(function CardDesigner({
   );
 
   return (
-    <div className={v2 ? 'grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : 'grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]'}>
-      {/* ── the inspector ── */}
-      <div className={v2 ? 'min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6' : 'min-w-0'}>
+    <div ref={gridRef} className={v2 ? 'grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : 'grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]'}>
+      {/* ── the inspector (or, in v2, another step's content over it) ── */}
+      {v2 && inspectorOverride && <div className="min-w-0 space-y-4">{inspectorOverride}</div>}
+      <div className={v2 ? `min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6${inspectorOverride ? ' hidden' : ''}` : 'min-w-0'}>
         {v2 && (
           <header className="mb-4">
             <h2 className="text-[19px] font-bold tracking-[-0.01em] text-[#0B1C3F]">Design de la carte</h2>
