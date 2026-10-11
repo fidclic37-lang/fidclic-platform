@@ -1318,6 +1318,13 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     ]
     if not stamp_prog:                    # « Encore N tampons » means nothing on a points card
         back = [f for f in back if f["key"] != "next_reward"]
+    else:
+        # No points on a tampons card's face (user, 2026-10-12), but the
+        # balance stays on its back: a parrainage credits points, and Wallet
+        # only rings for a field that was already there — « Votre ami Lina
+        # est venu… » rides on this one (_points_news).
+        back.insert(next((i + 1 for i, f in enumerate(back) if f["key"] == "pending_rewards"), len(back)),
+                    {**points_field, "label": (card.get("points_label") or "Points")})
     if not reward_on:                     # « Non »: no reward on the card, front or back
         back = [f for f in back if f["key"] not in ("next_reward", "program")]
     if show_tier and not tier_front and not tier_up:

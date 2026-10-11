@@ -187,6 +187,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("…and no « Récompense » added by itself", field(prim, "reward") is None
           and field(p["storeCard"]["secondaryFields"], "reward") is None)
     check("…it notifies on each new tampon", "%@" in st.get("changeMessage", ""))
+    bp = field(p["posterGeneric"]["backFields"], "points")
+    check("the balance stays on the back, so a parrainage's points still ring (Wallet notifies a field it knows)",
+          bp is not None and bp["value"] == 30 and "%@" in bp.get("changeMessage", ""))
     setcard(stamps_change_message="Un tampon de plus : %@")
     check("the owner's tampon message is used", field(pj()["posterGeneric"]["primaryFields"], "stamps")["changeMessage"]
           == "Un tampon de plus : %@")
