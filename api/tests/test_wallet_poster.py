@@ -143,25 +143,32 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         return sum(1 for x in range(0, 1035, 3) for px in [im.getpixel((x, y))]
                    if abs(px[0] - 212) < 40 and abs(px[1] - 175) < 40 and abs(px[2] - 55) < 45)
     g2, g8 = gold_pixels(2), gold_pixels(8)
-    check(f"the meter is painted in the poster and fills with progress ({g2} < {g8})", 0 < g2 < g8)
+    # 2026-10-11: nothing painted over the photo — the jauge is text under the QR
+    check(f"no meter painted in the poster any more ({g2}, {g8})", g2 == 0 and g8 == 0)
+    pg8 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))["posterGeneric"]
+    st = next(f for f in pg8["primaryFields"] if f["key"] == "stamps")
+    check(f"the jauge is the stamps field, count in its label ({st['label']} {st['value']})",
+          st["value"] == "●" * 8 + "○" * 2 and st["label"].endswith("· 8/10"))
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
 
     print("\nThe poster photo stays sharp")
     def png_data(w, h, rgb):
         b = _io.BytesIO(); _Img.new("RGB", (w, h), rgb).save(b, "PNG")
         return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
-    # a landscape banner: blurred behind, the whole photo sharp in the middle band
+    # a landscape banner covers the whole poster, as on iOS 27 (user, 2026-10-11)
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": png_data(1125, 432, (20, 120, 220)),
                                                                "hero_mode": "image"}})
     im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
-    band = im.getpixel((517, int(1515 * 0.265) + 200))
-    check(f"a landscape banner is shown whole, sharp, in the middle band ({band})", band == (20, 120, 220))
+    band, low = im.getpixel((517, int(1515 * 0.265) + 200)), im.getpixel((20, 1500))
+    check(f"a landscape banner fills the card, no blur anywhere ({band}, {low})",
+          band == (20, 120, 220) and low == (20, 120, 220))
     # the « Image poster » wins; at the poster's shape it fills the card
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_image_url": png_data(1035, 1515, (200, 40, 40))}})
     im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
     check("a poster-shaped image fills the card edge to edge",
           im.getpixel((517, 1400)) == (200, 40, 40) and im.getpixel((5, 900)) == (200, 40, 40))
-    # any other shape is shown whole, never cropped: a square photo keeps its 4 corners
+    # any other shape covers the card too: the poster is full bleed (user,
+    # 2026-10-11); « Ajuster » is how the owner frames it otherwise
     sq = _Img.new("RGB", (800, 800), (30, 160, 60))
     for (cx, cy) in ((0, 0), (799, 0), (0, 799), (799, 799)):
         for dx in range(-40, 41):
@@ -172,10 +179,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"poster_image_url":
                                  "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()}})
     im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
-    top_y = (1515 - 1035) // 2 + 36           # the square sits centred, 1035 wide; corner ≈ 52 px
-    centre, corner = im.getpixel((517, 757)), im.getpixel((30, top_y))
-    check(f"a square photo is shown whole: centre green {centre}, its yellow corner kept {corner}",
-          centre == (30, 160, 60) and corner[0] > 180 and corner[1] > 180 and corner[2] < 90)
+    centre, side, low = im.getpixel((517, 757)), im.getpixel((10, 757)), im.getpixel((1030, 1510))
+    check(f"a square photo covers the card: green edge to edge {centre} {side} {low}",
+          centre == side == low == (30, 160, 60))
     r = http("PUT", "/api/owner/card/settings", headers={"Authorization": "Bearer " + _auth.create_access_token(
         {"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})}, json={"poster_image_url": "javascript:alert(1)"})
     check("anything but an image is refused", r.status_code == 400)

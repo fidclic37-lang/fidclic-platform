@@ -236,7 +236,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           "?offre=camp-photo&k=" in gobj["linksModuleData"]["uris"][0]["uri"]
           and not any(t["id"] == "offer_link" for t in gobj["textModulesData"]))
     check("campaign photo: Google's banner URL changes with the campaign",
-          gobj["heroImage"]["sourceUri"]["uri"].endswith("-camp-photo"))
+          "-camp-photo-" in gobj["heroImage"]["sourceUri"]["uri"])
     db.campaigns.update_one({"id": "camp-photo"}, {"$set": {
         "sent_at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=WP.CAMPAIGN_OFFER_DAYS + 1)}})
     pje = WP.build_pass_json(WP._card_payload("FT-TEST0001"))

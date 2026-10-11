@@ -6863,6 +6863,8 @@ def _serialize_card_payload(cust: dict) -> dict:
             "logo_round":           tpl.get("logo_round"),
             "logo_ring":            tpl.get("logo_ring"),
             "logo_ring_color":      tpl.get("logo_ring_color"),
+            "poster_footer_color":  tpl.get("poster_footer_color"),
+            "stamp_shape":          tpl.get("stamp_shape"),
             "google_design":        tpl.get("google_design"),
             "hero_mode":            tpl.get("hero_mode"),
             "visits_label":         tpl.get("visits_label"),

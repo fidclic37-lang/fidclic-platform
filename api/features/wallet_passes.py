@@ -322,6 +322,9 @@ def derive_colors(card: Dict[str, Any]) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # Images
 # ---------------------------------------------------------------------------
+_FETCHED: Dict[str, Tuple[float, bytes]] = {}
+
+
 def _fetch_image(src: Optional[str]) -> Optional[bytes]:
     """data: URL or https URL → raw bytes (None on any failure)."""
     if not src:
@@ -331,8 +334,15 @@ def _fetch_image(src: Optional[str]) -> Optional[bytes]:
             head, _, data = src.partition(",")
             return base64.b64decode(data) if ";base64" in head else urllib.parse.unquote_to_bytes(data)
         if src.startswith("http"):
+            hit = _FETCHED.get(src)
+            if hit and time.time() - hit[0] < 600:          # the same photo on every preview keystroke
+                return hit[1]
             with urllib.request.urlopen(src, timeout=8) as r:  # noqa: S310 — merchant-provided image URL
-                return r.read()
+                data = r.read()
+            _FETCHED[src] = (time.time(), data)
+            while len(_FETCHED) > 16:
+                _FETCHED.pop(next(iter(_FETCHED)))
+            return data
     except Exception:
         return None
     return None
@@ -340,6 +350,12 @@ def _fetch_image(src: Optional[str]) -> Optional[bytes]:
 
 def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = False,
                   fallback_rgb: Tuple[int, int, int] = (28, 29, 34), tight: bool = False) -> Dict[str, bytes]:
+    return _cached("png_variants", (raw or b"", box, cover, fallback_rgb, tight),
+                   lambda: _make_png_variants(raw, box, cover, fallback_rgb, tight))
+
+
+def _make_png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = False,
+                       fallback_rgb: Tuple[int, int, int] = (28, 29, 34), tight: bool = False) -> Dict[str, bytes]:
     """Return {'':1x, '@2x':2x, '@3x':3x} PNGs fitted (contain) or filling (cover)
     the given point box. Falls back to a flat brand tile when Pillow is missing
     or the image is unreadable — a pass MUST ship icon.png.
@@ -398,6 +414,130 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
 
 
 # ---------------------------------------------------------------------------
+# Tampon shapes (user, 2026-10-11: the owner picks the shape, for Android
+# and iOS alike) — one choice for every jauge: the iOS 27 text jauge under
+# the QR, Google's jauge row, and the jauge painted into the iOS 26 strip and
+# Google's banner. No choice yet → the painted bars of before and ● in text.
+# ---------------------------------------------------------------------------
+STAMP_SHAPES: Dict[str, Tuple[str, str, str]] = {
+    # key → (label, filled glyph, empty glyph). U+FE0E keeps ♥ a text glyph:
+    # iOS would otherwise draw the red emoji, whatever the card's colours.
+    "rond": ("Rond", "●", "○"),
+    "etoile": ("Étoile", "★", "☆"),
+    "coeur": ("Cœur", "♥︎", "♡"),
+    "carre": ("Carré", "■", "□"),
+    "losange": ("Losange", "◆", "◇"),
+}
+JAUGE_MAX = 20          # past 20 tampons a row of glyphs no longer fits: « 3 / 25 » instead
+
+
+def stamp_shape(card: Dict[str, Any]) -> Optional[str]:
+    """The owner's shape, or None for the default (bars painted, ● in text)."""
+    s = card.get("stamp_shape")
+    return s if s in STAMP_SHAPES else None
+
+
+def jauge_text(stamps: int, threshold: int, shape: Optional[str]) -> Optional[str]:
+    """« ●●●○○○○○○○ » — the jauge Wallet writes itself, crisp on any photo.
+    None when there is nothing to draw or too many tampons for one line."""
+    if threshold <= 0 or threshold > JAUGE_MAX:
+        return None
+    _, full, empty = STAMP_SHAPES.get(shape or "rond", STAMP_SHAPES["rond"])
+    done = max(0, min(threshold, int(stamps)))
+    return full * done + empty * (threshold - done)
+
+
+def _shape_points(shape: str, cx: float, cy: float, r: float) -> List[Tuple[float, float]]:
+    import math
+    if shape == "losange":
+        return [(cx, cy - r), (cx + r * 0.82, cy), (cx, cy + r), (cx - r * 0.82, cy)]
+    if shape == "etoile":
+        pts = []
+        for i in range(10):
+            a = -math.pi / 2 + i * math.pi / 5
+            k = r if i % 2 == 0 else r * 0.46
+            pts.append((cx + k * math.cos(a), cy + k * math.sin(a) + r * 0.06))
+        return pts
+    if shape == "coeur":
+        pts = []
+        for i in range(48):
+            t = 2 * math.pi * i / 48
+            x = 16 * math.sin(t) ** 3
+            y = -(13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t))
+            pts.append((cx + x * r / 16.5, cy + (y + 2) * r / 16.5))
+        return pts
+    return []
+
+
+def paint_stamps(d: Any, shape: str, x0: float, x1: float, cy: float, max_size: float, threshold: int,
+                 stamps: int, fill: Tuple[int, int, int], empty_fill: Tuple[int, ...],
+                 empty_line: Tuple[int, ...], line_w: int = 2) -> None:
+    """A row of `threshold` shapes centred between x0 and x1, the first
+    `stamps` filled with the brand colour — the painted jauge's shapes."""
+    if threshold <= 0:
+        return
+    gap_k = 0.32
+    size = min(max_size, (x1 - x0) / (threshold + gap_k * (threshold - 1)))
+    gap = size * gap_k
+    total = threshold * size + (threshold - 1) * gap
+    left = x0 + ((x1 - x0) - total) / 2
+    done = max(0, min(threshold, stamps))
+    r = size / 2
+    for i in range(threshold):
+        cx = left + i * (size + gap) + r
+        on = i < done
+        kw = {"fill": fill + (255,)} if on else {"fill": empty_fill, "outline": empty_line, "width": line_w}
+        if shape == "rond":
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], **kw)
+        elif shape == "carre":
+            k = r * 0.9
+            d.rounded_rectangle([cx - k, cy - k, cx + k, cy + k], radius=max(1, round(k * 0.22)), **kw)
+        else:
+            pts = _shape_points(shape, cx, cy, r)
+            if on:
+                d.polygon(pts, fill=kw["fill"])
+            else:
+                d.polygon(pts, fill=empty_fill)
+                d.line(pts + [pts[0]], fill=empty_line, width=line_w, joint="curve")
+
+
+# ---------------------------------------------------------------------------
+# Composed images, remembered (the « Aperçu » was slow, user 2026-10-11):
+# typing a name rebuilt the same photo, strip and poster on every keystroke.
+# Keyed by a hash of every input, so a changed photo or count is new work.
+# ---------------------------------------------------------------------------
+_IMG_CACHE: Dict[str, Any] = {}
+_IMG_CACHE_MAX = 48
+_IMG_CACHE_BYTES = 48 * 1024 * 1024      # a serverless instance has memory to spare, not to waste
+
+
+def _size(v: Any) -> int:
+    if isinstance(v, (bytes, str)):
+        return len(v)
+    if isinstance(v, dict):
+        return sum(_size(x) for x in v.values())
+    return 64
+
+
+def _cached(kind: str, parts: Tuple[Any, ...], make):
+    h = hashlib.sha1(kind.encode())
+    for p in parts:
+        h.update(b"\x00")
+        h.update(p if isinstance(p, (bytes, bytearray)) else repr(p).encode())
+    key = h.hexdigest()
+    if key in _IMG_CACHE:
+        _IMG_CACHE[key] = _IMG_CACHE.pop(key)          # most recent last
+        return _IMG_CACHE[key]
+    out = make()
+    if out is not None:
+        _IMG_CACHE[key] = out
+        while len(_IMG_CACHE) > 1 and (len(_IMG_CACHE) > _IMG_CACHE_MAX
+                                       or sum(_size(v) for v in _IMG_CACHE.values()) > _IMG_CACHE_BYTES):
+            _IMG_CACHE.pop(next(iter(_IMG_CACHE)))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # The strip — the only place a pass can show a progress meter
 # ---------------------------------------------------------------------------
 # PassKit has no progress element: a pass can show text, images and a barcode,
@@ -408,7 +548,13 @@ STRIP_W, STRIP_H = 1125, 432          # Apple's 375 × 144 pt at 3×
 
 
 def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
-                  with_meter: bool, title: str = "", subtitle: str = "") -> Optional[bytes]:
+                  with_meter: bool, title: str = "", subtitle: str = "", shape: Optional[str] = None) -> Optional[bytes]:
+    return _cached("strip", (raw or b"", sorted(theme.items()), stamps, threshold, with_meter, title, subtitle, shape),
+                   lambda: _make_strip(raw, theme, stamps, threshold, with_meter, title, subtitle, shape))
+
+
+def _make_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
+                with_meter: bool, title: str = "", subtitle: str = "", shape: Optional[str] = None) -> Optional[bytes]:
     """Build the strip: the merchant's photo (or a brand gradient when there is
     none), the current offer written across it, and a segmented progress meter
     burnt into the bottom band. Returns PNG bytes at 3×, or None without Pillow."""
@@ -507,6 +653,11 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
 
     pad, bar_h = 64, 26
     y0 = STRIP_H - 62
+    if shape in STAMP_SHAPES:                  # the owner's tampon shape, not bars
+        paint_stamps(d, shape, pad, STRIP_W - pad, y0 + bar_h / 2 - 4, 58, threshold, stamps,
+                     brand, empty_fill, empty_line, 3)
+        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+        return buf.getvalue()
     inner = STRIP_W - 2 * pad
     gap = 10
     seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
@@ -534,14 +685,21 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
 POSTER_W, POSTER_H = 1035, 1515       # 345 × 505 pt at 3×
 
 
-def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
-                   with_meter: bool) -> Optional[bytes]:
-    """The poster's background: the merchant's photo (or the brand gradient),
-    a soft scrim at the top so the logo and the header read on any photo, and
-    the progress meter painted under them (user, 2026-10-05: « meter photo
-    mein + text »). PNG at 3×, None without Pillow."""
+def compose_poster(raw: Optional[bytes], theme: Dict[str, str]) -> Optional[bytes]:
+    """The poster's background, as an iOS 27 poster is meant to be: the
+    merchant's photo over the whole card (user, 2026-10-11: « jaise poster
+    aata hai woh rhe default, pure mein as bg image »), or the brand gradient,
+    with a soft scrim at the top so the logo and the header read on any photo.
+    Nothing else is painted: the tampons are a jauge Wallet writes in the
+    band under the QR (build_pass_json). To frame the photo another way the
+    owner uses « Ajuster » (poster_image_url, already the poster's shape).
+    PNG at 3×, None without Pillow."""
+    return _cached("poster", (raw or b"", sorted(theme.items())), lambda: _make_poster(raw, theme))
+
+
+def _make_poster(raw: Optional[bytes], theme: Dict[str, str]) -> Optional[bytes]:
     try:
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image, ImageFilter
     except ImportError:
         return None
     surface = _rgb(theme.get("surface_hex")) or (28, 29, 34)
@@ -552,47 +710,13 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
             base = Image.open(io.BytesIO(raw)).convert("RGB")
         except Exception:
             base = None
-    poster_ratio = POSTER_W / POSTER_H
-    if base is not None and abs(base.width / max(1, base.height) - poster_ratio) / poster_ratio < 0.04:
-        # already the poster's shape: fills the card
-        img = base.resize((POSTER_W, POSTER_H), Image.LANCZOS)
-    elif base is not None:
-        # Any other shape is shown WHOLE, resized, never cropped (user,
-        # 2026-10-06: « puri photo dikhe, kati hui nhi »), over the same photo
-        # blurred and dimmed behind. Filling the card instead zoomed a banner
-        # ~3.5× and turned it to pixels.
+    if base is not None:
+        # full bleed: the photo covers the card, centred
         scale = max(POSTER_W / base.width, POSTER_H / base.height)
-        back = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.BILINEAR)
-        left, top = (back.width - POSTER_W) // 2, (back.height - POSTER_H) // 2
-        img = back.crop((left, top, left + POSTER_W, top + POSTER_H)).filter(ImageFilter.GaussianBlur(28))
-        img = Image.blend(img, Image.new("RGB", img.size, (0, 0, 0)), 0.25)
-        if base.width / base.height >= 1.2:
-            # wide: full width, in the band between the meter and the barcode
-            fw, fh = POSTER_W, round(base.height * POSTER_W / base.width)
-            x, y = 0, int(POSTER_H * 0.265)
-            fh = min(fh, POSTER_H - y)
-        else:
-            k = min(POSTER_W / base.width, POSTER_H / base.height)
-            fw, fh = round(base.width * k), round(base.height * k)
-            x, y = (POSTER_W - fw) // 2, (POSTER_H - fh) // 2
-        sharp = base.resize((fw, fh), Image.LANCZOS)
-        # soft edges wherever the photo meets its blur
-        mask = Image.new("L", (fw, fh), 255)
-        md = ImageDraw.Draw(mask)
-        # thin, so the photo's own edges stay visible (« puri photo dikhe »)
-        fy, fx = max(1, min(24, fh // 8)), max(1, min(24, fw // 8))
-        for i in range(fy):
-            a = int(255 * (i / fy) ** 1.2)
-            if y > 0:
-                md.line([(0, i), (fw, i)], fill=a)
-            if y + fh < POSTER_H:
-                md.line([(0, fh - 1 - i), (fw, fh - 1 - i)], fill=a)
-        for i in range(fx):
-            if x > 0:
-                a = int(255 * (i / fx) ** 1.2)
-                md.line([(i, 0), (i, fh)], fill=min(a, 255))
-                md.line([(fw - 1 - i, 0), (fw - 1 - i, fh)], fill=min(a, 255))
-        img.paste(sharp, (x, y), mask)
+        big = base.resize((max(POSTER_W, round(base.width * scale)), max(POSTER_H, round(base.height * scale))),
+                          Image.LANCZOS)
+        left, top = (big.width - POSTER_W) // 2, (big.height - POSTER_H) // 2
+        img = big.crop((left, top, left + POSTER_W, top + POSTER_H))
     else:
         def mix(a, b, t):
             return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
@@ -603,50 +727,33 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
                           (diag.width + POSTER_W) // 2, (diag.height + POSTER_H) // 2))
         img = Image.composite(sheen, img, diag.point(lambda v: 255 - v)).filter(ImageFilter.GaussianBlur(18))
 
-    light = raw is None and _lum(surface) > 0.45
-    _paint_poster_meter(img, brand, stamps, threshold if with_meter else 0, light)
+    _paint_top_scrim(img, light=raw is None and _lum(surface) > 0.45)
     buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
     return buf.getvalue()
 
 
-def _paint_poster_meter(img: Any, brand: Tuple[int, int, int], stamps: int, threshold: int,
-                        light: bool = False) -> None:
-    """The top scrim (logo + header read on any photo) and, when threshold > 0,
-    the segmented meter under them — one segment per stamp. Drawn in place,
-    sized from the image's own width so any poster size gets the same look."""
+def _paint_top_scrim(img: Any, light: bool = False) -> None:
+    """A soft shade at the top so the logo and the header read on any photo."""
     from PIL import ImageDraw
     W, H = img.size
-    k = W / POSTER_W
     scrim = (255, 255, 255) if light else (0, 0, 0)
     d = ImageDraw.Draw(img, "RGBA")
     band = int(H * 0.30)
-    for i in range(band):                          # top scrim: logo + header + meter
+    for i in range(band):
         a = int((120 if light else 150) * (1 - i / band) ** 1.4)
         d.line([(0, i), (W, i)], fill=scrim + (a,))
-    if threshold > 0:
-        pad, bar_h, gap = 60 * k, max(2, round(24 * k)), 10 * k
-        y0 = int(H * 0.205)
-        inner = W - 2 * pad
-        seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
-        done = max(0, min(threshold, stamps))
-        empty_fill = (0, 0, 0, 38) if light else (255, 255, 255, 52)
-        empty_line = (0, 0, 0, 64) if light else (255, 255, 255, 90)
-        for i in range(threshold):
-            x0 = pad + i * (seg + gap)
-            box = [x0, y0, x0 + seg, y0 + bar_h]
-            if i < done:
-                d.rounded_rectangle(box, radius=bar_h // 2, fill=brand + (255,))
-            else:
-                d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
-                d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=max(1, round(2 * k)))
 
 
 def _poster_variants(png3x: bytes) -> Dict[str, bytes]:
+    return _cached("poster_variants", (png3x,), lambda: _make_poster_variants(png3x))
+
+
+def _make_poster_variants(png3x: bytes) -> Dict[str, bytes]:
     from PIL import Image
     big = Image.open(io.BytesIO(png3x))
-    out: Dict[str, bytes] = {}
-    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
-        im = big if k == 3 else big.resize((345 * k, 505 * k), Image.LANCZOS)
+    out: Dict[str, bytes] = {"@3x": png3x}            # the master is already the @3x PNG
+    for suffix, k in (("", 1), ("@2x", 2)):
+        im = big.resize((345 * k, 505 * k), Image.LANCZOS)
         b = io.BytesIO(); im.save(b, "PNG", optimize=True); out[suffix] = b.getvalue()
     return out
 
@@ -840,14 +947,18 @@ def build_barcodes(fmt: str, fallback: Optional[str], serial: str, alt: Optional
 
 def _strip_variants(png3x: bytes) -> Dict[str, bytes]:
     """3× master → the @2x and 1× Wallet also asks for."""
+    return _cached("strip_variants", (png3x,), lambda: _make_strip_variants(png3x))
+
+
+def _make_strip_variants(png3x: bytes) -> Dict[str, bytes]:
     try:
         from PIL import Image
     except ImportError:
         return {"@3x": png3x}
     master = Image.open(io.BytesIO(png3x)).convert("RGB")
-    out: Dict[str, bytes] = {}
-    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
-        img = master if k == 3 else master.resize((375 * k, 144 * k), Image.LANCZOS)
+    out: Dict[str, bytes] = {"@3x": png3x}            # the master is already the @3x PNG
+    for suffix, k in (("", 1), ("@2x", 2)):
+        img = master.resize((375 * k, 144 * k), Image.LANCZOS)
         buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
         out[suffix] = buf.getvalue()
     return out
@@ -1326,6 +1437,16 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         member_field = next((f for f in secondary if f["key"] == "member"),
                             {"key": "member", "label": "MEMBRE", "value": first_name})
         primary: List[Dict[str, Any]] = [member_field]
+        # The tampons as a jauge Wallet writes in the band under the QR (user,
+        # 2026-10-11): crisp on any photo, never painted over it. The count
+        # moves to the label: « TAMPONS · 3/10 » over « ●●●○○○○○○○ ».
+        # It takes the progress slot, whichever it was (« Tampons » or the
+        # reward): the mockup's MEMBRE | TAMPONS ●●●○○○○○○○ 3/10.
+        jauge = jauge_text(stamps, threshold, stamp_shape(card)) if card.get("show_meter") is not False else None
+        if jauge:
+            progress = {"key": "stamps" if progress and progress["key"] == "stamps" else "jauge",
+                        "label": f"{(card.get('stamps_label') or 'Tampons').upper()} · {stamps}/{threshold}",
+                        "value": jauge, "changeMessage": card.get("stamps_change_message") or "Tampons : %@"}
         if progress:
             primary.append(progress)
         elif show_tier:
@@ -1343,6 +1464,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
         # logoText stays: it is the iOS 26 card's shop name next to the logo
         # (the poster draws its primaryLogo only).
+        # The band under the fields: Apple's blur by default, or the owner's
+        # colour, as in Pass Designer (user, 2026-10-11: « footer jidhar blur
+        # aata hai udhar color daalne ka option »).
+        foot = _rgb(card.get("poster_footer_color"))
+        if foot:
+            pass_json["footerBackgroundColor"] = _css(foot)
     fa = featured_json(clean_featured(card.get("featured_actions"), tenant), serial)
     if fa:
         pass_json["featuredActions"] = fa
@@ -1363,6 +1490,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             # the running campaign's offer, short, or nothing (a front field
             # holding only {offre} then disappears)
             "offer": offer_title or "", "visits": visits, "shop": org,
+            # {jauge}: the tampons as shapes, « ●●●○○○○○○○ »
+            "meter": (jauge_text(stamps, threshold, stamp_shape(card)) or f"{stamps} / {threshold}"),
             "member_since": since.strftime("%d/%m/%Y") if isinstance(since, datetime) else "",
         }
         pass_json = PD.apply(pass_json, tpl, values)
@@ -1405,7 +1534,7 @@ def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
                  else int(cust.get("visits") or 0) // visits_per_stamp)
     title, sub = _offer_text(card)
     return compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter,
-                         title=title, subtitle=sub)
+                         title=title, subtitle=sub, shape=stamp_shape(card))
 
 
 def _stamp_state(payload: Dict[str, Any]) -> Tuple[int, int]:
@@ -1418,44 +1547,14 @@ def _stamp_state(payload: Dict[str, Any]) -> Tuple[int, int]:
     return stamps, threshold
 
 
-def template_poster_with_meter(files: Dict[str, bytes], payload: Dict[str, Any]) -> Dict[str, bytes]:
-    """A Pass Designer template ships its own poster background; the progress
-    meter is painted onto it, every size, as on the FidClic design — so iOS 27
-    shows the tampons too, and the next visit's pass carries the new count.
-    The meter follows the business's switch (show_meter): off → the template's
-    background goes out untouched. Returns only the files it replaced."""
-    card = payload["card"]
-    if card.get("show_meter") is False or int(card.get("reward_threshold") or 0) <= 0:
-        return {}
-    try:
-        if "posterGeneric" not in json.loads(files.get("pass.json") or b"{}"):
-            return {}
-        from PIL import Image
-    except Exception:
-        return {}
-    stamps, threshold = _stamp_state(payload)
-    brand = _rgb(card.get("brand_color")) or (184, 92, 56)
-    out: Dict[str, bytes] = {}
-    for name in [n for n in files if n.startswith("background") and n.endswith(".png")]:
-        try:
-            img = Image.open(io.BytesIO(files[name])).convert("RGB")
-            _paint_poster_meter(img, brand, stamps, threshold)
-            b = io.BytesIO(); img.save(b, "PNG", optimize=True); out[name] = b.getvalue()
-        except Exception:
-            continue
-    return out
-
-
 def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
     """The iOS 27 poster background (1035×1515): same photo as the strip — the
     live campaign's, else the merchant's banner, else the brand gradient."""
     card = payload["card"]
-    stamps, threshold = _stamp_state(payload)
-    with_meter = card.get("show_meter") is not False
     raw = None
     if not _campaign_photo(card) and card.get("poster_image_url"):
-        raw = _fetch_image(card.get("poster_image_url"))     # the portrait made for the poster
-    return compose_poster(raw or _hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
+        raw = _fetch_image(card.get("poster_image_url"))     # the owner's « Ajuster », poster-shaped
+    return compose_poster(raw or _hero_raw(card), derive_colors(card))
 
 
 def round_logo(raw: Optional[bytes], ring: Optional[str] = None, size: int = 600) -> Optional[bytes]:
@@ -1568,7 +1667,6 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
         tpl = None
     if tpl:
         files.update(_template_files(tpl, card))
-        files.update(template_poster_with_meter(files, payload))   # iOS 27: the tampons on the poster
         if "storeCard" in json.loads(files["pass.json"]):   # iOS 26: the card as before, strip in
             strip3x = strip_png(payload)
             for suffix, png in (_strip_variants(strip3x) if strip3x else {}).items():
@@ -1816,6 +1914,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
+    "poster_footer_color", "stamp_shape",
 }
 
 
@@ -1892,13 +1991,17 @@ def _preview_image(name: str, png: bytes) -> Optional[str]:
     """A file of the pass for the page: photos as JPEG (a poster PNG is a
     megabyte), artwork with transparency as PNG."""
     if name.split("@")[0].split(".")[0] in ("background", "strip"):
-        try:
-            from PIL import Image
-            b = io.BytesIO()
-            Image.open(io.BytesIO(png)).convert("RGB").save(b, "JPEG", quality=82)
-            return "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
-        except Exception:
-            pass
+        def jpeg() -> Optional[str]:
+            try:
+                from PIL import Image
+                b = io.BytesIO()
+                Image.open(io.BytesIO(png)).convert("RGB").save(b, "JPEG", quality=82)
+                return "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
+            except Exception:
+                return None
+        out = _cached("preview_jpeg", (png,), jpeg)
+        if out:
+            return out
     return _data_url(png)
 
 
@@ -1936,9 +2039,6 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
     if tpl:                                   # a Pass Designer template: its own images
         imgs = PD.images(tpl)
         bg2x = PD.best(imgs, "background")
-        if bg2x:                              # the tampons, as the pass carries them
-            bg2x = template_poster_with_meter({"pass.json": json.dumps(pj).encode(),
-                                               "background@2x.png": bg2x}, payload).get("background@2x.png", bg2x)
         logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
     else:
         bg3x = poster_png(payload)
@@ -2413,7 +2513,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:   # Google has no strip either: it gets the same painted banner, meter in.
         hero = (f"{_site_url()}/api/card/{serial}/wallet-strip.png"
                 f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"
-                f"-{(card.get('campaign_offer') or {}).get('id') or 0}")
+                f"-{(card.get('campaign_offer') or {}).get('id') or 0}-{stamp_shape(card) or 'barre'}")
     obj: Dict[str, Any] = {
         "id": object_id, "classId": class_id, "state": "INACTIVE" if pj.get("voided") else "ACTIVE",
         "accountId": serial, "accountName": str(member),
@@ -2436,7 +2536,19 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
                                     for l in pj["locations"][:10]]
     if points:
         obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": {"int": int(points["value"] or 0)}}
-    if progress:
+    # The jauge rides in the banner (hero « fidclic »). With a photo or no
+    # banner it would be gone: then Google's own row carries it, in the
+    # owner's shape (user, 2026-10-11: « agar meter nhi h toh add kr do »).
+    jauge = None
+    if gd["hero"] != "fidclic" and card.get("show_meter") is not False:
+        st, th = _stamp_state(payload)
+        st = max(0, min(st, th))
+        jauge = jauge_text(st, th, stamp_shape(card))
+    if jauge:
+        label = (card.get("stamps_label") or "Tampons").strip().title()
+        obj["secondaryLoyaltyPoints" if points else "loyaltyPoints"] = {
+            "label": f"{label} · {st}/{th}", "balance": {"string": jauge}}
+    elif progress:
         obj["secondaryLoyaltyPoints" if points else "loyaltyPoints"] = {
             "label": str(progress["label"]).title(), "balance": {"string": str(progress["value"])}}
     # The campaign stays as a message in the card (Google's banner element).

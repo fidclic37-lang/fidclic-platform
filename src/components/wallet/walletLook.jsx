@@ -74,7 +74,7 @@ export const ICON_IMAGE = ['icon', 'Icône (notifications)', '29 × 29 pt'];
 // {placeholders} the server fills for each customer (features/pass_designer)
 export const FIELD_VARS = [
   ['{prenom}', 'Prénom'], ['{nom}', 'Nom complet'], ['{carte}', 'N° de carte'], ['{points}', 'Points'],
-  ['{tampons}', 'Tampons (3 / 10)'], ['{statut}', 'Statut'], ['{recompense}', 'Prochaine récompense'],
+  ['{tampons}', 'Tampons (3 / 10)'], ['{jauge}', 'Jauge (●●●○○○)'], ['{statut}', 'Statut'], ['{recompense}', 'Prochaine récompense'],
   ['{offre}', 'Offre du moment'], ['{visites}', 'Visites'], ['{membre_depuis}', 'Membre depuis'], ['{commerce}', 'Nom du commerce'],
 ];
 
