@@ -21,7 +21,7 @@ export const VAR_LABELS = {
   'points_gagnés': 'Points gagnés', visite_ami: '« est venu / est revenu »', 'établissement': 'Établissement le plus proche',
   jours_absence: "Jours d'absence", nom: 'Nom complet du client', 'récompense': 'Récompense du palier',
   distance: 'Distance', offre: 'Offre en cours', lien_avis: 'Lien de votre page Google Avis', lien: 'Lien vers la carte du client',
-  points_restants: 'Points restants avant la récompense', tampons_restants: 'Tampons restants avant la récompense', tampons: 'Tampons sur la carte',
+  amis_parraines: "Nombre d'amis parrainés (validés)", points_restants: 'Points restants avant la récompense', tampons_restants: 'Tampons restants avant la récompense', tampons: 'Tampons sur la carte',
 };
 // the « + Prénom » chips of the message step (mockups, 2026-10-11)
 export const VAR_SHORT = {
@@ -30,7 +30,7 @@ export const VAR_SHORT = {
   visites_restantes: 'Visites restantes', visite_s: 'visite(s)', filleul: 'Filleul', parrain: 'Parrain',
   'points_gagnés': 'Points gagnés', visite_ami: 'Venu / revenu', 'établissement': "Nom de l'établissement",
   jours_absence: "Jours d'absence", 'récompense': 'Récompense', distance: 'Distance', offre: 'Offre', lien_avis: 'Lien Google Avis',
-  lien: 'Lien', points_restants: 'Points restants', tampons_restants: 'Tampons restants', tampons: 'Tampons actuels',
+  lien: 'Lien', amis_parraines: "Nombre d'amis parrainés", points_restants: 'Points restants', tampons_restants: 'Tampons restants', tampons: 'Tampons actuels',
 };
 // Géolocalisation (mockups 2026-10-11)
 export const PASSANTS = [
