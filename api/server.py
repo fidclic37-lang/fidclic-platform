@@ -4934,8 +4934,11 @@ def _offers_active_for(tenant_id: str, customer_id: str) -> List[Dict[str, Any]]
         for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "kind": {"$in": list(_K.OFFER_KINDS)},
                                     "recipient_ids": customer_id}, {"_id": 0}):
             if _K.active_now(c, now_utc):
+                # « Offre utilisée » (Nouvelle automatisation, 2026-10-11): once per client
+                used = db.offer_uses.find_one({"tenant_id": tenant_id, "campaign_id": c.get("id"),
+                                               "customer_id": customer_id}, {"_id": 0, "used_at": 1})
                 out.append({"id": c.get("id"), "title": c.get("name"), "label": _K.discount_label(c.get("offer")),
-                            "terms": _K.terms_label(c)})
+                            "terms": _K.terms_label(c), "used": bool(used)})
         return out
     except Exception as exc:
         print(f"scan: active offers unavailable (non-fatal): {exc}")
@@ -5225,7 +5228,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "visit"})        # points / visites / montant
         _AU.fire("google_review", token_data.tenant_id, _fresh,             # the visit's établissement: its Google link
                  {"event": "visit", "branch_id": req.branch_id or cust.get("branch_id")})
-        _AU.fire("custom", token_data.tenant_id, _fresh, {"event": "visit"})    # « Personnalisée »
+        _AU.fire("custom", token_data.tenant_id, _fresh, {                    # « Personnalisée » / Nouvelle automatisation
+            "event": "visit", "amount": float(req.amount_paid or 0), "branch_id": req.branch_id or cust.get("branch_id"),
+            "points_before": int(cust.get("points") or 0), "visits_before": int(cust.get("visits") or 0)})
     except Exception as _e:
         print(f"scan_visit: automatic messages failed (non-fatal): {_e}")
 
@@ -10978,6 +10983,15 @@ def proximity_ping(req: ProximityPingRequest):
         if (cust.get("tier") or "").lower() != "vip":
             return {"status": "ignored", "reason": "vip_only: customer not VIP"}
 
+    # Nouvelle automatisation › Géolocalisation: its own address and rayon
+    # (features/custom_rules, 2026-10-11) — checked before the shop's own zone
+    custom_said = []
+    try:
+        from features import custom_rules as _CR
+        custom_said = _CR.near(tid, cust, req.latitude, req.longitude)
+    except Exception as exc:
+        print(f"proximity: custom geolocation failed ({exc})")
+
     # The shop's establishments (features/geo_automation.anchors — the same
     # ids an automation's « établissements » use) and its one radius.
     from features import geo_automation as _GA
@@ -10991,6 +11005,9 @@ def proximity_ping(req: ProximityPingRequest):
             nearest = {**a, "distance_m": dist}
 
     if not nearest or nearest["distance_m"] > radius_m:
+        if custom_said:
+            return {"status": "sent", "title": custom_said[0]["title"], "body": custom_said[0]["body"],
+                    "button_label": custom_said[0].get("button_label"), "button_url": custom_said[0].get("click_url")}
         return {"status": "out_of_range", "distance_m": (nearest["distance_m"] if nearest else None)}
 
     # The owner's map: this client was near the shop (rounded ~50 m, kept 30 days).
@@ -11005,6 +11022,7 @@ def proximity_ping(req: ProximityPingRequest):
     from features import automations as _AU
     said = [x for x in _AU.fire("geo", tid, cust, {"store": nearest.get("name") or "", "store_id": nearest.get("id"),
                                                      "distance_m": int(nearest["distance_m"])}) if x.get("title")]
+    said = said or custom_said
     if not said:
         return {"status": "ignored", "reason": "no geolocation automation for this client"}
     db.push_notifications.update_one({"log_id": said[0]["id"]}, {"$set": {

@@ -139,9 +139,10 @@ function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
 
 // Campagnes (2026-10-10): what the staff must not forget for this client —
 // an offer valid right now (dates and happy hours) and a défi's reward won.
-function TillReminders({ offers = [], rewards = [], onRedeemed }) {
+function TillReminders({ offers = [], rewards = [], onRedeemed, customerId, branchId }) {
   const [busy, setBusy] = useState('');
   const [done, setDone] = useState({});
+  const [used, setUsed] = useState({});
   const [err, setErr] = useState('');
   if (!offers.length && !rewards.length) return null;
   const give = async (r) => {
@@ -150,13 +151,28 @@ function TillReminders({ offers = [], rewards = [], onRedeemed }) {
     catch (e) { setErr(e?.response?.data?.detail || "La récompense n'a pas pu être remise."); }
     finally { setBusy(''); }
   };
+  // « Offre utilisée » (Nouvelle automatisation › Après une action client, 2026-10-11): once per client
+  const useIt = async (o) => {
+    setBusy(o.id); setErr('');
+    try { await ownerAPI.useOffer(o.id, { customer_id: customerId, branch_id: branchId || null }); setUsed((d) => ({ ...d, [o.id]: true })); }
+    catch (e) {
+      if (e?.response?.status === 409) setUsed((d) => ({ ...d, [o.id]: true }));
+      setErr(e?.response?.data?.detail || "L'offre n'a pas pu être marquée comme utilisée.");
+    } finally { setBusy(''); }
+  };
   return (
     <div className="mt-3 space-y-2">
       {offers.map((o) => (
-        <p key={o.id} className="flex items-start gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2.5 text-[13.5px] text-[#92400E]">
+        <div key={o.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2.5 text-[13.5px] text-[#92400E]">
           <span aria-hidden="true">%</span>
-          <span><b>Offre active{o.label ? ` : ${o.label}` : ''}</b> — {o.title}{o.terms ? ` (${o.terms})` : ''}. Pensez à l'appliquer.</span>
-        </p>
+          <span className="min-w-0 flex-1"><b>Offre active{o.label ? ` : ${o.label}` : ''}</b> — {o.title}{o.terms ? ` (${o.terms})` : ''}.{o.used || used[o.id] ? ' Déjà utilisée par ce client.' : " Pensez à l'appliquer."}</span>
+          {customerId && (o.used || used[o.id] ? <span className="font-semibold text-[#15803D]">Utilisée ✓</span> : (
+            <button type="button" onClick={() => useIt(o)} disabled={busy === o.id}
+                    className="rounded-lg bg-[#D97706] px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60">
+              {busy === o.id ? '…' : 'Offre utilisée'}
+            </button>
+          ))}
+        </div>
       ))}
       {rewards.map((r) => (
         <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2.5 text-[13.5px] text-[#14532D]">
@@ -970,7 +986,7 @@ const ScanPage = () => {
                     🎉 Défi réussi : {scanResult.defis_won.map((w) => w.reward).join(', ')} !
                   </p>
                 )}
-                <TillReminders offers={scanResult.offers_active} rewards={scanResult.defi_rewards} />
+                <TillReminders offers={scanResult.offers_active} rewards={scanResult.defi_rewards} customerId={scanResult.customer_id} branchId={scanResult.branch_id} />
                 {/* Points & Stamps Summary */}
                 <div className="grid grid-cols-2 gap-4 mb-6 text-center">
                   <div className="bg-white p-4 rounded-lg">

@@ -10,6 +10,7 @@ import {
 import { ownerAPI } from '../lib/api';
 import LockScreenPreview from '../components/automations/LockScreenPreview';
 import GeoZoneMap from '../components/automations/GeoZoneMap';
+import NouvelleEditor from '../components/automations/NouvelleEditor';
 import {
   ICONS, TONES, VAR_LABELS, VAR_SHORT, DAY_NAMES, GENDERS, AGES, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
   CLIENT_TYPES, AGE_STEPS,
@@ -426,6 +427,10 @@ export default function AutomationEditorPage() {
   if (error && !s) return <p role="alert" className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13px] text-[#B91C1C]">{error}</p>;
   if (!s || !page || !m) {
     return <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E6EEFB] bg-white py-24 text-[13px] text-[#64748B]"><Loader2 size={16} className="animate-spin" /> Chargement…</div>;
+  }
+  // « Nouvelle automatisation » (29 mockups, 2026-10-11): the owner's own automation, its own editor
+  if (s.scenario === 'custom' && (!editing || row)) {
+    return <NouvelleEditor key={row?.id || 'new'} page={page} row={editing ? row : null} ai={location.state?.ai} />;
   }
 
   const tr = s.trigger;

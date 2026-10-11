@@ -70,6 +70,8 @@ READY_IMAGES = ("/automations/avis-google.png",)   # the Avis Google default (pu
 def init(db):
     global _db
     _db = db
+    from features import custom_rules as CR
+    CR.init(db)
     try:
         _db.automation_log.create_index([("tenant_id", 1), ("automation_id", 1), ("customer_id", 1)])
         _db.automation_log.create_index("id", unique=True)
@@ -98,6 +100,21 @@ def _aware(value: Any) -> Optional[datetime]:
 def _paris(at: datetime) -> datetime:
     from features import period as P
     return P.local(at)
+
+
+def _loc(at: datetime, sched: Optional[Dict[str, Any]]) -> datetime:
+    """Wall clock in the automation's « Fuseau horaire » (Paris unless chosen)."""
+    if not (sched or {}).get("tz"):
+        return _paris(at)
+    from features import custom_rules as CR
+    return CR.local(at, sched)
+
+
+def _from_loc(d: date, hh: int, mm: int, sched: Optional[Dict[str, Any]]) -> datetime:
+    if not (sched or {}).get("tz"):
+        return _from_paris(d, hh, mm)
+    from features import custom_rules as CR
+    return CR.from_local(d, hh, mm, sched)
 
 
 def _from_paris(d: date, hh: int, mm: int) -> datetime:
@@ -205,7 +222,14 @@ DATE_MODES = ("once", "weekly", "monthly", "yearly")
 def is_timed(scenario: str, trigger: Optional[Dict[str, Any]] = None) -> bool:
     """Sent at an hour (daily run / tick) rather than on an event."""
     kind = SCENARIOS[scenario]["kind"]
+    if scenario == "custom" and (trigger or {}).get("type") in CR_V2:
+        from features import custom_rules as CR
+        return CR.is_timed(trigger or {})
     return kind == "time" or (scenario in ("custom", "google_review") and (trigger or {}).get("type") == "date")
+
+
+# « Nouvelle automatisation » (mockups 2026-10-11): features/custom_rules
+CR_V2 = ("on_date", "recurring", "action", "loyalty", "behavior", "geo", "other")
 # Removed by the user (2026-10-11) — with their data.
 REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products", "special_event"}
 
@@ -213,7 +237,7 @@ VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
     "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["points_restants", "tampons_restants", "tampons", "récompense", "visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami", "récompense", "lien", "amis_parraines"], "geo": ["établissement"],
-    "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": [],
+    "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": ["prénom", "nom", "points", "récompense", "nom_commerce", "date", "montant", "nombre_visites"],
 }
 VARIABLES["geo"] = ["établissement", "distance", "offre"]
 LINK_TYPES = ("card", "rewards", "offer", "google_review", "url")
@@ -631,6 +655,26 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
                 return False
         except ValueError:
             pass
+    # Nouvelle automatisation › Ciblage (2026-10-11)
+    pts = int(cust.get("points") or 0)
+    if f.get("points_min") not in (None, "") and pts < int(f["points_min"]):
+        return False
+    if f.get("points_max") not in (None, "") and pts > int(f["points_max"]):
+        return False
+    paid = float(cust.get("total_amount_paid") or 0)
+    if f.get("spent_min") not in (None, "") and paid < float(f["spent_min"]):
+        return False
+    if f.get("spent_max") not in (None, "") and paid > float(f["spent_max"]):
+        return False
+    if f.get("last_visit_days") not in (None, ""):
+        last = _aware(cust.get("last_visit_date"))
+        idle = (at - last).days if last else None
+        n = int(f["last_visit_days"])
+        if f.get("last_visit_op") == "less":
+            if idle is None or idle > n:
+                return False
+        elif idle is not None and idle < n:
+            return False                          # « il y a plus de N jours » (never came = counts)
     # Client inactif's filters (mockups, 2026-10-11) — every automation reads them
     pf = as_list(f.get("past_freq"), PAST_FREQS)
     if pf and not within(visits_per_month(cust, at), [PAST_FREQS[x] for x in pf], half_open=True):
@@ -722,15 +766,15 @@ def slots_of(sched: Dict[str, Any]) -> List[Tuple[Tuple[int, int], Tuple[int, in
 def next_window(sched: Dict[str, Any], at: datetime) -> datetime:
     """The first moment at or after `at` inside the days, hours, dates and
     holidays of an event scenario. A window that never opens answers far away."""
-    loc = _paris(at)
+    loc = _loc(at, sched)
     best: Optional[datetime] = None
     for i in range(-1, 15):                   # yesterday: a night slot may still run
         d = (loc + timedelta(days=i)).date()
         if not _day_ok(sched, d):
             continue
         for (fh, fm), (th, tm) in slots_of(sched):
-            start = _from_paris(d, fh, fm)
-            end = _from_paris(d, th, tm) if (th, tm) > (fh, fm) else _from_paris(d + timedelta(days=1), th, tm)
+            start = _from_loc(d, fh, fm, sched)
+            end = _from_loc(d, th, tm, sched) if (th, tm) > (fh, fm) else _from_loc(d + timedelta(days=1), th, tm, sched)
             if (th, tm) == (23, 59):
                 end += timedelta(seconds=59)
             if end < at:
@@ -751,7 +795,7 @@ def ended(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
     if not raw:
         return False
     try:
-        return _paris(at or _now()).date() > date.fromisoformat(str(raw)[:10])
+        return _loc(at or _now(), row.get("schedule")).date() > date.fromisoformat(str(raw)[:10])
     except ValueError:
         return False
 
@@ -760,7 +804,7 @@ def running(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
     """Active and inside its period (not « Terminée », already started)."""
     if row.get("status") != "active" or ended(row, at):
         return False
-    return _valid_on(row.get("schedule") or {}, _paris(at or _now()).date())
+    return _valid_on(row.get("schedule") or {}, _loc(at or _now(), row.get("schedule")).date())
 
 
 def status_of(row: Dict[str, Any], at: Optional[datetime] = None) -> str:
@@ -822,6 +866,18 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
             out["récompense"] = out["recompense"] = ctx.get("reward") or reward
         per_stamp = max(1, int(tpl.get("visits_per_stamp") or 1))
         out["tampons"] = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0)) // per_stamp
+    if scenario == "custom":
+        out["récompense"] = out["recompense"] = reward
+        today = _paris(_now()).date()
+        months = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+                  "novembre", "décembre"]
+        out["date"] = f"{today.day} {months[today.month - 1]}"
+        out["montant"] = f"{float(cust.get('total_amount_paid') or 0):.2f} €".replace(".", ",")
+        out["nombre_visites"] = int(cust.get("visits") or 0)
+        if ctx.get("offre"):
+            out["offre"] = ctx["offre"]
+        if ctx.get("palier"):
+            out["palier"] = ctx["palier"]
     if scenario == "referral":
         out.update({"visite_ami": "est revenu" if ctx.get("kind") == "next" else "est venu",
                     "filleul": ctx.get("filleul") or "votre ami", "parrain": ctx.get("parrain") or "votre parrain",
@@ -871,6 +927,8 @@ def _target_url(tid: str, row: Dict[str, Any], cust: Dict[str, Any],
     msg = row.get("message") or {}
     if row.get("scenario") == "referral" and (ctx or {}).get("side") == "filleul" and row.get("message_filleul"):
         msg = row["message_filleul"]                  # the filleul's own button
+    if row.get("scenario") == "custom" and (ctx or {}).get("reminder") and row.get("message_reminder"):
+        msg = row["message_reminder"]
     btn = (msg.get("button") or {})
     if not btn.get("enabled"):
         return None
@@ -910,6 +968,8 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     msg = row.get("message") or {}
     if scenario == "referral" and ctx.get("side") == "filleul" and row.get("message_filleul"):
         msg = row["message_filleul"]                  # one automation, each side its own words
+    if scenario == "custom" and ctx.get("reminder") and row.get("message_reminder"):
+        msg = row["message_reminder"]                 # Annuelle › « Rappel avant la date »
     # a palier of its own (paliers personnalisés) speaks its own words
     raw_title = ctx.get("tier_title") or msg.get("title") or meta["title"]
     raw_body = ctx.get("tier_body") or msg.get("body") or meta["body"]
@@ -926,6 +986,10 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
            "clicked_at": None, "status": "sent"}
     if ctx.get("cycle"):
         log["cycle"] = ctx["cycle"]
+    if ctx.get("year"):
+        log["year"] = ctx["year"]
+    if ctx.get("reminder"):
+        log["reminder"] = True
     if ctx.get("level") is not None:
         log["level"] = ctx["level"]
     _db.automation_log.insert_one(dict(log))
@@ -1197,6 +1261,12 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
         ctx.update({"level": hit["level"], "palier": hit["label"],
                     **({"tier_title": hit["tier"].get("title"), "tier_body": hit["tier"].get("body"),
                         "tier_reward": hit["tier"].get("reward")} if hit.get("tier") else {})})
+    elif sc == "custom" and tr.get("type") in CR_V2:
+        from features import custom_rules as CR
+        if not CR.eligible(tid, row, cust, ctx, at) or not CR.rules_ok(row, cust, at, ctx):
+            return False
+        if tr.get("type") == "geo" and (row.get("schedule") or {}).get("window") and not in_window(row["schedule"], at):
+            return False                         # outside the plage horaire: a passer-by does not wait
     elif sc == "custom":
         t = tr.get("type")
         want = {"visits": "visit", "after_visit": "visit", "after_signup": "signup"}.get(t)
@@ -1372,7 +1442,13 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
                 if not matches(tid, row, cust, at, cache) or not _eligible(tid, row, cust, ctx, at):
                     continue
                 due = at + _delay(row.get("trigger") or {})
-                if scenario == "google_review" and gr_freq(row.get("trigger") or {}) == "smart":
+                v2 = scenario == "custom" and (row.get("trigger") or {}).get("type") in CR_V2
+                if v2:
+                    from features import custom_rules as CR
+                    due = CR.send_moment(row, due)             # « à une date / heure spécifique »
+                if v2 and (row.get("trigger") or {}).get("type") == "geo":
+                    pass                                     # a passer-by does not wait (checked in _eligible)
+                elif scenario == "google_review" and gr_freq(row.get("trigger") or {}) == "smart":
                     due = smart_due(tid, cust, row.get("schedule") or {}, due)   # the client's own time
                 elif scenario != "geo":
                     due = next_window(row.get("schedule") or {}, due)
@@ -1499,6 +1575,10 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             nxt = next_window(row.get("schedule") or {}, _from_paris(_paris(at).date() + timedelta(days=1), 0, 0))
             _db.automation_queue.insert_one({**q, "due_at": _over_limit(row, nxt) or nxt})
             continue
+        if row["scenario"] == "custom" and (row.get("trigger") or {}).get("type") in CR_V2:
+            from features import custom_rules as CR
+            if not CR.rules_ok(row, cust, at, q.get("ctx")):
+                continue                          # the limit / anti-doublon filled up meanwhile
         if row["scenario"] == "inactive":         # came back while waiting: nothing to say
             last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
             if not last or at - last < timedelta(days=max(1, int((row.get("trigger") or {}).get("days") or 30))):
@@ -1513,7 +1593,7 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
                                           "scenario": {"$in": ["birthday", "inactive", "custom", "google_review"]}},
                                          {"_id": 0})):
         if row["scenario"] in ("custom", "google_review") and (row.get("trigger") or {}).get("type") != "date":
-            continue
+            continue                               # (« Nouvelle automatisation »: run_custom below)
         tid = row["tenant_id"]
         try:
             sched = row.get("schedule") or {}
@@ -1560,7 +1640,41 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         except Exception as exc:
             summary["errors"] += 1
             print(f"automations: {row.get('id')} failed ({exc})")
+    run_custom(at, strict, summary)
     return summary
+
+
+def run_custom(at: datetime, strict: bool, summary: Dict[str, Any]) -> None:
+    """« Nouvelle automatisation » on a clock (date, récurrent, comportement,
+    autre › inactivité / anniversaire / 1re visite): once a day each, at its
+    hour in its own « Fuseau horaire »."""
+    from features import custom_rules as CR
+    rows = [r for r in _db.automations.find({"status": "active", "scenario": "custom",
+                                             "trigger.type": {"$in": list(CR_V2)}}, {"_id": 0})
+            if CR.is_timed(r.get("trigger") or {})]
+    for row in rows:
+        tid = row["tenant_id"]
+        try:
+            sched = row.get("schedule") or {}
+            if not _plan_ok(tid) or not running(row, at):
+                continue
+            today = CR.local(at, sched).date()
+            last = _aware(row.get("last_run_at"))
+            if last and CR.local(last, sched).date() == today:
+                continue
+            hh, mm = _hm(sched.get("hour"), (10, 0))
+            if strict and at < CR.from_local(today, hh, mm, sched):
+                continue
+            cache: Dict[str, Any] = {}
+            for c, ctx in CR.due_people(tid, row, at):
+                if not matches(tid, row, c, at, cache) or not CR.rules_ok(row, c, at, ctx):
+                    continue
+                if _deliver(tid, row, c, ctx, at):
+                    summary["time_sent"] += 1
+            _db.automations.update_one({"id": row["id"]}, {"$set": {"last_run_at": at}})
+        except Exception as exc:
+            summary["errors"] += 1
+            print(f"automations: custom {row.get('id')} failed ({exc})")
 
 
 # ---------------------------------------------------------------------------
@@ -1654,11 +1768,14 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     opened = _opened(tid, logs) if logs else 0
     clicks = sum(1 for x in logs if x.get("clicked_at"))
     out = {k: r.get(k) for k in ("id", "scenario", "name", "description", "status", "trigger", "message", "targeting",
-                                 "schedule", "store_ids", "message_filleul")}
+                                 "schedule", "store_ids", "message_filleul", "message_reminder")}
     out["status"] = status_of(r)                  # « Terminée » once its period is over
     if r["scenario"] == "geo":
         from features import geo_automation as GA
         out["results"] = GA.results(tid, r["id"])
+    if r["scenario"] == "custom" and (r.get("trigger") or {}).get("type") in CR_V2:
+        from features import custom_rules as CR
+        out["next_dates"] = CR.next_dates(r, CR.local(_now(), r.get("schedule")).date())
     out.update({"label": meta["label"], "sub": meta["sub"], "icon": meta["icon"], "tone": meta["tone"],
                 "kind": "time" if is_timed(r["scenario"], r.get("trigger")) else "event",
                 "trigger_text": trigger_text(r), "schedule_text": schedule_text(r),
@@ -1749,6 +1866,9 @@ def trigger_text(r: Dict[str, Any]) -> str:
     sc, tr = r["scenario"], r.get("trigger") or {}
     if sc == "tier_up":
         return tier_text(tr)
+    if sc == "custom" and tr.get("type") in CR_V2:
+        from features import custom_rules as CR
+        return CR.trigger_text(tr, r.get("schedule"))
     if sc == "custom":
         return custom_text(tr)
     if sc == "birthday":
@@ -1797,6 +1917,9 @@ def _fr_date(raw: Any) -> str:
 
 def schedule_text(r: Dict[str, Any]) -> str:
     s = r.get("schedule") or {}
+    if r.get("scenario") == "custom" and (r.get("trigger") or {}).get("type") in CR_V2:
+        from features import custom_rules as CR
+        return CR.rules_text(s)
     days = {"all": "Tous les jours", "weekdays": "Jours ouvrés"}.get(s.get("days") or "all") or \
         ", ".join(DAY_NAMES[int(d)] for d in sorted(s.get("weekdays") or []))
     period = ""
@@ -2012,6 +2135,12 @@ class FiltersIn(BaseModel):
     tiers: Any = []                     # « Programme de fidélité » (statut)
     origin: Any = []                    # « Origine du client »
     last_offer: Any = []                # « Dernière offre reçue »
+    points_min: Any = None              # Nouvelle automatisation › Ciblage (2026-10-11)
+    points_max: Any = None
+    spent_min: Any = None
+    spent_max: Any = None
+    last_visit_op: Any = None           # « Date de dernière visite » : il y a plus / moins de
+    last_visit_days: Any = None
     activity: Any = []                  # « Statut client » (Règles clients keys)
     signed_since: Optional[str] = None  # « Inscription depuis » (a date)
 
@@ -2023,6 +2152,8 @@ class ExclusionsIn(BaseModel):
 
 class TargetingIn(BaseModel):
     mode: str = "all"
+    pick: Optional[str] = None          # Nouvelle automatisation: the card chosen (all, active, inactive…)
+    inactive_days: Any = None
     segment: Optional[str] = None
     passants: Optional[str] = "all"
     filters: FiltersIn = FiltersIn()
@@ -2042,6 +2173,14 @@ class ScheduleIn(BaseModel):
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
     daily_limit: Any = None             # « Limite d'envoi par jour » (optionnel)
+    # Nouvelle automatisation (features/custom_rules): Planification + Règles d'envoi
+    tz: Optional[str] = None
+    limit: Optional[Dict[str, Any]] = None
+    dedupe: bool = False
+    min_gap_days: Any = None
+    send_mode: Optional[str] = None
+    send_at: Optional[str] = None
+    rules_note: Optional[str] = None
 
 
 class AutomationIn(BaseModel):
@@ -2052,6 +2191,7 @@ class AutomationIn(BaseModel):
     status: str = "active"
     trigger: Dict[str, Any] = {}
     message: MessageIn
+    message_reminder: Optional["MessageIn"] = None   # Annuelle › « Rappel avant la date »
     message_filleul: Optional[MessageIn] = None      # Parrainage: the filleul's own words
     targeting: TargetingIn = TargetingIn()
     schedule: ScheduleIn = ScheduleIn()
@@ -2241,6 +2381,9 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
                         raise HTTPException(status_code=400, detail=f"Palier {palier_label(cond, v)} : récompense de 80 caractères au maximum.")
                     tiers.append({"value": v, "title": tt, "body": tb, "reward": rw})
                 tr.update(custom_tiers=True, tiers=sorted(tiers, key=lambda t: t["value"]))
+    elif sc == "custom" and tr_in.get("type") in CR_V2:
+        from features import custom_rules as CR
+        tr = CR.clean_trigger(tid, tr_in, draft, _paris(_now()).date())
     elif sc == "custom":
         t = tr_in.get("type")
         if t not in CUSTOM_TYPES:
@@ -2297,6 +2440,29 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         if any(str(x) not in allowed for x in raw):
             raise HTTPException(status_code=400, detail=f"{label} : valeur inconnue.")
         picked[key] = as_list(raw, allowed)
+    v2 = sc == "custom" and tr.get("type") in CR_V2
+    PICKS = ("all", "active", "inactive", "points", "segment", "stores")
+    pick = (t.pick if t.pick in PICKS else None) if v2 else None
+    if v2 and pick is None:
+        pick = {"segment": "segment"}.get(t.mode, "all")
+    for key, lo, hi, label in (("points_min", 0, 10000000, "Nombre de points (minimum)"),
+                               ("points_max", 0, 10000000, "Nombre de points (maximum)"),
+                               ("spent_min", 0, 10000000, "Montant total d'achats (minimum)"),
+                               ("spent_max", 0, 10000000, "Montant total d'achats (maximum)"),
+                               ("last_visit_days", 1, 3650, "Date de dernière visite (jours)")):
+        v = getattr(f, key)
+        picked[key] = None if v in (None, "") else _int(v, lo, hi, label)
+    for a_, b_, label in (("points_min", "points_max", "Nombre de points"), ("spent_min", "spent_max", "Montant total d'achats")):
+        if picked[a_] is not None and picked[b_] is not None and picked[b_] < picked[a_]:
+            raise HTTPException(status_code=400, detail=f"{label} : le maximum doit être au moins égal au minimum.")
+    picked["last_visit_op"] = (f.last_visit_op if f.last_visit_op in ("more", "less") else "more") \
+        if picked["last_visit_days"] is not None else None
+    if pick == "inactive":
+        picked["last_visit_op"], picked["last_visit_days"] = "more", _int(t.inactive_days if t.inactive_days not in (None, "") else 30, 1, 3650, "Clients inactifs depuis (jours)")
+    if pick == "points" and picked["points_min"] is None and picked["points_max"] is None:
+        raise HTTPException(status_code=400, detail="Indiquez le nombre de points des clients ciblés.")
+    if pick == "stores" and not [x for x in f.stores or [] if x]:
+        raise HTTPException(status_code=400, detail="Choisissez au moins un établissement.")
     nums: Dict[str, Optional[int]] = {}
     for key, lo, hi, label in (("visits_min", 0, 100000, "Nombre de visites (minimum)"),
                                ("visits_max", 0, 100000, "Nombre de visites (maximum)"),
@@ -2320,6 +2486,9 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     known = {s["id"] for s in T.stores(tid)}
     stores = [s for s in dict.fromkeys(f.stores or []) if s in known]
     acts = [] if f.activity in (None, "", "all") else (f.activity if isinstance(f.activity, list) else [f.activity])
+    if pick == "active":                          # « Clients actifs uniquement »: the shop's active statuts
+        from features import customer_rules as R
+        acts = [x["key"] for x in R.statuses(R.load(tid)) if ACTIVITY_GROUPS.get(x["key"]) == "active"]
     if acts:
         from features import customer_rules as R
         allowed_acts = {x["key"] for x in R.statuses(R.load(tid))}
@@ -2427,6 +2596,24 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
                      "window_from": wf, "window_to": wt, "slots": slots,
                      "holidays": bool(s.holidays), **valid},
     }
+    if v2:
+        from features import custom_rules as CR
+        today = _paris(_now()).date()
+        out["schedule"] = CR.clean_schedule(body.schedule, tr, draft, body.status, today)
+        fl = {**picked, **nums, "stores": stores, "radius_km": radius, "activity": acts, "signed_since": signed}
+        has = any(v not in (None, [], "") for k, v in fl.items() if k != "last_visit_op")
+        mode = "segment" if pick == "segment" else ("filtered" if pick != "all" or has else "all")
+        out["targeting"] = {**out["targeting"], "mode": mode, "pick": pick,
+                            "segment": t.segment if pick == "segment" else None,
+                            "inactive_days": picked["last_visit_days"] if pick == "inactive" else None,
+                            "filters": fl if mode != "all" else out["targeting"]["filters"]}
+        rem = (tr.get("reminder") or {}).get("enabled") and tr.get("period") == "yearly"
+        if rem:
+            out["message_reminder"] = clean_message(body.message_reminder or MessageIn(title="", body=""), sc, tid,
+                                                    not draft, "Rappel")
+        else:
+            out["message_reminder"] = clean_message(body.message_reminder, sc, tid, False, "Rappel") \
+                if body.message_reminder else None
     if links is not None:
         out["google_links"] = links
     if message_filleul is not None:
@@ -2659,6 +2846,7 @@ class PreviewIn(BaseModel):
     scenario: str
     targeting: TargetingIn = TargetingIn()
     trigger: Dict[str, Any] = {}          # Client inactif: its « X jours »
+    full: bool = False                    # Nouvelle automatisation: « Voir la liste »
 
 
 AGE_BARS = (("18-25", 18, 25), ("26-35", 26, 35), ("36-50", 36, 50), ("50+", 51, 200))
@@ -2818,14 +3006,31 @@ def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, 
     }
 
 
+def pick_targeting(tid: str, tg: Dict[str, Any]) -> Dict[str, Any]:
+    """Nouvelle automatisation › Ciblage: the chosen card as filters (as clean() saves it)."""
+    pick = tg.get("pick") or "all"
+    f = dict(tg.get("filters") or {})
+    if pick == "active":
+        from features import customer_rules as R
+        f["activity"] = [x["key"] for x in R.statuses(R.load(tid)) if ACTIVITY_GROUPS.get(x["key"]) == "active"]
+    if pick == "inactive":
+        f["last_visit_op"], f["last_visit_days"] = "more", int(tg.get("inactive_days") or 30)
+    has = any(v not in (None, [], "") for k, v in f.items() if k != "last_visit_op")
+    mode = "segment" if pick == "segment" else ("filtered" if pick != "all" or has else "all")
+    return {**tg, "mode": mode, "filters": f}
+
+
 @router.post("/api/owner/automations/preview")
 def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """Step 4's count, and a real client to fill the preview's variables."""
     tid = token_data.tenant_id
     if body.scenario not in SCENARIOS:
         raise HTTPException(status_code=400, detail="Scénario inconnu.")
+    tg = body.targeting.model_dump()
+    if body.scenario == "custom" and tg.get("pick"):
+        tg = pick_targeting(tid, tg)              # Nouvelle automatisation: the card chosen → its filters
     row = {"id": "preview", "scenario": body.scenario, "store_ids": _own_stores(token_data),
-           "targeting": body.targeting.model_dump(), "trigger": body.trigger or {}}
+           "targeting": tg, "trigger": body.trigger or {}}
     at = _now()
     cache: Dict[str, Any] = {}
     people = [c for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}) if matches(tid, row, c, at, cache)]
@@ -2843,8 +3048,81 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
                   "points": int(c.get("points") or 0),
                   "visits": int(c.get("visits") or 0), "next_reward": tpl.get("reward_description") or "votre récompense"}
     out = {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}
+    if body.scenario == "custom":
+        # « Aperçu du ciblage »: out of how many, three real clients, and the list
+        out["total"] = _db.customers.count_documents({"tenant_id": tid, "deleted_at": None})
+        def brief(c):
+            lv = _aware(c.get("last_visit_date"))
+            return {"id": c["id"], "name": c.get("name") or "", "points": int(c.get("points") or 0),
+                    "last_visit": _paris(lv).date().isoformat() if lv else None}
+        ordered = sorted(people, key=lambda c: _aware(c.get("last_visit_date")) or datetime.min.replace(tzinfo=timezone.utc),
+                         reverse=True)
+        out["examples"] = [brief(c) for c in ordered[:3]]
+        if body.full:
+            out["list"] = [brief(c) for c in ordered[:500]]
     if body.scenario == "inactive":
         out["inactive"] = inactive_insights(tid, row, at)
     if body.scenario == "near_reward":
         out["near"] = near_insights(tid, row, at)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Nouvelle automatisation: the address search (Géolocalisation) and the till's
+# « Offre utilisée » (Après une action client › Utilisation d'une offre)
+# ---------------------------------------------------------------------------
+@router.get("/api/owner/automations/address-search")
+def address_search(q: str = "", token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    """« Adresse ou établissement »: the shop's own establishments first, then
+    any address (Base Adresse Nationale / Photon)."""
+    tid = token_data.tenant_id
+    q = (q or "").strip()
+    out: List[Dict[str, Any]] = []
+    from features import geo_automation as GA
+    fold = lambda x: re.sub(r"\s+", " ", (x or "").lower())  # noqa: E731
+    for a in GA.anchors(tid):
+        if a.get("lat") is None:
+            continue
+        label = " – ".join(x for x in (a.get("name"), a.get("address")) if x)
+        if not q or fold(q) in fold(label):
+            out.append({"kind": "store", "label": label, "lat": a["lat"], "lng": a["lng"], "id": a.get("id")})
+    if len(q) >= 3:
+        try:
+            from services import addresses
+            t = _db.tenants.find_one({"id": tid}, {"_id": 0, "country": 1}) or {}
+            for r in addresses.search(q, t.get("country") or "FR", "address", 6):
+                if r.get("lat") is not None:
+                    out.append({"kind": "address", "label": r["label"], "lat": r["lat"], "lng": r["lng"]})
+        except Exception as exc:              # noqa: BLE001 — a geocoder outage is a message
+            if not out:
+                print(f"automations: address search failed ({exc})")
+                raise HTTPException(status_code=503, detail="La recherche d'adresse est momentanément indisponible. Réessayez dans un instant.")
+    return {"results": out[:10]}
+
+
+class OfferUseIn(BaseModel):
+    customer_id: str
+    branch_id: Optional[str] = None
+
+
+@router.post("/api/owner/offers/{campaign_id}/use")
+def use_offer(campaign_id: str, body: OfferUseIn,
+              token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
+    """The till: the client used this offer now (once per offer and client)."""
+    tid = token_data.tenant_id
+    cust = _db.customers.find_one({"id": body.customer_id, "tenant_id": tid, "deleted_at": None}, {"_id": 0})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Client introuvable.")
+    offer = _db.campaigns.find_one({"id": campaign_id, "tenant_id": tid}, {"_id": 0})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offre introuvable.")
+    try:
+        from features import campaign_kinds as K
+        live = offer.get("status") == "sent" and offer.get("kind") in K.OFFER_KINDS and \
+            cust["id"] in (offer.get("recipient_ids") or []) and K.active_now(offer, _now())
+    except Exception:
+        live = False
+    if not live:
+        raise HTTPException(status_code=400, detail="Cette offre n'est pas valable pour ce client en ce moment.")
+    from features import custom_rules as CR
+    return {"ok": True, "use": CR.offer_used(tid, cust, offer, getattr(token_data, "email", None), body.branch_id)}
