@@ -3,7 +3,7 @@ import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
   MapPin, Share2, CalendarClock, Type, ChevronDown, RefreshCw, ArrowLeft, ArrowRight, ChevronRight,
-  Upload, Send, ExternalLink,
+  Upload,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
@@ -222,7 +222,7 @@ const PROGRAMME_HINT = {
    messages (components/AutoMessagesPanel). */
 
 const TIER_TONE = ['#B08968', '#94A3B8', '#E0A128', '#7C3AED'];
-const STEPS = [[1, 'Design'], [2, 'Paramètres'], [3, 'Récompenses'], [4, 'Aperçu et publication']];
+const STEPS = [[1, 'Design'], [2, 'Paramètres']];
 const WINDOWS = [{ d: 7, label: '7 derniers jours' }, { d: 30, label: '30 derniers jours' }, { d: 90, label: '90 derniers jours' }];
 
 export default function LoyaltyCardPage() {
@@ -538,72 +538,10 @@ export default function LoyaltyCardPage() {
 
   const unit = isPoints ? 'points' : 'visites';
 
-  return (
-    <div className="lc lc-wrap space-y-4 pb-28">
-      {/* ── header (mockup): Retour, the four steps, Aperçu client ── */}
-      <div ref={topRef} className="flex scroll-mt-24 flex-wrap items-center justify-between gap-3">
-        <nav aria-label="Étapes de la carte" className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-2">
-          <button type="button" onClick={() => (step > 1 ? goStep(step - 1) : navigate(-1))}
-                  className="mr-1 inline-flex items-center gap-2 rounded-xl px-2 py-2 text-[13.5px] font-semibold text-[#334155] hover:bg-white hover:text-[#2F6BFF]">
-            <ArrowLeft size={16} /> Retour
-          </button>
-          {STEPS.map(([n, label], i) => (
-            <React.Fragment key={n}>
-              {i > 0 && <ChevronRight size={15} className="text-[#CBD5E1]" />}
-              <button type="button" onClick={() => goStep(n)} aria-current={step === n ? 'step' : undefined}
-                      className="inline-flex items-center gap-2.5 rounded-xl px-2 py-1.5 hover:bg-white">
-                <span className={`flex h-9 w-9 items-center justify-center rounded-xl text-[14px] font-bold ${step === n
-                  ? 'bg-[#2F6BFF] text-white shadow-[0_8px_18px_-10px_rgba(47,107,255,.9)]' : 'bg-[#EEF2F8] text-[#475569]'}`}>{n}</span>
-                <span className={`text-[14px] font-semibold ${step === n ? 'text-[#2F6BFF]' : 'text-[#334155]'}`}>{label}</span>
-              </button>
-            </React.Fragment>
-          ))}
-        </nav>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <button type="button" onClick={() => setCustomerPreview(true)}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#334155] shadow-[0_8px_20px_-16px_rgba(11,28,63,.4)] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-            <Eye size={16} /> Aperçu client
-          </button>
-          <button type="button" onClick={openAdvanced}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#334155] shadow-[0_8px_20px_-16px_rgba(11,28,63,.4)] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-            <Sliders size={16} /> Options avancées
-          </button>
-        </div>
-      </div>
-
-      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700">⚠ {error}</div>}
-      {!edit && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-[#E6EEFB] bg-white px-4 py-3 text-[12.5px] text-[#475569]">
-          <Eye size={15} className="mt-0.5 shrink-0 text-[#2F6BFF]" />
-          La carte est la même dans tous les établissements : seul le propriétaire peut la modifier.
-          Les statistiques de l’étape 4 sont celles de vos établissements.
-        </div>
-      )}
-
-      {/* ── 1. Design — CardDesigner « v2 »: the editor and the iPhone preview ── */}
-      {step === 1 && (
-        <div id="design-wallet">
-          {advanced ? (
-            <CardDesigner ref={designerRef} variant="v2" edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
-                          actions={advanced.featured_actions || []}
-                          onActionsChange={(rows) => setAdvanced((a) => ({ ...a, featured_actions: rows }))}
-                          identityPanel={identityPanel} previewCard={cardForPreview}
-                          clientPreview={<WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />}
-                          externalDirty={settingsDirty} onSaveAll={save} onDirtyChange={setDesignerDirty}
-                          googleDesign={advanced.google_design || {}}
-                          onGoogleChange={(patch) => setAdvanced((a) => ({ ...a, google_design: { ...(a.google_design || {}), ...patch } }))}
-                          googleLinks={advanced.google_links || []}
-                          onGoogleLinksChange={(rows) => setAdvanced((a) => ({ ...a, google_links: rows }))}
-                          onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
-          ) : (
-            <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
-          )}
-        </div>
-      )}
-
-      {/* ── 2. Paramètres — the programme, then the advanced options ── */}
-      {step === 2 && (
-        <div className="space-y-4">
+  /* ── 2. Paramètres: programme, options avancées, paliers, statistiques —
+     shown beside the live preview (user, 2026-10-11) ── */
+  const paramsPanel = advanced && (
+    <>
           <Card icon={Settings2} title="Paramètres de la carte" subtitle="Configurez le fonctionnement de votre programme." locked={!edit}>
             {/* full width now: two columns on a wide screen */}
             <div className="grid grid-cols-1 items-start gap-x-8 gap-y-3.5 lg:grid-cols-2">
@@ -700,7 +638,7 @@ export default function LoyaltyCardPage() {
                   </button>
                 )}
                 subtitle="Réglages pris en charge par Apple Wallet et Google Wallet. Tout le reste (police, mise en page, animations) est imposé par Apple.">
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
               {/* code + identity */}
               <div className="space-y-3.5">
                 <div>
@@ -796,7 +734,7 @@ export default function LoyaltyCardPage() {
               </div>
             </div>
             {/* second row — what the card shows, and how it behaves */}
-            <div className="mt-5 grid grid-cols-1 gap-5 border-t border-[#EEF2F9] pt-5 lg:grid-cols-3">
+            <div className="mt-5 grid grid-cols-1 gap-5 border-t border-[#EEF2F9] pt-5 2xl:grid-cols-2">
               <div className="space-y-3.5">
                 <div>
                   <Label hint="seul champ visible quand la carte est empilée">Champ en haut à droite</Label>
@@ -966,12 +904,6 @@ export default function LoyaltyCardPage() {
                 )} />
         )}
 
-        </div>
-      )}
-
-      {/* ── 3. Récompenses — the ladder and the VIP shortcut ── */}
-      {step === 3 && (
-        <div className="space-y-4">
           <Card
             icon={Gift}
             title="Récompenses et paliers"
@@ -1085,67 +1017,6 @@ export default function LoyaltyCardPage() {
               </div>
             </div>
           </Card>
-        </div>
-      )}
-
-      {/* ── 4. Aperçu et publication — the card as the customer sees it, the
-          Wallet refresh, and how the card is doing ── */}
-      {step === 4 && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <Card icon={Eye} title="Aperçu client" subtitle="Ce que voit votre client en ouvrant sa carte.">
-              <div className="rounded-2xl bg-[#F4F7FC] p-4">
-                <div className="mx-auto max-w-[360px]">
-                  <WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} />
-                </div>
-              </div>
-              {data?.tenant?.slug && (
-                <a href={`/join/${data.tenant.slug}`} target="_blank" rel="noreferrer"
-                   className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#2F6BFF] underline underline-offset-2">
-                  <ExternalLink size={13} /> Ouvrir le formulaire d'inscription client
-                </a>
-              )}
-            </Card>
-
-            <div className="space-y-4">
-              <Card icon={Send} title="Publication" subtitle="Vos réglages s’appliquent aux cartes de vos clients dès l’enregistrement.">
-                <div className={`flex items-center gap-2.5 rounded-xl border px-4 py-3 text-[13px] font-semibold ${dirty
-                  ? 'border-[#FDE68A] bg-[#FFFBEB] text-[#92400E]' : 'border-[#CDEBD8] bg-[#F0FAF4] text-[#166534]'}`}>
-                  {dirty
-                    ? <><span className="h-2.5 w-2.5 rounded-full bg-[#F59E0B]" /> Modifications non enregistrées</>
-                    : <><Check size={15} /> Votre carte est à jour</>}
-                </div>
-                {edit && dirty && (
-                  <button type="button" onClick={save} disabled={saving}
-                          className="mt-3 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-60"
-                          style={{ background: BLUE, boxShadow: '0 10px 22px -12px rgba(47,107,255,.8)' }}>
-                    {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Enregistrer et publier
-                  </button>
-                )}
-                <div className="mt-4 border-t border-[#EEF2F9] pt-4">
-                  <p className="text-[13px] font-semibold text-[#0B1C3F]">Cartes déjà dans Apple Wallet</p>
-                  <p className="mt-0.5 text-[12.5px] text-[#64748B]">
-                    Elles se mettent à jour à chaque passage. Pour qu’elles prennent le design actuel tout de suite :
-                  </p>
-                  {edit && (
-                    <button type="button" onClick={refreshCards} disabled={refresh.busy}
-                            title="Les cartes déjà ajoutées à Apple Wallet téléchargent tout de suite le design actuel"
-                            className="mt-3 inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
-                      {refresh.busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-                      {refresh.busy ? 'Actualisation…' : 'Actualiser les cartes'}
-                    </button>
-                  )}
-                  {refresh.msg && (
-                    <div role="status" className={`mt-3 flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] ${refresh.ok
-                      ? 'border-[#CDEBD8] bg-[#F0FAF4] text-[#166534]' : 'border-red-200 bg-red-50 text-red-700'}`}>
-                      {refresh.ok ? <Check size={15} /> : <X size={15} />} {refresh.msg}
-                    </div>
-                  )}
-                </div>
-              </Card>
-            </div>
-          </div>
-
           <Card
             icon={CreditCard}
             title="Statistiques de la carte"
@@ -1173,7 +1044,85 @@ export default function LoyaltyCardPage() {
               <div className="flex h-[132px] items-center justify-center text-[#94A3B8]"><Loader2 className="animate-spin" size={18} /></div>
             )}
           </Card>
+    </>
+  );
 
+  return (
+    <div className="lc lc-wrap space-y-4 pb-28">
+      {/* ── header (mockup): Retour, the four steps, Aperçu client ── */}
+      <div ref={topRef} className="flex scroll-mt-24 flex-wrap items-center justify-between gap-3">
+        <nav aria-label="Étapes de la carte" className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-2">
+          <button type="button" onClick={() => (step > 1 ? goStep(step - 1) : navigate(-1))}
+                  className="mr-1 inline-flex items-center gap-2 rounded-xl px-2 py-2 text-[13.5px] font-semibold text-[#334155] hover:bg-white hover:text-[#2F6BFF]">
+            <ArrowLeft size={16} /> Retour
+          </button>
+          {STEPS.map(([n, label], i) => (
+            <React.Fragment key={n}>
+              {i > 0 && <ChevronRight size={15} className="text-[#CBD5E1]" />}
+              <button type="button" onClick={() => goStep(n)} aria-current={step === n ? 'step' : undefined}
+                      className="inline-flex items-center gap-2.5 rounded-xl px-2 py-1.5 hover:bg-white">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-xl text-[14px] font-bold ${step === n
+                  ? 'bg-[#2F6BFF] text-white shadow-[0_8px_18px_-10px_rgba(47,107,255,.9)]' : 'bg-[#EEF2F8] text-[#475569]'}`}>{n}</span>
+                <span className={`text-[14px] font-semibold ${step === n ? 'text-[#2F6BFF]' : 'text-[#334155]'}`}>{label}</span>
+              </button>
+            </React.Fragment>
+          ))}
+        </nav>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {edit && (
+            <button type="button" onClick={refreshCards} disabled={refresh.busy}
+                    title="Les cartes déjà ajoutées à Apple Wallet téléchargent tout de suite le design actuel"
+                    className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#334155] shadow-[0_8px_20px_-16px_rgba(11,28,63,.4)] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
+              {refresh.busy ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+              {refresh.busy ? 'Actualisation…' : 'Actualiser les cartes'}
+            </button>
+          )}
+          <button type="button" onClick={() => setCustomerPreview(true)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#334155] shadow-[0_8px_20px_-16px_rgba(11,28,63,.4)] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+            <Eye size={16} /> Aperçu client
+          </button>
+          <button type="button" onClick={openAdvanced}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-4 py-2.5 text-[13.5px] font-semibold text-[#334155] shadow-[0_8px_20px_-16px_rgba(11,28,63,.4)] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+            <Sliders size={16} /> Options avancées
+          </button>
+        </div>
+      </div>
+
+      {refresh.msg && (
+        <div role="status" className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-[13px] ${refresh.ok
+          ? 'border-[#CDEBD8] bg-[#F0FAF4] text-[#166534]' : 'border-red-200 bg-red-50 text-red-700'}`}>
+          {refresh.ok ? <Check size={15} /> : <X size={15} />} {refresh.msg}
+        </div>
+      )}
+      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700">⚠ {error}</div>}
+      {!edit && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-[#E6EEFB] bg-white px-4 py-3 text-[12.5px] text-[#475569]">
+          <Eye size={15} className="mt-0.5 shrink-0 text-[#2F6BFF]" />
+          La carte est la même dans tous les établissements : seul le propriétaire peut la modifier.
+          Les statistiques des Paramètres sont celles de vos établissements.
+        </div>
+      )}
+
+      {/* ── 1. Design — CardDesigner « v2 »: the editor and the iPhone preview ── */}
+      {/* step 2 shows the Paramètres in the left column, the same live preview on
+          the right — the designer stays mounted so nothing typed is lost */}
+      {(
+        <div id="design-wallet">
+          {advanced ? (
+            <CardDesigner ref={designerRef} variant="v2" inspectorOverride={step === 2 ? paramsPanel : null} edit={edit} types={advanced.featured_types || []} formats={advanced.barcode_formats || []}
+                          actions={advanced.featured_actions || []}
+                          onActionsChange={(rows) => setAdvanced((a) => ({ ...a, featured_actions: rows }))}
+                          identityPanel={identityPanel} previewCard={cardForPreview}
+                          clientPreview={<WalletCard customer={previewCustomer} tenant={{ name: data?.tenant?.name }} card={cardForPreview} compact />}
+                          externalDirty={settingsDirty} onSaveAll={save} onDirtyChange={setDesignerDirty}
+                          googleDesign={advanced.google_design || {}}
+                          onGoogleChange={(patch) => setAdvanced((a) => ({ ...a, google_design: { ...(a.google_design || {}), ...patch } }))}
+                          googleLinks={advanced.google_links || []}
+                          onGoogleLinksChange={(rows) => setAdvanced((a) => ({ ...a, google_links: rows }))}
+                          onSaved={() => { setPdVersion((v) => v + 1); load(); }} />
+          ) : (
+            <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</div>
+          )}
         </div>
       )}
 
