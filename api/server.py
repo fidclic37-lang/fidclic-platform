@@ -6864,6 +6864,8 @@ def _serialize_card_payload(cust: dict) -> dict:
             "logo_ring":            tpl.get("logo_ring"),
             "logo_ring_color":      tpl.get("logo_ring_color"),
             "poster_footer_color":  tpl.get("poster_footer_color"),
+            # the shop's name beside the logo, in that colour (wallet_passes.name_logo)
+            "logo_text_color":      tpl.get("logo_text_color"),
             "stamp_shape":          tpl.get("stamp_shape"),
             "google_design":        tpl.get("google_design"),
             "hero_mode":            tpl.get("hero_mode"),

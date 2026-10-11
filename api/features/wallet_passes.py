@@ -1576,6 +1576,141 @@ def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
     return compose_poster(raw or _hero_raw(card), derive_colors(card))
 
 
+def _css_rgb(v: Any) -> Optional[Tuple[int, int, int]]:
+    """« rgb(1, 2, 3) » (pass.json) or « #010203 » → (1, 2, 3)."""
+    m = re.match(r"\s*rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", str(v or ""))
+    if m:
+        return tuple(int(x) for x in m.groups())  # type: ignore[return-value]
+    return _rgb(v)
+
+
+def name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
+              box: Tuple[int, int] = (160, 50)) -> Dict[str, bytes]:
+    """The shop's logo with its FULL name beside it, in one image (user,
+    2026-10-12: « BLOO J… » on iOS 27 — Wallet cuts its own logoText — and the
+    name's colour chosen by the owner, in every Wallet). Apple draws a logo up
+    to 160 × 50 pt: the name is written as large as it fits (20 pt down to
+    11 pt), on two lines if it must, never cut. {'':1x, '@2x', '@3x'}."""
+    return _cached("name_logo", (raw or b"", name, color, box), lambda: _make_name_logo(raw, name, color, box))
+
+
+def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
+                    box: Tuple[int, int]) -> Dict[str, bytes]:
+    from PIL import Image, ImageDraw, ImageFont
+    fonts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
+
+    def font(px: int):
+        try:
+            return ImageFont.truetype(os.path.join(fonts_dir, "DejaVuSans-Bold.ttf"), px)
+        except Exception:
+            return ImageFont.load_default()
+    base = None
+    if raw:
+        try:
+            base = Image.open(io.BytesIO(raw)).convert("RGBA")
+        except Exception:
+            base = None
+    name = re.sub(r"\s+", " ", name or "").strip()
+    out: Dict[str, bytes] = {}
+    for suffix, k0 in (("", 1), ("@2x", 2), ("@3x", 3)):
+        W, H = box[0] * k0, box[1] * k0
+        k = k0 * box[1] / 50                  # the sizes below are for Apple's 50-pt-high logo
+        logo = None
+        if base is not None:
+            sc = min(H / base.height, (W * 0.4) / base.width)
+            logo = base.resize((max(1, round(base.width * sc)), max(1, round(base.height * sc))), Image.LANCZOS)
+        lw = logo.width if logo is not None else 0
+        gap = round(8 * k) if logo is not None and name else 0
+        room = max(10, W - lw - gap)
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+        def width(t: str, f) -> int:
+            return int(draw.textlength(t, font=f))
+        lines, f = [name], font(round(20 * k))
+
+        def lh_of(fnt) -> int:
+            a, d = fnt.getmetrics() if hasattr(fnt, "getmetrics") else (12 * k, 3 * k)
+            return a + d
+
+        def wrap(fnt) -> List[str]:
+            rows, cur = [], ""
+            for w in name.split(" "):
+                t = f"{cur} {w}".strip()
+                if not cur or width(t, fnt) <= room:
+                    cur = t
+                else:
+                    rows.append(cur)
+                    cur = w
+            return rows + ([cur] if cur else [])
+        if name:
+            done = False
+            for pt in range(20, 11, -1):                       # one line, as large as it fits
+                f = font(round(pt * k))
+                if width(name, f) <= room:
+                    lines, done = [name], True
+                    break
+            if not done:                                       # up to three lines, never cut
+                for pt in range(16, 4, -1):
+                    f = font(round(pt * k))
+                    rows = wrap(f)
+                    if len(rows) <= 3 and all(width(r, f) <= room for r in rows) and lh_of(f) * len(rows) <= H:
+                        lines, done = rows, True
+                        break
+                if not done:
+                    f, lines = font(round(5 * k)), wrap(font(round(5 * k)))
+        asc, desc = f.getmetrics() if hasattr(f, "getmetrics") else (12 * k, 3 * k)
+        lh = asc + desc
+        tw = max((width(t, f) for t in lines), default=0) if name else 0
+        cw = min(W, lw + gap + tw) if name else max(lw, 1)
+        img = Image.new("RGBA", (max(1, cw), H), (0, 0, 0, 0))
+        if logo is not None:
+            img.paste(logo, (0, (H - logo.height) // 2), logo)
+        if name:
+            d = ImageDraw.Draw(img)
+            top = (H - lh * len(lines)) // 2
+            for i, t in enumerate(lines):
+                d.text((lw + gap, top + i * lh), t, font=f, fill=tuple(color) + (255,))
+        b = io.BytesIO()
+        img.save(b, "PNG")
+        out[suffix] = b.getvalue()
+    return out
+
+
+def _best_file(files: Dict[str, bytes], base: str) -> Optional[bytes]:
+    for suffix in ("@3x", "@2x", ""):
+        if f"{base}{suffix}.png" in files:
+            return files[f"{base}{suffix}.png"]
+    return None
+
+
+def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
+    """Apple: the shop's name moves from logoText into the logo images (iOS 26
+    logo.png, iOS 27 primaryLogo.png) — written in full, in the owner's colour
+    (« Couleur du nom ») or the card's text colour."""
+    try:
+        pj = json.loads(files["pass.json"])
+        name = str(pj.get("logoText") or "").strip()
+        if not name:
+            return
+        color = _rgb(card.get("logo_text_color")) or _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
+        done = False
+        for base in ("logo", "primaryLogo"):
+            src = _best_file(files, base)
+            if src is None and base == "logo":
+                continue
+            if src is None:
+                continue
+            # the image is made from the plain logo (a design's logo may already be a disc)
+            for suffix, png in name_logo(src, name, color).items():
+                files[f"{base}{suffix}.png"] = png
+            done = True
+        if done:
+            pj.pop("logoText", None)
+            files["pass.json"] = json.dumps(pj, ensure_ascii=False).encode("utf-8")
+    except Exception as exc:          # a pass without its name image still has logoText
+        print(f"wallet: name image failed ({exc})")
+
+
 def round_logo(raw: Optional[bytes], ring: Optional[str] = None, size: int = 600) -> Optional[bytes]:
     """The shop's logo as a disc (user, 2026-10-08: « logo gol »). Wallet draws
     a logo as it gets it, so the corners are made transparent here.
@@ -1724,6 +1859,7 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
                     files[f"background{suffix}.png"] = png
             for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
                 files[f"primaryLogo{suffix}.png"] = png
+    _name_into_logos(files, card)
     return files
 
 
@@ -1933,7 +2069,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape",
+    "poster_footer_color", "stamp_shape", "logo_text_color",
 }
 
 
@@ -1977,11 +2113,13 @@ def owner_wallet_preview(body: PassPreviewIn,
         with PD.preview_design(tid, PD.design_from_body(tid, body.design)):
             return _design_preview(payload, sample, visits)
 
-    pj = build_pass_json(payload)
-    strip3x = strip_png(payload)
-    strip2x = _strip_variants(strip3x).get("@2x") if strip3x else None
-    logo2x = _png_variants(_fetch_image(card.get("logo_url")), (100, 50),
-                           fallback_rgb=_rgb(card.get("brand_color")) or (184, 92, 56), tight=True).get("@2x")
+    # the very files the pass ships (user, 2026-10-12: « preview mein change,
+    # wallet mein nahi ») — the logo carries the shop's name since then
+    files = pass_files(payload)
+    pj = json.loads(files["pass.json"])
+    strip2x = files.get("strip@2x.png")
+    logo2x = files.get("logo@2x.png") or _png_variants(_fetch_image(card.get("logo_url")), (100, 50),
+                                                      fallback_rgb=_rgb(card.get("brand_color")) or (184, 92, 56), tight=True).get("@2x")
     logo_w = 50
     try:
         from PIL import Image
@@ -2002,7 +2140,7 @@ def owner_wallet_preview(body: PassPreviewIn,
         "logo": _data_url(logo2x), "logo_width": logo_w,
         "sample": {"name": sample["name"], "visits": visits},
         # iOS 27 « poster » — the same fields and background the pass ships
-        "poster": _poster_preview(pj, payload, logo2x),
+        "poster": _poster_preview(pj, payload, files.get("primaryLogo@2x.png") or logo2x, own=True),
     }
 
 
@@ -2046,7 +2184,8 @@ def _design_preview(payload: Dict[str, Any], sample: Dict[str, Any], visits: int
     }
 
 
-def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes]) -> Optional[Dict[str, Any]]:
+def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes],
+                    own: bool = False) -> Optional[Dict[str, Any]]:
     pg = pj.get("posterGeneric")
     if not pg:
         return None
@@ -2058,7 +2197,8 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
     if tpl:                                   # a Pass Designer template: its own images
         imgs = PD.images(tpl)
         bg2x = PD.best(imgs, "background")
-        logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
+        if not own:                           # `own`: the pass's own primaryLogo (with the name)
+            logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
     else:
         bg3x = poster_png(payload)
         bg2x = _poster_variants(bg3x).get("@2x") if bg3x else None
@@ -2437,8 +2577,11 @@ def clean_google_design(d: Any) -> Dict[str, Any]:
 def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     # the version changes with the image, so Google fetches the new one
     src = {"logo": card.get("logo_url"), "wide": (card.get("google_design") or {}).get("wide_logo"),
-           "hero": (card.get("google_design") or {}).get("hero_image")}[what] or ""
+           "hero": (card.get("google_design") or {}).get("hero_image"),
+           "name": card.get("logo_url")}[what] or ""
     look = f"{bool(card.get('logo_round'))}{bool(card.get('logo_ring'))}{card.get('logo_ring_color') or ''}"
+    if what == "name":                        # the name and its colour are in the image
+        look += f"{card.get('logo_text_color') or ''}{card.get('_shop_name') or ''}"
     v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
     return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}"
 
@@ -2467,6 +2610,13 @@ def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
         cls["programLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "logo", card)}}
     if gd["logo"] == "wide":
         cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "wide", card)}}
+    elif card.get("logo_text_color"):
+        # « Couleur du nom » (user, 2026-10-12): Google picks its own text colour,
+        # so the logo and the shop's name come as one wide logo, which replaces
+        # Google's logo + issuer name; the line under it then says what the card is
+        cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(
+            tenant["id"], "name", {**card, "_shop_name": tenant.get("name") or org})}}
+        cls["programName"] = gd.get("program_name") or "Carte de fidélité"
     if gd["rows"]:
         def item(key: str) -> Dict[str, Any]:
             return {"firstValue": {"fields": [{"fieldPath": GOOGLE_ROW_FIELDS[key][1]}]}}
@@ -2707,16 +2857,24 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
         return _png_variants(_fetch_image(gd.get("wide_logo")), (640, 200), tight=True).get("@2x")
     if what == "hero":
         return _png_variants(_fetch_image(gd.get("hero_image")), (516, 168), cover=True).get("@2x")
+    if what == "name":
+        _, ring = _logo_look(card)
+        color = _rgb(card.get("logo_text_color")) or (255, 255, 255)
+        return name_logo(round_logo(_fetch_image(card.get("logo_url")), ring, size=400), card.get("_shop_name") or "",
+                         color, box=(640, 200)).get("@2x")
     return None
 
 
 @router.get("/api/wallet/google/{tenant_id}/{what}.png")
 def google_image(tenant_id: str, what: str):
     """Public: Google's servers fetch these when they draw the card."""
-    if what not in ("logo", "wide", "hero"):
+    if what not in ("logo", "wide", "hero", "name"):
         raise HTTPException(status_code=404, detail="Image inconnue")
     tpl = _db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
     card = {**(tpl.get("brand_fields") or {}), **tpl}
+    if what == "name":
+        t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
+        card["_shop_name"] = t.get("name") or card.get("card_name") or ""
     png = _gw_image(card, what)
     if not png:
         raise HTTPException(status_code=404, detail="Image absente")
@@ -2740,7 +2898,12 @@ def owner_google_preview(body: PassPreviewIn,
         hero = strip_png(payload)
     return {
         "class": cls, "object": obj,
-        "images": {"logo": _data_url(_gw_image(card, "logo")), "wide": _data_url(_gw_image(card, "wide")) if gd["logo"] == "wide" else None,
+        "images": {"logo": _data_url(_gw_image(card, "logo")),
+                   "wide": _data_url(_gw_image(card, "wide")) if gd["logo"] == "wide" else (
+                       # « Couleur du nom »: the logo + the name, as Google gets it
+                       _data_url(_gw_image({**card, "_shop_name": (payload.get("tenant") or {}).get("name")
+                                            or card.get("card_name") or ""}, "name"))
+                       if card.get("logo_text_color") else None),
                    "hero": _preview_image("strip", hero) if hero else None},
         "row_fields": {k: v[0] for k, v in GOOGLE_ROW_FIELDS.items()},
         "codes": {k: v[0] for k, v in GOOGLE_CODES.items()},

@@ -443,6 +443,7 @@ export default function LoyaltyCardPage() {
     // iOS 27's bottom band and the tampons' shape ('' = the default)
     poster_footer_color: advanced?.poster_footer_color ?? undefined,
     stamp_shape: advanced?.stamp_shape ?? undefined,
+    logo_text_color: advanced?.logo_text_color ?? undefined,
   }), [design, programme, toggles, advanced, pdVersion]);
   // The server's preview starts from the saved card: a photo the owner has
   // not changed is not uploaded again on every keystroke (the « Aperçu » was
@@ -482,6 +483,29 @@ export default function LoyaltyCardPage() {
           <Input value={design.card_name} maxLength={40}
                  onChange={(e) => setDesign({ ...design, card_name: e.target.value })} />
         </div>
+        {advanced && (
+          <div>
+            {/* the shop's name beside the logo, written in full in every Wallet
+                (iOS 27, iOS 26, Google) — only its colour, nothing else (user, 2026-10-12) */}
+            <Label>Couleur du nom (à côté du logo)</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
+                {[['', 'Automatique'], ['color', 'Couleur']].map(([k, l]) => {
+                  const on = k ? Boolean(advanced.logo_text_color) : !advanced.logo_text_color;
+                  return (
+                    <button key={l} type="button" aria-pressed={on}
+                            onClick={() => setAdvanced((a) => ({ ...a, logo_text_color: k ? (a.logo_text_color || '#FFFFFF') : '' }))}
+                            className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${on ? 'bg-white text-[#0B1C3F] shadow-sm' : 'text-[#64748B]'}`}>{l}</button>
+                  );
+                })}
+              </div>
+              {advanced.logo_text_color && (
+                <div className="w-40"><ColorField value={advanced.logo_text_color} onChange={(v) => setAdvanced((a) => ({ ...a, logo_text_color: v }))} /></div>
+              )}
+            </div>
+            <p className="mt-1 text-[11.5px] text-[#64748B]">Le nom est écrit en entier à côté du logo, sur iOS 27, iOS 26 et Google Wallet. « Automatique » = la couleur du texte de la carte.</p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label>Couleur principale</Label>
