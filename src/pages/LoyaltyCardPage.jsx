@@ -14,6 +14,7 @@ import InfoTip from '../components/InfoTip';
 import PosterCropper from '../components/PosterCropper';
 import CardDesigner from '../components/wallet/CardDesigner';
 import FeaturedActionsEditor from '../components/wallet/FeaturedActionsEditor';
+import NameStyleEditor from '../components/wallet/NameStyleEditor';
 import { rgbToHex, hexToRgb } from '../components/wallet/walletLook';
 
 /**
@@ -439,6 +440,7 @@ export default function LoyaltyCardPage() {
     poster_footer_color: advanced?.poster_footer_color ?? undefined,
     stamp_shape: advanced?.stamp_shape ?? undefined,
     logo_text_color: advanced?.logo_text_color ?? undefined,
+    name_style: advanced?.name_style ?? undefined,
   }), [design, programme, toggles, advanced, pdVersion]);
   // The server's preview starts from the saved card: a photo the owner has
   // not changed is not uploaded again on every keystroke (the « Aperçu » was
@@ -502,6 +504,11 @@ export default function LoyaltyCardPage() {
               )}
             </div>
             <p className="mt-1 text-[11.5px] text-[#64748B]">Le nom est écrit en entier à côté du logo, sur iOS 27, iOS 26 et Google Wallet. « Automatique » = la couleur du texte de la carte.</p>
+            <div className="mt-3">
+              <NameStyleEditor value={advanced.name_style} fallbackText={design.card_name} fonts={advanced.name_fonts || []}
+                               defaultColor={advanced.logo_text_color || '#FFFFFF'} ColorField={ColorField}
+                               onChange={(v) => setAdvanced((a) => ({ ...a, name_style: v }))} />
+            </div>
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">

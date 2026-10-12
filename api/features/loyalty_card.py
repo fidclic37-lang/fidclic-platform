@@ -106,6 +106,11 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _name_fonts():
+    from features.wallet_passes import NAME_FONTS
+    return NAME_FONTS
+
+
 def _template(tenant_id: str) -> Dict[str, Any]:
     tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
     tpl.pop("_id", None)
@@ -301,6 +306,7 @@ class CardSettings(BaseModel):
     # the shop's name beside the logo, in every Wallet (user, 2026-10-12):
     # "" = the card's text colour, "#RRGGBB" = that colour (wallet_passes.name_logo)
     logo_text_color: Optional[str] = None
+    name_style: Optional[Dict[str, Any]] = None    # « Nom stylé »: letter by letter (wallet_passes.clean_name_style)
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None
@@ -409,6 +415,8 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "logo_ring_color": tpl.get("logo_ring_color") or "",
             "poster_footer_color": tpl.get("poster_footer_color") or "",
             "logo_text_color": tpl.get("logo_text_color") or "",
+            "name_style": tpl.get("name_style") or None,
+            "name_fonts": [{"key": k, "label": v[2]} for k, v in _name_fonts().items()],
             "stamp_shape": tpl.get("stamp_shape") or "",
             "reward_on_card": tpl.get("reward_on_card") is not False,
             "reward_place": "front" if tpl.get("reward_place") == "front" else "back",
@@ -497,6 +505,9 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Emplacement de la récompense inconnu.")
     if payload.get("logo_text_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_text_color"]):
         raise HTTPException(status_code=400, detail="Couleur du nom invalide.")
+    if "name_style" in payload:
+        from features.wallet_passes import clean_name_style
+        payload["name_style"] = clean_name_style(payload["name_style"])
     if payload.get("stamp_shape"):
         from features.wallet_passes import STAMP_SHAPES
         if payload["stamp_shape"] not in STAMP_SHAPES:
