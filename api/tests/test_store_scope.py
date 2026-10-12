@@ -160,9 +160,23 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     except HTTPException:
         refused = True
     check("but not another shop's, when it has several to choose from", refused)
-    # (an untagged scan falls back to the client's home establishment, as before)
-    check("an older employé covering the whole shop scans as before, nothing forced",
-          scanned_branch(as_("old.staff@c.fr", "staff"), None) == db.customers.find_one({"id": "c1"}).get("branch_id"))
+    # 2026-10-12: a visit counts where it is scanned — with several
+    # establishments one must be named, never left untagged or put on the
+    # client's home establishment
+    def refused_(tok, branch):
+        try:
+            scanned_branch(tok, branch)
+            return None
+        except HTTPException as e:
+            return e.status_code
+    check("an employé covering the whole shop must name the establishment",
+          refused_(as_("old.staff@c.fr", "staff"), None) == 400)
+    check("the owner too, when nothing is chosen", refused_(OWNER, None) == 400)
+    home = db.customers.find_one({"id": "c1"}).get("branch_id")
+    other = next(b for b in ("tours", "blois", "orleans") if b != home)
+    check(f"the owner's scan counts where it is scanned ({other}), not at home ({home})",
+          scanned_branch(OWNER, other) == other)
+    check("an unknown establishment is refused", refused_(OWNER, "nope") == 400)
 
     print("\nLa page Clients, limitée")
     total = lambda tok, store=None: CP.overview(request=Req(store), token_data=tok)["cards"][0]["value"]
