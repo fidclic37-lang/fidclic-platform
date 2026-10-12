@@ -24,6 +24,7 @@ import json
 import math
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from features import store_cards as _SC  # one card per establishment (multi-store)
 
 _db = None
 
@@ -268,6 +269,7 @@ def detections(tid: str, at: Optional[datetime] = None, days: int = 7) -> Dict[s
 # ---------------------------------------------------------------------------
 # the Wallet pass: locations on or off, client by client
 # ---------------------------------------------------------------------------
+@_SC.customer_store("cust")
 def for_pass(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     """The geolocation message this client's pass carries now, or None.
     The first active automation (list order) whose every rule holds."""

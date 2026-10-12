@@ -10,11 +10,17 @@ import { test, expect } from '@playwright/test';
 
 const OWNER = { email: 'demo.owner@fidelitour.com', password: 'Owner!Demo2026' };   // local seed only
 
+// the establishment chosen in the menu: the card page edits ITS card
+// (one card per establishment, 2026-10-12) — the API calls read the same one
+let ownerStore = '';
+const auth = (t) => ({ Authorization: `Bearer ${t}`, ...(ownerStore ? { 'X-FidClic-Store': ownerStore } : {}) });
+
 async function asOwner(page, request) {
   const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
   // several establishments: one is always chosen (« Toutes les branches » is gone, 2026-10-12)
   const br = await (await request.get('/api/owner/branches', { headers: { Authorization: `Bearer ${login.access_token}` } })).json();
   const store = ((br && br.branches) || br || []).find((b) => b.status !== 'closed')?.id || '';
+  ownerStore = store;
   await page.goto('/login');
   await page.evaluate(([t, s]) => {
     localStorage.setItem('fidelitour_access_token', t);
@@ -87,14 +93,14 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     // save, then the real pass for a customer takes all of it
     await page.getByRole('button', { name: /Enregistrer les modifications/ }).click();
     await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
-    const settings = await (await request.get('/api/owner/card/settings', { headers: { Authorization: `Bearer ${token}` } })).json();
+    const settings = await (await request.get('/api/owner/card/settings', { headers: auth(token) })).json();
     expect(settings.advanced.stamp_shape).toBe('losange');
     expect(settings.advanced.poster_footer_color).toMatch(/^#[0-9A-F]{6}$/i);
     expect(settings.advanced.poster_image_url).toMatch(/^data:image\/jpeg/);
 
     // Google: with no banner, the row is the jauge in the same shape
     const g = await (await request.post('/api/owner/wallet/google-preview', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: auth(token),
       data: { card: { google_design: { hero: 'none' } }, visits: 3 } })).json();
     const row = g.object.secondaryLoyaltyPoints || g.object.loyaltyPoints;
     expect(row.balance.string).toBe('◆ ◆ ◆ ◇ ◇ ◇ ◇ ◇ ◇ ◇');
@@ -106,7 +112,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     // 2026-10-12: with a design, iOS 27 drew the design's own background and
     // no tampons — « ios27 chhod k sab mein changes barabar dikh rhe hai »
     const token = await asOwner(page, request);
-    const H = { Authorization: `Bearer ${token}` };
+    const H = auth(token);
     const st = await (await request.get('/api/owner/card/pass-designer/starter', { headers: H })).json();
     st.pass.posterGeneric.primaryFields = [{ key: 'name', value: '{prenom}' }, { key: 'loves', label: 'LOVES', value: 'ROLLS ROYCE' }];
     st.pass.footerBackgroundColor = 'rgb(105,27,27)';
@@ -156,7 +162,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     // 2026-10-12: « points and tampons dono kyun hai », and a « Récompense »
     // that added itself to the card
     const token = await asOwner(page, request);
-    const H = { Authorization: `Bearer ${token}` };
+    const H = auth(token);
     await page.goto('/dashboard/card');
     await page.getByRole('button', { name: 'Étape suivante : Paramètres' }).click();
     await expect(page.getByText('Sur la carte : les tampons, sous le QR code (pas de points)')).toBeVisible();
@@ -190,7 +196,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
   test('the design\'s Champs: right after Identité, each field as the card shows it', async ({ page, request }) => {
     // 2026-10-12: « fields mein jo bhi hai woh directly card mein dikhni chahiye »
     const token = await asOwner(page, request);
-    const H = { Authorization: `Bearer ${token}` };
+    const H = auth(token);
     const soe = { posterGeneric: {
       headerFields: [{ key: 'CUST_ID', label: 'MEMBRE', value: '1234' }, { key: 'pts', label: 'POINTS', value: '{points}' }],
       primaryFields: [{ key: 'CUST_NAME', value: 'SPIRIT OF ECSTACY' }, { key: 'loves', label: 'LOVES', value: 'ROLLS ROYCE' }] },
@@ -230,7 +236,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     await page.getByRole('button', { name: 'Centrer automatiquement' }).click();
     await page.getByRole('button', { name: /Enregistrer les modifications/ }).click();
     await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
-    const s = await (await request.get('/api/owner/card/settings', { headers: { Authorization: `Bearer ${token}` } })).json();
+    const s = await (await request.get('/api/owner/card/settings', { headers: auth(token) })).json();
     expect(s.advanced.stamp_shape).toBe('');
     expect(s.advanced.poster_footer_color).toBe('');
     expect(s.advanced.poster_image_url || '').toBe('');

@@ -101,6 +101,13 @@ else:
     client = pymongo.MongoClient(tz_aware=True)
     db = client.fidelitour_db
 
+# One card per establishment (multi-store, 2026-10-12): db.card_templates reads
+# and writes the card of the establishment in context — the menu's one on the
+# dashboard, the client's home store for their card, pass, scan and messages.
+from features import store_cards as _SC  # noqa: E402
+_SC.init(db)
+app.add_middleware(_SC.StoreMiddleware)
+
 # ─────────────────────────────────────────────────────────────────────
 # RGPD / GDPR — Audit trail (Sprint 1)
 # Every privacy-sensitive action gets one immutable row in db.audit_logs:
@@ -449,6 +456,7 @@ PIXEL_PNG_BYTES = base64.b64decode(PIXEL_PNG_BASE64)
 # so personalised offers ("Bonjour {first_name}, il te reste
 # {points_to_next_reward} points pour une récompense !") work.
 # ============================================================
+@_SC.customer_store("customer")
 def _compute_points_to_next_reward(customer: dict, tenant_id: str) -> int:
     """How many more visits (≈ points) until the next reward for this customer.
 
@@ -486,6 +494,7 @@ def _tier_up(old: Optional[str], new: Optional[str]) -> bool:
     return n in TIER_ORDER and TIER_ORDER.index(n) > (TIER_ORDER.index(o) if o in TIER_ORDER else 0)
 
 
+@_SC.customer_store("customer")
 def render_template(content: str, customer: dict, tenant: dict = None) -> str:
     """Replace curly-brace placeholders in a campaign body with per-customer values.
     Missing values are silently replaced with a neutral fallback so the message never
@@ -4999,6 +5008,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     normalized_barcode = barcode_from(req.barcode_id)
 
     cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": normalized_barcode})
+    if cust:                     # the rules of the client's home store, wherever they are scanned
+        _SC.set_for_customer(cust)
     if not cust:
         # Be diagnostic: distinguish "barcode doesn't exist anywhere" vs
         # "barcode exists but in a different tenant" so the staff knows
@@ -5414,6 +5425,7 @@ def _has_recent_notification(customer_id: str, tenant_id: str, notif_type: str,
     return db.push_notifications.find_one(q) is not None
 
 
+@_SC.customer_store("customer_doc")
 def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str, Any]:
     """Compute the customer's current reward state, fire any missing
     near_reward / reward_unlocked notifications, and return what changed.
@@ -6257,10 +6269,15 @@ def _tenant_by_slug(slug: str):
 
 
 @app.get("/api/join/{slug}")
-def get_join_info(slug: str):
+def get_join_info(slug: str, store: Optional[str] = None):
     t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    if store:                    # an establishment's link: its own card (logo, reward…)
+        from features import store_links as _SL
+        _st = _SL.store_by(t, store)
+        if _st:
+            _SC.set_store(t["id"], _st["id"])
     t.pop("_id", None)
     # The shop's own consent sentence, privacy policy and cookie notice
     # (Paramètres › Données & confidentialité).
@@ -6716,6 +6733,7 @@ def _active_override_for(customer_id: str, tenant_id: str) -> dict:
     return row
 
 
+@_SC.customer_store("cust")
 def _serialize_card_payload(cust: dict) -> dict:
     """The card as every surface reads it (pass, Google, the web card), with
     the programme deciding points OR tampons (wallet_passes.apply_programme_rules,
@@ -6728,9 +6746,13 @@ def _serialize_card_payload(cust: dict) -> dict:
             _WP.apply_programme_rules(card)
         except Exception as exc:
             print(f"card payload: programme rules not applied (non-fatal): {exc}")
+    if isinstance(payload, dict):
+        # whose card: the pass / Google build reads it (a preview sample: the menu's)
+        payload["store_id"] = cust.get("branch_id") or _SC.store_for(cust.get("tenant_id"))
     return payload
 
 
+@_SC.customer_store("cust")
 def _serialize_card_payload_raw(cust: dict) -> dict:
     t = db.tenants.find_one({"id": cust["tenant_id"]}) or {}
     tpl = db.card_templates.find_one({"tenant_id": cust["tenant_id"]}) or {}
@@ -8904,7 +8926,8 @@ def create_branch(
         "address": req.get("address", ""),
         "postal_code": req.get("postal_code", ""),
         "phone": req.get("phone", ""),
-        "is_main": req.get("is_main", False)
+        "is_main": req.get("is_main", False),
+        "card_off": True,          # blank card, off until designed (features/store_cards)
     }
 
     branches = tenant.get("branches", [])
@@ -10815,6 +10838,7 @@ def redeem_reward(
     cust = db.customers.find_one(q)
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found")
+    _SC.set_for_customer(cust)       # the reward of the client's home store
 
     # Threshold for a full card (so decrement matches the real card)
     card_tpl = db.card_templates.find_one({"tenant_id": tid}) or {}

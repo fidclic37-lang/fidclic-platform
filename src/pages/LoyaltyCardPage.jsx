@@ -3,11 +3,12 @@ import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
   MapPin, Share2, CalendarClock, Type, ChevronDown, RefreshCw, ArrowLeft, ArrowRight, ChevronRight,
-  Upload, Move,
+  Upload, Move, Store,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useBranch } from '../contexts/BranchContext';
 import WalletCard from '../components/WalletCard';
 import InfoTip from '../components/InfoTip';
 import PosterCropper from '../components/PosterCropper';
@@ -229,9 +230,13 @@ const STEPS = [[1, 'Design'], [2, 'Paramètres']];
 const WINDOWS = [{ d: 7, label: '7 derniers jours' }, { d: 30, label: '30 derniers jours' }, { d: 90, label: '90 derniers jours' }];
 
 export default function LoyaltyCardPage() {
-  // One card for every establishment: the owner changes it, everyone else
-  // sees it as it is — with the figures of their own establishments.
+  // Each establishment has its own card (multi-store, 2026-10-12): the page
+  // shows and saves the card of the establishment chosen in the menu; its
+  // customers carry it, the other establishments keep theirs.
   const { user } = useAuth();
+  const { branchId, branches, setBranches } = useBranch();
+  const openStores = (branches || []).filter((b) => b && b.id && b.status !== 'closed');
+  const curStore = openStores.length > 1 ? openStores.find((b) => b.id === branchId) : null;
   const navigate = useNavigate();
   const edit = user?.role === 'business_owner';
   // the four steps of the mockup; every one keeps the page's single save
@@ -676,6 +681,8 @@ export default function LoyaltyCardPage() {
       if (designerDirty) await designerRef.current?.save();
       setSavedAt({ at: Date.now(), wallet });
       load();
+      // a new establishment's first save opens its card (signups): the menu learns it
+      if (curStore?.card_off) ownerAPI.getBranches().then(({ data }) => setBranches(data?.branches || data || [])).catch(() => {});
     } catch (e) {
       setError(e?.response?.data?.detail || 'Enregistrement impossible.');
     } finally {
@@ -1270,6 +1277,18 @@ export default function LoyaltyCardPage() {
 
   return (
     <div className="lc lc-wrap space-y-4 pb-28">
+      {curStore && (
+        <div role="note" data-testid="store-card-note"
+             className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-[13.5px] ${curStore.card_off
+               ? 'border-[#FDE68A] bg-[#FFFBEB] text-[#78350F]' : 'border-[#DCE6FA] bg-[#F3F7FF] text-[#0B1C3F]'}`}>
+          <Store size={18} className="mt-0.5 shrink-0 text-[#2F6BFF]" aria-hidden="true" />
+          <p>
+            Carte de <strong translate="no" className="notranslate">{curStore.name}</strong> : ses réglages ne s'appliquent qu'à cet
+            établissement et à ses clients. Les autres établissements gardent leur propre carte.
+            {curStore.card_off && <> <strong>Carte pas encore créée</strong> — les inscriptions dans cet établissement s'ouvriront dès le premier enregistrement.</>}
+          </p>
+        </div>
+      )}
       {/* ── header (mockup): Retour, the four steps, Aperçu client ── */}
       <div ref={topRef} className="flex scroll-mt-24 flex-wrap items-center justify-between gap-3">
         <nav aria-label="Étapes de la carte" className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-2">

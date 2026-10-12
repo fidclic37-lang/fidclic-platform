@@ -53,6 +53,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import store_cards as _SC  # one card per establishment (multi-store)
 
 router = APIRouter(tags=["automations"])
 _db = None
@@ -962,6 +963,7 @@ def safe_url(raw: Optional[str]) -> Optional[str]:
     return s if (s and len(s) <= 500 and _URL.match(s)) else None
 
 
+@_SC.customer_store("cust")
 def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any],
              at: datetime) -> Optional[Dict[str, Any]]:
     """One client, one message. Returns what was said, or None."""
@@ -1132,6 +1134,7 @@ def reward_unit(tpl: Dict[str, Any]) -> str:
     return "tampons" if prog == "stamps" else ("€" if prog == "cashback" else "points")
 
 
+@_SC.customer_store("cust")
 def reward_targets(tid: str, cust: Dict[str, Any], tpl: Optional[Dict[str, Any]] = None,
                    cycle: Optional[str] = None) -> List[Dict[str, Any]]:
     """The rewards ahead of this client, in the seuil's unit (user's answer:
