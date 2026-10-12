@@ -425,7 +425,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     body["card"]["card_name"] = "AB"            # typing the name: same images
     t0 = time.perf_counter(); r2 = http("POST", "/api/owner/wallet/preview", headers=H, json=body); warm = time.perf_counter() - t0
     check(f"typing does not rebuild the images: {cold:.2f}s → {warm:.2f}s", warm < cold * 0.6)
-    check("…and the preview is still right", r2.status_code == 200 and r2.json()["pass_json"]["logoText"] == "AB")
+    check("…and the preview is still right (the name now in the logo)", r2.status_code == 200
+          and "logoText" not in r2.json()["pass_json"] and r2.json()["images"].get("logo"))
     body["card"]["stamp_shape"] = "coeur"       # a real change is new work, not a stale image
     s1 = http("POST", "/api/owner/wallet/preview", headers=H, json=body).json()["images"].get("strip")
     body["card"]["stamp_shape"] = "rond"

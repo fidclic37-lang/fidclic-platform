@@ -294,6 +294,9 @@ class CardSettings(BaseModel):
     # shape ("" = bars painted, ● in text; else wallet_passes.STAMP_SHAPES)
     poster_footer_color: Optional[str] = None
     stamp_shape: Optional[str] = None
+    # the shop's name beside the logo, in every Wallet (user, 2026-10-12):
+    # "" = the card's text colour, "#RRGGBB" = that colour (wallet_passes.name_logo)
+    logo_text_color: Optional[str] = None
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None
@@ -397,6 +400,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "logo_ring": bool(tpl.get("logo_ring")),
             "logo_ring_color": tpl.get("logo_ring_color") or "",
             "poster_footer_color": tpl.get("poster_footer_color") or "",
+            "logo_text_color": tpl.get("logo_text_color") or "",
             "stamp_shape": tpl.get("stamp_shape") or "",
             "stamp_shapes": _stamp_shapes(),
             "google_design": _google_design(tpl.get("google_design")),
@@ -479,6 +483,8 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Couleur de bordure invalide.")
     if payload.get("poster_footer_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["poster_footer_color"]):
         raise HTTPException(status_code=400, detail="Couleur du pied invalide.")
+    if payload.get("logo_text_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_text_color"]):
+        raise HTTPException(status_code=400, detail="Couleur du nom invalide.")
     if payload.get("stamp_shape"):
         from features.wallet_passes import STAMP_SHAPES
         if payload["stamp_shape"] not in STAMP_SHAPES:

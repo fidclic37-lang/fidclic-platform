@@ -109,7 +109,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("storeCard + ids", pj["formatVersion"] == 1 and pj["passTypeIdentifier"] == "pass.com.fidclic.test" and pj["teamIdentifier"] == "TEAM123456" and "storeCard" in pj)
     check("serial = barcode; QR altText", pj["serialNumber"] == "FT-TEST0001" and pj["barcodes"][0]["format"] == "PKBarcodeFormatQR" and pj["barcodes"][0]["altText"] == "FT-TEST0001")
     check("design → colours (black surface, light ink)", pj["backgroundColor"] == "rgb(0, 0, 0)" and pj["foregroundColor"] == "rgb(244, 243, 240)")
-    check("card_name → logoText", pj["logoText"] == "ROYAL TRIM")
+    # the shop's name is written into the logo, in full (user, 2026-10-12:
+    # « BLOO J… » on iOS 27 — Wallet cut its own logoText)
+    from PIL import Image as _Im
+    _logo = _Im.open(io.BytesIO(z.read("logo@3x.png")))
+    check("card_name → written beside the logo (no logoText to cut)", "logoText" not in pj and _logo.height == 150
+          and _logo.width > 250)
+    _px = _logo.convert("RGBA").getdata()
+    check("…in the card's text colour by default", any(p[:3] == (244, 243, 240) and p[3] == 255 for p in _px))
     sc = pj["storeCard"]
     check("points in the header (nothing over the strip)", sc["headerFields"][0]["value"] == 70)
     check("primaryFields empty with a strip", sc["primaryFields"] == [])
@@ -128,7 +135,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           back_by_key["offer"]["value"] == "Aucune offre en ce moment." and back_by_key["offer"]["changeMessage"] == "%@")
     from PIL import Image as _LI
     lw, lh = _LI.open(io.BytesIO(z.read("logo.png"))).size
-    check(f"logo only as wide as it is (no 160-pt padding eating the name): {lw}x{lh}", lw <= 50 and lh == 50)
+    # logo + name: within Apple's 160 × 50 pt, no blank padding past the name
+    _im = _LI.open(io.BytesIO(z.read("logo.png"))).convert("RGBA")
+    _edge = any(_im.getpixel((x, y))[3] > 0 for x in range(lw - 3, lw) for y in range(lh))
+    check(f"logo + name within 160 × 50 pt, nothing blank after the name: {lw}x{lh}", lw <= 160 and lh == 50 and _edge)
     check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
     check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)
     tok = pj["authenticationToken"]
@@ -346,9 +356,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("preview: same front fields as the real pass (keys, order)",
           [f["key"] for f in pv["secondaryFields"]] == [f["key"] for f in real["secondaryFields"]]
           and [f["key"] for f in pv["headerFields"]] == [f["key"] for f in real["headerFields"]])
-    check("preview: the unsaved name is used", pv["logoText"] == "NOUVEAU NOM")
+    _pvlogo = _Im.open(io.BytesIO(base64.b64decode(pv["logo"].split(",", 1)[1])))
+    check("preview: the unsaved name is in the logo, as on the pass", not pv["logoText"] and pv["logo_width"] > 50)
     check("preview: strip and logo are the real images", (pv["strip"] or "").startswith("data:image/png;base64,")
-          and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 100)
+          and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 160 and _pvlogo.height == 100)
+    pv2 = WP.owner_wallet_preview(WP.PassPreviewIn(card={"card_name": "NOUVEAU NOM", "logo_text_color": "#FF0000"}, visits=3), _OT())
+    _red = _Im.open(io.BytesIO(base64.b64decode(pv2["logo"].split(",", 1)[1]))).convert("RGBA").getdata()
+    check("« Couleur du nom »: the name in that colour (preview = pass)", any(p[:3] == (255, 0, 0) and p[3] == 255 for p in _red))
+    files = WP.pass_files(WP._card_payload("FT-TEST0001"))
+    check("iOS 27: the poster's primaryLogo carries the name too",
+          "primaryLogo@3x.png" not in files or _Im.open(io.BytesIO(files["primaryLogo@3x.png"])).width > 250)
     check("preview: the offer is on the back, like the pass", any(f["key"] == "offer" for f in pv["backFields"]))
     check("preview: a sample customer, never a real one", pv["sample"]["name"] == "Marie Dupont"
           and pv["barcode"]["altText"] == "FT-5A3C91E2")
