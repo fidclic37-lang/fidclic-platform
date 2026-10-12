@@ -1555,11 +1555,11 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             holds one field, else in the footer row — a third primary field
             squeezed the customer's name into « AK-SHANSH » (user, 2026-10-12)."""
             prim = pg.setdefault("primaryFields", [])
-            if len(prim) < 2:
-                prim.insert(len(prim) if at is None else min(at, len(prim)), field)
-                return
             foot = pg.setdefault("footerFields", [])
-            if len(foot) < 3:
+            if len(prim) < 2 or (len(foot) >= 2 and len(prim) < 4):
+                # (a footer already full — Wallet draws two — keeps the old place)
+                prim.insert(len(prim) if at is None else min(at, len(prim)), field)
+            elif len(foot) < 2:
                 foot.append(field)
         if isinstance(pg, dict) and reward_front:          # « Sous le QR code »: the design gets it too
             front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
