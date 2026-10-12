@@ -6,6 +6,8 @@ import {
   Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
 import { CHANNEL_WORDS } from '../lib/sources';
 
 /* Paramètres › Lien d'inscription & QR — the shop's signup link, its QR code,
@@ -224,13 +226,28 @@ export default function LienInscriptionPage() {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.fidclic.com';
   const host = typeof window !== 'undefined' ? window.location.host : 'app.fidclic.com';
   const slug = d?.shop.slug || '';
-  const url = `${origin}/inscription/${slug}`;
+  // multi-store (2026-10-12): every link and QR here is the chosen
+  // establishment's — a signup through it makes the client its member
+  const { branchId } = useBranch();
+  const { user } = useAuth();
+  const stores = d?.stores || [];
+  const store = stores.length > 1 ? stores.find((x) => x.id === branchId) || null : null;
+  const url = `${origin}/inscription/${slug}${store ? `/${store.slug}` : ''}`;
+  const [storeSlug, setStoreSlug] = useState('');
+  useEffect(() => { setStoreSlug(store?.slug || ''); }, [store?.slug]);
+  const saveStoreSlug = async () => {
+    try {
+      await ownerAPI.setStoreSlug(store.id, storeSlug);
+      say('Adresse de l’établissement enregistrée');
+      load();
+    } catch (e) { say(e?.response?.data?.detail || "L'adresse n'a pas pu être enregistrée."); }
+  };
   // One link per channel (user, 2026-10-08): /inscription/<slug>/insta, /wa…
   // The owner copies the Instagram one into the Instagram bio; every signup
   // through it is « Instagram » — nothing to add, nothing to explain.
   const tagged = (src) => `${url}/${CHANNEL_WORDS[src] || src}`;
   const qrUrl = tagged('qr_store');
-  const shopName = d?.shop.name || 'Votre commerce';
+  const shopName = store?.name || d?.shop.name || 'Votre commerce';
   const message = `Rejoignez le programme de fidélité de ${shopName} : `;
 
   // Live availability check for the custom name — a moment after typing stops.
@@ -273,7 +290,7 @@ export default function LienInscriptionPage() {
     const data = chanQr.current?.toDataURL('image/png');
     if (data) {
       const a = document.createElement('a');
-      a.href = data; a.download = `qr-${slug}-${CHANNEL_WORDS[qrFor] || qrFor}.png`;
+      a.href = data; a.download = `qr-${slug}${store ? `-${store.slug}` : ""}-${CHANNEL_WORDS[qrFor] || qrFor}.png`;
       document.body.appendChild(a); a.click(); a.remove();
       say('QR code téléchargé');
     }
@@ -285,7 +302,7 @@ export default function LienInscriptionPage() {
     const data = qrDataUrl();
     if (!data) return;
     const a = document.createElement('a');
-    a.href = data; a.download = `qr-code-${slug}.png`;
+    a.href = data; a.download = `qr-code-${slug}${store ? `-${store.slug}` : ""}.png`;
     document.body.appendChild(a); a.click(); a.remove();
     say('QR code téléchargé');
   };
@@ -390,6 +407,21 @@ export default function LienInscriptionPage() {
               Personnaliser le lien
             </button>
           </div>
+          {store && (
+            <div className="mt-4 rounded-lg border border-[#E6EEFB] p-3">
+              <p className="text-[12.5px] font-semibold text-[#0B1C3F]">Établissement : {store.name}</p>
+              <p className="mb-2 text-[11.5px] text-[#64748B]">Ce lien et ce QR inscrivent les clients dans cet établissement. Changez d’établissement dans le menu pour obtenir les siens.</p>
+              {user?.role === 'business_owner' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] text-[#64748B]">…/{slug}/</span>
+                  <input value={storeSlug} onChange={(e) => setStoreSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40))}
+                         aria-label="Adresse de l'établissement" className="h-9 w-40 rounded-lg border border-[#E2E8F0] px-2.5 text-[13px] outline-none focus:border-[#2F6BFF]" />
+                  <button type="button" disabled={!storeSlug || storeSlug === store.slug} onClick={saveStoreSlug}
+                          className="h-9 rounded-lg bg-[#2F6BFF] px-3 text-[12.5px] font-semibold text-white disabled:opacity-50">Enregistrer</button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="mt-5 flex items-center gap-3 rounded-lg bg-[#F2F7FF] px-3.5 py-3">
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#2F6BFF] text-white"><Info size={12} strokeWidth={3} /></span>
             <p className="text-[12px] text-[#1E4FD8]">Vous pouvez personnaliser votre lien pour le rendre plus simple et mémorable.</p>

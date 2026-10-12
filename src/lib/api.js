@@ -647,6 +647,9 @@ export const ownerAPI = {
   // Clients › « Modifier la fiche » / « Ajuster points / tampons » (features/customer_edit.py)
   clientFiche: (id) => api.get(`/owner/clients/${id}/fiche`),
   saveClientFiche: (id, body) => api.put(`/owner/clients/${id}/fiche`, body),
+  // multi-store (2026-10-12): the client's home store, a store's link
+  setHomeStore: (id, branchId) => api.put(`/owner/customers/${encodeURIComponent(id)}/home-store`, { branch_id: branchId }),
+  setStoreSlug: (branchId, slug) => api.put(`/owner/stores/${encodeURIComponent(branchId)}/slug`, { slug }),
   adjustClient: (id, body) => api.post(`/owner/clients/${id}/ajustement`, body),
   // « Reprendre » / « Supprimer » a draft (QA F02)
   campaignDraft: (id) => api.get(`/owner/campaigns/drafts/${id}`),

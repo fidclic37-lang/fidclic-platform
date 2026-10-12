@@ -5914,17 +5914,17 @@ def _ensure_branch_assignments(tid: str) -> None:
         _backfill_visits_from_customers(tid, branch_ids)
         return
 
+    # Multi-store (user, 2026-10-12): never a random store, never a visit
+    # moved — a visit counts where it was scanned. A customer from before the
+    # store links (no home store) belongs to the store of their first tagged
+    # visit, else the main store.
+    open_ids = [b.get("id") for b in branches if b.get("id") and b.get("status") != "closed"] or branch_ids
+    main = next((b.get("id") for b in branches if b.get("is_main") and b.get("id") in open_ids), None) or open_ids[0]
     for cust in needs_fix:
         cid = cust.get("id") or ""
-        idx = (sum(ord(ch) for ch in cid) if cid else 0) % n
-        target_branch = branch_ids[idx]
-        db.customers.update_one({"id": cid}, {"$set": {"branch_id": target_branch}})
-        # Mirror onto visits unconditionally — the customer's visits all happen
-        # at the same "home" branch in this deterministic mapping.
-        db.visits.update_many(
-            {"tenant_id": tid, "customer_id": cid},
-            {"$set": {"branch_id": target_branch}},
-        )
+        first = db.visits.find_one({"tenant_id": tid, "customer_id": cid, "branch_id": {"$in": open_ids}},
+                                   {"_id": 0, "branch_id": 1}, sort=[("visit_time", 1)])
+        db.customers.update_one({"id": cid}, {"$set": {"branch_id": (first or {}).get("branch_id") or main}})
 
 
 def _backfill_visits_from_customers(tid: str, branch_ids: list) -> None:
@@ -5950,9 +5950,13 @@ def _backfill_visits_from_customers(tid: str, branch_ids: list) -> None:
         bid = cust.get("branch_id") if cust else None
         if bid in valid:
             seen[cid] = bid
+    # only the untagged / stale visits — a visit tagged with the store where it
+    # was scanned keeps it (multi-store, 2026-10-12)
     for cid, bid in seen.items():
         db.visits.update_many(
-            {"tenant_id": tid, "customer_id": cid},
+            {"tenant_id": tid, "customer_id": cid, "$or": [
+                {"branch_id": None}, {"branch_id": {"$exists": False}}, {"branch_id": ""},
+                {"branch_id": {"$nin": list(valid)}}]},
             {"$set": {"branch_id": bid}},
         )
 
@@ -6308,6 +6312,9 @@ class JoinRequest(BaseModel):
     # customer actually comes in, because a signup is free to fake and a visit
     # is not.
     parrain_barcode: Optional[str] = None
+    # Multi-store (2026-10-12): the establishment of the link (its slug) or the
+    # one chosen on the form — the customer's home store (features/store_links)
+    store: Optional[str] = None
 
 def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> None:
     """What the signup form says, checked by the server too (QA UX10,
@@ -6479,6 +6486,12 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    # The home store: the store of the link / the form, or the parrain's
+    # (features/store_links). Checked before anything is written.
+    from features import store_links as _SL
+    _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
+                                     {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
+    cust_doc["branch_id"] = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None)
     if getattr(req, "_birth_date", None):
         cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came

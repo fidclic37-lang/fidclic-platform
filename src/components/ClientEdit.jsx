@@ -89,10 +89,17 @@ export function FicheModal({ clientId, onClose, onSaved }) {
       const y2 = (f.birth_date || '').slice(0, 4);
       body.birthday = y2 && m2 && d2 ? `${y2}-${m2}-${d2}` : f.birthday;
     }
-    if (!Object.keys(body).length) { onClose(); return; }
+    // « Établissement d'origine » (multi-store, 2026-10-12): its own call
+    const storeMoved = f.branch_id && f.branch_id !== d.client.branch_id;
+    if (!Object.keys(body).length && !storeMoved) { onClose(); return; }
     try {
-      const { data } = await ownerAPI.saveClientFiche(clientId, body);
-      onSaved(data.changed.length ? 'Fiche enregistrée.' : 'Aucun changement.');
+      let changed = false;
+      if (Object.keys(body).length) {
+        const { data } = await ownerAPI.saveClientFiche(clientId, body);
+        changed = data.changed.length > 0;
+      }
+      if (storeMoved) { await ownerAPI.setHomeStore(clientId, f.branch_id); changed = true; }
+      onSaved(changed ? 'Fiche enregistrée.' : 'Aucun changement.');
     } catch (e) { setMsg(err(e, "La fiche n'a pas pu être enregistrée.")); } finally { setBusy(false); }
   };
   return (
@@ -141,6 +148,17 @@ export function FicheModal({ clientId, onClose, onSaved }) {
           <label><Label>Code postal</Label>
             <input inputMode="numeric" maxLength={5} value={f.postal_code} onChange={(e) => setF({ ...f, postal_code: e.target.value.replace(/\D/g, '').slice(0, 5) })} className={field} />
           </label>
+          {d.home_store?.choices?.length > 0 && (
+            <label className="sm:col-span-2"><Label>Établissement d'origine</Label>
+              <select value={f.branch_id || ''} onChange={(e) => setF({ ...f, branch_id: e.target.value })} className={field}
+                      disabled={d.home_store.choices.length < 2 && f.branch_id === d.home_store.choices[0]?.id}>
+                {!f.branch_id && <option value="">—</option>}
+                {f.branch_id && !d.home_store.choices.some((x) => x.id === f.branch_id) && <option value={f.branch_id}>{d.home_store.name || f.branch_id}</option>}
+                {d.home_store.choices.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <span className="mt-1 block text-[11.5px] text-[#64748B]">Sa carte et ses messages sont ceux de cet établissement ; ses passages comptent là où ils sont scannés.</span>
+            </label>
+          )}
           <label><Label>Comment nous a-t-il connu ?</Label>
             <select value={f.acquisition_source || ''} onChange={(e) => setF({ ...f, acquisition_source: e.target.value })} className={field}>
               <option value="">Non renseigné</option>

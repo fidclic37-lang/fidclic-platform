@@ -32,6 +32,9 @@ async function signup(page, { name, tel, path = `/join/${SLUG}` }) {
   if (path) await page.goto(path);
   const form = page.locator('#join-form');
   await expect(form).toBeVisible();
+  // several establishments and the account's own link: « Votre établissement » (2026-10-12)
+  const store = form.getByLabel('Votre établissement');
+  if (await store.count()) await store.selectOption({ index: 1 });
   await form.locator('input[type="text"]').first().fill(name);
   await page.locator('#join-phone').fill(tel);
   await page.locator('input[name="postal-code"]').fill('37000');
@@ -55,6 +58,37 @@ async function signup(page, { name, tel, path = `/join/${SLUG}` }) {
   expect(key, 'the phone keeps the card owner key after signup').toBeTruthy();
   return { barcode, key };
 }
+
+test("each establishment's link signs up its own members", async ({ page, request }) => {
+  const pub = await (await request.get(`/api/join/${SLUG}/page`)).json();
+  const stores = pub.stores || [];
+  test.skip(stores.length < 2, 'a one-shop demo');
+  // the account's link asks which one
+  await page.goto(`/join/${SLUG}`);
+  await expect(page.getByLabel('Votre établissement')).toBeVisible();
+  await page.locator('input[type="text"]').first().fill('Sans Choix');
+  await page.locator('#join-phone').fill('0699887766');
+  await page.locator('input[name="postal-code"]').fill('37000');
+  await page.locator('input[name="bday"]').pressSequentially('01021990');
+  await page.locator('input[type="checkbox"][required]').check();
+  await page.getByRole('button', { name: /Rejoindre le programme/ }).click();
+  await expect(page.getByText('Choisissez votre établissement.')).toBeVisible();
+  // a store's own link names it, asks nothing, and makes its member
+  const s2 = stores[1];
+  await page.goto(`/join/${SLUG}/${s2.slug}/insta`);
+  await expect(page.getByText(`Établissement : ${s2.name}`)).toBeVisible();
+  await expect(page.getByLabel('Votre établissement')).toHaveCount(0);
+  const tel = `07${String(Date.now()).slice(-8)}`;
+  const res = await request.post(`/api/join/${SLUG}`, { data: { name: 'Lien Magasin', phone: tel, postal_code: '37000',
+    birthday: '03/04/1992', consent: true, store: s2.slug, acquisition_source: 'instagram' } });
+  expect(res.ok()).toBeTruthy();
+  const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+  const auth = { Authorization: `Bearer ${login.access_token}` };
+  const made = await res.json();
+  const card = await (await request.get(`/api/card/${made.barcode_id}`, { headers: { 'X-Card-Key': made.card_key } })).json();
+  const fiche = await (await request.get(`/api/owner/clients/${card.customer.id}/fiche`, { headers: auth })).json();
+  expect(fiche.home_store.id, 'a member of the store whose link they used').toBe(s2.id);
+});
 
 test.describe.serial('a customer, end to end', () => {
   let me;                       // { barcode, key, name }
@@ -141,8 +175,10 @@ test.describe.serial('a customer, end to end', () => {
   });
 
   test("the till moves a paper card's stamps once, on top of today's visit", async ({ request }) => {
+    const pub = await (await request.get(`/api/join/${SLUG}/page`)).json();
     const signed = await (await request.post(`/api/join/${SLUG}`, { data: {
-      name: 'Paula Papier', phone: phone(), postal_code: '37000', birthday: '03/04/1992', consent: true } })).json();
+      name: 'Paula Papier', phone: phone(), postal_code: '37000', birthday: '03/04/1992', consent: true,
+      ...(pub.stores?.length ? { store: pub.stores[0].slug } : {}) } })).json();
     const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
     const auth = { Authorization: `Bearer ${login.access_token}` };
     const pre = await (await request.get(`/api/owner/scan/preview?barcode=${signed.barcode_id}`, { headers: auth })).json();
