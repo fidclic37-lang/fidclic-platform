@@ -1717,18 +1717,223 @@ def _css_rgb(v: Any) -> Optional[Tuple[int, int, int]]:
     return _rgb(v)
 
 
+# ---------------------------------------------------------------------------
+# « Nom stylé » (user, 2026-10-13: « MUSEUM mein M bada »): the name beside the
+# logo, letter by letter — each its size, colour and font, symbols included —
+# drawn into the logo image, so Apple (iOS 26 and 27) and Google show exactly it.
+# card_templates.name_style = {"letters": [{"c": "M", "s": 140, "color": "#D4AF37", "font": "cinzel"}, …]}
+# ---------------------------------------------------------------------------
+NAME_FONTS: Dict[str, Tuple[str, Optional[int], str]] = {
+    "dejavu": ("DejaVuSans-Bold.ttf", None, "Sans gras"),
+    "dejavu-light": ("DejaVuSans.ttf", None, "Sans"),
+    "cinzel": ("Cinzel.ttf", 700, "Cinzel"),
+    "playfair": ("PlayfairDisplay.ttf", 700, "Playfair Display"),
+    "montserrat": ("Montserrat.ttf", 700, "Montserrat"),
+    "bebas": ("BebasNeue.ttf", None, "Bebas Neue"),
+    "oswald": ("Oswald.ttf", 600, "Oswald"),
+    "greatvibes": ("GreatVibes.ttf", None, "Great Vibes"),
+    "pacifico": ("Pacifico.ttf", None, "Pacifico"),
+}
+NAME_MAX_LETTERS = 40
+NAME_SIZE_MIN, NAME_SIZE_MAX = 50, 200
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
+_FONT_OBJ: Dict[Tuple[str, int], Any] = {}
+_GLYPH: Dict[Tuple[str, str], bool] = {}
+
+
+def _name_font(key: str, px: int):
+    from PIL import ImageFont
+    k = (key if key in NAME_FONTS else "dejavu", max(1, int(px)))
+    f = _FONT_OBJ.get(k)
+    if f is None:
+        file, weight, _ = NAME_FONTS[k[0]]
+        try:
+            f = ImageFont.truetype(os.path.join(_FONTS_DIR, file), k[1])
+            if weight:
+                try:
+                    f.set_variation_by_axes([weight])
+                except Exception:
+                    pass
+        except Exception:
+            f = ImageFont.load_default()
+        if len(_FONT_OBJ) > 400:
+            _FONT_OBJ.clear()
+        _FONT_OBJ[k] = f
+    return f
+
+
+def _has_glyph(key: str, ch: str) -> bool:
+    """Does this font draw `ch`? (else its empty box would show: DejaVu draws it)"""
+    k = (key, ch)
+    if k not in _GLYPH:
+        try:
+            from PIL import Image, ImageDraw
+            f = _name_font(key, 40)
+
+            def ink(t: str) -> bytes:
+                im = Image.new("L", (80, 80), 0)
+                ImageDraw.Draw(im).text((10, 10), t, font=f, fill=255)
+                return im.tobytes()
+            _GLYPH[k] = ch == " " or ink(ch) != ink("\U0010FFFD")
+        except Exception:
+            _GLYPH[k] = key == "dejavu"
+    return _GLYPH[k]
+
+
+def clean_name_style(raw: Any) -> Optional[Dict[str, Any]]:
+    """The owner's styled name, checked (a French 400 on anything odd). None or
+    no letters: the plain name, as before."""
+    if raw in (None, "", {}):
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("letters"), list):
+        raise HTTPException(status_code=400, detail="Nom stylé invalide.")
+    letters = raw["letters"]
+    if len(letters) > NAME_MAX_LETTERS:
+        raise HTTPException(status_code=400, detail=f"Nom stylé : {NAME_MAX_LETTERS} caractères au plus.")
+    out = []
+    for x in letters:
+        if not isinstance(x, dict):
+            raise HTTPException(status_code=400, detail="Nom stylé invalide.")
+        c = str(x.get("c") or "")
+        if len(c) != 1 or (not c.isprintable() and c != " "):
+            raise HTTPException(status_code=400, detail="Nom stylé : un caractère par case.")
+        try:
+            size = int(x.get("s") or 100)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Taille de lettre invalide.")
+        if not NAME_SIZE_MIN <= size <= NAME_SIZE_MAX:
+            raise HTTPException(status_code=400, detail=f"Taille de lettre : {NAME_SIZE_MIN} à {NAME_SIZE_MAX} %.")
+        color = x.get("color") or None
+        if color and not re.match(r"^#[0-9A-Fa-f]{6}$", str(color)):
+            raise HTTPException(status_code=400, detail="Couleur de lettre invalide.")
+        fnt = x.get("font") or None
+        if fnt and fnt not in NAME_FONTS:
+            raise HTTPException(status_code=400, detail="Police inconnue.")
+        out.append({"c": c, "s": size, "color": color.upper() if color else None, "font": fnt})
+    while out and out[-1]["c"] == " ":
+        out.pop()
+    while out and out[0]["c"] == " ":
+        out.pop(0)
+    return {"letters": out} if out else None
+
+
+def styled_letters(card: Dict[str, Any]) -> Optional[Tuple[Tuple[str, int, Optional[str], Optional[str]], ...]]:
+    ns = card.get("name_style") if isinstance(card, dict) else None
+    letters = (ns or {}).get("letters") if isinstance(ns, dict) else None
+    if not letters:
+        return None
+    try:
+        return tuple((str(x["c"])[:1], int(x.get("s") or 100), x.get("color"), x.get("font"))
+                     for x in letters if x.get("c"))
+    except Exception:
+        return None
+
+
+def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, k: float):
+    """The styled name, as large as it fits in room × H (one line, else up to
+    three, never cut): an RGBA image, or None."""
+    from PIL import Image, ImageDraw
+    glyphs = []
+    for c, size, col, fkey in letters:
+        key = fkey if fkey in NAME_FONTS else "dejavu"
+        if not _has_glyph(key, c):
+            key = "dejavu"                       # a symbol the font lacks: drawn, not boxed
+        glyphs.append((c, size / 100.0, _rgb(col) if col else tuple(color), key))
+    words: List[List[Any]] = [[]]
+    for g in glyphs:
+        if g[0] == " ":
+            words.append([])
+        else:
+            words[-1].append(g)
+    words = [w for w in words if w]
+    if not words:
+        return None
+
+    def metrics(gl, base):
+        f = _name_font(gl[3], round(base * gl[1]))
+        a, d = f.getmetrics()
+        return f, f.getlength(gl[0]), a, d
+
+    def line_box(line, base):
+        """(width, ascent, descent, left overhang) — a script letter's swash
+        reaches past its advance: the ink decides the width, never cut."""
+        x, asc, desc, left, right = 0.0, 0, 0, 0.0, 0.0
+        sp = _name_font("dejavu", round(base)).getlength(" ")
+        for i, word in enumerate(line):
+            if i:
+                x += sp
+            for gl in word:
+                f, adv, a, d = metrics(gl, base)
+                l0, _, r0, _ = f.getbbox(gl[0], anchor="ls")
+                left, right = min(left, x + l0), max(right, x + r0, x + adv)
+                x, asc, desc = x + adv, max(asc, a), max(desc, d)
+        return right - left, asc, desc, -left
+
+    def wrap(base):
+        rows, cur = [], []
+        for word in words:
+            if cur and line_box(cur + [word], base)[0] > room:
+                rows.append(cur)
+                cur = [word]
+            else:
+                cur.append(word)
+        return rows + ([cur] if cur else [])
+
+    def fits(rows, base):
+        boxes = [line_box(r, base) for r in rows]
+        return all(b[0] <= room for b in boxes) and sum(b[1] + b[2] for b in boxes) <= H, boxes
+    chosen = None
+    for pt in range(20, 11, -1):
+        ok, boxes = fits([words], pt * k)
+        if ok:
+            chosen = ([words], pt * k, boxes)
+            break
+    if chosen is None:
+        for pt in range(16, 3, -1):
+            rows = wrap(pt * k)
+            ok, boxes = fits(rows, pt * k)
+            if len(rows) <= 3 and ok:
+                chosen = (rows, pt * k, boxes)
+                break
+    if chosen is None:
+        base = 4 * k
+        rows = wrap(base)
+        chosen = (rows, base, [line_box(r, base) for r in rows])
+    rows, base, boxes = chosen
+    tw = int(max(b[0] for b in boxes)) + 1
+    th = sum(b[1] + b[2] for b in boxes)
+    img = Image.new("RGBA", (max(1, min(room, tw)), max(1, min(H, th))), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    y = 0
+    sp = _name_font("dejavu", round(base)).getlength(" ")
+    for row, (_, asc, desc, lead) in zip(rows, boxes):
+        x, baseline = lead, y + asc
+        for i, word in enumerate(row):
+            if i:
+                x += sp
+            for gl in word:
+                f, adv, _, _ = metrics(gl, base)
+                d.text((x, baseline), gl[0], font=f, fill=tuple(gl[2]) + (255,), anchor="ls")
+                x += adv
+        y += asc + desc
+    return img
+
+
 def name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
-              box: Tuple[int, int] = (160, 50)) -> Dict[str, bytes]:
+              box: Tuple[int, int] = (160, 50), letters=None) -> Dict[str, bytes]:
     """The shop's logo with its FULL name beside it, in one image (user,
     2026-10-12: « BLOO J… » on iOS 27 — Wallet cuts its own logoText — and the
     name's colour chosen by the owner, in every Wallet). Apple draws a logo up
     to 160 × 50 pt: the name is written as large as it fits (20 pt down to
     11 pt), on two lines if it must, never cut. {'':1x, '@2x', '@3x'}."""
+    if letters:
+        return _cached("name_logo", (raw or b"", "styled", letters, color, box),
+                       lambda: _make_name_logo(raw, name, color, box, letters))
     return _cached("name_logo", (raw or b"", name, color, box), lambda: _make_name_logo(raw, name, color, box))
 
 
 def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
-                    box: Tuple[int, int]) -> Dict[str, bytes]:
+                    box: Tuple[int, int], letters=None) -> Dict[str, bytes]:
     from PIL import Image, ImageDraw, ImageFont
     fonts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
 
@@ -1755,6 +1960,20 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
         lw = logo.width if logo is not None else 0
         gap = round(8 * k) if logo is not None and name else 0
         room = max(10, W - lw - gap)
+        if letters:                                    # « Nom stylé »: letter by letter
+            gap = round(8 * k) if logo is not None else 0
+            room = max(10, W - lw - gap)
+            text = _styled_name_image(letters, color, room, H, k)
+            cw = min(W, lw + gap + (text.width if text else 0)) if text else max(lw, 1)
+            img = Image.new("RGBA", (max(1, cw), H), (0, 0, 0, 0))
+            if logo is not None:
+                img.paste(logo, (0, (H - logo.height) // 2), logo)
+            if text is not None:
+                img.paste(text, (lw + gap, (H - text.height) // 2), text)
+            b = io.BytesIO()
+            img.save(b, "PNG")
+            out[suffix] = b.getvalue()
+            continue
         draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
 
         def width(t: str, f) -> int:
@@ -1822,8 +2041,9 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     (« Couleur du nom ») or the card's text colour."""
     try:
         pj = json.loads(files["pass.json"])
-        name = str(pj.get("logoText") or "").strip()
-        if not name:
+        letters = styled_letters(card)               # « Nom stylé »: the owner's letters, in its place
+        name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
+        if not name.strip():
             return
         color = _rgb(card.get("logo_text_color")) or _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
         done = False
@@ -1834,7 +2054,7 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
             if src is None:
                 continue
             # the image is made from the plain logo (a design's logo may already be a disc)
-            for suffix, png in name_logo(src, name, color).items():
+            for suffix, png in name_logo(src, name, color, letters=letters).items():
                 files[f"{base}{suffix}.png"] = png
             done = True
         if done:
@@ -2312,7 +2532,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape", "logo_text_color",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style",
     "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
@@ -2835,6 +3055,7 @@ def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     look = f"{bool(card.get('logo_round'))}{bool(card.get('logo_ring'))}{card.get('logo_ring_color') or ''}"
     if what == "name":                        # the name and its colour are in the image
         look += f"{card.get('logo_text_color') or ''}{card.get('_shop_name') or ''}"
+        look += json.dumps(card.get("name_style") or {}, sort_keys=True)
     v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
     sid = _SC.store_for(tenant_id)
     own = sid and (_SC.own_card(tenant_id, sid) or (what == "name" and _SC.store_name(tenant_id, sid)))
@@ -2867,7 +3088,7 @@ def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
         cls["programLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "logo", card)}}
     if gd["logo"] == "wide":
         cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "wide", card)}}
-    elif card.get("logo_text_color"):
+    elif card.get("logo_text_color") or styled_letters(card):
         # « Couleur du nom » (user, 2026-10-12): Google picks its own text colour,
         # so the logo and the shop's name come as one wide logo, which replaces
         # Google's logo + issuer name; the line under it then says what the card is
@@ -3151,8 +3372,19 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
         _, ring = _logo_look(card)
         color = _rgb(card.get("logo_text_color")) or (255, 255, 255)
         return name_logo(round_logo(_fetch_image(card.get("logo_url")), ring, size=400), card.get("_shop_name") or "",
-                         color, box=(640, 200)).get("@2x")
+                         color, box=(640, 200), letters=styled_letters(card)).get("@2x")
     return None
+
+
+@router.get("/api/wallet/name-fonts/{key}.ttf")
+def name_font_file(key: str):
+    """The fonts of « Nom stylé », for the editor to show each letter as the
+    card will (public, OFL-licensed files from assets/fonts)."""
+    if key not in NAME_FONTS:
+        raise HTTPException(status_code=404, detail="Police inconnue")
+    with open(os.path.join(_FONTS_DIR, NAME_FONTS[key][0]), "rb") as fh:
+        data = fh.read()
+    return Response(content=data, media_type="font/ttf", headers={"Cache-Control": "public, max-age=2592000, immutable"})
 
 
 @router.get("/api/wallet/google/{tenant_id}/{what}.png")
@@ -3195,7 +3427,7 @@ def owner_google_preview(body: PassPreviewIn,
                        # « Couleur du nom »: the logo + the name, as Google gets it
                        _data_url(_gw_image({**card, "_shop_name": (payload.get("tenant") or {}).get("name")
                                             or card.get("card_name") or ""}, "name"))
-                       if card.get("logo_text_color") else None),
+                       if card.get("logo_text_color") or styled_letters(card) else None),
                    "hero": _preview_image("strip", hero) if hero else None},
         "row_fields": {k: v[0] for k, v in GOOGLE_ROW_FIELDS.items()},
         "codes": {k: v[0] for k, v in GOOGLE_CODES.items()},
