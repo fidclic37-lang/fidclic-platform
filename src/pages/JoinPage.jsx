@@ -191,6 +191,11 @@ const JoinPage = () => {
   const parrainBarcode = (searchParams.get('p') || '').trim().toUpperCase();
   const [inviter, setInviter] = useState(null);
   const [tenant, setTenant] = useState(null);
+  // several establishments: the shop is the one of the link (or chosen on the form) —
+  // its name in the welcome, the consent and the card, never the account's (2026-10-12)
+  const storeName = urlStore?.name || openStores.find((x) => x.slug === chosenStore)?.name
+    || (openStores.length === 1 ? openStores[0].name : '');
+  const shop = tenant && storeName ? { ...tenant, name: storeName } : tenant;
   const [closed, setClosed] = useState(null);
   const [logoBroken, setLogoBroken] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', postal_code: '', birth: '' });
@@ -305,15 +310,15 @@ const JoinPage = () => {
   return (
     <div className="min-h-screen bg-[#F8FAFC] px-4 py-10 font-['Inter']">
       <div className="mx-auto w-full max-w-md">
-        {success ? <Success result={success} tenant={tenant} /> : (
+        {success ? <Success result={success} tenant={shop} /> : (
           <>
             <header className="text-center">
               {logo && !logoBroken ? (
-                <img src={logo} alt={tenant.name} onError={() => setLogoBroken(true)}
+                <img src={logo} alt={shop.name} onError={() => setLogoBroken(true)}
                      className="mx-auto h-28 w-28 rounded-full object-cover shadow-[0_12px_30px_-12px_rgba(11,28,63,.45)]" />
               ) : (
                 <span translate="no" className="notranslate mx-auto flex h-28 w-28 items-center justify-center rounded-full bg-[#0B1C3F] text-[40px] font-bold text-white">
-                  {(tenant.name || '?').slice(0, 1).toUpperCase()}
+                  {(shop.name || '?').slice(0, 1).toUpperCase()}
                 </span>
               )}
               <h1 className="mt-6 text-[30px] font-extrabold leading-[1.12] text-[#0B1C3F]">{title}</h1>
@@ -419,7 +424,7 @@ const JoinPage = () => {
                        className="mt-0.5 h-6 w-6 shrink-0 cursor-pointer rounded-md accent-[#2F6BFF]" />
                 <span className="text-[14px] leading-relaxed text-[#1E293B]">
                   {tenant.privacy_public?.consent_text || (
-                    <>J’accepte que <strong translate="no" className="notranslate">{tenant.name}</strong> et FidClic utilisent mes
+                    <>J’accepte que <strong translate="no" className="notranslate">{shop.name}</strong> et FidClic utilisent mes
                       données personnelles pour gérer ma carte de fidélité, mon compte et m’envoyer des offres personnalisées,
                       y compris des offres pertinentes à proximité si j’autorise ma position.</>
                   )}

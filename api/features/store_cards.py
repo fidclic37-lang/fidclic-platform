@@ -124,6 +124,19 @@ def store_for(tid: Any) -> Optional[str]:
     return sid
 
 
+def store_name(tid: str, sid: Optional[str]) -> Optional[str]:
+    """The establishment's own name when the account has several (its card,
+    pass and signup page say « ROYAL TRIM PALISSY », not the account's name)."""
+    if not sid or _db is None:
+        return None
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    open_ = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    if len(open_) < 2:
+        return None
+    b = next((b for b in open_ if b["id"] == sid), None)
+    return (b or {}).get("name") or None
+
+
 def card_off(tid: str, sid: Optional[str]) -> bool:
     b = _branch(tid, sid) if sid else None
     return bool(b and b.get("card_off"))
