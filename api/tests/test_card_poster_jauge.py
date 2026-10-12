@@ -483,6 +483,51 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     unset("poster_image_url", "hero_image_url", "logo_url")
     http("DELETE", "/api/owner/card/pass-designer", headers=H)
 
+    # 2026-10-12: « fields mein jo bhi hai woh directly card mein dikhni
+    # chahiye » — a Pass Designer key (CUST_NAME, CUST_ID) no longer hides the
+    # field's text: it is shown as its placeholder, and what is typed shows
+    print("\nThe design's fields show what the card shows")
+    soe = {"posterGeneric": {
+        "headerFields": [{"key": "CUST_ID", "label": "MEMBRE", "value": "1234"}],
+        "primaryFields": [{"key": "CUST_NAME", "value": "SPIRIT OF ECSTACY"}, {"key": "", "label": "LOVES", "value": "ROLLS ROYCE"}]},
+        "logoText": "ROYAL TRIM", "barcodes": [{"format": "PKBarcodeFormatQR"}]}
+    r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={"name": "SOE", "pass_json": json.dumps(soe), "images": {}})
+    full = http("GET", "/api/owner/card/pass-designer?full=1", headers=H).json()
+    pgx = full["pass"]["posterGeneric"]
+    check(f"import: CUST_ID's sample text is shown as {{carte}} ({pgx['headerFields'][0]['value']})",
+          pgx["headerFields"][0]["value"] == "{carte}")
+    check(f"import: CUST_NAME's sample text is shown as {{nom}} ({pgx['primaryFields'][0]['value']})",
+          pgx["primaryFields"][0]["value"] == "{nom}")
+    check("…the business's own text untouched", pgx["primaryFields"][1]["value"] == "ROLLS ROYCE")
+    check("import: the design's logoText is dropped (the name is Identité's)", "logoText" not in full["pass"])
+    p = pj()
+    check("the card: the customer's name and card number, as the editor now says",
+          p["posterGeneric"]["primaryFields"][0]["value"] == "Marie Dupont" and p["posterGeneric"]["headerFields"][0]["value"] == "FT-JAUGE001")
+    check("the shop's name is Identité's, whatever the design said", p.get("logoText") != "ROYAL TRIM")
+    # the owner now types over it: the card shows exactly that
+    pgx["primaryFields"][0]["value"] = "SPIRIT OF ECSTACY"
+    r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={"name": "SOE", "pass_json": json.dumps(full["pass"]),
+                                                                      "images": {}, "source": "editor"})
+    p = pj()
+    check(f"typed text on a CUST_NAME key is what the card shows ({p['posterGeneric']['primaryFields'][0]['value']})",
+          p["posterGeneric"]["primaryFields"][0]["value"] == "SPIRIT OF ECSTACY")
+    check("…and the preview agrees", http("POST", "/api/owner/wallet/preview", headers=H, json={
+        "card": {}, "visits": 3, "design": {"pass": full["pass"], "images": {}, "options": {}}}).json()
+        ["pass_json"]["posterGeneric"]["primaryFields"][0]["value"] == "SPIRIT OF ECSTACY")
+    # an older design, saved before (no « literal » flag): its key still fills
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"pass_designer.literal": ""},
+                                                      "$set": {"pass_designer.pass": soe}})
+    p = pj()
+    check("an older design still shows the customer's name on the card",
+          p["posterGeneric"]["primaryFields"][0]["value"] == "Marie Dupont")
+    full = http("GET", "/api/owner/card/pass-designer?full=1", headers=H).json()
+    check("…and opens in the editor as {nom} / {carte}, so the editor matches the card",
+          full["pass"]["posterGeneric"]["primaryFields"][0]["value"] == "{nom}"
+          and full["pass"]["posterGeneric"]["headerFields"][0]["value"] == "{carte}")
+    check("a lone {points} keeps the number for Wallet", isinstance(PD._fields([{"key": "x", "value": "{points}"}],
+                                                                              {"points": 70})[0]["value"], int))
+    http("DELETE", "/api/owner/card/pass-designer", headers=H)
+
     # an imported template: its photo and logo land in Identité, to be framed there
     r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={
         "name": "Import", "pass_json": json.dumps(raw),

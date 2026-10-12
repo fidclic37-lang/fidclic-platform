@@ -181,6 +181,41 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
   });
 
+  test('the design\'s Champs: right after Identité, each field as the card shows it', async ({ page, request }) => {
+    // 2026-10-12: « fields mein jo bhi hai woh directly card mein dikhni chahiye »
+    const token = await asOwner(page, request);
+    const H = { Authorization: `Bearer ${token}` };
+    const soe = { posterGeneric: {
+      headerFields: [{ key: 'CUST_ID', label: 'MEMBRE', value: '1234' }, { key: 'pts', label: 'POINTS', value: '{points}' }],
+      primaryFields: [{ key: 'CUST_NAME', value: 'SPIRIT OF ECSTACY' }, { key: 'loves', label: 'LOVES', value: 'ROLLS ROYCE' }] },
+      logoText: 'ROYAL TRIM', barcodes: [{ format: 'PKBarcodeFormatQR' }] };
+    expect((await request.put('/api/owner/card/pass-designer', { headers: H,
+      data: { name: 'SOE', pass_json: JSON.stringify(soe), images: {} } })).status()).toBe(200);
+    await page.goto('/dashboard/card');
+    await expect(page.getByRole('button', { name: 'Champs', exact: true })).toBeVisible();
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('button')].map((b) => b.textContent.trim())
+      .filter((t) => ['Identité', 'Champs', 'Style', 'Images', 'Code-barres', 'Boutons'].includes(t)));
+    expect(tabs.slice(0, 3)).toEqual(['Identité', 'Champs', 'Style']);
+
+    await page.getByRole('button', { name: 'Style', exact: true }).click();
+    await expect(page.getByText('Texte du logo')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Champs', exact: true }).click();
+    await expect(page.locator('input[value="{nom}"]')).toHaveCount(1);       // not « SPIRIT OF ECSTACY »
+    await expect(page.locator('input[value="{carte}"]')).toHaveCount(1);     // not « 1234 »
+    // a tampons programme: the {points} field says why it is not on the card
+    await expect(page.getByText(/Pas sur la carte : programme Tampons/)).toBeVisible();
+    // the jauge FidClic adds is listed, read-only, with where to set it
+    await expect(page.getByText(/Ajouté par FidClic/)).toBeVisible();
+
+    // typing in the CUST_NAME field changes the card
+    const phone = page.locator('[translate="no"]').filter({ hasText: 'ROLLS ROYCE' }).first();
+    await expect(phone).toContainText('Marie');
+    await page.locator('input[value="{nom}"]').fill('SPIRIT OF ECSTACY');
+    await expect(phone).toContainText('SPIRIT OF ECSTACY');
+    await request.delete('/api/owner/card/pass-designer', { headers: H });
+  });
+
   test('back to the defaults: Flou Apple, bars, automatic centring', async ({ page, request }) => {
     const token = await asOwner(page, request);
     await page.goto('/dashboard/card');
