@@ -81,6 +81,26 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, a
 };
 
 /* CRM de prospection — a group that opens on its own on any /admin/crm page. */
+// one row per page (features/role_perms.PAGES); Paramètres opens on the tab the account may see
+const PERM_NAV = [
+  { keys: ['dashboard'], to: '/dashboard', icon: Home, label: 'Tableau de bord' },
+  { keys: ['scan'], to: '/dashboard/scan', icon: QrCode, label: 'Enregistrer une visite' },
+  { keys: ['analytics'], to: '/dashboard/analytics', icon: BarChart3, label: 'Analyses' },
+  { keys: ['customers'], to: '/dashboard/customers', icon: Users, label: 'Clients' },
+  { keys: ['campaigns'], to: '/dashboard/campaigns', icon: Megaphone, label: 'Campagnes' },
+  { keys: ['card'], to: '/dashboard/card', icon: CreditCard, label: 'Carte de fidélité' },
+  { keys: ['automations'], to: '/dashboard/automations', icon: Zap, label: 'Automatisations' },
+  { keys: ['segmentation'], to: '/dashboard/segmentation', icon: PieChart, label: 'Segmentation' },
+  { keys: ['referral'], to: '/dashboard/referral', icon: Share2, label: 'Parrainage' },
+  { keys: ['geolocation'], to: '/dashboard/map', icon: MapPin, label: 'Géolocalisation' },
+  { keys: ['catalogue'], to: '/dashboard/catalogue', icon: ShoppingBag, label: 'Catalogue produits' },
+  { keys: ['insights'], to: '/dashboard/insights', icon: Sparkles, label: 'Insights' },
+  { keys: ['ai'], to: '/dashboard/ai-assistant', icon: Sparkle, label: 'FidClic IA' },
+  { keys: ['history'], to: '/dashboard/history', icon: History, label: 'Historique' },
+  { keys: ['settings', 'billing'], to: '/dashboard/parametres', icon: Settings2, label: 'Paramètres', also: ['/dashboard/settings'] },
+  { keys: ['team'], to: '/dashboard/parametres/equipe', icon: Users, label: 'Équipe & accès' },
+];
+
 const CRM_ITEMS = [
   ['/admin/crm', 'Vue d\'ensemble', UserRound], ['/admin/crm/prospects', 'Prospects', Users], ['/admin/crm/pipeline', 'Pipeline', Kanban],
   ['/admin/crm/taches', 'Tâches', ListChecks], ['/admin/crm/calendrier', 'Calendrier', CalendarDays], ['/admin/crm/sequences', 'Séquences d\'emails', Mail],
@@ -365,6 +385,17 @@ const DashboardLayout = () => {
   const role = user?.role || 'default';
   const partialScope = ['administrateur', 'manager'].includes(role) && user?.scope === 'partial';
   const { branchId, branches: myBranches } = useBranch();
+  // Rôles et permissions par page (Équipe & accès): an account with its own
+  // switches sees the pages it may « Voir » in the establishment chosen
+  const pagePerms = role !== 'business_owner' && user?.page_perms && typeof user.page_perms === 'object' ? user.page_perms : null;
+  const myLevels = React.useMemo(() => {
+    if (!pagePerms) return null;
+    if (branchId && pagePerms[branchId]) return pagePerms[branchId];
+    const all = Object.values(pagePerms);
+    if (!all.length) return {};
+    const rank = { none: 0, view: 1, edit: 2 };
+    return Object.fromEntries(Object.keys(all[0]).map((k) => [k, all.map((p) => p[k] || 'none').reduce((a, b) => (rank[a] <= rank[b] ? a : b))]));
+  }, [pagePerms, branchId]);
   const theme = themeForRole(role);
 
   // Collapsed-sidebar toggle (persisted across reloads). When true the
@@ -549,7 +580,15 @@ const DashboardLayout = () => {
               <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
-          {role === 'manager' && !partialScope && (
+          {myLevels && (
+            <>
+              {PERM_NAV.filter((n) => n.keys.some((k) => (myLevels[k] || 'none') !== 'none')).map((n) => (
+                <NavLink key={n.to} to={n.to} icon={n.icon} label={n.label} currentPath={currentPath} role={role} collapsed={rail} alsoActive={n.also} />
+              ))}
+              <SignOutNavItem onClick={logout} collapsed={rail} />
+            </>
+          )}
+          {!myLevels && role === 'manager' && !partialScope && (
             <>
               <NavLink to="/dashboard/analytics" icon={BarChart3} label={t('nav.analytics')}    currentPath={currentPath} role={role} collapsed={rail} />
               <NavLink to="/dashboard/insights"  icon={Sparkles}  label={t('nav.insights')}     currentPath={currentPath} role={role} collapsed={rail} />
@@ -567,7 +606,7 @@ const DashboardLayout = () => {
           {/* An administrateur — and a manager covering only some of the
               establishments — works from the team page until the data pages
               filter by establishment. */}
-          {(role === 'administrateur' || (role === 'manager' && partialScope)) && (
+          {!myLevels && (role === 'administrateur' || (role === 'manager' && partialScope)) && (
             <>
               <NavLink to="/dashboard"               icon={Home}         label={t('nav.dashboard')}        currentPath={currentPath} role={role} collapsed={rail} />
               <NavLink to="/dashboard/analytics"     icon={BarChart3}    label={t('nav.analytics')}        currentPath={currentPath} role={role} collapsed={rail} />
@@ -587,7 +626,7 @@ const DashboardLayout = () => {
               <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}
-          {role === 'staff' && (
+          {!myLevels && role === 'staff' && (
             <>
               <NavLink to="/dashboard/scan" icon={QrCode} label={t('nav.scan_visit')} currentPath={currentPath} role={role} collapsed={rail} />
               <SignOutNavItem onClick={logout} collapsed={rail} />

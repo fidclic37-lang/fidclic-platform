@@ -196,7 +196,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and d["matrix"]["manager"]["team"] == "own")
     check("an employé only scans", [k for k, v in d["matrix"]["staff"].items() if v] == ["scan"])
     check("the rows carry their permission chips",
-          {u["email"]: u for u in d["users"]}["sara@corner.fr"]["permissions"][:2] == ["Clients", "Campagnes"])
+          {u["email"]: u for u in d["users"]}["sara@corner.fr"]["permissions"][:2] == ["Enregistrer une visite", "Analyses"])
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
