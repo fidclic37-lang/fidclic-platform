@@ -147,14 +147,17 @@ test.describe.serial('a customer, end to end', () => {
     const auth = { Authorization: `Bearer ${login.access_token}` };
     const pre = await (await request.get(`/api/owner/scan/preview?barcode=${signed.barcode_id}`, { headers: auth })).json();
     expect(pre.paper_max, 'a new card can take a full paper card').toBe(pre.threshold);
+    // a visit counts where it is scanned: with several establishments the till names one (2026-10-12)
+    const br = await (await request.get('/api/owner/branches', { headers: auth })).json();
+    const store = ((br && br.branches) || br || []).find((b) => b.status !== 'closed')?.id;
     const scan = await (await request.post('/api/owner/scan', { headers: auth,
-      data: { barcode_id: signed.barcode_id, amount_paid: 4, paper_stamps: 4 } })).json();
+      data: { barcode_id: signed.barcode_id, amount_paid: 4, paper_stamps: 4, branch_id: store } })).json();
     expect(scan.stamps_in_cycle, '4 paper stamps + today = 5').toBe(5);
     const card = await (await request.get(`/api/card/${signed.barcode_id}`, { headers: { 'X-Card-Key': signed.card_key } })).json();
     expect(card.customer.cycle_visits, 'the customer sees 5 on their card').toBe(5);
     expect(card.customer.visits, 'one real visit').toBe(1);
     const again = await request.post('/api/owner/scan', { headers: auth,
-      data: { barcode_id: signed.barcode_id, amount_paid: 4, paper_stamps: 2 } });
+      data: { barcode_id: signed.barcode_id, amount_paid: 4, paper_stamps: 2, branch_id: store } });
     expect(again.status(), 'never twice').toBe(409);
   });
 

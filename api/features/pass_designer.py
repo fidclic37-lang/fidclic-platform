@@ -433,7 +433,7 @@ def png_data(name: str, url: str) -> Optional[str]:
         k = {"@3x": 1, "@2x": 2 / 3, None: 1 / 3}[m.group(2)]
         im.thumbnail((max(1, int(mw * k)), max(1, int(mh * k))), Image.LANCZOS)
         b = io.BytesIO()
-        im.save(b, "PNG", optimize=True)
+        im.save(b, "PNG", compress_level=3)           # optimize=True took seconds on Vercel
         return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
     except Exception:
         return None

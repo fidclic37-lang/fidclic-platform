@@ -82,6 +82,7 @@ def init(db):
         _db.pass_registrations.create_index([("serial", 1)])
         _db.pass_push_log.create_index([("serial", 1), ("sent_at", -1)])
         _db.pass_push_log.create_index([("device_id", 1), ("checked_at", 1)])
+        _db.img_cache.create_index("at", expireAfterSeconds=30 * 24 * 3600)
     except Exception:
         pass
 
@@ -323,6 +324,7 @@ def derive_colors(card: Dict[str, Any]) -> Dict[str, str]:
 # Images
 # ---------------------------------------------------------------------------
 _FETCHED: Dict[str, Tuple[float, bytes]] = {}
+_MISSED: Dict[str, float] = {}                    # links that failed, and when
 
 
 def _fetch_image(src: Optional[str]) -> Optional[bytes]:
@@ -337,8 +339,17 @@ def _fetch_image(src: Optional[str]) -> Optional[bytes]:
             hit = _FETCHED.get(src)
             if hit and time.time() - hit[0] < 600:          # the same photo on every preview keystroke
                 return hit[1]
-            with urllib.request.urlopen(src, timeout=8) as r:  # noqa: S310 — merchant-provided image URL
-                data = r.read()
+            miss = _MISSED.get(src)
+            if miss and time.time() - miss < 300:            # a dead link is not waited for again
+                return None
+            try:
+                with urllib.request.urlopen(src, timeout=4) as r:  # noqa: S310 — merchant-provided image URL
+                    data = r.read()
+            except Exception:
+                _MISSED[src] = time.time()
+                while len(_MISSED) > 64:
+                    _MISSED.pop(next(iter(_MISSED)))
+                return None
             _FETCHED[src] = (time.time(), data)
             while len(_FETCHED) > 16:
                 _FETCHED.pop(next(iter(_FETCHED)))
@@ -393,7 +404,7 @@ def _make_png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool =
                 canvas.paste(img, ((cw - img.width) // 2, (h - img.height) // 2), img)
                 img = canvas
             buf = io.BytesIO()
-            img.save(buf, format="PNG", optimize=True)
+            img.save(buf, format="PNG", compress_level=3)
             out[suffix] = buf.getvalue()
         return out
     except ImportError:
@@ -540,6 +551,55 @@ def _size(v: Any) -> int:
     return 64
 
 
+# The images a pass is made of, shared by every server instance (user,
+# 2026-10-12: « preview 20 seconds »): on Vercel each new instance started
+# with an empty memory cache and rebuilt the poster, the strip and the logos
+# — seconds of image work every time. Built once, kept 30 days in Mongo.
+_SHARED_KINDS = {"poster", "poster_variants", "strip", "strip_variants", "png_variants", "name_logo",
+                 "round_logo", "template_scaled", "preview_jpeg"}
+_SHARED_MAX = 12 * 1024 * 1024
+
+
+def _shared_get(kind: str, key: str) -> Any:
+    if kind not in _SHARED_KINDS or _db is None:
+        return None
+    try:
+        doc = _db.img_cache.find_one({"_id": key})
+    except Exception:
+        return None
+    if not doc:
+        return None
+    if "b" in doc:
+        return bytes(doc["b"])
+    if "s" in doc:
+        return str(doc["s"])
+    if "d" in doc:
+        return {k[1:]: bytes(v) for k, v in doc["d"].items()}         # stored as "k" + key
+    return None
+
+
+def _shared_put(kind: str, key: str, value: Any) -> None:
+    if kind not in _SHARED_KINDS or _db is None:
+        return
+    try:
+        if isinstance(value, (bytes, bytearray)):
+            body: Dict[str, Any] = {"b": bytes(value)}
+        elif isinstance(value, str):
+            body = {"s": value}
+        elif isinstance(value, dict) and value and all(isinstance(v, (bytes, bytearray)) for v in value.values()):
+            if any("." in str(k) or "$" in str(k) for k in value):
+                return
+            body = {"d": {f"k{k}": bytes(v) for k, v in value.items()}}   # "" / "@2x" / "@3x" → "k" + key
+        else:
+            return
+        if _size(value) > _SHARED_MAX:
+            return
+        _db.img_cache.update_one({"_id": key}, {"$set": {**body, "kind": kind, "at": datetime.now(timezone.utc)}},
+                                 upsert=True)
+    except Exception as exc:                               # a cache that fails is just a slower preview
+        print(f"wallet: image not shared ({exc})")
+
+
 def _cached(kind: str, parts: Tuple[Any, ...], make):
     h = hashlib.sha1(kind.encode())
     for p in parts:
@@ -549,7 +609,11 @@ def _cached(kind: str, parts: Tuple[Any, ...], make):
     if key in _IMG_CACHE:
         _IMG_CACHE[key] = _IMG_CACHE.pop(key)          # most recent last
         return _IMG_CACHE[key]
-    out = make()
+    out = _shared_get(kind, key)
+    if out is None:
+        out = make()
+        if out is not None:
+            _shared_put(kind, key, out)
     if out is not None:
         _IMG_CACHE[key] = out
         while len(_IMG_CACHE) > 1 and (len(_IMG_CACHE) > _IMG_CACHE_MAX
@@ -656,7 +720,7 @@ def _make_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thresh
             d0.text((x, y + dy), text, font=font, fill=ink + (alpha,))
 
     if not with_meter or threshold <= 0:
-        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True); return buf.getvalue()
+        buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3); return buf.getvalue()
 
     # ---- meter: scrim + segmented track, one segment per stamp -------------
     # The scrim follows the card: dark on a dark surface, light on a crème or
@@ -677,7 +741,7 @@ def _make_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thresh
     if shape in STAMP_SHAPES:                  # the owner's tampon shape, not bars
         paint_stamps(d, shape, pad, STRIP_W - pad, y0 + bar_h / 2 - 4, 58, threshold, stamps,
                      brand, empty_fill, empty_line, 3)
-        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+        buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
         return buf.getvalue()
     inner = STRIP_W - 2 * pad
     gap = 10
@@ -692,7 +756,7 @@ def _make_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thresh
             d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
             d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
 
-    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
     return buf.getvalue()
 
 
@@ -750,7 +814,7 @@ def _make_poster(raw: Optional[bytes], theme: Dict[str, str], scrim: bool = True
 
     if scrim:     # a Pass Designer design has Apple's own (« Assombrir le haut de l'image »)
         _paint_top_scrim(img, light=raw is None and _lum(surface) > 0.45)
-    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
     return buf.getvalue()
 
 
@@ -776,7 +840,7 @@ def _make_poster_variants(png3x: bytes) -> Dict[str, bytes]:
     out: Dict[str, bytes] = {"@3x": png3x}            # the master is already the @3x PNG
     for suffix, k in (("", 1), ("@2x", 2)):
         im = big.resize((345 * k, 505 * k), Image.LANCZOS)
-        b = io.BytesIO(); im.save(b, "PNG", optimize=True); out[suffix] = b.getvalue()
+        b = io.BytesIO(); im.save(b, "PNG", compress_level=3); out[suffix] = b.getvalue()
     return out
 
 
@@ -981,7 +1045,7 @@ def _make_strip_variants(png3x: bytes) -> Dict[str, bytes]:
     out: Dict[str, bytes] = {"@3x": png3x}            # the master is already the @3x PNG
     for suffix, k in (("", 1), ("@2x", 2)):
         img = master.resize((375 * k, 144 * k), Image.LANCZOS)
-        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+        buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
         out[suffix] = buf.getvalue()
     return out
 
@@ -1860,10 +1924,12 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
         from PIL import Image
 
         def scaled(data: bytes, k: float) -> bytes:
-            im = Image.open(io.BytesIO(data))
-            b = io.BytesIO()
-            im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS).save(b, "PNG")
-            return b.getvalue()
+            def make() -> bytes:
+                im = Image.open(io.BytesIO(data))
+                b = io.BytesIO()
+                im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS).save(b, "PNG", compress_level=3)
+                return b.getvalue()
+            return _cached("template_scaled", (data, k), make)       # the same design on every preview
         for name in list(imgs):
             if name.endswith("@3x.png"):
                 for suffix, k in (("@2x", 2 / 3), ("", 1 / 3)):
@@ -2220,7 +2286,7 @@ def owner_wallet_preview(body: PassPreviewIn,
         "secondaryFields": sc.get("secondaryFields", []), "auxiliaryFields": sc.get("auxiliaryFields", []),
         "backFields": sc.get("backFields", []),
         "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
-        "strip": _data_url(strip2x) if "storeCard" in pj else None,
+        "strip": (_preview_image("strip", strip2x) if strip2x else None) if "storeCard" in pj else None,
         "logo": _data_url(logo2x), "logo_width": logo_w,
         "sample": {"name": sample["name"], "visits": visits},
         # iOS 27 « poster » — the same fields and background the pass ships
@@ -2287,7 +2353,8 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
         bg3x = poster_png(payload)
         bg2x = _poster_variants(bg3x).get("@2x") if bg3x else None
     return {"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
-            "footerFields": pg.get("footerFields", []), "background": _data_url(bg2x), "logo": _data_url(logo2x),
+            "footerFields": pg.get("footerFields", []), "background": _preview_image("background", bg2x) if bg2x else None,
+            "logo": _data_url(logo2x),
             "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}
                         for a in clean_featured(payload["card"].get("featured_actions"), payload.get("tenant"))]}
 

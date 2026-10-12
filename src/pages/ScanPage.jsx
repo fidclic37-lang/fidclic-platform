@@ -10,6 +10,7 @@ const C_SCAN = {
   ochre: '#2F6BFF', amber: '#4F7BFF', terracotta: '#7C3AED',
 };
 import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 import CardReaddModal from '../components/CardReaddModal';
 
@@ -240,9 +241,18 @@ const ScanPage = () => {
   const [pickerQty, setPickerQty] = useState({}); // { [item.id]: qty }
   // App-wide branch context (item #18). Picking a branch here also reflects on every other page.
   const { branchId: _branchIdRaw, setBranchId: _setBranchIdGlobal, branches: _branchesCtx, setBranches: _setBranchesCtx } = useBranch();
-  const branches = _branchesCtx;
-  const branchId = _branchIdRaw || '';
+  // The establishment of the visit (user, 2026-10-12): the owner picks among
+  // all, an administrateur among its own, a manager / employé has one and no
+  // menu — the visit counts where it is scanned, never « non taguée ».
+  const { user } = useAuth();
+  const role = user?.role;
+  const open = (Array.isArray(_branchesCtx) ? _branchesCtx : []).filter((b) => b && b.id && b.status !== 'closed');
+  const mine = Array.isArray(user?.branch_ids) ? user.branch_ids : null;
+  const branches = role === 'business_owner' || !mine ? open : open.filter((b) => mine.includes(b.id));
+  const fixedStore = role === 'manager' || role === 'staff' || branches.length === 1;
+  const branchId = fixedStore ? (branches[0]?.id || '') : (branches.some((b) => b.id === _branchIdRaw) ? _branchIdRaw : '');
   const setBranchId = (id) => _setBranchIdGlobal(id || null);
+  const needStore = branches.length > 1 && !branchId;   // several stores, none chosen yet
 
   useEffect(() => {
     (async () => {
@@ -631,6 +641,10 @@ const ScanPage = () => {
       setStatus({ type: 'error', message: paperError });
       return;
     }
+    if (needStore) {
+      setStatus({ type: 'error', message: "Choisissez l'établissement où a lieu le passage." });
+      return;
+    }
 
     setLoading(true);
     setStatus(null);
@@ -678,7 +692,8 @@ const ScanPage = () => {
         tier: customerData.tier || null,
         previous_tier: customerData.previous_tier || null,
         tier_upgraded: !!customerData.tier_upgraded,
-        branch_id: branchId || customerData.branch_id || null,
+        // where this visit was scanned (not the customer's home store)
+        branch_id: customerData.visit_branch_id || branchId || null,
         // Notification subscription status — drives the "encourage enable
         // notifications" prompt staff sees post-scan. Customers without
         // push subscriptions get a QR code they can scan to enable.
@@ -755,16 +770,22 @@ const ScanPage = () => {
       {/* Establishment and « give a card back » — only what the shop needs */}
       {(
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {branches.length > 0 ? (
-            <label className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 text-[12.5px] text-[#334155]">
+          {branches.length > 1 && !fixedStore ? (
+            <label className={`inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-[12.5px] text-[#334155] ${needStore ? 'border-[#F59E0B] ring-2 ring-[#F59E0B]/20' : 'border-[#E2E8F0]'}`}>
               <Building2 size={14} className="text-[#2F6BFF]" />
               <span className="font-semibold">{t('scan.scanning_at_branch')}</span>
-              <select value={branchId} onChange={(e) => setBranchId(e.target.value)}
-                      className="max-w-[180px] !border-0 bg-transparent !p-0 text-[12.5px] font-semibold text-[#0B1C3F] !outline-none">
-                <option value="">{t('scan.branch_not_tagged')}</option>
+              <select value={branchId} onChange={(e) => setBranchId(e.target.value)} aria-label="Établissement du passage"
+                      className="max-w-[200px] !border-0 bg-transparent !p-0 text-[12.5px] font-semibold text-[#0B1C3F] !outline-none">
+                {!branchId && <option value="" disabled>Choisir l'établissement…</option>}
                 {branches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
               </select>
             </label>
+          ) : branches.length >= 1 ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 text-[12.5px] text-[#334155]">
+              <Building2 size={14} className="text-[#2F6BFF]" />
+              <span className="font-semibold">{t('scan.scanning_at_branch')}</span>
+              <span className="font-semibold text-[#0B1C3F]">{branches[0]?.name}</span>
+            </span>
           ) : <span />}
           <button type="button" onClick={() => setReadd({ find: true })}
                   className="inline-flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">

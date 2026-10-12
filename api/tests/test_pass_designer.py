@@ -204,7 +204,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     pv = http("POST", "/api/owner/wallet/preview", headers=H, json={"card": {}}).json()
     check("the preview draws the template's poster",
           pv.get("poster") and pv["poster"]["primaryFields"][0]["key"] == "CUST_NAME"
-          and pv["poster"]["background"].startswith("data:image/png") and pv["colors"]["labelColor"] == "rgb(0,220,255)")
+          and pv["poster"]["background"].startswith("data:image/jpeg") and pv["colors"]["labelColor"] == "rgb(0,220,255)")
     check("…and the iOS 26 card as before: strip, shop colour", bool(pv.get("strip")) and pv["colors"]["backgroundColor"] != "rgb(0,229,136)")
     st = http("GET", "/api/owner/card/pass-designer", headers=H).json()
     check("status says which template", st.get("active") is True and st.get("name") == "SOE_ZIP")

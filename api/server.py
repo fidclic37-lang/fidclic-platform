@@ -4817,21 +4817,27 @@ def scan_visit(
     if _amount > MAX_VISIT_AMOUNT:
         raise HTTPException(status_code=400,
                             detail=f"Montant trop élevé (maximum {MAX_VISIT_AMOUNT:,.0f} €).".replace(",", " "))
-    # A team account scans in its own establishments: the visit is tagged with
-    # one of them — never with another shop's — so every establishment's
-    # figures stay its own (features/store_scope.py filters on this tag).
-    if token_data.role in ("administrateur", "manager", "staff"):
-        from features import store_scope as _S
+    # The visit's establishment (user, 2026-10-12): it counts where it is
+    # scanned. With several open establishments one must be named — the owner
+    # any of them, an administrateur one of its own, a manager / employé its
+    # only one (forced) — never untagged, never another shop's. A one-shop
+    # account is unchanged (its visits stay on the shop).
+    from features import store_scope as _S
+    from features import team_access as _T
+    _open = [st["id"] for st in _T.stores(token_data.tenant_id)]
+    if token_data.role == "business_owner":
+        _allowed = _open
+    else:
         _sc = _S.resolve(token_data, requested="")
-        # Accounts covering every establishment scan as before (a visit may
-        # stay untagged); only accounts limited to some are held to them.
-        partial = set(_sc.allowed) != set(_sc.all_ids)
-        if partial and req.branch_id not in _sc.allowed:
-            if len(_sc.allowed) == 1:
-                req.branch_id = _sc.allowed[0]
+        _allowed = [x for x in _open if x in set(_sc.allowed)]
+    if len(_open) > 1 or (len(_open) == 1 and _open[0] != _T.MAIN):
+        if req.branch_id not in _allowed:
+            if len(_allowed) == 1:
+                req.branch_id = _allowed[0]
+            elif req.branch_id and req.branch_id in _open:
+                raise HTTPException(status_code=403, detail="Cet établissement ne fait pas partie de votre accès.")
             else:
-                raise HTTPException(status_code=400,
-                                    detail="Choisissez l'établissement où a lieu le passage.")
+                raise HTTPException(status_code=400, detail="Choisissez l'établissement où a lieu le passage.")
     try:
         result = _scan_visit_impl(req, token_data)
         # API & Intégrations: visit.created (and reward.unlocked when this very
@@ -5335,6 +5341,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "tier": new_tier,
         "previous_tier": previous_tier,
         "tier_upgraded": tier_rank.get(new_tier, 0) > tier_rank.get(previous_tier, 0),
+        # where this visit counts (the scan's establishment, 2026-10-12)
+        "visit_branch_id": req.branch_id or None,
         "branch_id": req.branch_id or cust.get("branch_id"),
         # Cycle-aware stamps math — the staff page renders these directly.
         "stamps_in_cycle":  stamps_capped,

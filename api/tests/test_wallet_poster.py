@@ -207,7 +207,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     _tk = _auth.create_access_token({"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})
     pv = http("POST", "/api/owner/wallet/preview", headers={"Authorization": "Bearer " + _tk}, json={"card": {}}).json()
     check("preview has the poster: fields, background, logo",
-          bool(pv.get("poster")) and pv["poster"]["background"].startswith("data:image/png")
+          bool(pv.get("poster")) and pv["poster"]["background"].startswith("data:image/jpeg")  # photos as JPEG in the preview (2026-10-12: speed)
           and pv["poster"]["primaryFields"][0]["key"] == "member")
     check("…and the iOS 26 card as before, strip included", bool(pv.get("strip")) and bool(pv.get("secondaryFields")))
 

@@ -366,7 +366,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and [f["key"] for f in pv["headerFields"]] == [f["key"] for f in real["headerFields"]])
     _pvlogo = _Im.open(io.BytesIO(base64.b64decode(pv["logo"].split(",", 1)[1])))
     check("preview: the unsaved name is in the logo, as on the pass", not pv["logoText"] and pv["logo_width"] > 50)
-    check("preview: strip and logo are the real images", (pv["strip"] or "").startswith("data:image/png;base64,")
+    check("preview: strip and logo are the real images", (pv["strip"] or "").startswith("data:image/jpeg;base64,")
           and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 160 and _pvlogo.height == 100)
     pv2 = WP.owner_wallet_preview(WP.PassPreviewIn(card={"card_name": "NOUVEAU NOM", "logo_text_color": "#FF0000"}, visits=3), _OT())
     _red = _Im.open(io.BytesIO(base64.b64decode(pv2["logo"].split(",", 1)[1]))).convert("RGBA").getdata()
