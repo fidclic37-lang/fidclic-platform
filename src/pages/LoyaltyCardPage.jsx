@@ -643,7 +643,10 @@ export default function LoyaltyCardPage() {
           <textarea rows={3} maxLength={100} value={design.welcome_text}
                     onChange={(e) => setDesign({ ...design, welcome_text: e.target.value })}
                     className="w-full resize-none rounded-xl border border-[#E1E8F5] bg-white px-3.5 py-2.5 text-[13.5px] text-[#0F172A] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
-          <div className="mt-1 text-right text-[11px] text-[#94A3B8]">{(design.welcome_text || '').length}/100</div>
+          <div className="mt-1 flex justify-between gap-3 text-[11px] text-[#94A3B8]">
+            <span>Affiché au dos de la carte (Apple Wallet), sous le nom de votre établissement.</span>
+            <span>{(design.welcome_text || '').length}/100</span>
+          </div>
         </div>
       </div>
     </fieldset>

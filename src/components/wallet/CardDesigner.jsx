@@ -785,8 +785,9 @@ const CardDesigner = forwardRef(function CardDesigner({
                   if (/\{(recompense|reward)\}/i.test(v)) return 'Pas sur la carte : la récompense est réglée « Au dos » ou « Non » (Paramètres › Récompense).';
                   return 'Pas affiché sur la carte.';
                 };
-                // what FidClic adds to this group, set elsewhere
-                const added = g === 'primaryFields' && pjb ? (pjb.primaryFields || []).filter((x) => ['jauge', 'reward'].includes(x.key)
+                // what FidClic adds to this group, set elsewhere — in the footer row
+                // when the primary one already holds two fields (2026-10-12)
+                const added = ['primaryFields', 'footerFields'].includes(g) && pjb ? (pjb[g] || []).filter((x) => ['jauge', 'reward'].includes(x.key)
                   && !rows.some((r, i) => keyOf(r, i) === x.key)) : [];
                 return (
                   <div key={g}>
