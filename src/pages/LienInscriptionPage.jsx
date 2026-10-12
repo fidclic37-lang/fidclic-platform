@@ -3,7 +3,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import {
   Users, Link2, QrCode, Share2, Copy, Info, Download, Printer, Store, Settings, CheckCircle2,
   XCircle, Loader2, Mail, MessageSquare, MoreHorizontal, Eye, Pencil, ExternalLink, Gift,
-  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin,
+  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin, ImagePlus,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useBranch } from '../contexts/BranchContext';
@@ -197,6 +197,66 @@ function PageModal({ initial, defaults, limits, onClose, onSaved }) {
 }
 
 /* ------------------------------------------------------------------ page -- */
+// « Image de la page d'inscription » (user, 2026-10-12): the picture at the top
+// of the signup page, chosen by each establishment; none: the card's logo.
+const MAX_IMG = 2 * 1024 * 1024;
+function SignupImage({ d, setD, shopName, canEdit }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const input = useRef(null);
+  const own = d.shop.signup_image || '';
+  const shown = own || d.shop.card_logo_url || '';
+  const save = async (image) => {
+    setBusy(true); setErr('');
+    try { const { data } = await ownerAPI.saveSignupImage(image); setD(data); }
+    catch (e) { setErr(e?.response?.data?.detail || "L'image n'a pas pu être enregistrée."); }
+    finally { setBusy(false); }
+  };
+  const pick = (file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setErr('Choisissez une image (JPG, PNG, WebP).'); return; }
+    if (file.size > MAX_IMG) { setErr("L'image dépasse 2 Mo."); return; }
+    const r = new FileReader();
+    r.onload = () => save(String(r.result));
+    r.readAsDataURL(file);
+  };
+  return (
+    <section className="mt-4 rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="signup-image">
+      <CardHead icon={ImagePlus} title="Image de la page d'inscription"
+                subtitle={`L'image en haut de la page d'inscription de ${shopName}. Sans image choisie, c'est le logo de la carte.`} />
+      <div className="flex flex-wrap items-center gap-5">
+        <div className="flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E6EEFB] bg-[#F8FAFC]">
+          {shown ? <img src={shown} alt="" className="h-full w-full object-cover" />
+            : <ImagePlus size={28} className="text-[#94A3B8]" aria-hidden="true" />}
+        </div>
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-[13px] text-[#475569]">
+            {own ? 'Image propre à cet établissement.' : 'Actuellement : le logo de la carte de fidélité.'}
+            {' '}Format carré conseillé, 2 Mo maximum.
+          </p>
+          {canEdit && (
+            <div className="flex flex-wrap gap-2">
+              <input ref={input} type="file" accept="image/*" className="hidden" aria-label="Choisir l'image de la page d'inscription"
+                     onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+              <button type="button" onClick={() => input.current?.click()} disabled={busy}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#2F6BFF] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-60">
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />} {own ? "Changer l'image" : 'Choisir une image'}
+              </button>
+              {own && (
+                <button type="button" onClick={() => save('')} disabled={busy}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3.5 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] disabled:opacity-60">
+                  <RotateCcw size={14} /> Revenir au logo de la carte
+                </button>
+              )}
+            </div>
+          )}
+          {err && <p role="alert" className="text-[12.5px] text-[#B91C1C]">{err}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function LienInscriptionPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
@@ -538,6 +598,8 @@ export default function LienInscriptionPage() {
       </div>
 
       {/* Un lien par canal — each channel's signups counted apart */}
+      <SignupImage d={d} setD={setD} shopName={shopName} canEdit={user?.role === 'business_owner'} />
+
       <section className={`${cardCls} mt-4`}>
         <CardHead icon={Link2} title="Un lien par canal"
                   subtitle="Mettez le lien Instagram dans votre bio Instagram, le lien WhatsApp dans vos messages… Chaque inscription est comptée dans son canal, sans rien demander au client." />
