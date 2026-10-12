@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, Check, Plus, Store, Link2 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
-import { useBranch } from '../contexts/BranchContext';
+import { useBranch, allowedStores } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
@@ -43,21 +43,13 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
   // What this account may pick: the owner every establishment, an
   // administrateur only its own, a manager or an employé none — they work in
   // one establishment and see its name, without a menu.
+  // « Toutes les branches » is gone (user, 2026-10-12): one establishment is
+  // always chosen (StoreGate, after login); this menu switches to another.
   const role = user?.role;
-  const everything = Array.isArray(branches) ? branches : [];
-  const mine = Array.isArray(user?.branch_ids) ? user.branch_ids : null;
-  const list = role === 'business_owner' || !mine ? everything : everything.filter((b) => mine.includes(b.id));
+  const list = allowedStores(branches, user);
   const fixed = role === 'manager' || role === 'staff';
-  const allLabel = role === 'administrateur' ? 'Tous mes établissements' : 'Toutes les branches';
   const active = branchId ? list.find((b) => b.id === branchId) : null;
-  // A choice left in this browser that the account does not cover is dropped.
-  useEffect(() => {
-    if (branchId && everything.length && !list.some((b) => b.id === branchId)) setBranchId(null);
-  }, [branchId, everything.length, list.length]); // eslint-disable-line react-hooks/exhaustive-deps
-  // With no branch chosen the header reads the whole network; with one shop on
-  // the account it reads that shop, since "all of one" is a strange thing to say.
-  const label = (fixed && list[0]?.name) || active?.name
-    || (list.length > 1 ? allLabel : (list[0]?.name || tenant?.name || 'Mon établissement'));
+  const label = active?.name || list[0]?.name || tenant?.name || 'Mon établissement';
 
   if (fixed && !collapsed) {
     return (
@@ -100,13 +92,6 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
 
       {open && (
         <div className="absolute left-3 right-3 top-full z-40 mt-1 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
-          {list.length > 1 && (
-            <button type="button" onClick={() => pick(null)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
-              <span className="w-4 shrink-0">{!branchId && <Check size={14} className="text-[#2F6BFF]" />}</span>
-              {allLabel}
-            </button>
-          )}
           {list.map((b) => (
             <button key={b.id} type="button" onClick={() => pick(b.id)}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">

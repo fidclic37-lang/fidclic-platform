@@ -12,8 +12,14 @@ const OWNER = { email: 'demo.owner@fidelitour.com', password: 'Owner!Demo2026' }
 
 async function asOwner(page, request) {
   const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+  // several establishments: one is always chosen (« Toutes les branches » is gone, 2026-10-12)
+  const br = await (await request.get('/api/owner/branches', { headers: { Authorization: `Bearer ${login.access_token}` } })).json();
+  const store = ((br && br.branches) || br || []).find((b) => b.status !== 'closed')?.id || '';
   await page.goto('/login');
-  await page.evaluate((t) => localStorage.setItem('fidelitour_access_token', t), login.access_token);
+  await page.evaluate(([t, s]) => {
+    localStorage.setItem('fidelitour_access_token', t);
+    if (s) localStorage.setItem('ft_selected_branch_v1', s);
+  }, [login.access_token, store]);
   return login.access_token;
 }
 
