@@ -224,9 +224,18 @@ async function translateNodes(nodes) {
     return t.length >= 2 && LATIN.test(t) && !PROTECTED.has(t.toLowerCase());
   });
   if (!units.length) return;
+  // what each node held when it was sent for translation
+  const sent = units.map((u) => u.nodes.map((n) => n.nodeValue));
   const translated = await translateBatch(units.map((u) => u.source.trim()), currentLang);
   if (currentLang === SOURCE_LANG) return;
-  units.forEach((u, i) => applyUnit(u, translated[i]));
+  units.forEach((u, i) => {
+    // React wrote new text while the translation was on its way (the menu's
+    // « Mon établissement » became « ROYAL TRIM » once the stores arrived):
+    // the old translation must not overwrite it — the new text is queued
+    // by the observer and translated on its own (user, 2026-10-12).
+    if (u.nodes.some((n, j) => n.nodeValue !== sent[i][j])) return;
+    applyUnit(u, translated[i]);
+  });
 }
 
 // Names are data, not words (QA F08, 2026-10-08: in Arabic the business
