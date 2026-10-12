@@ -154,7 +154,13 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           all(f.get("key") for g in pg.values() if isinstance(g, list) for f in g)
           and [f["value"] for f in pg["footerFields"]] == ["ROYALTY LIVES HERE"])
     back = {f["key"]: f for f in pg["backFields"]}
-    check("POINTS → the balance, with a changeMessage (it notifies)", back["POINTS"]["value"] == 70 and "changeMessage" in back["POINTS"])
+    # points OR tampons, by the programme (user, 2026-10-12)
+    check("tampons programme: the template's POINTS row is left out", "POINTS" not in back)
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": "points_visit"}})
+    _bp = {f["key"]: f for f in WP.build_pass_json(WP._card_payload("FT-TEST0001"))["posterGeneric"]["backFields"]}
+    check("points programme: POINTS → the balance, with a changeMessage (it notifies)",
+          _bp["POINTS"]["value"] == 70 and "changeMessage" in _bp["POINTS"])
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"programme": ""}})
     check("our back follows: « Offre du moment » with its changeMessage (campaigns notify)",
           "offer" in back and back["offer"].get("changeMessage") == "%@" and "jhvkhv" not in back)
     check("the designer's text colours; the shop's background stays for the iOS 26 card",

@@ -294,6 +294,10 @@ class CardSettings(BaseModel):
     # shape ("" = bars painted, ● in text; else wallet_passes.STAMP_SHAPES)
     poster_footer_color: Optional[str] = None
     stamp_shape: Optional[str] = None
+    # the reward on the card (user, 2026-10-12): shown or not, and where —
+    # "front" (under the QR) or "back" (⋯ › Détails du pass)
+    reward_on_card: Optional[bool] = None
+    reward_place: Optional[str] = None
     # the shop's name beside the logo, in every Wallet (user, 2026-10-12):
     # "" = the card's text colour, "#RRGGBB" = that colour (wallet_passes.name_logo)
     logo_text_color: Optional[str] = None
@@ -402,6 +406,8 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "poster_footer_color": tpl.get("poster_footer_color") or "",
             "logo_text_color": tpl.get("logo_text_color") or "",
             "stamp_shape": tpl.get("stamp_shape") or "",
+            "reward_on_card": tpl.get("reward_on_card") is not False,
+            "reward_place": "front" if tpl.get("reward_place") == "front" else "back",
             "stamp_shapes": _stamp_shapes(),
             "google_design": _google_design(tpl.get("google_design")),
             "barcode_formats": _barcode_formats(),
@@ -483,6 +489,8 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Couleur de bordure invalide.")
     if payload.get("poster_footer_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["poster_footer_color"]):
         raise HTTPException(status_code=400, detail="Couleur du pied invalide.")
+    if payload.get("reward_place") is not None and payload["reward_place"] not in ("front", "back"):
+        raise HTTPException(status_code=400, detail="Emplacement de la récompense inconnu.")
     if payload.get("logo_text_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_text_color"]):
         raise HTTPException(status_code=400, detail="Couleur du nom invalide.")
     if payload.get("stamp_shape"):

@@ -148,7 +148,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     pg8 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))["posterGeneric"]
     st = next(f for f in pg8["primaryFields"] if f["key"] == "stamps")
     check(f"the jauge is the stamps field, count in its label ({st['label']} {st['value']})",
-          st["value"] == "●" * 8 + "○" * 2 and st["label"].endswith("· 8/10"))
+          st["value"] == " ".join("●" * 8 + "○" * 2) and st["label"].endswith("· 8/10"))
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 7}})
 
     print("\nThe poster photo stays sharp")

@@ -428,7 +428,7 @@ STAMP_SHAPES: Dict[str, Tuple[str, str, str]] = {
     "carre": ("Carré", "■", "□"),
     "losange": ("Losange", "◆", "◇"),
 }
-JAUGE_MAX = 20          # past 20 tampons a row of glyphs no longer fits: « 3 / 25 » instead
+JAUGE_MAX = 15          # past 15 tampons a spaced row no longer fits: « 3 / 25 » instead
 
 
 def stamp_shape(card: Dict[str, Any]) -> Optional[str]:
@@ -437,14 +437,35 @@ def stamp_shape(card: Dict[str, Any]) -> Optional[str]:
     return s if s in STAMP_SHAPES else None
 
 
+def apply_programme_rules(card: Dict[str, Any]) -> Dict[str, Any]:
+    """Points OR tampons on the card, never both (user, 2026-10-12: « dono is
+    not good »), decided by the programme itself: a tampons programme shows
+    the jauge and no points, every other one its balance and no jauge. The
+    old « Afficher le solde de points » / « Indicateur de progression »
+    switches no longer decide. Also the reward's defaults: on the card, on
+    its back. In place; returns the card."""
+    from features.loyalty_card import _programme
+    prog = _programme(card)
+    stamps = prog == "stamps"
+    card["programme"] = prog
+    card["show_points"] = not stamps
+    card["show_meter"] = stamps
+    card["show_stamps"] = stamps
+    card["reward_on_card"] = card.get("reward_on_card") is not False
+    card["reward_place"] = "front" if card.get("reward_place") == "front" else "back"
+    return card
+
+
 def jauge_text(stamps: int, threshold: int, shape: Optional[str]) -> Optional[str]:
-    """« ●●●○○○○○○○ » — the jauge Wallet writes itself, crisp on any photo.
-    None when there is nothing to draw or too many tampons for one line."""
+    """« ● ● ● ○ ○ ○ ○ ○ ○ ○ » — the jauge Wallet writes itself, crisp on any
+    photo, a space between the tampons (user, 2026-10-12: « symbols k beech
+    mein gap do »). None when there is nothing to draw or too many tampons
+    for one line."""
     if threshold <= 0 or threshold > JAUGE_MAX:
         return None
     _, full, empty = STAMP_SHAPES.get(shape or "rond", STAMP_SHAPES["rond"])
     done = max(0, min(threshold, int(stamps)))
-    return full * done + empty * (threshold - done)
+    return " ".join([full] * done + [empty] * (threshold - done))
 
 
 def _shape_points(shape: str, cx: float, cy: float, r: float) -> List[Tuple[float, float]]:
@@ -1216,6 +1237,13 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     first_name = full_name if card.get("use_full_name") else full_name.split(" ")[0]
     reward = card.get("reward_description") or "Une récompense fidélité"
 
+    apply_programme_rules(card)
+    stamp_prog = card["programme"] == "stamps"
+    # The reward (user, 2026-10-12): the owner's own words, shown or not,
+    # under the QR or on the back — never added to the card by itself.
+    reward_on = card["reward_on_card"]
+    reward_front = reward_on and card["reward_place"] == "front"
+    reward_field = {"key": "reward", "label": "RÉCOMPENSE", "value": reward}
     show = lambda k, default=True: card.get(k) is not False if card.get(k) is not None else default  # noqa: E731
 
     # A banner (strip) image changes the layout. In a storeCard, Wallet draws
@@ -1243,21 +1271,22 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # RÉCOM… · Encore 9 tampons · Un café gra… » (user's iPhone, 2026-10-04).
     # Three fields at most: who, how far, and the offer (or the statut).
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
-    if show("show_stamps"):
+    if reward_front:
+        secondary.append(reward_field)
+    if stamp_prog:
+        # changeMessage is what makes Wallet raise a lock-screen notification
+        # when the value changes after an update push.
         secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
                           "value": f"{stamps} / {threshold}",
                           "changeMessage": (card.get("stamps_change_message") or "Tampons : %@")})
-    else:
-        # changeMessage is what makes Wallet raise a lock-screen notification
-        # when the value changes after an update push.
-        secondary.append({"key": "reward", "label": "RÉCOMPENSE",
-                          "value": "Débloquée !" if remaining <= 0 else f"Encore {remaining}",
-                          "changeMessage": "Récompense : %@"})
     offer_title, offer_sub = _offer_text(card)
+    header_fields = _header_fields(card, has_banner, show("show_points"), show_tier,
+                                   points_field, tier_field, visits, card.get("visits_label"))
+    tier_up = any(f["key"] == "tier" for f in header_fields)      # never twice on one card
     tier_front = False
     if offer_title:
         secondary.append({"key": "offer_title", "label": "OFFRE", "value": offer_title})
-    elif show_tier and (has_banner or not show("show_points")):
+    elif show_tier and not tier_up and (has_banner or not show("show_points")):
         secondary.append(tier_field)
         tier_front = True
     elif show("show_visits"):
@@ -1270,6 +1299,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # receives must change this field, not create it.
     offer_full = (f"{offer_title} — {offer_sub}" if offer_sub else offer_title) if offer_title \
         else "Aucune offre en ce moment."
+    reward_points = int(card.get("reward_points") or 0)
     back = [
         {"key": "offer", "label": "Offre du moment", "value": offer_full, "changeMessage": "%@"},
         {"key": "next_reward", "label": "Prochaine récompense",
@@ -1281,10 +1311,23 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
          "value": (f"{pending} récompense{'s' if pending > 1 else ''} à récupérer : {reward}. "
                    "Présentez votre carte en caisse.") if pending else "Aucune pour le moment.",
          "changeMessage": "%@"},
-        {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
+        {"key": "program", "label": "Programme de fidélité",
+         "value": f"{reward} tous les {threshold} tampons." if stamp_prog
+         else (f"{reward} dès {reward_points} points." if reward_points else f"{reward}.")},
         {"key": "card", "label": "Ma carte en ligne", "value": CO.owner_url(_site_url(), serial)},
     ]
-    if show_tier and not tier_front:
+    if not stamp_prog:                    # « Encore N tampons » means nothing on a points card
+        back = [f for f in back if f["key"] != "next_reward"]
+    else:
+        # No points on a tampons card's face (user, 2026-10-12), but the
+        # balance stays on its back: a parrainage credits points, and Wallet
+        # only rings for a field that was already there — « Votre ami Lina
+        # est venu… » rides on this one (_points_news).
+        back.insert(next((i + 1 for i, f in enumerate(back) if f["key"] == "pending_rewards"), len(back)),
+                    {**points_field, "label": (card.get("points_label") or "Points")})
+    if not reward_on:                     # « Non »: no reward on the card, front or back
+        back = [f for f in back if f["key"] not in ("next_reward", "program")]
+    if show_tier and not tier_front and not tier_up:
         back.insert(1, {"key": "tier_back", "label": "Statut", "value": tier_field["value"]})
     # Tapping a Wallet notification only opens the pass, and the back of a pass
     # holds text only: the link opens the campaign itself — photo, full text —
@@ -1362,8 +1405,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             # With a banner: points in the header, nothing over the image.
             # Without: the classic big number, statut in the header. The
             # merchant can override which value sits top-right.
-            "headerFields": _header_fields(card, has_banner, show("show_points"), show_tier,
-                                           points_field, tier_field, visits, card.get("visits_label")),
+            "headerFields": header_fields,
             "primaryFields": [] if has_banner
             else ([points_field] if show("show_points") else []),
             "secondaryFields": secondary[:3],
@@ -1433,23 +1475,25 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Apple's sample (user, 2026-10-06): labelled fields — who, and how
         # far. The offer lives on the back, where its changeMessage still
         # raises the notification.
-        progress = next((f for f in secondary if f["key"] in ("stamps", "reward")), None)
         member_field = next((f for f in secondary if f["key"] == "member"),
                             {"key": "member", "label": "MEMBRE", "value": first_name})
         primary: List[Dict[str, Any]] = [member_field]
+        if reward_front:
+            primary.append(reward_field)
         # The tampons as a jauge Wallet writes in the band under the QR (user,
         # 2026-10-11): crisp on any photo, never painted over it. The count
         # moves to the label: « TAMPONS · 3/10 » over « ●●●○○○○○○○ ».
         # It takes the progress slot, whichever it was (« Tampons » or the
         # reward): the mockup's MEMBRE | TAMPONS ●●●○○○○○○○ 3/10.
-        jauge = jauge_text(stamps, threshold, stamp_shape(card)) if card.get("show_meter") is not False else None
-        if jauge:
-            progress = {"key": "stamps" if progress and progress["key"] == "stamps" else "jauge",
-                        "label": f"{(card.get('stamps_label') or 'Tampons').upper()} · {stamps}/{threshold}",
-                        "value": jauge, "changeMessage": card.get("stamps_change_message") or "Tampons : %@"}
+        progress = None
+        if stamp_prog:
+            jauge = jauge_text(stamps, threshold, stamp_shape(card))
+            progress = ({"key": "stamps", "label": f"{(card.get('stamps_label') or 'Tampons').upper()} · {stamps}/{threshold}",
+                         "value": jauge, "changeMessage": card.get("stamps_change_message") or "Tampons : %@"} if jauge
+                        else next((f for f in secondary if f["key"] == "stamps"), None))
         if progress:
             primary.append(progress)
-        elif show_tier:
+        elif len(primary) == 1 and show_tier and show("show_points"):
             primary.append(tier_field)
         header = ([points_field] if show("show_points") else ([tier_field] if show_tier else []))
         pass_json["posterGeneric"] = {
@@ -1484,14 +1528,17 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         since = cust.get("created_at")
         values = {
             "name": full_name if card.get("use_full_name") is not False else first_name,
-            "first_name": full_name.split(" ")[0], "card": serial, "points": points,
-            "stamps": f"{stamps} / {threshold}", "tier": tier_field["value"],
-            "reward": ("Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} avant : {reward}"),
+            # points OR tampons, by the programme: a field showing the other
+            # one is left out (an empty {placeholder} field disappears)
+            "first_name": full_name.split(" ")[0], "card": serial, "points": points if not stamp_prog else "",
+            "stamps": f"{stamps} / {threshold}" if stamp_prog else "", "tier": tier_field["value"],
+            # the reward: the owner's words, only where the owner put it
+            "reward": reward if reward_front else "",
             # the running campaign's offer, short, or nothing (a front field
             # holding only {offre} then disappears)
             "offer": offer_title or "", "visits": visits, "shop": org,
             # {jauge}: the tampons as shapes, « ●●●○○○○○○○ »
-            "meter": (jauge_text(stamps, threshold, stamp_shape(card)) or f"{stamps} / {threshold}"),
+            "meter": ((jauge_text(stamps, threshold, stamp_shape(card)) or f"{stamps} / {threshold}") if stamp_prog else ""),
             "member_since": since.strftime("%d/%m/%Y") if isinstance(since, datetime) else "",
         }
         pass_json = PD.apply(pass_json, tpl, values)
@@ -1501,7 +1548,11 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         # under the QR anyway: a field showing « 3 / 10 » becomes the jauge,
         # else one is added (Wallet takes 4 primary fields).
         pg = pass_json.get("posterGeneric")
-        jauge = jauge_text(stamps, threshold, stamp_shape(card)) if card.get("show_meter") is not False else None
+        if isinstance(pg, dict) and reward_front:          # « Sous le QR code »: the design gets it too
+            prim = pg.setdefault("primaryFields", [])
+            if not any(f.get("value") == reward for f in prim) and len(prim) < 4:
+                prim.insert(min(1, len(prim)), dict(reward_field))
+        jauge = jauge_text(stamps, threshold, stamp_shape(card)) if stamp_prog else None
         if isinstance(pg, dict) and jauge:
             front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
             if not any(f.get("value") == jauge for f in front):
@@ -2070,6 +2121,7 @@ _PREVIEW_KEYS = {
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
     "poster_footer_color", "stamp_shape", "logo_text_color",
+    "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
 
@@ -2091,6 +2143,7 @@ def _preview_payload(tid: str, body: "PassPreviewIn"):
     if (body.card or {}).get("reward_threshold_stamps"):
         card["reward_threshold"] = body.card["reward_threshold_stamps"]
     card.pop("stamps_earned", None)            # recomputed from the sample's visits
+    apply_programme_rules(card)                # the draft's programme decides points or tampons
     sample["points"] = visits * int(card.get("points_per_visit") or 10)
     payload["customer"] = {**payload.get("customer", {}), **sample}
     return payload, sample, visits

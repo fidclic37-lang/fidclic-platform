@@ -46,7 +46,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
 
     // the jauge is under the QR by default: « TAMPONS · 3/10 » over ●●●○…
     const phone = page.locator('[translate="no"]').filter({ hasText: 'TAMPONS' }).first();
-    await expect(phone).toContainText('●●●○○○○○○○');
+    await expect(phone).toContainText('● ● ● ○ ○ ○ ○ ○ ○ ○');   // a space between the tampons
 
     // a landscape « Image de fond »
     const bytes = await landscape(page);
@@ -65,14 +65,14 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     await band(page).getByRole('button', { name: 'Couleur', exact: true }).click();
     // the shape: ★
     await page.getByRole('button', { name: /Étoile/ }).click();
-    await expect(phone).toContainText('★★★☆☆☆☆☆☆☆');
+    await expect(phone).toContainText('★ ★ ★ ☆ ☆ ☆ ☆ ☆ ☆ ☆');
 
     // the preview's pass.json carries the footer colour
     const pv = page.waitForResponse((r) => r.url().includes('/api/owner/wallet/preview') && r.status() === 200);
     await page.getByRole('button', { name: /Losange/ }).click();
     const preview = await (await pv).json();
     expect(preview.pass_json.footerBackgroundColor).toMatch(/^rgb\(/);
-    await expect(phone).toContainText('◆◆◆◇');
+    await expect(phone).toContainText('◆ ◆ ◆ ◇');
 
     // iOS 26: same card as before, the strip carries the jauge
     await page.getByRole('button', { name: 'iOS 26 et avant', exact: true }).click();
@@ -91,7 +91,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
       headers: { Authorization: `Bearer ${token}` },
       data: { card: { google_design: { hero: 'none' } }, visits: 3 } })).json();
     const row = g.object.secondaryLoyaltyPoints || g.object.loyaltyPoints;
-    expect(row.balance.string).toBe('◆◆◆◇◇◇◇◇◇◇');
+    expect(row.balance.string).toBe('◆ ◆ ◆ ◇ ◇ ◇ ◇ ◇ ◇ ◇');
 
     expect(errors).toEqual([]);
   });
@@ -111,7 +111,7 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     const phone = page.locator('[translate="no"]').filter({ hasText: 'ROLLS ROYCE' }).first();
     // the jauge, under the QR (in whichever shape the card has: the test before saved ◆)
     await expect(phone).toContainText(/TAMPONS · 3\/10/);
-    await expect(phone).toContainText(/^.*[●◆★♥■]{3}[○◇☆♡□]{7}/s);
+    await expect(phone).toContainText(/([●◆★♥■]\uFE0E? ){3}([○◇☆♡□] ){6}[○◇☆♡□]/);
     await expect(band(page).getByRole('button', { name: 'Couleur', exact: true })).toHaveAttribute('aria-pressed', 'true');
 
     const bytes = await landscape(page);
@@ -133,6 +133,41 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     expect(px.slice(0, 2)).toEqual([1035, 1515]);                       // the design's background is the new photo,
     expect(px[2]).toBeLessThan(100); expect(px[4]).toBeGreaterThan(180); // centred: its blue middle
     await request.delete('/api/owner/card/pass-designer', { headers: H });
+  });
+
+  test('the Récompense box: shown or not, under the QR or on the back — and no points on a tampons card', async ({ page, request }) => {
+    // 2026-10-12: « points and tampons dono kyun hai », and a « Récompense »
+    // that added itself to the card
+    const token = await asOwner(page, request);
+    const H = { Authorization: `Bearer ${token}` };
+    await page.goto('/dashboard/card');
+    await page.getByRole('button', { name: 'Étape suivante : Paramètres' }).click();
+    await expect(page.getByText('Sur la carte : les tampons, sous le QR code (pas de points)')).toBeVisible();
+    await expect(page.getByText('Afficher le solde de points')).toHaveCount(0);
+    await expect(page.getByText('Paliers (optionnel)')).toBeVisible();
+    await expect(page.getByText('Comment le palier d\'un client est décidé')).toHaveCount(0);   // folded
+
+    const phone = page.locator('[translate="no"]').filter({ hasText: 'TAMPONS' }).first();
+    await expect(phone).not.toContainText('POINTS');
+    await page.getByPlaceholder('Une coupe offerte').fill('Une coupe offerte');
+    await page.getByRole('button', { name: /Sous le QR code/ }).click();
+    await expect(phone).toContainText('RÉCOMPENSE');
+    await page.getByRole('button', { name: /Enregistrer les modifications/ }).click();
+    await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
+    const s1 = await (await request.get('/api/owner/card/settings', { headers: H })).json();
+    expect(s1.advanced.reward_place).toBe('front');
+    expect(s1.programme.reward_description).toBe('Une coupe offerte');
+
+    await page.getByRole('button', { name: 'Non', exact: true }).click();
+    await expect(phone).not.toContainText('RÉCOMPENSE');
+    await page.getByRole('button', { name: /Enregistrer les modifications/ }).click();
+    await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
+    const s2 = await (await request.get('/api/owner/card/settings', { headers: H })).json();
+    expect(s2.advanced.reward_on_card).toBe(false);
+    await page.getByRole('button', { name: 'Oui', exact: true }).click();
+    await page.getByRole('button', { name: /Au dos de la carte\s*Dans/ }).click();
+    await page.getByRole('button', { name: /Enregistrer les modifications/ }).click();
+    await expect(page.getByText(/Modifications non enregistrées/)).toHaveCount(0, { timeout: 15_000 });
   });
 
   test('back to the defaults: Flou Apple, bars, automatic centring', async ({ page, request }) => {

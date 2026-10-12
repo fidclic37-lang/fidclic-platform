@@ -326,6 +326,8 @@ export default function LoyaltyCardPage() {
   }, [savedAt]);
   const [error, setError] = useState('');
   const [editTiers, setEditTiers] = useState(false);
+  // « Paliers (optionnel) » stays folded until asked (user, 2026-10-12)
+  const [showTiers, setShowTiers] = useState(false);
   const [tierError, setTierError] = useState('');
   // VIP also from N visits with a high average basket — the one shortcut,
   // shown and set here with the ladder (QA F21, user 2026-10-09)
@@ -410,13 +412,18 @@ export default function LoyaltyCardPage() {
     tagline: design?.welcome_text,
     offer_box_text: toggles?.show_message ? design?.card_message : '',
     show_offer_box: Boolean(toggles?.show_message && design?.card_message),
-    show_points: toggles?.show_points !== false,
+    // points OR tampons, by the programme (the server applies the same rule)
+    programme: programme?.type,
+    show_points: isPoints,
     show_tier: advanced?.show_tier !== false,
     show_tier_badge: advanced?.show_tier !== false,
     show_visits: advanced?.show_visits !== false,
     // Derived from the single choice, so the preview shows exactly one.
-    show_stamps: (advanced?.progress_style || 'meter') === 'stamps',
-    show_meter: (advanced?.progress_style || 'meter') === 'meter',
+    show_stamps: !isPoints,
+    show_meter: !isPoints,
+    reward_on_card: advanced ? advanced.reward_on_card !== false : undefined,
+    reward_place: advanced?.reward_place || 'back',
+    reward_points: programme?.reward_points,
     // Every card shows its code; its kind is the « Type de code » option.
     show_qr: true,
     code_type: advanced?.code_type || 'qr',
@@ -736,6 +743,10 @@ export default function LoyaltyCardPage() {
                   <option value="cashback">Cagnotte (% du ticket)</option>
                 </Select>
                 <p className="mt-1 text-[11.5px] text-[#94A3B8]">{PROGRAMME_HINT[programme.type]}</p>
+                {/* points OR tampons on the card, by the programme (user, 2026-10-12) */}
+                <p className="mt-1 text-[11.5px] font-semibold text-[#334155]">
+                  Sur la carte : {isPoints ? 'le solde de points (pas de tampons)' : 'les tampons, sous le QR code (pas de points)'}
+                </p>
               </div>
               {programme.type === 'cashback' && (
                 <div>
@@ -767,40 +778,14 @@ export default function LoyaltyCardPage() {
                     </Select>
                   </div>
                   )}
-                  <div>
-                    <Label>Récompense par défaut</Label>
-                    <div className="flex gap-2">
-                      <Input type="number" min="1" value={programme.reward_points} className="w-24"
-                             onChange={(e) => setProgramme({ ...programme, reward_points: e.target.value })} />
-                      <Input value={programme.reward_description} placeholder="1 boisson offerte"
-                             onChange={(e) => setProgramme({ ...programme, reward_description: e.target.value })} />
-                    </div>
-                    <p className="mt-1 text-[11.5px] text-[#94A3B8]">{programme.reward_points} points = {programme.reward_description || '—'}</p>
-                  </div>
                 </>
-              ) : (
-                <>
-                  <div>
-                    <Label>Tampons pour une récompense</Label>
-                    <Input type="number" min="1" max="50" value={programme.reward_threshold_stamps}
-                           onChange={(e) => setProgramme({ ...programme, reward_threshold_stamps: e.target.value })} />
-                  </div>
-                  <div>
-                    <Label>Récompense par défaut</Label>
-                    <Input value={programme.reward_description} placeholder="Un café offert"
-                           onChange={(e) => setProgramme({ ...programme, reward_description: e.target.value })} />
-                    <p className="mt-1 text-[11.5px] text-[#94A3B8]">{programme.reward_threshold_stamps} tampons = {programme.reward_description || '—'}</p>
-                  </div>
-                </>
-              )}
+              ) : null}
               <div>
                 <Label>Message sur la carte</Label>
                 <Input value={design.card_message} maxLength={120}
                        onChange={(e) => setDesign({ ...design, card_message: e.target.value })} />
               </div>
               <div className="-mx-2 space-y-0.5 pt-1">
-                <Toggle icon={Star} label="Afficher le solde de points" checked={toggles.show_points}
-                        onChange={(v) => setToggles({ ...toggles, show_points: v })} />
                 <Toggle icon={CreditCard} label="Afficher le message sur la carte" checked={toggles.show_message}
                         onChange={(v) => setToggles({ ...toggles, show_message: v })} />
                 <Toggle icon={Users} label="Notification anniversaire" checked={toggles.birthday_notification}
@@ -808,6 +793,82 @@ export default function LoyaltyCardPage() {
               </div>
             </div>
           </Card>
+
+        {/* ── Récompense (user, 2026-10-12: « ekdm easy and simple ») — what the
+            client earns, and whether and where the card says it ── */}
+        <Card icon={Gift} title="Récompense" subtitle="Ce que vos clients gagnent, et ce que leur carte en dit." locked={!edit}>
+          <div className="grid grid-cols-1 items-start gap-x-8 gap-y-3.5 lg:grid-cols-2">
+            <div>
+              <Label>{isPoints ? 'Points pour une récompense' : 'Tampons pour une récompense'}</Label>
+              {isPoints ? (
+                <Input type="number" min="1" value={programme.reward_points}
+                       onChange={(e) => setProgramme({ ...programme, reward_points: e.target.value })} />
+              ) : (
+                <Input type="number" min="1" max="50" value={programme.reward_threshold_stamps}
+                       onChange={(e) => setProgramme({ ...programme, reward_threshold_stamps: e.target.value })} />
+              )}
+            </div>
+            <div>
+              <Label>La récompense</Label>
+              <Input value={programme.reward_description} maxLength={60} placeholder={isPoints ? '1 boisson offerte' : 'Une coupe offerte'}
+                     onChange={(e) => setProgramme({ ...programme, reward_description: e.target.value })} />
+              <p className="mt-1 text-[11.5px] text-[#94A3B8]">
+                {isPoints ? `${programme.reward_points} points` : `${programme.reward_threshold_stamps} tampons`} = {programme.reward_description || '—'}
+              </p>
+            </div>
+            <div className="lg:col-span-2">
+              <Label>Afficher la récompense sur la carte</Label>
+              <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5">
+                {[[true, 'Oui'], [false, 'Non']].map(([v, l]) => {
+                  const on = (advanced.reward_on_card !== false) === v;
+                  return (
+                    <button key={l} type="button" aria-pressed={on} onClick={() => setAdvanced({ ...advanced, reward_on_card: v })}
+                            className={`rounded-md px-4 py-1.5 text-[12.5px] font-semibold ${on ? 'bg-white text-[#2F6BFF] shadow-sm' : 'text-[#64748B]'}`}>
+                      {l}
+                    </button>
+                  );
+                })}
+              </div>
+              {advanced.reward_on_card === false && (
+                <p className="mt-1.5 text-[11.5px] text-[#94A3B8]">La carte ne parle pas de la récompense. Quand un client la gagne, sa carte le lui dit quand même.</p>
+              )}
+            </div>
+            {advanced.reward_on_card !== false && (
+              <div className="lg:col-span-2">
+                <Label>Où ?</Label>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {[['front', 'Sous le QR code', 'Sur le devant de la carte, à côté du nom'],
+                    ['back', 'Au dos de la carte', 'Dans ⋯ › Détails du pass, avec la prochaine récompense']].map(([k, l, h]) => {
+                    const on = (advanced.reward_place || 'back') === k;
+                    return (
+                      <button key={k} type="button" aria-pressed={on} onClick={() => setAdvanced({ ...advanced, reward_place: k })}
+                              className={`rounded-xl border px-3 py-2.5 text-left ${on ? 'border-[#2F6BFF] bg-[#EAF1FF]' : 'border-[#E6EEFB] bg-white hover:border-[#2F6BFF]'}`}>
+                        <span className={`block text-[12.5px] font-semibold ${on ? 'text-[#2F6BFF]' : 'text-[#334155]'}`}>{l}</span>
+                        <span className="block text-[11.5px] text-[#94A3B8]">{h}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {(() => {
+                  const acts = advanced.featured_actions || [];
+                  const has = acts.some((a) => a.type === 'viewOffersRewards');
+                  const full = !has && acts.length >= 2;
+                  return (
+                    <label className={`mt-2.5 flex items-start gap-2 text-[12.5px] ${full ? 'text-[#94A3B8]' : 'text-[#334155]'}`}>
+                      <input type="checkbox" className="mt-0.5" checked={has} disabled={full}
+                             onChange={(e) => setAdvanced({ ...advanced, featured_actions: e.target.checked
+                               ? [...acts, { type: 'viewOffersRewards' }] : acts.filter((a) => a.type !== 'viewOffersRewards') })} />
+                      <span>
+                        Aussi le bouton « Voir les offres et récompenses » sous la carte (iOS 27)
+                        {full && <span className="block text-[11px]">Deux boutons déjà choisis : retirez-en un dans Design › Boutons.</span>}
+                      </span>
+                    </label>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        </Card>
 
         {/* ── options avancées — the knobs Apple and Google really expose ── */}
         {showAdvanced && advanced ? (
@@ -958,23 +1019,8 @@ export default function LoyaltyCardPage() {
                         onChange={(v) => setAdvanced({ ...advanced, show_tier: v })} />
                 <Toggle icon={Users} label="Nombre de visites" checked={advanced.show_visits}
                         onChange={(v) => setAdvanced({ ...advanced, show_visits: v })} />
-                {/* One control, not two. The stamps row and the progress bar show
-                    the same fact, and offering both let a card carry it twice. */}
-                <div className="col-span-full">
-                  <Label hint="une seule jauge sur la carte">Indicateur de progression</Label>
-                  <Select
-                    value={advanced.progress_style || 'meter'}
-                    onChange={(e) => {
-                      const style = e.target.value;
-                      setAdvanced({ ...advanced, progress_style: style,
-                                    show_stamps: style === 'stamps', show_meter: style === 'meter' });
-                    }}
-                  >
-                    <option value="meter">Jauge de progression sur la bannière</option>
-                    <option value="stamps">Tampons (une pastille par passage)</option>
-                    <option value="none">Aucun indicateur</option>
-                  </Select>
-                </div>
+                {/* No « Indicateur de progression » any more (user, 2026-10-12):
+                    the programme decides — tampons → the jauge, points → the balance. */}
               </div>
 
               <div className="space-y-3.5">
@@ -1087,17 +1133,23 @@ export default function LoyaltyCardPage() {
         )}
 
           <Card
-            icon={Gift}
-            title="Récompenses et paliers"
+            icon={Star}
+            title="Paliers (optionnel)"
             help="tiers"
-            subtitle="Configurez les récompenses et visualisez les paliers de fidélité."
-            action={edit && (
+            subtitle="Bronze, Argent, Or, VIP : un statut selon la fidélité, avec sa récompense si vous voulez."
+            action={!showTiers ? (
+              <button type="button" onClick={() => setShowTiers(true)}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#E1E8F5] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+                <ChevronDown size={14} /> Afficher
+              </button>
+            ) : edit && (
               <button type="button" onClick={() => (editTiers ? saveTiers() : setEditTiers(true))} disabled={saving}
                       className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
                 {editTiers ? <><Check size={14} /> Enregistrer</> : <><Settings2 size={14} /> Gérer les récompenses</>}
               </button>
             )}
           >
+            {showTiers && (<>
             {/* Each rung shows its upper number — « 200 points », not « 0 · 200 » —
                 and the last one « 600+ points » (user, 2026-10-02). Editing works
                 on the same numbers: a rung's ceiling is the next rung's floor. */}
@@ -1198,6 +1250,7 @@ export default function LoyaltyCardPage() {
                 <p className="text-[12px] text-[#92400E]/90">Proposez des récompenses attractives pour encourager vos clients à revenir plus souvent !</p>
               </div>
             </div>
+            </>)}
           </Card>
           <Card
             icon={CreditCard}

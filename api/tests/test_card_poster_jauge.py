@@ -81,6 +81,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     passed = failed = 0
 
+    def SP(x):                      # the jauge, a space between the tampons
+        return " ".join(x)
+
     def check(label, cond):
         global passed, failed
         passed += bool(cond); failed += (not cond)
@@ -119,20 +122,21 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     # ------------------------------------------------------------------
     print("\nThe text jauge")
-    check("default: ●●●○○○○○○○", WP.jauge_text(3, 10, None) == "●●●○○○○○○○")
-    check("étoile: ★★★☆☆", WP.jauge_text(3, 5, "etoile") == "★★★☆☆")
-    check("carré: ■■□□", WP.jauge_text(2, 4, "carre") == "■■□□")
-    check("losange: ◆◇◇", WP.jauge_text(1, 3, "losange") == "◆◇◇")
+    check("default: ●●●○○○○○○○", WP.jauge_text(3, 10, None) == SP("●●●○○○○○○○"))
+    check("étoile: ★★★☆☆", WP.jauge_text(3, 5, "etoile") == SP("★★★☆☆"))
+    check("carré: ■■□□", WP.jauge_text(2, 4, "carre") == SP("■■□□"))
+    check("losange: ◆◇◇", WP.jauge_text(1, 3, "losange") == SP("◆◇◇"))
     check("cœur: the filled heart is forced to text (no red emoji)",
-          WP.jauge_text(2, 3, "coeur") == "♥︎♥︎♡")
-    check("an unknown shape reads as the default", WP.jauge_text(1, 2, "pizza") == "●○")
-    check("0 tampons: all empty", WP.jauge_text(0, 4, None) == "○○○○")
-    check("full card: all filled", WP.jauge_text(10, 10, None) == "●" * 10)
-    check("more tampons than the card: capped", WP.jauge_text(14, 10, None) == "●" * 10)
-    check("negative never draws", WP.jauge_text(-2, 3, None) == "○○○")
+          WP.jauge_text(2, 3, "coeur") == "♥︎ ♥︎ ♡")
+    check("a space between the tampons (user, 2026-10-12)", WP.jauge_text(2, 3, None) == "● ● ○")
+    check("an unknown shape reads as the default", WP.jauge_text(1, 2, "pizza") == SP("●○"))
+    check("0 tampons: all empty", WP.jauge_text(0, 4, None) == SP("○○○○"))
+    check("full card: all filled", WP.jauge_text(10, 10, None) == SP("●" * 10))
+    check("more tampons than the card: capped", WP.jauge_text(14, 10, None) == SP("●" * 10))
+    check("negative never draws", WP.jauge_text(-2, 3, None) == SP("○○○"))
     check("no threshold: no jauge", WP.jauge_text(3, 0, None) is None)
-    check("20 tampons still fit", WP.jauge_text(3, 20, None) == "●●●" + "○" * 17)
-    check("21+ tampons: no jauge (one line cannot hold them)", WP.jauge_text(3, 21, None) is None)
+    check("15 tampons still fit", WP.jauge_text(3, 15, None) == SP("●●●" + "○" * 12))
+    check("16+ tampons: no jauge (one line cannot hold them)", WP.jauge_text(3, 16, None) is None)
     check("stamp_shape: only known keys", WP.stamp_shape({"stamp_shape": "etoile"}) == "etoile"
           and WP.stamp_shape({"stamp_shape": "x"}) is None and WP.stamp_shape({}) is None)
 
@@ -142,7 +146,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = pj()
     pg = p["posterGeneric"]
     st = field(pg["primaryFields"], "stamps")
-    check(f"the stamps field is the jauge ({st and st['value']})", st and st["value"] == "●●●○○○○○○○")
+    check(f"the stamps field is the jauge ({st and st['value']})", st and st["value"] == SP("●●●○○○○○○○"))
     check(f"the count is in its label ({st and st['label']})", st and st["label"] == "TAMPONS · 3/10")
     check("it still notifies when a tampon is added", st and "%@" in st.get("changeMessage", ""))
     check("member first, jauge second (under the QR, in the band)",
@@ -153,17 +157,17 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     setcard(stamp_shape="etoile")
     st = field(pj()["posterGeneric"]["primaryFields"], "stamps")
-    check(f"the owner's shape: ★ ({st['value']})", st["value"] == "★★★☆☆☆☆☆☆☆")
+    check(f"the owner's shape: ★ ({st['value']})", st["value"] == SP("★★★☆☆☆☆☆☆☆"))
     setcard(stamp_shape="coeur")
     check("cœur on the pass", field(pj()["posterGeneric"]["primaryFields"], "stamps")["value"].startswith("♥︎"))
     unset("stamp_shape")
 
     visits(10)
     st = field(pj()["posterGeneric"]["primaryFields"], "stamps")
-    check(f"full card: every shape filled, 10/10 ({st['label']})", st["value"] == "●" * 10 and st["label"].endswith("10/10"))
+    check(f"full card: every shape filled, 10/10 ({st['label']})", st["value"] == SP("●" * 10) and st["label"].endswith("10/10"))
     visits(0)
     check("new customer: empty jauge, 0/10",
-          field(pj()["posterGeneric"]["primaryFields"], "stamps")["value"] == "○" * 10)
+          field(pj()["posterGeneric"]["primaryFields"], "stamps")["value"] == SP("○" * 10))
     visits(3)
 
     setcard(stamps_label="Cafés")
@@ -171,25 +175,67 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           field(pj()["posterGeneric"]["primaryFields"], "stamps")["label"] == "CAFÉS · 3/10")
     unset("stamps_label")
 
-    setcard(show_meter=False)
-    st = field(pj()["posterGeneric"]["primaryFields"], "stamps")
-    check(f"jauge switched off: « 3 / 10 » as before ({st['value']})", st["value"] == "3 / 10" and st["label"] == "TAMPONS")
-    unset("show_meter")
-
-    # the page's default « Jauge » style: show_stamps off, show_meter on
-    setcard(show_stamps=False, show_meter=True)
+    # the old switches no longer decide (user, 2026-10-12): the programme does
+    setcard(show_meter=False, show_stamps=False, show_points=True)
     p = pj()
     prim = p["posterGeneric"]["primaryFields"]
-    j = field(prim, "jauge")
-    check("« Jauge » style: the jauge takes the reward's slot (MEMBRE | TAMPONS ●●●○)",
-          [f["key"] for f in prim] == ["member", "jauge"] and j["value"] == "●●●○○○○○○○" and j["label"] == "TAMPONS · 3/10")
-    check("…and notifies on each new tampon", "%@" in j.get("changeMessage", ""))
-    check("iOS 26 keeps its reward field and its painted strip",
-          field(p["storeCard"]["secondaryFields"], "reward") is not None)
+    st = field(prim, "stamps")
+    check("tampons programme: the jauge, whatever the old switches say",
+          [f["key"] for f in prim] == ["member", "stamps"] and st["value"] == SP("●●●○○○○○○○"))
+    check("…and no points, top right or anywhere", not any(f["key"] == "points" for g in ("headerFields", "primaryFields")
+                                                         for f in p["posterGeneric"][g]))
+    check("…and no « Récompense » added by itself", field(prim, "reward") is None
+          and field(p["storeCard"]["secondaryFields"], "reward") is None)
+    check("…it notifies on each new tampon", "%@" in st.get("changeMessage", ""))
+    bp = field(p["posterGeneric"]["backFields"], "points")
+    check("the balance stays on the back, so a parrainage's points still ring (Wallet notifies a field it knows)",
+          bp is not None and bp["value"] == 30 and "%@" in bp.get("changeMessage", ""))
     setcard(stamps_change_message="Un tampon de plus : %@")
-    check("the owner's tampon message is used", field(pj()["posterGeneric"]["primaryFields"], "jauge")["changeMessage"]
+    check("the owner's tampon message is used", field(pj()["posterGeneric"]["primaryFields"], "stamps")["changeMessage"]
           == "Un tampon de plus : %@")
-    unset("show_stamps", "show_meter", "stamps_change_message")
+    unset("show_stamps", "show_meter", "show_points", "stamps_change_message")
+    setcard(programme="points_visit")
+    p = pj()
+    check("points programme: the balance top right, no jauge, no tampons",
+          p["posterGeneric"]["headerFields"][0]["key"] == "points"
+          and not any(f["key"] in ("stamps", "jauge") for f in p["posterGeneric"]["primaryFields"])
+          and field(p["storeCard"]["secondaryFields"], "stamps") is None)
+    unset("programme")
+
+    # ------------------------------------------------------------------
+    print("\nThe reward: shown or not, under the QR or on the back")
+    p = pj()
+    back = [f["key"] for f in p["posterGeneric"]["backFields"]]
+    check("default: on the back only (Prochaine récompense, Programme)", "next_reward" in back and "program" in back
+          and field(p["posterGeneric"]["primaryFields"], "reward") is None)
+    setcard(reward_place="front", reward_description="Une coupe offerte")
+    p = pj()
+    rf = field(p["posterGeneric"]["primaryFields"], "reward")
+    check(f"« Sous le QR code »: the owner's words, as written ({rf})",
+          rf is not None and rf["value"] == "Une coupe offerte" and rf["label"] == "RÉCOMPENSE")
+    check("…between the member and the jauge", [f["key"] for f in p["posterGeneric"]["primaryFields"]] == ["member", "reward", "stamps"])
+    check("…on iOS 26 too", field(p["storeCard"]["secondaryFields"], "reward")["value"] == "Une coupe offerte")
+    setcard(reward_on_card=False)
+    p = pj()
+    back = [f["key"] for f in p["posterGeneric"]["backFields"]]
+    check("« Non »: no reward on the front or the back", field(p["posterGeneric"]["primaryFields"], "reward") is None
+          and field(p["storeCard"]["secondaryFields"], "reward") is None and "next_reward" not in back and "program" not in back)
+    check("…a reward actually earned still says so (it is what notifies)", "pending_rewards" in back)
+    unset("reward_on_card", "reward_place")
+    setcard(programme="points_visit", reward_points=200, reward_description="1 boisson offerte")
+    back = {f["key"]: f["value"] for f in pj()["posterGeneric"]["backFields"]}
+    check(f"points programme: the back says points, not tampons ({back.get('program')})",
+          back.get("program") == "1 boisson offerte dès 200 points." and "next_reward" not in back)
+    unset("programme", "reward_points")
+    setcard(reward_description="Un café offert")
+    r = http("PUT", "/api/owner/card/settings", headers=H, json={"reward_on_card": True, "reward_place": "front"})
+    tplr = db.card_templates.find_one({"tenant_id": "t1"})
+    check(f"the settings save the reward's place ({r.status_code})", r.status_code == 200 and tplr["reward_place"] == "front")
+    adv = http("GET", "/api/owner/card/settings", headers=H).json()["advanced"]
+    check("…and read it back", adv["reward_on_card"] is True and adv["reward_place"] == "front")
+    r = http("PUT", "/api/owner/card/settings", headers=H, json={"reward_place": "middle"})
+    check(f"an unknown place is refused ({r.status_code})", r.status_code == 400)
+    http("PUT", "/api/owner/card/settings", headers=H, json={"reward_place": "back"})
 
     setcard(reward_threshold_stamps=25)
     st = field(pj()["posterGeneric"]["primaryFields"], "stamps")
@@ -248,7 +294,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     tpl = db.card_templates.find_one({"tenant_id": "t1"})
     check("stored as given", tpl.get("poster_footer_color") == "#12AB34" and tpl.get("stamp_shape") == "losange")
     check("the pass takes both", pj().get("footerBackgroundColor") == "rgb(18, 171, 52)"
-          and field(pj()["posterGeneric"]["primaryFields"], "stamps")["value"].startswith("◆◆◆◇"))
+          and field(pj()["posterGeneric"]["primaryFields"], "stamps")["value"].startswith("◆ ◆ ◆ ◇"))
     r = http("GET", "/api/owner/card/settings", headers=H)
     adv = (r.json() or {}).get("advanced") or {}
     check("the settings page reads them back", adv.get("poster_footer_color") == "#12AB34" and adv.get("stamp_shape") == "losange")
@@ -312,26 +358,22 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     setcard(google_design={"hero": "none"})
     o = gobj()
     lp = o.get("secondaryLoyaltyPoints") or o.get("loyaltyPoints")
-    check(f"no banner: the row is the jauge ({lp})", lp["balance"]["string"] == "●●●○○○○○○○" and lp["label"].endswith("3/10"))
+    check(f"no banner: the row is the jauge ({lp})", lp["balance"]["string"] == SP("●●●○○○○○○○") and lp["label"].endswith("3/10"))
     setcard(stamp_shape="coeur")
     lp = (lambda x: x.get("secondaryLoyaltyPoints") or x.get("loyaltyPoints"))(gobj())
     check("…in the owner's shape", lp["balance"]["string"].startswith("♥"))
     unset("stamp_shape")
-    setcard(show_stamps=False)
-    o = gobj()
-    lp = o.get("secondaryLoyaltyPoints") or o.get("loyaltyPoints")
-    check(f"« Jauge » style: the row is the jauge, not the reward ({lp})", lp["balance"]["string"] == "●●●○○○○○○○")
-    unset("show_stamps")
+    check("tampons programme on Google: no points row", "secondaryLoyaltyPoints" not in gobj()
+          and not (gobj()["loyaltyPoints"]["label"] or "").startswith("Points"))
     setcard(stamps_label="Cafés")
     lp = (lambda x: x.get("secondaryLoyaltyPoints") or x.get("loyaltyPoints"))(gobj())
     check(f"the owner's label on Google too ({lp['label']})", lp["label"] == "Cafés · 3/10")
     unset("stamps_label")
-    setcard(show_meter=False)
+    setcard(programme="points_visit")
     o = gobj()
-    lp = o.get("secondaryLoyaltyPoints") or o.get("loyaltyPoints")
-    check("jauge off: « 3 / 10 », no module", lp["balance"]["string"] == "3 / 10"
-          and not any(m["id"] == "jauge" for m in o["textModulesData"]))
-    unset("show_meter")
+    check("points programme on Google: the balance, no jauge", o["loyaltyPoints"]["label"] == "Points"
+          and "secondaryLoyaltyPoints" not in o)
+    unset("programme")
     setcard(google_design={"hero": "fidclic"}, stamp_shape="etoile")
     check("the banner's link changes with the shape (Google re-reads it)", gobj()["heroImage"]["sourceUri"]["uri"].endswith("-etoile"))
     unset("stamp_shape", "google_design")
@@ -348,11 +390,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = pj()
     prog = field(p["posterGeneric"]["primaryFields"], "JAUGE")
     check(f"filled per customer: {prog and prog['value']} / {prog and prog['label']}",
-          prog and prog["value"] == "●●●○○○○○○○" and prog["label"] == "TAMPONS · 3 / 10")
+          prog and prog["value"] == SP("●●●○○○○○○○") and prog["label"] == "TAMPONS · 3 / 10")
     check("…and it notifies", prog and "%@" in prog.get("changeMessage", ""))
     setcard(stamp_shape="carre")
     check("the template's jauge takes the shape too",
-          field(pj()["posterGeneric"]["primaryFields"], "JAUGE")["value"] == "■■■□□□□□□□")
+          field(pj()["posterGeneric"]["primaryFields"], "JAUGE")["value"] == SP("■■■□□□□□□□"))
     unset("stamp_shape")
     tpl_bg = PD.best(PD.images(PD.load("t1")), "background")
     files = WP.pass_files(WP._card_payload("FT-JAUGE001"))
@@ -376,23 +418,23 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     prim = pj()["posterGeneric"]["primaryFields"]
     j = field(prim, "jauge")
     check(f"a design without a jauge gets one under the QR ({[f['key'] for f in prim]})",
-          j is not None and j["value"] == "●●●○○○○○○○" and j["label"] == "TAMPONS · 3/10" and "%@" in j["changeMessage"])
+          j is not None and j["value"] == SP("●●●○○○○○○○") and j["label"] == "TAMPONS · 3/10" and "%@" in j["changeMessage"])
     check("…after the design's own fields, which stay as they are",
           [f["key"] for f in prim] == ["name", "loves", "jauge"] and prim[1]["value"] == "ROLLS ROYCE")
     setcard(stamp_shape="coeur")
     check("…in the owner's shape", field(pj()["posterGeneric"]["primaryFields"], "jauge")["value"].startswith("♥"))
     unset("stamp_shape")
-    setcard(show_meter=False)
-    check("jauge switched off: nothing added", field(pj()["posterGeneric"]["primaryFields"], "jauge") is None)
-    unset("show_meter")
+    setcard(programme="points_visit")
+    check("points programme: no jauge added to the design", field(pj()["posterGeneric"]["primaryFields"], "jauge") is None)
+    unset("programme")
     put_design([{"key": "name", "value": "{prenom}"}, {"key": "p", "label": "PROGRESSION", "value": "{tampons}"}])
     prim = pj()["posterGeneric"]["primaryFields"]
     check(f"a design showing « 3 / 10 » gets the jauge in that very field ({prim[1]})",
-          len(prim) == 2 and prim[1]["key"] == "p" and prim[1]["value"] == "●●●○○○○○○○" and prim[1]["label"] == "TAMPONS · 3/10")
+          len(prim) == 2 and prim[1]["key"] == "p" and prim[1]["value"] == SP("●●●○○○○○○○") and prim[1]["label"] == "TAMPONS · 3/10")
     put_design([{"key": "name", "value": "{prenom}"}, {"key": "j", "label": "MES TAMPONS", "value": "{jauge}"}])
     prim = pj()["posterGeneric"]["primaryFields"]
     check("a design with its own {jauge} is left alone (no second jauge)",
-          len(prim) == 2 and prim[1]["label"] == "MES TAMPONS" and prim[1]["value"] == "●●●○○○○○○○")
+          len(prim) == 2 and prim[1]["label"] == "MES TAMPONS" and prim[1]["value"] == SP("●●●○○○○○○○"))
     put_design([{"key": f"k{i}", "label": f"L{i}", "value": f"v{i}"} for i in range(4)])
     prim = pj()["posterGeneric"]["primaryFields"]
     check("4 fields already (Wallet's maximum): nothing pushed out", len(prim) == 4 and field(prim, "jauge") is None)
@@ -409,14 +451,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = r.json()
     pg = d["pass_json"]["posterGeneric"]
     check(f"the unsaved shape shows on the preview ({r.status_code})",
-          field(pg["primaryFields"], "stamps")["value"] == "★★★☆☆☆☆☆☆☆")
+          field(pg["primaryFields"], "stamps")["value"] == SP("★★★☆☆☆☆☆☆☆"))
     check("the unsaved footer colour too", d["pass_json"].get("footerBackgroundColor") == "rgb(51, 68, 85)")
     check("the preview ships the poster background", (d.get("images") or {}).get("background", "").startswith("data:image/jpeg"))
     r = http("POST", "/api/owner/wallet/google-preview", headers=H,
              json={"card": {"stamp_shape": "carre", "google_design": {"hero": "none"}}, "visits": 3})
     o = r.json()["object"]
     lp = o.get("secondaryLoyaltyPoints") or o.get("loyaltyPoints")
-    check(f"Google's preview shows the jauge when no banner ({lp['balance']['string']})", lp["balance"]["string"] == "■■■□□□□□□□")
+    check(f"Google's preview shows the jauge when no banner ({lp['balance']['string']})", lp["balance"]["string"] == SP("■■■□□□□□□□"))
 
     photo = png_data(1600, 1000, (90, 140, 60), "JPEG")
     body = {"card": {"hero_image_url": photo, "hero_mode": "image", "card_name": "A"}, "visits": 3, "design": {}}
