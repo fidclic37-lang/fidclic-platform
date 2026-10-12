@@ -183,7 +183,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": "points_visit"}})
     pgp = WP.build_pass_json(WP._card_payload("FT-TEST0001"))["posterGeneric"]
     check("points programme: the balance, notifying when it changes, and no tampons",
-          pgp["headerFields"][0]["value"] == "70" and pgp["headerFields"][0].get("changeMessage")
+          str(pgp["headerFields"][0]["value"]) == "70" and pgp["headerFields"][0].get("changeMessage")
           and not any(f["key"] in ("prog", "jauge", "stamps") for f in pgp["primaryFields"]))
     db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"programme": ""}})
     check("no campaign running → no empty « OFFRE » row", [f["key"] for f in pg["footerFields"]] == ["shop"])

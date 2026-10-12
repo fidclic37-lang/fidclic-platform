@@ -200,17 +200,51 @@ def _fill(text: Any, values: Dict[str, Any]) -> Any:
     return re.sub(r"\{([^{}]{1,30})\}", rep, text)
 
 
-def _fields(rows: List[Dict[str, Any]], values: Dict[str, Any]) -> List[Dict[str, Any]]:
+# A field whose KEY names a customer value (Pass Designer's CUST_NAME,
+# CUST_ID…) used to show that value whatever its text — « SPIRIT OF ECSTACY »
+# in the editor, « Marie » on the card (user, 2026-10-12: « fields mein jo
+# bhi hai woh directly card mein dikhni chahiye »). Such a text is written as
+# the matching {placeholder} once (import, or the editor opening an older
+# design), and from then on the text IS the field: what the owner types is
+# what the card shows.
+KIND_PLACEHOLDER = {"name": "{nom}", "first_name": "{prenom}", "card": "{carte}", "points": "{points}",
+                    "stamps": "{tampons}", "tier": "{statut}", "reward": "{recompense}", "offer": "{offre}",
+                    "visits": "{visites}", "member_since": "{membre_depuis}"}
+
+
+def show_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """The design with every key-filled field written as its placeholder."""
+    t = copy.deepcopy(raw)
+    for style in STYLES:
+        block = t.get(style)
+        if not isinstance(block, dict):
+            continue
+        for g in GROUPS:
+            for f in block.get(g) or []:
+                if not isinstance(f, dict):
+                    continue
+                kind = _kind_of_key(f.get("key"))
+                val = f.get("value")
+                if kind and not (isinstance(val, str) and _ONLY.match(val)
+                                 and PLACEHOLDERS.get(_ONLY.match(val).group(1).strip().lower()) == kind):
+                    f["value"] = KIND_PLACEHOLDER[kind]
+    return t
+
+
+def _fields(rows: List[Dict[str, Any]], values: Dict[str, Any], by_key: bool = True) -> List[Dict[str, Any]]:
+    """`by_key`: an older design, saved before show_keys — its key-named
+    fields still show the customer's value."""
     out = []
     for f in rows or []:
         f = dict(f)
-        kind = _kind_of_key(f.get("key"))
+        kind = _kind_of_key(f.get("key")) if by_key else None
         if kind:
             f["value"] = values.get(kind, f.get("value"))
         else:
             only = _ONLY.match(f["value"]) if isinstance(f.get("value"), str) else None
             kind = PLACEHOLDERS.get(only.group(1).strip().lower()) if only else None
-            f["value"] = _fill(f.get("value"), values)
+            # a lone {points} keeps the number (Wallet formats it), else text
+            f["value"] = values.get(kind, f.get("value")) if kind else _fill(f.get("value"), values)
         if kind and f["value"] in (None, ""):
             continue                                    # {offre} with no campaign running: no empty row
         if kind in NOTIFY and "changeMessage" not in f:
@@ -256,7 +290,8 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
     our_back = (pj.get(ours_style) or {}).get("backFields", []) if ours_style else []
     out = {k: v for k, v in pj.items() if k not in STYLES and k != "logoText"}
 
-    block = {g: _fields(rows, values) for g, rows in t[style].items() if g in GROUPS}
+    by_key = not tpl.get("literal")
+    block = {g: _fields(rows, values, by_key) for g, rows in t[style].items() if g in GROUPS}
     for k, v in t[style].items():                       # transitType and other style keys
         if k not in GROUPS:
             block[k] = v
@@ -269,7 +304,7 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
     if style == "posterGeneric":
         own = next((st for st in STYLES if st != "posterGeneric" and isinstance(t.get(st), dict)), None)
         if fb == "template" and own:
-            out[own] = {g: _fields(rows, values) for g, rows in t[own].items() if g in GROUPS}
+            out[own] = {g: _fields(rows, values, by_key) for g, rows in t[own].items() if g in GROUPS}
             out[own]["backFields"] = block["backFields"]
         elif fb in ("fidclic", "template") and isinstance(pj.get("storeCard"), dict):
             fb = "fidclic"
@@ -288,8 +323,9 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
         if pj.get("backgroundColor"):
             out["backgroundColor"] = pj["backgroundColor"]
         out["logoText"] = pj.get("logoText") or values.get("shop") or ""
-    if t.get("logoText"):
-        out["logoText"] = _fill(t["logoText"], values)
+    # The shop's name is set once, in Identité (user, 2026-10-12: « logo text
+    # style se htao, already hai in the identity »): a design's own logoText
+    # no longer overrides it.
 
     # the barcode: the design's format and fallback, carrying OUR message
     from features.wallet_passes import build_barcodes, BARCODE_FORMATS
@@ -434,7 +470,8 @@ def design_from_body(tid: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]
         imgs = _images_in(body.get("images") or {}, stored.get("images") or [])
     except HTTPException:
         imgs = []
-    return {"active": True, "name": "aperçu", "pass": raw, "images": imgs, "options": _clean_options(body.get("options"))}
+    return {"active": True, "name": "aperçu", "pass": raw, "images": imgs, "options": _clean_options(body.get("options")),
+            "literal": True}
 
 
 MAX_ZIP = 12_000_000
@@ -474,7 +511,9 @@ def get_template(full: bool = False,
            "imported_at": t.get("imported_at").isoformat() if isinstance(t.get("imported_at"), datetime) else t.get("imported_at"),
            "images": sorted(n for n, _ in _image_items(t))}
     if full:                                   # the editor opens it
-        out.update({"pass": _strip_ids(t["pass"]), "options": options_of(t),
+        # an older design opens with its key-filled fields as placeholders,
+        # so the editor shows what the card shows
+        out.update({"pass": _strip_ids(t["pass"] if t.get("literal") else show_keys(t["pass"])), "options": options_of(t),
                     "image_data": {n: d for n, d in _image_items(t)}})
     return out
 
@@ -555,9 +594,12 @@ def put_template(body: TemplateIn, token_data: TokenData = Depends(require_role(
     tid = token_data.tenant_id
     stored = (_db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "pass_designer": 1}) or {}).get("pass_designer") or {}
     imgs = _images_in(body.images or {}, stored.get("images") or [])
+    # the editor sends what it shows; an import is written out first
+    raw = raw if body.source == "editor" else show_keys(raw)
+    raw.pop("logoText", None)                    # the name is Identité's
     doc = {"active": True, "name": (body.name or "Modèle Pass Designer")[:80], "pass": raw, "images": imgs,
            "options": _clean_options(body.options), "source": "editor" if body.source == "editor" else "import",
-           "imported_at": _now(), "imported_by": token_data.email}
+           "imported_at": _now(), "imported_by": token_data.email, "literal": True}
     sets: Dict[str, Any] = {"tenant_id": tid, "pass_designer": doc, "poster_style": True, "updated_at": _now()}
     from features.wallet_passes import clean_featured
     if body.featured_actions is not None:            # the editor's buttons

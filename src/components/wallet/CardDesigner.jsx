@@ -141,7 +141,7 @@ function ColorRow({ label, value, onChange, optional, hint }) {
   );
 }
 
-function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled }) {
+function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled, note }) {
   const [open, setOpen] = useState(false);
   const insert = (v) => onChange({ ...f, value: `${f.value || ''}${v}` });
   return (
@@ -167,6 +167,7 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
         </div>
         <button type="button" disabled={disabled} onClick={onRemove} aria-label="Supprimer le champ" className="shrink-0 rounded p-1 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={14} /></button>
       </div>
+      {note && <p className="mt-1.5 rounded-lg bg-[#FFF7E6] px-2 py-1 text-[11.5px] text-[#92400E]">{note}</p>}
       <button type="button" onClick={() => setOpen((o) => !o)} className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#64748B]">
         Options <ChevronDown size={12} className={open ? 'rotate-180' : ''} />
       </button>
@@ -482,8 +483,10 @@ const CardDesigner = forwardRef(function CardDesigner({
   const fbStyle = styles.find((s2) => s2 !== 'posterGeneric');
   const G_TABS = [['identite', 'Identité', Fingerprint], ['g_couleur', 'Couleur et logo', Palette], ['g_banniere', 'Bannière', ImagePlus],
     ['g_lignes', 'Lignes', Rows3], ['g_code', 'Code-barres', Barcode], ['g_details', 'Détails et liens', ListTree], ['g_notif', 'Notifications', Bell]];
-  const TABS = wallet === 'google' ? G_TABS : [['identite', 'Identité', Fingerprint], ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
-    ['boutons', 'Boutons', MousePointerClick], ['champs', 'Champs', ListTree]];
+  // « Champs » right after Identité: it is the card's text (user, 2026-10-12)
+  const TABS = wallet === 'google' ? G_TABS : [['identite', 'Identité', Fingerprint], ['champs', 'Champs', ListTree],
+    ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
+    ['boutons', 'Boutons', MousePointerClick]];
 
   // ── v2: one iPhone at a time, picked with the version buttons ──
   const pj = preview?.pass_json;
@@ -656,10 +659,7 @@ const CardDesigner = forwardRef(function CardDesigner({
                   </select>
                 </div>
               )}
-              <div>
-                <Lbl hint="à côté du logo, sur la carte iOS 26">Texte du logo</Lbl>
-                <input className={inputCls} value={d.pass.logoText || ''} placeholder="ex. ROYAL TRIM" onChange={(e) => setPass({ logoText: e.target.value })} />
-              </div>
+              {/* « Texte du logo » is gone: the shop's name is set in Identité (user, 2026-10-12) */}
               <div className="rounded-xl border border-[#E6EEFB] px-3 py-1">
                 <ColorRow label="Couleur du texte" value={d.pass.foregroundColor} onChange={(v) => setPass({ foregroundColor: v })} />
                 <ColorRow label="Couleur de fond" value={d.pass.backgroundColor} onChange={(v) => setPass({ backgroundColor: v })}
@@ -769,6 +769,25 @@ const CardDesigner = forwardRef(function CardDesigner({
               {[...groups, ['backFields', 'Au dos (⋯ › Détails du pass)', 99]].map(([g, label, max]) => {
                 const rows = block[g] || [];
                 const set = (next) => setBlock({ [g]: next });
+                // what the card really shows (user, 2026-10-12: « ek field hai lekin
+                // usme changes krne se kuch dikhta hi nhi ») — read off the preview
+                const pjb = pvState ? null : (preview?.pass_json || {})[style];
+                const shown = pjb ? new Set(['headerFields', 'primaryFields', 'secondaryFields', 'auxiliaryFields', 'footerFields', 'backFields']
+                  .flatMap((k) => (pjb[k] || []).map((x) => x.key))) : null;
+                const keyOf = (x, i) => String(x.key || '').trim().replace(/[^A-Za-z0-9_]/g, '_') || `${g.slice(0, -6)}${i + 1}`;
+                const why = (x, i) => {
+                  if (!shown || shown.has(keyOf(x, i))) return null;
+                  const v = String(x.value || '');
+                  if (!v.trim() && !String(x.label || '').trim()) return 'Champ vide : il n’apparaît pas.';
+                  if (/\{points\}/i.test(v) && previewCard.programme === 'stamps') return 'Pas sur la carte : programme Tampons, les points ne s’affichent pas (Paramètres › Type de programme).';
+                  if (/\{(tampons|jauge|stamps)\}/i.test(v) && previewCard.programme && previewCard.programme !== 'stamps') return 'Pas sur la carte : programme à points, sans tampons.';
+                  if (/\{(offre|offer)\}/i.test(v)) return 'Visible seulement pendant une campagne.';
+                  if (/\{(recompense|reward)\}/i.test(v)) return 'Pas sur la carte : la récompense est réglée « Au dos » ou « Non » (Paramètres › Récompense).';
+                  return 'Pas affiché sur la carte.';
+                };
+                // what FidClic adds to this group, set elsewhere
+                const added = g === 'primaryFields' && pjb ? (pjb.primaryFields || []).filter((x) => ['jauge', 'reward'].includes(x.key)
+                  && !rows.some((r, i) => keyOf(r, i) === x.key)) : [];
                 return (
                   <div key={g}>
                     <div className="mb-1.5 flex items-center justify-between">
@@ -779,12 +798,22 @@ const CardDesigner = forwardRef(function CardDesigner({
                     </div>
                     <div className="space-y-1.5">
                       {rows.map((f, i) => (
-                        <FieldRow key={f.key} f={f} group={g} first={i === 0} last={i === rows.length - 1}
+                        <FieldRow key={f.key} f={f} group={g} first={i === 0} last={i === rows.length - 1} note={why(f, i)}
                                   onChange={(nf) => set(rows.map((x, j) => (j === i ? nf : x)))}
                                   onRemove={() => set(rows.filter((_, j) => j !== i))}
                                   onMove={(dir) => { const n = [...rows]; [n[i], n[i + dir]] = [n[i + dir], n[i]]; set(n); }} />
                       ))}
-                      {!rows.length && <p className="text-[11.5px] text-[#94A3B8]">Aucun champ.</p>}
+                      {added.map((x) => (
+                        <div key={x.key} className="rounded-xl border border-dashed border-[#B9CCF5] bg-[#F8FAFF] px-3 py-2">
+                          <p className="text-[12px] text-[#334155]">
+                            <span className="font-semibold">{x.label}</span>{' '}<span translate="no">{String(x.value)}</span>
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-[#64748B]">
+                            Ajouté par FidClic, sur la carte de chaque client. Réglage : Paramètres › {x.key === 'jauge' ? 'Type de programme et Forme des tampons' : 'Récompense'}.
+                          </p>
+                        </div>
+                      ))}
+                      {!rows.length && !added.length && <p className="text-[11.5px] text-[#94A3B8]">Aucun champ.</p>}
                     </div>
                     {g === 'backFields' && (
                       <p className="mt-1.5 text-[11.5px] text-[#94A3B8]">
