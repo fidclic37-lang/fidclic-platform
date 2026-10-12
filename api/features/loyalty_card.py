@@ -374,7 +374,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "brand_color": tpl.get("brand_color") or "#B85C38",
             "logo_url": tpl.get("logo_url") or "",
             "hero_image_url": tpl.get("hero_image_url") or "",
-            "welcome_text": tpl.get("welcome_text") or "",
+            "welcome_text": tpl.get("welcome_text") or tpl.get("tagline") or "",
             "card_message": tpl.get("card_message") or tpl.get("offer_box_text") or "",
         },
         "programme": {
@@ -552,6 +552,10 @@ def put_card_settings(body: CardSettings,
         payload["show_offer_box"] = bool(payload["card_message"])
     if "welcome_text" in payload:
         payload["greeting_label"] = payload.get("greeting_label") or "Membre"
+        # the pass reads `tagline` (the onboarding's slogan): the « Texte
+        # d'accueil » IS that text — it was saved apart and never reached the
+        # card, only the preview (user, 2026-10-12)
+        payload["tagline"] = (payload["welcome_text"] or "").strip()
 
     # The toggle switches the Automatisations page's "Anniversaire" scenario
     # (it used to write a collection nothing read).

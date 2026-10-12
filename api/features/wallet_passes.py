@@ -1549,10 +1549,22 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         # under the QR anyway: a field showing « 3 / 10 » becomes the jauge,
         # else one is added (Wallet takes 4 primary fields).
         pg = pass_json.get("posterGeneric")
-        if isinstance(pg, dict) and reward_front:          # « Sous le QR code »: the design gets it too
+
+        def place(field: Dict[str, Any], at: Optional[int] = None) -> None:
+            """A field we add to a design's poster: in the primary row while it
+            holds one field, else in the footer row — a third primary field
+            squeezed the customer's name into « AK-SHANSH » (user, 2026-10-12)."""
             prim = pg.setdefault("primaryFields", [])
-            if not any(f.get("value") == reward for f in prim) and len(prim) < 4:
-                prim.insert(min(1, len(prim)), dict(reward_field))
+            if len(prim) < 2:
+                prim.insert(len(prim) if at is None else min(at, len(prim)), field)
+                return
+            foot = pg.setdefault("footerFields", [])
+            if len(foot) < 3:
+                foot.append(field)
+        if isinstance(pg, dict) and reward_front:          # « Sous le QR code »: the design gets it too
+            front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
+            if not any(f.get("value") == reward for f in front):
+                place(dict(reward_field), 1)
         jauge = jauge_text(stamps, threshold, stamp_shape(card)) if stamp_prog else None
         if isinstance(pg, dict) and jauge:
             front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
@@ -1563,9 +1575,9 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
                 if hit:
                     hit.update({"label": label, "value": jauge})
                     hit.setdefault("changeMessage", "Tampons : %@")
-                elif len(prim) < 4:
-                    prim.append({"key": "jauge", "label": label, "value": jauge,
-                                 "changeMessage": card.get("stamps_change_message") or "Tampons : %@"})
+                else:
+                    place({"key": "jauge", "label": label, "value": jauge,
+                           "changeMessage": card.get("stamps_change_message") or "Tampons : %@"})
     return pass_json
 
 

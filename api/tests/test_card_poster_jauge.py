@@ -415,17 +415,26 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                  json={"name": "Royal", "pass_json": json.dumps(raw), "images": {}, "source": "editor"})
         assert r.status_code == 200, r.text
     put_design([{"key": "name", "value": "{prenom}"}, {"key": "loves", "label": "LOVES", "value": "ROLLS ROYCE"}])
-    prim = pj()["posterGeneric"]["primaryFields"]
-    j = field(prim, "jauge")
-    check(f"a design without a jauge gets one under the QR ({[f['key'] for f in prim]})",
+    pgd = pj()["posterGeneric"]
+    prim, foot = pgd["primaryFields"], pgd["footerFields"]
+    j = field(foot, "jauge")
+    check(f"a design without a jauge gets one, in the footer row ({[f['key'] for f in foot]})",
           j is not None and j["value"] == SP("●●●○○○○○○○") and j["label"] == "TAMPONS · 3/10" and "%@" in j["changeMessage"])
-    check("…after the design's own fields, which stay as they are",
-          [f["key"] for f in prim] == ["name", "loves", "jauge"] and prim[1]["value"] == "ROLLS ROYCE")
+    # 2026-10-12: a third primary field squeezed the name into « AK-SHANSH »
+    check("…the name's row keeps its two fields (the name is never broken)",
+          [f["key"] for f in prim] == ["name", "loves"] and prim[1]["value"] == "ROLLS ROYCE")
+    check("…the design's footer text stays first", foot[0]["value"] == "ROYALTY LIVES HERE")
     setcard(stamp_shape="coeur")
-    check("…in the owner's shape", field(pj()["posterGeneric"]["primaryFields"], "jauge")["value"].startswith("♥"))
+    check("…in the owner's shape", field(pj()["posterGeneric"]["footerFields"], "jauge")["value"].startswith("♥"))
     unset("stamp_shape")
+    put_design([{"key": "name", "value": "{prenom}"}])
+    prim = pj()["posterGeneric"]["primaryFields"]
+    check("a design with only the name: the jauge beside it, in the primary row",
+          [f["key"] for f in prim] == ["name", "jauge"])
+    put_design([{"key": "name", "value": "{prenom}"}, {"key": "loves", "label": "LOVES", "value": "ROLLS ROYCE"}])
     setcard(programme="points_visit")
-    check("points programme: no jauge added to the design", field(pj()["posterGeneric"]["primaryFields"], "jauge") is None)
+    check("points programme: no jauge added to the design",
+          not any(f.get("key") == "jauge" for g in ("primaryFields", "footerFields") for f in pj()["posterGeneric"].get(g) or []))
     unset("programme")
     put_design([{"key": "name", "value": "{prenom}"}, {"key": "p", "label": "PROGRESSION", "value": "{tampons}"}])
     prim = pj()["posterGeneric"]["primaryFields"]
@@ -437,7 +446,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           len(prim) == 2 and prim[1]["label"] == "MES TAMPONS" and prim[1]["value"] == SP("●●●○○○○○○○"))
     put_design([{"key": f"k{i}", "label": f"L{i}", "value": f"v{i}"} for i in range(4)])
     prim = pj()["posterGeneric"]["primaryFields"]
-    check("4 fields already (Wallet's maximum): nothing pushed out", len(prim) == 4 and field(prim, "jauge") is None)
+    check("4 fields already: nothing pushed out, the jauge in the footer",
+          len(prim) == 4 and field(prim, "jauge") is None and field(pj()["posterGeneric"]["footerFields"], "jauge"))
     put_design([{"key": "name", "value": "{prenom}"}], footer="rgb(186,13,140)")
     check("the design's own footer colour is what iOS 27 draws",
           pj().get("footerBackgroundColor") == "rgb(186,13,140)")
@@ -543,6 +553,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("import: a logo the card already has is kept", db.card_templates.find_one({"tenant_id": "t1"})["logo_url"] == keep)
     unset("poster_image_url", "logo_url")
     http("DELETE", "/api/owner/card/pass-designer", headers=H)
+
+    # « Texte d'accueil sur la carte » (2026-10-12): it reached the preview only
+    r = http("PUT", "/api/owner/card/settings", headers=H, json={"welcome_text": "Bienvenue chez nous ✨"})
+    back = pj()["storeCard"]["backFields"]
+    check(f"the welcome text is on the back of the real pass ({r.status_code})",
+          any(f.get("key") == "tagline" and f["value"] == "Bienvenue chez nous ✨" for f in back))
+    adv = http("GET", "/api/owner/card/settings", headers=H).json()
+    check("…and the page reads it back", (adv.get("design") or adv).get("welcome_text") == "Bienvenue chez nous ✨")
 
     # ------------------------------------------------------------------
     print("\nThe « Aperçu »: the editor's draft, and fast")

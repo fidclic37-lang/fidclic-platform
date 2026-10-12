@@ -152,7 +152,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a {prenom} placeholder is filled", prim["HELLO"]["value"] == "Bonjour Marie !")
     check("every field keyed, the empty footer row dropped",
           all(f.get("key") for g in pg.values() if isinstance(g, list) for f in g)
-          and [f["value"] for f in pg["footerFields"]] == ["ROYALTY LIVES HERE"])
+          and [f["value"] for f in pg["footerFields"]][:1] == ["ROYALTY LIVES HERE"]
+          # the tampons go after it: the name's row stays at two fields (2026-10-12)
+          and [f["key"] for f in pg["footerFields"]][1:] in ([], ["jauge"]))
     back = {f["key"]: f for f in pg["backFields"]}
     # points OR tampons, by the programme (user, 2026-10-12)
     check("tampons programme: the template's POINTS row is left out", "POINTS" not in back)
