@@ -183,7 +183,9 @@ const JoinPage = () => {
   const urlStore = stores.find((x) => x.slug === String(seg || '').toLowerCase()) || null;
   const channel = urlStore ? channel2 : seg;
   const [chosenStore, setChosenStore] = useState('');
-  const askStore = stores.length > 1 && !urlStore && !searchParams.get('p');
+  // a store whose card is not designed yet takes no signup (multi-store, 2026-10-12)
+  const openStores = stores.filter((x) => !x.card_off);
+  const askStore = openStores.length > 1 && !urlStore && !searchParams.get('p');
   const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams, channel), [searchParams, channel]);
   // ?p=FT-… — a friend's card brought them: parrainage
   const parrainBarcode = (searchParams.get('p') || '').trim().toUpperCase();
@@ -208,7 +210,7 @@ const JoinPage = () => {
   }, [parrainBarcode]);
 
   useEffect(() => {
-    publicAPI.getJoinInfo(slug).then((res) => {
+    publicAPI.getJoinInfo(slug, seg).then((res) => {
       const live = res.data?.slug;                 // a name from before a rename
       if (live && live !== slug) {
         const base = location.pathname.startsWith('/inscription/') ? '/inscription/' : '/join/';
@@ -220,8 +222,13 @@ const JoinPage = () => {
     }).catch((e) => {
       if (e?.response?.status === 410) setClosed(e.response.data?.detail || "Ce programme de fidélité n'est plus disponible.");
     });
-    publicAPI.joinPage(slug).then(({ data }) => setPage(data)).catch(() => {});
-  }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
+    publicAPI.joinPage(slug, seg).then(({ data }) => setPage(data)).catch(() => {});
+  }, [slug, seg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the link of an establishment whose card is not designed yet: no signup there
+  useEffect(() => {
+    if (urlStore?.card_off) setClosed(page?.card_off_message || "Cet établissement prépare encore sa carte de fidélité.");
+  }, [urlStore, page]);
 
   // one visit per browser per day for Paramètres › Lien d'inscription (not the owner's preview)
   useEffect(() => {
@@ -288,7 +295,7 @@ const JoinPage = () => {
     } finally { setBusy(false); }
   };
 
-  if (closed) return <div className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8"><p className="mb-2 font-semibold text-[#0B1C3F]">Programme terminé</p><p className="text-sm text-[#64748B]">{closed}</p></div></div>;
+  if (closed) return <div className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8"><p className="mb-2 font-semibold text-[#0B1C3F]">{urlStore?.card_off ? 'Bientôt disponible' : 'Programme terminé'}</p><p className="text-sm text-[#64748B]">{closed}</p></div></div>;
   if (!tenant) return <div className="p-8 text-center text-[#64748B]">Chargement…</div>;
 
   const logo = page?.logo_url;
@@ -344,7 +351,7 @@ const JoinPage = () => {
                     <select aria-label="Votre établissement" required className={`${inputCls} bg-transparent`} value={chosenStore}
                             onChange={(e) => { setChosenStore(e.target.value); setErrors((x) => ({ ...x, store: undefined })); }}>
                       <option value="">Votre établissement</option>
-                      {stores.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.city ? ` — ${x.city}` : ''}</option>)}
+                      {openStores.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.city ? ` — ${x.city}` : ''}</option>)}
                     </select>
                     <Star />
                   </label>

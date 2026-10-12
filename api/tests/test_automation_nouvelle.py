@@ -324,7 +324,7 @@ def main():
     r = create({"type": "action", "action": "signup", "repeat": "once"}, name="Bienvenue maison")
     pushed.clear()
     j = http("POST", "/api/join/cafe", headers={}, json={"name": "Inès Neuve", "phone": "0611111111", "postal_code": "37000",
-                                                        "birthday": "02/03/1995", "consent": True})
+                                                        "birthday": "02/03/1995", "consent": True, "store": "b1"})
     ines = db.customers.find_one({"barcode_id": (j.json() or {}).get("barcode_id")}, {"_id": 0}) or {}
     check(f"signed up ({j.status_code}): « Inscription » sent", ines and len(mine(ines["id"])) == 1)
     pause_all()

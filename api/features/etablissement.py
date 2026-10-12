@@ -466,7 +466,9 @@ def add_store(body: StoreIn, token_data: TokenData = Depends(require_role(["busi
                          "city": t.get("city") or "", "phone": t.get("phone") or "",
                          "address": t.get("address") or "",
                          **({"latitude": lat, "longitude": lng} if lat is not None else {})})
-    new = {"id": str(uuid.uuid4()), "is_main": False, "created_at": _now(), **_branch_doc(body)}
+    # A new establishment starts with a blank card, OFF until its owner designs
+    # it (user, 2026-10-12): no signup there before (features/store_cards).
+    new = {"id": str(uuid.uuid4()), "is_main": False, "created_at": _now(), "card_off": True, **_branch_doc(body)}
     branches.append(new)
     _db.tenants.update_one({"id": tid}, {"$set": {"branches": branches}})
     return _view(tid, token_data)

@@ -973,7 +973,7 @@ export const comptableAPI = {
 };
 
 export const publicAPI = {
-  getJoinInfo: (slug) => api.get('/join/' + slug),
+  getJoinInfo: (slug, store) => api.get('/join/' + slug, { params: store ? { store } : {} }),
   joinProgram: (slug, data) => api.post('/join/' + slug, data),
   // -- Real-time proximity push (wallet card calls this with device GPS) --
   proximityPing: (data) => api.post('/public/proximity-ping', data),
@@ -981,7 +981,7 @@ export const publicAPI = {
   submitReview: (data) => api.post('/public/reviews', data),
   googleReviewClick: (barcode) => api.post(`/card/${barcode}/google-review-click`),
   // -- Signup page: its words (Paramètres › Lien d'inscription) and one visit --
-  joinPage: (slug) => api.get(`/join/${slug}/page`),
+  joinPage: (slug, store) => api.get(`/join/${slug}/page`, { params: store ? { store } : {} }),
   joinView: (slug, body) => api.post(`/join/${slug}/view`, body),
 };
 

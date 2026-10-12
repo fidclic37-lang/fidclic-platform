@@ -30,6 +30,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
+from features import store_cards as _SC  # one card per establishment (multi-store)
 
 _db = None
 
@@ -605,6 +606,7 @@ def tiers_crossed(tid: str, before: int, after: int) -> List[Dict[str, Any]]:
     return [t for t in LC.tiers_for(tid) if before < int(t.get("min") or 0) <= after]
 
 
+@_SC.customer_store("cust")
 def eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any], at: datetime) -> bool:
     """The déclencheur's own rule for an event (Ciblage already holds)."""
     tr = row.get("trigger") or {}
@@ -762,6 +764,7 @@ def geo_open(row: Dict[str, Any], at: datetime) -> bool:
     return True
 
 
+@_SC.customer_store("cust")
 def pass_geo(row: Dict[str, Any], cust: Dict[str, Any], at: datetime, cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """What the Wallet pass carries for a custom géolocalisation (lock screen near the address)."""
     from features import automations as AU

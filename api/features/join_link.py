@@ -318,16 +318,24 @@ def put_page(body: PageIn, request: Request = None, token_data: TokenData = Depe
 # public endpoints — the signup page itself
 # ---------------------------------------------------------------------------
 @router.get("/api/join/{slug}/page")
-def public_page(slug: str):
+def public_page(slug: str, store: Optional[str] = None):
+    """`store`: the link's second segment — an establishment's slug (its own
+    card and logo) or a channel word (ignored)."""
     t = tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Commerce introuvable")
     from features import store_links as SL
+    from features import store_cards as SC
     stores = SL.public_stores(t)
+    st = SL.store_by(t, store)
+    with SC.store(t["id"], st["id"] if st else None):
+        brand = _brand(t["id"])
     return {"slug": t.get("slug"), "name": t.get("name") or "", "city": t.get("city") or "",
-            "page": page_of(t), **_brand(t["id"]),
-            # « Votre établissement »: the stores a signup may join (one → no question)
-            "stores": stores if len(stores) > 1 else []}
+            "page": page_of(t), **brand,
+            # « Votre établissement »: the stores of the account (one → no question);
+            # a store whose card is off is listed (its link says so) but not offered
+            "stores": stores if len(stores) > 1 else [],
+            "card_off_message": SL.CARD_OFF_MSG}
 
 
 class ViewIn(BaseModel):

@@ -99,7 +99,18 @@ def ensure_slugs(t: Dict[str, Any]) -> Dict[str, Any]:
 def public_stores(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     ensure_slugs(t)
     return [{"id": b["id"], "slug": b.get("slug"), "name": b.get("name") or "Établissement",
-             "city": b.get("city") or "", "street": b.get("street") or ""} for b in _open(t)]
+             "city": b.get("city") or "", "street": b.get("street") or "",
+             "card_off": bool(b.get("card_off"))} for b in _open(t)]
+
+
+def _signup(t: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The stores a customer may join: open, and with their card on (a store
+    created since 2026-10-12 is off until its owner designs its card)."""
+    return [b for b in _open(t) if not b.get("card_off")]
+
+
+CARD_OFF_MSG = ("Cet établissement prépare encore sa carte de fidélité : "
+                "les inscriptions ouvriront très bientôt.")
 
 
 def store_by(t: Dict[str, Any], key: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -123,12 +134,14 @@ def home_for_signup(t: Dict[str, Any], store: Optional[str], parrain: Optional[D
     - a friend's card: the parrain's store (if it is still open);
     - else the store of the link, or the one chosen on the form;
     - one open store: that one; none (a one-shop account): None."""
-    stores = _open(t)
+    stores = _signup(t)
     if not stores:
         return None
     if parrain and parrain.get("branch_id") in {b["id"] for b in stores}:
         return parrain["branch_id"]
     hit = store_by(t, store)
+    if hit and hit.get("card_off"):
+        raise HTTPException(status_code=400, detail={"code": "store_card_off", "message": CARD_OFF_MSG})
     if hit:
         return hit["id"]
     if len(stores) == 1:
@@ -195,6 +208,9 @@ def put_home_store(customer_id: str, body: HomeStoreIn,
     target = next((b for b in _open(t) if b["id"] == body.branch_id), None)
     if not target:
         raise HTTPException(status_code=400, detail="Établissement inconnu ou fermé.")
+    if target.get("card_off"):
+        raise HTTPException(status_code=400, detail="Cet établissement n'a pas encore sa carte de fidélité : "
+                                                    "créez-la (Carte de fidélité) avant d'y rattacher des clients.")
     if token_data.role != "business_owner":
         from features import store_scope as S
         sc = S.resolve(token_data, requested="")

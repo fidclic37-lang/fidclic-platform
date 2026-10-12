@@ -70,6 +70,8 @@ from pydantic import BaseModel
 
 from auth import require_role, TokenData
 
+from features import store_cards as _SC  # one card per establishment (multi-store)
+
 router = APIRouter(tags=["wallet-passes"])
 _db = None
 
@@ -1280,6 +1282,7 @@ def _points_news(card: Dict[str, Any], points: int) -> Optional[str]:
     return str(news["text"])
 
 
+@_SC.payload_store
 def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
     serial = cust["barcode_id"]
@@ -1664,6 +1667,7 @@ def _sign_manifest(manifest: bytes) -> bytes:
             .sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.DetachedSignature, pkcs7.PKCS7Options.Binary]))
 
 
+@_SC.payload_store
 def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
     """The 1125×432 strip a card ships with — the merchant's banner with the
     progress meter painted into it, or the brand gradient with the meter when
@@ -1694,6 +1698,7 @@ def _stamp_state(payload: Dict[str, Any]) -> Tuple[int, int]:
     return stamps, threshold
 
 
+@_SC.payload_store
 def poster_png(payload: Dict[str, Any], scrim: bool = True) -> Optional[bytes]:
     """The iOS 27 poster background (1035×1515): same photo as the strip — the
     live campaign's, else the merchant's banner, else the brand gradient."""
@@ -1956,6 +1961,7 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
     return imgs
 
 
+@_SC.payload_store
 def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
     """Every file of the pass but the manifest and signature — what the
     owner's preview shows and what build_pkpass signs."""
@@ -2011,6 +2017,7 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
     return files
 
 
+@_SC.payload_store
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
     files = pass_files(payload)
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
@@ -2101,6 +2108,10 @@ def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> D
     q: Dict[str, Any] = {"tenant_id": tenant_id}
     if customer_ids:
         q["id"] = {"$in": list(customer_ids)}
+    else:                      # one establishment's card changed: only its members' cards
+        sid = _SC.store_for(tenant_id)
+        if sid:
+            q["branch_id"] = sid
     serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
     return notify_passes(serials, design_changed=not customer_ids)
 
@@ -2312,6 +2323,7 @@ def _preview_image(name: str, png: bytes) -> Optional[str]:
     return _data_url(png)
 
 
+@_SC.payload_store
 def _design_preview(payload: Dict[str, Any], sample: Dict[str, Any], visits: int) -> Dict[str, Any]:
     """The card editor's preview: the whole pass.json the customer's iPhone
     gets — every style it carries — and its images (@2x), from the very
@@ -2334,6 +2346,7 @@ def _design_preview(payload: Dict[str, Any], sample: Dict[str, Any], visits: int
     }
 
 
+@_SC.payload_store
 def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes],
                     own: bool = False) -> Optional[Dict[str, Any]]:
     pg = pj.get("posterGeneric")
@@ -2507,9 +2520,10 @@ def featured_action_click(serial: str, identifier: str, k: Optional[str] = None)
     from fastapi.responses import RedirectResponse
     owner = CO.valid(serial, k)
     home = CO.owner_url(_site_url(), serial) if owner else f"{_site_url()}/card/{serial}"
-    cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1})
+    cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1, "branch_id": 1})
     if not cust:
         return RedirectResponse(_site_url(), status_code=302)
+    _SC.set_for_customer(cust)
     tpl = _db.card_templates.find_one({"tenant_id": cust.get("tenant_id")}, {"_id": 0, "featured_actions": 1}) or {}
     kind = identifier.split("-", 1)[1] if "-" in identifier else identifier
     tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0}) or {}
@@ -2656,8 +2670,12 @@ def _hex6(rgb_css: str) -> str:
 
 
 def _gw_ids(tenant_id: str, serial: str) -> Tuple[str, str]:
+    """The Google class is the card's design: one per establishment that has
+    its own card (multi-store), else the account's."""
     issuer = _gw_issuer()
-    return (f"{issuer}.fidclic_{tenant_id}".replace("-", "_"),
+    sid = _SC.store_for(tenant_id)
+    cls = f"fidclic_{tenant_id}_{sid}" if sid and _SC.own_card(tenant_id, sid) else f"fidclic_{tenant_id}"
+    return (f"{issuer}.{cls}".replace("-", "_"),
             f"{issuer}.{serial}".replace("-", "_"))
 
 
@@ -2734,7 +2752,9 @@ def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     if what == "name":                        # the name and its colour are in the image
         look += f"{card.get('logo_text_color') or ''}{card.get('_shop_name') or ''}"
     v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
-    return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}"
+    sid = _SC.store_for(tenant_id)
+    store_q = f"&store={sid}" if sid and _SC.own_card(tenant_id, sid) else ""
+    return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}{store_q}"
 
 
 def _gw_callback_url() -> str:
@@ -2742,6 +2762,7 @@ def _gw_callback_url() -> str:
     return callback_url()
 
 
+@_SC.payload_store
 def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
     tenant, card = payload["tenant"], payload["card"]
     gd = clean_google_design(card.get("google_design"))
@@ -2794,6 +2815,7 @@ def _fill_vars(text: str, cust: Dict[str, Any], card: Dict[str, Any]) -> str:
     return re.sub(r"\{([a-z_]{2,20})\}", lambda m: str(values.get(m.group(1), m.group(0))), text or "")
 
 
+@_SC.payload_store
 def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     """The Google card, read off the SAME pass.json Apple gets (build_pass_json):
     the member, the progress and the offer say the same thing on both phones."""
@@ -2880,6 +2902,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     return obj
 
 
+@_SC.payload_store
 def google_save_url(payload: Dict[str, Any]) -> str:
     import jwt
     sa = _gw_sa()
@@ -3017,11 +3040,13 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
 
 
 @router.get("/api/wallet/google/{tenant_id}/{what}.png")
-def google_image(tenant_id: str, what: str):
-    """Public: Google's servers fetch these when they draw the card."""
+def google_image(tenant_id: str, what: str, store: Optional[str] = None):
+    """Public: Google's servers fetch these when they draw the card
+    (`store`: an establishment with its own card)."""
     if what not in ("logo", "wide", "hero", "name"):
         raise HTTPException(status_code=404, detail="Image inconnue")
-    tpl = _db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
+    with _SC.store(tenant_id, store):
+        tpl = _db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
     card = {**(tpl.get("brand_fields") or {}), **tpl}
     if what == "name":
         t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}

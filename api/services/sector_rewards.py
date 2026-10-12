@@ -106,13 +106,15 @@ def sync_all(db) -> int:
         return 0
     _synced = True
     changed = 0
+    from features import store_cards as SC
     try:
-        chosen = {t["tenant_id"] for t in db.card_templates.find({"reward_chosen": True}, {"_id": 0, "tenant_id": 1})
-                  if t.get("tenant_id")}
-        for t in db.tenants.find({"sector": {"$nin": [None, ""]}}, {"_id": 0, "id": 1, "sector": 1}):
-            if t.get("id") and t["id"] not in chosen and apply(db, t["id"], t.get("sector")):
-                changed += 1
-                _refresh_passes(t["id"])
+        with SC.store(None, None):                   # the accounts' own cards, whatever request runs this
+            chosen = {t["tenant_id"] for t in db.card_templates.find({"reward_chosen": True}, {"_id": 0, "tenant_id": 1})
+                      if t.get("tenant_id")}
+            for t in db.tenants.find({"sector": {"$nin": [None, ""]}}, {"_id": 0, "id": 1, "sector": 1}):
+                if t.get("id") and t["id"] not in chosen and apply(db, t["id"], t.get("sector")):
+                    changed += 1
+                    _refresh_passes(t["id"])
     except Exception as exc:                       # noqa: BLE001 — never block a boot
         print(f"sector_rewards: sync skipped ({exc})")
     return changed
