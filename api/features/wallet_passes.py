@@ -2753,7 +2753,8 @@ def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
         look += f"{card.get('logo_text_color') or ''}{card.get('_shop_name') or ''}"
     v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
     sid = _SC.store_for(tenant_id)
-    store_q = f"&store={sid}" if sid and _SC.own_card(tenant_id, sid) else ""
+    own = sid and (_SC.own_card(tenant_id, sid) or (what == "name" and _SC.store_name(tenant_id, sid)))
+    store_q = f"&store={sid}" if own else ""
     return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}{store_q}"
 
 
@@ -3050,7 +3051,7 @@ def google_image(tenant_id: str, what: str, store: Optional[str] = None):
     card = {**(tpl.get("brand_fields") or {}), **tpl}
     if what == "name":
         t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
-        card["_shop_name"] = t.get("name") or card.get("card_name") or ""
+        card["_shop_name"] = _SC.store_name(tenant_id, store) or t.get("name") or card.get("card_name") or ""
     png = _gw_image(card, what)
     if not png:
         raise HTTPException(status_code=404, detail="Image absente")

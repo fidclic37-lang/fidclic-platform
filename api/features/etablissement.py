@@ -88,6 +88,19 @@ def _pos(d: Dict[str, Any]):
     return (float(lat), float(lng)) if lat is not None and lng is not None else (None, None)
 
 
+def _selected(t: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Several establishments: the one chosen in the menu, whose name, address
+    and phone this page shows and edits (user, 2026-10-12: renaming PALISSY
+    leaves the other stores as they are). None: a one-shop account — the
+    account's own fields, as before."""
+    from features import store_cards as SC
+    open_ = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    if len(open_) < 2:
+        return None
+    sid = SC.store_for(t.get("id"))
+    return next((b for b in open_ if b["id"] == sid), None)
+
+
 def _me(token: TokenData) -> Dict[str, Any]:
     return _db.users.find_one({"email": getattr(token, "email", None)}, {"_id": 0}) or {}
 
@@ -158,19 +171,30 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
     except Exception:
         multi = False
     o = _owner(tid, token)
+    sel = _selected(t)
+    if sel:
+        slat, slng = _pos(sel)
+        addr = {"street": _street(sel), "postal_code": sel.get("postal_code") or "", "city": sel.get("city") or "",
+                "country": t.get("country") or "FR", "lat": slat, "lng": slng,
+                "pin": sel.get("pin_source") or ("adresse" if slat is not None else None)}
+    else:
+        addr = {"street": _street(t), "postal_code": t.get("postal_code") or "", "city": t.get("city") or "",
+                "country": t.get("country") or "FR", "lat": lat, "lng": lng,
+                "pin": t.get("pin_source") or ("adresse" if lat is not None else None)}
     return {
         # the owner's own name (« Bonjour … » on the dashboard), changed by the owner only
         "owner": {"first_name": o.get("first_name") or "", "last_name": o.get("last_name") or "",
                   "email": o.get("email") or ""},
         "can": {"brand": owner, "owner_name": owner, "legal": role in EDITORS, "geo": owner, "hours": owner,
                 "add_store": owner and multi, "plan_allows_stores": multi},
-        "business": {"name": t.get("name") or "", "logo_url": tpl.get("logo_url") or "",
-                     "phone": t.get("phone") or "", "email": t.get("email") or t.get("contact_email") or "",
+        "business": {"name": (sel or {}).get("name") or t.get("name") or "", "logo_url": tpl.get("logo_url") or "",
+                     "phone": (sel.get("phone") if sel else None) or t.get("phone") or "",
+                     "email": t.get("email") or t.get("contact_email") or "",
                      "sector": t.get("sector") or "", "activity": t.get("activity") or "",
                      "description": t.get("description") or "", "website": t.get("website") or ""},
-        "address": {"street": _street(t), "postal_code": t.get("postal_code") or "", "city": t.get("city") or "",
-                    "country": t.get("country") or "FR", "lat": lat, "lng": lng,
-                    "pin": t.get("pin_source") or ("adresse" if lat is not None else None)},
+        # several establishments: the page is the chosen one's (its name, address, phone)
+        "store": {"id": sel["id"], "name": sel.get("name") or "", "account_name": t.get("name") or ""} if sel else None,
+        "address": addr,
         "legal": {"legal_name": t.get("legal_name") or "", "siret": t.get("siret") or "",
                   "vat_number": t.get("vat_number") or ""},
         "geo": {"enabled": bool(t.get("geo_enabled")), "radius_m": int(t.get("geo_radius_meters") or DEFAULT_RADIUS),
@@ -262,6 +286,8 @@ def put_etablissement(body: EtablissementIn,
         raise HTTPException(status_code=403, detail="Seul le propriétaire modifie ces informations.")
     sets: Dict[str, Any] = {}
     owner_names: Dict[str, str] = {}
+    sel = _selected(t)
+    store_sets: Dict[str, Any] = {}          # the chosen establishment's own fields
     if body.owner:
         # checked before anything is written: a refused name saves nothing
         owner_names = {"first_name": _clean_name(body.owner.first_name, "prénom"),
@@ -272,9 +298,9 @@ def put_etablissement(body: EtablissementIn,
         if b.name is not None:
             if not b.name.strip():
                 raise HTTPException(status_code=400, detail="Le nom du commerce est obligatoire.")
-            sets["name"] = b.name.strip()
+            (store_sets if sel else sets)["name"] = b.name.strip()
         if b.phone is not None:
-            sets["phone"] = b.phone.strip()
+            (store_sets if sel else sets)["phone"] = b.phone.strip()
         if b.email is not None:
             if b.email.strip() and not EMAIL_RE.match(b.email.strip()):
                 raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
@@ -297,11 +323,23 @@ def put_etablissement(body: EtablissementIn,
     if body.address:
         a = body.address
         _check_pin(a.lat, a.lng)
-        street = (a.street if a.street is not None else _street(t)).strip()
-        postal = (a.postal_code if a.postal_code is not None else t.get("postal_code") or "").strip()
-        city = (a.city if a.city is not None else t.get("city") or "").strip()
+        src = sel or t
+        street = (a.street if a.street is not None else _street(src)).strip()
+        postal = (a.postal_code if a.postal_code is not None else src.get("postal_code") or "").strip()
+        city = (a.city if a.city is not None else src.get("city") or "").strip()
         if postal and not re.fullmatch(r"\d{4,5}", postal):
             raise HTTPException(status_code=400, detail="Code postal invalide.")
+    if body.address and sel:
+        # the chosen establishment's address; the account's follows its main one
+        store_sets.update({"street": street, "postal_code": postal, "city": city,
+                           "address": f"{street}, {postal} {city}".strip(", "),
+                           **({"latitude": a.lat, "longitude": a.lng,
+                               "pin_source": "manuel" if a.pin == "manuel" else "adresse"} if a.lat is not None else {})})
+        if sel.get("id") == MAIN or sel.get("is_main"):
+            sets.update({"street": street, "postal_code": postal, "city": city, "address": store_sets["address"],
+                         **({"lat": a.lat, "lng": a.lng, "pin_source": store_sets["pin_source"]}
+                            if a.lat is not None else {})})
+    elif body.address:
         sets.update({"street": street, "postal_code": postal, "city": city,
                      "address": f"{street}, {postal} {city}".strip(", ")})
         if a.lat is not None:
@@ -348,6 +386,24 @@ def put_etablissement(body: EtablissementIn,
                 from server import log_audit
                 log_audit("owner.renamed", actor=getattr(token_data, "email", None), actor_type="user",
                           tenant_id=tid, target=me["email"], meta={"by": getattr(token_data, "view_by", None)})
+            except Exception:
+                pass
+
+    if store_sets:
+        _db.tenants.update_one({"id": tid, "branches.id": sel["id"]},
+                               {"$set": {f"branches.$.{k}": v for k, v in store_sets.items()}})
+        try:
+            from server import log_audit
+            log_audit("etablissement.store_updated", actor=getattr(token_data, "email", None), actor_type="user",
+                      tenant_id=tid, target=sel["id"], meta={"fields": sorted(store_sets)})
+        except Exception:
+            pass
+        if "name" in store_sets and store_sets["name"] != sel.get("name"):
+            try:                       # its members' cards carry the new name
+                from features import store_cards as SC
+                from features.wallet_passes import notify_tenant
+                with SC.store(tid, sel["id"]):
+                    notify_tenant(tid)
             except Exception:
                 pass
 

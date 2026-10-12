@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useBranch } from '../contexts/BranchContext';
 
 /* Paramètres › Établissement — built to the approved mockup (blocks 1–8),
    plus what lived nowhere else and the user asked to add: the opening hours,
@@ -225,6 +226,7 @@ export default function EtablissementPage() {
   const [err, setErr] = useState('');
   const [pin, setPin] = useState(false);
   const [store, setStore] = useState(null);
+  const { setBranches } = useBranch();
   const [menu, setMenu] = useState(null);
 
   const apply = useCallback((data) => {
@@ -268,6 +270,8 @@ export default function EtablissementPage() {
         setDirtyHours({ weekly: false, annual: false, holidays: false });
       }
       apply(data);
+      // a renamed establishment: the menu shows its new name at once (only that one)
+      if (data.store) ownerAPI.getBranches().then(({ data: b }) => setBranches(b?.branches || b || [])).catch(() => {});
       // the new name shows at once everywhere the app greets the owner (« Bonjour … »)
       if (renamed) await checkAuth();
       say('Modifications enregistrées.');
@@ -308,9 +312,15 @@ export default function EtablissementPage() {
       <fieldset disabled={!can.brand} className="m-0 min-w-0 border-0 p-0">
       <div className="grid gap-5 lg:grid-cols-[1.08fr_1fr]">
         {/* 1 */}
-        <Block n={1} title="Nom du commerce">
-          <label className="block"><Label required right={`${(biz.name || '').length}/100`}>Nom du commerce</Label>
+        <Block n={1} title={d.store ? "Nom de l'établissement" : 'Nom du commerce'}>
+          <label className="block"><Label required right={`${(biz.name || '').length}/100`}>{d.store ? "Nom de l'établissement" : 'Nom du commerce'}</Label>
             <input className={inputCls} value={biz.name} maxLength={100} onChange={(e) => setBiz({ ...biz, name: e.target.value })} /></label>
+          {d.store && (
+            <p data-testid="store-name-note" className="mt-2 text-[12.5px] leading-snug text-[#64748B]">
+              Le nom de cet établissement uniquement (menu, page d'inscription, carte de ses clients) — ses adresse et
+              téléphone aussi. Les autres établissements gardent les leurs.
+            </p>
+          )}
         </Block>
 
         {/* 2 */}

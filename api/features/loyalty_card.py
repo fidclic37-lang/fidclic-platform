@@ -364,6 +364,10 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
     tid = token_data.tenant_id
     tpl = _template(tid)
     tenant = _db.tenants.find_one({"id": tid}) or {}
+    from features import store_cards as SC          # several establishments: the chosen one's name
+    _sn = SC.store_name(tid, SC.store_for(tid))
+    if _sn:
+        tenant = {**tenant, "name": _sn}
     programme = _programme(tpl)
     return {
         "tenant": {"name": tenant.get("name"), "slug": tenant.get("slug"), "city": tenant.get("city"),
