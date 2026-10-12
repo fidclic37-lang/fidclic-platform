@@ -107,7 +107,7 @@ const ColorField = ({ value, onChange }) => (
 
 /** Image slot (mockup): the picture fills the tile, « Changer … » sits on it,
  *  the bin removes it. `contain` for a logo (never cropped). */
-const ImageField = ({ value, onChange, label, aspect = '16 / 10', accept = 'image/png,image/jpeg,image/webp', downscale, cta = 'Changer', contain = false }) => {
+const ImageField = ({ value, onChange, label, aspect = '16 / 10', accept = 'image/png,image/jpeg,image/webp', downscale, cta = 'Changer', contain = false, extra = null }) => {
   const ref = useRef(null);
   const pick = async (e) => {
     const file = e.target.files?.[0]; e.target.value = '';
@@ -133,6 +133,7 @@ const ImageField = ({ value, onChange, label, aspect = '16 / 10', accept = 'imag
                       ? 'bg-[#EEF4FF] text-[#2F6BFF] hover:bg-[#E0EAFF]' : 'bg-black/55 text-white backdrop-blur hover:bg-black/70'}`}>
               {contain ? <Upload size={13} /> : <ImageIcon size={13} />} {cta}
             </button>
+            {extra}
             <button type="button" onClick={() => onChange('')} aria-label={`Retirer ${label}`}
                     className={`flex h-[30px] w-[30px] items-center justify-center rounded-lg ${contain
                       ? 'text-[#E5484D] hover:bg-[#FEF2F2]' : 'bg-black/55 text-white backdrop-blur hover:bg-[#E5484D]'}`}>
@@ -211,23 +212,6 @@ const readLogo = downscaleTo(320, 320, false);
 const readBanner = downscaleTo(1600, 1600, false, true);
 // (the « Image poster » goes through PosterCropper instead: framed, full card)
 
-// A photo centred over the whole iOS 27 poster (1035 × 1515), as the server
-// does for a card without a design — for a poster design's background.
-const posterCover = (src) => new Promise((resolve, reject) => {
-  if (!src) { reject(new Error('no image')); return; }
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = () => {
-    const c = document.createElement('canvas');
-    c.width = 1035; c.height = 1515;
-    const k = Math.max(1035 / img.width, 1515 / img.height);
-    const w = img.width * k; const h = img.height * k;
-    c.getContext('2d').drawImage(img, (1035 - w) / 2, (1515 - h) / 2, w, h);
-    resolve(c.toDataURL('image/jpeg', 0.88));
-  };
-  img.onerror = reject;
-  img.src = src;
-});
 
 const PROGRAMME_HINT = {
   points_euro: 'Le client cumule des points proportionnels au montant dépensé.',
@@ -268,11 +252,10 @@ export default function LoyaltyCardPage() {
   const readPoster = (file) => new Promise((resolve) => setCropReq({ file, resolve }));
   // a new « Image de fond » while the iOS 27 card has its own framing
   const [newPhoto, setNewPhoto] = useState(false);
-  // the card editor's poster design, when there is one ({ footer }): iOS 27
-  // then draws ITS background and footer, so the photo and the band set here
-  // go to it too (user, 2026-10-12: « ios27 chhod k sab mein changes »)
+  // the card editor's poster design, when there is one ({ footer }): the
+  // server draws it with this page's photo and logo, and the band set here
+  // is its footer colour too (user, 2026-10-12: « ios27 chhod k sab mein changes »)
   const [tplPoster, setTplPoster] = useState(null);
-  const toDesign = (url) => { if (url && tplPoster) designerRef.current?.setPosterBackground(url); };
   // « Ajuster » (iOS 27): the background photo, framed by the owner in the
   // poster's shape — Wallet ships that frame as is
   const adjustPoster = async () => {
@@ -281,7 +264,7 @@ export default function LoyaltyCardPage() {
     try {
       const blob = await (await fetch(src)).blob();
       const url = await new Promise((resolve) => setCropReq({ file: blob, resolve, adjust: true }));
-      if (url) { setAdvanced((a) => ({ ...a, poster_image_url: url })); setNewPhoto(false); toDesign(url); }
+      if (url) { setAdvanced((a) => ({ ...a, poster_image_url: url })); setNewPhoto(false); }
     } catch (e) {
       setError("Impossible d'ouvrir la photo pour l'ajuster. Changez l'image puis réessayez.");
     }
@@ -535,12 +518,17 @@ export default function LoyaltyCardPage() {
               the owner had just added, on the preview and on the real card
               alike. Removing the photo hands the banner back to the brand
               colour. */}
-          <ImageField label="Image de fond (optionnelle)" value={design.hero_image_url} aspect="16 / 10" downscale={readBanner} cta="Changer l'image"
+          <ImageField label="Image de fond (optionnelle)" value={design.hero_image_url} aspect="16 / 10" downscale={readBanner} cta="Changer"
+                      extra={advanced && advanced.poster_style !== false && design.hero_image_url ? (
+                        <button type="button" onClick={adjustPoster}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-black/55 px-3 py-1.5 text-[12.5px] font-semibold text-white backdrop-blur hover:bg-black/70">
+                          <Move size={13} /> Ajuster
+                        </button>
+                      ) : null}
                       onChange={(v) => {
                         setDesign({ ...design, hero_image_url: v });
                         setAdvanced((a) => ({ ...a, hero_mode: v ? 'image' : (a?.hero_mode === 'none' ? 'none' : 'brand') }));
                         setNewPhoto(Boolean(v));
-                        if (v && tplPoster) posterCover(v).then(toDesign).catch(() => {});
                       }} />
         </div>
         {/* iOS 27 (user, 2026-10-11): the photo covers the whole card, like a
@@ -555,23 +543,18 @@ export default function LoyaltyCardPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[12.5px] text-[#475569]">
                   {advanced.poster_image_url ? 'Cadrage personnalisé' : 'Photo centrée automatiquement'}
+                  {design.hero_image_url && <span className="text-[#94A3B8]"> · « Ajuster » sur la photo</span>}
                 </span>
                 <span className="flex gap-2">
                   {advanced.poster_image_url && design.hero_image_url && (
                     <button type="button" onClick={() => {
                               setAdvanced({ ...advanced, poster_image_url: '' }); setNewPhoto(false);
-                              if (tplPoster) posterCover(design.hero_image_url).then(toDesign).catch(() => {});
                             }}
                             className="rounded-lg px-2.5 py-1.5 text-[12px] font-semibold text-[#64748B] hover:bg-[#F4F7FC]">
                       Centrer automatiquement
                     </button>
                   )}
-                  {design.hero_image_url && (
-                    <button type="button" onClick={adjustPoster}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E1E8F5] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-                      <Move size={13} /> Ajuster
-                    </button>
-                  )}
+                  {/* « Ajuster » sits on the photo itself (Image de fond) */}
                 </span>
               </div>
             )}

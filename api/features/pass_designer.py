@@ -566,6 +566,19 @@ def put_template(body: TemplateIn, token_data: TokenData = Depends(require_role(
         acts = clean_featured(actions_of(raw), keep_empty=True)
         if acts or raw.get("featuredActions") is not None:
             sets["featured_actions"] = acts
+    # An imported template's photo and logo become the card's (« Identité »,
+    # the one place they are set — user, 2026-10-12), so the owner sees and
+    # frames them there. A logo the card already has is kept.
+    if doc["source"] == "import":
+        have = {row["name"]: row["data"] for row in imgs if isinstance(row, dict)}
+        bg = next((have[n] for n in ("background@3x.png", "background@2x.png", "background.png") if have.get(n)), None)
+        if bg and style_of(raw) == "posterGeneric" and len(bg) <= 3_500_000:
+            sets["poster_image_url"] = bg
+        cur = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
+        lg = next((have[n] for n in ("primaryLogo@3x.png", "primaryLogo@2x.png", "logo@3x.png", "logo@2x.png",
+                                     "primaryLogo.png", "logo.png") if have.get(n)), None)
+        if lg and not cur.get("logo_url"):
+            sets["logo_url"] = lg
     _db.card_templates.update_one({"tenant_id": tid}, {"$set": sets}, upsert=True)
     try:
         from features.wallet_passes import notify_tenant

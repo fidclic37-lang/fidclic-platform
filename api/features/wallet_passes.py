@@ -706,7 +706,7 @@ def _make_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thresh
 POSTER_W, POSTER_H = 1035, 1515       # 345 × 505 pt at 3×
 
 
-def compose_poster(raw: Optional[bytes], theme: Dict[str, str]) -> Optional[bytes]:
+def compose_poster(raw: Optional[bytes], theme: Dict[str, str], scrim: bool = True) -> Optional[bytes]:
     """The poster's background, as an iOS 27 poster is meant to be: the
     merchant's photo over the whole card (user, 2026-10-11: « jaise poster
     aata hai woh rhe default, pure mein as bg image »), or the brand gradient,
@@ -715,10 +715,10 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str]) -> Optional[byte
     band under the QR (build_pass_json). To frame the photo another way the
     owner uses « Ajuster » (poster_image_url, already the poster's shape).
     PNG at 3×, None without Pillow."""
-    return _cached("poster", (raw or b"", sorted(theme.items())), lambda: _make_poster(raw, theme))
+    return _cached("poster", (raw or b"", sorted(theme.items()), scrim), lambda: _make_poster(raw, theme, scrim))
 
 
-def _make_poster(raw: Optional[bytes], theme: Dict[str, str]) -> Optional[bytes]:
+def _make_poster(raw: Optional[bytes], theme: Dict[str, str], scrim: bool = True) -> Optional[bytes]:
     try:
         from PIL import Image, ImageFilter
     except ImportError:
@@ -748,7 +748,8 @@ def _make_poster(raw: Optional[bytes], theme: Dict[str, str]) -> Optional[bytes]
                           (diag.width + POSTER_W) // 2, (diag.height + POSTER_H) // 2))
         img = Image.composite(sheen, img, diag.point(lambda v: 255 - v)).filter(ImageFilter.GaussianBlur(18))
 
-    _paint_top_scrim(img, light=raw is None and _lum(surface) > 0.45)
+    if scrim:     # a Pass Designer design has Apple's own (« Assombrir le haut de l'image »)
+        _paint_top_scrim(img, light=raw is None and _lum(surface) > 0.45)
     buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
     return buf.getvalue()
 
@@ -1617,14 +1618,14 @@ def _stamp_state(payload: Dict[str, Any]) -> Tuple[int, int]:
     return stamps, threshold
 
 
-def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
+def poster_png(payload: Dict[str, Any], scrim: bool = True) -> Optional[bytes]:
     """The iOS 27 poster background (1035×1515): same photo as the strip — the
     live campaign's, else the merchant's banner, else the brand gradient."""
     card = payload["card"]
     raw = None
     if not _campaign_photo(card) and card.get("poster_image_url"):
         raw = _fetch_image(card.get("poster_image_url"))     # the owner's « Ajuster », poster-shaped
-    return compose_poster(raw or _hero_raw(card), derive_colors(card))
+    return compose_poster(raw or _hero_raw(card), derive_colors(card), scrim)
 
 
 def _css_rgb(v: Any) -> Optional[Tuple[int, int, int]]:
@@ -1824,7 +1825,25 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
     from features import pass_designer as PD
     imgs = dict(PD.images(tpl))
     brand = _rgb(card.get("brand_color")) or (184, 92, 56)
-    logo_raw = PD.best(imgs, "logo") or PD.best(imgs, "primaryLogo") or _fetch_image(card.get("logo_url"))
+    # « Identité » is the one place for the logo and the photo (user,
+    # 2026-10-12: « logo and bg image identity and images dono jagah hai,
+    # images se htao »): a design draws the card's own, framed as the owner
+    # framed it (« Ajuster »). The design's images are only what a card
+    # without them falls back on.
+    card_logo = _fetch_image(card.get("logo_url"))
+    if card_logo:
+        imgs = {n: v for n, v in imgs.items() if not re.match(r"^(logo|primaryLogo)(@[23]x)?\.png$", n)}
+        for base in ("logo", "primaryLogo"):
+            for suffix, png in _png_variants(card_logo, (100, 50), fallback_rgb=brand, tight=True).items():
+                imgs[f"{base}{suffix}.png"] = png
+    if isinstance((tpl.get("pass") or {}).get("posterGeneric"), dict) and \
+            (card.get("poster_image_url") or _hero_raw(card)):
+        bg = poster_png({"card": card}, scrim=False)
+        if bg:
+            imgs = {n: v for n, v in imgs.items() if not re.match(r"^background(@[23]x)?\.png$", n)}
+            for suffix, png in _poster_variants(bg).items():
+                imgs[f"background{suffix}.png"] = png
+    logo_raw = card_logo or PD.best(imgs, "logo") or PD.best(imgs, "primaryLogo")
     try:
         from PIL import Image
 
@@ -2247,9 +2266,9 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
         tpl = PD.load((payload.get("tenant") or {}).get("id"))
     except Exception:
         tpl = None
-    if tpl:                                   # a Pass Designer template: its own images
-        imgs = PD.images(tpl)
-        bg2x = PD.best(imgs, "background")
+    if tpl:                                   # a Pass Designer template: the card's photo and logo first
+        imgs = _template_files(tpl, payload["card"])
+        bg2x = imgs.get("background@2x.png") or PD.best(imgs, "background")
         if not own:                           # `own`: the pass's own primaryLogo (with the name)
             logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
     else:

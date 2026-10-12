@@ -444,6 +444,61 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("iOS 26 keeps FidClic's card with its strip", "storeCard" in pj())
     http("DELETE", "/api/owner/card/pass-designer", headers=H)
 
+    # 2026-10-12: « Identité » is the one place for the logo and the photo —
+    # a design is drawn with the card's own, the design's are only a fallback
+    print("\nA design draws Identité's photo and logo")
+    def b64img(w, h, rgb):
+        b = io.BytesIO(); Image.new("RGB", (w, h), rgb).save(b, "PNG")
+        return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
+    raw = {"posterGeneric": {"primaryFields": [{"key": "name", "value": "{prenom}"}]},
+           "barcodes": [{"format": "PKBarcodeFormatQR"}]}
+    r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={
+        "name": "Royal", "pass_json": json.dumps(raw), "source": "editor",
+        "images": {"background@3x.png": b64img(1035, 1515, (200, 0, 0)), "primaryLogo@3x.png": b64img(300, 150, (0, 200, 0))}})
+    check(f"design saved ({r.status_code})", r.status_code == 200)
+    unset("hero_image_url", "poster_image_url", "logo_url")
+    setcard(hero_mode="none")
+    f = WP.pass_files(WP._card_payload("FT-JAUGE001"))
+    check("no photo in Identité: the design's own background", img(f["background@3x.png"]).getpixel((500, 900)) == (200, 0, 0))
+    def has_colour(raw, test):          # the poster's logo carries the shop's name beside it (#217)
+        im = img(raw)
+        return sum(1 for x in range(0, im.width, 3) for y in range(0, im.height, 3) if test(im.getpixel((x, y)))) > 20
+    check("no logo in Identité: the design's own logo", has_colour(f["primaryLogo@3x.png"], lambda p: p[1] > 150 and p[0] < 60 and p[2] < 60))
+    setcard(hero_image_url=png_data(1600, 1000, (0, 0, 200), "JPEG"), hero_mode="image",
+            logo_url=b64img(200, 200, (250, 250, 0)))
+    f = WP.pass_files(WP._card_payload("FT-JAUGE001"))
+    bgp = img(f["background@3x.png"]).getpixel((500, 900))
+    check(f"Identité's photo covers the design's poster ({bgp})", bgp[2] > 180 and bgp[0] < 40)
+    check("…every size", img(f["background.png"]).size == (345, 505) and img(f["background@2x.png"]).size == (690, 1010))
+    yellow = lambda p: p[0] > 200 and p[1] > 200 and p[2] < 60          # noqa: E731
+    check("Identité's logo is the poster's logo", has_colour(f["primaryLogo@3x.png"], yellow)
+          and not has_colour(f["primaryLogo@3x.png"], lambda p: p[1] > 150 and p[0] < 60 and p[2] < 60))
+    check("…and the iOS 26 logo", has_colour(f["logo@3x.png"], yellow))
+    framed = b64img(1035, 1515, (10, 120, 10))
+    setcard(poster_image_url=framed)
+    f = WP.pass_files(WP._card_payload("FT-JAUGE001"))
+    check("« Ajuster »'s frame is the design's poster", img(f["background@3x.png"]).getpixel((500, 900)) == (10, 120, 10))
+    pv = http("POST", "/api/owner/wallet/preview", headers=H, json={"card": {}, "visits": 3, "design": {}}).json()
+    check("the preview shows it too", bool(pv["images"].get("background")) and pv["images"].get("primaryLogo"))
+    unset("poster_image_url", "hero_image_url", "logo_url")
+    http("DELETE", "/api/owner/card/pass-designer", headers=H)
+
+    # an imported template: its photo and logo land in Identité, to be framed there
+    r = http("PUT", "/api/owner/card/pass-designer", headers=H, json={
+        "name": "Import", "pass_json": json.dumps(raw),
+        "images": {"background@2x.png": b64img(690, 1010, (90, 40, 140)), "primaryLogo@2x.png": b64img(200, 100, (1, 2, 3))}})
+    tplx = db.card_templates.find_one({"tenant_id": "t1"})
+    check(f"import: the template's photo becomes the card's poster photo ({r.status_code})",
+          r.status_code == 200 and (tplx.get("poster_image_url") or "").startswith("data:image/"))
+    check("import: its logo becomes the card's, the card having none", (tplx.get("logo_url") or "").startswith("data:image/"))
+    setcard(logo_url=b64img(100, 100, (250, 250, 0)))
+    keep = db.card_templates.find_one({"tenant_id": "t1"})["logo_url"]
+    http("PUT", "/api/owner/card/pass-designer", headers=H, json={
+        "name": "Import 2", "pass_json": json.dumps(raw), "images": {"primaryLogo@2x.png": b64img(200, 100, (1, 2, 3))}})
+    check("import: a logo the card already has is kept", db.card_templates.find_one({"tenant_id": "t1"})["logo_url"] == keep)
+    unset("poster_image_url", "logo_url")
+    http("DELETE", "/api/owner/card/pass-designer", headers=H)
+
     # ------------------------------------------------------------------
     print("\nThe « Aperçu »: the editor's draft, and fast")
     r = http("POST", "/api/owner/wallet/preview", headers=H,
