@@ -6876,7 +6876,10 @@ def _serialize_card_payload_raw(cust: dict) -> dict:
             # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
             # WalletCard / WalletPassPreview and the native pass builder.
             "card_name":            tpl.get("card_name"),
-            "tagline":              tpl.get("tagline"),
+            # « Texte d'accueil sur la carte » (Carte de fidélité) first: a text
+            # saved there before the two were kept in step still reaches the
+            # back of the card (user, 2026-10-12), else the onboarding slogan
+            "tagline":              (tpl.get("welcome_text") or "").strip() or tpl.get("tagline"),
             "surface":              tpl.get("surface"),
             "surface_color":        tpl.get("surface_color"),
             "code_type":            tpl.get("code_type"),

@@ -561,6 +561,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           any(f.get("key") == "tagline" and f["value"] == "Bienvenue chez nous ✨" for f in back))
     adv = http("GET", "/api/owner/card/settings", headers=H).json()
     check("…and the page reads it back", (adv.get("design") or adv).get("welcome_text") == "Bienvenue chez nous ✨")
+    # a welcome text saved before the fix (welcome_text only, no tagline) still shows
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"welcome_text": "Welcome."}, "$unset": {"tagline": ""}})
+    check("a welcome text saved before the fix is on the back too",
+          any(f.get("key") == "tagline" and f["value"] == "Welcome." for f in pj()["storeCard"]["backFields"]))
 
     # ------------------------------------------------------------------
     print("\nThe « Aperçu »: the editor's draft, and fast")
