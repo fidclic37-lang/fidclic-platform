@@ -108,10 +108,11 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
           {tenant?.slug && (
             <>
               <span className="my-1 block h-px bg-[#EEF3FB]" />
-              <a href={`/join/${tenant.slug}`} target="_blank" rel="noreferrer"
+              {/* the chosen establishment's own signup link (multi-store, 2026-10-12) */}
+              <a href={`/join/${tenant.slug}${list.length > 1 && active?.slug ? `/${active.slug}` : ''}`} target="_blank" rel="noreferrer"
                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-[#64748B] hover:bg-[#F4F7FC]">
                 <Link2 size={13} className="shrink-0" />
-                <span className="min-w-0 flex-1 truncate font-mono">/join/{tenant.slug}</span>
+                <span className="min-w-0 flex-1 truncate font-mono">/join/{tenant.slug}{list.length > 1 && active?.slug ? `/${active.slug}` : ''}</span>
               </a>
             </>
           )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
-import { User, Mail, Phone, CalendarDays, ArrowRight, Check, Share2, Smartphone, Printer } from 'lucide-react';
+import { User, Mail, Phone, CalendarDays, ArrowRight, Check, Share2, Smartphone, Printer, Store } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
 import { SIGNUP_SOURCES, normalizeSource } from '../lib/sources';
 import { addMine, ownerLink } from '../lib/myCards';
@@ -173,17 +173,23 @@ function Success({ result, tenant }) {
 }
 
 const JoinPage = () => {
-  const { slug, channel } = useParams();
+  // /join/<compte>/<établissement>[/<canal>] or /join/<compte>/<canal> (multi-store, 2026-10-12)
+  const { slug, channel: seg, channel2 } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [page, setPage] = useState(null);
+  const stores = page?.stores || [];                    // only when the account has several
+  const urlStore = stores.find((x) => x.slug === String(seg || '').toLowerCase()) || null;
+  const channel = urlStore ? channel2 : seg;
+  const [chosenStore, setChosenStore] = useState('');
+  const askStore = stores.length > 1 && !urlStore && !searchParams.get('p');
   const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams, channel), [searchParams, channel]);
   // ?p=FT-… — a friend's card brought them: parrainage
   const parrainBarcode = (searchParams.get('p') || '').trim().toUpperCase();
   const [inviter, setInviter] = useState(null);
   const [tenant, setTenant] = useState(null);
   const [closed, setClosed] = useState(null);
-  const [page, setPage] = useState(null);
   const [logoBroken, setLogoBroken] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', postal_code: '', birth: '' });
   const [consent, setConsent] = useState(false);
@@ -206,7 +212,8 @@ const JoinPage = () => {
       const live = res.data?.slug;                 // a name from before a rename
       if (live && live !== slug) {
         const base = location.pathname.startsWith('/inscription/') ? '/inscription/' : '/join/';
-        navigate(`${base}${live}${location.search}`, { replace: true });
+        const rest = location.pathname.split('/').slice(3).filter(Boolean).join('/');   // the store / channel stay
+        navigate(`${base}${live}${rest ? `/${rest}` : ''}${location.search}`, { replace: true });
         return;
       }
       setTenant(res.data);
@@ -227,7 +234,8 @@ const JoinPage = () => {
         localStorage.setItem('fidclic:visitor', visitor);
       }
     } catch (_e) { /* private mode */ }
-    if (visitor) publicAPI.joinView(slug, { visitor, src: lockedSource }).catch(() => {});
+    // the 2nd part of the address may be the establishment (the server checks it)
+    if (visitor) publicAPI.joinView(slug, { visitor, src: lockedSource || resolveSourceFromUrl(searchParams, channel2), store: seg || undefined }).catch(() => {});
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (lockedSource) recordTouchpoint(slug, lockedSource); }, [slug, lockedSource]);
 
@@ -242,6 +250,7 @@ const JoinPage = () => {
     const be = birthError(form.birth);
     if (be) errs.birth = be;
     if (!consent) errs.consent = 'Cochez la case pour créer votre carte.';
+    if (askStore && !chosenStore) errs.store = 'Choisissez votre établissement.';
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true); setJoinError(null);
@@ -256,6 +265,7 @@ const JoinPage = () => {
         consent: true, consent_policy_version: '2026-10-09',
         ...(position || {}),
         ...(parrainBarcode ? { parrain_barcode: parrainBarcode } : {}),
+        ...(urlStore ? { store: urlStore.slug } : chosenStore ? { store: chosenStore } : {}),
       };
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);
@@ -264,7 +274,10 @@ const JoinPage = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       const detail = err?.response?.data?.detail_raw ?? err?.response?.data?.detail;
-      if (err?.response?.status === 409 && detail && typeof detail === 'object') {
+      if (detail && typeof detail === 'object' && detail.code === 'store_required') {
+        setErrors((x) => ({ ...x, store: detail.message }));
+        setJoinError(null);
+      } else if (err?.response?.status === 409 && detail && typeof detail === 'object') {
         setJoinError({ tone: 'amber', title: detail.code === 'email_taken' ? 'E-mail déjà utilisé' : 'Vous avez déjà une carte', message: detail.message });
       } else if (err?.response?.status === 403 && detail && typeof detail === 'object' && detail.code === 'plan_limit_reached') {
         setJoinError({ tone: 'amber', title: 'Programme complet', message: detail.message || 'Ce programme de fidélité est complet pour le moment.' });
@@ -318,6 +331,26 @@ const JoinPage = () => {
             )}
 
             <form id="join-form" onSubmit={submit} noValidate className="mt-7 space-y-3.5">
+              {urlStore && (
+                <p className="flex items-center justify-center gap-2 rounded-2xl bg-[#F3F7FF] px-4 py-2.5 text-[13.5px] text-[#0B1C3F]">
+                  <Store size={17} className="text-[#2F6BFF]" aria-hidden="true" />
+                  Établissement : <strong translate="no" className="notranslate">{urlStore.name}</strong>
+                </p>
+              )}
+              {askStore && (
+                <div>
+                  <label className={box(errors.store)}>
+                    <Store size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
+                    <select aria-label="Votre établissement" required className={`${inputCls} bg-transparent`} value={chosenStore}
+                            onChange={(e) => { setChosenStore(e.target.value); setErrors((x) => ({ ...x, store: undefined })); }}>
+                      <option value="">Votre établissement</option>
+                      {stores.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.city ? ` — ${x.city}` : ''}</option>)}
+                    </select>
+                    <Star />
+                  </label>
+                  <FieldError id="join-store-error">{errors.store}</FieldError>
+                </div>
+              )}
               <div>
                 <label className={box(errors.name)}>
                   <User size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />

@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
@@ -134,20 +134,23 @@ def _pct(now_value: float, was_value: float) -> Optional[float]:
     return round((now_value - was_value) / was_value * 100, 1)
 
 
-def stats(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
+def stats(tid: str, at: Optional[datetime] = None, store: Optional[str] = None) -> Dict[str, Any]:
+    """The page's figures — one establishment's (its members, its link's
+    visits) when the account has several (multi-store, 2026-10-12)."""
     at = at or _now()
     start, prev_start = at - timedelta(days=WINDOW_DAYS), at - timedelta(days=2 * WINDOW_DAYS)
-    customers = list(_db.customers.find({"tenant_id": tid},
-                                        {"_id": 0, "created_at": 1, "signup_channel": 1}))
+    cq: Dict[str, Any] = {"tenant_id": tid, **({"branch_id": store} if store else {})}
+    customers = list(_db.customers.find(cq, {"_id": 0, "created_at": 1, "signup_channel": 1}))
     created = [(_aware(c.get("created_at")), c.get("signup_channel")) for c in customers]
     new_now = sum(1 for d, _ in created if d and d >= start)
     new_prev = sum(1 for d, _ in created if d and prev_start <= d < start)
 
-    first = _db.join_views.find_one({"tenant_id": tid}, sort=[("at", 1)])
+    vq: Dict[str, Any] = {"tenant_id": tid, **({"store": store} if store else {})}
+    first = _db.join_views.find_one(vq, sort=[("at", 1)])
     since = _aware(first.get("at")) if first else None
 
     def views(lo, hi, src=None):
-        q: Dict[str, Any] = {"tenant_id": tid, "at": {"$gte": lo, "$lt": hi}}
+        q: Dict[str, Any] = {**vq, "at": {"$gte": lo, "$lt": hi}}
         if src:
             q["src"] = src
         return _db.join_views.count_documents(q)
@@ -224,13 +227,27 @@ def channels(tid: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
             for k, w in SRC.CHANNEL_WORDS.items()]
 
 
-def _payload(tid: str) -> Dict[str, Any]:
+def _store_of(token: TokenData, request: Optional[Request]) -> Optional[str]:
+    """The establishment chosen in the menu, when the account has several."""
+    try:
+        from features import store_scope as S
+        sc = S.resolve(token, request)
+        return sc.ids[0] if sc.ids and len(sc.ids) == 1 else None
+    except Exception:
+        return None
+
+
+def _payload(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
     t = _db.tenants.find_one({"id": tid}) or {}
+    from features import store_links as SL
     return {
+        # multi-store (2026-10-12): each establishment's own link and QR
+        "stores": SL.public_stores(t) if t else [],
         "channels": channels(tid),
         "shop": {"name": t.get("name") or "", "city": t.get("city") or "",
                  "slug": t.get("slug") or "", **_brand(tid)},
-        "stats": stats(tid),
+        "stats": stats(tid, store=store),
+        "store_id": store,
         "page": page_of(t),
         "defaults": DEFAULT_PAGE,
         "limits": {**LIMITS, "slug_min": SLUG_MIN, "slug_max": SLUG_MAX},
@@ -238,8 +255,9 @@ def _payload(tid: str) -> Dict[str, Any]:
 
 
 @router.get("/api/owner/join-link")
-def get_join_link(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    return _payload(token_data.tenant_id)
+def get_join_link(request: Request = None,
+                  token_data: TokenData = Depends(require_role(["business_owner", "manager"], partial_ok=True))):
+    return _payload(token_data.tenant_id, _store_of(token_data, request))
 
 
 @router.get("/api/owner/join-link/slug-check")
@@ -254,7 +272,7 @@ class SlugIn(BaseModel):
 
 @router.put("/api/owner/join-link/slug")
 @SV.records("lien-inscription")
-def put_slug(body: SlugIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def put_slug(body: SlugIn, request: Request = None, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     result = check_slug(body.slug, tid)
     if not result["available"]:
@@ -268,7 +286,7 @@ def put_slug(body: SlugIn, token_data: TokenData = Depends(require_role(["busine
         _db.tenants.update_one({"id": tid}, update)
         # Taking back a name the shop once had: it is live again, not "previous".
         _db.tenants.update_one({"id": tid}, {"$pull": {"previous_slugs": new}})
-    return _payload(tid)
+    return _payload(tid, _store_of(token_data, request))
 
 
 class PageIn(BaseModel):
@@ -280,7 +298,7 @@ class PageIn(BaseModel):
 
 @router.put("/api/owner/join-link/page")
 @SV.records("lien-inscription")
-def put_page(body: PageIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def put_page(body: PageIn, request: Request = None, token_data: TokenData = Depends(require_role(["business_owner"]))):
     title, subtitle, button = body.title.strip(), body.subtitle.strip(), body.button.strip()
     benefits = [b.strip() for b in body.benefits if b and b.strip()]
     if not title or not button:
@@ -293,7 +311,7 @@ def put_page(body: PageIn, token_data: TokenData = Depends(require_role(["busine
     _db.tenants.update_one({"id": token_data.tenant_id}, {"$set": {"join_page": {
         "title": title, "subtitle": subtitle, "benefits": benefits, "button": button,
         "updated_at": _now()}}})
-    return _payload(token_data.tenant_id)
+    return _payload(token_data.tenant_id, _store_of(token_data, request))
 
 
 # ---------------------------------------------------------------------------
@@ -304,13 +322,18 @@ def public_page(slug: str):
     t = tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Commerce introuvable")
+    from features import store_links as SL
+    stores = SL.public_stores(t)
     return {"slug": t.get("slug"), "name": t.get("name") or "", "city": t.get("city") or "",
-            "page": page_of(t), **_brand(t["id"])}
+            "page": page_of(t), **_brand(t["id"]),
+            # « Votre établissement »: the stores a signup may join (one → no question)
+            "stores": stores if len(stores) > 1 else []}
 
 
 class ViewIn(BaseModel):
     visitor: str
     src: Optional[str] = None
+    store: Optional[str] = None          # the establishment of the link (its slug)
 
 
 @router.post("/api/join/{slug}/view")
@@ -323,13 +346,16 @@ def record_view(slug: str, body: ViewIn):
         return {"ok": False}
     from services.sources import normalize
     src = normalize(body.src) or ""
+    from features import store_links as SL
+    st = SL.store_by(t, body.store)
     at = _now()
     try:
         _db.join_views.update_one(
             {"tenant_id": t["id"], "visitor": visitor, "day": at.strftime("%Y-%m-%d")},
             {"$setOnInsert": {"tenant_id": t["id"], "visitor": visitor,
                               "day": at.strftime("%Y-%m-%d"), "at": at,
-                              "src": src if src in KNOWN_SOURCES else None}},
+                              "src": src if src in KNOWN_SOURCES else None,
+                              "store": st["id"] if st else None}},
             upsert=True)
     except Exception:
         # Two tabs racing on the unique index: the visit is already counted.

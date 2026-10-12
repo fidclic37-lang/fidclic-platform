@@ -105,7 +105,21 @@ def get_fiche(customer_id: str, request: Request = None,
     rows = list(_db.customer_changes.find({"customer_id": customer_id, "tenant_id": token_data.tenant_id},
                                           {"_id": 0}).sort("at", -1).limit(20))
     from services import sources as SRC
-    return {"client": _view(c),
+    # « Établissement d'origine » (multi-store, 2026-10-12): the stores this
+    # account may move the client between — the owner all, an administrateur its own
+    t = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "branches": 1}) or {}
+    open_ = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    if token_data.role != "business_owner":
+        from features import store_scope as S
+        mine = set(S.resolve(token_data, requested="").allowed)
+        movable = [b for b in open_ if b["id"] in mine] if (not c.get("branch_id") or c.get("branch_id") in mine) else []
+    else:
+        movable = open_
+    return {"client": {**_view(c), "branch_id": c.get("branch_id")},
+            "home_store": {"id": c.get("branch_id"),
+                           "name": next((b.get("name") for b in open_ if b["id"] == c.get("branch_id")), None),
+                           "choices": [{"id": b["id"], "name": b.get("name") or "Établissement"} for b in movable]
+                           if len(open_) > 1 else []},
             "sources": [{"key": k, "label": SRC.label(k)} for k in SRC.SIGNUP_SOURCES],
             "changes": [{"at": r["at"].isoformat() if isinstance(r.get("at"), datetime) else r.get("at"),
                          "kind": r["kind"], "text": r["text"], "by": r.get("by"), "reason": r.get("reason")}

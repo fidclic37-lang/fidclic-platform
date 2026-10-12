@@ -103,6 +103,7 @@ MODULES = [
     "features.team_access",             # Paramètres › Équipe & accès (roles, establishments, accounts)
     "features.store_scope",             # which establishments a request is about (the logo dropdown)
     "features.join_link",               # Paramètres › Lien d'inscription & QR (+ signup-page visits)
+    "features.store_links",             # each establishment's link + QR, the client's home store (multi-store)
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages
     # Automatisations · Push Wallet — scenarios that fire on their own and land
