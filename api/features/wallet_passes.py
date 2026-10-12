@@ -558,7 +558,7 @@ def _size(v: Any) -> int:
 # with an empty memory cache and rebuilt the poster, the strip and the logos
 # — seconds of image work every time. Built once, kept 30 days in Mongo.
 _SHARED_KINDS = {"poster", "poster_variants", "strip", "strip_variants", "png_variants", "name_logo",
-                 "round_logo", "template_scaled", "preview_jpeg"}
+                 "round_logo", "template_scaled", "preview_jpeg", "slim_photo"}
 _SHARED_MAX = 12 * 1024 * 1024
 
 
@@ -2017,9 +2017,36 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
     return files
 
 
+# The pass a customer downloads (user, 2026-10-12: « Add to Apple Wallet takes
+# ages »): its photo layers were 3–7 MB of lossless PNG — seconds on a phone
+# network before Wallet even opens. Wallet only takes PNG, so the photos keep
+# 6 bits per colour (64 levels: no visible change, PSNR ≈ 42 dB) and compress
+# to about half. Logos, icons and the name keep every bit.
+_PHOTO_LAYERS = ("background", "strip", "thumbnail")
+
+
+def _slim_photo(png: bytes) -> bytes:
+    def make() -> bytes:
+        try:
+            from PIL import Image, ImageOps
+            im = Image.open(io.BytesIO(png))
+            if im.mode not in ("RGB", "L"):
+                return png                        # a transparent layer stays exact
+            out = io.BytesIO()
+            ImageOps.posterize(im.convert("RGB"), 6).save(out, "PNG", compress_level=6)
+            return out.getvalue() if out.tell() < len(png) else png
+        except Exception:
+            return png
+    return _cached("slim_photo", (png,), make)
+
+
+def slim_pass_files(files: Dict[str, bytes]) -> Dict[str, bytes]:
+    return {n: (_slim_photo(b) if n.endswith(".png") and n.startswith(_PHOTO_LAYERS) else b) for n, b in files.items()}
+
+
 @_SC.payload_store
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
-    files = pass_files(payload)
+    files = slim_pass_files(pass_files(payload))
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
     files["signature"] = _sign_manifest(manifest)
@@ -2031,11 +2058,68 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+# A signed pass ready before the customer taps « Ajouter à Apple Wallet »
+# (user, 2026-10-12: « wallet khulne mein bahut time lagta hai »): the card page
+# asks for it as soon as it opens (POST …/wallet-prepare) and the tap gets the
+# bytes at once. The key is the pass itself — its fields and its design — so a
+# visit or a design change since builds a fresh one.
+_PKPASS_MEM: Dict[str, Tuple[str, bytes]] = {}
+_PKPASS_TTL = 24 * 3600
+
+
+def _pkpass_key(payload: Dict[str, Any]) -> str:
+    h = hashlib.sha1(json.dumps(build_pass_json(payload), sort_keys=True, default=str).encode())
+    h.update(json.dumps(payload.get("card") or {}, sort_keys=True, default=str).encode())
+    h.update(str(payload.get("store_id") or "").encode())
+    return h.hexdigest()
+
+
+def _pkpass_cache_get(serial: str, key: str) -> Optional[bytes]:
+    hit = _PKPASS_MEM.get(serial)
+    if hit and hit[0] == key:
+        return hit[1]
+    if _db is None:
+        return None
+    try:
+        row = _db.pkpass_cache.find_one({"_id": serial, "key": key})
+    except Exception:
+        return None
+    if row and row.get("data"):
+        data = bytes(row["data"])
+        _PKPASS_MEM[serial] = (key, data)
+        return data
+    return None
+
+
+def _pkpass_cache_put(serial: str, key: str, data: bytes) -> None:
+    _PKPASS_MEM[serial] = (key, data)
+    while len(_PKPASS_MEM) > 50:
+        _PKPASS_MEM.pop(next(iter(_PKPASS_MEM)))
+    if _db is None or len(data) > _SHARED_MAX:
+        return
+    try:
+        from bson.binary import Binary
+        _db.pkpass_cache.update_one({"_id": serial}, {"$set": {"key": key, "data": Binary(data),
+                                                              "at": datetime.now(timezone.utc)}}, upsert=True)
+        _db.pkpass_cache.create_index("at", expireAfterSeconds=_PKPASS_TTL)
+    except Exception as exc:
+        print(f"wallet: pass not cached ({exc})")
+
+
+def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> bytes:
+    payload = payload or _card_payload(barcode_id)
+    key = _pkpass_key(payload)
+    data = _pkpass_cache_get(barcode_id, key)
+    if data is None:
+        data = build_pkpass(payload)
+        _pkpass_cache_put(barcode_id, key, data)
+    return data
+
+
 def _pkpass_response(barcode_id: str) -> Response:
     if not apple_configured():
         raise HTTPException(status_code=503, detail="Apple Wallet n'est pas encore configuré")
-    payload = _card_payload(barcode_id)
-    data = build_pkpass(payload)
+    data = signed_pass(barcode_id)
     fname = f"fidclic-{barcode_id}.pkpass"
     return StreamingResponse(io.BytesIO(data), media_type="application/vnd.apple.pkpass",
                             headers={"Content-Disposition": f'attachment; filename="{fname}"',
@@ -2919,9 +3003,40 @@ def google_save_url(payload: Dict[str, Any]) -> str:
         {"serial": cust["barcode_id"]},
         {"$set": {"object_id": obj["id"], "tenant_id": payload["tenant"]["id"], "updated_at": datetime.now(timezone.utc)},
          "$setOnInsert": {"created_at": datetime.now(timezone.utc)}}, upsert=True)
+    return _gw_save_link(obj["id"])
+
+
+def _gw_save_link(object_id: str) -> str:
+    """The « Save to Google Wallet » link of an object Google already has."""
+    import jwt
+    sa = _gw_sa()
     claims = {"iss": sa["client_email"], "aud": "google", "typ": "savetowallet", "iat": int(time.time()),
-              "origins": [_site_url()], "payload": {"loyaltyObjects": [{"id": obj["id"]}]}}
+              "origins": [_site_url()], "payload": {"loyaltyObjects": [{"id": object_id}]}}
     return "https://pay.google.com/gp/v/save/" + jwt.encode(claims, sa["private_key"], algorithm="RS256")
+
+
+def google_link_fast(barcode_id: str) -> str:
+    """The object exists at Google already (made once, kept in step by
+    google_sync on every change): its link needs no call to Google — instant.
+    Otherwise the full round (class, object) once."""
+    row = _db.google_wallet_objects.find_one({"serial": barcode_id, "object_id": {"$exists": True}}, {"_id": 0})
+    if row and row.get("object_id") and row.get("linked_class") == _gw_class_id_for(barcode_id):
+        return _gw_save_link(row["object_id"])
+    payload = _card_payload(barcode_id)
+    url = google_save_url(payload)
+    _db.google_wallet_objects.update_one({"serial": barcode_id},
+                                         {"$set": {"linked_class": _gw_class_id_for(barcode_id, payload)}})
+    return url
+
+
+def _gw_class_id_for(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> str:
+    """The Google class this card belongs to now (its establishment's)."""
+    cust = (payload or {}).get("customer") or _db.customers.find_one({"barcode_id": barcode_id},
+                                                                      {"_id": 0, "tenant_id": 1, "branch_id": 1}) or {}
+    tid = (payload or {}).get("tenant", {}).get("id") or cust.get("tenant_id")
+    sid = (payload or {}).get("store_id") or cust.get("branch_id")
+    with _SC.store(tid, sid) if sid else _SC.store(None, None):
+        return _gw_ids(tid, barcode_id)[0]
 
 
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
@@ -3089,6 +3204,30 @@ def owner_google_preview(body: PassPreviewIn,
     }
 
 
+@router.post("/api/card/{barcode_id}/wallet-prepare")
+def wallet_prepare(barcode_id: str, request: Request = None):
+    """Asked by the card page as it opens: the signed Apple pass is built and
+    kept, the Google link is made — so « Ajouter à … » opens the Wallet at once."""
+    _owner_only(barcode_id, request)
+    out: Dict[str, Any] = {"apple": False, "google_url": None}
+    if not _wallet_in_plan(barcode_id):
+        return out
+    payload = None
+    if apple_configured():
+        try:
+            payload = _card_payload(barcode_id)
+            signed_pass(barcode_id, payload)
+            out["apple"] = True
+        except Exception as exc:
+            print(f"wallet prepare: apple ({exc})")
+    if google_configured():
+        try:
+            out["google_url"] = google_link_fast(barcode_id)
+        except Exception as exc:
+            print(f"wallet prepare: google ({exc})")
+    return out
+
+
 @router.get("/api/card/{barcode_id}/google-wallet")
 def google_wallet_link(barcode_id: str, request: Request = None):
     _owner_only(barcode_id, request)
@@ -3097,7 +3236,7 @@ def google_wallet_link(barcode_id: str, request: Request = None):
     if not google_configured():
         raise HTTPException(status_code=503, detail="Google Wallet n'est pas encore configuré")
     try:
-        return {"url": google_save_url(_card_payload(barcode_id))}
+        return {"url": google_link_fast(barcode_id)}
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001 — surface Google's message to the merchant
