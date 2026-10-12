@@ -68,8 +68,54 @@ def init(db):
     try:
         db.join_views.create_index([("tenant_id", 1), ("visitor", 1), ("day", 1)], unique=True)
         db.join_views.create_index([("tenant_id", 1), ("at", -1)])
+        db.signup_images.create_index([("tenant_id", 1), ("store_id", 1)], unique=True)
     except Exception:
         pass
+    try:
+        move_inline_images()
+    except Exception as exc:                       # never in the way of a start
+        print(f"join_link: signup images not moved ({exc})")
+
+
+# ---------------------------------------------------------------------------
+# The signup-page images live in their own collection (2026-10-12). Stored
+# inside the account (tenant.signup_image, branches[].signup_image) each 2 Mo
+# image rode along on every read of the account — the menu's store check
+# alone reads its branches on each card read — and a three-store account's
+# every page took seconds (user: « platform takes so much time to load now »).
+# ---------------------------------------------------------------------------
+def image_of(tid: str, store: Optional[str]) -> str:
+    doc = _db.signup_images.find_one({"tenant_id": tid, "store_id": store}, {"_id": 0, "data": 1})
+    return (doc or {}).get("data") or ""
+
+
+def set_image(tid: str, store: Optional[str], img: str) -> None:
+    if img:
+        _db.signup_images.update_one({"tenant_id": tid, "store_id": store},
+                                     {"$set": {"tenant_id": tid, "store_id": store, "data": img, "at": _now()}},
+                                     upsert=True)
+    else:
+        _db.signup_images.delete_one({"tenant_id": tid, "store_id": store})
+
+
+def move_inline_images() -> int:
+    """Images still kept inside an account move to signup_images; returns how many."""
+    moved = 0
+    q = {"$or": [{"signup_image": {"$exists": True}}, {"branches.signup_image": {"$exists": True}}]}
+    for t in _db.tenants.find(q, {"_id": 0, "id": 1, "signup_image": 1, "branches": 1}):
+        unset: Dict[str, str] = {}
+        if "signup_image" in t:
+            if t.get("signup_image"):
+                set_image(t["id"], None, t["signup_image"]); moved += 1
+            unset.update({"signup_image": "", "signup_image_at": ""})
+        for i, b in enumerate(t.get("branches") or []):
+            if isinstance(b, dict) and "signup_image" in b:
+                if b.get("signup_image") and b.get("id"):
+                    set_image(t["id"], b["id"], b["signup_image"]); moved += 1
+                unset.update({f"branches.{i}.signup_image": "", f"branches.{i}.signup_image_at": ""})
+        if unset:
+            _db.tenants.update_one({"id": t["id"]}, {"$unset": unset})
+    return moved
 
 
 def _now() -> datetime:
@@ -212,11 +258,11 @@ def _signup_image(t: Dict[str, Any], store: Optional[str]) -> str:
     account keeps it on the account."""
     stores = _open_stores(t)
     if len(stores) < 2:
-        return t.get("signup_image") or ""
+        return image_of(t["id"], None)
     b = next((b for b in stores if b["id"] == store), None) if store else None
     if b is None:
         b = next((b for b in stores if b.get("is_main") or b["id"] == "main"), None)
-    return (b or {}).get("signup_image") or ""
+    return image_of(t["id"], b["id"]) if b else ""
 
 
 def _brand(tid: str, store: Optional[str] = None) -> Dict[str, str]:
@@ -225,7 +271,8 @@ def _brand(tid: str, store: Optional[str] = None) -> Dict[str, str]:
     from features import store_cards as SC
     with SC.store(tid, store) if store else _nullctx():
         tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
-    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1, "signup_image": 1}) or {}
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "id": 1, "branches.id": 1, "branches.status": 1,
+                                           "branches.is_main": 1}) or {"id": tid}
     own = _signup_image(t, store)
     return {"logo_url": own or tpl.get("logo_url") or "", "card_logo_url": tpl.get("logo_url") or "",
             "signup_image": own}
@@ -360,7 +407,7 @@ def put_signup_image(body: SignupImageIn, request: Request = None,
         raise HTTPException(status_code=400, detail="Image invalide.")
     if len(img) > MAX_SIGNUP_IMAGE:
         raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
-    t = _db.tenants.find_one({"id": tid}) or {}
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches.id": 1, "branches.status": 1}) or {}
     stores = _open_stores(t)
     store = None
     if len(stores) >= 2:
@@ -368,10 +415,7 @@ def put_signup_image(body: SignupImageIn, request: Request = None,
         store = SC.store_for(tid)
         if not any(b["id"] == store for b in stores):
             raise HTTPException(status_code=400, detail="Choisissez d'abord l'établissement dans le menu.")
-        _db.tenants.update_one({"id": tid, "branches.id": store},
-                               {"$set": {"branches.$.signup_image": img, "branches.$.signup_image_at": _now()}})
-    else:
-        _db.tenants.update_one({"id": tid}, {"$set": {"signup_image": img, "signup_image_at": _now()}})
+    set_image(tid, store, img)
     return _payload(tid, store or _store_of(token_data, request))
 
 

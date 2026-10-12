@@ -209,6 +209,16 @@ function StoreModal({ store, onClose, onSaved }) {
   );
 }
 
+// A save that failed without the server's own sentence says why, so it can
+// be fixed (user, 2026-10-12: only « L'enregistrement n'a pas abouti »).
+function saveFailed(e) {
+  const st = e?.response?.status;
+  if (!e?.response) return "L'enregistrement n'a pas abouti : pas de réponse du serveur (connexion ou délai dépassé). Réessayez.";
+  if (st === 504 || st === 502) return `L'enregistrement n'a pas abouti : le serveur a mis trop de temps (erreur ${st}). Réessayez.`;
+  if (st === 413) return "L'enregistrement n'a pas abouti : les données envoyées sont trop lourdes (erreur 413).";
+  return `L'enregistrement n'a pas abouti (erreur ${st || 'inconnue'}).`;
+}
+
 export default function EtablissementPage() {
   const { checkAuth } = useAuth();
   const [d, setD] = useState(null);
@@ -275,7 +285,7 @@ export default function EtablissementPage() {
       // the new name shows at once everywhere the app greets the owner (« Bonjour … »)
       if (renamed) await checkAuth();
       say('Modifications enregistrées.');
-    } catch (e) { setErr(e?.response?.data?.detail || "L'enregistrement n'a pas abouti."); }
+    } catch (e) { setErr(e?.response?.data?.detail || saveFailed(e)); }
     finally { setSaving(false); }
   };
 
