@@ -43,6 +43,8 @@ def main():
     db = server.db
     pushed = []
     WP.notify_passes = lambda serials, *a, **k: pushed.append(sorted(s for s in serials if s)) or {"sent": 0}
+    # a card design change goes through the Wallet refresh queue (2026-10-13)
+    WP.queue_refresh = lambda tid, serials, design_changed=False: pushed.append(sorted(s for s in serials if s)) or 0
     WP.notify_customer = lambda *a, **k: {}
     from features import plan_limits as PL
     _feat = PL.tenant_features
