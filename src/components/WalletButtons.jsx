@@ -19,11 +19,24 @@ import { keyOf } from '../lib/myCards';
 export default function WalletButtons({ barcodeId, onError }) {
   const [cfg, setCfg] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [googleUrl, setGoogleUrl] = useState(null);
 
   useEffect(() => {
     // The card's business plan decides too (Super admin › Plan Limits › Wallet).
     api.get('/wallet/config', { params: { barcode: barcodeId } }).then((r) => setCfg(r.data || {})).catch(() => setCfg({}));
   }, [barcodeId]);
+
+  // Ready before the tap (user, 2026-10-12: « wallet khulne mein bahut time »):
+  // the server builds and keeps the Apple pass and makes the Google link while
+  // the customer reads the page, so the button opens the Wallet at once.
+  useEffect(() => {
+    if (!cfg || (!cfg.apple && !cfg.google)) return undefined;
+    let alive = true;
+    api.post(`/card/${barcodeId}/wallet-prepare`).then((r) => {
+      if (alive && r.data?.google_url) setGoogleUrl(r.data.google_url);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [cfg, barcodeId]);
 
   if (!cfg || (!cfg.apple && !cfg.google)) return null;
 
@@ -33,6 +46,7 @@ export default function WalletButtons({ barcodeId, onError }) {
   const order = isAndroid ? ['google', 'apple'] : ['apple', 'google'];
 
   const saveGoogle = async () => {
+    if (googleUrl) { window.location.href = googleUrl; return; }     // prepared: no wait
     setBusy(true);
     try {
       const r = await api.get(`/card/${barcodeId}/google-wallet`);

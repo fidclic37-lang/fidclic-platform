@@ -256,7 +256,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("no meter painted at the old place", not any(abs(r - 212) < 40 and abs(g - 175) < 40 and b < 100 for r, g, b in row))
     setcard(hero_image_url=png_data(600, 1400, (200, 30, 30)))
     bg = img(bundle().read("background@3x.png"))
-    check("a tall photo covers it too", bg.getpixel((5, 900)) == (200, 30, 30) and bg.getpixel((1030, 1510)) == (200, 30, 30))
+    near = lambda px, c: max(abs(a - b) for a, b in zip(px, c)) <= 4  # noqa: E731 — 6 bits per colour in the signed pass
+    check("a tall photo covers it too", near(bg.getpixel((5, 900)), (200, 30, 30)) and near(bg.getpixel((1030, 1510)), (200, 30, 30)))
 
     # « Ajuster »: the owner's frame, already poster-shaped, ships as is
     framed = Image.new("RGB", (1035, 1515), (10, 200, 10))
@@ -267,7 +268,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     setcard(poster_image_url="data:image/png;base64," + base64.b64encode(b.getvalue()).decode())
     bg = img(bundle().read("background@3x.png"))
     check("« Ajuster »: the framed image is the poster, pixel for pixel",
-          bg.getpixel((517, 800)) == (10, 200, 10) and bg.getpixel((517, 1400)) == (250, 250, 0))
+          near(bg.getpixel((517, 800)), (10, 200, 10)) and near(bg.getpixel((517, 1400)), (250, 250, 0)))
     check("…and the 1x / 2x are the same frame",
           img(bundle().read("background.png")).size == (345, 505) and img(bundle().read("background@2x.png")).size == (690, 1010))
     unset("poster_image_url")

@@ -181,7 +181,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     im = _Img.open(_io.BytesIO(bundle().read("background@3x.png"))).convert("RGB")
     centre, side, low = im.getpixel((517, 757)), im.getpixel((10, 757)), im.getpixel((1030, 1510))
     check(f"a square photo covers the card: green edge to edge {centre} {side} {low}",
-          centre == side == low == (30, 160, 60))
+          # the signed pass keeps 6 bits per colour (wallet_passes._slim_photo): ±4
+          all(max(abs(a - b) for a, b in zip(px, (30, 160, 60))) <= 4 for px in (centre, side, low)))
     r = http("PUT", "/api/owner/card/settings", headers={"Authorization": "Bearer " + _auth.create_access_token(
         {"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})}, json={"poster_image_url": "javascript:alert(1)"})
     check("anything but an image is refused", r.status_code == 400)
