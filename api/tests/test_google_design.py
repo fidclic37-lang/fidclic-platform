@@ -137,7 +137,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     z = _zip.ZipFile(_io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
     for name in ("logo@3x.png", "primaryLogo@3x.png"):
         im = _Img.open(_io.BytesIO(z.read(name))).convert("RGBA")
-        check(f"{name}: round (transparent corners), square", im.getpixel((1, 1))[3] == 0 and im.width == im.height)
+        # the shop's name is written beside the disc since 2026-10-12: the disc is the left square
+        h = im.height
+        check(f"{name}: round (transparent corners) disc, then the name",
+              im.getpixel((1, 1))[3] == 0 and im.getpixel((1, h - 2))[3] == 0 and im.getpixel((h // 2, h // 2))[3] > 0
+              and im.width > h)
     icon = _Img.open(_io.BytesIO(z.read("icon@3x.png"))).convert("RGBA")
     check("the notification icon keeps the logo as it is", icon.getpixel((1, 1))[3] == 255)
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"logo_round": False}})
@@ -208,6 +212,30 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and tpl["google_design"]["rows"] == [["visits"]] and tpl["google_design"]["barcode"] == "AZTEC")
     adv = http("GET", "/api/owner/card/settings", headers=H).json()["advanced"]
     check("the page reads it back", adv["google_design"]["barcode"] == "AZTEC" and adv["logo_round"] is True)
+
+    print("\n« Couleur du nom » (2026-10-12): the shop's name in that colour, on Google too")
+    plain = WP._gw_class(WP._card_payload("FT-TEST0001"))
+    check("no colour chosen: Google's own logo + name, as before", "wideProgramLogo" not in plain)
+    r = http("PUT", "/api/owner/card/settings", headers=H, json={"logo_text_color": "#12"})
+    check(f"a bad name colour is refused ({r.status_code})", r.status_code == 400)
+    r = http("PUT", "/api/owner/card/settings", headers=H, json={"logo_text_color": "#FF0000"})
+    adv = http("GET", "/api/owner/card/settings", headers=H).json()["advanced"]
+    check(f"saved and read back ({r.status_code})", r.status_code == 200 and adv["logo_text_color"] == "#FF0000")
+    cls = WP._gw_class(WP._card_payload("FT-TEST0001"))
+    uri = (cls.get("wideProgramLogo") or {}).get("sourceUri", {}).get("uri", "")
+    check("Google gets one wide logo: the logo + the name", "/name.png?v=" in uri)
+    check("…and the line under it says what the card is (no name twice)", cls["programName"] == "Carte de fidélité")
+    img = http("GET", "/api/wallet/google/t1/name.png")
+    im = _Img.open(_io.BytesIO(img.content)).convert("RGBA") if img.status_code == 200 else None
+    check(f"the image Google fetches: 1280 × 400 max, the name in red ({img.status_code})",
+          im is not None and im.height == 400 and im.width <= 1280
+          and any(p[:3] == (255, 0, 0) and p[3] == 255 for p in im.getdata()))
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"logo_text_color": "#00FF00"}})
+    cls2 = WP._gw_class(WP._card_payload("FT-TEST0001"))
+    check("a new colour is a new image address (Google fetches it again)", cls2["wideProgramLogo"]["sourceUri"]["uri"] != uri)
+    pj = json.loads(WP.pass_files(WP._card_payload("FT-TEST0001"))["pass.json"])
+    lg = _Img.open(_io.BytesIO(WP.pass_files(WP._card_payload("FT-TEST0001"))["logo@3x.png"])).convert("RGBA")
+    check("Apple: the same colour beside the logo", "logoText" not in pj and any(p[:3] == (0, 255, 0) and p[3] == 255 for p in lg.getdata()))
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

@@ -51,6 +51,8 @@ const TIER = {
 
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
+// Columns whose values are numbers — right-aligned so the digits line up.
+const NUM_COLS = new Set(['Visites', 'Total dépensé']);
 const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 const day = (iso) => {
   if (!iso) return '—';
@@ -760,7 +762,7 @@ export default function ClientsPage() {
         </header>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[820px] border-collapse">
+          <table className="w-full min-w-[900px] border-collapse">
             <thead>
               <tr className="border-y border-[#EEF3FB] bg-[#FAFCFF] text-left">
                 <th className="w-10 px-4 py-3">
@@ -770,8 +772,8 @@ export default function ClientsPage() {
                          onChange={togglePage}
                          className="h-4 w-4 accent-[#2F6BFF]" />
                 </th>
-                {['Client', 'Âge', 'Carte', 'Statut', 'Segment', 'Dernière visite', 'Total dépensé', 'Actions'].map((h, i) => (
-                  <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${i === 6 ? 'text-right' : ''}`}>
+                {['Client', 'Âge', 'Carte', 'Statut', 'Segment', 'Visites', 'Dernière visite', 'Total dépensé', 'Actions'].map((h) => (
+                  <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${NUM_COLS.has(h) ? 'text-right' : ''}`}>
                     {h}
                   </th>
                 ))}
@@ -779,12 +781,12 @@ export default function ClientsPage() {
             </thead>
             <tbody>
               {loading && feed.rows.length === 0 && (
-                <tr key="loading"><td colSpan={9} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                <tr key="loading"><td colSpan={10} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                   <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement des clients…
                 </td></tr>
               )}
               {!loading && feed.rows.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-14 text-center">
+                <tr><td colSpan={10} className="px-4 py-14 text-center">
                   <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Aucun client ici</p>
                   <p className="mt-1 text-[12.5px] text-[#64748B]">
                     {search || status || spend || joined || source || segment !== 'all'
@@ -833,6 +835,10 @@ export default function ClientsPage() {
                             style={{ background: segTone.bg, color: segTone.fg }}>
                         <SegIcon size={12} /> {r.segment_label}
                       </span>
+                    </td>
+                    {/* lifetime visits — the figure that says who actually comes back */}
+                    <td className="whitespace-nowrap px-4 py-3 text-right text-[13px] font-semibold tabular-nums text-[#0B1C3F]">
+                      {nf(r.visits)}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-[12.5px] text-[#475569]">{day(r.last_visit)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-right text-[13px] font-semibold tabular-nums text-[#0B1C3F]">
