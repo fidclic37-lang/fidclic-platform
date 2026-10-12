@@ -199,10 +199,41 @@ def page_of(tenant: Dict[str, Any]) -> Dict[str, Any]:
     return page
 
 
-def _brand(tid: str) -> Dict[str, str]:
-    """The shop's logo, as set on its Carte de fidélité."""
-    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
-    return {"logo_url": tpl.get("logo_url") or ""}
+MAX_SIGNUP_IMAGE = 2_800_000      # a 2 Mo image, as a data URI
+
+
+def _open_stores(t: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+
+
+def _signup_image(t: Dict[str, Any], store: Optional[str]) -> str:
+    """« Image de la page d'inscription » (user, 2026-10-12): each establishment
+    chooses its own; the account's link shows the main store's; a one-shop
+    account keeps it on the account."""
+    stores = _open_stores(t)
+    if len(stores) < 2:
+        return t.get("signup_image") or ""
+    b = next((b for b in stores if b["id"] == store), None) if store else None
+    if b is None:
+        b = next((b for b in stores if b.get("is_main") or b["id"] == "main"), None)
+    return (b or {}).get("signup_image") or ""
+
+
+def _brand(tid: str, store: Optional[str] = None) -> Dict[str, str]:
+    """The picture at the top of the signup page: the establishment's own image,
+    else its card's logo (Carte de fidélité)."""
+    from features import store_cards as SC
+    with SC.store(tid, store) if store else _nullctx():
+        tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1, "signup_image": 1}) or {}
+    own = _signup_image(t, store)
+    return {"logo_url": own or tpl.get("logo_url") or "", "card_logo_url": tpl.get("logo_url") or "",
+            "signup_image": own}
+
+
+def _nullctx():
+    from contextlib import nullcontext
+    return nullcontext()
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +276,7 @@ def _payload(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
         "stores": SL.public_stores(t) if t else [],
         "channels": channels(tid),
         "shop": {"name": t.get("name") or "", "city": t.get("city") or "",
-                 "slug": t.get("slug") or "", **_brand(tid)},
+                 "slug": t.get("slug") or "", **_brand(tid, store)},
         "stats": stats(tid, store=store),
         "store_id": store,
         "page": page_of(t),
@@ -314,6 +345,36 @@ def put_page(body: PageIn, request: Request = None, token_data: TokenData = Depe
     return _payload(token_data.tenant_id, _store_of(token_data, request))
 
 
+class SignupImageIn(BaseModel):
+    image: Optional[str] = None          # data:image/… or https://…; empty: back to the card's logo
+
+
+@router.put("/api/owner/join-link/image")
+@SV.records("lien-inscription")
+def put_signup_image(body: SignupImageIn, request: Request = None,
+                     token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """The establishment chosen in the menu gets its own signup-page image."""
+    tid = token_data.tenant_id
+    img = (body.image or "").strip()
+    if img and not (img.startswith("data:image/") or img.startswith("https://")):
+        raise HTTPException(status_code=400, detail="Image invalide.")
+    if len(img) > MAX_SIGNUP_IMAGE:
+        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
+    t = _db.tenants.find_one({"id": tid}) or {}
+    stores = _open_stores(t)
+    store = None
+    if len(stores) >= 2:
+        from features import store_cards as SC
+        store = SC.store_for(tid)
+        if not any(b["id"] == store for b in stores):
+            raise HTTPException(status_code=400, detail="Choisissez d'abord l'établissement dans le menu.")
+        _db.tenants.update_one({"id": tid, "branches.id": store},
+                               {"$set": {"branches.$.signup_image": img, "branches.$.signup_image_at": _now()}})
+    else:
+        _db.tenants.update_one({"id": tid}, {"$set": {"signup_image": img, "signup_image_at": _now()}})
+    return _payload(tid, store or _store_of(token_data, request))
+
+
 # ---------------------------------------------------------------------------
 # public endpoints — the signup page itself
 # ---------------------------------------------------------------------------
@@ -328,8 +389,7 @@ def public_page(slug: str, store: Optional[str] = None):
     from features import store_cards as SC
     stores = SL.public_stores(t)
     st = SL.store_by(t, store)
-    with SC.store(t["id"], st["id"] if st else None):
-        brand = _brand(t["id"])
+    brand = _brand(t["id"], st["id"] if st else None)
     return {"slug": t.get("slug"), "name": t.get("name") or "", "city": t.get("city") or "",
             "page": page_of(t), **brand,
             # « Votre établissement »: the stores of the account (one → no question);
