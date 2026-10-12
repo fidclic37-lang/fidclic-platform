@@ -390,7 +390,6 @@ const CardDesigner = forwardRef(function CardDesigner({
   useImperativeHandle(ref, () => ({
     save,
     reset: () => { setDirty(false); return load(); },
-    setPosterBackground: (url) => { if (posterDesign && url) setImage('background', url); },
     setPosterFooter: (rgb) => { if (posterDesign) setPass({ footerBackgroundColor: rgb || undefined }); },
   }));
   const remove = async () => {
@@ -471,9 +470,12 @@ const CardDesigner = forwardRef(function CardDesigner({
 
   const groups = GROUPS[style] || [];
   const imgs = !ready ? [] : [...(IMAGES[style] || []), ...(style === 'posterGeneric' && d.options.fallback !== 'fidclic'
-    ? [d.options.fallback === 'storeCard' || d.options.fallback === 'coupon' ? ['strip', 'Bannière (iOS 26)', '375 × 144 pt'] : ['thumbnail', 'Vignette (iOS 26)', '90 × 90 pt'], ['logo', 'Logo (iOS 26)', '160 × 50 pt max']]
-    : style === 'posterGeneric' ? [['logo', 'Logo (iOS 26, à côté du nom)', '160 × 50 pt max']] : []), ICON_IMAGE]
-    .filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i);
+    ? [d.options.fallback === 'storeCard' || d.options.fallback === 'coupon' ? ['strip', 'Bannière (iOS 26)', '375 × 144 pt'] : ['thumbnail', 'Vignette (iOS 26)', '90 × 90 pt']]
+    : []), ICON_IMAGE]
+    .filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i)
+    // the logo and the poster's photo are set once, in « Identité » (user,
+    // 2026-10-12: « images se htao »): the server draws the design with them
+    .filter(([base]) => !['logo', 'primaryLogo'].includes(base) && !(base === 'background' && style === 'posterGeneric'));
   const bc = (ready && (d.pass.barcodes || [])[0]) || { format: 'PKBarcodeFormatQR' };
   const ios27Only = (f) => formats.find((x) => x.format === f)?.ios27_only;
   const styles = preview?.styles || [];
@@ -686,6 +688,12 @@ const CardDesigner = forwardRef(function CardDesigner({
           )}
 
           {tab === 'images' && (
+            <>
+            <p className="mb-3 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] px-3 py-2 text-[12px] text-[#475569]">
+              Le logo et l’image de fond (avec « Ajuster ») se règlent dans{' '}
+              <button type="button" onClick={() => setTab('identite')} className="font-semibold text-[#2F6BFF]">Identité</button> :
+              une seule fois, pour toutes les versions de la carte.
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {imgs.map(([base, label, size]) => {
                 const n = imgName(d.shown, base);
@@ -707,6 +715,7 @@ const CardDesigner = forwardRef(function CardDesigner({
                 );
               })}
             </div>
+            </>
           )}
 
           {tab === 'code' && (

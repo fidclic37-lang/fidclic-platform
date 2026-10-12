@@ -124,14 +124,25 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
 
     const d = await (await request.get('/api/owner/card/pass-designer?full=1', { headers: H })).json();
     expect(d.pass.footerBackgroundColor || '').toBe('');
+    // the pass the server builds draws the design with Identité's photo (2026-10-12)
+    const pv = await (await request.post('/api/owner/wallet/preview', { headers: H, data: { card: {}, visits: 3, design: {} } })).json();
     const px = await page.evaluate(async (src) => {
       const im = new Image(); im.src = src; await im.decode();
       const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
       const x = c.getContext('2d'); x.drawImage(im, 0, 0);
       return [c.width, c.height, ...x.getImageData(Math.round(c.width / 2), Math.round(c.height / 2), 1, 1).data.slice(0, 3)];
-    }, d.image_data['background@3x.png']);
-    expect(px.slice(0, 2)).toEqual([1035, 1515]);                       // the design's background is the new photo,
+    }, pv.images.background);
+    expect(px.slice(0, 2)).toEqual([690, 1010]);                         // the poster's @2x is the new photo,
     expect(px[2]).toBeLessThan(100); expect(px[4]).toBeGreaterThan(180); // centred: its blue middle
+
+    // the Images tab no longer offers the logo or the photo: they live in Identité
+    await page.getByRole('button', { name: 'Images', exact: true }).click();
+    await expect(page.getByText('Le logo et l’image de fond (avec « Ajuster »)')).toBeVisible();
+    await expect(page.getByText('Logo principal (sur le poster)')).toHaveCount(0);
+    await expect(page.getByText('Image de fond', { exact: true })).toHaveCount(0);
+    // « Ajuster » sits on the photo itself
+    await page.getByRole('button', { name: 'Identité', exact: true }).last().click();   // the note's link
+    await expect(field.getByRole('button', { name: 'Ajuster' })).toBeVisible();
     await request.delete('/api/owner/card/pass-designer', { headers: H });
   });
 
