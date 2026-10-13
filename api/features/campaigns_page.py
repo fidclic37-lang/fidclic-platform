@@ -25,7 +25,9 @@ THE ONE FIGURE THAT COULD LIE
     than letting it be read as an email open rate.
 
     "CA généré" is the spend of recipients in the ATTRIBUTION_DAYS after the
-    send. It is an association, not a proof, and it carries its own note.
+    send, each visit once (the latest campaign before it) — counted by
+    services/campaign_figures, the same for Analyses › Campagnes (QA F32). It
+    is an association, not a proof, and it carries its own note.
 
 NOTHING IS INVENTED
     A merchant who has never sent a campaign reads zeros and is told so. No
@@ -56,8 +58,9 @@ _db = None
 INACTIVE_DAYS = 30          # "Clients inactifs · Plus de 30 jours"
 LOYAL_VISITS = 3            # "Clients fidèles · Plus de 3 achats" — strictly more
 BIRTHDAY_DAYS = 7           # "Anniversaire · Cette semaine"
-OPEN_WINDOW_H = 72          # a card opened this long after a send counts as an open
-ATTRIBUTION_DAYS = 15       # a visit inside this window counts for the campaign
+from services import campaign_figures as CF
+OPEN_WINDOW_H = CF.OPEN_WINDOW_H        # a card opened this long after a send counts as an open
+ATTRIBUTION_DAYS = CF.ATTRIBUTION_DAYS  # a visit inside this window counts for the campaign
 WALLET_OFFER_DAYS = 30      # how long a campaign stays the card's current offer
 
 TITLE_MAX = 50
@@ -411,9 +414,9 @@ def campaign_detail(campaign_id: str, request: Request = None,
         delivered = int(c.get("delivered_count") or 0)
         stats = {"recipients": len(ids), "delivered": min(delivered, len(ids)) if delivered else None,
                  "opened": len(opened), "open_rate": _pct(len(opened), len(ids)),
-                 "clicks": int(c.get("offer_clicks") or 0), "came_back": len(back),
+                 "clicks": CF.clicks(c), "came_back": len(back),
                  "came_back_rate": _pct(len(back), len(ids)),
-                 "revenue": _attributed_revenue(tid, ids, sent_at, scope),
+                 "revenue": CF.attribution(_db, tid, [c], S.visit_filter(scope))[c["id"]]["revenue"],
                  "window_days": ATTRIBUTION_DAYS, "open_window_h": OPEN_WINDOW_H}
     _, until = K.window(c) if sent_at else (None, None)
     st = row["status"]
@@ -437,18 +440,6 @@ def _opened_ids(tid: str, recipients: List[str], sent_at: datetime,
     one definition with the Automatisations page (services/card_opens)."""
     from services import card_opens
     return card_opens.opened_ids(_db, tid, recipients, sent_at, campaign, OPEN_WINDOW_H)
-
-
-def _attributed_revenue(tid: str, recipients: List[str], sent_at: datetime,
-                        scope: Optional["S.Scope"] = None) -> float:
-    if not recipients or not sent_at:
-        return 0.0
-    rows = _db.visits.find(
-        {"tenant_id": tid, "customer_id": {"$in": recipients},
-         "visit_time": {"$gte": sent_at, "$lte": sent_at + timedelta(days=ATTRIBUTION_DAYS)},
-         **(S.visit_filter(scope) if scope else {})},
-        {"_id": 0, "amount_paid": 1})
-    return round(sum(float(r.get("amount_paid") or 0) for r in rows), 2)
 
 
 def _pct(part: float, whole: float) -> int:
@@ -483,14 +474,14 @@ def _sent_between(tid: str, start: datetime, end: datetime, mine: Optional[set] 
 
 def _totals(tid: str, rows: List[Dict[str, Any]], scope: Optional["S.Scope"] = None) -> Dict[str, float]:
     reach = opened = clicks = 0
-    revenue = 0.0
+    att = CF.attribution(_db, tid, rows, S.visit_filter(scope) if scope else None)
     for c in rows:
         ids = list(c.get("recipient_ids") or [])
         at = _aware(c.get("sent_at"))
         reach += len(ids)
         opened += len(_opened_ids(tid, ids, at, c))
-        clicks += int(c.get("offer_clicks") or 0)
-        revenue += _attributed_revenue(tid, ids, at, scope)
+        clicks += CF.clicks(c)
+    revenue = sum(a["revenue"] for a in att.values())
     return {"campaigns": len(rows), "reach": reach, "opened": opened,
             "clicks": clicks, "revenue": round(revenue, 2)}
 
@@ -579,8 +570,7 @@ def page(request: Request = None,
                      "ouverte (« Voir l'offre » dans le Wallet) ou son lien cliqué. Une notification wallet "
                      "ne renvoie pas d'accusé de lecture : un client qui regarde seulement la carte dans "
                      "Apple Wallet ou Google Wallet n'est pas compté.",
-        "revenue_note": f"Le CA généré est la dépense des destinataires dans les "
-                        f"{ATTRIBUTION_DAYS} jours suivant l'envoi.",
+        "revenue_note": CF.REVENUE_NOTE,
         "empty": not recent,
         "scope": scope.describe(),
         # the redesign's wizard: segments to pick from, the best time to send,
