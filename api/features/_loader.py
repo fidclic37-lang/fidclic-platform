@@ -30,6 +30,7 @@ MODULES = [
     "features.invoices",
     "features.privacy_page",
     "features.security_page",
+    "features.account_email",           # Sécurité › changer l'adresse e-mail du compte
     "features.preferences",
     "features.platform_access",
     "features.platform_reset",

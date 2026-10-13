@@ -83,7 +83,7 @@ def main():
         if roles and set(roles) & {"administrateur", "manager", "staff"}:
             loose += [f"{m} {r.path}" for m in r.methods if RP.page_of(r.path) is None and not RP.is_common(r.path, m)]
     check(f"no team endpoint outside a page ({loose[:5]})", not loose)
-    check("one row per sidebar page (17 + account deletion)", len(RP.PAGES) == 18)
+    check("one row per sidebar page (17 + e-mail change + account deletion)", len(RP.PAGES) == 19)
 
     print("\n1. The owner creates a role, its name, its pages")
     r = http("POST", "/api/owner/team-access/roles", headers=H(OWNER),

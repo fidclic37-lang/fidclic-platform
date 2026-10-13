@@ -4,7 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import {
   Shield, ShieldCheck, Clock, ArrowRight, Lock, Monitor, Smartphone, Tablet, Users, User, MoreVertical,
   Database, CloudUpload, KeyRound, Trash2, CheckCircle2, X, Loader2, Check, LogOut, AlertTriangle,
-  ShieldAlert, Pencil, Download, UserPlus, Bell,
+  ShieldAlert, Pencil, Download, UserPlus, Bell, Mail,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,8 +67,16 @@ export default function SecuritePage() {
   const [form, setForm] = useState({});
   const [mErr, setMErr] = useState('');
 
+  // The pending e-mail change lives on its own endpoint: an account without
+  // the « Changer l'adresse e-mail » permission is refused it, and the card
+  // simply shows the address with no way to change it.
+  const [mailPending, setMailPending] = useState(null);
+  const [mayChangeEmail, setMayChangeEmail] = useState(false);
   const load = useCallback(() => {
     ownerAPI.security().then(({ data }) => setD(data)).catch((e) => setErr(e?.response?.data?.detail || 'Impossible de charger la sécurité.'));
+    ownerAPI.emailState()
+      .then(({ data }) => { setMailPending(data.pending); setMayChangeEmail(true); })
+      .catch(() => { setMailPending(null); setMayChangeEmail(false); });
   }, []);
   useEffect(() => { load(); }, [load]);
   const say = (m) => { setToast(m); setTimeout(() => setToast(''), 3500); };
@@ -117,6 +125,27 @@ export default function SecuritePage() {
         </Card>
 
         {/* row 2 */}
+        <Card>
+          <Head icon={Mail} title="Adresse e-mail" sub="L'adresse avec laquelle vous vous connectez." />
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[13.5px] text-[#0B1C3F]">Adresse actuelle</p>
+              <p translate="no" className="notranslate truncate text-[14px] text-[#475569]">{d.me.email}</p>
+              {mailPending && (
+                <p className="mt-1 text-[12.5px] text-[#92400E]">
+                  En attente de confirmation sur <strong translate="no" className="notranslate">{mailPending.new_email}</strong>
+                  {' '}— {mailPending.method === 'code' ? 'par code' : 'par lien'}.
+                </p>
+              )}
+            </div>
+            {mayChangeEmail && (
+              <button type="button" onClick={() => open('email')}
+                      className="inline-flex items-center gap-2 rounded-xl border border-[#2F6BFF] px-5 py-2.5 text-[13.5px] font-medium text-[#2F6BFF]">
+                {mailPending ? 'Reprendre' : "Modifier l'adresse"} <ArrowRight size={14} />
+              </button>
+            )}
+          </div>
+        </Card>
         <Card>
           <Head icon={Lock} title="Mot de passe" sub="Protégez votre compte avec un mot de passe fort." />
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -276,6 +305,72 @@ export default function SecuritePage() {
       <div aria-live="polite" className="pointer-events-none fixed bottom-5 left-1/2 z-40 -translate-x-1/2 transition-opacity" style={{ opacity: toast ? 1 : 0 }}>
         <span className="inline-flex items-center gap-2 rounded-full bg-[#0B1C3F] px-4 py-2 text-[13px] font-medium text-white shadow-lg"><Check size={14} /> {toast}</span>
       </div>
+
+      {modal?.type === 'email' && (
+        <Modal title="Modifier l'adresse e-mail" onClose={() => setModal(null)}>
+          {!(form.sent || mailPending) ? (
+            <div className="space-y-3">
+              <label className="block text-[13px]">Nouvelle adresse
+                <input type="email" autoComplete="email" translate="no" className={`${inputCls} notranslate`} value={form.mail || ''}
+                       onChange={(e) => setForm({ ...form, mail: e.target.value })} /></label>
+              <label className="block text-[13px]">Votre mot de passe
+                <input type="password" autoComplete="current-password" className={inputCls} value={form.pw || ''}
+                       onChange={(e) => setForm({ ...form, pw: e.target.value })} /></label>
+              <div>
+                <p className="mb-1.5 text-[13px] text-[#334155]">Comment confirmer ?</p>
+                <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5" role="group" aria-label="Comment confirmer ?">
+                  {[['link', 'Par lien'], ['code', 'Par code']].map(([k, l]) => (
+                    <button key={k} type="button" aria-pressed={(form.method || 'link') === k}
+                            onClick={() => setForm({ ...form, method: k })}
+                            className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${(form.method || 'link') === k ? 'bg-white text-[#2F6BFF] shadow-sm' : 'text-[#64748B]'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[12px] text-[#64748B]">
+                FidClic envoie la confirmation à la <strong>nouvelle</strong> adresse. Tant qu'elle
+                n'est pas confirmée, vous vous connectez avec l'adresse actuelle — une faute de frappe
+                ne bloque donc rien.
+              </p>
+              {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+              <button type="button" disabled={busy === 'mail' || !form.mail || !form.pw}
+                      onClick={() => run('mail', () => ownerAPI.emailStart(form.mail.trim(), form.pw, form.method || 'link'),
+                                         null, (r) => { setForm({ ...form, sent: r }); load(); })}
+                      className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
+                Envoyer la confirmation
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {(() => { const p = form.sent || mailPending; return (
+                <>
+                  <p className="text-[13.5px] text-[#475569]">
+                    {p.method === 'code' ? 'Un code a été envoyé à ' : 'Un lien a été envoyé à '}
+                    <strong translate="no" className="notranslate">{p.sent_to || p.new_email}</strong>.
+                  </p>
+                  {p.method === 'code' ? (
+                    <>
+                      <label className="block text-[13px]">Code reçu
+                        <input inputMode="numeric" maxLength={6} className={`${inputCls} text-center text-[22px] tracking-[8px]`}
+                               value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value.replace(/\D/g, '') })} /></label>
+                      {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+                      <button type="button" disabled={busy === 'mailc' || (form.code || '').length < 6}
+                              onClick={() => run('mailc', () => ownerAPI.emailConfirm({ code: form.code }), 'Adresse e-mail modifiée.')}
+                              className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
+                        Confirmer
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-[12.5px] text-[#64748B]">Ouvrez ce lien depuis votre boîte mail pour terminer. Il est valable 30 minutes.</p>
+                  )}
+                  {mErr && p.method !== 'code' && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+                  <button type="button" onClick={() => run('mailx', () => ownerAPI.emailCancel(), 'Demande annulée.')}
+                          className="w-full rounded-xl border border-[#DCE3EE] py-2.5 text-[13.5px] text-[#334155]">Annuler la demande</button>
+                </>
+              ); })()}
+            </div>
+          )}
+        </Modal>
+      )}
 
       {modal?.type === 'password' && (
         <Modal title={d.me.has_password ? 'Modifier le mot de passe' : 'Créer un mot de passe'} onClose={() => setModal(null)}>

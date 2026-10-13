@@ -580,6 +580,11 @@ export const ownerAPI = {
   totpDisable: (password, code) => api.post('/security/2fa/disable', { password, code }),
   endSession: (sid) => api.delete(`/security/sessions/${sid}`),
   endOtherSessions: () => api.post('/security/sessions/revoke-others'),
+  // Sécurité › changer l'adresse e-mail du compte (features/account_email)
+  emailState: () => api.get('/security/email'),
+  emailStart: (new_email, password, method) => api.post('/security/email/start', { new_email, password, method }),
+  emailConfirm: (proof) => api.post('/security/email/confirm', proof),
+  emailCancel: () => api.post('/security/email/cancel'),
   deleteAccount: (password, confirm) => api.post('/security/account/delete', { password, confirm }),
   restoreAccount: () => api.post('/security/account/restore'),
   resetTeamPassword: (uid) => api.post(`/owner/team-access/users/${uid}/password`),
