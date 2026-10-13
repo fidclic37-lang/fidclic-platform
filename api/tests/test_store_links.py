@@ -12,6 +12,7 @@ Run: cd api && /usr/local/bin/python3 tests/test_store_links.py
 """
 import asyncio
 import os
+from datetime import datetime, timezone
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -183,18 +184,29 @@ def main():
     check("the administrateur's fiche offers only its stores", {c["id"] for c in fa["home_store"]["choices"]} == {"pal", "mon"})
 
     print("\n7. The link page's figures are the chosen store's")
-    for sid in ("pal", "mon"):
+    # the main store's clients from before it had establishments carry no store, and
+    # its first visits none either (prod, 2026-10-14: Paramètres 3 clients, Clients 5)
+    db.customers.insert_one({"id": "c-old", "tenant_id": "t1", "name": "Ancien", "created_at": datetime.now(timezone.utc)})
+    db.visits.insert_many([{"id": f"v-old{i}", "tenant_id": "t1", "customer_id": "c-old",
+                            "visit_time": datetime.now(timezone.utc)} for i in range(3)])
+    db.visits.insert_one({"id": "v-pal", "tenant_id": "t1", "customer_id": "c-old", "branch_id": "pal",
+                          "visit_time": datetime.now(timezone.utc)})
+    for sid in ("main", "pal", "mon"):
         st = http("GET", "/api/owner/join-link", headers={**OWNER, "X-FidClic-Store": sid}).json()
-        members = db.customers.count_documents({"tenant_id": "t1", "branch_id": sid})
-        check(f"{sid}: total = its members ({st['stats']['total']['value']} = {members})",
-              st["stats"]["total"]["value"] == members and st["store_id"] == sid)
+        cl = http("GET", "/api/owner/clients/list?per_page=200", headers={**OWNER, "X-FidClic-Store": sid}).json()
+        listed = cl.get("total", len(cl.get("rows") or []))
+        check(f"{sid}: total = the Clients page's ({st['stats']['total']['value']} = {listed})",
+              st["stats"]["total"]["value"] == listed and st["store_id"] == sid)
+        till = db.visits.count_documents({"tenant_id": "t1", "branch_id": {"$in": [None, "main"] if sid == "main" else [sid]}})
+        check(f"{sid}: scans QR = its till's visits ({st['stats']['qr_scans']['value']} = {till})",
+              st["stats"]["qr_scans"]["value"] == till)
+    st = http("GET", "/api/owner/join-link", headers={**OWNER, "X-FidClic-Store": "main"}).json()
+    check("the old client and its 3 visits count for the main store",
+          st["stats"]["qr_scans"]["value"] >= 3 and "c-old" in [r["id"] for r in http(
+              "GET", "/api/owner/clients/list?per_page=200", headers={**OWNER, "X-FidClic-Store": "main"}).json()["rows"]])
     http("POST", "/api/join/royal-trim/view", json={"visitor": "visitor-abc-123", "src": "qr", "store": "palissy-tours"})
     v = db.join_views.find_one({"visitor": "visitor-abc-123"})
     check("a visit of a store's page is that store's", v and v.get("store") == "pal")
-    st = http("GET", "/api/owner/join-link", headers={**OWNER, "X-FidClic-Store": "pal"}).json()
-    st2 = http("GET", "/api/owner/join-link", headers={**OWNER, "X-FidClic-Store": "mon"}).json()
-    check("…its QR scan counts there, not in the other store",
-          st["stats"]["qr_scans"]["value"] == 1 and st2["stats"]["qr_scans"]["value"] == 0)
 
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
