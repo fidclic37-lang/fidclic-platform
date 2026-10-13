@@ -134,12 +134,23 @@ def _from_cdn(mid: str) -> Optional[Tuple[str, bytes]]:
         req = urllib.request.Request(f"{site}{PREFIX}{mid}", headers={"User-Agent": "FidClic-media/1"})
         with urllib.request.urlopen(req, timeout=4) as resp:
             if resp.status != 200:
+                _note("media_cdn_fail", f"http {resp.status}")
                 return None
             raw = resp.read()
             mime = (resp.headers.get("Content-Type") or "application/octet-stream").split(";")[0]
         return (mime, raw) if raw else None
-    except Exception:
+    except Exception as exc:
+        _note("media_cdn_fail", f"{type(exc).__name__} {exc}")
         return None
+
+
+def _note(key: str, value: Any = 1) -> None:
+    """Where this request's pictures came from, in its Server-Timing header."""
+    try:
+        from services import server_timing as ST
+        ST.note(key, value)
+    except Exception:
+        pass
 
 
 def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
@@ -149,12 +160,15 @@ def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
     hit = _MEM.get(mid)
     if hit is not None:
         _MEM.move_to_end(mid)
+        _note("media_mem")
         return hit
     if cdn:
         got = _from_cdn(mid)
         if got:
             _remember(mid, got)
+            _note("media_cdn")
             return got
+    _note("media_db")
     doc = _raw(_db["media"]).find_one({"_id": mid})
     if not doc:
         return None
