@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional, Tuple
 
@@ -97,16 +98,42 @@ def put(data_url: str) -> str:
     return PREFIX + mid
 
 
+# A picture's id is the hash of its bytes: once read, it never changes, so the
+# server keeps it in memory (2026-10-13: a card preview with a Pass Designer
+# design read the same pictures 29 times — 14 MB from the free cluster per
+# preview, over Vercel's 30 s: « Aperçu indisponible »).
+_MEM: "OrderedDict[str, Tuple[str, bytes]]" = OrderedDict()
+_MEM_MAX = 160 * 1024 * 1024
+_mem_size = 0
+
+
+def _remember(mid: str, got: Tuple[str, bytes]) -> None:
+    global _mem_size
+    if mid in _MEM or len(got[1]) > _MEM_MAX // 4:
+        return
+    _MEM[mid] = got
+    _mem_size += len(got[1])
+    while _mem_size > _MEM_MAX and _MEM:
+        _, old = _MEM.popitem(last=False)
+        _mem_size -= len(old[1])
+
+
 def get(mid: str) -> Optional[Tuple[str, bytes]]:
     if _db is None or not _ID.match(mid or ""):
         return None
+    hit = _MEM.get(mid)
+    if hit is not None:
+        _MEM.move_to_end(mid)
+        return hit
     doc = _raw(_db["media"]).find_one({"_id": mid})
     if not doc:
         return None
     data = doc.get("data")
     if isinstance(data, str):
         data = base64.b64decode(data)
-    return doc.get("mime") or "application/octet-stream", bytes(data)
+    got = (doc.get("mime") or "application/octet-stream", bytes(data))
+    _remember(mid, got)
+    return got
 
 
 def resolve(src: Any) -> Optional[bytes]:
