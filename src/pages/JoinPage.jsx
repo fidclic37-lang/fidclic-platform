@@ -45,8 +45,19 @@ export function birthError(value) {
   if (mo < 1 || mo > 12 || dt.getUTCDate() !== d || dt.getUTCMonth() !== mo - 1) return 'Date de naissance invalide : ce jour n’existe pas.';
   const now = new Date();
   if (y < 1900 || dt > now) return 'Date de naissance invalide : vérifiez l’année.';
+  // nobody older than 85 joins (user, 2026-10-11) — the server says the same
+  const age = now.getFullYear() - y - ((now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) ? 1 : 0);
+  if (age > MAX_AGE) return `Date de naissance : l’inscription est ouverte jusqu’à ${MAX_AGE} ans. Vérifiez l’année.`;
   return null;
 }
+
+export const MAX_AGE = 85;
+// the shape only; the server also catches typos, throwaway inboxes and a
+// domain that receives no mail (services/email_check)
+export const emailError = (v) => {
+  const s = String(v || '').trim();
+  return s && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(s) ? 'Adresse e-mail invalide. Exemple : prenom.nom@gmail.com' : null;
+};
 
 function resolveSourceFromUrl(searchParams, channel) {
   const raw = channel || searchParams.get('src') || searchParams.get('source') || searchParams.get('utm_source') || '';
@@ -256,6 +267,8 @@ const JoinPage = () => {
     const postal = postalDigits(postalRef.current?.value ?? form.postal_code);
     const errs = {};
     if (!form.name.trim()) errs.name = 'Indiquez votre nom.';
+    const ee = emailError(form.email);
+    if (ee) errs.email = ee;
     const pe = phoneValueError(form.phone);
     if (pe) errs.phone = pe;
     if (!/^\d{5}$/.test(postal)) errs.postal_code = 'Code postal : 5 chiffres, par exemple 37000.';
@@ -286,7 +299,12 @@ const JoinPage = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       const detail = err?.response?.data?.detail_raw ?? err?.response?.data?.detail;
-      if (detail && typeof detail === 'object' && detail.code === 'store_required') {
+      if (detail && typeof detail === 'object' && detail.code === 'invalid_field') {
+        // the server's word on one field (a postal code unknown in France, an
+        // e-mail domain that receives no mail…), shown under that field
+        setErrors((x) => ({ ...x, [detail.field]: detail.message }));
+        setJoinError(null);
+      } else if (detail && typeof detail === 'object' && detail.code === 'store_required') {
         setErrors((x) => ({ ...x, store: detail.message }));
         setJoinError(null);
       } else if (err?.response?.status === 409 && detail && typeof detail === 'object') {
@@ -373,11 +391,15 @@ const JoinPage = () => {
                 </label>
                 <FieldError id="join-name-error">{errors.name}</FieldError>
               </div>
-              <label className={box(false)}>
-                <Mail size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
-                <input type="email" autoComplete="email" placeholder="Email (optionnel)" aria-label="Email (optionnel)"
-                       className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} />
-              </label>
+              <div>
+                <label className={box(errors.email)}>
+                  <Mail size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
+                  <input type="email" autoComplete="email" placeholder="Email (optionnel)" aria-label="Email (optionnel)"
+                         aria-invalid={errors.email ? 'true' : undefined}
+                         className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} />
+                </label>
+                <FieldError id="join-email-error">{errors.email}</FieldError>
+              </div>
               <div>
                 <div className={box(errors.phone)}>
                   <Phone size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />

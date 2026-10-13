@@ -141,7 +141,9 @@ export function FicheModal({ clientId, onClose, onSaved }) {
               <select aria-label="Année" value={yy || ''} className={field}
                       onChange={(e) => setF({ ...f, birth_date: e.target.value ? `${e.target.value}-${mm || '01'}-${dd || '01'}` : '' })}>
                 <option value="">Année</option>
-                {Array.from({ length: THIS_YEAR - 1899 }, (_, i) => String(THIS_YEAR - i)).map((y) => <option key={y} value={y}>{y}</option>)}
+                {/* 85 at most (user, 2026-10-11) — a year already on file still shows */}
+                {[...Array.from({ length: 87 }, (_, i) => String(THIS_YEAR - i)), ...(yy && Number(yy) < THIS_YEAR - 86 ? [yy] : [])]
+                  .map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
           </div>

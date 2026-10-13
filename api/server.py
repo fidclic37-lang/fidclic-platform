@@ -6348,7 +6348,7 @@ class JoinRequest(BaseModel):
     # one chosen on the form — the customer's home store (features/store_links)
     store: Optional[str] = None
 
-def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> None:
+def _check_join_fields(req: "JoinRequest", profile_optional: bool = False, by_field: bool = False) -> None:
     """What the signup form says, checked by the server too (QA UX10,
     2026-10-08: « abc », « ABCDE » and « 13-99 » were never refused here —
     only the browser stood in the way). French messages naming the field;
@@ -6357,26 +6357,38 @@ def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> No
     `profile_optional`: the merchant API (POST /api/v1/customers) documents
     postal code and birthday as optional — a till rarely has them. They are
     still checked when given. Requiring them there broke every API signup
-    without a postal code (found 2026-10-09)."""
+    without a postal code (found 2026-10-09).
+
+    `by_field`: the signup page shows each refusal under its own field
+    (detail {code: "invalid_field", field, message})."""
     from services import customer_fields as CF
-    req.name = CF.name(req.name)
-    req.phone = CF.phone(req.phone)
+
+    def field(name, fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except HTTPException as e:
+            if not by_field:
+                raise
+            raise HTTPException(status_code=400, detail={"code": "invalid_field", "field": name, "message": e.detail})
+
+    req.name = field("name", CF.name, req.name)
+    req.phone = field("phone", CF.phone, req.phone)
     if req.postal_code or not profile_optional:
-        req.postal_code = CF.postal_code(req.postal_code)
+        req.postal_code = field("postal_code", CF.postal_code, req.postal_code)
     if req.birthday or not profile_optional:
         # the full date on the signup page (user, 2026-10-09: the age shows in
         # Clients); the merchant API may still send day and month only
-        b = CF.birth(req.birthday, need_year=not profile_optional)
+        b = field("birth", CF.birth, req.birthday, need_year=not profile_optional)
         req.birthday = b["birthday"]
         req._birth_date = b["birth_date"]
-    req.email = CF.email(req.email)
+    req.email = field("email", CF.email, req.email)
 
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
     # Only in-process callers (the merchant API) come without a request: the
     # public page always has one, so it can never skip the profile fields.
-    _check_join_fields(req, profile_optional=request is None)
+    _check_join_fields(req, profile_optional=request is None, by_field=request is not None)
     # Where they came from (services/sources): the channel of the link they
     # opened, or their own answer — never a guess. An unknown word used to be
     # filed as « QR code en magasin », so a WhatsApp signup read as an in-store

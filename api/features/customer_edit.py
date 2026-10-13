@@ -146,16 +146,23 @@ def save_fiche(customer_id: str, body: FicheIn, request: Request = None,
         new["name"] = CF.name(body.name)
     if body.phone is not None:
         new["phone"] = CF.phone(body.phone)
+    # The page sends every field back. The rules of 2026-10-11 (a real e-mail,
+    # a French postal code, 85 at most) judge what the owner changes: a
+    # client already on file with an older value can still be edited.
     if body.email is not None:
-        new["email"] = CF.email(body.email).lower()
+        same = (body.email or "").strip().lower() == (c.get("email") or "").strip().lower()
+        new["email"] = (body.email or "").strip().lower() if same else CF.email(body.email).lower()
     if body.birthday is not None:
         # « 25/12/1990 » keeps the year (the age in Clients); « 25/12 » only the day
-        b = CF.birth(body.birthday)
+        b = CF.birth(body.birthday, max_age=False)
+        if b["birth_date"] and b["birth_date"] != c.get("birth_date"):
+            b = CF.birth(body.birthday)
         new["birthday"] = b["birthday"]
         if b["birth_date"]:
             new["birth_date"] = b["birth_date"]
     if body.postal_code is not None:
-        new["postal_code"] = CF.postal_code(body.postal_code)
+        same = (body.postal_code or "").strip() == (c.get("postal_code") or "").strip()
+        new["postal_code"] = (body.postal_code or "").strip() if same else CF.postal_code(body.postal_code)
     if body.is_student is not None:
         new["is_student"] = bool(body.is_student)
     if body.acquisition_source is not None:
