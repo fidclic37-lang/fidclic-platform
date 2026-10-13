@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import PosterCropper from '../components/PosterCropper';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
   Users, Link2, QrCode, Share2, Copy, Info, Download, Printer, Store, Settings, CheckCircle2,
@@ -205,6 +206,7 @@ function SignupImage({ d, setD, shopName, canEdit }) {
   const [err, setErr] = useState('');
   const input = useRef(null);
   const own = d.shop.signup_image || '';
+  const [crop, setCrop] = useState(null);      // the file being framed
   const shown = own || d.shop.card_logo_url || '';
   const save = async (image) => {
     setBusy(true); setErr('');
@@ -212,16 +214,25 @@ function SignupImage({ d, setD, shopName, canEdit }) {
     catch (e) { setErr(e?.response?.data?.detail || "L'image n'a pas pu être enregistrée."); }
     finally { setBusy(false); }
   };
+  // The image is shown in a circle, here and on the registration page. Saved
+  // as it came, a logo wider than it is tall lost its edges — « ROYAL TRIM »
+  // read « OYAL TRI » (user, 2026-10-13). The owner frames it now, opening on
+  // the whole picture, and can zoom in if they want a detail instead.
   const pick = (file) => {
     if (!file) return;
     if (!/^image\//.test(file.type)) { setErr('Choisissez une image (JPG, PNG, WebP).'); return; }
     if (file.size > MAX_IMG) { setErr("L'image dépasse 2 Mo."); return; }
-    const r = new FileReader();
-    r.onload = () => save(String(r.result));
-    r.readAsDataURL(file);
+    setErr('');
+    setCrop(file);
   };
   return (
     <section className="mt-4 rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="signup-image">
+      {crop && (
+        <PosterCropper file={crop} outW={800} outH={800} round fit guides={false}
+                       title="Cadrer l'image"
+                       onCancel={() => setCrop(null)}
+                       onDone={(data) => { setCrop(null); save(data); }} />
+      )}
       <CardHead icon={ImagePlus} title="Image de la page d'inscription"
                 subtitle={`L'image en haut de la page d'inscription de ${shopName}. Sans image choisie, c'est le logo de la carte.`} />
       <div className="flex flex-wrap items-center gap-5">
