@@ -174,6 +174,36 @@ def main():
         M._raw = real_get
         M._MEM.clear(); M._mem_size = 0
 
+    print("\nA card's pictures are fetched together, not one after the other")
+    import threading
+    import time as _t
+    ids = []
+    for i in range(4):
+        im = Image.effect_noise((120, 120), 50 + i).convert("RGB")      # over 1 KB: stored in `media`
+        b = io.BytesIO()
+        im.save(b, "PNG")
+        ids.append(M.put("data:image/png;base64," + base64.b64encode(b.getvalue()).decode()))
+    M._MEM.clear(); M._mem_size = 0
+    seen, threads = [], set()
+    real_g = M.get
+
+    def slow_get(mid, cdn=True):
+        seen.append(mid)
+        threads.add(threading.get_ident())
+        _t.sleep(0.3)                               # a cold picture
+        return real_g(mid, cdn)
+    M.get = slow_get
+    try:
+        t0 = _t.perf_counter()
+        n = M.prefetch({"logo_url": ids[0], "poster_image_url": ids[1]}, {"images": [{"data": ids[2]}, {"data": ids[3]}, {"data": ids[0]}]})
+        took = _t.perf_counter() - t0
+    finally:
+        M.get = real_g
+    check(f"4 pictures (one linked twice): 4 fetches ({n}, {len(seen)})", n == 4 and len(seen) == 4)
+    check(f"…at the same time, not 4 × 0.3 s ({took:.2f}s, {len(threads)} threads)", took < 0.8 and len(threads) > 1)
+    check("…all in memory afterwards", all(i.split("/")[-1] in M._MEM for i in ids))
+    check("nothing to fetch the second time", M.prefetch({"logo_url": ids[0]}) == 0)
+
     print("\nThe establishments of an account: read once per preview")
     from features import store_cards as SC
     SC.forget()
