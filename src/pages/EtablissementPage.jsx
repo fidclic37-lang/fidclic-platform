@@ -157,6 +157,11 @@ function StoreModal({ store, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const save = async () => {
+    // Adresse, Code postal and Ville are required, as their « * » says (QA F26)
+    const missing = [['street', 'Adresse'], ['postal_code', 'Code postal'], ['city', 'Ville']]
+      .filter(([k]) => !String(f[k] || '').trim()).map(([, l]) => l);
+    if (!String(f.name || '').trim() && creating) { setErr('Donnez un nom au point de vente.'); return; }
+    if (missing.length) { setErr(`Complétez : ${missing.join(', ')}.`); return; }
     setBusy(true); setErr('');
     try {
       const body = { ...f };
@@ -571,7 +576,12 @@ export default function EtablissementPage() {
       )}
       {store && (
         <StoreModal store={store.id ? store : null} onClose={() => setStore(null)}
-                    onSaved={(data, m) => { apply(data); setStore(null); say(m); }} />
+                    onSaved={(data, m) => {
+                      apply(data); setStore(null); say(m);
+                      // the menu's list of establishments too, at once (QA F27: a new one
+                      // appeared there only after a reload)
+                      ownerAPI.getBranches().then(({ data: b }) => setBranches(b?.branches || b || [])).catch(() => {});
+                    }} />
       )}
     </div>
   );
