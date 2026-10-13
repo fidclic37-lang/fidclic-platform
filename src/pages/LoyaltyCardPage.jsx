@@ -454,12 +454,19 @@ export default function LoyaltyCardPage() {
     return out;
   }, [cardForPreview, data]);
 
-  const previewCustomer = useMemo(() => ({
-    name: 'Marie Love', first_name: 'Marie', tier: 'silver',
-    points: isPoints ? 1200 : (programme?.points_per_visit || 10) * 7,
-    visits: 7, barcode_id: 'FIDCLIC-0000-0000',
-    reward_threshold: programme?.reward_threshold_stamps || 10,
-  }), [isPoints, programme]);
+  const previewCustomer = useMemo(() => {
+    const points = isPoints ? 1200 : (programme?.points_per_visit || 10) * 7;
+    // her palier from the ladder set below — points or visits, as the server's
+    // loyalty_card.tier_of — not a fixed « Argent » (QA F33: 7 visits read
+    // ARGENT while the rules put 7 visits in Bronze)
+    const value = isPoints ? points : 7;
+    const tier = (tiers || []).reduce((acc, t) => (value >= Number(t.min) ? t.key : acc), 'bronze');
+    return {
+      name: 'Marie Love', first_name: 'Marie', tier,
+      points, visits: 7, barcode_id: 'FIDCLIC-0000-0000',
+      reward_threshold: programme?.reward_threshold_stamps || 10,
+    };
+  }, [isPoints, programme, tiers]);
 
   // « Bande du bas »: the design's footer colour when a poster design draws
   // iOS 27, else the card's own (both kept, so either way the same band)
