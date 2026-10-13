@@ -15,6 +15,7 @@ import WalletPassPreview from '../components/WalletPassPreview';
 import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
+import { protectNames } from '../lib/translator';
 
 // ---------------------------------------------------------------------------
 // Element / stamp rendering — mirrors the owner-side designer
@@ -283,6 +284,14 @@ const CardView = () => {
   // now — e.g. they cleared site data, switched device, or the browser rotated
   // the endpoint — silently re-register. This runs only when permission is
   // already granted, so we never prompt the user unexpectedly.
+  // The shop's name is a name, not words: « Royal Trim Liberté » must not read
+  // « Royal Trim Freedom » in English. This page lives outside the dashboard
+  // layout, which is the only place that registered names until now, so on the
+  // customer's own card nothing protected it (user, 2026-10-13).
+  useEffect(() => {
+    protectNames([data?.tenant?.name, data?.customer?.name]);
+  }, [data?.tenant?.name, data?.customer?.name]);
+
   useEffect(() => {
     if (!data?.prefs?.push_enabled) return;
     if (!isPushSupported()) return;

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { protectNames } from '../../lib/translator';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Store, Users, Plus, Search, Download, List, LayoutGrid, MapPin, MoreHorizontal, ChevronDown, ChevronUp, ChevronsUpDown,
@@ -49,6 +50,10 @@ export default function CommercesPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') || '';
+  // A super admin reads other businesses' names, which nothing registers:
+  // the layout only protects the signed-in shop's own. Without this the
+  // translator reaches them wherever they sit inside a sentence — a modal
+  // title, a confirmation (user, 2026-10-13).
   const [d, setD] = useState(null);
   const [f, setF] = useState({ q: '', sector: '', city: '', plan: '', status: '' });
   const [sort, setSort] = useState('-clients');
@@ -61,7 +66,7 @@ export default function CommercesPage() {
   const [say, toast] = useToast();
 
   const load = useCallback(() => {
-    adminAPI.commerces({ ...f, tab, sort, page, per_page: perPage }).then(({ data }) => setD(data)).catch(() => setD((x) => x || { rows: [], cards: [], counts: {}, options: {}, pages: 1, total: 0 }));
+    adminAPI.commerces({ ...f, tab, sort, page, per_page: perPage }).then(({ data }) => { protectNames((data?.rows || []).map((r) => r.name)); setD(data); }).catch(() => setD((x) => x || { rows: [], cards: [], counts: {}, options: {}, pages: 1, total: 0 }));
   }, [f, tab, sort, page, perPage]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [tab]);
@@ -152,7 +157,7 @@ export default function CommercesPage() {
                 {d.rows.map((c) => (
                   <tr key={c.id} onClick={() => navigate(`/admin/commerces/${c.id}`)} className="cursor-pointer border-b border-[#F4F7FC] hover:bg-[#FAFCFF]">
                     <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Choisir ${c.name}`} checked={picked.includes(c.id)} onChange={(e) => setPicked(e.target.checked ? [...picked, c.id] : picked.filter((x) => x !== c.id))} className="accent-[#2F6BFF]" /></td>
-                    <td className="px-2 py-2"><span className="flex items-center gap-2.5"><CommerceLogo c={c} /><span className="max-w-[200px] truncate font-medium text-[#0B1C3F]">{c.name}</span></span></td>
+                    <td className="px-2 py-2"><span className="flex items-center gap-2.5"><CommerceLogo c={c} /><span translate="no" className="max-w-[200px] truncate font-medium text-[#0B1C3F]">{c.name}</span></span></td>
                     <td className="px-2 py-2 text-[#475569]">{c.sector ? <span className="flex items-center gap-1.5"><Store size={13} className="text-[#94A3B8]" />{c.sector}</span> : '—'}</td>
                     <td className="px-2 py-2 text-[#475569]">{c.city ? <span className="flex items-center gap-1.5"><MapPin size={13} className="text-[#94A3B8]" />{c.city}</span> : '—'}</td>
                     <td className="px-2 py-2"><PlanPill p={c.plan} /></td>
@@ -174,7 +179,7 @@ export default function CommercesPage() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {d.rows.map((c) => (
               <button key={c.id} type="button" onClick={() => navigate(`/admin/commerces/${c.id}`)} className="rounded-2xl border border-[#EDF1F7] p-4 text-left hover:border-[#BFD3FF]">
-                <p className="flex items-center gap-3"><CommerceLogo c={c} size={40} /><span className="min-w-0 flex-1"><strong className="block truncate text-[#0B1C3F]">{c.name}</strong><span className="text-[12px] text-[#64748B]">{[c.sector, c.city].filter(Boolean).join(' · ')}</span></span><StatusPill s={c.status} label={c.status_label} /></p>
+                <p className="flex items-center gap-3"><CommerceLogo c={c} size={40} /><span className="min-w-0 flex-1"><strong translate="no" className="block truncate text-[#0B1C3F]">{c.name}</strong><span className="text-[12px] text-[#64748B]">{[c.sector, c.city].filter(Boolean).join(' · ')}</span></span><StatusPill s={c.status} label={c.status_label} /></p>
                 <p className="mt-3 grid grid-cols-3 gap-2 text-center text-[12px] text-[#64748B]">
                   <span><strong className="block text-[15px] text-[#0B1C3F]">{nf(c.clients)}</strong>clients</span>
                   <span><strong className="block text-[15px] text-[#0B1C3F]">{nf(c.visits)}</strong>visites</span>
