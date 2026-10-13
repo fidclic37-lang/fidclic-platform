@@ -12243,7 +12243,16 @@ register_all(app, db)
 # edge keep it for a year — a page no longer carries its logo in every answer.
 # ─────────────────────────────────────────────────────────────────────
 @app.get("/api/media/{mid}")
-def get_media(mid: str):
+def get_media(mid: str, raw: int = 0):
+    # In Blob: the browser goes straight to Blob's CDN, which no deploy empties
+    # (2026-10-13 — the card preview waited on the free cluster after each merge).
+    # ?raw=1: the bytes from here, same origin (« Ajuster » reads a saved poster
+    # with fetch(), which a cross-origin answer could refuse)
+    url = None if raw else _MEDIA.blob_url(mid.split(".", 1)[0])
+    if url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url, status_code=307,
+                                headers={"Cache-Control": "public, max-age=31536000, s-maxage=31536000, immutable"})
     got = _MEDIA.get(mid.split(".", 1)[0], cdn=False)     # this IS the CDN's source
     if not got:
         raise HTTPException(status_code=404, detail="Image introuvable")

@@ -5,6 +5,17 @@ import {
   Copy, Bell, Rows3, ImagePlus,
 } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { useBranch } from '../../contexts/BranchContext';
+
+// The last preview the server built, kept in this browser per account and
+// establishment (user, 2026-10-13: « PREVIEW OF LOYALTY CARD KYUN LOAD N HO
+// RHA »): the page opens on it at once and swaps in the fresh one when it
+// comes — a slow or failed first answer never leaves the phone empty.
+const pvStore = {
+  read(key) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch (_e) { return null; } },
+  write(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); } catch (_e) { /* full or private: no keep */ } },
+};
 import PassPreview, { PassBack, NEW_CODES } from './PassPreview';
 import FeaturedActionsEditor from './FeaturedActionsEditor';
 import GoogleDesignEditor from './GoogleDesignEditor';
@@ -245,6 +256,15 @@ const CardDesigner = forwardRef(function CardDesigner({
   const [tab, setTab] = useState('identite');
   const [preview, setPreview] = useState(null);
   const [pvState, setPvState] = useState('');
+  const { user } = useAuth();
+  const { branchId } = useBranch();
+  const pvCacheKey = `fidclic:pv:${user?.tenant_id || ''}:${branchId || ''}`;
+  const previewRef = useRef(null);
+  useEffect(() => { previewRef.current = preview; }, [preview]);
+  useEffect(() => {
+    const kept = pvStore.read(pvCacheKey);
+    if (kept) setPreview((p) => p || kept);
+  }, [pvCacheKey]);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState(null);
   const [crop, setCrop] = useState(null);
@@ -280,11 +300,11 @@ const CardDesigner = forwardRef(function CardDesigner({
     // warm server answers in a second or two — so one failure retries once.
     const ask = (retry) => ownerAPI.walletPreview({ card: { ...previewCard, featured_actions: actions }, visits: 3,
       design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
-      .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); } })
+      .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); pvStore.write(pvCacheKey, r.data); } })
       .catch(() => {
         if (my !== seq.current) return;
         if (retry) setTimeout(() => { if (my === seq.current) ask(false); }, 800);
-        else setPvState('error');
+        else setPvState(previewRef.current ? 'stale' : 'error');     // the last one stays on screen
       });
     const t = setTimeout(() => ask(true), 300);   // the server keeps composed images: a short wait is enough
     return () => clearTimeout(t);
@@ -529,6 +549,7 @@ const CardDesigner = forwardRef(function CardDesigner({
         </div>
         {stageState === 'loading' && <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-[#94A3B8]" />}
         {stageState === 'error' && <span className="mt-1 shrink-0 text-[11.5px] text-[#B91C1C]">Aperçu indisponible</span>}
+        {stageState === 'stale' && <span className="mt-1 shrink-0 text-[11.5px] text-[#64748B]">Dernier aperçu — mise à jour au prochain changement</span>}
       </header>
       {wallet === 'google' ? (
         gPreview ? (
