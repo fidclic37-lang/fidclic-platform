@@ -112,6 +112,13 @@ export function FicheModal({ clientId, onClose, onSaved }) {
            </>)}>
       {!f ? (msg ? null : <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</p>) : (
         <div className="grid gap-3 sm:grid-cols-2">
+          {/* how often this client comes, read only (QA BUG-005) */}
+          <p className="sm:col-span-2 rounded-lg bg-[#F4F7FC] px-3 py-2 text-[13px] text-[#334155]" data-testid="fiche-visits">
+            {d.client.visits
+              ? <><b>{d.client.visits} visite{d.client.visits > 1 ? 's' : ''}</b>{d.client.last_visit
+                ? ` · dernière le ${new Date(d.client.last_visit).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' })}` : ''}</>
+              : 'Aucune visite pour l’instant'}
+          </p>
           <label className="sm:col-span-2"><Label>Nom</Label>
             <input translate="no" value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} className={field} />
           </label>

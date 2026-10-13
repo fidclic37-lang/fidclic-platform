@@ -79,6 +79,12 @@ def _tier(tid: str, visits: int, points: int, paid: float) -> str:
     return LC.tier_of({"visits": visits, "points": points, "total_amount_paid": paid}, tid)
 
 
+def _aware(v: Any) -> Optional[datetime]:
+    if not isinstance(v, datetime):
+        return None
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
     visits = int(c.get("visits") or 0)
     return {
@@ -87,6 +93,8 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
         "birth_date": c.get("birth_date") or "", "age": CF.age_of(c.get("birth_date")),
         "is_student": bool(c.get("is_student")), "acquisition_source": c.get("acquisition_source") or "",
         "barcode_id": c.get("barcode_id"), "points": int(c.get("points") or 0), "visits": visits,
+        # « 12 visites · dernière le 10/10 » at the top of the fiche (QA BUG-005)
+        "last_visit": (lv.isoformat() if (lv := _aware(c.get("last_visit_date"))) else None),
         "stamps_in_cycle": max(0, visits - int(c.get("visits_at_last_redemption") or 0)),
         "visits_at_last_redemption": int(c.get("visits_at_last_redemption") or 0),
         "tier": (c.get("tier") or "bronze").lower(),
