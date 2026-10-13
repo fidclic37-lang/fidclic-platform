@@ -172,6 +172,7 @@ import { EINVOICING_VISIBLE, OWNER_HOME } from './lib/modules';
 import { hasPagePerms, pageOfPath, canSee, firstAllowed as firstPage } from './lib/pagePerms';
 const CabinetSignup = lazyPage(() => import('./pages/CabinetSignup'));
 const ResetPasswordPage = lazyPage(() => import('./pages/ResetPasswordPage'));
+const ChangerEmailPage = lazyPage(() => import('./pages/ChangerEmailPage'));
 // Public marketing pages — one per product line, so each audience gets a whole
 // page instead of an anchor buried in the homepage.
 const FacturationLanding = lazyPage(() => import('./pages/FacturationLanding'));
@@ -383,6 +384,8 @@ function App() {
           ) : <Navigate to="/dashboard" replace />} />
           {/* Accountant (comptable) control tower over all their linked clients. */}
           <Route path="/reinitialiser" element={<ResetPasswordPage />} />
+          {/* where the « Confirmer cette adresse » link of the e-mail lands */}
+          <Route path="/changer-email" element={<ChangerEmailPage />} />
           <Route path="/cabinet/inscription" element={EINVOICING_VISIBLE ? (
             <PublicRoute><CabinetSignup /></PublicRoute>
           ) : <Navigate to="/" replace />} />

@@ -48,6 +48,7 @@ PAGES: List[Dict[str, Any]] = [
     {"key": "settings", "label": "Paramètres", "to": "/dashboard/parametres"},
     {"key": "team", "label": "Équipe & accès", "to": "/dashboard/parametres/equipe"},
     {"key": "billing", "label": "Abonnement & facturation", "to": "/dashboard/parametres/abonnement"},
+    {"key": "email_change", "label": "Changer l'adresse e-mail du compte", "to": None, "edit_only": True},
     {"key": "delete", "label": "Supprimer le compte", "to": None, "edit_only": True},
 ]
 PAGE_KEYS = [p["key"] for p in PAGES]
@@ -60,7 +61,7 @@ def _all(level: str, **over) -> Dict[str, str]:
 
 # The built-in roles' templates, as they worked before (what each one's sidebar showed)
 DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
-    "administrateur": _all("edit", billing="none", delete="none"),
+    "administrateur": _all("edit", billing="none", delete="none", email_change="none"),
     "manager": _all("none", scan="edit", analytics="view", insights="view", ai="edit", customers="edit",
                     campaigns="edit", segmentation="edit", geolocation="view", history="view", team="edit"),
     "staff": _all("none", scan="edit"),
@@ -107,6 +108,7 @@ _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/facturation", "billing"), ("/api/owner/upgrade-plan", "billing"),
     ("/api/owner/request-upgrade", "billing"),
     ("/api/security/account", "delete"),
+    ("/api/security/email", "email_change"),
 ]
 _PREFIX.sort(key=lambda x: -len(x[0]))
 
