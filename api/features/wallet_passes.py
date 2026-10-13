@@ -2356,6 +2356,7 @@ def notify_passes(serials: Iterable[str], google_notify: Any = None,
     res = _notify_apple(serials)
     try:
         res["google"] = google_sync(serials, notify=google_notify, update_class=design_changed)
+        res["google"].pop("done", None)
     except Exception as exc:                       # noqa: BLE001
         res["google"] = {"errors": [str(exc)[:160]]}
     return res
@@ -2408,7 +2409,8 @@ def notify_customer(customer_id: str, message: Optional[str] = None,
 
 def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
     """Every registered pass of a tenant (or just the given customers) — used
-    when the card design or an offer changes."""
+    when the card design or an offer changes. Queued, then worked for a few
+    seconds: a save never waits for every card (see queue_refresh)."""
     q: Dict[str, Any] = {"tenant_id": tenant_id}
     if customer_ids:
         q["id"] = {"$in": list(customer_ids)}
@@ -2417,7 +2419,115 @@ def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> D
         if sid:
             q["branch_id"] = sid
     serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
-    return notify_passes(serials, design_changed=not customer_ids)
+    queue_refresh(tenant_id, serials, design_changed=not customer_ids)
+    return drain_refresh(tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# Wallet refresh queue (2026-10-13). Renaming an establishment answered
+# « erreur 504 » (user): the save sent every card to Apple and, one request
+# per card, to Google, inside the request — past Vercel's 30 s the request
+# was cut. Every card to refresh is now queued per account, then worked for
+# REFRESH_BUDGET_S; what is left is worked by the page right after (POST
+# /api/owner/wallet/refresh, until nothing is left) and by the daily cron.
+# Nothing is dropped: a card leaves the queue only once it was sent.
+# ---------------------------------------------------------------------------
+REFRESH_BUDGET_S = 6.0
+APPLE_CHUNK = 100
+# what is left of this request's budget: a save that changes the card twice
+# (its name, then its sector's reward) still waits REFRESH_BUDGET_S at most
+import contextvars as _cv
+_SPENT: "_cv.ContextVar[float]" = _cv.ContextVar("fidclic_wallet_spent", default=0.0)
+
+
+def queue_refresh(tenant_id: str, serials: Iterable[str], design_changed: bool = False) -> int:
+    serials = [s for s in dict.fromkeys(serials) if s]
+    if not serials or not tenant_id:
+        return 0
+    sets: Dict[str, Any] = {"tenant_id": tenant_id, "queued_at": datetime.now(timezone.utc)}
+    if design_changed:
+        sets["design"] = True
+    _db.wallet_refresh.update_one({"tenant_id": tenant_id},
+                                  {"$addToSet": {"apple": {"$each": serials}, "google": {"$each": serials}},
+                                   "$set": sets}, upsert=True)
+    return len(serials)
+
+
+def refresh_left(tenant_id: str) -> int:
+    doc = _db.wallet_refresh.find_one({"tenant_id": tenant_id}, {"_id": 0, "apple": 1, "google": 1}) or {}
+    return len(set(doc.get("apple") or []) | set(doc.get("google") or []))
+
+
+def drain_refresh(tenant_id: str, budget: Optional[float] = None) -> Dict[str, Any]:
+    """Send queued cards until `budget` seconds are spent (default: what this
+    request has left of REFRESH_BUDGET_S); returns what was done and how many
+    cards are still waiting (`left`)."""
+    out: Dict[str, Any] = {"devices": 0, "sent": 0, "google": {"cards": 0, "synced": 0, "errors": []}, "left": 0}
+    doc = _db.wallet_refresh.find_one({"tenant_id": tenant_id}, {"_id": 0})
+    if not doc:
+        return out
+    shared = budget is None
+    if shared:
+        budget = REFRESH_BUDGET_S - _SPENT.get()
+        if budget <= 0:                            # this request already spent its share
+            out["left"] = refresh_left(tenant_id)
+            return out
+    started = time.monotonic()
+    deadline = started + max(0.5, budget)
+    apple, google = list(doc.get("apple") or []), list(doc.get("google") or [])
+    done_apple: List[str] = []
+    for i in range(0, len(apple), APPLE_CHUNK):
+        if done_apple and time.monotonic() > deadline:
+            break
+        chunk = apple[i:i + APPLE_CHUNK]
+        try:
+            r = _notify_apple(chunk)
+            out["devices"] += int(r.get("devices") or 0)
+            out["sent"] += int(r.get("sent") or 0)
+        except Exception as exc:                   # noqa: BLE001 — a push never breaks the queue
+            print(f"wallet refresh: apple failed ({exc})")
+        done_apple += chunk
+    done_google: List[str] = []
+    if google and time.monotonic() < deadline:
+        try:
+            g = google_sync(google, update_class=bool(doc.get("design")), deadline=deadline)
+            done_google = g.pop("done", [])
+            out["google"] = g
+        except Exception as exc:                   # noqa: BLE001
+            out["google"]["errors"].append(str(exc)[:160])
+    if done_apple or done_google:
+        _db.wallet_refresh.update_one({"tenant_id": tenant_id},
+                                      {"$pull": {"apple": {"$in": done_apple}, "google": {"$in": done_google}}})
+    left = refresh_left(tenant_id)
+    if not left:
+        _db.wallet_refresh.delete_one({"tenant_id": tenant_id, "apple": {"$size": 0}, "google": {"$size": 0}})
+    out["left"] = left
+    if shared:
+        _SPENT.set(_SPENT.get() + (time.monotonic() - started))
+    return out
+
+
+def drain_all(budget_each: float = 5.0) -> int:
+    """The cron's pass over every account with cards still waiting."""
+    n = 0
+    for d in list(_db.wallet_refresh.find({}, {"_id": 0, "tenant_id": 1})):
+        try:
+            drain_refresh(d["tenant_id"], budget_each)
+            n += 1
+        except Exception as exc:                   # noqa: BLE001
+            print(f"wallet refresh: {d.get('tenant_id')} failed ({exc})")
+    return n
+
+
+@router.post("/api/owner/wallet/refresh")
+def owner_wallet_refresh(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"]))):
+    """The page's follow-up after a save: send what is still waiting (a few
+    seconds' worth) and say how many cards are left."""
+    tid = token_data.tenant_id
+    if not _db.wallet_refresh.find_one({"tenant_id": tid}, {"_id": 1}):
+        return {"left": 0}
+    r = drain_refresh(tid, budget=20.0)
+    return {"left": r["left"], "sent": r["sent"], "google_synced": (r.get("google") or {}).get("synced", 0)}
 
 
 def _iso_or_none(d: Any) -> Optional[str]:
@@ -3271,7 +3381,8 @@ def _gw_reason(body: Dict[str, Any]) -> str:
     return str(err.get("message") or err.get("status") or "")[:160]
 
 
-def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool = False) -> Dict[str, Any]:
+def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool = False,
+                deadline: Optional[float] = None) -> Dict[str, Any]:
     """Push the current card to Google for every customer who added it.
 
     Apple pulls a changed pass after a push; Google does not — the server has
@@ -3280,15 +3391,19 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
     `notify` ("campaign" | "reward" | {"kind": "birthday" | "parrainage" | "near_reward", "header", "body"})
     adds a TEXT_AND_NOTIFY message; anything
     else updates the card without a notification. `update_class`: the design
-    changed (colours, logo, name) — only then is the class sent again."""
+    changed (colours, logo, name) — only then is the class sent again.
+    `deadline` (time.monotonic()): stop there; `done` lists the serials
+    handled (the refresh queue keeps the others)."""
     serials = [x for x in dict.fromkeys(serials) if x]
     kind = notify.get("kind") if isinstance(notify, dict) else notify
-    out: Dict[str, Any] = {"cards": 0, "synced": 0, "notified": 0, "errors": []}
+    out: Dict[str, Any] = {"cards": 0, "synced": 0, "notified": 0, "errors": [], "done": list(serials)}
     if not serials or not google_configured():
         return out
     rows = list(_db.google_wallet_objects.find({"serial": {"$in": serials}}, {"_id": 0}))
     if not rows:
         return out
+    have = {r["serial"] for r in rows}
+    out["done"] = [x for x in serials if x not in have]      # no Google card: nothing to send
     out["cards"] = len(rows)
     try:
         token = _gw_access_token()
@@ -3299,7 +3414,11 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
         out["errors"].append(msg)
         return out
     classes_done = set()
+    worked = 0
     for row in rows:
+        if deadline is not None and worked and time.monotonic() > deadline:
+            break                                  # at least one card per call, then the clock
+        worked += 1
         result = "ok"
         try:
             payload = _card_payload(row["serial"])
@@ -3352,6 +3471,7 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             out["errors"].append(result)
         _db.google_wallet_objects.update_one({"serial": row["serial"]}, {"$set": {
             "last_sync_at": datetime.now(timezone.utc), "last_sync_result": result[:200]}})
+        out["done"].append(row["serial"])
     out["errors"] = out["errors"][:3]
     return out
 

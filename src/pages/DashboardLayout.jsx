@@ -21,6 +21,7 @@ import {
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
 import { protectNames } from '../lib/translator';
+import { drainWallet, kickWallet } from '../lib/walletRefresh';
 
 /* =====================================================================
    DashboardLayout — the shell used by every authenticated page.
@@ -397,6 +398,14 @@ const DashboardLayout = () => {
   }, []);
   const [menuOpen, setMenuOpen] = React.useState(false);
   React.useEffect(() => { setMenuOpen(false); }, [currentPath]);
+  // Wallet cards a save left queued: sent in the background (lib/walletRefresh)
+  React.useEffect(() => {
+    if (!['business_owner', 'administrateur', 'manager'].includes(user?.role)) return undefined;
+    drainWallet();                               // anything left from before
+    const on = () => kickWallet();
+    window.addEventListener('fidclic:wallet-kick', on);
+    return () => window.removeEventListener('fidclic:wallet-kick', on);
+  }, [user?.role]);
   React.useEffect(() => {
     if (!menuOpen) return undefined;
     const key = (e) => { if (e.key === 'Escape') setMenuOpen(false); };

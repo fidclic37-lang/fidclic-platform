@@ -58,6 +58,10 @@ const settingsSaved = (r) => {
   try {
     const m = String(r?.config?.method || '').toLowerCase();
     if (m && m !== 'get' && SETTINGS_SAVE.test(r?.config?.url || '')) window.dispatchEvent(new Event('fidclic:settings-saved'));
+    // any owner change may have queued Wallet cards: the layout sends them
+    // (lib/walletRefresh) — never the follow-up call itself
+    const u = String(r?.config?.url || '');
+    if (m && m !== 'get' && /^\/?owner\//.test(u) && !/wallet\/refresh/.test(u)) window.dispatchEvent(new Event('fidclic:wallet-kick'));
   } catch (_e) { /* never in the way of a response */ }
   return r;
 };
@@ -716,6 +720,7 @@ export const ownerAPI = {
   copilotChatHistory: () => api.get('/owner/copilot/chat'),
 
   walletNotify: () => api.post('/owner/wallet/notify'),
+  walletRefresh: () => api.post('/owner/wallet/refresh'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
   getActiveCardOverrideCount: () => api.get('/owner/card-overrides/active-count'),

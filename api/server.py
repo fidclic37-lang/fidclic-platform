@@ -93,6 +93,10 @@ app.add_middleware(
 
 # Database Initialization — synchronous pymongo for Vercel serverless reliability
 MONGODB_URI = os.environ.get("MONGODB_URI", "")
+# Server-Timing on every /api answer: whole time, MongoDB time and calls
+# (services/server_timing — the listener must exist before the client).
+from services import server_timing as _ST  # noqa: E402
+_ST.install_listener()
 
 if MONGODB_URI:
     client = pymongo.MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, tz_aware=True)
@@ -107,6 +111,7 @@ else:
 from features import store_cards as _SC  # noqa: E402
 _SC.init(db)
 app.add_middleware(_SC.StoreMiddleware)
+app.add_middleware(_ST.TimingMiddleware)
 
 # ─────────────────────────────────────────────────────────────────────
 # RGPD / GDPR — Audit trail (Sprint 1)
@@ -11844,6 +11849,12 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         push_wallet_summary["geo_purged"] = _GA.purge(now)
     except Exception as _e:
         print(f"geo passes runner failed (non-fatal): {_e}")
+    # Wallet cards still waiting after a save (wallet_passes.queue_refresh)
+    try:
+        from features.wallet_passes import drain_all as _drain_wallet
+        push_wallet_summary["wallet_refresh"] = _drain_wallet()
+    except Exception as _e:
+        print(f"wallet refresh queue failed (non-fatal): {_e}")
 
     # FidClic IA Autopilot — prepares (never sends) the week's campaign steps
     # for the shops that switched it on. Sending waits for the merchant's OK.
