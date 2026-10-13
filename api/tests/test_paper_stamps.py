@@ -92,7 +92,8 @@ def main():
     check("4 paper + today's visit = 5 stamps on the receipt", d["stamps_in_cycle"] == 5 and d["paper_stamps"] == 4)
     c = db.customers.find_one({"id": cid})
     check("one real visit only (not 5)", c["visits"] == 1)
-    check("points of one visit only (10, not 50)", c["points"] == 10)
+    # a Tampons card gives tampons, never points (QA BUG-009, 2026-10-13)
+    check("no points on a Tampons card (not 10, not 50)", c["points"] == 0)
     check("palier unchanged by paper stamps", c["tier"] == "bronze")
     check("the card the customer sees reads 5", card(cid)["customer"]["cycle_visits"] == 5
           and card(cid)["card"].get("stamps_earned", 5) == 5)

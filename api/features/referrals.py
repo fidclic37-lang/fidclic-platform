@@ -39,6 +39,7 @@ from typing import Any, Dict, Optional
 import re
 import secrets
 import string
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -67,6 +68,13 @@ def init(db):
 
 
 REWARD_MODES = ("once", "every", "first_then")
+# What each side receives (user, 2026-10-13): the owner chooses, for the
+# parrain and for the filleul separately, points, tampons or an offer of
+# their own (« 1 café offert ») handed over at the till — whatever the
+# programme of the card.
+REWARD_KINDS = ("points", "stamps", "offer")
+SIDES = ("referrer", "referee")
+OFFER_MAX = 80
 
 
 # ---------- Models ----------
@@ -83,6 +91,17 @@ class ReferralConfig(BaseModel):
     reward_mode: str = "once"
     referrer_reward_points_next: int = 0
     referee_reward_points_next: int = 0
+    # each side's kind of reward, and its amount for tampons / words for an offer
+    referrer_reward_kind: str = "points"
+    referee_reward_kind: str = "points"
+    referrer_reward_stamps: int = 1
+    referee_reward_stamps: int = 1
+    referrer_reward_stamps_next: int = 0
+    referee_reward_stamps_next: int = 0
+    referrer_reward_offer: str = ""
+    referee_reward_offer: str = ""
+    referrer_reward_offer_next: str = ""
+    referee_reward_offer_next: str = ""
     referrer_message: str = "Thanks for sharing! You earned {points} points."
     referee_message: str = "Welcome via a friend! Here are {points} points to start."
 
@@ -109,6 +128,15 @@ def update_config(
     for f in ("referrer_reward_points", "referee_reward_points",
               "referrer_reward_points_next", "referee_reward_points_next"):
         setattr(config, f, max(0, min(10000, int(getattr(config, f) or 0))))
+    for side, who in (("referrer", "parrain"), ("referee", "filleul")):
+        if getattr(config, f"{side}_reward_kind") not in REWARD_KINDS:
+            raise HTTPException(status_code=400, detail="Type de récompense inconnu.")
+        for f in (f"{side}_reward_stamps", f"{side}_reward_stamps_next"):
+            setattr(config, f, max(0, min(50, int(getattr(config, f) or 0))))
+        for f in (f"{side}_reward_offer", f"{side}_reward_offer_next"):
+            setattr(config, f, " ".join(str(getattr(config, f) or "").split())[:OFFER_MAX])
+        if config.enabled and getattr(config, f"{side}_reward_kind") == "offer" and not getattr(config, f"{side}_reward_offer"):
+            raise HTTPException(status_code=400, detail=f"Décrivez l'offre du {who} (par exemple « 1 café offert »).")
     config.minimum_visits_to_earn = max(1, min(20, int(config.minimum_visits_to_earn or 1)))
     payload = config.model_dump()
     _db.referral_config.update_one(
@@ -176,6 +204,8 @@ def record(tenant_id: str, parrain_barcode: str, filleul: Dict[str, Any]) -> Opt
         # must not rewrite what a referral recorded today promised.
         "referrer_points_promised": int(cfg.get("referrer_reward_points", 50)),
         "referee_points_promised": int(cfg.get("referee_reward_points", 25)),
+        "referrer_reward_promised": reward_of(cfg, "referrer"),
+        "referee_reward_promised": reward_of(cfg, "referee"),
         "referrer_pending": True,
         "source": "qr_card",
         "created_at": datetime.now(timezone.utc),
@@ -215,8 +245,11 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
     if row.get("referrer_pending", True):
         # The first payment — what was promised at signup. Claimed first: two
         # tills scanning the same card at once must not pay twice.
-        parrain_pts = int(row.get("referrer_points_promised") or 0)
-        filleul_pts = int(row.get("referee_points_promised") or row.get("referee_points") or 0)
+        parrain_r = row.get("referrer_reward_promised") or {
+            "kind": "points", "n": int(row.get("referrer_points_promised") or 0)}
+        filleul_r = row.get("referee_reward_promised") or {
+            "kind": "points", "n": int(row.get("referee_points_promised") or row.get("referee_points") or 0)}
+        parrain_pts, filleul_pts = _points(parrain_r), _points(filleul_r)
         claimed = _db.referral_redemptions.update_one(
             {"_id": row["_id"], "referrer_pending": True},
             {"$set": {"referrer_pending": False, "referrer_points": parrain_pts, "referee_points": filleul_pts,
@@ -228,12 +261,9 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
         last = int(row.get("last_rewarded_visit") or need)
         if visits <= last:
             return None                                    # this visit is already paid
-        if mode == "every":
-            parrain_pts = int(cfg.get("referrer_reward_points", 50) or 0)
-            filleul_pts = int(cfg.get("referee_reward_points", 25) or 0)
-        else:
-            parrain_pts = int(cfg.get("referrer_reward_points_next", 0) or 0)
-            filleul_pts = int(cfg.get("referee_reward_points_next", 0) or 0)
+        which = "first" if mode == "every" else "next"
+        parrain_r, filleul_r = reward_of(cfg, "referrer", which), reward_of(cfg, "referee", which)
+        parrain_pts, filleul_pts = _points(parrain_r), _points(filleul_r)
         claimed = _db.referral_redemptions.update_one(
             {"_id": row["_id"], "$or": [{"last_rewarded_visit": {"$lt": visits}},
                                         {"last_rewarded_visit": {"$exists": False}}]},
@@ -243,16 +273,87 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
     if not getattr(claimed, "modified_count", 1):
         return None
 
-    if parrain_pts:
-        _db.customers.update_one({"id": row["referrer_customer_id"]}, {"$inc": {"points": parrain_pts}})
-    if filleul_pts:
-        _db.customers.update_one({"id": filleul_id}, {"$inc": {"points": filleul_pts}})
+    tag = f"parrainage:{row.get('referee_customer_id')}:{visits}"
+    _give(tenant_id, row["referrer_customer_id"], parrain_r, f"{tag}:parrain")
+    _give(tenant_id, filleul_id, filleul_r, f"{tag}:filleul")
     try:
-        _announce(tenant_id, row["referrer_customer_id"], filleul, kind, parrain_pts, filleul_pts)
-    except Exception as exc:                   # a message must never cost the points
+        _announce(tenant_id, row["referrer_customer_id"], filleul, kind, parrain_r, filleul_r)
+    except Exception as exc:                   # a message must never cost the reward
         print(f"referrals: announce failed ({exc})")
     return {"referrer_customer_id": row["referrer_customer_id"], "kind": kind,
-            "referrer_points": parrain_pts, "referee_points": filleul_pts}
+            "referrer_points": parrain_pts, "referee_points": filleul_pts,
+            "referrer_reward": label(parrain_r), "referee_reward": label(filleul_r)}
+
+
+# ---------------------------------------------------------------------------
+# The rewards themselves
+# ---------------------------------------------------------------------------
+def reward_of(cfg: Dict[str, Any], side: str, which: str = "first") -> Dict[str, Any]:
+    """One side's reward from the settings: {kind: points, n} · {kind: stamps,
+    n} · {kind: offer, text}. `which`: « first » (the validation, and every
+    visit in « À chaque visite »), « next » (the later visits of « Bonus puis
+    récurrent »)."""
+    kind = cfg.get(f"{side}_reward_kind")
+    kind = kind if kind in REWARD_KINDS else "points"
+    nx = "_next" if which == "next" else ""
+    if kind == "offer":
+        return {"kind": "offer", "text": str(cfg.get(f"{side}_reward_offer{nx}") or "").strip()}
+    if kind == "stamps":
+        return {"kind": "stamps", "n": max(0, int(cfg.get(f"{side}_reward_stamps{nx}", 0 if nx else 1) or 0))}
+    default = 0 if nx else (50 if side == "referrer" else 25)
+    return {"kind": "points", "n": max(0, int(cfg.get(f"{side}_reward_points{nx}", default) or 0))}
+
+
+def _points(r: Dict[str, Any]) -> int:
+    return int(r.get("n") or 0) if r.get("kind") == "points" else 0
+
+
+def label(r: Dict[str, Any]) -> str:
+    """« 50 points », « 2 tampons », « 1 café offert » — or « » for nothing."""
+    kind, n = r.get("kind"), int(r.get("n") or 0)
+    if kind == "offer":
+        return str(r.get("text") or "").strip()
+    if not n:
+        return ""
+    if kind == "stamps":
+        return f"{n} tampon{'s' if n > 1 else ''}"
+    return f"{n} point{'s' if n > 1 else ''}"
+
+
+def _give(tenant_id: str, customer_id: str, r: Dict[str, Any], tag: str) -> None:
+    """Hand one side its reward.
+      points  added to the card's points
+      stamps  on the card's meter, the way a paper card's stamps are moved in
+              (the cycle marker steps back — visits are not invented)
+      offer   waits at the till with « Remettre », beside the défis won
+    """
+    if not label(r):
+        return
+    kind = r.get("kind")
+    now = datetime.now(timezone.utc)
+    if kind == "points":
+        _db.customers.update_one({"id": customer_id}, {"$inc": {"points": int(r["n"])}, "$set": {"updated_at": now}})
+    elif kind == "stamps":
+        # a tampon is worth « visits_per_stamp » visits on the client's own card
+        # (their home store's, multi-store 2026-10-12)
+        cust = _db.customers.find_one({"id": customer_id}, {"_id": 0, "branch_id": 1}) or {}
+        try:
+            from features import store_cards as SC
+            with SC.store(tenant_id, cust.get("branch_id")):
+                tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+        except Exception:
+            tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+        per = max(1, int(tpl.get("visits_per_stamp", 1) or 1))
+        _db.customers.update_one({"id": customer_id}, {"$inc": {"visits_at_last_redemption": -int(r["n"]) * per},
+                                                       "$set": {"updated_at": now}})
+    elif kind == "offer":
+        try:
+            _db.defi_rewards.insert_one({
+                "id": str(uuid.uuid4()), "tenant_id": tenant_id, "campaign_id": tag, "customer_id": customer_id,
+                "kind": "parrainage", "title": "Parrainage", "reward": r["text"], "won_at": now,
+                "expires_at": None, "status": "pending"})
+        except Exception as exc:               # unique (campaign_id, customer): this visit already gave it
+            print(f"referrals: offer not banked ({exc})")
 
 
 def _first(name: Any, fallback: str) -> str:
@@ -260,19 +361,22 @@ def _first(name: Any, fallback: str) -> str:
     return ((str(name or "").strip().split(" ") or [""])[0] or fallback).replace("%", "")
 
 
-def messages(kind: str, shop: str, parrain: str, filleul: str, parrain_pts: int, filleul_pts: int) -> Dict[str, Any]:
-    """What each side is told when parrainage points land (user, 2026-10-09):
-    the parrain hears that their friend came, the filleul whom they owe it to."""
+def messages(kind: str, shop: str, parrain: str, filleul: str, parrain_got: Any, filleul_got: Any) -> Dict[str, Any]:
+    """What each side is told when a parrainage reward lands (user, 2026-10-09):
+    the parrain hears that their friend came, the filleul whom they owe it to.
+    `*_got`: a number of points, or the reward's words (« 2 tampons »)."""
+    def what(x):
+        return f"+{x} points" if isinstance(x, int) else (f"+{x}" if str(x)[:1].isdigit() else str(x))
     if kind == "first":
-        return {"parrain": ("Parrainage réussi 🎉", f"Votre ami {filleul} est venu chez {shop} : +{parrain_pts} points."),
+        return {"parrain": ("Parrainage réussi 🎉", f"Votre ami {filleul} est venu chez {shop} : {what(parrain_got)}."),
                 "filleul": (f"Bienvenue chez {shop} 🎉",
-                            f"Merci d'être venu grâce à {parrain} : +{filleul_pts} points de parrainage.")}
-    return {"parrain": ("Parrainage 🎉", f"{filleul} est revenu chez {shop} : +{parrain_pts} points."),
-            "filleul": ("Parrainage 🎉", f"+{filleul_pts} points de parrainage grâce à {parrain}.")}
+                            f"Merci d'être venu grâce à {parrain} : {what(filleul_got)} de parrainage.")}
+    return {"parrain": ("Parrainage 🎉", f"{filleul} est revenu chez {shop} : {what(parrain_got)}."),
+            "filleul": ("Parrainage 🎉", f"{what(filleul_got)} de parrainage grâce à {parrain}.")}
 
 
 def _announce(tenant_id: str, parrain_id: str, filleul: Dict[str, Any], kind: str,
-              parrain_pts: int, filleul_pts: int) -> None:
+              parrain_r: Dict[str, Any], filleul_r: Dict[str, Any]) -> None:
     """Tell each side, on their own card, through the shop's « Parrainage »
     automations (features/automations, 2026-10-11): one for the parrain, one
     for the filleul, words and button chosen by the shop. No automation
@@ -281,10 +385,12 @@ def _announce(tenant_id: str, parrain_id: str, filleul: Dict[str, Any], kind: st
     parrain = _db.customers.find_one({"id": parrain_id}, {"_id": 0}) or {}
     filleul_doc = _db.customers.find_one({"id": filleul["id"]}, {"_id": 0}) or filleul
     names = {"parrain": _first(parrain.get("name"), "votre parrain"), "filleul": _first(filleul.get("name"), "Votre ami")}
-    for cust, pts, side in ((parrain, parrain_pts, "parrain"), (filleul_doc, filleul_pts, "filleul")):
-        if not pts or not cust.get("id"):
+    as_reward = lambda x: x if isinstance(x, dict) else {"kind": "points", "n": int(x or 0)}   # noqa: E731 — a number is points
+    for cust, r, side in ((parrain, as_reward(parrain_r), "parrain"), (filleul_doc, as_reward(filleul_r), "filleul")):
+        if not label(r) or not cust.get("id"):
             continue
-        AU.fire("referral", tenant_id, cust, {"side": side, "points": pts, "kind": kind, **names})
+        AU.fire("referral", tenant_id, cust, {"side": side, "points": _points(r), "reward": label(r),
+                                              "reward_kind": r.get("kind"), "kind": kind, **names})
 
 
 @router.get("/api/card/{barcode_id}/inviter")
@@ -309,6 +415,9 @@ def inviter(barcode_id: str):
         "business_name": tenant.get("name"),
         "referee_points": int(cfg.get("referee_reward_points", 25)),
         "referrer_points": int(cfg.get("referrer_reward_points", 50)),
+        # what each side receives, in words (« 25 points », « 1 tampon », « 1 café offert »)
+        "referee_reward": label(reward_of(cfg, "referee")),
+        "referrer_reward": label(reward_of(cfg, "referrer")),
         # when they are paid, so the signup form says it right
         "minimum_visits": max(1, int(cfg.get("minimum_visits_to_earn", 1) or 1)),
         "reward_mode": cfg.get("reward_mode") if cfg.get("reward_mode") in REWARD_MODES else "once",

@@ -107,7 +107,7 @@ def after_scan(tenant_id: str, customer: Dict[str, Any], at: Optional[datetime] 
 
 def _public(r: Dict[str, Any], at: datetime) -> Dict[str, Any]:
     exp = K.aware(r.get("expires_at"))
-    return {"id": r["id"], "title": r.get("title"), "reward": r.get("reward"),
+    return {"id": r["id"], "title": r.get("title"), "reward": r.get("reward"), "kind": r.get("kind") or "defi",
             "won_at": K.aware(r.get("won_at")).isoformat() if K.aware(r.get("won_at")) else None,
             "expires_at": exp.isoformat() if exp else None,
             "status": "expired" if r.get("status") == "pending" and exp and exp < at else r.get("status")}
@@ -116,7 +116,9 @@ def _public(r: Dict[str, Any], at: datetime) -> Dict[str, Any]:
 def pending_rewards(customer_id: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     at = at or _now()
     rows = _db.defi_rewards.find({"customer_id": customer_id, "status": "pending"}, {"_id": 0})
-    return [_public(r, at) for r in rows if (e := K.aware(r.get("expires_at"))) and e >= at]
+    # a parrainage offer (features/referrals, 2026-10-13) waits here too, with no end date
+    return [_public(r, at) for r in rows
+            if (e := K.aware(r.get("expires_at"))) is None and r.get("kind") == "parrainage" or (e and e >= at)]
 
 
 def card_view(customer: Dict[str, Any], at: Optional[datetime] = None) -> Dict[str, Any]:

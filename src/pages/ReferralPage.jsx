@@ -246,6 +246,46 @@ const NumberField = ({ label, hint, value, onChange, min = 0, max = 10000 }) => 
   </label>
 );
 
+// What one side receives (user, 2026-10-13): points, tampons or the shop's
+// own offer, chosen for the parrain and for the filleul separately.
+const KINDS = [['points', 'Points'], ['stamps', 'Tampons'], ['offer', 'Offre']];
+const RewardEditor = ({ side, who, form, setForm, when, hint }) => {
+  const kind = form[`${side}_reward_kind`] || 'points';
+  const next = when === 'next' ? '_next' : '';
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const title = `${who}${when === 'next' ? ' — visites suivantes' : form.reward_mode === 'first_then' ? ' — à la validation'
+    : form.reward_mode === 'every' ? ' — à chaque visite' : ''}`;
+  return (
+    <div className="rounded-xl border border-[#E6EEFB] p-3">
+      <p className="mb-2 text-[12.5px] font-semibold text-[#334155]">{title}</p>
+      {when !== 'next' && (
+        <div role="group" aria-label={`Récompense ${who.toLowerCase()}`} className="mb-2 grid grid-cols-3 gap-1 rounded-lg bg-[#F4F7FC] p-1">
+          {KINDS.map(([k, l]) => (
+            <button key={k} type="button" aria-pressed={kind === k} onClick={() => set(`${side}_reward_kind`, k)}
+                    className={`rounded-md py-1.5 text-[12.5px] font-semibold ${kind === k ? 'bg-white text-[#2F6BFF] shadow-sm' : 'text-[#64748B]'}`}>{l}</button>
+          ))}
+        </div>
+      )}
+      {kind === 'offer' ? (
+        <label className="block">
+          <input value={form[`${side}_reward_offer${next}`] || ''} maxLength={80}
+                 placeholder={when === 'next' ? 'Rien (laisser vide)' : 'Ex. : 1 café offert'}
+                 aria-label={`Offre ${who.toLowerCase()}${next ? ' visites suivantes' : ''}`}
+                 onChange={(e) => set(`${side}_reward_offer${next}`, e.target.value)}
+                 className="w-full rounded-xl border border-[#E6EEFB] bg-white px-3 py-2.5 text-[13px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
+          <span className="mt-1 block text-[11.5px] leading-snug text-[#94A3B8]">{hint} Remise en caisse avec « Remettre ».</span>
+        </label>
+      ) : (
+        <NumberField label={kind === 'stamps' ? 'Nombre de tampons' : 'Nombre de points'}
+                     max={kind === 'stamps' ? 50 : 10000}
+                     value={form[`${side}_reward_${kind === 'stamps' ? 'stamps' : 'points'}${next}`] ?? (kind === 'stamps' && !next ? 1 : 0)}
+                     hint={hint}
+                     onChange={(v) => set(`${side}_reward_${kind === 'stamps' ? 'stamps' : 'points'}${next}`, v)} />
+      )}
+    </div>
+  );
+};
+
 const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
   const [form, setForm] = useState({ ...config, enabled });
   const [saving, setSaving] = useState(false);
@@ -261,6 +301,13 @@ const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
         reward_mode: form.reward_mode || 'once',
         referrer_reward_points_next: form.referrer_reward_points_next || 0,
         referee_reward_points_next: form.referee_reward_points_next || 0,
+        ...Object.fromEntries(['referrer', 'referee'].flatMap((s) => [
+          [`${s}_reward_kind`, form[`${s}_reward_kind`] || 'points'],
+          [`${s}_reward_stamps`, form[`${s}_reward_stamps`] ?? 1],
+          [`${s}_reward_stamps_next`, form[`${s}_reward_stamps_next`] || 0],
+          [`${s}_reward_offer`, form[`${s}_reward_offer`] || ''],
+          [`${s}_reward_offer_next`, form[`${s}_reward_offer_next`] || ''],
+        ])),
       });
       onSaved();
     } catch (e) {
@@ -312,23 +359,17 @@ const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
           </button>
         ))}
       </div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <NumberField label={form.reward_mode === 'first_then' ? 'Points pour le parrain — à la validation' : form.reward_mode === 'every' ? 'Points pour le parrain — à chaque visite' : 'Points pour le parrain'}
-                     value={form.referrer_reward_points}
-                     hint={`Crédités à la ${ordinal(form.minimum_visits_to_earn)} visite du filleul${form.reward_mode === 'every' ? ', puis à chaque visite suivante' : ''}.`}
-                     onChange={(v) => setForm((f) => ({ ...f, referrer_reward_points: v }))} />
-        <NumberField label={form.reward_mode === 'first_then' ? 'Points pour le filleul — à la validation' : form.reward_mode === 'every' ? 'Points pour le filleul — à chaque visite' : 'Points pour le filleul'}
-                     value={form.referee_reward_points}
-                     hint={`Crédités à sa ${ordinal(form.minimum_visits_to_earn)} visite${form.reward_mode === 'every' ? ', puis à chaque visite suivante' : ''} — pas à l'inscription.`}
-                     onChange={(v) => setForm((f) => ({ ...f, referee_reward_points: v }))} />
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <RewardEditor side="referrer" who="Parrain" form={form} setForm={setForm}
+                      hint={`À la ${ordinal(form.minimum_visits_to_earn)} visite du filleul${form.reward_mode === 'every' ? ', puis à chaque visite suivante' : ''}.`} />
+        <RewardEditor side="referee" who="Filleul" form={form} setForm={setForm}
+                      hint={`À sa ${ordinal(form.minimum_visits_to_earn)} visite${form.reward_mode === 'every' ? ', puis à chaque visite suivante' : ''} — pas à l'inscription.`} />
         {form.reward_mode === 'first_then' && (
           <>
-            <NumberField label="Points pour le parrain — visites suivantes" value={form.referrer_reward_points_next || 0}
-                         hint="À chaque visite du filleul après la validation."
-                         onChange={(v) => setForm((f) => ({ ...f, referrer_reward_points_next: v }))} />
-            <NumberField label="Points pour le filleul — visites suivantes" value={form.referee_reward_points_next || 0}
-                         hint="À chacune de ses visites après la validation."
-                         onChange={(v) => setForm((f) => ({ ...f, referee_reward_points_next: v }))} />
+            <RewardEditor side="referrer" who="Parrain" when="next" form={form} setForm={setForm}
+                          hint="À chaque visite du filleul après la validation." />
+            <RewardEditor side="referee" who="Filleul" when="next" form={form} setForm={setForm}
+                          hint="À chacune de ses visites après la validation." />
           </>
         )}
       </div>

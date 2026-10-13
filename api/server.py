@@ -5124,9 +5124,16 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     mode = (card_template.get("points_mode") or "per_visit").lower()
     ppe = float(card_template.get("points_per_euro") or 10)
     ppv = int(card_template.get("points_per_visit", 10) or 10)
-    programme = (card_template.get("programme") or "").lower()
+    # the programme as the whole app reads it (features/loyalty_card._programme:
+    # a card saved before « programme » existed is a tampons card)
+    from features import loyalty_card as _LCP
+    programme = _LCP._programme(card_template)
     amount = float(req.amount_paid or 0)
-    if programme == "cashback":
+    if programme == "stamps":
+        # A Tampons programme gives tampons, never points (QA BUG-009, user
+        # 2026-10-13: « Haan, sirf tampons »). Points already on a card stay.
+        points_to_add = 0
+    elif programme == "cashback":
         # The customer builds a euro balance, held in cents so the ledger
         # stays in integers like every other points programme.
         rate = float(card_template.get("cashback_rate") or 5)
@@ -5216,9 +5223,10 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # ---- ALL OPTIONAL SIDE EFFECTS BELOW — wrapped, never block response ----
     # Parrainage — this may be the visit the referral was waiting for. Points
     # are promised at signup and paid here, on a visit that really happened.
+    referral_paid = None
     try:
         from features.referrals import settle as _settle_referral
-        _settle_referral(token_data.tenant_id, cust["id"])
+        referral_paid = _settle_referral(token_data.tenant_id, cust["id"])
     except Exception as _e:
         print(f"scan_visit: referral settle failed (non-fatal): {_e}")
 
@@ -5281,9 +5289,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         scan_tpl = db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     except Exception:
         scan_tpl = {}
+    per_stamp_scan = max(int(scan_tpl.get("visits_per_stamp", 1) or 1), 1)
     reward_threshold = max(
-        int(scan_tpl.get("reward_threshold_stamps", 10) or 10) *
-        int(scan_tpl.get("visits_per_stamp", 1) or 1),
+        int(scan_tpl.get("reward_threshold_stamps", 10) or 10) * per_stamp_scan,
         1,
     )
 
@@ -5383,6 +5391,17 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "cycle_restarted": cycles_completed > 0,
         # stamps moved from a paper card at this scan (0 when none)
         "paper_stamps": paper["stamps"] if paper else 0,
+        # The receipt in the card's own unit (QA BUG-009): the programme, and
+        # for tampons what this scan gave and where the card stands, counted
+        # in tampons — « +1 tampon » was written whatever « visites par
+        # tampon » said, and 6/20 showed for 3 tampons out of 10.
+        "programme": programme,
+        "stamps_earned": (1 if per_stamp_scan == 1 or stamps_in_cycle % per_stamp_scan == 0 else 0)
+                         + (paper["stamps"] if paper else 0),
+        "stamps_on_card": stamps_capped // per_stamp_scan,
+        "stamps_target": reward_threshold // per_stamp_scan,
+        # the filleul's parrainage reward, when this visit validated it
+        "referral_reward": (referral_paid or {}).get("referee_reward") or "",
         # Campagnes (2026-10-10): défis this visit won, rewards to hand over,
         # and the offers valid right now — the till reminds the staff
         "defis_won": defis_won,

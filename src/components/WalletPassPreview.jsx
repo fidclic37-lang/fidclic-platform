@@ -52,7 +52,13 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const stamps = Math.min(threshold, Math.floor(onCard / visitsPerStamp));
   const remaining = threshold - stamps;
   const meterMax = threshold * visitsPerStamp * pointsPerVisit;
-  const earned = Math.min(onCard * pointsPerVisit, meterMax);
+  // The client's real balance, as the Wallet pass and « Votre statut » show
+  // it — parrainage and welcome bonuses included (QA F28: the card read 50
+  // from 5 visits × 10 while the client had 100). Only a sample without a
+  // balance (the designer's preview) is worked out from its visits.
+  const earned = customer && customer.points != null && customer.points !== ''
+    ? (parseInt(customer.points, 10) || 0)
+    : Math.min(onCard * pointsPerVisit, meterMax);
   const tierKey = (customer?.tier || 'bronze').toLowerCase();
   const tierLabels = { bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' };
   const barcodeId = customer?.barcode_id || '';
@@ -267,11 +273,12 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
              primary shows points — no duplicated 6/10. ── */}
       {!hasBanner && (
       <div style={{ padding: `${px(12)}px ${px(14)}px 0` }}>
-        <div style={label}>{showStamps || showPoints ? pointsLabel
-                                                      : (card.stamps_label || 'Tampons').toUpperCase()}</div>
+        {/* a Tampons card shows tampons, never points (QA BUG-009 / F28) */}
+        <div style={label}>{showPoints ? pointsLabel
+                                       : (card.stamps_label || 'Tampons').toUpperCase()}</div>
         <div style={{ fontSize: px(30), fontWeight: 700, color: t.ink, lineHeight: 1.05,
                       letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>
-          {showStamps || showPoints ? earned : `${stamps} / ${threshold}`}
+          {showPoints ? earned : `${stamps} / ${threshold}`}
         </div>
       </div>
       )}
