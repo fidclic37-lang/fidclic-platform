@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ownerAPI } from '../lib/api';
-import { ScanLine, CheckCircle2, AlertCircle, Euro, Camera, Building2, Gift, BellRing, X, Info, Zap, SwitchCamera, Package, ChevronDown, ArrowRight, Stamp, Keyboard, Link2, ImageUp } from 'lucide-react';
+import { ScanLine, CheckCircle2, AlertCircle, Euro, Camera, Building2, Gift, BellRing, X, Info, Zap, SwitchCamera, Package, ChevronDown, ChevronLeft, ArrowRight, Stamp, Keyboard, Link2, ImageUp } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 // The dashboard's blue palette — every account (owner, manager, employé)
 // works in the same colours.
@@ -862,9 +862,15 @@ const ScanPage = () => {
   // no form, no second « Enregistrer la visite » for the same scan (it made a
   // second visit at 0 €). The next visit starts from a new scan or code.
   const [recorded, setRecorded] = useState(null);
-  const scanAnother = () => { resetVisit(); setBarcode(''); setCard(null); setScanResult(null); setStatus(null); setRecorded(null); };
+  // Every scan is a new visit, in steps (user, 2026-10-14): 1. the products and
+  // services, « Suivant » → 2. the récap, where the offer or reward is chosen,
+  // « Enregistrer la visite » → 3. the summary. Even the same card scanned again
+  // right away starts at step 1, like any visit.
+  const [step, setStep] = useState('items');
+  const scanAnother = () => { resetVisit(); setBarcode(''); setCard(null); setScanResult(null); setStatus(null); setRecorded(null); setStep('items'); };
   // a new code read (camera, photo, typed): a new visit, not the last one's summary
-  useEffect(() => { setRecorded(null); }, [barcode]);
+  useEffect(() => { setRecorded(null); setStep('items'); }, [barcode]);
+  const paperTooMany = paperOn && parseInt(paperStamps || '0', 10) > (card?.paper?.max ?? 0);
 
   const registerVisit = async () => {
     if (!card) return;
@@ -888,6 +894,7 @@ const ScanPage = () => {
       // the summary below says « Visite enregistrée »; a banner only when the offer could not apply
       setStatus(failed ? { type: 'info', message: `Offre non appliquée : ${data.applied.error}` } : null);
       resetVisit();
+      setStep('items');
       // the card changed (stamps, reward used): read it again
       ownerAPI.scanCard(card.customer.barcode_id).then(({ data: d2 }) => setCard(d2)).catch(() => {});
     } catch (e) {
@@ -1014,6 +1021,21 @@ const ScanPage = () => {
             </div>
           </div>
 
+          <ol className="flex items-center justify-center gap-2 text-[12.5px] font-semibold" aria-label="Étapes de la visite">
+            {[['items', `1. ${words.many.charAt(0).toUpperCase() + words.many.slice(1)}`], ['review', '2. Récapitulatif'], ['done', '3. Terminé']].map(([k, l], i) => {
+              const at = recorded ? 'done' : step;
+              const order = ['items', 'review', 'done'];
+              const past = order.indexOf(k) < order.indexOf(at);
+              return (
+                <React.Fragment key={k}>
+                  {i > 0 && <span className="h-px w-8 bg-[#CBD5E1]" />}
+                  <li aria-current={k === at ? 'step' : undefined}
+                      className={`rounded-full px-3 py-1 ${k === at ? 'bg-[#1463FF] text-white' : past ? 'bg-[#E7F7EE] text-[#0F7A45]' : 'bg-[#F1F5F9] text-[#64748B]'}`}>{l}</li>
+                </React.Fragment>
+              );
+            })}
+          </ol>
+
           {recorded && (
             <div className="rounded-2xl border border-[#BFE8D1] bg-white p-5" data-testid="visit-summary">
               <p className="flex items-center gap-2 text-[16px] font-bold text-[#0B1C3F]">
@@ -1045,37 +1067,9 @@ const ScanPage = () => {
             </div>
           )}
 
-          {/* every offer and reward — exactly one can be chosen */}
-          {!recorded && card.applicables.length > 0 && (
-            <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
-              <p className="text-[14px] font-bold text-[#0B1C3F]">Offre / Récompense</p>
-              <p className="mb-3 text-[12.5px] text-[#64748B]">Une seule peut être appliquée à cette visite.</p>
-              <div className="grid gap-2 md:grid-cols-2">
-                {card.applicables.map((a) => {
-                  const on = apply === a.id;
-                  const off = a.tone === 'offer';
-                  return (
-                    <button key={a.id} type="button" onClick={() => setApply(on ? '' : a.id)} aria-pressed={on}
-                            className={`flex items-start gap-3 rounded-xl border p-3 text-left transition ${on ? 'border-[#2F6BFF] bg-[#F5F9FF] ring-2 ring-[#2F6BFF]/15' : 'border-[#E6EEFB] bg-white hover:border-[#BFD3FF]'}`}>
-                      <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${off ? 'bg-[#E7F7EE] text-[#0F7A45]' : 'bg-[#F7EDFF] text-[#7C3AED]'}`}>
-                        <Gift size={16} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">{a.title}</span>
-                        {a.sub && <span className="block text-[12.5px] text-[#64748B]">{a.sub}</span>}
-                        {a.after_visit && <span className="mt-1 inline-block rounded-md bg-[#FFF4DB] px-2 py-0.5 text-[11.5px] font-semibold text-[#92400E]">Débloquée après cette visite</span>}
-                      </span>
-                      <span className={`mt-1 h-4 w-4 shrink-0 rounded-full border-2 ${on ? 'border-[#2F6BFF] bg-[#2F6BFF]' : 'border-[#CBD5E1]'}`} />
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* the visit itself — until it is recorded */}
-          {!recorded && (
-          <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
+          {!recorded && step === 'items' && (
+          <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="visit-items">
             <p className="mb-3 text-[16px] font-bold text-[#0B1C3F]">Enregistrer une visite</p>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1146,17 +1140,80 @@ const ScanPage = () => {
                     )}
                   </div>
                 )}
-                {paperOn && parseInt(paperStamps || '0', 10) > card.paper.max && (
+                {paperTooMany && (
                   <p className="mt-1 text-[12.5px] text-[#C0392B]">{card.paper.max} tampons au maximum.</p>
                 )}
               </div>
             </div>
 
-            <button type="button" disabled={loading || (paperOn && parseInt(paperStamps || '0', 10) > card.paper.max)}
-                    onClick={registerVisit}
+            <button type="button" disabled={paperTooMany}
+                    onClick={() => { setStatus(null); setStep('review'); }}
                     className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50">
-              <Gift size={17} /> {loading ? 'Enregistrement…' : 'Enregistrer la visite'}
+              Suivant <ArrowRight size={17} />
             </button>
+          </div>
+          )}
+
+          {/* step 2: what is about to be written, and the one offer or reward */}
+          {!recorded && step === 'review' && (
+          <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="visit-review">
+            <p className="mb-3 text-[16px] font-bold text-[#0B1C3F]">Récapitulatif de la visite</p>
+            <dl className="grid gap-y-2 text-[13.5px]">
+              <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">{words.many.charAt(0).toUpperCase() + words.many.slice(1)}</dt>
+                <dd className="text-right text-[#0B1C3F]">{lines.length ? lines.map((l) => `${l.qty} × ${l.name}`).join(', ') : 'Aucun'}</dd></div>
+              {paperOn && parseInt(paperStamps || '0', 10) > 0 && (
+                <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Carte papier</dt>
+                  <dd className="text-right text-[#0B1C3F]">{parseInt(paperStamps, 10)} tampon{parseInt(paperStamps, 10) > 1 ? 's' : ''} reporté{parseInt(paperStamps, 10) > 1 ? 's' : ''}</dd></div>
+              )}
+            </dl>
+
+            <p className="mt-5 text-[14px] font-bold text-[#0B1C3F]">Offre / Récompense</p>
+            {card.applicables.length > 0 ? (
+              <>
+                <p className="mb-3 text-[12.5px] text-[#64748B]">Une seule peut être appliquée à cette visite.</p>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {card.applicables.map((a) => {
+                    const on = apply === a.id;
+                    const off = a.tone === 'offer';
+                    return (
+                      <button key={a.id} type="button" onClick={() => setApply(on ? '' : a.id)} aria-pressed={on}
+                              className={`flex items-start gap-3 rounded-xl border p-3 text-left transition ${on ? 'border-[#2F6BFF] bg-[#F5F9FF] ring-2 ring-[#2F6BFF]/15' : 'border-[#E6EEFB] bg-white hover:border-[#BFD3FF]'}`}>
+                        <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${off ? 'bg-[#E7F7EE] text-[#0F7A45]' : 'bg-[#F7EDFF] text-[#7C3AED]'}`}>
+                          <Gift size={16} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">{a.title}</span>
+                          {a.sub && <span className="block text-[12.5px] text-[#64748B]">{a.sub}</span>}
+                          {a.after_visit && <span className="mt-1 inline-block rounded-md bg-[#FFF4DB] px-2 py-0.5 text-[11.5px] font-semibold text-[#92400E]">Débloquée après cette visite</span>}
+                        </span>
+                        <span className={`mt-1 h-4 w-4 shrink-0 rounded-full border-2 ${on ? 'border-[#2F6BFF] bg-[#2F6BFF]' : 'border-[#CBD5E1]'}`} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <p className="mt-1 rounded-xl bg-[#F8FAFF] px-4 py-3 text-[13px] text-[#64748B]">Aucune offre ni récompense disponible pour ce client.</p>
+            )}
+
+            <div className="mt-5 flex items-baseline justify-between gap-3 rounded-xl bg-[#F8FAFF] px-4 py-3">
+              <span className="text-[14px] font-semibold text-[#334155]">Montant payé</span>
+              <span className="text-right">
+                <span className="block text-[20px] font-extrabold tabular-nums text-[#0B1C3F]">{money(manual ? parseFloat(amountPaid || '0') || 0 : autoAmount)}</span>
+                {discount > 0 && !manual && <span className="block text-[12.5px] text-[#0F7A45]">{money(linesTotal)} − {money(discount)} d'offre appliquée</span>}
+              </span>
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button type="button" onClick={() => { setStatus(null); setStep('items'); }} disabled={loading}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E2E8F0] bg-white px-5 py-3.5 text-[15px] font-semibold text-[#334155] disabled:opacity-50">
+                <ChevronLeft size={17} /> Retour
+              </button>
+              <button type="button" disabled={loading} onClick={registerVisit}
+                      className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50">
+                <Gift size={17} /> {loading ? 'Enregistrement…' : 'Enregistrer la visite'}
+              </button>
+            </div>
           </div>
           )}
         </>

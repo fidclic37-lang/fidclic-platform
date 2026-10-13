@@ -97,8 +97,20 @@ test.describe.serial('the till records a visit', () => {
       return (b.rows || []).find((c) => c.barcode_id === card) || {};
     };
     const before = await mine();
+    // in steps (user, 2026-10-14): the products first, nothing to record yet…
+    await expect(page.getByRole('button', { name: 'Enregistrer la visite' })).toHaveCount(0);
+    await page.getByRole('button', { name: /Suivant/ }).click();
+    // …then the récap, with the offer or reward to choose, and only then « Enregistrer »
+    const review = page.getByTestId('visit-review');
+    await expect(review).toContainText('1 × Coloration');
+    await expect(review).toContainText('70,00');
+    await expect(review.getByText('Offre / Récompense')).toBeVisible();
+    // « Retour » keeps what was picked
+    await review.getByRole('button', { name: /Retour/ }).click();
+    await expect(page.getByPlaceholder('0,00')).toHaveValue('70.00');
+    await page.getByRole('button', { name: /Suivant/ }).click();
     await page.getByRole('button', { name: 'Enregistrer la visite' }).click();
-    await expect(page.getByText(/Visite enregistrée/)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('visit-summary')).toBeVisible({ timeout: 15_000 });
 
     // the server really counted it: one more visit, 70 € more spent
     const after = await mine();
@@ -112,5 +124,10 @@ test.describe.serial('the till records a visit', () => {
     // the next visit starts from a new scan
     await page.getByTestId('visit-summary').getByRole('button', { name: /Scanner une autre carte/ }).click();
     await expect(page.getByLabel('Code de la carte')).toHaveValue('');
+    // the same card again, right away: a normal new visit from step 1, empty
+    await page.getByLabel('Code de la carte').fill(card);
+    await expect(page.getByTestId('visit-items')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByPlaceholder('0,00')).toHaveValue('');
+    await expect(page.getByTestId('visit-summary')).toHaveCount(0);
   });
 });
