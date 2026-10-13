@@ -777,7 +777,7 @@ const ScanPage = () => {
               <select value={branchId} onChange={(e) => setBranchId(e.target.value)} aria-label="Établissement du passage"
                       className="max-w-[200px] !border-0 bg-transparent !p-0 text-[12.5px] font-semibold text-[#0B1C3F] !outline-none">
                 {!branchId && <option value="" disabled>Choisir l'établissement…</option>}
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
+                {branches.map((b) => <option key={b.id} value={b.id} translate="no">{b.name || b.id}</option>)}
               </select>
             </label>
           ) : branches.length >= 1 ? (

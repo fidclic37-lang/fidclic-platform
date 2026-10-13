@@ -63,7 +63,7 @@ export default function StoreGate({ children }) {
                     className={`flex w-full items-center gap-3 rounded-2xl border bg-white px-4 py-3.5 text-left transition hover:border-[#2F6BFF] hover:shadow-[0_10px_30px_-20px_rgba(47,107,255,.8)] ${last ? 'border-[#2F6BFF]' : 'border-[#E6EEFB]'}`}>
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F4F7FC] text-[#2F6BFF]"><Store size={19} /></span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[15px] font-bold text-[#0B1C3F]">{b.name || b.id}</span>
+                <span className="block truncate text-[15px] font-bold text-[#0B1C3F]" translate="no">{b.name || b.id}</span>
                 {(b.city || b.street) && <span className="block truncate text-[12.5px] text-[#64748B]">{[b.street, b.city].filter(Boolean).join(', ')}</span>}
               </span>
               {last ? <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF]"><Check size={14} /> Dernier choisi</span>

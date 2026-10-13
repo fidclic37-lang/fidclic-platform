@@ -456,7 +456,7 @@ export default function OwnerDashboard() {
                 <Plus size={14} /> {t('dashboard.new_campaign')}
               </button>
             </div>
-            <h2>{t('dashboard.welcome_back')}{tenant?.name ? <> · <em>{tenant.name}</em></> : null}</h2>
+            <h2>{t('dashboard.welcome_back')}{tenant?.name ? <> · <em translate="no">{tenant.name}</em></> : null}</h2>
             <p className="fdz-sub">{t('dashboard.live_subtitle')}</p>
             <div className="fdz-hstats">
               <div className="fdz-hs">
