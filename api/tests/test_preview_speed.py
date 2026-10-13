@@ -122,7 +122,8 @@ def main():
         for _ in range(5):
             WP._fetch_image(ref)
         check(f"five uses, one read from the database ({len(reads)})", len(reads) == 1)
-        check("…the same bytes every time", WP._fetch_image(ref) == first)
+        kept = M.shrink("image/png", first)[1]      # what `media` keeps (lighter when big, 2026-10-13)
+        check("…the same bytes every time", WP._fetch_image(ref) == kept)
         check("a link that is not a picture of ours reads nothing", M.get("not-an-id") is None)
     finally:
         M._raw = real_get
@@ -162,7 +163,8 @@ def main():
         def down(req, timeout=None):
             raise OSError("edge down")
         UR.urlopen = down
-        check("the edge unreachable: the database, as before", M.get(ref.split("/")[-1])[1] == first and len(reads) == 1)
+        check("the edge unreachable: the database, as before", M.get(ref.split("/")[-1])[1] == M.shrink("image/png", first)[1]
+              and len(reads) == 1)
         M._MEM.clear(); M._mem_size = 0; reads.clear(); asked.clear()
         UR.urlopen = lambda req, timeout=None: asked.append(1) or Resp(b"EDGE")
         M.get(ref.split("/")[-1], cdn=False)

@@ -74,6 +74,55 @@ def _decode(data_url: str) -> Optional[Tuple[str, bytes]]:
     return mime.lower(), raw
 
 
+# A picture bigger than any screen needs (2026-10-13): Royal Trim's pass took
+# 30 s on every cold server — one picture of its design came back from the
+# free cluster in 15,6 s, and its « /api/media » link could never be kept by
+# Vercel's edge (a function answers 4,5 Mo at most). The wallet uses 1125 px
+# at most, the editor a little more: pictures are kept at 2 400 px on the long
+# side, a photo as JPEG (q 88, its EXIF — the phone's rotation — kept), a
+# picture with transparency as PNG. The look on a card does not change.
+MAX_SIDE = 2400
+SHRINK_ABOVE = 1_500_000          # bytes; smaller pictures are kept exactly as sent
+
+
+def shrink(mime: str, raw: bytes) -> Tuple[str, bytes]:
+    """(mime, bytes) of a lighter copy, or the picture unchanged when it is
+    small, not one Pillow reads, animated, or would not get lighter."""
+    if len(raw) <= SHRINK_ABOVE:
+        return mime, raw
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(raw))
+        if getattr(im, "is_animated", False):
+            return mime, raw
+        exif = im.info.get("exif")
+        alpha = im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info)
+        if max(im.size) <= MAX_SIDE and (im.format == "JPEG" or (alpha and im.format == "PNG")):
+            return mime, raw                   # already its light form: never compressed twice
+        im.thumbnail((MAX_SIDE, MAX_SIDE))
+        out = io.BytesIO()
+        if alpha:
+            im.convert("RGBA").save(out, "PNG", optimize=True)
+            new_mime = "image/png"
+        else:
+            kw = {"exif": exif} if exif else {}
+            im.convert("RGB").save(out, "JPEG", quality=88, optimize=True, progressive=True, **kw)
+            new_mime = "image/jpeg"
+        small = out.getvalue()
+        return (new_mime, small) if len(small) < len(raw) else (mime, raw)
+    except Exception:
+        return mime, raw
+
+
+def _blob(raw: bytes) -> Any:
+    try:
+        from bson.binary import Binary
+        return Binary(raw)
+    except Exception:                          # mongomock without bson: keep base64
+        return base64.b64encode(raw).decode()
+
+
 def put(data_url: str) -> str:
     """Store a data:image URL once; returns its link (or the value unchanged
     when it is not one, or too small to be worth a link)."""
@@ -83,16 +132,16 @@ def put(data_url: str) -> str:
     if not dec:
         return data_url
     mime, raw = dec
+    # the id is the picture as sent: the same upload is still stored once
     mid = hashlib.sha256(mime.encode() + b"\0" + raw).hexdigest()[:32]
     real = _raw(_db["media"])
     if not real.find_one({"_id": mid}, {"_id": 1}):
+        kept_mime, kept = shrink(mime, raw)
+        doc = {"_id": mid, "mime": kept_mime, "data": _blob(kept), "size": len(kept), "at": _now()}
+        if len(kept) != len(raw):
+            doc["original_size"] = len(raw)
         try:
-            from bson.binary import Binary
-            blob: Any = Binary(raw)
-        except Exception:                      # mongomock without bson: keep base64
-            blob = base64.b64encode(raw).decode()
-        try:
-            real.insert_one({"_id": mid, "mime": mime, "data": blob, "size": len(raw), "at": _now()})
+            real.insert_one(doc)
         except Exception:
             pass                               # stored meanwhile by another request
     return PREFIX + mid
@@ -207,13 +256,29 @@ def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
             _note("media_cdn")
             return got
     _note("media_db")
+    import time
+    t0 = time.perf_counter()
     doc = _raw(_db["media"]).find_one({"_id": mid})
+    ms = (time.perf_counter() - t0) * 1000
     if not doc:
         return None
     data = doc.get("data")
     if isinstance(data, str):
         data = base64.b64decode(data)
     got = (doc.get("mime") or "application/octet-stream", bytes(data))
+    if ms > 1000:                              # which picture, how big: in Server-Timing
+        _note("media_slow", f"{mid[:8]} {len(got[1]) // 1024} Ko {ms:.0f} ms")
+    if len(got[1]) > SHRINK_ABOVE and not doc.get("original_size"):
+        # stored before pictures were kept light: lighter from now on, same link
+        kept_mime, kept = shrink(*got)
+        if len(kept) < len(got[1]):
+            try:
+                _raw(_db["media"]).update_one({"_id": mid}, {"$set": {
+                    "mime": kept_mime, "data": _blob(kept), "size": len(kept),
+                    "original_size": len(got[1]), "shrunk_at": _now()}})
+            except Exception:
+                pass
+            got = (kept_mime, kept)
     _remember(mid, got)
     return got
 
