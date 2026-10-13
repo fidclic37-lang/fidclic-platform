@@ -65,7 +65,7 @@ function Stat({ s }) {
           <p className="mt-1 flex items-center gap-1 text-[13.5px] font-medium text-[#334155]">
             {s.label} <InfoTip k={{ sent: 'campaigns_sent', revenue: 'campaign_revenue' }[s.key] || s.key} size={13} />
           </p>
-          <p className="text-[12px] text-[#64748B]">vs. mois précédent</p>
+          <p className="text-[12px] text-[#64748B]">Ce mois-ci · vs. mois précédent</p>
         </div>
       </div>
     </div>

@@ -87,7 +87,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "v3", "tenant_id": "t1", "customer_id": "c3", "branch_id": "orleans", "amount_paid": 40.0, "visit_time": now - dt.timedelta(days=1)},
         {"id": "v4", "tenant_id": "t1", "customer_id": "c3", "branch_id": None, "amount_paid": 5.0, "visit_time": now - dt.timedelta(days=1)},
     ])
-    db.campaigns.insert_one({"id": "k1", "tenant_id": "t1", "name": "Promo", "sent_at": now - dt.timedelta(days=3),
+    db.campaigns.insert_one({"id": "k1", "tenant_id": "t1", "name": "Promo", "status": "sent",   # only sent ones count (QA F32)
+                             "sent_at": now - dt.timedelta(days=3),
                              "recipient_ids": ["c1", "c2", "c3"], "attributed_visit_customer_ids": ["c2", "c3"]})
 
     print("\nLe menu des établissements")
@@ -115,8 +116,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = dash(ALI)
     check("administrateur: Tours + Blois only (30 €)", cards(d)["revenue"] == 30.0)
     check("its clients only (Ana, Ben, Dan)", cards(d)["clients"] == 3)
+    # Ana (Tours) and Ben (Blois) both came after it — each visit counts (QA F32)
     check("a campaign counts only the recipients from its establishments",
-          d["campaigns"]["touched"] == 2 and d["campaigns"]["sales"] == 1)
+          d["campaigns"]["touched"] == 2 and d["campaigns"]["sales"] == 2)
     d = dash(SARA, "orleans")
     check("manager: Blois only, even when asking for Orléans (20 €)", cards(d)["revenue"] == 20.0)
     check("the page says which establishments it shows", d["scope"]["label"] == "Blois")
