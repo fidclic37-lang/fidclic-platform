@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Mail, MessageSquare, ShieldCheck, Loader2 } from 'lucide-react';
+import { Mail, MessageSquare, ShieldCheck, Loader2, Pencil } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { onboardingAPI } from '../lib/api';
+import { onboardingAPI, setAuthToken } from '../lib/api';
 import OnboardingShell from '../components/OnboardingShell';
 
 /**
@@ -22,6 +22,10 @@ export default function OnboardingVerifyPage() {
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [wait, setWait] = useState(0);
+  // « Modifier l'adresse e-mail » (QA BUG-001): a typo in the address left the
+  // owner waiting for a code sent elsewhere, with « logout » as the only way out
+  const [editing, setEditing] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
 
   useEffect(() => {
     onboardingAPI.verifyState().then((r) => setSt(r.data)).catch(async (e) => {
@@ -47,6 +51,28 @@ export default function OnboardingVerifyPage() {
       setErr(e?.response?.data?.detail || t('verify.failed'));
     } finally { setBusy(''); }
   };
+
+  const openEdit = () => { setErr(''); setNewEmail(user?.email || ''); setEditing(true); };
+  const changeEmail = async (e) => {
+    e.preventDefault(); setErr(''); setBusy('email');
+    try {
+      const r = await onboardingAPI.verifyEmail(newEmail.trim());
+      setAuthToken(r.data.access_token);        // the login is the e-mail: a session for the new one
+      await checkAuth();
+      setSt((s) => ({ ...s, email: r.data.email }));
+      setEditing(false); setBusy('');
+      await send('email');                      // the code goes to the corrected address at once
+    } catch (e2) {
+      setErr(e2?.response?.data?.detail || t('verify.failed'));
+      setBusy('');
+    }
+  };
+  const editLink = (
+    <button type="button" onClick={openEdit} disabled={!!busy}
+            className="mx-auto flex items-center gap-1.5 text-[13.5px] font-semibold text-[#2F6BFF] disabled:text-[#94A3B8]">
+      <Pencil size={14} /> {t('verify.edit_email')}
+    </button>
+  );
 
   const verify = async (e) => {
     e.preventDefault(); setErr(''); setBusy('check');
@@ -75,7 +101,23 @@ export default function OnboardingVerifyPage() {
       {!st && !err && <div className="mt-8 flex justify-center"><Loader2 className="animate-spin text-[#94A3B8]" /></div>}
       {none && <div className="mt-6 rounded-xl bg-[#FFF7E6] px-4 py-3 text-[14px] text-[#92400E]">{t('verify.none')}</div>}
 
-      {st && !sent && !none && (
+      {editing && (
+        <form onSubmit={changeEmail} className="mt-8 space-y-3">
+          <label htmlFor="new-email" className="block text-[15px] font-semibold text-[#0B1C3F]">{t('verify.new_email')}</label>
+          <input id="new-email" type="email" autoComplete="email" autoFocus required value={newEmail}
+                 onChange={(e) => setNewEmail(e.target.value)}
+                 className="w-full rounded-xl border border-[#E1E8F5] px-4 py-3 text-[16px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF] focus:ring-4 focus:ring-[#2F6BFF]/10" />
+          <button type="submit" disabled={!newEmail.trim() || !!busy}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-[17px] font-semibold text-white disabled:opacity-50" style={{ background: '#0A6CFF' }}>
+            {busy === 'email' && <Loader2 size={18} className="animate-spin" />} {t('verify.send_new')}
+          </button>
+          <button type="button" onClick={() => { setEditing(false); setErr(''); }} className="mx-auto block text-[13.5px] font-semibold text-[#64748B]">
+            {t('verify.cancel')}
+          </button>
+        </form>
+      )}
+
+      {st && !sent && !none && !editing && (
         <div className="mt-8 space-y-3">
           {ch.email && (
             <button type="button" className={btn} disabled={!!busy} onClick={() => send('email')}>
@@ -90,10 +132,11 @@ export default function OnboardingVerifyPage() {
               <span className="flex-1"><b className="block text-[15px] text-[#0B1C3F]">{t('verify.by_sms')}</b><span className="text-[13.5px] text-[#64748B]">{st.phone}</span></span>
             </button>
           )}
+          {ch.email && <div className="pt-1">{editLink}</div>}
         </div>
       )}
 
-      {sent && (
+      {sent && !editing && (
         <form onSubmit={verify} className="mt-8 space-y-4">
           <p className="text-center text-[14px] text-[#16803C]">{t('verify.sent_to', { to: sent.to })}</p>
           <label htmlFor="otp" className="block text-[15px] font-semibold text-[#0B1C3F]">{t('verify.code_label')}</label>
@@ -114,6 +157,7 @@ export default function OnboardingVerifyPage() {
             )}
           </div>
           {sent.channel === 'email' && <p className="text-center text-[12.5px] text-[#64748B]">{t('verify.spam')}</p>}
+          {sent.channel === 'email' && editLink}
         </form>
       )}
     </OnboardingShell>

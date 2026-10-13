@@ -596,6 +596,10 @@
     "change": "Changer de mode",
     "spam": "Pas reçu ? Regardez dans les spams, ou renvoyez le code.",
     "none": "La vérification est momentanément indisponible. Réessayez dans un instant.",
-    "failed": "Une erreur est survenue. Réessayez."
+    "failed": "Une erreur est survenue. Réessayez.",
+    "edit_email": "Modifier l'adresse e-mail",
+    "new_email": "Votre adresse e-mail",
+    "send_new": "Envoyer le code à cette adresse",
+    "cancel": "Annuler"
   }
 }
