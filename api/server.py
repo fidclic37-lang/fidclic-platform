@@ -12251,6 +12251,31 @@ def _media_migrate_once() -> None:
 _media_migrate_once()
 
 
+def _cache_purge_once() -> None:
+    """The image caches kept in MongoDB (img_cache, pkpass_cache) made the free
+    cluster slower, not faster (2026-10-13): they are no longer used, and what
+    they hold — rebuildable images and passes, no customer data — is removed
+    once, to give the cluster its room back."""
+    try:
+        done = db.platform_settings.find_one({"key": "image_cache_purged"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        n = 0
+        for name in ("img_cache", "pkpass_cache"):
+            try:
+                n += db[name].delete_many({}).deleted_count or 0
+            except Exception as exc:  # noqa: BLE001
+                print(f"cache purge: {name} skipped ({exc})", flush=True)
+        db.platform_settings.update_one({"key": "image_cache_purged"}, {"$set": {
+            "key": "image_cache_purged", "value": "v1", "at": datetime.now(timezone.utc), "removed": n}}, upsert=True)
+        print(f"cache purge: {n} cached images removed", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it
+        print(f"cache purge: not finished ({exc})", flush=True)
+
+
+_cache_purge_once()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8001, reload=True)
