@@ -352,7 +352,8 @@ def main():
     pj = WP.build_pass_json(WP._card_payload("FT-C3"))
     check("an active géolocalisation that leaves her out: no locations at all (not the old reminder)", not pj.get("locations"))
     check("…and Google gets none either", "merchantLocations" not in WP._gw_object(WP._card_payload("FT-C3")))
-    db.automations.update_one({"id": g["id"]}, {"$set": {"status": "paused"}})
+    # every establishment's copy (one per store since multi-store PR5)
+    db.automations.update_many({"tenant_id": "t1", "scenario": "geo"}, {"$set": {"status": "paused"}})
     pj = WP.build_pass_json(WP._card_payload("FT-C3"))
     check("no active géolocalisation: the card designer's own reminder, as before",
           pj.get("locations") and "pensez à scanner" in pj["locations"][0]["relevantText"])

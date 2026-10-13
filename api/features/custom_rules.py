@@ -743,6 +743,8 @@ def send_moment(row: Dict[str, Any], due: datetime) -> datetime:
 # Géolocalisation: the card's position (and the Wallet pass)
 # ---------------------------------------------------------------------------
 def geo_rows(tid: str) -> List[Dict[str, Any]]:
+    from features import automations as AU
+    AU.split_per_store(tid)                        # one establishment each (multi-store PR5)
     return [r for r in _db.automations.find({"tenant_id": tid, "scenario": "custom", "status": "active",
                                              "trigger.type": "geo"}, {"_id": 0})
             if (r.get("trigger") or {}).get("lat") is not None]

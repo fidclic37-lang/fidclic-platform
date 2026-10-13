@@ -192,9 +192,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the Clients page opens to them", guard(SARA, CP.READERS, partial_ok=True) == 200)
 
     print("\nContacter un groupe")
-    out = server.send_campaign_to_group({"customer_ids": ["c2", "c3"], "name": "Hello", "content": "Bonjour"},
+    out = server.send_campaign_to_group({"customer_ids": ["c2", "c3", "c4"], "name": "Hello", "content": "Bonjour"},
                                         request=Req(), token_data=SARA)
-    check("a manager's campaign reaches only its establishment's clients", out["recipient_ids"] == ["c2"])
+    # multi-store PR5: only its establishment's MEMBERS (Dan signed up at Blois;
+    # Ben only visited it)
+    check("a manager's campaign reaches only its establishment's members", out["recipient_ids"] == ["c4"])
     check("and records for which establishments it was sent",
           db.campaigns.find_one({"id": out["id"]})["store_ids"] == ["blois"])
     try:
@@ -203,8 +205,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     except HTTPException:
         refused = True
     check("nobody from another establishment → refused, nothing sent", refused)
-    out = server.send_campaign_to_group({"customer_ids": ["c1", "c3"], "content": "x"}, request=Req(), token_data=OWNER)
-    check("the owner, on 'all', reaches anyone", sorted(out["recipient_ids"]) == ["c1", "c3"])
+    try:
+        server.send_campaign_to_group({"customer_ids": ["c1", "c3"], "content": "x"}, request=Req(), token_data=OWNER)
+        refused = False
+    except HTTPException as e:
+        refused = e.status_code == 400
+    check("the owner must choose the establishment it writes for (several stores)", refused)
+    out = server.send_campaign_to_group({"customer_ids": ["c1", "c3", "c4"], "content": "x"}, request=Req("blois"), token_data=OWNER)
+    # Ana was moved to Blois above (home store); Dan signed up there
+    check("…then reaches that establishment's members", out["recipient_ids"] == ["c1", "c4"])
 
     print("\nFiltres enregistrés")
     seg = server.create_saved_segment(server.SavedSegmentRequest(name="Mes fidèles", filters={}), token_data=SARA)
@@ -229,20 +238,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     out = KP.compose(KP.Compose(title="Café offert", message="Venez !", segment="all", draft=True),
                      request=Req(), token_data=SARA)
     doc = db.campaigns.find_one({"id": out["id"]})
-    check("a manager's campaign goes to its establishment's clients", sorted(doc["recipient_ids"]) == ["c1", "c2", "c4"])
+    check("a manager's campaign goes to its establishment's members", sorted(doc["recipient_ids"]) == ["c1", "c4"])
     check("and records its establishment and sender", doc["store_ids"] == ["blois"] and doc["sent_by"] == "sara@c.fr")
     out = KP.compose(KP.Compose(title="x", message="y", customer_ids=["c2", "c3"], draft=True), request=Req(), token_data=SARA)
-    check("hand-picked clients from another establishment are dropped",
-          db.campaigns.find_one({"id": out["id"]})["recipient_ids"] == ["c2"])
+    check("hand-picked clients who are not its members are dropped (Ben only visited Blois)",
+          db.campaigns.find_one({"id": out["id"]})["recipient_ids"] == [])
     try:
         KP.compose(KP.Compose(title="x", message="y", customer_ids=["c3"]), request=Req(), token_data=SARA)
         refused = False
     except HTTPException:
         refused = True
     check("none of its own → refused, nothing sent", refused)
-    check("the administrateur reaches Tours + Blois",
+    check("the administrateur reaches Tours + Blois members (no store yet: the main one, Tours)",
           sorted(db.campaigns.find_one({"id": KP.compose(KP.Compose(title="a", message="b", draft=True),
-                                                         request=Req(), token_data=ALI)["id"]})["recipient_ids"]) == ["c1", "c2", "c4"])
+                                                         request=Req(), token_data=ALI)["id"]})["recipient_ids"]) == ["c1", "c2", "c3", "c4"])
     check("Campagnes opens to them", guard(SARA, KP.SENDERS, partial_ok=True) == 200)
 
     print("\nLa page Analyses, limitée")

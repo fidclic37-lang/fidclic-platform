@@ -278,6 +278,11 @@ def for_pass(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[Di
     tid = cust.get("tenant_id")
     if not tid or cust.get("deleted_at") or not live(tid)["ok"] or not AU._plan_ok(tid):
         return None
+    try:
+        from features import automations as _AU
+        _AU.split_per_store(tid)                   # one establishment each (multi-store PR5)
+    except Exception:
+        pass
     rows = list(_db.automations.find({"tenant_id": tid, "scenario": "geo", "status": "active"},
                                      {"_id": 0}).sort("order", 1))
     from features import custom_rules as CR

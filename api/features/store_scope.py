@@ -137,3 +137,45 @@ def customer_filter(scope: Scope) -> Dict[str, Any]:
     if ids is not None:
         base["id"] = {"$in": list(ids)}
     return base
+
+
+# ---------------------------------------------------------------------------
+# Sending (multi-store PR5, user 2026-10-12: « jo store upar selected hoga,
+# campaigns and offers bhi usi k customers ko jaayenge »): only a client's
+# HOME store (customers.branch_id, the store of its signup link) messages it —
+# a client who only visited another store is not that store's to contact.
+# ---------------------------------------------------------------------------
+def home_customer_ids(scope: Scope) -> Optional[Set[str]]:
+    """Members of these establishments (their home store). None = everyone."""
+    if scope.is_all:
+        return None
+    vals = _branch_values(scope)
+    # a client never given a store belongs to the main one (as server._ensure_branch_assignments does)
+    t = _db.tenants.find_one({"id": scope.tenant_id}, {"_id": 0, "branches": 1}) or {}
+    open_ = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    main = next((b["id"] for b in open_ if b.get("is_main") or b["id"] == "main"), open_[0]["id"] if open_ else None)
+    if main in (scope.ids or []):
+        vals = list(vals) + [None, ""]
+    ids = set(_db.customers.distinct("id", {"tenant_id": scope.tenant_id, "branch_id": {"$in": vals}}))
+    if main in (scope.ids or []):
+        ids.update(_db.customers.distinct("id", {"tenant_id": scope.tenant_id, "branch_id": {"$exists": False}}))
+    ids.discard(None)
+    return ids
+
+
+def is_multi(tid: str) -> bool:
+    from features import team_access as T
+    return len(T.stores(tid)) > 1
+
+
+def sending_scope(token: TokenData, request: Optional[Request] = None) -> Scope:
+    """The establishment a send is for: the one chosen in the menu. With
+    several establishments, a send for « all of them » is refused — each
+    store messages its own clients."""
+    from fastapi import HTTPException
+    scope = resolve(token, request)
+    if scope.is_all and is_multi(token.tenant_id):
+        raise HTTPException(status_code=400, detail="Choisissez d'abord l'établissement dans le menu : "
+                                                    "chaque établissement écrit à ses propres clients.")
+    return scope
+
