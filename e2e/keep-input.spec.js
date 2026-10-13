@@ -57,6 +57,8 @@ test.describe.serial('typed input survives a tap beside the window', () => {
     await page.getByRole('button', { name: 'Modifier la fiche' }).click();
     const dialog = page.getByRole('dialog', { name: 'Modifier la fiche' });
     await expect(dialog).toBeVisible();
+    // QA BUG-005: how often the client comes, at the top of the fiche
+    await expect(dialog.getByTestId('fiche-visits')).toHaveText(/visite/i);
     const phone = dialog.getByLabel('Téléphone');
     await expect(phone).toBeVisible();
     await phone.fill('0612340000');
