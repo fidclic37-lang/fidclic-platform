@@ -86,11 +86,14 @@ export default function AnalyticsGlobalPage() {
   useEffect(() => { load(); }, [load]);
   const showAll = () => { setAll([]); adminAPI.analyticsActivity({ ...range, limit: 100 }).then(({ data }) => setAll(data.rows)).catch(() => setAll([])); };
 
-  if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
-  const K = Object.fromEntries(d.kpis.map((k) => [k.key, k]));
-  const kpis = [['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF', nf(K.commerces.value)], ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE', nf(K.clients.value)],
+  // « Analyses avancées » below each fetch their own data. Returning early
+  // while this page's own call is in flight kept them unmounted, so they only
+  // started once it answered — six requests queued behind the slowest one
+  // instead of running beside it. Only the part that needs `d` waits now.
+  const K = d ? Object.fromEntries(d.kpis.map((k) => [k.key, k])) : null;
+  const kpis = K ? [['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF', nf(K.commerces.value)], ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE', nf(K.clients.value)],
     ['visites', 'Visites', BarChart3, '#F59E0B', '#FFF4DB', nf(K.visites.value)], ['mrr', 'MRR', Euro, '#8B5CF6', '#F3EEFF', eur(K.mrr.value)],
-    ['ca', "Chiffre d'affaires total", Euro, '#2F6BFF', '#EAF1FF', eur(K.ca.value, 2)]];
+    ['ca', "Chiffre d'affaires total", Euro, '#2F6BFF', '#EAF1FF', eur(K.ca.value, 2)]] : [];
 
   return (
     <div className="crm">
@@ -111,6 +114,10 @@ export default function AnalyticsGlobalPage() {
           </span>
         </div>
       </header>
+      {!d && (err
+        ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p>
+        : <Loading />)}
+      {d && (<>
       {d.grain !== grain && <p className="mb-3 rounded-xl bg-[#EFF5FF] px-4 py-2 text-[12.5px] text-[#1E4FD8]">Sur une période aussi longue, les courbes passent par {GRAINS.find(([k]) => k === d.grain)?.[1].toLowerCase()}.</p>}
 
       {/* 1 — figures */}
@@ -160,6 +167,8 @@ export default function AnalyticsGlobalPage() {
         </Card>
       </div>
 
+      </>)}
+
       {/* Analyses avancées (user, 2026-10-01) — each section loads on its own */}
       <h2 className="mb-1 mt-8 text-[20px] font-bold text-[#0B1C3F]">Analyses avancées</h2>
       <p className="mb-3 text-[13px] text-[#64748B]">Rétention, comparaisons par secteur, usage des fonctionnalités, mouvements de plans, croissance et carte.</p>
@@ -176,12 +185,14 @@ export default function AnalyticsGlobalPage() {
       <div className="mt-4"><UsageFigures range={range} /></div>
       <UsagePanel />
 
-      {/* 7 — recent activity */}
-      <Card className="mt-4">
-        <Head icon={Clock} title="Activité récente" sub="Dernières actions importantes sur la plateforme."
-              right={<button type="button" onClick={showAll} className="rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[12.5px] font-medium text-[#0B1C3F] hover:border-[#2F6BFF]">Voir tout</button>} />
-        <ActivityList rows={d.activity} />
-      </Card>
+      {/* 7 — recent activity — part of this page's own call, like the figures */}
+      {d && (
+        <Card className="mt-4">
+          <Head icon={Clock} title="Activité récente" sub="Dernières actions importantes sur la plateforme."
+                right={<button type="button" onClick={showAll} className="rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[12.5px] font-medium text-[#0B1C3F] hover:border-[#2F6BFF]">Voir tout</button>} />
+          <ActivityList rows={d.activity} />
+        </Card>
+      )}
 
       {all && <Modal title="Activité récente" onClose={() => setAll(null)} wide>{all.length ? <ActivityList rows={all} /> : <Loading />}</Modal>}
     </div>
