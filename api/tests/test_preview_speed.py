@@ -70,19 +70,22 @@ def main():
     t0 = time.perf_counter()
     first = WP.compose_poster(raw, theme)
     cold = time.perf_counter() - t0
-    check("the poster is built and shared", first and WP._db.img_cache.count_documents({"kind": "poster"}) == 1)
+    # 2026-10-13: the free cluster hands megabytes back in seconds — a photo is rebuilt, never fetched
+    check("the poster is built, and not stored in the database (a photo: rebuilt is faster)",
+          first and WP._db.img_cache.count_documents({"kind": "poster"}) == 0)
     WP._IMG_CACHE.clear()                                   # a new instance: empty memory
     t0 = time.perf_counter()
     again = WP.compose_poster(raw, theme)
     warm = time.perf_counter() - t0
-    check(f"a new instance gets the same poster from the shared cache ({cold:.2f}s → {warm:.3f}s)",
-          again == first and warm < cold)
+    check(f"a new instance builds the very same poster ({cold:.2f}s → {warm:.2f}s)", again == first)
     v1 = WP._png_variants(raw, (100, 50), tight=True)
     WP._IMG_CACHE.clear()
     v2 = WP._png_variants(raw, (100, 50), tight=True)
     check("variants ({'', '@2x', '@3x'}) come back with their keys", v1 == v2 and set(v2) == {"", "@2x", "@3x"})
-    doc = WP._db.img_cache.find_one({"kind": "png_variants"})
-    check("…stored without an empty field name", doc and all(k.startswith("k") for k in doc["d"]))
+    WP.name_logo(raw, "ROYAL TRIM", (255, 255, 255))
+    doc = WP._db.img_cache.find_one({"kind": "name_logo"})
+    check("a small result (the name beside the logo) is shared, without an empty field name",
+          doc and all(k.startswith("k") for k in doc["d"]))
     check("the shared cache expires (30 days)",
           any(ix.get("expireAfterSeconds") == 30 * 24 * 3600 for ix in WP._db.img_cache.index_information().values()))
     huge = b"x" * (WP._SHARED_MAX + 1)
@@ -124,6 +127,53 @@ def main():
         check("a link that is not a picture of ours reads nothing", M.get("not-an-id") is None)
     finally:
         M._raw = real_get
+
+    print("\nOn Vercel a picture comes from the edge (60 ms), not from the free cluster (seconds)")
+    import urllib.request as UR
+
+    class Resp:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __init__(self, raw):
+            self.raw = raw
+
+        def read(self):
+            return self.raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    asked = []
+    real_open = UR.urlopen
+    os.environ["VERCEL"] = "1"
+    real_site = WP._site_url
+    WP._site_url = lambda: "https://app.fidclic.com"
+    M._raw = lambda coll: Spy(real_get(coll)) if getattr(real_get(coll), "name", "") == "media" else real_get(coll)
+    try:
+        M._MEM.clear(); M._mem_size = 0; reads.clear()
+        UR.urlopen = lambda req, timeout=None: asked.append(req.full_url) or Resp(b"EDGE")
+        got = M.get(ref.split("/")[-1])
+        check("read from the edge copy of « /api/media/<id> », no database read",
+              got == ("image/png", b"EDGE") and asked and asked[0].endswith(ref.split("/")[-1]) and not reads)
+        M._MEM.clear(); M._mem_size = 0; reads.clear()
+
+        def down(req, timeout=None):
+            raise OSError("edge down")
+        UR.urlopen = down
+        check("the edge unreachable: the database, as before", M.get(ref.split("/")[-1])[1] == first and len(reads) == 1)
+        M._MEM.clear(); M._mem_size = 0; reads.clear(); asked.clear()
+        UR.urlopen = lambda req, timeout=None: asked.append(1) or Resp(b"EDGE")
+        M.get(ref.split("/")[-1], cdn=False)
+        check("the « /api/media » route itself never asks the edge (it IS the edge's source)", not asked and len(reads) == 1)
+    finally:
+        UR.urlopen = real_open
+        os.environ.pop("VERCEL", None)
+        WP._site_url = real_site
+        M._raw = real_get
+        M._MEM.clear(); M._mem_size = 0
 
     print("\nThe establishments of an account: read once per preview")
     from features import store_cards as SC

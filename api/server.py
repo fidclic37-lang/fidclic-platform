@@ -12213,7 +12213,7 @@ register_all(app, db)
 # ─────────────────────────────────────────────────────────────────────
 @app.get("/api/media/{mid}")
 def get_media(mid: str):
-    got = _MEDIA.get(mid.split(".", 1)[0])
+    got = _MEDIA.get(mid.split(".", 1)[0], cdn=False)     # this IS the CDN's source
     if not got:
         raise HTTPException(status_code=404, detail="Image introuvable")
     mime, raw = got
