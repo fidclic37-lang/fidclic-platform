@@ -203,7 +203,10 @@ export default function CardOffersPage() {
   // the customer as the variables read them (personal)
   const who = { ...customer, _shop: tenant.name || shop, _reward: card.reward_description, _missing: Math.max(0, left) };
   const shown = all ? feed : feed.slice(0, FIRST_OFFERS);
-  const cardLink = ownerLink(barcodeId, ownerKey);
+  // back to THIS card: from the dashboard (?vue=commerce) it stays the shop's
+  // view — dropping it opened the browser's own card of the shop (QA F34)
+  const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
+  const cardLink = ownerLink(barcodeId, ownerKey, shopView ? 'vue=commerce' : '');
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#F4F7FC] to-[#EEF3FB] font-['Inter',system-ui,sans-serif]">

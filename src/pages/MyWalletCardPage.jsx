@@ -694,8 +694,12 @@ const CardView = () => {
       ? 'Dans Safari : bouton Partager, puis « Sur l’écran d’accueil ».'
       : 'Dans le menu du navigateur : « Ajouter à l’écran d’accueil ».');
   };
+  // the shop's view (?vue=commerce, from the dashboard) stays on through « Mes
+  // offres » and back — without it the page took the browser's own card for
+  // the shop and opened that one instead (QA F34, 2026-10-11)
+  const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
   const menu = [
-    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres` },
+    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres${shopView ? '?vue=commerce' : ''}` },
     { key: 'program', icon: Gift, label: 'Le programme', hint: card.reward_description ? `${card.reward_description} après ${stampsTarget} visites` : 'Récompenses et points' },
     recentVisit && { key: 'review', icon: Star, label: 'Donner mon avis', hint: 'Sur votre dernière visite — anonyme' },
     { key: 'about', icon: Store, label: `À propos de ${tenant.name || 'la boutique'}`, hint: 'Adresse, horaires, contact' },
