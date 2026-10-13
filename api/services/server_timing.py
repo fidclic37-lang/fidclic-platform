@@ -19,11 +19,21 @@ from typing import Any, Dict, Optional
 _REQ: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("fidclic_timing", default=None)
 
 
+_COLL: Dict[int, str] = {}     # request_id → "find media" (from the started event)
+
+
 class _Listener:
     """pymongo.monitoring.CommandListener, without importing it at module level."""
 
     def started(self, event):  # noqa: D401
-        pass
+        try:
+            name = event.command_name
+            coll = event.command.get(name) if hasattr(event, "command") else ""
+            if len(_COLL) > 2000:
+                _COLL.clear()
+            _COLL[event.request_id] = f"{name} {coll if isinstance(coll, str) else ''}".strip()
+        except Exception:
+            pass
 
     def succeeded(self, event):
         self._add(event)
@@ -33,10 +43,24 @@ class _Listener:
 
     @staticmethod
     def _add(event):
+        what = _COLL.pop(getattr(event, "request_id", None), "") if _COLL else ""
         tally = _REQ.get()
         if tally is not None:
-            tally["db_us"] += int(getattr(event, "duration_micros", 0) or 0)
+            us = int(getattr(event, "duration_micros", 0) or 0)
+            tally["db_us"] += us
             tally["db_n"] += 1
+            if us > tally.get("slow_us", 0):         # the slowest call, named in the header
+                tally["slow_us"], tally["slow"] = us, what
+
+
+def note(key: str, value: Any = 1) -> None:
+    """Count something for this request's header (e.g. where pictures came from)."""
+    tally = _REQ.get()
+    if tally is not None:
+        if isinstance(value, str):
+            tally.setdefault("notes", {})[key] = value[:60]
+        else:
+            tally.setdefault("notes", {})[key] = tally.get("notes", {}).get(key, 0) + value
 
 
 def install_listener() -> None:
@@ -49,6 +73,10 @@ def install_listener() -> None:
         monitoring.register(L())
     except Exception as exc:  # noqa: BLE001 — timing must never stop the app
         print(f"server timing: no db monitoring ({exc})")
+
+
+def _clean(v: str) -> str:
+    return "".join(c for c in str(v) if c.isalnum() or c in " _-./:")[:60]
 
 
 class TimingMiddleware:
@@ -69,6 +97,10 @@ class TimingMiddleware:
                 total = (time.perf_counter() - t0) * 1000
                 value = (f'app;dur={total:.0f}, db;dur={tally["db_us"] / 1000:.0f};'
                          f'desc="{tally["db_n"]} appels"')
+                if tally.get("slow"):
+                    value += f', slow;dur={tally["slow_us"] / 1000:.0f};desc="{_clean(tally["slow"])}"'
+                for k, v in (tally.get("notes") or {}).items():
+                    value += f', {_clean(k)};desc="{_clean(str(v))}"'
                 headers = list(message.get("headers") or [])
                 headers.append((b"server-timing", value.encode("latin-1")))
                 message = {**message, "headers": headers}
