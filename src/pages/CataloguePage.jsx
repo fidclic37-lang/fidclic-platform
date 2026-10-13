@@ -17,6 +17,7 @@ import { perPage } from '../lib/prefs';
    otherwise). A product switched off here is no longer offered at the till.
    "Produits les plus vendus" is how few products make 80 % of those sales. */
 
+const PRICE_REQUIRED = 'Prix obligatoire : indiquez le prix (0 pour un produit offert).';
 const TONES = {
   blue:   { bg: '#EAF1FF', fg: '#2F6BFF' },
   orange: { bg: '#FFF3E8', fg: '#E8741A' },
@@ -159,8 +160,12 @@ function ProductModal({ product, categories, limits, onClose, onSaved, onImport 
   };
   const save = async (e) => {
     e.preventDefault();
-    const price = Number(String(d.price).replace(',', '.'));
     if (!d.name.trim()) { setError('Donnez un nom au produit.'); return; }
+    // an empty price is not « 0 »: erased by mistake it made a paid product free
+    // without a word (QA F31); a « 0 » typed on purpose still makes it free
+    const raw = String(d.price ?? '').trim();
+    if (!raw) { setError(PRICE_REQUIRED); return; }
+    const price = Number(raw.replace(',', '.'));
     if (!Number.isFinite(price) || price < 0) { setError('Indiquez un prix valide.'); return; }
     setSaving(true); setError('');
     try {
@@ -280,8 +285,15 @@ function MenuImportModal({ onClose, onDone }) {
     } finally { setBusy(false); }
   };
   const importNow = async () => {
-    const items = rows.filter((r) => r.keep && r.name.trim()).map((r) => ({
-      name: r.name.trim(), price: Number(String(r.price).replace(',', '.')) || 0, category: r.category.trim(), active: true }));
+    const kept = rows.filter((r) => r.keep && r.name.trim());
+    // a line read without a price is not a free product (QA F31)
+    const noPrice = kept.filter((r) => !String(r.price ?? '').trim() || !Number.isFinite(Number(String(r.price).replace(',', '.'))));
+    if (noPrice.length) {
+      setError(`Prix manquant ou invalide : ${noPrice.map((r) => r.name.trim()).join(', ')}. Indiquez-le (0 pour un produit offert) ou décochez la ligne.`);
+      return;
+    }
+    const items = kept.map((r) => ({
+      name: r.name.trim(), price: Number(String(r.price).replace(',', '.')), category: r.category.trim(), active: true }));
     if (!items.length) return;
     setBusy(true); setError('');
     try {

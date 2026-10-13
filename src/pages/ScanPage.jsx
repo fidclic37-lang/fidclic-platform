@@ -588,11 +588,18 @@ const ScanPage = () => {
   const pickerLineItems = pickedItems.map(({ item, qty }) => ({ item_id: item.id, qty }));
   // When the picker has at least one selection, force amount_paid to the
   // picker total — the field is shown read-only in that mode so the
-  // cashier can't accidentally type a different number.
+  // cashier can't accidentally type a different number. Every product taken
+  // off again: the catalogue's total goes too (QA BUG-004: « − » down to 0
+  // left « 10,00 € » in the field, editable again, read as a real amount).
+  const amountFromPicker = React.useRef(false);
   React.useEffect(() => {
     if (pickedItems.length > 0) {
       setAmountPaid(pickerTotal.toFixed(2));
       setAmountError(null);                // the catalogue's total replaces what was typed
+      amountFromPicker.current = true;
+    } else if (amountFromPicker.current) {
+      setAmountPaid('');
+      amountFromPicker.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickerTotal, pickedItems.length]);
