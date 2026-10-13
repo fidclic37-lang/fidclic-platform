@@ -1857,8 +1857,8 @@ def styled_letters(card: Dict[str, Any]) -> Optional[Tuple[Tuple[str, int, Optio
 
 
 def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, k: float):
-    """The styled name, as large as it fits in room × H (one line, else up to
-    three, never cut): an RGBA image, or None."""
+    """The styled name on ONE line, as large as the box allows: an RGBA image,
+    or None. Never wrapped, never cut, never an ellipsis."""
     from PIL import Image, ImageDraw
     glyphs = []
     for c, size, col, fkey in letters:
@@ -1896,37 +1896,39 @@ def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, 
                 x, asc, desc = x + adv, max(asc, a), max(desc, d)
         return right - left, asc, desc, -left
 
-    def wrap(base):
-        rows, cur = [], []
-        for word in words:
-            if cur and line_box(cur + [word], base)[0] > room:
-                rows.append(cur)
-                cur = [word]
-            else:
-                cur.append(word)
-        return rows + ([cur] if cur else [])
-
-    def fits(rows, base):
-        boxes = [line_box(r, base) for r in rows]
-        return all(b[0] <= room for b in boxes) and sum(b[1] + b[2] for b in boxes) <= H, boxes
-    chosen = None
-    for pt in range(20, 11, -1):
-        ok, boxes = fits([words], pt * k)
-        if ok:
-            chosen = ([words], pt * k, boxes)
+    # ONE line, always (user, 2026-10-14): a shop's name is its name, and half
+    # of it on a second line — or trailing « … » — is not. So the size is not
+    # picked from a list any more: it is computed from the box itself.
+    #
+    # That also makes the per-letter size mean something. It used to be capped
+    # at 20 pt, so a short name could not grow past it however large its
+    # letters were set; and when every letter was raised together the whole
+    # line was simply re-normalised to the same width — 100 % and 200 % drew
+    # the identical picture. Now the only limits are `room` and `H`: raise the
+    # letters and the name really does get bigger, until it touches an edge.
+    REF = 100.0
+    # A couple of pixels kept clear: the line is measured from the ink, and a
+    # letter that ends exactly on the edge is a letter one pixel from being
+    # shaved off.
+    fit_w, fit_h = max(10.0, room - 2.0), max(10.0, H - 2.0)
+    w0, a0, d0, _ = line_box(words, REF)
+    if w0 <= 0 or (a0 + d0) <= 0:
+        return None
+    base = REF * min(fit_w / w0, fit_h / (a0 + d0))
+    # Fonts are hinted, so a measured line is not exactly linear in its size:
+    # measure again and correct, a few times, always downwards.
+    for _ in range(4):
+        w, a, d, _lead = line_box(words, base)
+        if w <= fit_w and (a + d) <= fit_h:
             break
-    if chosen is None:
-        for pt in range(16, 3, -1):
-            rows = wrap(pt * k)
-            ok, boxes = fits(rows, pt * k)
-            if len(rows) <= 3 and ok:
-                chosen = (rows, pt * k, boxes)
-                break
-    if chosen is None:
-        base = 4 * k
-        rows = wrap(base)
-        chosen = (rows, base, [line_box(r, base) for r in rows])
-    rows, base, boxes = chosen
+        base *= min(fit_w / max(w, 1.0), fit_h / max(a + d, 1.0)) * 0.99
+    # 100 % is a real size, not « whatever fills the box »: without this the
+    # line was always stretched to the edges, so raising every letter together
+    # just shrank the base and drew the exact same picture. The box is only
+    # the ceiling now — 200 % grows until it touches it.
+    base = max(2.0, min(base, 20.0 * k))
+    rows = [words]
+    boxes = [line_box(words, base)]
     tw = int(max(b[0] for b in boxes)) + 1
     th = sum(b[1] + b[2] for b in boxes)
     img = Image.new("RGBA", (max(1, min(room, tw)), max(1, min(H, th))), (0, 0, 0, 0))
@@ -2011,32 +2013,22 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
             a, d = fnt.getmetrics() if hasattr(fnt, "getmetrics") else (12 * k, 3 * k)
             return a + d
 
-        def wrap(fnt) -> List[str]:
-            rows, cur = [], ""
-            for w in name.split(" "):
-                t = f"{cur} {w}".strip()
-                if not cur or width(t, fnt) <= room:
-                    cur = t
-                else:
-                    rows.append(cur)
-                    cur = w
-            return rows + ([cur] if cur else [])
         if name:
-            done = False
-            for pt in range(20, 11, -1):                       # one line, as large as it fits
-                f = font(round(pt * k))
-                if width(name, f) <= room:
-                    lines, done = [name], True
+            # ONE line, always (user, 2026-10-14) — the same rule as the styled
+            # name above: the whole name, end to end, never on a second line
+            # and never cut short.
+            lines = [name]
+            f = font(max(2, round(20 * k)))
+            for _ in range(5):
+                w = width(name, f)
+                if w <= room and lh_of(f) <= H:
                     break
-            if not done:                                       # up to three lines, never cut
-                for pt in range(16, 4, -1):
-                    f = font(round(pt * k))
-                    rows = wrap(f)
-                    if len(rows) <= 3 and all(width(r, f) <= room for r in rows) and lh_of(f) * len(rows) <= H:
-                        lines, done = rows, True
-                        break
-                if not done:
-                    f, lines = font(round(5 * k)), wrap(font(round(5 * k)))
+                px = max(2, int(f.size * min(room / max(w, 1), H / max(lh_of(f), 1)) * 0.99))
+                if px >= f.size:
+                    px = f.size - 1
+                if px < 2:
+                    break
+                f = font(px)
         asc, desc = f.getmetrics() if hasattr(f, "getmetrics") else (12 * k, 3 * k)
         lh = asc + desc
         tw = max((width(t, f) for t in lines), default=0) if name else 0
