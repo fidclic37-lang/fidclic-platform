@@ -171,7 +171,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"saved ({r.status_code})", r.status_code == 200 and r.json().get("source") == "editor")
     tdoc = db.card_templates.find_one({"tenant_id": "t1"})["pass_designer"]
     bg = next(i for i in tdoc["images"] if i["name"] == "background@3x.png")["data"]
-    check("a big upload is scaled to Wallet's 1035×1515", _Img.open(_io.BytesIO(base64.b64decode(bg.split(",")[1]))).size == (1010, 1515))
+    from services import media as _M        # stored in `media` since 2026-10-13
+    check("a big upload is stored as a link", _M.is_ref(bg))
+    check("a big upload is scaled to Wallet's 1035×1515", _Img.open(_io.BytesIO(_M.resolve(bg))).size == (1010, 1515))
     check("the editor's buttons are the card's", [a["type"] for a in db.card_templates.find_one({"tenant_id": "t1"})["featured_actions"]]
           == ["viewOffersRewards", "bookAppointment"])
     p = WP.build_pass_json(WP._card_payload("FT-TEST0001"))

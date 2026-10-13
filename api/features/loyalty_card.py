@@ -538,7 +538,8 @@ def put_card_settings(body: CardSettings,
         ]
     if payload.get("poster_image_url"):
         v = payload["poster_image_url"]
-        if not (v.startswith("data:image/") or v.startswith("https://")):
+        from services import media as _M
+        if not _M.is_image_value(v):        # a link to our own media is the saved picture
             raise HTTPException(status_code=400, detail="Image poster invalide.")
         if len(v) > 3_500_000:
             raise HTTPException(status_code=400, detail="L'image poster dépasse 2,5 Mo.")

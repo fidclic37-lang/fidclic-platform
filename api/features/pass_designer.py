@@ -358,8 +358,15 @@ def actions_of(t: Dict[str, Any]) -> List[Dict[str, str]]:
 def images(tpl: Dict[str, Any]) -> Dict[str, bytes]:
     """The template's images as pass files (PNG bytes by name)."""
     out: Dict[str, bytes] = {}
+    from services import media as _M
     for name, url in _image_items(tpl):
-        if IMAGE_RE.match(name) and isinstance(url, str) and url.startswith("data:image/"):
+        if not (IMAGE_RE.match(name) and isinstance(url, str)):
+            continue
+        if _M.is_ref(url):                             # stored in `media` (2026-10-13)
+            raw = _M.resolve(url)
+            if raw:
+                out[name] = raw
+        elif url.startswith("data:image/"):
             try:
                 out[name] = base64.b64decode(url.split(",", 1)[1])
             except Exception:
@@ -449,6 +456,10 @@ def _images_in(body_images: Dict[str, str], saved: List[Dict[str, Any]]) -> List
         if url == "saved":
             if have.get(name):
                 imgs.append({"name": name, "data": have[name]})
+            continue
+        from services import media as _M
+        if _M.is_ref(url) and _M.resolve(url) is not None:   # a picture already stored: kept as it is
+            imgs.append({"name": name, "data": url})
             continue
         if not isinstance(url, str) or len(url) > MAX_IMAGE * 3:
             raise HTTPException(status_code=400, detail=f"Image {name} trop lourde.")

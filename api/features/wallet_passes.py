@@ -334,6 +334,9 @@ def _fetch_image(src: Optional[str]) -> Optional[bytes]:
     if not src:
         return None
     try:
+        from services import media as _M
+        if _M.is_ref(src):                         # our own picture: straight from the database
+            return _M.resolve(src)
         if src.startswith("data:"):
             head, _, data = src.partition(",")
             return base64.b64decode(data) if ";base64" in head else urllib.parse.unquote_to_bytes(data)
@@ -3123,7 +3126,8 @@ _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 def _img_ok(v: Any, limit: int = 3_500_000) -> bool:
-    return isinstance(v, str) and (v.startswith("data:image/") or v.startswith("https://")) and len(v) <= limit
+    from services import media as _M
+    return _M.is_image_value(v) and len(v) <= limit
 
 
 def clean_google_design(d: Any) -> Dict[str, Any]:

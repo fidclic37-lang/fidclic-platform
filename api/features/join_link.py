@@ -90,6 +90,8 @@ def image_of(tid: str, store: Optional[str]) -> str:
 
 
 def set_image(tid: str, store: Optional[str], img: str) -> None:
+    from services import media as _M
+    img = _M.put(img) if img else img                # a link: the signup page answer stays small
     if img:
         _db.signup_images.update_one({"tenant_id": tid, "store_id": store},
                                      {"$set": {"tenant_id": tid, "store_id": store, "data": img, "at": _now()}},
@@ -403,7 +405,8 @@ def put_signup_image(body: SignupImageIn, request: Request = None,
     """The establishment chosen in the menu gets its own signup-page image."""
     tid = token_data.tenant_id
     img = (body.image or "").strip()
-    if img and not (img.startswith("data:image/") or img.startswith("https://")):
+    from services import media as _M
+    if img and not _M.is_image_value(img):
         raise HTTPException(status_code=400, detail="Image invalide.")
     if len(img) > MAX_SIGNUP_IMAGE:
         raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")

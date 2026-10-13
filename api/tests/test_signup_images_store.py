@@ -38,6 +38,14 @@ def main():
     import auth
     import httpx
     from features import join_link as JL
+    from services import media as M
+    import base64 as _b64
+
+    def same(v, data_url):
+        """The picture is the one sent (kept inline, or as a link to `media`)."""
+        if v == data_url:
+            return True
+        return M.is_ref(v) and M.resolve(v) == _b64.b64decode(data_url.split(",", 1)[1])
 
     db = server.db
 
@@ -70,15 +78,16 @@ def main():
           and t1["branches"][1]["slug"] == "palissy")
     size = len(json.dumps(t1, default=str))
     check(f"the account document is light again ({size} bytes)", size < 5000)
-    check("each image kept in signup_images", JL.image_of("t1", "main") == BIG and JL.image_of("t1", "pal") == BIG
+    check("each image kept, as a link to `media` (big) or inline (tiny)",
+          M.is_ref(JL.image_of("t1", "main")) and same(JL.image_of("t1", "main"), BIG) and same(JL.image_of("t1", "pal"), BIG)
           and JL.image_of("t2", None) == SMALL and JL.image_of("t1", "mon") == "")
     check("moving twice moves nothing", JL.move_inline_images() == 0)
 
     print("\nThe signup page still shows each establishment's own")
     p = http("GET", "/api/join/royal-trim/page?store=palissy").json()
-    check("PALISSY's link: its image", p.get("signup_image") == BIG)
+    check("PALISSY's link: its image", same(p.get("signup_image"), BIG))
     p = http("GET", "/api/join/royal-trim/page").json()
-    check("the account's link: the main store's", p.get("signup_image") == BIG)
+    check("the account's link: the main store's", same(p.get("signup_image"), BIG))
     p = http("GET", "/api/join/royal-trim/page?store=pl-monster").json()
     check("a store without one: none (the card's logo shows)", p.get("signup_image") == "")
     check("a one-shop account: its own", http("GET", "/api/join/solo/page").json().get("signup_image") == SMALL)

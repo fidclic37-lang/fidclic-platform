@@ -545,7 +545,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         "images": {"background@2x.png": b64img(690, 1010, (90, 40, 140)), "primaryLogo@2x.png": b64img(200, 100, (1, 2, 3))}})
     tplx = db.card_templates.find_one({"tenant_id": "t1"})
     check(f"import: the template's photo becomes the card's poster photo ({r.status_code})",
-          r.status_code == 200 and (tplx.get("poster_image_url") or "").startswith("data:image/"))
+          r.status_code == 200 and (tplx.get("poster_image_url") or "").startswith("/api/media/"))
     check("import: its logo becomes the card's, the card having none", (tplx.get("logo_url") or "").startswith("data:image/"))
     setcard(logo_url=b64img(100, 100, (250, 250, 0)))
     keep = db.card_templates.find_one({"tenant_id": "t1"})["logo_url"]
