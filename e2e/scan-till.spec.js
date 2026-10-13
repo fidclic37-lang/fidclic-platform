@@ -104,7 +104,13 @@ test.describe.serial('the till records a visit', () => {
     const after = await mine();
     expect(after.visits).toBe((before.visits || 0) + 1);
     expect(Math.round((after.spent - (before.spent || 0)) * 100) / 100).toBe(70);
-    // and the form is clean for the next client
-    await expect(page.getByPlaceholder('0,00')).toHaveValue('');
+    // recorded: the visit's summary, no second « Enregistrer la visite » for the
+    // same scan (user, 2026-10-13: it made a second visit at 0 €)
+    await expect(page.getByTestId('visit-summary')).toContainText('70,00');
+    await expect(page.getByRole('button', { name: 'Enregistrer la visite' })).toHaveCount(0);
+    await expect(page.getByPlaceholder('0,00')).toHaveCount(0);
+    // the next visit starts from a new scan
+    await page.getByTestId('visit-summary').getByRole('button', { name: /Scanner une autre carte/ }).click();
+    await expect(page.getByLabel('Code de la carte')).toHaveValue('');
   });
 });

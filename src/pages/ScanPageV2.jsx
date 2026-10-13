@@ -857,6 +857,14 @@ const ScanPage = () => {
   const panelTotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
 
   const resetVisit = () => { setPicked({}); setApply(''); setManual(false); setAmountPaid(''); setPaperStamps(''); setPaperOn(false); };
+  // The visit just recorded (user, 2026-10-13: « visit ek baar record ho gyi toh
+  // waapis kyun de rhe ho option »): from then on the page is its summary —
+  // no form, no second « Enregistrer la visite » for the same scan (it made a
+  // second visit at 0 €). The next visit starts from a new scan or code.
+  const [recorded, setRecorded] = useState(null);
+  const scanAnother = () => { resetVisit(); setBarcode(''); setCard(null); setScanResult(null); setStatus(null); setRecorded(null); };
+  // a new code read (camera, photo, typed): a new visit, not the last one's summary
+  useEffect(() => { setRecorded(null); }, [barcode]);
 
   const registerVisit = async () => {
     if (!card) return;
@@ -875,9 +883,10 @@ const ScanPage = () => {
         branch_id: branchId || undefined,
       });
       setScanResult(data);
+      setRecorded({ amount, lines, applied: chosen ? chosen.title : '', paper, data });
       const failed = data.applied && data.applied.ok === false;
-      setStatus({ type: failed ? 'info' : 'success',
-                  message: failed ? `Visite enregistrée. ${data.applied.error}` : 'Visite enregistrée.' });
+      // the summary below says « Visite enregistrée »; a banner only when the offer could not apply
+      setStatus(failed ? { type: 'info', message: `Offre non appliquée : ${data.applied.error}` } : null);
       resetVisit();
       // the card changed (stamps, reward used): read it again
       ownerAPI.scanCard(card.customer.barcode_id).then(({ data: d2 }) => setCard(d2)).catch(() => {});
@@ -968,7 +977,7 @@ const ScanPage = () => {
               </p>
               <p className="mt-1 text-[14px] text-[#64748B]">Les informations du client sont affichées ci-dessous.</p>
             </div>
-            <button type="button" onClick={() => { resetVisit(); setBarcode(''); setCard(null); setScanResult(null); setStatus(null); }}
+            <button type="button" onClick={scanAnother}
                     className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[#E2E8F0] bg-white px-4 py-2.5 text-[13px] font-medium text-[#334155]">
               <ScanLine size={15} /> Scanner une autre carte
             </button>
@@ -1005,8 +1014,39 @@ const ScanPage = () => {
             </div>
           </div>
 
+          {recorded && (
+            <div className="rounded-2xl border border-[#BFE8D1] bg-white p-5" data-testid="visit-summary">
+              <p className="flex items-center gap-2 text-[16px] font-bold text-[#0B1C3F]">
+                <CheckCircle2 size={18} className="text-[#10B981]" /> Visite enregistrée
+              </p>
+              <dl className="mt-3 grid gap-x-6 gap-y-2 text-[13.5px] sm:grid-cols-2">
+                <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Montant payé</dt><dd className="font-semibold text-[#0B1C3F]">{money(recorded.amount)}</dd></div>
+                <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Cette visite</dt><dd className="font-semibold text-[#0F7A45]">{
+                  recorded.data?.programme === 'stamps'
+                    ? `+${recorded.data?.stamps_earned ?? 0} tampon${(recorded.data?.stamps_earned ?? 0) > 1 ? 's' : ''}${recorded.paper ? `, dont ${recorded.paper} de la carte papier` : ''}`
+                    : `+${recorded.data?.points_earned ?? 0} point${(recorded.data?.points_earned ?? 0) > 1 ? 's' : ''}`}</dd></div>
+                {recorded.lines.length > 0 && (
+                  <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2"><dt className="text-[#64748B]">{words.many.charAt(0).toUpperCase() + words.many.slice(1)}</dt>
+                    <dd className="text-right text-[#0B1C3F]">{recorded.lines.map((l) => `${l.qty} × ${l.name}`).join(', ')}</dd></div>
+                )}
+                {recorded.applied && (
+                  <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2"><dt className="text-[#64748B]">Offre / Récompense</dt>
+                    <dd className="text-right text-[#0B1C3F]">{recorded.applied}{recorded.data?.applied?.ok === false ? ' — non appliquée' : ''}</dd></div>
+                )}
+                {recorded.data?.referral_reward && (
+                  <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2"><dt className="text-[#64748B]">Parrainage</dt>
+                    <dd className="text-right text-[#EA580C]">🎁 {recorded.data.referral_reward}</dd></div>
+                )}
+              </dl>
+              <button type="button" onClick={scanAnother}
+                      className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white">
+                <ScanLine size={17} /> Scanner une autre carte
+              </button>
+            </div>
+          )}
+
           {/* every offer and reward — exactly one can be chosen */}
-          {card.applicables.length > 0 && (
+          {!recorded && card.applicables.length > 0 && (
             <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
               <p className="text-[14px] font-bold text-[#0B1C3F]">Offre / Récompense</p>
               <p className="mb-3 text-[12.5px] text-[#64748B]">Une seule peut être appliquée à cette visite.</p>
@@ -1033,7 +1073,8 @@ const ScanPage = () => {
             </div>
           )}
 
-          {/* the visit itself */}
+          {/* the visit itself — until it is recorded */}
+          {!recorded && (
           <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
             <p className="mb-3 text-[16px] font-bold text-[#0B1C3F]">Enregistrer une visite</p>
 
@@ -1117,6 +1158,7 @@ const ScanPage = () => {
               <Gift size={17} /> {loading ? 'Enregistrement…' : 'Enregistrer la visite'}
             </button>
           </div>
+          )}
         </>
       )}
 
