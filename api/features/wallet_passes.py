@@ -2278,6 +2278,7 @@ def slim_pass_files(files: Dict[str, bytes]) -> Dict[str, bytes]:
 
 @_SC.payload_store
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
+    _prefetch_pictures((payload.get("tenant") or {}).get("id"), payload.get("card"))
     files = slim_pass_files(pass_files(payload))
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
@@ -2680,7 +2681,19 @@ def _preview_payload(tid: str, body: "PassPreviewIn"):
     apply_programme_rules(card)                # the draft's programme decides points or tampons
     sample["points"] = visits * int(card.get("points_per_visit") or 10)
     payload["customer"] = {**payload.get("customer", {}), **sample}
+    _prefetch_pictures(tid, card, body.design)
     return payload, sample, visits
+
+
+def _prefetch_pictures(tid: str, *more: Any) -> None:
+    """All the pictures this card will use, fetched together before the work
+    (services/media.prefetch) — never one after the other on a cold server."""
+    try:
+        from services import media as M
+        from features import pass_designer as PD
+        M.prefetch(PD.load(tid) or {}, *[m for m in more if m])
+    except Exception as exc:              # a slower preview, never a broken one
+        print(f"wallet: pictures not prefetched ({exc})")
 
 
 @router.post("/api/owner/wallet/preview")

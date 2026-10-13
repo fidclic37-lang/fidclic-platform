@@ -107,15 +107,20 @@ _MEM_MAX = 160 * 1024 * 1024
 _mem_size = 0
 
 
+import threading
+_MEM_LOCK = threading.Lock()                   # prefetch fills it from several threads
+
+
 def _remember(mid: str, got: Tuple[str, bytes]) -> None:
     global _mem_size
-    if mid in _MEM or len(got[1]) > _MEM_MAX // 4:
-        return
-    _MEM[mid] = got
-    _mem_size += len(got[1])
-    while _mem_size > _MEM_MAX and _MEM:
-        _, old = _MEM.popitem(last=False)
-        _mem_size -= len(old[1])
+    with _MEM_LOCK:
+        if mid in _MEM or len(got[1]) > _MEM_MAX // 4:
+            return
+        _MEM[mid] = got
+        _mem_size += len(got[1])
+        while _mem_size > _MEM_MAX and _MEM:
+            _, old = _MEM.popitem(last=False)
+            _mem_size -= len(old[1])
 
 
 def _from_cdn(mid: str) -> Optional[Tuple[str, bytes]]:
@@ -132,7 +137,9 @@ def _from_cdn(mid: str) -> Optional[Tuple[str, bytes]]:
         if not site.startswith("https://"):
             return None
         req = urllib.request.Request(f"{site}{PREFIX}{mid}", headers={"User-Agent": "FidClic-media/1"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        # one wait, long enough for an edge MISS (its origin reads the cluster):
+        # timing out and then reading the cluster again cost twice (2026-10-13)
+        with urllib.request.urlopen(req, timeout=12) as resp:
             if resp.status != 200:
                 _note("media_cdn_fail", f"http {resp.status}")
                 return None
@@ -142,6 +149,35 @@ def _from_cdn(mid: str) -> Optional[Tuple[str, bytes]]:
     except Exception as exc:
         _note("media_cdn_fail", f"{type(exc).__name__} {exc}")
         return None
+
+
+_REF_RE = re.compile(r"/api/media/([0-9a-f]{32})")
+
+
+def prefetch(*objs: Any) -> int:
+    """Every picture these documents link to, fetched AT ONCE (threads) into
+    memory before the work starts: a cold preview waited for its pictures one
+    after the other — 4 × (edge miss + cluster) went past Vercel's 30 s."""
+    import json
+    ids = []
+    for o in objs:
+        try:
+            text = o if isinstance(o, str) else json.dumps(o, default=str)
+        except Exception:
+            continue
+        ids += [m for m in _REF_RE.findall(text) if m not in _MEM]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return 0
+    if len(ids) == 1:
+        get(ids[0])
+        return 1
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+    ctx = contextvars.copy_context()                   # the request's timing tally follows
+    with ThreadPoolExecutor(max_workers=min(8, len(ids))) as pool:
+        list(pool.map(lambda m: ctx.copy().run(get, m), ids))
+    return len(ids)
 
 
 def _note(key: str, value: Any = 1) -> None:
@@ -157,9 +193,11 @@ def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
     """`cdn=False`: the database only (the « /api/media » route itself)."""
     if _db is None or not _ID.match(mid or ""):
         return None
-    hit = _MEM.get(mid)
+    with _MEM_LOCK:
+        hit = _MEM.get(mid)
+        if hit is not None:
+            _MEM.move_to_end(mid)
     if hit is not None:
-        _MEM.move_to_end(mid)
         _note("media_mem")
         return hit
     if cdn:
