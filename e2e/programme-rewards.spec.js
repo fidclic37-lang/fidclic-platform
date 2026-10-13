@@ -38,18 +38,16 @@ test.describe.serial('programme units and parrainage rewards', () => {
       consent: true, ...(slug ? { store: slug } : {}) } })).json();
 
     await page.goto('/dashboard/scan');
+    await page.getByRole('button', { name: 'Saisir le code' }).click();
     await page.locator('#scan-card-id').fill(made.barcode_id);
-    // a shop with a catalogue picks a product first (another test may have added some)
-    const picker = page.getByRole('button', { name: /Sélectionner un produit/ });
-    if (await picker.count()) {
-      await picker.click();
-      await page.getByRole('button', { name: 'Ajouter', exact: true }).first().click();
-    }
-    const go = page.getByRole('button', { name: /Enregistrer la visite et ajouter le tampon/ });
-    await expect(go).toBeVisible();
-    await go.click();
-    await expect(page.getByText(/^tampon$/)).toBeVisible();
-    await expect(page.getByText('points', { exact: true }), 'no points tile on a Tampons card').toHaveCount(0);
+    await expect(page.getByText('Client scanné')).toBeVisible({ timeout: 10_000 });
+
+    // the card counts in tampons, and says so — never in points
+    await expect(page.getByText('tampons', { exact: true })).toBeVisible();
+    await expect(page.getByText('points', { exact: true }), 'no points on a Tampons card').toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Enregistrer la visite' }).click();
+    await expect(page.getByText(/Visite enregistrée/)).toBeVisible({ timeout: 15_000 });
     const card = await (await request.get(`/api/card/${made.barcode_id}`, { headers: { 'X-Card-Key': made.card_key } })).json();
     expect(card.customer.points, 'no points credited').toBe(0);
   });

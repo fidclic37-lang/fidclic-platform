@@ -4379,6 +4379,16 @@ class ScanRequest(BaseModel):
     # card; they move the card's meter only — not visits, points or palier.
     # Any: validated by _paper_stamps_check (pydantic would turn `true` into 1)
     paper_stamps: Optional[Any] = None
+    # The one offer or reward the till put on this visit (user, 2026-10-13):
+    # "offer:<campaign id>" · "card" · "defi:<reward id>". One, never several —
+    # the staff picks from a single list. An offer's discount comes off the
+    # amount here, where the prices are, not in the browser.
+    apply: Optional[str] = None
+    # The staff typed a final amount over what the catalogue worked out — the
+    # till had the last word (a cash rounding, a gesture). Without this the
+    # catalogue's own total always wins, so a tampered browser cannot inflate
+    # revenue by sending a number of its own.
+    amount_manual: bool = False
 
 
 # ============================================================
@@ -5012,6 +5022,39 @@ def scan_preview(barcode: str,
     }
 
 
+def _apply_to_visit(choice: str, token_data: "TokenData", cust: dict,
+                    branch_id: Optional[str]) -> Dict[str, Any]:
+    """Hand over the one offer or reward the till picked, once the visit is
+    written. Order matters: the visit is counted first, so a card completed by
+    THIS visit can be redeemed on the spot (user, 2026-10-13).
+
+    Never raises: the visit happened, and a scan that reported failure because
+    a reward could not be handed over would be lying about the visit. The
+    answer carries what went wrong instead, and the till shows it."""
+    kind, _, ident = (choice or "").partition(":")
+    try:
+        if kind == "offer":
+            from features import custom_rules as _CR
+            camp = db.campaigns.find_one({"tenant_id": token_data.tenant_id, "id": ident}, {"_id": 0})
+            if not camp:
+                return {"kind": "offer", "ok": False, "error": "Offre introuvable."}
+            _CR.offer_used(token_data.tenant_id, cust, camp,
+                           by=getattr(token_data, "email", None), branch_id=branch_id)
+            return {"kind": "offer", "ok": True, "label": camp.get("name")}
+        if kind == "card":
+            out = redeem_reward(RedeemRewardRequest(customer_id=cust["id"]), token_data)
+            return {"kind": "card", "ok": True, "label": (out or {}).get("reward_name")}
+        if kind == "defi":
+            from features import defis as _defis
+            _defis.redeem(ident, token_data)
+            return {"kind": "defi", "ok": True}
+    except HTTPException as e:
+        return {"kind": kind, "ok": False, "error": str(e.detail)}
+    except Exception as e:
+        return {"kind": kind, "ok": False, "error": str(e)}
+    return {"kind": kind or "?", "ok": False, "error": "Choix inconnu."}
+
+
 def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     """MINIMAL fast-path scan — does the essentials inline, defers every
     optional side effect to a best-effort try/except so a single bad
@@ -5110,8 +5153,26 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # Only override if at least one item resolved — otherwise fall
         # back to the client-sent amount_paid so a typo in an item id
         # doesn't silently zero out the visit.
-        if resolved_lines:
+        # `amount_manual` is the till saying it typed the final figure itself
+        # (a cash rounding, a gesture): the lines are still recorded, so « Top
+        # produits » keeps working, but the amount is the one the staff stands
+        # behind. Without that flag the catalogue's own total always wins.
+        if resolved_lines and not req.amount_manual:
             req.amount_paid = computed_amount
+    # « Appliquer » on an offer takes its discount off the amount (user,
+    # 2026-10-13). Done here, on the catalogue's own total — a browser never
+    # gets to say what a visit was worth. A staff member who typed a final
+    # amount keeps it (amount_manual).
+    _applied_offer = None
+    if req.apply and str(req.apply).startswith("offer:") and not req.amount_manual:
+        _applied_offer = db.campaigns.find_one({"tenant_id": token_data.tenant_id,
+                                                "id": str(req.apply).split(":", 1)[1]},
+                                               {"_id": 0, "id": 1, "name": 1, "offer": 1})
+        off = (_applied_offer or {}).get("offer") or {}
+        base, kind, val = float(req.amount_paid or 0), off.get("discount_type"), off.get("discount_value")
+        if base > 0 and val:
+            cut = base * float(val) / 100 if kind == "percent" else float(val)
+            req.amount_paid = round(max(0.0, base - cut), 2)
 
     # Compute points to add — owner-controlled via card_template.points_mode.
     # The client's `points` is ignored (user, 2026-10-04): the till has no
@@ -5219,6 +5280,10 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         db.visits.insert_one(visit_doc)
     except Exception as _e:
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
+
+    # The visit exists now, so the card counts it: what the till chose is
+    # handed over against the figures of AFTER this visit.
+    applied = _apply_to_visit(req.apply, token_data, cust, req.branch_id) if req.apply else None
 
     # ---- ALL OPTIONAL SIDE EFFECTS BELOW — wrapped, never block response ----
     # Parrainage — this may be the visit the referral was waiting for. Points
@@ -5371,6 +5436,10 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "points": new_points,
         # What this scan added, by the card's rules — the till shows it.
         "points_earned": points_to_add,
+        # The offer or reward the till put on this visit, and whether it went
+        # through. The visit stands either way; the receipt says if it did not.
+        "applied": applied,
+        "amount_paid": round(float(req.amount_paid or 0), 2),
         "total_amount_paid": round(new_paid, 2),
         "tier": new_tier,
         "previous_tier": previous_tier,

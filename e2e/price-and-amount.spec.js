@@ -59,14 +59,24 @@ test.describe.serial('money typed by mistake', () => {
     const made = await request.post('/api/owner/catalogue/products', { headers: H, data: { name, price: 10 } });
     expect(made.ok(), await made.text()).toBeTruthy();
 
+    // the redesigned till shows the form once a card is in hand (2026-10-13)
+    const clients = await (await request.get('/api/owner/clients/list?per_page=5', { headers: H })).json();
+    const card = (clients.rows || [])[0]?.barcode_id;
+    expect(card, 'the seed has a client to scan').toBeTruthy();
+
     await page.goto('/dashboard/scan');
-    const amount = page.locator('#scan-amount');
-    await expect(amount).toBeVisible();
-    await page.getByRole('button', { name: /Sélectionner un produit/ }).click();
-    const row = page.locator('div.flex.items-center').filter({ hasText: name }).filter({ has: page.getByRole('button', { name: 'Retirer' }) }).last();
-    await row.getByRole('button', { name: 'Ajouter' }).click();
+    await page.getByRole('button', { name: 'Saisir le code' }).click();
+    await page.locator('#scan-card-id').fill(card);
+    await expect(page.getByText('Client scanné')).toBeVisible({ timeout: 10_000 });
+
+    const amount = page.getByPlaceholder('0,00');
+    await expect(amount).toHaveValue('');
+    await page.getByRole('button', { name: /Choisir un (service|produit)/ }).click();
+    const drawer = page.getByRole('dialog');
+    await drawer.getByRole('button', { name: `Plus ${name}` }).click();
+    await drawer.getByRole('button', { name: /Ajouter/ }).click();
     await expect(amount).toHaveValue(/^10[.,]00$/);
-    await row.getByRole('button', { name: 'Retirer' }).click();
+    await page.getByRole('button', { name: `Retirer ${name}` }).click();
     await expect(amount, 'nothing picked: no amount left behind').toHaveValue('');
     await expect(amount).toBeEditable();
   });
