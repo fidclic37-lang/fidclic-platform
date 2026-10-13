@@ -1388,11 +1388,18 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     offer_full = (f"{offer_title} — {offer_sub}" if offer_sub else offer_title) if offer_title \
         else "Aucune offre en ce moment."
     reward_points = int(card.get("reward_points") or 0)
+    # What the balance still owes for the reward — a points card's own count.
+    points_left = max(0, reward_points - points) if reward_points else 0
     back = [
         {"key": "offer", "label": "Offre du moment", "value": offer_full, "changeMessage": "%@"},
+        # A points card counts in points, not in stamps: it used to say
+        # « Encore 3 tampons » to someone who has never had a stamp.
         {"key": "next_reward", "label": "Prochaine récompense",
-         "value": "Récompense débloquée : présentez votre carte !" if remaining <= 0
-         else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}"},
+         "value": "Récompense débloquée : présentez votre carte !"
+         if (remaining <= 0 if stamp_prog else (reward_points and points_left <= 0))
+         else (f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}" if stamp_prog
+               else (f"Encore {points_left} point{'s' if points_left > 1 else ''} avant : {reward}"
+                     if reward_points else f"{reward}."))},
         # a full card restarts on the next visit; its reward stays valid
         # until handed over (user, 2026-10-09)
         {"key": "pending_rewards", "label": "Récompense à récupérer",

@@ -115,16 +115,30 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
     one stamp short leaves with the reward today, because the visit is written
     first and the reward is handed over straight after (features/scan_page is
     read-only — server.scan does that part)."""
+    from features import loyalty_card as LC
+    waiting = _db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
+    label = next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense"
+    if LC._is_points(LC._programme(tpl)):
+        # A points card buys its reward with points (2026-10-14). What this
+        # visit is about to earn is not known here, so « after_visit » is left
+        # to the stamp card, where one visit is always one step.
+        price = max(int(tpl.get("reward_points") or 0), 0)
+        if not price:
+            return None
+        balance = int(cust.get("points") or 0)
+        if balance < price and waiting == 0:
+            return None
+        return {"id": "card", "kind": "card", "tone": "reward", "title": label,
+                "sub": f"{price} points", "discount_type": None, "discount_value": None,
+                "available": True, "after_visit": False}
     per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
     size = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1)
     need = size * per
     on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
-    waiting = _db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
     now_ok = on_card >= need or waiting > 0
     after_ok = (not now_ok) and (on_card + 1) >= need
     if not (now_ok or after_ok):
         return None
-    label = next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense"
     return {"id": "card", "kind": "card", "tone": "reward", "title": label,
             "sub": f"{size} {unit}" if unit != "€" else None,
             "discount_type": None, "discount_value": None,

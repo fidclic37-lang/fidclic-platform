@@ -89,15 +89,20 @@ def main():
         "vip_shortcut": {"enabled": False, "min_visits": 10, "min_avg": 60}})
     body = r.json()
     tiers = {c["id"]: c["tier"] for c in db.customers.find({"tenant_id": "t1"})}
-    check(f"saved ({r.status_code}): A 6 visits → Argent, C 25 → Argent, D without the shortcut → Argent",
-          r.status_code == 200 and tiers == {"a": "silver", "b": "silver", "c": "silver", "d": "silver"})
-    check("the answer says who moved: 1 up, 2 down", body.get("moved") == {"up": 1, "down": 2, "same": 1})
+    # A palier is a floor since 2026-10-14: raising the ladder promotes those
+    # the new rungs reach, and leaves everyone else where they already stood.
+    check(f"saved ({r.status_code}): A 6 visits → Argent; C and D keep what they earned",
+          r.status_code == 200 and tiers == {"a": "silver", "b": "silver", "c": "gold", "d": "vip"})
+    check("the answer says who moved: 1 up, nobody down",
+          body.get("moved") == {"up": 1, "down": 0, "same": 3})
     a_push = [p for p in pushed if p[0] == "a"]
     check("A (up) is told — even though A already had today's one message (not counted)",
           a_push and "Argent" in a_push[0][1] and "Croissant" in a_push[0][2])
     check("…and A's card gets a Google message", any(c == "a" and isinstance(n, dict) and n.get("kind") == "tier_up" for c, n in woken))
-    check("C and D (down) get no push, only their card refreshed",
-          not [p for p in pushed if p[0] in ("c", "d")] and ("c", "quiet") in woken and ("d", "quiet") in woken)
+    check("C and D are not demoted, and nothing is sent to them",
+          not [p for p in pushed if p[0] in ("c", "d")]
+          and db.customers.find_one({"id": "c"})["tier"] == "gold"
+          and db.customers.find_one({"id": "d"})["tier"] == "vip")
     check("the daily « Atteinte d'un palier » is not stamped (no double congratulation)",
           not db.customers.find_one({"id": "a"}).get("tier_changed_at"))
     check("the shortcut setting is kept", LC.vip_shortcut(LC._template("t1"))["enabled"] is False)
