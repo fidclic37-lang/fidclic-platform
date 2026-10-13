@@ -11,6 +11,7 @@ businesses it found.
 """
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -41,6 +42,52 @@ def init(db):
 
 _cache: Dict[Any, Any] = {}
 CACHE_SECONDS = 60
+# One build at a time per process: the page can ask twice at once, and without
+# this both misses start their own build (the cache is only written at the end)
+# — the work was done twice and the two calls queued behind each other.
+_build_lock = threading.Lock()
+# The cache above lives inside one process. On Vercel every cold function has
+# its own empty one, so an admin opening the page nearly always paid for a full
+# rebuild. This keeps the same single entry in Mongo, where the next function
+# finds it. Never fatal: any failure here just means building again.
+SHARED_DOC = "admin_dashboard"
+
+
+def _key_text(key) -> str:
+    """Mongo has no date-only type: the key travels as text."""
+    return "|".join(str(p) for p in key)
+
+
+def _shared_get(key, now):
+    try:
+        doc = _db.cache_entries.find_one({"_id": SHARED_DOC})
+    except Exception:
+        return None
+    if not doc or doc.get("key") != _key_text(key):
+        return None
+    at = _aware(doc.get("expires_at"))
+    return doc.get("payload") if at and at > now else None
+
+
+def invalidate() -> None:
+    """Forget both layers — for a caller that has just changed the data and
+    wants the next answer rebuilt instead of waiting out the 60 seconds."""
+    _cache.clear()
+    try:
+        _db.cache_entries.delete_one({"_id": SHARED_DOC})
+    except Exception:
+        pass
+
+
+def _shared_put(key, payload, now):
+    try:
+        _db.cache_entries.replace_one(
+            {"_id": SHARED_DOC},
+            {"_id": SHARED_DOC, "key": _key_text(key), "payload": payload,
+             "expires_at": now + timedelta(seconds=CACHE_SECONDS)},
+            upsert=True)
+    except Exception:
+        pass            # a cache that cannot be written is not an error
 
 
 def _now() -> datetime:
@@ -94,8 +141,24 @@ def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
     stand = {t["id"]: AC.standing_of(t, now) for t in tenants}
 
     def cum(coll, match, field="created_at"):
-        at = lambda t: _db[coll].count_documents({**match, field: {"$lt": t}})       # noqa: E731
-        return at(end), at(start), [at(b) for _, b in B]
+        """The running total at each point of the curve.
+
+        It used to ask Mongo to count from scratch for every point — one
+        count_documents per bucket, ten round trips per figure, and the two
+        figures below made twenty. Now: one count for what came before the
+        period, then the dates inside it, and the curve is added up here.
+        Two queries, the same numbers."""
+        base = _db[coll].count_documents({**match, field: {"$lt": start}})
+        inside = sorted(d for d in (_aware(x.get(field)) for x in _db[coll].find(
+            {**match, field: {"$gte": start, "$lt": end}}, {"_id": 0, field: 1})) if d)
+        series, i, running = [], 0, base
+        for _, b in B:
+            while i < len(inside) and inside[i] < b:
+                i += 1
+                running += 1
+            series.append(running)
+        # the last bucket ends at `end`, so its total is the period's own
+        return (series[-1] if series else base), base, series
 
     out = []
     essai = sum(1 for v in stand.values() if v == "essai")
@@ -304,9 +367,21 @@ def dashboard(date_from: Optional[str] = Query(None, alias="from"), date_to: Opt
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    out = _build(start, end, key[2], now)
-    _cache.clear()                       # one entry is enough: the page asks for one period at a time
-    _cache[key] = (now + timedelta(seconds=CACHE_SECONDS), out)
+    shared = _shared_get(key, now)       # built by another function, still fresh
+    if shared is not None:
+        _cache.clear()                   # one entry is enough: the page asks for one period at a time
+        _cache[key] = (now + timedelta(seconds=CACHE_SECONDS), shared)
+        return shared
+    with _build_lock:
+        # Whoever held the lock may have just built exactly this.
+        again = _cache.get(key)
+        if again and again[0] > _now():
+            return again[1]
+        out = _build(start, end, key[2], now)
+        done = _now()
+        _cache.clear()
+        _cache[key] = (done + timedelta(seconds=CACHE_SECONDS), out)
+        _shared_put(key, out, done)
     return out
 
 

@@ -80,12 +80,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = D.dashboard(date_from=(now - dt.timedelta(days=7)).date().isoformat(), date_to=now.date().isoformat(), token_data=ADMIN)
     check("a shorter period counts less", {x["key"]: x for x in p["kpis"]}["ca"]["value"] < 315.0)
     db.tenants.update_one({"id": "c"}, {"$set": {"suspended_at": now}})
-    D._cache.clear()
+    D.invalidate()
     kk = {x["key"]: x for x in D.dashboard(token_data=ADMIN)["kpis"]}
     check("a suspended business leaves Commerces and counts as Impayé", kk["commerces"]["value"] == 3 and kk["impaye"]["value"] == 1
           and kk["impaye"]["suspendus"] == 1 and kk["impaye"]["mrr_at_stake"] == 450)
     db.tenants.update_one({"id": "c"}, {"$unset": {"suspended_at": ""}})
-    D._cache.clear()
+    D.invalidate()
 
     print("\nCharts")
     check("Évolution and the sector donut left the Dashboard", "evolution" not in d and "sectors" not in d)
@@ -156,7 +156,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
          "trial_ends_at": now - dt.timedelta(days=10), "subscription_started_at": now - dt.timedelta(days=10)},
     ])
     db.users.insert_one({"email": "owner@ex.fr", "role": "business_owner", "tenant_id": "e", "first_name": "Léa", "last_name": "Martin"})
-    D._cache.clear()
+    D.invalidate()
     d2 = D.dashboard(token_data=ADMIN)
     k2 = {x["key"]: x for x in d2["kpis"]}
     s2 = {x["key"]: x for x in d2["status_cards"]}
