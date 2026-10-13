@@ -88,7 +88,10 @@ const DashboardLayout = lazyPage(() => import('./pages/DashboardLayout'));
 // import AnalyticsPage from './pages/AnalyticsPage';
 // import AnalyticsPage from './pages/AnalyticsPageV2';
 const AnalysesPage = lazyPage(() => import('./pages/AnalysesPage'));
-const ScanPage = lazyPage(() => import('./pages/ScanPage'));
+// The redesigned till (user, 2026-10-13). ScanPage stays in the repo,
+// unrouted, until the new one has been through a few real services.
+const ScanPage = lazyPage(() => import('./pages/ScanPage')); // eslint-disable-line no-unused-vars -- superseded by ScanPageV2, kept for rollback
+const ScanPageV2 = lazyPage(() => import('./pages/ScanPageV2'));
 const CampaignsPage = lazyPage(() => import('./pages/CampaignsPage'));
 const SettingsPage = lazyPage(() => import('./pages/SettingsPage'));
 const ParametresPage = lazyPage(() => import('./pages/ParametresPage'));
@@ -456,7 +459,7 @@ function App() {
             {/* Scan is the ONE page staff can reach. */}
             <Route path="scan" element={
               <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager', 'staff']}>
-                <ScanPage />
+                <ScanPageV2 />
               </ProtectedRoute>
             } />
             {/* Carte de fidélité — the merchant's single card. The old
