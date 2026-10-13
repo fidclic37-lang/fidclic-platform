@@ -175,7 +175,8 @@ def main():
     check("the visit counts where it is scanned", r.json().get("visit_branch_id") == "pal")
 
     print("\n5. A store created from now: blank, card off")
-    r = http("POST", "/api/owner/etablissement/stores", headers=as_("main"), json={"name": "ROYAL TRIM LIBERTE", "city": "Tours"})
+    r = http("POST", "/api/owner/etablissement/stores", headers=as_("main"), json={"name": "ROYAL TRIM LIBERTE", "street": "11 place de la Liberté",
+                                                                                       "postal_code": "37000", "city": "Tours"})  # the address is required (QA F26)
     check(f"created ({r.status_code})", r.status_code == 200)
     new = next((b for b in db.tenants.find_one({"id": "t1"})["branches"] if b.get("name") == "ROYAL TRIM LIBERTE"), {})
     nid = new.get("id")

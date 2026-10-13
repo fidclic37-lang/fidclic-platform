@@ -498,6 +498,21 @@ def _branch_doc(body: StoreIn, base: Optional[Dict[str, Any]] = None) -> Dict[st
     return d
 
 
+_ADDRESS = (("street", "Adresse"), ("postal_code", "Code postal"), ("city", "Ville"))
+
+
+def _require_address(doc: Dict[str, Any], body: StoreIn, creating: bool) -> None:
+    """Adresse, Code postal and Ville are marked required (QA F26: a point de
+    vente was saved with its name only, « Adresse à compléter »): a new one
+    needs all three; an edit that touches the address keeps all three. Closing
+    or reopening an older one without an address still works."""
+    if not creating and all(getattr(body, k) is None for k, _ in _ADDRESS):
+        return
+    missing = [label for k, label in _ADDRESS if not (doc.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Complétez : {', '.join(missing)}.")
+
+
 @router.post("/api/owner/etablissement/stores")
 def add_store(body: StoreIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
@@ -525,7 +540,9 @@ def add_store(body: StoreIn, token_data: TokenData = Depends(require_role(["busi
                          **({"latitude": lat, "longitude": lng} if lat is not None else {})})
     # A new establishment starts with a blank card, OFF until its owner designs
     # it (user, 2026-10-12): no signup there before (features/store_cards).
-    new = {"id": str(uuid.uuid4()), "is_main": False, "created_at": _now(), "card_off": True, **_branch_doc(body)}
+    doc = _branch_doc(body)
+    _require_address(doc, body, creating=True)
+    new = {"id": str(uuid.uuid4()), "is_main": False, "created_at": _now(), "card_off": True, **doc}
     branches.append(new)
     _db.tenants.update_one({"id": tid}, {"$set": {"branches": branches}})
     return _view(tid, token_data)
@@ -549,6 +566,7 @@ def edit_store(store_id: str, body: StoreIn,
         base = {"street": _street(t), "postal_code": t.get("postal_code") or "", "city": t.get("city") or "",
                 "phone": t.get("phone") or ""}
         doc = _branch_doc(StoreIn(**{**body.model_dump(), "name": None}), base)
+        _require_address(doc, body, creating=False)
         sets = {k: doc[k] for k in ("street", "postal_code", "city", "phone", "address")}
         if body.lat is not None:
             sets.update({"lat": body.lat, "lng": body.lng, "pin_source": "manuel"})
@@ -563,6 +581,7 @@ def edit_store(store_id: str, body: StoreIn,
         if body.status == "closed" and (branches[idx].get("is_main") or store_id == MAIN):
             raise HTTPException(status_code=400, detail="L'établissement principal ne peut pas être fermé.")
     doc = _branch_doc(body, branches[idx])
+    _require_address(doc, body, creating=False)
     if body.status is not None:
         doc["status"] = body.status
         doc["closed_at" if body.status == "closed" else "reopened_at"] = _now()
