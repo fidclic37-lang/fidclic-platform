@@ -5323,11 +5323,22 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
 
     # Défis (Campagnes › Défi): does this visit win one?
     defis_won = []
+    fresh_for_goals = db.customers.find_one({"id": cid}, {"_id": 0}) or cust
     try:
         from features import defis as _defis
-        defis_won = _defis.after_scan(token_data.tenant_id, db.customers.find_one({"id": cid}, {"_id": 0}) or cust)
+        defis_won = _defis.after_scan(token_data.tenant_id, fresh_for_goals)
     except Exception as _e:
         print(f"scan_visit: defis failed (non-fatal): {_e}")
+
+    # « Objectifs et récompenses »: the shop's own milestones, read on the
+    # customer AFTER this visit, so one that is reached by this very scan is
+    # already « à remettre » when the till shows the receipt.
+    objectifs_won = []
+    try:
+        from features import milestones as _ms
+        objectifs_won = _ms.after_scan(token_data.tenant_id, fresh_for_goals)
+    except Exception as _e:
+        print(f"scan_visit: objectifs failed (non-fatal): {_e}")
 
     # Automatisations after a scan (features/automations): « Avis Google », and
     # « Atteinte d'un palier » when this visit moved the client up.
@@ -5445,6 +5456,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # The offer or reward the till put on this visit, and whether it went
         # through. The visit stands either way; the receipt says if it did not.
         "applied": applied,
+        # Objectifs this visit reached — the receipt congratulates, the till
+        # hands them over from the « à remettre » list like any other reward.
+        "objectifs_won": objectifs_won,
         "amount_paid": round(float(req.amount_paid or 0), 2),
         "total_amount_paid": round(new_paid, 2),
         "tier": new_tier,

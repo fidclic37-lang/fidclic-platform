@@ -675,6 +675,10 @@ export const ownerAPI = {
 
   // Segmentation — the page in one call, the builder counted live.
   segmentationPage: () => api.get('/owner/segmentation/page'),
+  // « Objectifs et récompenses » — les paliers que le commerce se fixe
+  // lui-même (features/milestones).
+  milestones: () => api.get('/owner/milestones'),
+  saveMilestones: (items) => api.put('/owner/milestones', { items }),
   cataloguePage: (days) => api.get('/owner/catalogue/page', { params: { days } }),
   createProduct: (body) => api.post('/owner/catalogue/products', body),
   updateProduct: (id, body) => api.put(`/owner/catalogue/products/${id}`, body),

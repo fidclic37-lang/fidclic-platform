@@ -1,5 +1,5 @@
 import {
-  Users, QrCode, UserCog, ShieldCheck, Wallet, Languages, Bell, Lock, Store, Plug,
+  Users, QrCode, UserCog, ShieldCheck, Wallet, Languages, Bell, Lock, Store, Plug, Target,
 } from 'lucide-react';
 
 /* Paramètres — the eight sub-pages, in the sidebar's order. One list, read by
@@ -12,6 +12,9 @@ export const PARAMETRES_SECTIONS = [
   { slug: 'etablissement', label: 'Établissement', icon: Store,
     title: 'Établissement',
     subtitle: 'Gérez les informations de votre commerce.' },
+  { slug: 'objectifs', label: 'Objectifs et récompenses', icon: Target,
+    title: 'Objectifs et récompenses',
+    subtitle: 'Fixez vos propres paliers — à tant de visites, de points ou d\'euros, telle récompense.' },
   { slug: 'regles-clients', label: 'Règles clients', icon: Users,
     title: 'Règles clients',
     subtitle: 'Définissez comment FidClic classe automatiquement vos clients.' },
@@ -49,9 +52,22 @@ export const PARAMETRES_SECTIONS = [
    their team here, and see their establishments (an administrateur edits its
    points de vente and the legal information; a manager reads). The shop-wide
    settings stay with the Propriétaire. */
-export const sectionsFor = (role) => (role === 'business_owner'
-  ? PARAMETRES_SECTIONS
-  : PARAMETRES_SECTIONS.filter((s) => ['equipe', 'etablissement', 'securite', 'preferences'].includes(s.slug)));
+const SHARED = ['equipe', 'etablissement', 'securite', 'preferences'];
+
+/* The owner sees every tab. Another account sees the ones its role always had,
+   plus any whose own permission the owner granted it in « Équipe & accès » —
+   otherwise granting « Objectifs et récompenses » showed nothing. `user` is
+   optional so the old call with a bare role keeps working. */
+export const sectionsFor = (role, user = null) => {
+  if (role === 'business_owner') return PARAMETRES_SECTIONS;
+  const granted = (slug) => {
+    const perms = user && user.page_perms;
+    if (!perms) return false;
+    const key = { objectifs: 'milestones', equipe: 'team', abonnement: 'billing' }[slug];
+    return Boolean(key) && Object.values(perms).some((p) => (p?.[key] || 'none') !== 'none');
+  };
+  return PARAMETRES_SECTIONS.filter((s) => SHARED.includes(s.slug) || granted(s.slug));
+};
 
 export const PARAMETRES_BASE = '/dashboard/parametres';
 export const sectionPath = (slug) => `${PARAMETRES_BASE}/${slug}`;
