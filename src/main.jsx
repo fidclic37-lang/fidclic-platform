@@ -143,6 +143,10 @@ import './index.css';
 // first paint already shows the chosen language. The import has the
 // side effect of bootstrapping i18next with FR/EN/AR resources.
 import './lib/i18n';
+import { installKeepInput } from './lib/keepInput';
+
+// a window with something typed in it never closes on a tap beside it (QA BUG-003 / BUG-007)
+installKeepInput();
 
 // ───────────────────────────────────────────────────────────────────────
 // PWA launch failsafe — runs BEFORE React renders, so it never flashes
