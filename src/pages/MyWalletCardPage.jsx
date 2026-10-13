@@ -837,7 +837,8 @@ const CardView = () => {
               <p className="mt-1 font-semibold text-[#0B1C3F]">🎁 {card.reward_description || 'Une récompense fidélité'}</p>
               <p className="mt-1 text-[13px] text-[#475569]">Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
             </div>
-            {!!card.points_per_visit && (
+            {/* a Tampons card earns no points (QA BUG-009): no « points par visite » */}
+            {!!card.points_per_visit && card.show_points !== false && (
               <div className="rounded-2xl bg-[#F8FAFC] p-4">
                 <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Points par visite</p>
                 <p className="mt-1 font-semibold text-[#0B1C3F]">+{card.points_per_visit} pts à chaque passage</p>
@@ -847,7 +848,7 @@ const CardView = () => {
               <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Votre statut</p>
               <p className="mt-1 font-semibold text-[#0B1C3F]">
                 {({ bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' })[String(customer.tier || 'bronze').toLowerCase()] || customer.tier}
-                {' · '}{customer.points || 0} pts · {customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
+                {' · '}{card.show_points !== false ? `${customer.points || 0} pts · ` : ''}{customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
               </p>
             </div>
           </div>

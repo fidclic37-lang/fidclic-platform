@@ -931,8 +931,10 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
                     "filleul": ctx.get("filleul") or "votre ami", "parrain": ctx.get("parrain") or "votre parrain",
                     "points_gagnés": ctx.get("points") or 0, "points_gagnes": ctx.get("points") or 0})
         # mockup chips « Récompense », « Lien », « Nombre d'amis parrainés » (validated ones)
+        # the reward in words — points, tampons or the shop's own offer (2026-10-13)
         pts = int(ctx.get("points") or 0)
-        out["récompense"] = out["recompense"] = f"{pts} point{'s' if pts > 1 else ''}" if pts else "votre récompense"
+        got = ctx.get("reward") or (f"{pts} point{'s' if pts > 1 else ''}" if pts else "")
+        out["récompense"] = out["recompense"] = got or "votre récompense"
         try:
             from services import card_owner as CO
             out["lien"] = CO.owner_url(public_base(), cust.get("barcode_id") or "")
@@ -1065,7 +1067,7 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
         # the Wallet card: « Dernier message » + the button's link on the pass
         news = {"log_id": log_id, "title": title, "body": body, "label": label, "url": click, "at": at,
                 "image_url": msg.get("image_url")}
-        if scenario == "referral":
+        if scenario == "referral" and (ctx or {}).get("reward_kind", "points") == "points":
             # rides on the points field's own banner (« … Vous avez maintenant %@ points. »):
             # one notification, not two; the card page still shows it with its button
             news["pass"] = False

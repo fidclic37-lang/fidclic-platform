@@ -93,7 +93,8 @@ def main():
     check("the form learns what the filleul will get", inv["referee_points"] == 25)
     check("nothing else about the inviter leaks",
           set(inv) == {"enabled", "first_name", "slug", "business_name",
-                       "referee_points", "referrer_points", "minimum_visits", "reward_mode"})
+                       "referee_points", "referrer_points", "minimum_visits", "reward_mode",
+                       "referee_reward", "referrer_reward"})       # the reward in words (2026-10-13)
     check("lowercase in the URL still resolves", R.inviter("ft-marie01")["first_name"] == "Marie")
     try:
         R.inviter("FT-NOBODY")

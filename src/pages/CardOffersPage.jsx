@@ -256,9 +256,10 @@ export default function CardOffersPage() {
         ))}
         {(data.defis?.won || []).map((w) => (
           <section key={w.id} className="mb-4 rounded-[28px] bg-gradient-to-br from-[#FFF7ED] to-[#FFEDD5] p-5 text-[#7C2D12] shadow-[0_14px_30px_-24px_rgba(124,45,18,.6)]">
-            <p className="text-[13px] font-bold uppercase tracking-wide text-[#EA580C]">🏆 Défi réussi</p>
+            {/* a parrainage offer waits here too (2026-10-13) */}
+            <p className="text-[13px] font-bold uppercase tracking-wide text-[#EA580C]">{w.kind === 'parrainage' ? '🎁 Parrainage' : '🏆 Défi réussi'}</p>
             <p className="mt-1 text-[20px] font-extrabold">{w.reward}</p>
-            <p className="text-[13.5px]">« {w.title} » — présentez votre carte en caisse{w.expires_at ? `, avant le ${fmtDay(w.expires_at)}` : ''}.</p>
+            <p className="text-[13.5px]">{w.kind === 'parrainage' ? 'Votre récompense de parrainage' : `« ${w.title} »`} — présentez votre carte en caisse{w.expires_at ? `, avant le ${fmtDay(w.expires_at)}` : ''}.</p>
           </section>
         ))}
         <section className="mb-4 overflow-hidden rounded-[28px] bg-gradient-to-br from-[#3B7BFF] via-[#2F6BFF] to-[#1D4FE0] p-5 text-white shadow-[0_22px_44px_-26px_rgba(47,107,255,.95)]">

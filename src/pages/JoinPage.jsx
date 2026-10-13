@@ -351,8 +351,9 @@ const JoinPage = () => {
                 </span>
                 <p className="text-[13px] leading-snug text-[#0B1C3F]">
                   Vous êtes invité par <strong translate="no" className="notranslate">{inviter.first_name || 'un client'}</strong>.
-                  {inviter.referee_points > 0 && (
-                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_points} points</strong> à votre
+                  {/* points, tampons or the shop's own offer (2026-10-13) */}
+                  {(inviter.referee_reward ?? (inviter.referee_points > 0 ? `${inviter.referee_points} points` : '')) && (
+                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_reward ?? `${inviter.referee_points} points`}</strong> à votre
                       {Number(inviter.minimum_visits || 1) <= 1 ? ' première' : ` ${inviter.minimum_visits}e`} visite
                       {inviter.reward_mode === 'every' ? ', puis à chaque visite' : ''}.</>
                   )}
