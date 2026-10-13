@@ -38,54 +38,69 @@ const SECTOR_KEYS = [
   { value: 'retail',     i18nKey: 'auth.sector_retail' },
   { value: 'other',      i18nKey: 'auth.sector_other' },
 ];
-const SELECT = INPUT + ' cursor-pointer appearance-none pr-10';
 const Caret = () => <ChevronDown size={18} className="pointer-events-none mr-4 self-center text-[#2F6BFF]" />;
 
-/* The sector, in FidClic's own list (QA BUG-002): the phone's native picker
-   opened black and oversized in dark mode, unlike the rest of the page.
-   A button and a listbox — click, ↑ ↓, Entrée, Échap, a tap outside closes. */
-function SectorPicker({ value, onChange, options, placeholder, label }) {
+/* A choice from FidClic's own list (QA BUG-002, user 2026-10-13: « pays wala
+   bhi FidClic style banao »): the phone's native picker opened black and
+   oversized in dark mode, unlike the rest of the page. A button and a white
+   listbox — click, ↑ ↓, Entrée, Échap, a tap outside closes; typing letters
+   jumps to the first matching entry (« fr » → France), as a native list does,
+   and the chosen one is scrolled into view in a long list. */
+function ListPicker({ icon, value, onChange, options, placeholder, label }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const box = useRef(null);
+  const list = useRef(null);
+  const typed = useRef({ text: '', at: 0 });
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [open]);
+  useEffect(() => {
+    if (open && active >= 0) list.current?.children[active]?.scrollIntoView?.({ block: 'nearest' });
+  }, [open, active]);
   const chosen = options.find((o) => o.value === value);
   const pick = (v) => { onChange(v); setOpen(false); };
   const show = () => { setActive(Math.max(0, options.findIndex((o) => o.value === value))); setOpen(true); };
+  const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const onKey = (e) => {
     if (e.key === 'Escape') { setOpen(false); return; }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       if (!open) { show(); return; }
       setActive((i) => (i + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length);
-    } else if (e.key === 'Enter' || e.key === ' ') {
+    } else if (e.key === 'Enter' || (e.key === ' ' && !typed.current.text)) {
       e.preventDefault();
       if (open && active >= 0) pick(options[active].value); else show();
+    } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const now = Date.now();
+      const text = (now - typed.current.at < 800 ? typed.current.text : '') + fold(e.key);
+      typed.current = { text, at: now };
+      const i = options.findIndex((o) => fold(o.label).startsWith(text));
+      if (i >= 0) { if (!open) setOpen(true); setActive(i); }
     }
   };
   return (
     <div className="relative" ref={box}>
-      <Field icon={Store} trailing={<Caret />}>
+      <Field icon={icon} trailing={<Caret />}>
         <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={label}
                 onClick={() => (open ? setOpen(false) : show())} onKeyDown={onKey}
-                className={`${INPUT} text-left ${chosen ? '' : 'text-[#94A3B8]'}`}>
-          {chosen ? chosen.label : placeholder}
+                className={`${INPUT} truncate text-left ${chosen ? '' : 'text-[#94A3B8]'}`}>
+          {chosen ? <>{chosen.prefix && <span className="mr-2" aria-hidden="true">{chosen.prefix}</span>}{chosen.label}</> : placeholder}
         </button>
       </Field>
       {open && (
-        <ul role="listbox" aria-label={label}
+        <ul role="listbox" aria-label={label} ref={list}
             className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-72 overflow-y-auto rounded-xl border border-[#E1E8F5] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.35)]">
           {options.map((o, i) => (
             <li key={o.value} role="option" aria-selected={o.value === value}
                 onMouseDown={(e) => { e.preventDefault(); pick(o.value); }} onMouseEnter={() => setActive(i)}
                 className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 text-[14.5px] ${
                   i === active ? 'bg-[#F4F7FF]' : ''} ${o.value === value ? 'font-semibold text-[#2F6BFF]' : 'text-[#0F172A]'}`}>
-              {o.label}{o.value === value && <Check size={16} aria-hidden="true" />}
+              <span className="min-w-0 truncate">{o.prefix && <span className="mr-2" aria-hidden="true">{o.prefix}</span>}{o.label}</span>
+              {o.value === value && <Check size={16} aria-hidden="true" className="shrink-0" />}
             </li>
           ))}
         </ul>
@@ -162,17 +177,15 @@ const OnboardingCompanyPage = () => {
         </div>
         <div>
           <FieldLabel>{t('auth.sector')}</FieldLabel>
-          <SectorPicker value={form.sector} label={t('auth.sector')} placeholder={t('onboarding.sector_placeholder')}
+          <ListPicker icon={Store} value={form.sector} label={t('auth.sector')} placeholder={t('onboarding.sector_placeholder')}
                         onChange={(v) => setForm((f) => ({ ...f, sector: v }))}
                         options={SECTOR_KEYS.map((s) => ({ value: s.value, label: t(s.i18nKey) }))} />
         </div>
         <div>
           <FieldLabel>{t('onboarding.country')}</FieldLabel>
-          <Field icon={Globe} trailing={<Caret />}>
-            <select className={SELECT} value={form.country} onChange={set('country')} autoComplete="country">
-              {countries.map((c) => <option key={c.code} value={c.code}>{c.flag} {c.label}</option>)}
-            </select>
-          </Field>
+          <ListPicker icon={Globe} value={form.country} label={t('onboarding.country')}
+                      onChange={(v) => setForm((f) => ({ ...f, country: v }))}
+                      options={countries.map((c) => ({ value: c.code, label: c.label, prefix: c.flag }))} />
         </div>
         <AddressPicker country={form.country} onChange={setPlace} />
 

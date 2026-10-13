@@ -63,4 +63,16 @@ test('BUG-002 — the sector is picked from FidClic\'s own list', async ({ page 
   await expect(sector).not.toHaveText(/Restaurant/);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('listbox')).toHaveCount(0);
+
+  // the country too (user, 2026-10-13: « pays wala bhi FidClic style banao »)
+  await expect(page.locator('select')).toHaveCount(0);
+  const country = page.getByRole('button', { name: /pays/i });
+  await expect(country).toHaveText(/France/);
+  await country.click();
+  const countries = page.getByRole('listbox');
+  await expect(countries).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(countries.getByRole('option', { selected: true })).toHaveText(/France/);
+  await page.keyboard.type('belg');                   // typing jumps, as a native list does
+  await page.keyboard.press('Enter');
+  await expect(country).toHaveText(/Belgique/);
 });
