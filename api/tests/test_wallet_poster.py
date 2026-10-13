@@ -264,5 +264,43 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           st["featured_actions"]["clicks_30d"] == {"viewOffersRewards": 1, "bookAppointment": 1}
           and [a["type"] for a in st["featured_actions"]["active"]] == ["viewOffersRewards", "bookAppointment"])
 
+    # « Couleur du nom » = Automatique (user, 2026-10-13: the name was missing
+    # on the iOS 27 poster and appeared as soon as a colour was picked by hand).
+    # The two cards stand on different grounds, so Automatique is not one
+    # colour: the card's own ink on iOS 26, the poster's rule on iOS 27.
+    seen = {}
+    real_name_logo = WP.name_logo
+    def spy(src, text, color, **kw):
+        seen[len(seen)] = color
+        return real_name_logo(src, text, color, **kw)
+
+    def inks(card_patch):
+        """The colour each logo was drawn with, for this card."""
+        seen.clear()
+        db.card_templates.update_one({"tenant_id": "t1"}, {"$set": card_patch})
+        WP.name_logo = spy
+        try:
+            WP.pass_files(WP._card_payload("FT-TEST0001"))
+        finally:
+            WP.name_logo = real_name_logo
+        return list(seen.values())
+
+    white_card = {"surface_color": "#FFFFFF", "logo_text_color": "",
+                  "poster_image_url": png_data(1035, 1515, (18, 18, 22))}
+    got = inks(white_card)
+    check("Automatique: the poster writes the name in white over a photo, "
+          "whatever the card's own ink is", got and got[-1] == (255, 255, 255))
+    check("…and iOS 26's logo keeps the card's own ink (dark on a white card)",
+          len(got) < 2 or got[0] != (255, 255, 255))
+
+    got = inks({**white_card, "logo_text_color": "#D4AF37"})
+    check("a colour chosen by hand still wins on both",
+          got and all(c == (212, 175, 55) for c in got))
+
+    check("a light card with no photo writes the name dark",
+          WP._poster_ink({"surface_color": "#FFFFFF"}, {}) == (25, 25, 28))
+    check("a dark card writes it white, photo or not",
+          WP._poster_ink({"surface_color": "#101014"}, {}) == (255, 255, 255))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
