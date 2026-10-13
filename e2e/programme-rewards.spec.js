@@ -46,8 +46,9 @@ test.describe.serial('programme units and parrainage rewards', () => {
     await expect(page.getByText('tampons', { exact: true })).toBeVisible();
     await expect(page.getByText('points', { exact: true }), 'no points on a Tampons card').toHaveCount(0);
 
+    await page.getByRole('button', { name: /Suivant/ }).click();
     await page.getByRole('button', { name: 'Enregistrer la visite' }).click();
-    await expect(page.getByText(/Visite enregistrée/)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('visit-summary')).toBeVisible({ timeout: 15_000 });
     const card = await (await request.get(`/api/card/${made.barcode_id}`, { headers: { 'X-Card-Key': made.card_key } })).json();
     expect(card.customer.points, 'no points credited').toBe(0);
   });
