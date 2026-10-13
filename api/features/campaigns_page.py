@@ -288,7 +288,8 @@ def audience_preview(req: PreviewIn, request: Request = None,
     real recipient to fill the phone preview's variables."""
     tid = token_data.tenant_id
     at = _now()
-    mine = S.customer_ids(S.resolve(token_data, request))
+    # only the members of the establishment chosen in the menu (multi-store PR5)
+    mine = S.home_customer_ids(S.resolve(token_data, request))
     people, label = resolve_audience(tid, req.audience, at, mine)
     from features.resend_guard import without
     people = without(people, req.exclude_ids)
@@ -353,9 +354,10 @@ def list_campaigns(tab: str = "all", search: str = "", page: int = 1, per_page: 
     if tab not in K.TABS:
         raise HTTPException(status_code=400, detail="Onglet inconnu.")
     per_page = max(1, min(int(per_page or 5), 50))
-    mine = S.customer_ids(S.resolve(token_data, request))
-    # an administrateur or a manager sees the campaigns that reach its clients
-    docs = _limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine)
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
+    # the campaigns of the establishment chosen (an older one: if it reached its clients)
+    docs = _limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine, scope)
     rows = [_row(c, tid, at) for c in docs]
     q = (search or "").strip().lower()
     if q:
@@ -392,7 +394,7 @@ def campaign_detail(campaign_id: str, request: Request = None,
     at = _now()
     scope = S.resolve(token_data, request)
     mine = S.customer_ids(scope)
-    found = _limit([c for c in [_db.campaigns.find_one({"tenant_id": tid, "id": campaign_id}, {"_id": 0})] if c], mine)
+    found = _limit([c for c in [_db.campaigns.find_one({"tenant_id": tid, "id": campaign_id}, {"_id": 0})] if c], mine, scope)
     if not found:
         raise HTTPException(status_code=404, detail="Campagne introuvable.")
     c = found[0]
@@ -453,13 +455,18 @@ def _pct(part: float, whole: float) -> int:
     return round(part / whole * 100) if whole else 0
 
 
-def _limit(rows: List[Dict[str, Any]], mine: Optional[set]) -> List[Dict[str, Any]]:
-    """For an administrateur or a manager, a campaign counts for the clients of
-    its establishments only; one that reached none of them is not shown."""
+def _limit(rows: List[Dict[str, Any]], mine: Optional[set], scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
+    """The campaigns of the establishment chosen in the menu: those it sent
+    (store_ids, multi-store PR5); older ones, sent for the whole shop, count
+    for the clients of its establishments only."""
     if mine is None:
         return rows
     out = []
     for c in rows:
+        if c.get("store_ids") and scope is not None and not scope.is_all:
+            if set(c["store_ids"]) & set(scope.ids or []):
+                out.append(c)
+            continue
         ids = [i for i in c.get("recipient_ids") or [] if i in mine]
         if ids:
             out.append({**c, "recipient_ids": ids, "delivered_count": min(int(c.get("delivered_count") or 0), len(ids)),
@@ -467,10 +474,11 @@ def _limit(rows: List[Dict[str, Any]], mine: Optional[set]) -> List[Dict[str, An
     return out
 
 
-def _sent_between(tid: str, start: datetime, end: datetime, mine: Optional[set] = None) -> List[Dict[str, Any]]:
+def _sent_between(tid: str, start: datetime, end: datetime, mine: Optional[set] = None,
+                  scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     rows = list(_db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}))
     return _limit([c for c in rows
-                   if (d := _aware(c.get("sent_at"))) and start <= d <= end], mine)
+                   if (d := _aware(c.get("sent_at"))) and start <= d <= end], mine, scope)
 
 
 def _totals(tid: str, rows: List[Dict[str, Any]], scope: Optional["S.Scope"] = None) -> Dict[str, float]:
@@ -501,8 +509,8 @@ def page(request: Request = None,
     # (Paris), as the user chose for the redesign (2026-10-10)
     start, prev_start, _ = K.month_bounds(at)
 
-    now_rows = _sent_between(tid, start, at, mine)
-    prev_rows = _sent_between(tid, prev_start, start, mine)
+    now_rows = _sent_between(tid, start, at, mine, scope)
+    prev_rows = _sent_between(tid, prev_start, start, mine, scope)
     cur, was = _totals(tid, now_rows, scope), _totals(tid, prev_rows, scope)
 
     strip = [
@@ -524,7 +532,7 @@ def page(request: Request = None,
         segments.append({**s, "count": len(audience(tid, s["key"], at, mine))})
 
     recent = []
-    for c in sorted(_limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine),
+    for c in sorted(_limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine, scope),
                     key=lambda c: _aware(c.get("sent_at")) or _aware(c.get("created_at")) or at,
                     reverse=True)[:8]:
         ids = list(c.get("recipient_ids") or [])
@@ -729,8 +737,9 @@ def compose(req: Compose, request: Request = None,
     previous = _own_draft(tid, req.draft_id) if req.draft_id else None
 
     at = _now()
-    scope = S.resolve(token_data, request)
-    mine = S.customer_ids(scope)
+    # each establishment writes to its own members (multi-store PR5)
+    scope = S.sending_scope(token_data, request)
+    mine = S.home_customer_ids(scope)
     when_req = _aware(req.schedule_at)
     send_at = when_req if (when_req and when_req > at and not req.draft) else at
     # the kind and its terms (step 1), checked against the moment it leaves

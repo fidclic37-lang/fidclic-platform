@@ -7364,6 +7364,7 @@ class PushCardOverrideRequest(BaseModel):
 @app.post("/api/owner/card-overrides/push")
 def push_card_override(
     req: PushCardOverrideRequest,
+    request: Request = None,
     token_data: TokenData = Depends(require_role(["business_owner"])),
 ):
     """Write a middle-band overlay onto every customer matching `filters`.
@@ -7392,6 +7393,11 @@ def push_card_override(
             lv["$gte"] = now_utc - timedelta(days=int(f["inactive_days_max"]))
         query["last_visit_date"] = lv
 
+    # the members of the establishment chosen in the menu (multi-store PR5)
+    from features import store_scope as _S
+    _home = _S.home_customer_ids(_S.sending_scope(token_data, request))
+    if _home is not None:
+        query["id"] = {"$in": list(_home)}
     targets = list(db.customers.find(query, {
         "id": 1, "name": 1, "first_name": 1, "tenant_id": 1,
         "phone": 1, "tier": 1, "points": 1, "visits": 1,
@@ -7685,8 +7691,9 @@ def send_campaign_to_group(
     # Only the clients of the establishments the sender may see: an
     # administrateur or a manager never writes to another shop's clients.
     from features import store_scope as _S
-    _scope = _S.resolve(token_data, request)
-    _mine = _S.customer_ids(_scope)
+    # each establishment writes to its own members only (multi-store PR5)
+    _scope = _S.sending_scope(token_data, request)
+    _mine = _S.home_customer_ids(_scope)
     if _mine is not None:
         customer_ids = [c for c in customer_ids if c in _mine]
         if not customer_ids:

@@ -455,10 +455,52 @@ def _visits_30(tid: str, cid: str, at: datetime) -> int:
 
 
 def _store_people(tid: str, stores: List[str]) -> Optional[set]:
+    """The MEMBERS of these establishments (their home store): each store's
+    automations write to its own clients only (multi-store PR5)."""
     if not stores:
         return None
     from features import store_scope as S
-    return S.customer_ids(S.Scope(tenant_id=tid, ids=list(stores)))
+    return S.home_customer_ids(S.Scope(tenant_id=tid, ids=list(stores)))
+
+
+def _open_store_ids(tid: str) -> List[str]:
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    return [b["id"] for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+
+
+def split_per_store(tid: str) -> int:
+    """Automatisations par établissement (user, 2026-10-12): with several
+    establishments, every automation belongs to ONE. One made for the whole
+    shop (or for several) becomes one per establishment — the same words, the
+    same switch — so every store's clients keep receiving it; the first store
+    keeps the row (and its history)."""
+    stores = _open_store_ids(tid)
+    if len(stores) < 2:
+        return 0
+    if not _db.automations.find_one({"tenant_id": tid, "$or": [{"store_ids": None}, {"store_ids": []},
+                                                               {"store_ids.1": {"$exists": True}}]}, {"_id": 1}):
+        return 0                                   # already one establishment each (the usual case)
+    made = 0
+    for row in list(_db.automations.find({"tenant_id": tid}, {"_id": 0})):
+        ids = [x for x in (row.get("store_ids") or []) if x in stores]
+        if row.get("store_ids") and len(ids) == 1 and len(row["store_ids"]) == 1:
+            continue
+        targets = ids or stores
+        _db.automations.update_one({"id": row["id"]}, {"$set": {"store_ids": [targets[0]]}})
+        for sid in targets[1:]:
+            copy = {**row, "id": str(uuid.uuid4()), "store_ids": [sid], "split_from": row["id"],
+                    "created_at": row.get("created_at") or _now(), "last_run_at": None}
+            _db.automations.insert_one(copy)
+            made += 1
+    return made
+
+
+def _menu_store(tid: str, token: TokenData, request: Any = None) -> Optional[str]:
+    """The establishment chosen in the menu (several stores), else None."""
+    if len(_open_store_ids(tid)) < 2:
+        return None
+    from features import store_scope as S
+    return S.resolve(token, request).single
 
 
 def _segment_ids(tid: str, key: Optional[str], at: datetime) -> Optional[set]:
@@ -1045,6 +1087,7 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
 # events
 # ---------------------------------------------------------------------------
 def _active(tid: str, scenario: str) -> List[Dict[str, Any]]:
+    split_per_store(tid)
     return list(_db.automations.find({"tenant_id": tid, "scenario": scenario, "status": "active"},
                                      {"_id": 0}).sort("order", 1))
 
@@ -2015,14 +2058,19 @@ def near_page(tid: str) -> Dict[str, Any]:
                       for t in LC.tiers_for(tid)]}
 
 
-def _list(tid: str, token: TokenData) -> Dict[str, Any]:
+def _list(tid: str, token: TokenData, request: Any = None) -> Dict[str, Any]:
     migrate(tid)
+    split_per_store(tid)
     at = _now()
     # the scenario's new name (user, 2026-10-11) on the rows that kept the default one
     _db.automations.update_many({"tenant_id": tid, "scenario": "near_reward", "name": OLD_NEAR_LABEL},
                                 {"$set": {"name": SCENARIOS["near_reward"]["label"]}})
     merge_referrals(tid)
+    split_per_store(tid)
     q: Dict[str, Any] = {"tenant_id": tid}
+    menu = _menu_store(tid, token, request)
+    if menu:                                       # the establishment chosen: its automations
+        q["store_ids"] = [menu]
     rows = [_row_view(r, tid) for r in _db.automations.find(q, {"_id": 0}).sort([("order", 1), ("created_at", 1)])]
     active = sum(1 for r in rows if r["status"] == "active")
     counts = {"all": len(rows), "active": active, "paused": sum(1 for r in rows if r["status"] == "paused"),
@@ -2035,6 +2083,8 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
     for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}).sort("sent_at", -1).limit(40):
         try:
             from features import campaign_kinds as K
+            if menu and c.get("store_ids") and menu not in c["store_ids"]:
+                continue                           # another establishment's offer
             if K.is_live(c, at) and c.get("kind") != "defi":
                 offers.append({"id": c["id"], "name": c.get("name") or "Offre", "terms": K.terms_label(c)})
         except Exception:
@@ -2107,8 +2157,8 @@ def geo_zone(token_data: TokenData = Depends(require_role(READERS, partial_ok=Tr
 
 
 @router.get("/api/owner/automations")
-def list_automations(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    return _list(token_data.tenant_id, token_data)
+def list_automations(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    return _list(token_data.tenant_id, token_data, request)
 
 
 class ButtonIn(BaseModel):
@@ -2682,8 +2732,10 @@ def _own(tid: str, aid: str) -> Dict[str, Any]:
 def _guard(token: TokenData, row: Optional[Dict[str, Any]] = None) -> None:
     if token.role not in EDITORS:
         raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
-    if row and token.role != "business_owner" and row.get("store_ids") != _own_stores(token):
-        raise HTTPException(status_code=403, detail="Cette automatisation concerne d'autres établissements.")
+    if row and token.role != "business_owner":
+        own = _own_stores(token)                   # None: every establishment
+        if own is not None and not (row.get("store_ids") and set(row["store_ids"]) <= set(own)):
+            raise HTTPException(status_code=403, detail="Cette automatisation concerne d'autres établissements.")
 
 
 def _geo_saved(tid: str, data: Optional[Dict[str, Any]]) -> None:
@@ -2704,7 +2756,8 @@ def _wake_geo(tid: str) -> None:
 
 
 @router.post("/api/owner/automations")
-def create_automation(body: AutomationIn, token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+def create_automation(body: AutomationIn, request: Request = None,
+                      token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id
     _guard(token_data)
     migrate(tid)
@@ -2714,7 +2767,9 @@ def create_automation(body: AutomationIn, token_data: TokenData = Depends(requir
     _save_links(tid, data.pop("google_links", None))
     doc = new_doc(tid, data["scenario"])
     doc.update(data)
-    doc["store_ids"] = _own_stores(token_data)
+    # the establishment chosen in the menu (multi-store PR5); else, as before
+    menu = _menu_store(tid, token_data, request)
+    doc["store_ids"] = [menu] if menu else _own_stores(token_data)
     doc["order"] = _db.automations.count_documents({"tenant_id": tid})
     doc["created_by"] = token_data.email
     _db.automations.insert_one(dict(doc))
