@@ -53,6 +53,7 @@ export const emptyState = (kind) => ({
   defi: { target: '3', end_date: '', count_mode: 'per_day', reward: '', reward_valid_days: '30' },
   audience: { mode: 'all', segment: '', customer_ids: [], km: 5, filters: { active: false, inactive: false, new: false, min_points: null } },
   sendMode: null, date: '', time: '14:00', draftId: null, template: null,
+  walletPhoto: false,     // the photo on the Wallet card too? (BUG-006, off unless chosen)
 });
 
 export default function CampaignWizard({ initial, startStep = 1, page, onClose, onDone }) {
@@ -193,6 +194,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     const b = {
       kind: s.kind, title: s.title.trim(), message: s.message.trim(), details: s.details.trim() || null,
       image_url: s.image || null, link_url: fullLink(s.link) || null, push: true, wallet: true,
+      wallet_photo: !!(s.image && s.walletPhoto),
       audience: audienceBody, draft: mode === 'draft', schedule_at: mode === 'draft' ? null : scheduleIso(),
       ...(s.draftId ? { draft_id: s.draftId } : {}), ...(s.template ? { template: s.template } : {}),
     };
@@ -429,7 +431,8 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
             <textarea className={`${field} min-h-[96px]`} maxLength={500} value={s.details}
                       onChange={(e) => set({ details: e.target.value })} placeholder="Trois nouveaux plats de saison, à découvrir dès ce soir." /></label>
           <div className="mt-3"><Label hint="(optionnelle)">Photo</Label>
-            <ImageField image={s.image} onPick={() => fileRef.current?.click()} onClear={() => set({ image: '' })} /></div>
+            <ImageField image={s.image} onPick={() => fileRef.current?.click()} onClear={() => set({ image: '' })}
+                        walletPhoto={!!s.walletPhoto} onWalletPhoto={(v) => set({ walletPhoto: v })} /></div>
         </>
       )}
 
@@ -562,7 +565,8 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {s.kind !== 'nouveaute' && (
           <div><Label hint="(optionnelle)">Photo</Label>
-            <ImageField image={s.image} onPick={() => fileRef.current?.click()} onClear={() => set({ image: '' })} /></div>
+            <ImageField image={s.image} onPick={() => fileRef.current?.click()} onClear={() => set({ image: '' })}
+                        walletPhoto={!!s.walletPhoto} onWalletPhoto={(v) => set({ walletPhoto: v })} /></div>
         )}
         <label className="block"><Label hint="(optionnel)">Lien</Label>
           <span className="flex items-center gap-2 rounded-xl border border-[#D9E2F2] px-3 focus-within:border-[#2F6BFF]">
@@ -860,13 +864,31 @@ function Row({ icon: I, tone, title, children, onEdit }) {
   );
 }
 
-function ImageField({ image, onPick, onClear }) {
+function ImageField({ image, onPick, onClear, walletPhoto, onWalletPhoto }) {
   return image ? (
-    <span className="flex items-center gap-3 rounded-xl border border-[#D9E2F2] p-2">
-      <img src={image} alt="" className="h-14 w-14 rounded-lg object-cover" />
-      <span className="flex-1 text-[13.5px] text-[#0B1C3F]">Photo ajoutée</span>
-      <button type="button" onClick={onClear} className="rounded-lg px-2 py-1 text-[13px] font-semibold text-[#DC2626]">Retirer</button>
-    </span>
+    <>
+      <span className="flex items-center gap-3 rounded-xl border border-[#D9E2F2] p-2">
+        <img src={image} alt="" className="h-14 w-14 rounded-lg object-cover" />
+        <span className="flex-1 text-[13.5px] text-[#0B1C3F]">Photo ajoutée</span>
+        <button type="button" onClick={onClear} className="rounded-lg px-2 py-1 text-[13px] font-semibold text-[#DC2626]">Retirer</button>
+      </span>
+      {/* QA BUG-006 (user, 2026-10-13): the owner decides, campaign by campaign,
+          whether the photo replaces the card's own picture in the Wallet while
+          the campaign runs. Off: it shows in « Mes offres » (the iOS 27 rewards
+          button opens it). */}
+      {onWalletPhoto && (
+        <span className="mt-2 flex items-center gap-3 rounded-xl border border-[#E6EEFB] px-3 py-2.5">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">Afficher la photo sur la carte Wallet</span>
+            <span className="block text-[12px] text-[#64748B]">
+              {walletPhoto ? 'Elle remplace la photo de la carte tant que la campagne dure.'
+                : 'La carte garde sa photo ; celle-ci s’affiche dans « Mes offres ».'}
+            </span>
+          </span>
+          <Toggle on={!!walletPhoto} onChange={onWalletPhoto} label="Afficher la photo sur la carte Wallet" />
+        </span>
+      )}
+    </>
   ) : (
     <button type="button" onClick={onPick} className="flex w-full items-center gap-2 rounded-xl border border-dashed border-[#BFD3FF] px-4 py-3 text-[14px] font-semibold text-[#1463FF]">
       <ImageIcon size={18} /> Ajouter une photo

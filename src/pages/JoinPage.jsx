@@ -7,6 +7,7 @@ import { addMine, ownerLink } from '../lib/myCards';
 import PhoneField, { phoneValueError } from '../components/PhoneField';
 import WalletButtons from '../components/WalletButtons';
 import WalletPassPreview from '../components/WalletPassPreview';
+import WalletPassLive from '../components/WalletPassLive';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import Fireworks from '../components/Fireworks';
 
@@ -118,6 +119,9 @@ function Success({ result, tenant }) {
   const bc = result.barcode_id;
   const [data, setData] = useState(null);
   const [toast, setToast] = useState('');
+  // a Wallet button for this phone? (null: not known yet) — « Voir ma carte »
+  // only without one (user, 2026-10-13, BUG-008: the card must go to the Wallet)
+  const [walletShown, setWalletShown] = useState(null);
   useEffect(() => {
     api.get(`/card/${bc}`).then(({ data: d }) => setData(d)).catch(() => setData(null));
   }, [bc]);
@@ -149,22 +153,21 @@ function Success({ result, tenant }) {
       {tenant?.name && <p className="mt-1 text-[18px] font-semibold text-[#0B1C3F]">Bienvenue chez {tenant.name} !</p>}
       <p className="mt-1 text-[16px] text-[#64748B]">Votre carte de fidélité est prête.</p>
 
+      {/* the card as the owner designed it — the very pass the Wallet gets
+          (iOS 27 poster included), not a drawing of an older layout (BUG-008) */}
       <div className="mt-6 flex justify-center">
-        {data?.card ? (
-          data.card.layout_style === 'wallet' ? (
-            <div style={{ maxWidth: 360, width: '100%' }}>
-              <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
-            </div>
-          ) : (
-            <div className="w-full max-w-[360px]"><PremiumLoyaltyCard customer={data.customer} tenant={data.tenant} card={data.card} /></div>
-          )
-        ) : (
-          <div className="h-56 w-full max-w-[360px] animate-pulse rounded-2xl bg-[#E2E8F0]" />
-        )}
+        <div className="w-fit">
+          <WalletPassLive barcodeId={bc} width={Math.min(360, (typeof window !== 'undefined' ? window.innerWidth : 360) - 40)}
+                          fallback={data?.card ? (
+                            data.card.layout_style === 'wallet'
+                              ? <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
+                              : <div className="w-full max-w-[360px]"><PremiumLoyaltyCard customer={data.customer} tenant={data.tenant} card={data.card} /></div>
+                          ) : null} />
+        </div>
       </div>
 
       <div className="mx-auto mt-5 max-w-[360px] space-y-3 text-left">
-        <WalletButtons barcodeId={bc} onError={say} />
+        <WalletButtons barcodeId={bc} onError={say} phoneOnly onShown={setWalletShown} />
         <div className="grid grid-cols-3 gap-2">
           {[[Share2, 'Partager / copier', share], [Smartphone, 'Sur l’écran d’accueil', home], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
             <button key={label} type="button" onClick={fn}
@@ -173,10 +176,12 @@ function Success({ result, tenant }) {
             </button>
           ))}
         </div>
-        <Link to={ownerLink(bc, result.card_key)}
-              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
-          Voir ma carte <ArrowRight size={18} />
-        </Link>
+        {walletShown === false && (
+          <Link to={ownerLink(bc, result.card_key)}
+                className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
+            Voir ma carte <ArrowRight size={18} />
+          </Link>
+        )}
       </div>
       {toast && <p role="status" className="mx-auto mt-4 max-w-[360px] rounded-xl bg-[#0B1C3F] px-4 py-2.5 text-[13px] text-white">{toast}</p>}
     </div>

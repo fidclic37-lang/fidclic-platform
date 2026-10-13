@@ -143,7 +143,7 @@ export default function CampagnesPage() {
       const kind = d.kind || 'offre';
       const st = emptyState(kind);
       Object.assign(st, { title: d.title || '', message: d.message || '', details: d.details || '', image: d.image_url || '',
-        link: d.link_url || '', draftId: d.id, template: d.template || null });
+        link: d.link_url || '', draftId: d.id, template: d.template || null, walletPhoto: !!d.wallet_photo });
       if (d.offer) st.offer = { ...st.offer, ...d.offer, discount_type: d.offer.discount_type || 'percent',
         discount_value: d.offer.discount_value ?? '', start_date: d.offer.start_date || '', end_date: d.offer.end_date || '',
         time_from: d.offer.time_from || '17:00', time_to: d.offer.time_to || '19:00' };

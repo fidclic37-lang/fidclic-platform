@@ -184,7 +184,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the template's images, a 1x for each, and what Wallet requires",
           {"background@2x.png", "background.png", "primaryLogo@2x.png", "primaryLogo.png", "icon.png", "logo.png",
            "strip.png", "pass.json", "manifest.json", "signature"} <= names)
-    check("the designer's background as designed", _Img.open(_io.BytesIO(z.read("background@2x.png"))).getpixel((10, 10)) == (200, 120, 30))
+    # a palette PNG since 2026-10-13 (a light pass): read as colours
+    check("the designer's background as designed",
+          _Img.open(_io.BytesIO(z.read("background@2x.png"))).convert("RGB").getpixel((10, 10)) == (200, 120, 30))
     man = _json.loads(z.read("manifest.json"))
     check("manifest covers every file", all(n in man for n in names - {"manifest.json", "signature"}))
 
