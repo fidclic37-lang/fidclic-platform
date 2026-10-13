@@ -5216,6 +5216,12 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     update_set = {
         "visits": new_visits,
         "points": new_points,
+        # What was EARNED, never spent: the palier is read from this, so buying
+        # a reward with points cannot send the client back down a rung.
+        "points_lifetime": int(cust.get("points_lifetime") if cust.get("points_lifetime") is not None
+                             else current_points) + points_to_add,
+        # A rung reached is kept for good (user, 2026-10-13).
+        "tier_best": new_tier,
         "total_amount_paid": round(new_paid, 2),
         "last_visit_date": datetime.now(timezone.utc),
         "tier": new_tier,
@@ -10976,7 +10982,20 @@ def redeem_reward(
     # visits than its size.
     on_card = current_visits - int(cust.get("visits_at_last_redemption") or 0)
     waiting = db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
-    if on_card < threshold and not waiting:
+    # A points card buys its reward with points — which is what the pass has
+    # always promised the customer (« {reward} dès N points »), even though
+    # nothing used to charge for it. A stamp card fills a card, as before.
+    from features import loyalty_card as _LCR
+    points_prog = _LCR._is_points(_LCR._programme(card_tpl))
+    price = max(int(card_tpl.get("reward_points") or 0), 0)
+    balance = int(cust.get("points") or 0)
+    if points_prog and price > 0:
+        if balance < price and not waiting:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Il manque {price - balance} points avant d'échanger cette récompense.",
+            )
+    elif on_card < threshold and not waiting:
         raise HTTPException(
             status_code=400,
             detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
@@ -11012,15 +11031,18 @@ def redeem_reward(
     # a 10-visit card keeps the 3 stamps they have already earned.
     last_red = int(cust.get("visits_at_last_redemption") or 0)
     new_marker = last_red if banked else last_red + threshold
-    db.customers.update_one(
-        {"id": cust["id"]},
-        {"$inc": {"rewards_redeemed_count": 1},
-         "$set": {
-             "last_reward_redeemed_at": reward["redeemed_at"],
-             "visits_at_last_redemption": new_marker,
-             "updated_at": datetime.now(timezone.utc),
-         }},
-    )
+    inc = {"rewards_redeemed_count": 1}
+    sets = {
+        "last_reward_redeemed_at": reward["redeemed_at"],
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if points_prog and price > 0 and not banked:
+        # The balance pays; `points_lifetime` does not move, so the palier the
+        # client reached stays theirs (features/loyalty_card.tier_of).
+        inc["points"] = -min(price, balance)
+    else:
+        sets["visits_at_last_redemption"] = new_marker
+    db.customers.update_one({"id": cust["id"]}, {"$inc": inc, "$set": sets})
     refresh_wallet_pass(cust["id"])          # the meter resets — show it now
     reward.pop("_id", None)
     try:                                      # API & Intégrations: reward.redeemed
@@ -12346,6 +12368,45 @@ def _media_migrate_once() -> None:
 
 
 _media_migrate_once()
+
+
+def _points_split_once() -> None:
+    """Points become a balance that a reward can spend (2026-10-14), so the
+    palier had to stop reading it. Two fields are filled once, for everyone
+    already on the platform:
+
+      points_lifetime — what they EARNED. Nothing has ever spent points, so
+                        their current balance is exactly that.
+      tier_best       — the rung they stand on today becomes their floor, so
+                        this change cannot demote a single customer.
+
+    Idempotent, and never fatal: a start that fails here is retried next time.
+    """
+    try:
+        done = db.platform_settings.find_one({"key": "points_split"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        n = 0
+        for c in db.customers.find({"$or": [{"points_lifetime": {"$exists": False}},
+                                            {"tier_best": {"$exists": False}}]},
+                                   {"_id": 0, "id": 1, "points": 1, "tier": 1,
+                                    "points_lifetime": 1, "tier_best": 1}):
+            sets = {}
+            if c.get("points_lifetime") is None:
+                sets["points_lifetime"] = int(c.get("points") or 0)
+            if not c.get("tier_best"):
+                sets["tier_best"] = (c.get("tier") or "bronze").lower()
+            if sets:
+                db.customers.update_one({"id": c["id"]}, {"$set": sets})
+                n += 1
+        db.platform_settings.update_one({"key": "points_split"}, {"$set": {
+            "key": "points_split", "value": "v1", "at": datetime.now(timezone.utc), "customers": n}}, upsert=True)
+        print(f"points: balance split from lifetime for {n} customers", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it
+        print(f"points: split not finished ({exc})", flush=True)
+
+
+_points_split_once()
 
 
 def _cache_purge_once() -> None:

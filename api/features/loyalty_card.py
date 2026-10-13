@@ -188,13 +188,39 @@ def vip_shortcut(tpl: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def earned_points(customer: Dict[str, Any]) -> int:
+    """Points the client has EARNED over their life with the shop.
+
+    Since a reward can be bought with points, `points` is a balance and goes
+    down. The palier must not: it was earned by coming back. Cards written
+    before the split have no `points_lifetime` — their balance has never been
+    spent, so it IS what they earned."""
+    v = customer.get("points_lifetime")
+    return int(v if v is not None else (customer.get("points") or 0))
+
+
+def floor_of(customer: Dict[str, Any]) -> str:
+    """The highest rung this client has ever stood on.
+
+    A palier is never taken back (user, 2026-10-13): « usne woh tier earn kiya
+    hai loyalty dikha ke ». Cards from before carry no `tier_best`, so their
+    current `tier` is their floor — nobody is demoted by this arriving."""
+    best = (customer.get("tier_best") or customer.get("tier") or "bronze").lower()
+    return best if best in TIER_ORDER else "bronze"
+
+
 def tier_of(customer: Dict[str, Any], tenant_id: str, tpl: Optional[Dict[str, Any]] = None) -> str:
     """Points or visits against the ladder, per the programme; then the VIP
-    shortcut (visits + average basket), if the owner keeps it on."""
+    shortcut (visits + average basket), if the owner keeps it on — and never
+    below a rung already reached.
+
+    A palier only ever goes up. Spending points on a reward, an owner raising
+    the ladder, a correction at the till: none of them can send a client back
+    down. What they earned, they keep."""
     tpl = tpl if tpl is not None else _template(tenant_id)
     programme = _programme(tpl)
     visits = int(customer.get("visits") or 0)
-    value = int(customer.get("points") or 0) if _is_points(programme) else visits
+    value = earned_points(customer) if _is_points(programme) else visits
     tier = "bronze"
     for row in tiers_for(tenant_id):
         if value >= row["min"]:
@@ -204,7 +230,8 @@ def tier_of(customer: Dict[str, Any], tenant_id: str, tpl: Optional[Dict[str, An
         avg = float(customer.get("total_amount_paid") or 0) / visits if visits else 0.0
         if avg >= sc["min_avg"]:
             tier = "vip"
-    return tier
+    floor = floor_of(customer)
+    return tier if TIER_ORDER.index(tier) >= TIER_ORDER.index(floor) else floor
 
 
 def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
@@ -219,6 +246,8 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
     tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1, "campaign_sender_name": 1}) or {}
     shop = tenant.get("campaign_sender_name") or tenant.get("name") or "votre commerce"
     rewards = {r["key"]: r.get("reward") or "" for r in tiers_for(tenant_id)}
+    # "down" stays at zero now that a palier is a floor — kept so callers
+    # and the page that reads this answer do not have to change.
     out = {"up": 0, "down": 0, "same": 0}
     quiet: List[str] = []                      # cards to refresh without a word
     live = {"tenant_id": tenant_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
@@ -231,7 +260,9 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
             continue
         up = TIER_ORDER.index(new) > (TIER_ORDER.index(old) if old in TIER_ORDER else 0)
         out["up" if up else "down"] += 1
+        # `tier_best` is the floor from now on: a rung reached is never lost.
         _db.customers.update_one({"id": c["id"]}, {"$set": {"tier": new, "previous_tier": old,
+                                                            "tier_best": new,
                                                             "tier_recomputed_at": _now(), "updated_at": _now()}})
         if not (up and announce):
             quiet.append(c["id"])
