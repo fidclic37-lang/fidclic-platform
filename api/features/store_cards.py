@@ -106,9 +106,36 @@ def own_card(tid: str, sid: Optional[str]) -> bool:
     return _db["card_templates"]._real.find_one({"tenant_id": tid, "store_id": sid}, {"_id": 1}) is not None
 
 
-def _branch(tid: str, sid: str) -> Optional[Dict[str, Any]]:
+# One card read asks for the account's establishments several times (whose
+# card, is it off, its name): kept for the request (cleared when it starts and
+# ends, StoreMiddleware) and 3 s at most, so one preview reads them once.
+_BR: Dict[str, tuple] = {}
+_BR_TTL = 3.0
+
+
+def _branches(tid: str) -> list:
+    import time
+    hit = _BR.get(tid)
+    if hit and time.monotonic() - hit[0] < _BR_TTL:
+        return hit[1]
     t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) if _db is not None else None
-    return next((b for b in (t or {}).get("branches") or [] if b.get("id") == sid), None)
+    branches = (t or {}).get("branches") or []
+    if len(_BR) > 500:
+        _BR.clear()
+    _BR[tid] = (time.monotonic(), branches)
+    return branches
+
+
+def forget(tid: Optional[str] = None) -> None:
+    """An establishment changed (created, renamed, its card switched on)."""
+    if tid is None:
+        _BR.clear()
+    else:
+        _BR.pop(tid, None)
+
+
+def _branch(tid: str, sid: str) -> Optional[Dict[str, Any]]:
+    return next((b for b in _branches(tid) if b.get("id") == sid), None)
 
 
 def store_for(tid: Any) -> Optional[str]:
@@ -129,8 +156,7 @@ def store_name(tid: str, sid: Optional[str]) -> Optional[str]:
     pass and signup page say « ROYAL TRIM PALISSY », not the account's name)."""
     if not sid or _db is None:
         return None
-    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
-    open_ = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    open_ = [b for b in _branches(tid) if b.get("id") and b.get("status") != "closed"]
     if len(open_) < 2:
         return None
     b = next((b for b in open_ if b["id"] == sid), None)
@@ -200,6 +226,7 @@ class StoreCardTemplates:
             if card_off(tid, sid) and _db is not None:   # designed: the card is on
                 _db.tenants.update_one({"id": tid, "branches.id": sid}, {"$set": {"branches.$.card_off": False,
                                                                                   "branches.$.card_on_at": _now()}})
+                forget(tid)
             return res
         return self._real.update_one({**flt, "store_id": None}, update, *a, **k)
 
@@ -255,8 +282,10 @@ class StoreMiddleware:
                     val = v.decode("latin-1").strip()
                     break
             tok = _STORE.set((None, val) if val and val != "all" else None)
+            forget()                               # the establishments, read afresh for this request
             try:
                 return await self.app(scope, receive, send)
             finally:
                 _STORE.reset(tok)
+                forget()
         return await self.app(scope, receive, send)

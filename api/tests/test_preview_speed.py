@@ -94,6 +94,55 @@ def main():
     check(f"background: JPEG, smaller than the PNG ({len(jpg) // 1024} KB vs {len(first) * 4 // 3 // 1024} KB)",
           jpg.startswith("data:image/jpeg") and len(jpg) < len(base64.b64encode(first)))
 
+    print("\nA picture kept in `media` is read once per server, not once per use")
+    from services import media as M
+    reads = []
+    real_get = M._raw
+
+    class Spy:
+        def __init__(self, coll):
+            self.coll = coll
+
+        def find_one(self, *a, **k):
+            reads.append(1)
+            return self.coll.find_one(*a, **k)
+
+        def __getattr__(self, n):
+            return getattr(self.coll, n)
+    M._raw = lambda coll: Spy(real_get(coll)) if getattr(real_get(coll), "name", "") == "media" else real_get(coll)
+    try:
+        M._MEM.clear()
+        M._mem_size = 0
+        ref = M.put("data:image/png;base64," + base64.b64encode(first).decode())
+        M._MEM.clear()                          # a new server: nothing in memory yet
+        M._mem_size = 0
+        reads.clear()
+        for _ in range(5):
+            WP._fetch_image(ref)
+        check(f"five uses, one read from the database ({len(reads)})", len(reads) == 1)
+        check("…the same bytes every time", WP._fetch_image(ref) == first)
+        check("a link that is not a picture of ours reads nothing", M.get("not-an-id") is None)
+    finally:
+        M._raw = real_get
+
+    print("\nThe establishments of an account: read once per preview")
+    from features import store_cards as SC
+    SC.forget()
+    WP._db.tenants.insert_one({"id": "tz", "branches": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]})
+    n = []
+    real_find = WP._db.tenants.find_one
+    WP._db.tenants.find_one = lambda *a, **k: n.append(1) or real_find(*a, **k)
+    try:
+        for _ in range(10):
+            SC.store_name("tz", "a")
+            SC.card_off("tz", "b")
+        check(f"20 questions, {len(n)} read", len(n) == 1)
+        SC.forget("tz")
+        SC.store_name("tz", "a")
+        check("…and read again once an establishment changed", len(n) == 2)
+    finally:
+        WP._db.tenants.find_one = real_find
+
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
 
