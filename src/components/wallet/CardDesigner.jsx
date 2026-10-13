@@ -275,12 +275,18 @@ const CardDesigner = forwardRef(function CardDesigner({
     if (!pvKey) return undefined;
     const my = ++seq.current;
     setPvState('loading');
-    const t = setTimeout(() => {
-      ownerAPI.walletPreview({ card: { ...previewCard, featured_actions: actions }, visits: 3,
-        design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
-        .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); } })
-        .catch(() => { if (my === seq.current) setPvState('error'); });
-    }, 300);   // the server keeps composed images: a short wait is enough
+    // A first preview on a server that just started can run out of time
+    // (the free database slow on a big picture, 2026-10-13): asked again, a
+    // warm server answers in a second or two — so one failure retries once.
+    const ask = (retry) => ownerAPI.walletPreview({ card: { ...previewCard, featured_actions: actions }, visits: 3,
+      design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
+      .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); } })
+      .catch(() => {
+        if (my !== seq.current) return;
+        if (retry) setTimeout(() => { if (my === seq.current) ask(false); }, 800);
+        else setPvState('error');
+      });
+    const t = setTimeout(() => ask(true), 300);   // the server keeps composed images: a short wait is enough
     return () => clearTimeout(t);
   }, [pvKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -290,11 +296,14 @@ const CardDesigner = forwardRef(function CardDesigner({
     if (!gKey) return undefined;
     const my = ++gSeq.current;
     setGState('loading');
-    const t = setTimeout(() => {
-      ownerAPI.googlePreview({ card: previewCard, visits: 3 })
-        .then((r) => { if (my === gSeq.current) { setGPreview(r.data); setGState(''); } })
-        .catch(() => { if (my === gSeq.current) setGState('error'); });
-    }, 400);
+    const ask = (retry) => ownerAPI.googlePreview({ card: previewCard, visits: 3 })
+      .then((r) => { if (my === gSeq.current) { setGPreview(r.data); setGState(''); } })
+      .catch(() => {
+        if (my !== gSeq.current) return;
+        if (retry) setTimeout(() => { if (my === gSeq.current) ask(false); }, 800);   // once, as above
+        else setGState('error');
+      });
+    const t = setTimeout(() => ask(true), 400);
     return () => clearTimeout(t);
   }, [gKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
