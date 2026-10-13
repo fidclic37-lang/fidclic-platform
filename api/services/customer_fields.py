@@ -65,18 +65,30 @@ def phone(v: Optional[str]) -> str:
 
 
 def postal_code(v: Optional[str]) -> str:
+    """A real French postal code (user, 2026-10-11: « france ka valid pincodes
+    hi allowed »), not any five digits — La Poste's list, services/fr_postcodes."""
+    from services.fr_postcodes import CODES
     s = (v or "").strip()
     if not re.fullmatch(r"\d{5}", s):
         raise _bad("Code postal invalide : 5 chiffres (par exemple 37000).")
+    if s not in CODES:
+        raise _bad("Code postal inconnu en France : vérifiez-le (par exemple 37000).")
     return s
 
 
-def birth(v: Optional[str], need_year: bool = False) -> Dict[str, Optional[str]]:
+# Nobody older than this joins (user, 2026-10-11): a birth year far in the
+# past is a typing slip — or a made-up date — far more often than a real age.
+MAX_AGE = 85
+AGE_MESSAGE = f"Date de naissance : l'inscription est ouverte jusqu'à {MAX_AGE} ans. Vérifiez l'année."
+
+
+def birth(v: Optional[str], need_year: bool = False, max_age: bool = True) -> Dict[str, Optional[str]]:
     """The date of birth (user, 2026-10-09: the full date, so the age shows in
     Clients). Reads « 25/12/1990 », « 1990-12-25 », and the older « 25/12 » /
     « 12-25 » without a year. Returns {"birthday": "MM-DD" (the birthday
     automations' key, as before), "birth_date": "YYYY-MM-DD" or None}.
-    `need_year`: the signup form asks for the year."""
+    `need_year`: the signup form asks for the year. `max_age`: refuse an age
+    over MAX_AGE (off only to read back a date already on file)."""
     b = (v or "").strip()
     year = None
     m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", b)
@@ -105,6 +117,8 @@ def birth(v: Optional[str], need_year: bool = False) -> Dict[str, Optional[str]]
         if year < 1900 or (year, month, day) > (today.year, today.month, today.day):
             raise _bad("Date de naissance invalide : vérifiez l'année.")
         iso = f"{year:04d}-{month:02d}-{day:02d}"
+        if max_age and age_of(iso, today) > MAX_AGE:
+            raise _bad(AGE_MESSAGE)
     return {"birthday": f"{month:02d}-{day:02d}", "birth_date": iso}
 
 
@@ -129,11 +143,19 @@ def age_of(birth_date: Optional[str], today=None) -> Optional[int]:
     t = today or _paris_today()
     return t.year - y - ((t.month, t.day) < (mo, d))
 
-def email(v: Optional[str]) -> str:
-    """Optional: « » stays « »."""
+def email(v: Optional[str], dns: bool = True) -> str:
+    """Optional: « » stays « ». Given, it must be a real address (user,
+    2026-10-11: « email kuch bhi daal de rhe toh chal jaa rha »): the same
+    checks as a shop's own sign-up — shape and a real extension, typos
+    (« Vouliez-vous dire …@gmail.com ? »), throwaway inboxes, and a domain
+    that receives mail (services/email_check; DNS unreachable → accepted)."""
     s = (v or "").strip()
-    if s and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", s):
-        raise _bad("Adresse e-mail invalide.")
+    if not s:
+        return s
+    from services import email_check
+    verdict = email_check.check(s, dns=dns)
+    if not verdict["ok"]:
+        raise _bad(verdict["reason"] or "Adresse e-mail invalide.")
     return s
 
 
