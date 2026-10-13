@@ -97,6 +97,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("…the same figures as Analytics", an["cities"] == d["cities"] and an["revenue"] == d["revenue"] and an["sources"] == d["sources"])
     check("Analytics: six calendar months of « Évolution »", len(an["evolution"]) == 6 and an["evolution"][-1]["commerces"] == 4)
     check("…twelve on request", len(AN.analytics(months=12, token_data=ADMIN)["evolution"]) == 12)
+    # « Évolution » used to count each month from scratch — three queries per
+    # month. It is one pass per collection now, so pin it against the slow way.
+    for n_months in (6, 12):
+        slow = [{"month": a.strftime("%Y-%m"),
+                 "commerces": db.tenants.count_documents({"is_active": {"$ne": False}, "created_at": {"$lt": b}}),
+                 "clients": db.customers.count_documents({**D.LIVE, "created_at": {"$lt": b}}),
+                 "visites": db.visits.count_documents({"visit_time": {"$gte": a, "$lt": b}})}
+                for a, b in A.month_windows(D._now(), n_months)]
+        check(f"« Évolution » on {n_months} months: month by month, the slow count agrees",
+              D._evolution(n_months) == slow)
     check("Analytics: sector donut in French", {s["label"] for s in an["sectors_donut"]} == {"Boulangerie", "Café / Salon de thé", "Restauration / Fast-food"})
     check("plans incl. franchise and trial", {p_["key"]: p_["count"] for p_ in d["plans"]} == {"silver": 1, "gold": 1, "franchise": 1, "essai": 1})
 

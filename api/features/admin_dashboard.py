@@ -195,13 +195,46 @@ def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
 
 
 def _evolution(months: int) -> List[Dict[str, Any]]:
-    rows = []
-    for a, b in AC.month_windows(_now(), months):
-        rows.append({"month": a.strftime("%Y-%m"),
-                     "commerces": _db.tenants.count_documents({"is_active": {"$ne": False}, "created_at": {"$lt": b}}),
-                     "clients": _db.customers.count_documents({**LIVE, "created_at": {"$lt": b}}),
-                     "visites": _db.visits.count_documents({"visit_time": {"$gte": a, "$lt": b}})})
-    return rows
+    """« Évolution de la plateforme »: per calendar month, how many businesses
+    and clients existed by its end and how many visits it saw.
+
+    It used to count each of those from scratch, month by month — three
+    count_documents per month, thirty-six round trips over a year, and this is
+    what made /api/admin/analytics/global take 2,3 s. Mongo now returns each
+    month's own count in one pass per collection; the running totals are added
+    up here. Five queries instead of thirty-six, the same numbers.
+    """
+    wins = AC.month_windows(_now(), months)
+    if not wins:
+        return []
+    first, last = wins[0][0], wins[-1][1]
+
+    def per_month(coll: str, match: Dict[str, Any], field: str) -> List[int]:
+        sums = {f"m{i}": {"$sum": {"$cond": [{"$and": [{"$gte": [f"${field}", a]},
+                                                       {"$lt": [f"${field}", b]}]}, 1, 0]}}
+                for i, (a, b) in enumerate(wins)}
+        rows = list(_db[coll].aggregate([{"$match": {**match, field: {"$gte": first, "$lt": last}}},
+                                         {"$group": {"_id": None, **sums}}]))
+        row = rows[0] if rows else {}
+        return [int(row.get(f"m{i}") or 0) for i in range(len(wins))]
+
+    def running(coll: str, match: Dict[str, Any], field: str = "created_at") -> List[int]:
+        """The total at the end of each month: what already existed before the
+        first one, plus every month since. The months are contiguous, so this
+        lands on the same figure as counting `field < end` each time."""
+        total = _db[coll].count_documents({**match, field: {"$lt": first}})
+        out = []
+        for n in per_month(coll, match, field):
+            total += n
+            out.append(total)
+        return out
+
+    commerces = running("tenants", {"is_active": {"$ne": False}})
+    clients = running("customers", LIVE)
+    visites = per_month("visits", {}, "visit_time")
+    return [{"month": a.strftime("%Y-%m"), "commerces": commerces[i],
+             "clients": clients[i], "visites": visites[i]}
+            for i, (a, _) in enumerate(wins)]
 
 
 def _share(counter: Dict[str, int], labels: Optional[Dict[str, str]] = None, top: int = 7) -> List[Dict[str, Any]]:
