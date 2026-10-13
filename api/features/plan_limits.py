@@ -326,7 +326,10 @@ def plan_bullets(f: Dict[str, Any]) -> List[str]:
     out = ["Carte digitale personnalisée"]
     if f.get("wallet"):
         out.append("Apple Wallet & Google Wallet")
-    out += ["Points & récompenses", f"{n(f.get('max_customers') or 0)} cartes clients" if f.get("max_customers") else "Cartes clients illimitées",
+    # the limit is on ACTIVE clients (a visit in the last 12 months), the same
+    # words as the usage meter under it (QA F30: « 15 000 cartes clients »
+    # above « Cartes de fidélité créées 165 / 4 000 » read as two limits)
+    out += ["Points & récompenses", f"{n(f.get('max_customers') or 0)} clients actifs" if f.get("max_customers") else "Clients actifs illimités",
             f"{n(f['push_per_month'])} notifications / mois" if f.get("push_per_month") else "Notifications illimitées"]
     for key, label in (("crm_advanced", "CRM avancé"), ("segmentation", "Segmentation clients"), ("campaigns", "Campagnes ciblées"),
                        ("automations", "Automatisation marketing"), ("geo_proximity", "Géolocalisation"), ("referral", "Parrainage"),
