@@ -596,6 +596,10 @@
     "change": "Use another method",
     "spam": "Nothing? Check your spam folder, or resend the code.",
     "none": "Verification is temporarily unavailable. Try again in a moment.",
-    "failed": "Something went wrong. Try again."
+    "failed": "Something went wrong. Try again.",
+    "edit_email": "Change the e-mail address",
+    "new_email": "Your e-mail address",
+    "send_new": "Send the code to this address",
+    "cancel": "Cancel"
   }
 }

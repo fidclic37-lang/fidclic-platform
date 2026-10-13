@@ -181,6 +181,8 @@ export const onboardingAPI = {
   verifyState: () => api.get('/onboarding/verify'),
   verifySend: (channel) => api.post('/onboarding/verify/send', { channel }),
   verifyCheck: (code) => api.post('/onboarding/verify/check', { code }),
+  // « Modifier l'adresse e-mail » while the code is awaited (QA BUG-001)
+  verifyEmail: (email) => api.post('/onboarding/verify/email', { email }),
   // Step 2: suggestions inside the selected country (services/addresses.py).
   addressSearch: (params) => api.get('/onboarding/address-search', { params }),
 };

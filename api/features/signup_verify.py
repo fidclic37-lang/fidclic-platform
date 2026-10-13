@@ -26,7 +26,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from auth import TokenData, require_role
@@ -38,6 +38,7 @@ CODE_TTL = timedelta(minutes=10)
 MAX_TRIES = 5
 COOLDOWN = timedelta(seconds=60)
 MAX_PER_HOUR = 5
+MAX_EMAIL_CHANGES = 3          # per hour: each new address could otherwise be sent codes afresh
 
 
 def init(db):
@@ -148,6 +149,52 @@ def send_code(body: SendIn, token_data: TokenData = Depends(require_role(["busin
     _db.signup_codes.insert_one({"email": user["email"], "channel": ch, "code_hash": _hash(user["email"], code),
                                  "tries": 0, "used": False, "created_at": now, "expires_at": now + CODE_TTL})
     return {"ok": True, "channel": ch, "to": to, "expires_in": int(CODE_TTL.total_seconds())}
+
+
+class EmailIn(BaseModel):
+    email: str
+
+
+@router.post("/api/onboarding/verify/email")
+def change_email(body: EmailIn, response: Response, request: Request = None,
+                 token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """« Modifier l'adresse e-mail » on the code page (QA BUG-001, 2026-10-11):
+    an owner who typed « …@gmial.com » waited for a code that went elsewhere,
+    and could only log out. While the account is still being verified, the
+    address can be corrected: the same checks as the sign-up (shape, typos,
+    throwaway inboxes, a domain that receives mail), not another account's,
+    3 changes an hour. The codes and sessions of the old address end; the
+    browser gets a session for the new one (the login is the e-mail)."""
+    import server as core
+    from services import email_check
+    o = _owner(token_data)                         # only while the code is awaited
+    user, tenant = o["user"], o["tenant"]
+    new = (body.email or "").strip().lower()
+    verdict = email_check.check(new)
+    if not verdict["ok"]:
+        raise HTTPException(status_code=400, detail=verdict["reason"])
+    old = user["email"]
+    if new == old:
+        raise HTTPException(status_code=400, detail="C'est déjà l'adresse de ce compte.")
+    if _db.users.find_one({"email": new}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail="Cette adresse e-mail est déjà utilisée par un autre compte FidClic.")
+    now = _now()
+    recent = [t for t in (tenant.get("verify_email_changes") or []) if (_aware(t) or now) > now - timedelta(hours=1)]
+    if len(recent) >= MAX_EMAIL_CHANGES:
+        raise HTTPException(status_code=429, detail="Trop de changements d'adresse. Réessayez dans une heure.")
+    _db.users.update_one({"email": old}, {"$set": {"email": new, "email_changed_from": old, "email_changed_at": now},
+                                          "$unset": {"email_verified_at": ""}})
+    _db.tenants.update_one({"id": tenant["id"]}, {"$set": {"verify_email_changes": recent + [now]}})
+    _db.signup_codes.update_many({"email": old, "used": False}, {"$set": {"used": True}})
+    try:
+        from features import security_page as SEC
+        SEC.revoke({"email": old})
+    except Exception as exc:
+        print(f"signup verify: old sessions not closed ({exc})")
+    core.log_audit("auth.email_corrected", actor=new, actor_type="user", tenant_id=tenant["id"],
+                   request=request, meta={"from": old})
+    session = core._issue_session(response, _db.users.find_one({"email": new}), request)
+    return {**session, "email": _mask_email(new)}
 
 
 class CheckIn(BaseModel):
