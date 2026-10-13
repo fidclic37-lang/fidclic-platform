@@ -111,6 +111,10 @@ else:
 from features import store_cards as _SC  # noqa: E402
 _SC.init(db)
 app.add_middleware(_SC.StoreMiddleware)
+# Pictures out of the documents every page reads (services/media, 2026-10-13):
+# the card, campaigns and notifications keep a « /api/media/<id> » link.
+from services import media as _MEDIA  # noqa: E402
+_MEDIA.install(db)
 app.add_middleware(_ST.TimingMiddleware)
 
 # ─────────────────────────────────────────────────────────────────────
@@ -721,6 +725,12 @@ def _campaign_html(tenant_name: str, subject: str, rendered_body: str, customer:
 
     image_block = ""
     if image_url:
+        # a picture kept in `media` is linked in full: an e-mail is read elsewhere
+        try:
+            from features.wallet_passes import _site_url as _site
+            image_url = _MEDIA.absolute(image_url, _site())
+        except Exception:
+            pass
         image_block = f"""
     <div style="margin:-30px -30px 25px -30px;border-top-left-radius:12px;border-top-right-radius:12px;overflow:hidden;">
       <img src="{image_url}" alt="" style="display:block;width:100%;max-height:320px;object-fit:cover;" />
@@ -12187,6 +12197,39 @@ def resolve_upgrade_request(
 # ============================================================
 from features._loader import register_all
 register_all(app, db)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pictures (services/media, 2026-10-13). A link « /api/media/<id> » is the
+# hash of the picture's bytes: it never changes, so the browser and Vercel's
+# edge keep it for a year — a page no longer carries its logo in every answer.
+# ─────────────────────────────────────────────────────────────────────
+@app.get("/api/media/{mid}")
+def get_media(mid: str):
+    got = _MEDIA.get(mid.split(".", 1)[0])
+    if not got:
+        raise HTTPException(status_code=404, detail="Image introuvable")
+    mime, raw = got
+    return Response(content=raw, media_type=mime,
+                    headers={"Cache-Control": "public, max-age=31536000, s-maxage=31536000, immutable"})
+
+
+def _media_migrate_once() -> None:
+    """The pictures stored inline before 2026-10-13 move to `media`, once:
+    the first start after the deploy does it, the next ones see the marker."""
+    try:
+        done = db.platform_settings.find_one({"key": "media_migrated"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        moved = _MEDIA.migrate()
+        db.platform_settings.update_one({"key": "media_migrated"}, {"$set": {
+            "key": "media_migrated", "value": "v1", "at": datetime.now(timezone.utc), "moved": moved}}, upsert=True)
+        print(f"media: pictures moved out of documents {moved}", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it; retried next start
+        print(f"media: migration not finished ({exc})", flush=True)
+
+
+_media_migrate_once()
 
 
 if __name__ == "__main__":

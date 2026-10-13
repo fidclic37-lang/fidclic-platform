@@ -312,7 +312,8 @@ def put_etablissement(body: EtablissementIn,
         if b.description is not None:
             sets["description"] = b.description.strip()
         if b.logo_url is not None:
-            if b.logo_url and not (b.logo_url.startswith("data:image/") or b.logo_url.startswith("https://")):
+            from services import media as _M
+            if b.logo_url and not _M.is_image_value(b.logo_url):
                 raise HTTPException(status_code=400, detail="Logo invalide.")
             if len(b.logo_url) > MAX_LOGO:
                 raise HTTPException(status_code=400, detail="Le logo dépasse 2 Mo.")

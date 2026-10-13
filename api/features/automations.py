@@ -2238,7 +2238,8 @@ def _clean_message(m: "MessageIn", sc: str, tid: str, required: bool) -> Dict[st
         raise HTTPException(status_code=400, detail=f"Message : {BODY_MAX} caractères au maximum.")
     img = (m.image_url or "").strip() or None
     # FidClic's own ready images (public/automations/…) are allowed by their path
-    if img and not (img.startswith("data:image/") or img.startswith("https://") or img in READY_IMAGES):
+    from services import media as _M
+    if img and not (_M.is_image_value(img) or img in READY_IMAGES):
         raise HTTPException(status_code=400, detail="Image invalide.")
     if img and len(img) > 2_800_000:
         raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")

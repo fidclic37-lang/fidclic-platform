@@ -96,7 +96,11 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     const settings = await (await request.get('/api/owner/card/settings', { headers: auth(token) })).json();
     expect(settings.advanced.stamp_shape).toBe('losange');
     expect(settings.advanced.poster_footer_color).toMatch(/^#[0-9A-F]{6}$/i);
-    expect(settings.advanced.poster_image_url).toMatch(/^data:image\/jpeg/);
+    // stored once in `media`, kept as a link (2026-10-13), served as the JPEG it is
+    expect(settings.advanced.poster_image_url).toMatch(/^\/api\/media\/[0-9a-f]{32}$/);
+    const img = await request.get(settings.advanced.poster_image_url);
+    expect(img.status()).toBe(200);
+    expect(img.headers()['content-type']).toBe('image/jpeg');
 
     // Google: with no banner, the row is the jauge in the same shape
     const g = await (await request.post('/api/owner/wallet/google-preview', {
