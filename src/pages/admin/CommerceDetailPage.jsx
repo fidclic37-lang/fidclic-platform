@@ -8,6 +8,7 @@ import {
   Building2, Search, Loader2, Repeat, Clock, Ban, Undo2,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
+import { protectNames } from '../../lib/translator';
 import { Card, Head, Kpi, Donut, Select, Loading, Breadcrumb, Pager, Modal, useToast, nf, BLUE, inputCls } from '../crm/ui';
 import { ComposeEmail } from '../crm/emailUi';
 import { FranchiseTermsModal } from '../../components/admin/FranchisePanel';
@@ -27,6 +28,10 @@ const STATUS_FR = { active: 'Actif', trialing: 'Essai gratuit', onboarding: 'Ins
 export default function CommerceDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // A super admin reads other businesses' names, which nothing registers:
+  // the layout only protects the signed-in shop's own. Without this the
+  // translator reaches them wherever they sit inside a sentence — a modal
+  // title, a confirmation (user, 2026-10-13).
   const [d, setD] = useState(null);
   const [x, setX] = useState(null);
   const [err, setErr] = useState('');
@@ -40,7 +45,7 @@ export default function CommerceDetailPage() {
   }, [modal]);
   const [say, toast] = useToast();
   const load = useCallback(() => {
-    adminAPI.commerce(id).then(({ data }) => setD(data)).catch((e) => setErr(e?.response?.data?.detail || 'Commerce introuvable.'));
+    adminAPI.commerce(id).then(({ data }) => { protectNames([data?.name]); setD(data); }).catch((e) => setErr(e?.response?.data?.detail || 'Commerce introuvable.'));
     adminAPI.commerceDetails(id).then(({ data }) => setX(data)).catch(() => {});
   }, [id]);
   useEffect(() => { load(); }, [load]);
@@ -66,7 +71,7 @@ export default function CommerceDetailPage() {
       <header className="mb-4 mt-2 flex flex-wrap items-start gap-4">
         <CommerceLogo c={d} size={84} />
         <div className="min-w-0 flex-1">
-          <h1 className="flex flex-wrap items-center gap-3 text-[28px] font-bold leading-tight text-[#0B1C3F]">{d.name} <StatusPill s={d.status} label={d.status_label} /></h1>
+          <h1 className="flex flex-wrap items-center gap-3 text-[28px] font-bold leading-tight text-[#0B1C3F]"><span translate="no">{d.name}</span> <StatusPill s={d.status} label={d.status_label} /></h1>
           <p className="mt-1 text-[14px] text-[#64748B]">{[d.sector, d.city && `${d.city}${d.postal_code ? ` (${d.postal_code})` : ''}`].filter(Boolean).join(' • ') || '—'}</p>
           <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[#475569]">
             <span className="flex items-center gap-1.5"><CreditCard size={14} /> Plan : <strong className="text-[#2F6BFF]">{d.plan?.label}</strong></span>
@@ -288,7 +293,7 @@ function CampTable({ rows }) {
         <tbody>
           {rows.map((c, i) => (
             <tr key={c.id || i} className="border-b border-[#F4F7FC]">
-              <td className="px-2 py-2 text-[#94A3B8]">{i + 1}</td><td className="max-w-[220px] truncate px-2 py-2 font-medium text-[#0B1C3F]">{c.name}</td>
+              <td className="px-2 py-2 text-[#94A3B8]">{i + 1}</td><td translate="no" className="max-w-[220px] truncate px-2 py-2 font-medium text-[#0B1C3F]">{c.name}</td>
               <td className="px-2 py-2 text-[#475569]">{c.type}</td><td className="px-2 py-2">{nf(c.recipients)}</td><td className="px-2 py-2">{c.open_rate}%</td><td className="px-2 py-2">{c.click_rate}%</td>
               <td className="whitespace-nowrap px-2 py-2 text-[#475569]">{dateFr(c.sent_at, true)}</td>
               <td className="px-2 py-2"><span className="rounded-md bg-[#E7F7EE] px-2 py-0.5 text-[11.5px] text-[#0F8B58]">{c.status}</span></td>
@@ -318,7 +323,7 @@ function ClientsTab({ id }) {
           <thead><tr className="border-b border-[#EDF1F7] text-left text-[#64748B]">{['Client', 'Palier', 'Visites', 'Points', 'Carte', 'Dernière visite', 'Inscrit le'].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}</tr></thead>
           <tbody>{d.rows.map((c) => (
             <tr key={c.id} className="border-b border-[#F4F7FC]">
-              <td className="px-2 py-2 font-medium text-[#0B1C3F]">{c.name}</td><td className="px-2 py-2 capitalize">{c.tier || 'bronze'}</td><td className="px-2 py-2">{nf(c.visits)}</td>
+              <td translate="no" className="px-2 py-2 font-medium text-[#0B1C3F]">{c.name}</td><td className="px-2 py-2 capitalize">{c.tier || 'bronze'}</td><td className="px-2 py-2">{nf(c.visits)}</td>
               <td className="px-2 py-2">{nf(c.points)}</td><td className="px-2 py-2">{c.pass_issued ? 'Sur le téléphone' : '—'}</td>
               <td className="px-2 py-2 text-[#475569]">{dateFr(c.last_visit_date)}</td><td className="px-2 py-2 text-[#475569]">{dateFr(c.created_at)}</td>
             </tr>))}

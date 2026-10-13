@@ -218,6 +218,51 @@ function applyUnit(u, t) {
   u.nodes.forEach((n, i) => write(n, i === 0 ? leading + t + trailing : ''));
 }
 
+
+// ---------------------------------------------------------------------------
+// A name inside a sentence
+// ---------------------------------------------------------------------------
+// Protecting whole text nodes only covers a name standing on its own. The card
+// page says « À propos de Royal Trim Liberté » and « Votre retour aide Royal
+// Trim Liberté à progresser » — one sentence, which has to be translated, with
+// a name inside it that must not be. Word by word, « Liberté » came back as
+// « Freedom » (user, 2026-10-13).
+//
+// So each name is swapped for a marker before the sentence leaves, and put back
+// when it returns. If a marker does not come back — the engine dropped or
+// mangled it — the sentence is left as written rather than shown with a
+// translated name.
+const MARK = (i) => `QQ${i}ZZ`;
+// Accented letters are letters: « fid » must not match inside « fidélité »,
+// and « clic » must not match inside « Cliquez ».
+const EDGE = '[^\\p{L}\\p{N}]';
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function maskProtected(text) {
+  // Longest first, so « royal trim liberté » wins over « royal trim ».
+  const names = [...PROTECTED].sort((a, b) => b.length - a.length);
+  let out = text;
+  const marks = [];
+  names.forEach((name) => {
+    const re = new RegExp(`(^|${EDGE})(${escapeRe(name)})(?=${EDGE}|$)`, 'giu');
+    out = out.replace(re, (_m, before, hit) => {
+      const i = marks.push(hit) - 1;
+      return before + MARK(i);
+    });
+  });
+  return { text: out, marks };
+}
+
+function unmaskProtected(text, marks) {
+  let out = text;
+  for (let i = 0; i < marks.length; i += 1) {
+    const re = new RegExp(escapeRe(MARK(i)), 'gi');
+    if (!re.test(out)) return null;        // the marker never came back
+    out = out.replace(new RegExp(escapeRe(MARK(i)), 'gi'), marks[i]);
+  }
+  return out;
+}
+
 async function translateNodes(nodes) {
   const units = unitsOf(nodes).filter((u) => {
     const t = u.source.trim();
@@ -226,7 +271,9 @@ async function translateNodes(nodes) {
   if (!units.length) return;
   // what each node held when it was sent for translation
   const sent = units.map((u) => u.nodes.map((n) => n.nodeValue));
-  const translated = await translateBatch(units.map((u) => u.source.trim()), currentLang);
+  // names travel as markers, so the engine never sees them
+  const masked = units.map((u) => maskProtected(u.source.trim()));
+  const translated = await translateBatch(masked.map((m) => m.text), currentLang);
   if (currentLang === SOURCE_LANG) return;
   units.forEach((u, i) => {
     // React wrote new text while the translation was on its way (the menu's
@@ -236,7 +283,12 @@ async function translateNodes(nodes) {
     if (u.nodes.some((n, j) => n.nodeValue !== sent[i][j])) return;
     // …and a name protected while its translation was on its way stays as written
     if (PROTECTED.has(u.source.trim().toLowerCase())) return;
-    applyUnit(u, translated[i]);
+    const back = masked[i].marks.length
+      ? unmaskProtected(translated[i] || '', masked[i].marks)
+      : translated[i];
+    // a lost marker would mean showing a translated name: keep the source
+    if (back === null) return;
+    applyUnit(u, back);
   });
 }
 
