@@ -2055,6 +2055,17 @@ def _best_file(files: Dict[str, bytes], base: str) -> Optional[bytes]:
     return None
 
 
+def _poster_ink(card: Dict[str, Any], files: Dict[str, bytes]) -> Tuple[int, int, int]:
+    """What « Automatique » means on the iOS 27 poster — the same rule the
+    poster's own text follows (compose_strip): white over a photo or a dark
+    card, near-black over a light one."""
+    surface = (_rgb(card.get("surface_color"))
+               or _rgb(SURFACE_PRESETS.get(card.get("surface") or ""))
+               or (25, 25, 28))
+    photo = _best_file(files, "background") is not None
+    return (255, 255, 255) if (photo or _lum(surface) <= 0.45) else (25, 25, 28)
+
+
 def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     """Apple: the shop's name moves from logoText into the logo images (iOS 26
     logo.png, iOS 27 primaryLogo.png) — written in full, in the owner's colour
@@ -2065,7 +2076,17 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
         name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
         if not name.strip():
             return
-        color = _rgb(card.get("logo_text_color")) or _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
+        chosen = _rgb(card.get("logo_text_color"))
+        # « Automatique » cannot be one colour: the two cards stand on different
+        # grounds. iOS 26's logo sits on the card, so the card's own text colour
+        # is right there. iOS 27's primaryLogo sits on the poster, over the
+        # photo — and reading the card's colour there asked the wrong question:
+        # a white card gives dark ink, and on a dark photo the name simply
+        # disappeared, until the owner picked a colour by hand (user,
+        # 2026-10-13). The poster now follows the rule its own artwork already
+        # uses: white over a photo or a dark card, near-black over a light one.
+        on_card = _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
+        on_poster = _poster_ink(card, files)
         done = False
         for base in ("logo", "primaryLogo"):
             src = _best_file(files, base)
@@ -2073,6 +2094,7 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
                 continue
             if src is None:
                 continue
+            color = chosen or (on_poster if base == "primaryLogo" else on_card)
             # the image is made from the plain logo (a design's logo may already be a disc)
             for suffix, png in name_logo(src, name, color, letters=letters).items():
                 files[f"{base}{suffix}.png"] = png
