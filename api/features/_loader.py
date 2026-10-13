@@ -101,6 +101,7 @@ MODULES = [
     "features.customer_status",         # configurable active/inactive definition
     "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
     "features.team_access",             # Paramètres › Équipe & accès (roles, establishments, accounts)
+    "features.role_perms",              # rôles et permissions par page (Voir / Modifier, par établissement)
     "features.store_scope",             # which establishments a request is about (the logo dropdown)
     "features.join_link",               # Paramètres › Lien d'inscription & QR (+ signup-page visits)
     "features.store_links",             # each establishment's link + QR, the client's home store (multi-store)

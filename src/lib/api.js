@@ -53,7 +53,7 @@ api.interceptors.request.use((config) => {
 // opens the upgrade prompt (components/PlanAccess.jsx). The caller still gets
 // the error, so its own « chargement impossible » stays quiet or short.
 // A settings tab saved: Paramètres' « Réinitialiser » refreshes what it can undo.
-const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules|join-link\/(slug|page)|team-access\/(users|stores)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
+const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules|join-link\/(slug|page)|team-access\/(users|stores|roles)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
 const settingsSaved = (r) => {
   try {
     const m = String(r?.config?.method || '').toLowerCase();
@@ -688,6 +688,9 @@ export const ownerAPI = {
   teamStatus: (id, active) => api.post(`/owner/team-access/users/${encodeURIComponent(id)}/status`, { active }),
   teamPassword: (id) => api.post(`/owner/team-access/users/${encodeURIComponent(id)}/password`),
   teamDelete: (id) => api.delete(`/owner/team-access/users/${encodeURIComponent(id)}`),
+  teamRoleCreate: (body) => api.post('/owner/team-access/roles', body),
+  teamRoleUpdate: (key, body) => api.put(`/owner/team-access/roles/${encodeURIComponent(key)}`, body),
+  teamRoleDelete: (key) => api.delete(`/owner/team-access/roles/${encodeURIComponent(key)}`),
   teamStoreAccess: (storeId, id, enabled) => api.put(`/owner/team-access/stores/${encodeURIComponent(storeId)}/users/${encodeURIComponent(id)}`, { enabled }),
   joinLink: () => api.get('/owner/join-link'),
   joinSlugCheck: (slug) => api.get('/owner/join-link/slug-check', { params: { slug } }),

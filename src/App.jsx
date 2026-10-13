@@ -169,6 +169,7 @@ const CabinetCases = lazyPage(() => import('./pages/CabinetCases'));
 const CabinetReview = lazyPage(() => import('./pages/CabinetReview'));
 import CabinetPasswordGate from './components/CabinetPasswordGate';
 import { EINVOICING_VISIBLE, OWNER_HOME } from './lib/modules';
+import { hasPagePerms, pageOfPath, canSee, firstAllowed as firstPage } from './lib/pagePerms';
 const CabinetSignup = lazyPage(() => import('./pages/CabinetSignup'));
 const ResetPasswordPage = lazyPage(() => import('./pages/ResetPasswordPage'));
 // Public marketing pages — one per product line, so each audience gets a whole
@@ -218,9 +219,18 @@ function NoAccess({ first }) {
 
 const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, partialOk = false }) => {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to={onboardingPath(user)} replace />;
+  // An account with its own permissions (Équipe & accès): a /dashboard page
+  // opens if it may « Voir » it — the server checks every call too.
+  if (hasPagePerms(user) && location.pathname.startsWith('/dashboard')) {
+    const page = pageOfPath(location.pathname);
+    if (!page || canSee(user, page) || (page === 'settings' && (canSee(user, 'team') || canSee(user, 'billing')))) return children;
+    const first = firstPage(user);
+    return first && first !== location.pathname ? <Navigate to={first} replace /> : <Navigate to="/login" replace />;
+  }
   // Administrateurs, and managers covering only some establishments, reach
   // the data pages once those pages filter by establishment; until then they
   // work from Paramètres › Équipe & accès (the server refuses the rest too).
