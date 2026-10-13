@@ -282,7 +282,7 @@ def _view(tid: str, token_data: TokenData, request: Optional[Request]) -> Dict[s
 # ---------------------------------------------------------------------------
 class ProductIn(BaseModel):
     name: str
-    price: float
+    price: Optional[float] = None        # required — but refused in French, not as a 422
     category: Optional[str] = ""
     subtitle: Optional[str] = ""
     active: bool = True
@@ -294,7 +294,11 @@ def _clean(body: ProductIn) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Donnez un nom au produit.")
     if len(name) > NAME_MAX:
         raise HTTPException(status_code=400, detail=f"Nom limité à {NAME_MAX} caractères.")
-    if body.price is None or body.price < 0 or body.price > 100000:
+    # no price is not « 0 » (QA F31: an erased price made a paid product free);
+    # a 0 sent on purpose is a free product
+    if body.price is None:
+        raise HTTPException(status_code=400, detail="Prix obligatoire : indiquez le prix (0 pour un produit offert).")
+    if body.price < 0 or body.price > 100000:
         raise HTTPException(status_code=400, detail="Prix invalide.")
     subtitle = (body.subtitle or "").strip()
     category = (body.category or "").strip()
