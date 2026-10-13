@@ -108,17 +108,17 @@ def main():
           r.status_code == 200 and len(builds) == 1 and r.content[:2] == b"PK")
     WP._PKPASS_MEM.clear()                                  # another server instance
     http("GET", f"/api/card/{BC}/apple-wallet.pkpass", headers=KEY)
-    check("another server instance: from the shared cache, nothing built", len(builds) == 1)
+    # 2026-10-13: a 2 MB pass is not kept in the free cluster (seconds to read back) — rebuilt
+    check("another server instance: built again there (a big pass is not kept in the database)", len(builds) == 2)
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 4}})
     http("GET", f"/api/card/{BC}/apple-wallet.pkpass", headers=KEY)
-    check("a visit since: a fresh pass (the tampons are right)", len(builds) == 2)
+    check("a visit since: a fresh pass (the tampons are right)", len(builds) == 3)
     db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"card_name": "ROYAL TRIM PALISSY"}})
     http("GET", f"/api/card/{BC}/apple-wallet.pkpass", headers=KEY)
-    check("a design change since: a fresh pass", len(builds) == 3)
+    check("a design change since: a fresh pass", len(builds) == 4)
     http("GET", f"/api/card/{BC}/apple-wallet.pkpass", headers=KEY)
-    check("…then kept again", len(builds) == 3)
-    check("the shared copy expires (1 day)",
-          any(ix.get("expireAfterSeconds") == 24 * 3600 for ix in db.pkpass_cache.index_information().values()))
+    check("…then kept again", len(builds) == 4)
+    check("no megabytes written to the database for it", db.pkpass_cache.count_documents({}) == 0)
 
     print("\n3. Google: one round with Google, then none")
     calls = []

@@ -560,9 +560,13 @@ def _size(v: Any) -> int:
 # 2026-10-12: « preview 20 seconds »): on Vercel each new instance started
 # with an empty memory cache and rebuilt the poster, the strip and the logos
 # — seconds of image work every time. Built once, kept 30 days in Mongo.
-_SHARED_KINDS = {"poster", "poster_variants", "strip", "strip_variants", "png_variants", "name_logo",
-                 "round_logo", "template_scaled", "preview_jpeg", "slim_photo"}
-_SHARED_MAX = 12 * 1024 * 1024
+#
+# 2026-10-13 (« Aperçu indisponible »), measured on production: the free
+# cluster hands back megabytes slowly — 1 to 4.5 s for one picture — while
+# rebuilding a poster takes 0.1–0.4 s. So only the small results are shared
+# (the name beside the logo, the round logo); photos are rebuilt in memory.
+_SHARED_KINDS = {"name_logo", "round_logo"}
+_SHARED_MAX = 300 * 1024
 
 
 def _shared_get(kind: str, key: str) -> Any:

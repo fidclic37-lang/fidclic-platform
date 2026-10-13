@@ -118,13 +118,43 @@ def _remember(mid: str, got: Tuple[str, bytes]) -> None:
         _mem_size -= len(old[1])
 
 
-def get(mid: str) -> Optional[Tuple[str, bytes]]:
+def _from_cdn(mid: str) -> Optional[Tuple[str, bytes]]:
+    """On Vercel: the picture from the edge's copy of « /api/media/<id> »
+    (cached a year, ~60 ms) rather than from the free cluster, which hands
+    megabytes back in seconds (2026-10-13, « Aperçu indisponible »)."""
+    import os
+    if not os.environ.get("VERCEL"):
+        return None
+    try:
+        import urllib.request
+        from features.wallet_passes import _site_url
+        site = (_site_url() or "").rstrip("/")
+        if not site.startswith("https://"):
+            return None
+        req = urllib.request.Request(f"{site}{PREFIX}{mid}", headers={"User-Agent": "FidClic-media/1"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            if resp.status != 200:
+                return None
+            raw = resp.read()
+            mime = (resp.headers.get("Content-Type") or "application/octet-stream").split(";")[0]
+        return (mime, raw) if raw else None
+    except Exception:
+        return None
+
+
+def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
+    """`cdn=False`: the database only (the « /api/media » route itself)."""
     if _db is None or not _ID.match(mid or ""):
         return None
     hit = _MEM.get(mid)
     if hit is not None:
         _MEM.move_to_end(mid)
         return hit
+    if cdn:
+        got = _from_cdn(mid)
+        if got:
+            _remember(mid, got)
+            return got
     doc = _raw(_db["media"]).find_one({"_id": mid})
     if not doc:
         return None
