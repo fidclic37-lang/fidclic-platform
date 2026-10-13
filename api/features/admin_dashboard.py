@@ -215,6 +215,27 @@ def _share(counter: Dict[str, int], labels: Optional[Dict[str, str]] = None, top
     return [{"key": k, "label": (labels or {}).get(k, k), "count": v, "pct": round(v / tot * 100)} for k, v in items if v]
 
 
+def _window_counts(coll: str, match: Dict[str, Any], field: str,
+                   ranges: List[Any]) -> Dict[str, List[int]]:
+    """For each business, how many rows fall inside each (after, up_to] window.
+
+    Mongo counts them. This used to read every customer and every visit of the
+    last three months into this process — tens of thousands of documents — to
+    end up with these few numbers. The windows are the exact same instants, so
+    the counts are the same to the millisecond.
+
+    The boundaries keep their timezone: the driver converts them to UTC on the
+    way out, and the dates they are compared against were written the same way.
+    """
+    sums = {f"w{i}": {"$sum": {"$cond": [{"$and": [{"$gt": [f"${field}", a]},
+                                                   {"$lte": [f"${field}", b]}]}, 1, 0]}}
+            for i, (a, b) in enumerate(ranges)}
+    earliest = min(a for a, _ in ranges)
+    rows = _db[coll].aggregate([{"$match": {**match, field: {"$gt": earliest}}},
+                                {"$group": {"_id": "$tenant_id", **sums}}])
+    return {r["_id"]: [int(r.get(f"w{i}") or 0) for i in range(len(ranges))] for r in rows}
+
+
 def _status_history(tenants, weeks: int = 12) -> Dict[str, List[int]]:
     """Each of the last `weeks` weeks: how many businesses were actif,
     à risque, inactif at its end (weekly cards AND scans, the weaker
@@ -223,21 +244,15 @@ def _status_history(tenants, weeks: int = 12) -> Dict[str, List[int]]:
     r = AC.rules()
     now = _now()
     win = timedelta(days=int(r["window_days"]))
-    since = now - timedelta(weeks=weeks) - win
-    cards, scans = defaultdict(list), defaultdict(list)
-    for c in _db.customers.find({**LIVE, "created_at": {"$gte": since}}, {"_id": 0, "tenant_id": 1, "created_at": 1}):
-        d = _aware(c.get("created_at"))
-        if d:
-            cards[c["tenant_id"]].append(d)
-    for v in _db.visits.find({"visit_time": {"$gte": since}}, {"_id": 0, "tenant_id": 1, "visit_time": 1}):
-        d = _aware(v.get("visit_time"))
-        if d:
-            scans[v.get("tenant_id")].append(d)
+    spans = [(now - timedelta(weeks=k + 1), now - timedelta(weeks=k)) for k in range(weeks - 1, -1, -1)]
+    # What each week's status is read from: the rolling window ending that week.
+    ranges = [(w_end - win, w_end) for _, w_end in spans]
+    cards = _window_counts("customers", LIVE, "created_at", ranges)
+    scans = _window_counts("visits", {}, "visit_time", ranges)
+    none = [0] * len(ranges)
     stand = {t["id"]: AC.standing_of(t, now) for t in tenants}
     out = {"actif": [], "inactif": [], "a_risque": [], "nouveaux": [], "resilie": [], "non_converti": []}
-    for k in range(weeks - 1, -1, -1):
-        w_end = now - timedelta(weeks=k)
-        w_start = w_end - timedelta(weeks=1)
+    for i, (w_start, w_end) in enumerate(spans):
         counts = {"actif": 0, "inactif": 0, "a_risque": 0}
         for t in tenants:
             created = _aware(t.get("created_at")) or now
@@ -248,8 +263,8 @@ def _status_history(tenants, weeks: int = 12) -> Dict[str, List[int]]:
                 continue
             if stand[t["id"]] == "non_converti" and (_aware(t.get("trial_ends_at")) or now) <= w_end:
                 continue
-            n_c = sum(1 for d in cards.get(t["id"], []) if w_end - win < d <= w_end)
-            n_s = sum(1 for d in scans.get(t["id"], []) if w_end - win < d <= w_end)
+            n_c = cards.get(t["id"], none)[i]
+            n_s = scans.get(t["id"], none)[i]
             key = AC.status_of({"created_at": created}, n_c, r, w_end, n_s)["key"]
             if key in counts:
                 counts[key] += 1
