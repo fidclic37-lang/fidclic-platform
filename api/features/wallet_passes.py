@@ -565,7 +565,12 @@ def _size(v: Any) -> int:
 # cluster hands back megabytes slowly — 1 to 4.5 s for one picture — while
 # rebuilding a poster takes 0.1–0.4 s. So only the small results are shared
 # (the name beside the logo, the round logo); photos are rebuilt in memory.
-_SHARED_KINDS = {"name_logo", "round_logo"}
+#
+# Same day, after #240, on production: a cold preview still spent 4.5 s in
+# ONE write of the small name image to img_cache. Nothing is shared any more:
+# every image is rebuilt in memory (milliseconds for these), and the old cache
+# collections are emptied once (server._cache_purge_once).
+_SHARED_KINDS: set = set()
 _SHARED_MAX = 300 * 1024
 
 

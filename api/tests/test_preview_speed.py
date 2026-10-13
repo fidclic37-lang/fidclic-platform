@@ -83,9 +83,8 @@ def main():
     v2 = WP._png_variants(raw, (100, 50), tight=True)
     check("variants ({'', '@2x', '@3x'}) come back with their keys", v1 == v2 and set(v2) == {"", "@2x", "@3x"})
     WP.name_logo(raw, "ROYAL TRIM", (255, 255, 255))
-    doc = WP._db.img_cache.find_one({"kind": "name_logo"})
-    check("a small result (the name beside the logo) is shared, without an empty field name",
-          doc and all(k.startswith("k") for k in doc["d"]))
+    check("nothing is written to the database for an image (a write cost 4.5 s on the free cluster)",
+          WP._db.img_cache.count_documents({}) == 0)
     check("the shared cache expires (30 days)",
           any(ix.get("expireAfterSeconds") == 30 * 24 * 3600 for ix in WP._db.img_cache.index_information().values()))
     huge = b"x" * (WP._SHARED_MAX + 1)
