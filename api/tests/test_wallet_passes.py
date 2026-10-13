@@ -233,7 +233,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.campaigns.delete_many({})
     db.campaigns.insert_one({"id": "camp-photo", "tenant_id": "t1", "name": "Séance offerte",
                              "content": "Venez cette semaine", "status": "sent", "wallet_offer": True,
-                             "recipient_ids": ["c1"], "sent_at": dt.datetime.now(dt.timezone.utc), "image_url": photo})
+                             "recipient_ids": ["c1"], "sent_at": dt.datetime.now(dt.timezone.utc), "image_url": photo,
+                             # the owner chose « Afficher la photo sur la carte Wallet » (QA BUG-006, off by default)
+                             "wallet_photo": True})
     pjc = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     backc = {f["key"]: f for f in pjc["storeCard"]["backFields"]}
     check("campaign photo: the back links to the campaign on the web card",

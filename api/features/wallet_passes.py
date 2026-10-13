@@ -1123,7 +1123,7 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
             {"tenant_id": cust.get("tenant_id"), "status": "sent",
              "wallet_offer": True, "recipient_ids": cust.get("id")},
             {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1, "status": 1,
-             "kind": 1, "offer": 1, "event": 1, "defi": 1})
+             "kind": 1, "offer": 1, "event": 1, "defi": 1, "wallet_photo": 1})
         newest, newest_at = None, None
         for c in rows:
             at = _parse_dt(c.get("sent_at"))
@@ -1139,7 +1139,8 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
             except Exception:
                 pass
             card["campaign_offer"] = {"title": title, "subtitle": sub, "id": newest.get("id"),
-                                      "image_url": newest.get("image_url") or None}
+                                      "image_url": newest.get("image_url") or None,
+                                      "wallet_photo": bool(newest.get("wallet_photo"))}
     except Exception as exc:        # a missing offer must never cost the pass
         print(f"wallet: campaign offer lookup failed (non-fatal): {exc}")
 
@@ -1149,8 +1150,15 @@ def _campaign_photo(card: Dict[str, Any]) -> Optional[str]:
     « photo bhi attach ki thi, toh woh kidhar dikhegi »). Apple shows no image
     in a notification or on the back of a pass — the strip is the only place a
     picture can live — so while the campaign is the card's offer, its photo is
-    the banner. When the campaign expires the merchant's own banner returns."""
+    the banner. When the campaign expires the merchant's own banner returns.
+
+    Only when the owner chose it for that campaign (QA BUG-006, user
+    2026-10-13: « Afficher la photo sur la carte Wallet », off by default —
+    a campaign sent before the switch counts as off): otherwise the card keeps
+    its own picture and the photo shows in « Mes offres »."""
     campaign = card.get("campaign_offer") if isinstance(card.get("campaign_offer"), dict) else {}
+    if not campaign.get("wallet_photo"):
+        return None
     return campaign.get("image_url") or None
 
 
@@ -2251,25 +2259,35 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
 
 # The pass a customer downloads (user, 2026-10-12: « Add to Apple Wallet takes
 # ages »): its photo layers were 3–7 MB of lossless PNG — seconds on a phone
-# network before Wallet even opens. Wallet only takes PNG, so the photos keep
-# 6 bits per colour (64 levels: no visible change, PSNR ≈ 42 dB) and compress
-# to about half. Logos, icons and the name keep every bit.
+# network before Wallet even opens. Wallet only takes PNG. 6 bits per colour
+# only halved them: Royal Trim's pass still weighed 2,6 Mo on 2026-10-13
+# (36 s cold, 5 s even ready). The photos are now 256-colour PNG with
+# Floyd–Steinberg dithering — the same look on a phone (checked side by side
+# on the barber chair poster), about a third of the bytes: 2,1 Mo → 0,76 Mo
+# of photos. Logos, icons and the name keep every bit.
 _PHOTO_LAYERS = ("background", "strip", "thumbnail")
 
 
 def _slim_photo(png: bytes) -> bytes:
     def make() -> bytes:
         try:
-            from PIL import Image, ImageOps
+            from PIL import Image
             im = Image.open(io.BytesIO(png))
             if im.mode not in ("RGB", "L"):
                 return png                        # a transparent layer stays exact
+            rgb = im.convert("RGB")
+            if rgb.getcolors(256) is not None:
+                # 256 colours or fewer (a flat brand colour, a drawn gradient):
+                # the palette holds them exactly — not one value moves
+                q = rgb.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+            else:
+                q = rgb.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.FLOYDSTEINBERG)
             out = io.BytesIO()
-            ImageOps.posterize(im.convert("RGB"), 6).save(out, "PNG", compress_level=6)
+            q.save(out, "PNG", optimize=True)
             return out.getvalue() if out.tell() < len(png) else png
         except Exception:
             return png
-    return _cached("slim_photo", (png,), make)
+    return _cached("slim_photo_256b", (png,), make)
 
 
 def slim_pass_files(files: Dict[str, bytes]) -> Dict[str, bytes]:
@@ -2706,13 +2724,31 @@ def owner_wallet_preview(body: PassPreviewIn,
     preview still showed the old layout after the pass changed)."""
     tid = token_data.tenant_id
     payload, sample, visits = _preview_payload(tid, body)
-    card = payload["card"]
 
     if body.design is not None:
         from features import pass_designer as PD
         with PD.preview_design(tid, PD.design_from_body(tid, body.design)):
             return _design_preview(payload, sample, visits)
+    return _live_view(payload, sample["name"], visits)
 
+
+@router.get("/api/card/{barcode_id}/pass-view")
+def card_pass_view(barcode_id: str, request: Request = None):
+    """The customer's own pass as the server builds it — the owner's current
+    design (iOS 27 poster included), their name, points and tampons — for the
+    signup's « Félicitations » page (user, 2026-10-13: « card updated waala
+    nhi dikhta, old style waala dikhta hai »). Same answer as the owner's
+    preview, for this real card; the owner key, like the card itself."""
+    import server as core
+    cust = core._card_customer(barcode_id, request)
+    payload = _card_payload(cust["barcode_id"])
+    return _live_view(payload, cust.get("name") or "", int(cust.get("visits") or 0))
+
+
+@_SC.payload_store
+def _live_view(payload: Dict[str, Any], name: str, visits: int) -> Dict[str, Any]:
+    """What WalletPassLive draws: the pass.json fields and images build_pkpass ships."""
+    card = payload["card"]
     # the very files the pass ships (user, 2026-10-12: « preview mein change,
     # wallet mein nahi ») — the logo carries the shop's name since then
     files = pass_files(payload)
@@ -2738,7 +2774,7 @@ def owner_wallet_preview(body: PassPreviewIn,
         "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
         "strip": (_preview_image("strip", strip2x) if strip2x else None) if "storeCard" in pj else None,
         "logo": _data_url(logo2x), "logo_width": logo_w,
-        "sample": {"name": sample["name"], "visits": visits},
+        "sample": {"name": name, "visits": visits},
         # iOS 27 « poster » — the same fields and background the pass ships
         "poster": _poster_preview(pj, payload, files.get("primaryLogo@2x.png") or logo2x, own=True),
     }

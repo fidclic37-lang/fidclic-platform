@@ -609,6 +609,9 @@ class Compose(BaseModel):
     schedule_at: Optional[str] = None
     push: bool = True
     wallet: bool = True
+    # the photo on the Wallet card too, while the campaign runs (QA BUG-006,
+    # user 2026-10-13: the owner chooses; off by default — « Mes offres » then)
+    wallet_photo: bool = False
     draft: bool = False
     # Reprendre un brouillon (QA F02): the draft this save / send replaces —
     # saved again, scheduled or sent, it stays one campaign.
@@ -688,6 +691,7 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "image_url": d.get("image_url") or "", "link_url": d.get("link_url") or "",
         "push": bool((d.get("channels") or {}).get("push", True)),
         "wallet": bool((d.get("channels") or {}).get("wallet", True)),
+        "wallet_photo": bool(d.get("wallet_photo")),
         "template": d.get("template"),
         "status": d.get("status"),
         "scheduled_for": when.isoformat() if when else None,
@@ -801,6 +805,7 @@ def compose(req: Compose, request: Request = None,
         # How long this stays the card's current offer once sent. Read by the
         # wallet pass builder, so the pass and the web card agree.
         "wallet_offer": bool(req.wallet),
+        "wallet_photo": bool(req.wallet_photo and req.image_url),
         "template": (req.template or "").strip()[:40] or None,
         "kind": kind, **terms, "details": details,
         "audience_spec": req.audience.dict() if req.audience is not None else None,
