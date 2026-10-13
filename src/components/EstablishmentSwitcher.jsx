@@ -56,7 +56,7 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
       <div className="px-3 pb-2">
         <span className="flex items-center gap-1.5 px-1.5 py-1 text-[12.5px] font-medium text-[#475569]">
           <Store size={13} className="shrink-0 text-[#94A3B8]" />
-          <span className="min-w-0 truncate">{label}</span>
+          <span className="min-w-0 truncate" translate="no">{label}</span>
         </span>
       </div>
     );
@@ -84,7 +84,7 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
         aria-expanded={open}
         className="flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-[#F4F7FC]"
       >
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium" style={{ color: '#475569' }}>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium" style={{ color: '#475569' }} translate="no">
           {label}
         </span>
         <ChevronDown size={14} className="shrink-0" style={{ color: '#94A3B8' }} />
@@ -96,7 +96,7 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
             <button key={b.id} type="button" onClick={() => pick(b.id)}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
               <span className="w-4 shrink-0">{branchId === b.id && <Check size={14} className="text-[#2F6BFF]" />}</span>
-              <span className="min-w-0 flex-1 truncate">{b.name}</span>
+              <span className="min-w-0 flex-1 truncate" translate="no">{b.name}</span>
             </button>
           ))}
           {list.length === 0 && (

@@ -6,6 +6,7 @@ import {
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranch } from '../contexts/BranchContext';
+import { protectNames } from '../lib/translator';
 
 /* Paramètres › Établissement — built to the approved mockup (blocks 1–8),
    plus what lived nowhere else and the user asked to add: the opening hours,
@@ -159,6 +160,7 @@ function StoreModal({ store, onClose, onSaved }) {
     setBusy(true); setErr('');
     try {
       const body = { ...f };
+      protectNames([f.name]);
       if (!creating && store.is_main && store.id === 'main') delete body.name;
       const { data } = creating ? await ownerAPI.addStore(body) : await ownerAPI.editStore(store.id, body);
       onSaved(data, creating ? 'Point de vente ajouté.' : 'Point de vente enregistré.');
@@ -166,7 +168,7 @@ function StoreModal({ store, onClose, onSaved }) {
     finally { setBusy(false); }
   };
   return (
-    <Modal title={creating ? 'Ajouter un point de vente' : store.name} onClose={onClose}>
+    <Modal title={creating ? 'Ajouter un point de vente' : <span translate="no">{store.name}</span>} onClose={onClose}>
       <div className="space-y-3.5">
         <label className="block"><Label required>Nom</Label>
           <input className={inputCls} value={f.name} maxLength={80} disabled={!creating && store.id === 'main'}
@@ -265,6 +267,7 @@ export default function EtablissementPage() {
         && (owner.first_name.trim() !== (d.owner?.first_name || '') || owner.last_name.trim() !== (d.owner?.last_name || ''));
       if (renamed) body.owner = { first_name: owner.first_name, last_name: owner.last_name };
       if (can.brand) {
+        protectNames([biz.name]);      // the new name shows before the store list is read again
         body.business = { name: biz.name, phone: biz.phone, email: biz.email, sector: biz.sector, description: biz.description,
                           ...(biz.logo_url !== d.business.logo_url ? { logo_url: biz.logo_url } : {}) };
         body.address = { street: addr.street, postal_code: addr.postal_code, city: addr.city,
@@ -423,7 +426,7 @@ export default function EtablissementPage() {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
-                  {s.name}
+                  <span translate="no">{s.name}</span>
                   {s.is_main && <span className="rounded-md bg-[#EAF1FF] px-2 py-0.5 text-[12px] font-medium text-[#2F6BFF]">Principal</span>}
                   {s.status === 'closed' && <span className="rounded-md bg-[#F1F5F9] px-2 py-0.5 text-[12px] font-medium text-[#64748B]">Fermé</span>}
                 </p>

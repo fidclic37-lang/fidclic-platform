@@ -234,6 +234,8 @@ async function translateNodes(nodes) {
     // the old translation must not overwrite it — the new text is queued
     // by the observer and translated on its own (user, 2026-10-12).
     if (u.nodes.some((n, j) => n.nodeValue !== sent[i][j])) return;
+    // …and a name protected while its translation was on its way stays as written
+    if (PROTECTED.has(u.source.trim().toLowerCase())) return;
     applyUnit(u, translated[i]);
   });
 }
@@ -247,11 +249,28 @@ async function translateNodes(nodes) {
 // 2026-10-10: the logo « Fid » « Clic » read « فيدانقر » — « Clic » as
 // « click » — and « FidClic IA » became « FidClic Amnesty International »).
 const PROTECTED = new Set(['fidclic', 'fid', 'clic', 'fidclic ia', 'fidclic ai']);
+// A name that arrives late (a store renamed: the new name shows before the
+// list of stores is read again) may have been translated meanwhile — « ROYAL
+// TRIM LIBERTÉ » read « ROYAL TRIM FREEDOM » (user, 2026-10-13). Protecting
+// it puts the name back wherever it was already replaced.
 export function protectNames(names) {
+  let added = false;
   (names || []).forEach((n) => {
     const t = String(n || '').trim().toLowerCase();
-    if (t) PROTECTED.add(t);
+    if (t && !PROTECTED.has(t)) { PROTECTED.add(t); added = true; }
   });
+  if (added) restoreProtected();
+}
+
+function restoreProtected() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const src = n[ORIGINAL];
+    if (src != null && n[WRITTEN] !== undefined && n.nodeValue === n[WRITTEN]
+        && PROTECTED.has(src.trim().toLowerCase())) write(n, src);
+  }
 }
 
 function shouldTranslateNode(node) {
