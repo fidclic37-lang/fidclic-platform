@@ -115,6 +115,79 @@ def shrink(mime: str, raw: bytes) -> Tuple[str, bytes]:
         return mime, raw
 
 
+# ---------------------------------------------------------------------------
+# Vercel Blob (2026-10-13, user: « PREVIEW OF LOYALTY CARD KYUN LOAD N HO RHA »):
+# measured on production, the free cluster hands a picture back at ~100 Ko/s
+# (409 Ko in 4,2 s) and Vercel empties its edge cache at every deploy — so
+# after each merge the card preview waited seconds per picture, and a cold one
+# ran out of time. A picture now also lives in the project's Blob store
+# (public, Paris, a random name): browsers and the server read it from Blob's
+# own CDN, which no deploy empties. The cluster keeps its copy as a fallback.
+# Without BLOB_READ_WRITE_TOKEN (tests, local) nothing changes.
+# ---------------------------------------------------------------------------
+BLOB_API = "https://vercel.com/api/blob"
+BLOB_API_VERSION = "12"
+BLOB_TIMEOUT_S = 15.0
+
+
+def _blob_token() -> Optional[str]:
+    import os
+    return os.environ.get("BLOB_READ_WRITE_TOKEN") or None
+
+
+def _ext(mime: str) -> str:
+    return {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+            "image/svg+xml": "svg"}.get(mime, "bin")
+
+
+def blob_put(mid: str, mime: str, raw: bytes) -> Optional[str]:
+    """Upload one picture to Blob; its public URL, or None (no token, or Blob
+    did not answer — the picture is still served from the cluster)."""
+    token = _blob_token()
+    if not token or not raw:
+        return None
+    try:
+        import httpx
+        from urllib.parse import urlencode
+        r = httpx.put(f"{BLOB_API}/?{urlencode({'pathname': f'media/{mid}.{_ext(mime)}'})}", content=raw,
+                      timeout=BLOB_TIMEOUT_S,
+                      headers={"authorization": f"Bearer {token}", "x-api-version": BLOB_API_VERSION,
+                               "x-vercel-blob-access": "public", "x-content-type": mime,
+                               "x-add-random-suffix": "1", "x-cache-control-max-age": "31536000"})
+        if r.status_code >= 300:
+            print(f"media: blob upload refused ({r.status_code} {r.text[:200]})")
+            return None
+        url = (r.json() or {}).get("url")
+        return url if isinstance(url, str) and url.startswith("https://") else None
+    except Exception as exc:
+        print(f"media: blob upload failed ({exc})")
+        return None
+
+
+def _blob_get(url: str) -> Optional[bytes]:
+    try:
+        import httpx
+        r = httpx.get(url, timeout=BLOB_TIMEOUT_S, follow_redirects=True)
+        return r.content if r.status_code == 200 and r.content else None
+    except Exception as exc:
+        print(f"media: blob read failed ({exc})")
+        return None
+
+
+def blob_url(mid: str) -> Optional[str]:
+    """The picture's Blob URL, read without its bytes; uploaded now if it has
+    none yet and a token is set (a picture stored before Blob — once)."""
+    if _db is None or not _ID.match(mid or ""):
+        return None
+    meta = _raw(_db["media"]).find_one({"_id": mid}, {"data": 0}) or {}
+    if meta.get("blob_url"):
+        return meta["blob_url"]
+    if not meta or not _blob_token():
+        return None
+    got = get(mid, cdn=False)
+    return (_raw(_db["media"]).find_one({"_id": mid}, {"blob_url": 1}) or {}).get("blob_url") if got else None
+
+
 def _blob(raw: bytes) -> Any:
     try:
         from bson.binary import Binary
@@ -140,6 +213,9 @@ def put(data_url: str) -> str:
         doc = {"_id": mid, "mime": kept_mime, "data": _blob(kept), "size": len(kept), "at": _now()}
         if len(kept) != len(raw):
             doc["original_size"] = len(raw)
+        url = blob_put(mid, kept_mime, kept)
+        if url:
+            doc["blob_url"] = url
         try:
             real.insert_one(doc)
         except Exception:
@@ -249,6 +325,18 @@ def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
     if hit is not None:
         _note("media_mem")
         return hit
+    # in Blob: its few bytes of metadata from the cluster, the picture from Blob's
+    # CDN — before the edge copy, whose origin is this very app (cold after a deploy)
+    meta = _raw(_db["media"]).find_one({"_id": mid}, {"data": 0}) if _blob_token() else {}
+    if meta is None:
+        return None
+    if meta.get("blob_url"):
+        raw = _blob_get(meta["blob_url"])
+        if raw:
+            got = (meta.get("mime") or "application/octet-stream", raw)
+            _remember(mid, got)
+            _note("media_blob")
+            return got
     if cdn:
         got = _from_cdn(mid)
         if got:
@@ -279,6 +367,14 @@ def get(mid: str, cdn: bool = True) -> Optional[Tuple[str, bytes]]:
             except Exception:
                 pass
             got = (kept_mime, kept)
+    # not in Blob yet: put it there now, so this is the last slow read (once per picture)
+    if not doc.get("blob_url") and _blob_token():
+        url = blob_put(mid, got[0], got[1])
+        if url:
+            try:
+                _raw(_db["media"]).update_one({"_id": mid}, {"$set": {"blob_url": url}})
+            except Exception:
+                pass
     _remember(mid, got)
     return got
 

@@ -268,7 +268,8 @@ export default function LoyaltyCardPage() {
     const src = design?.hero_image_url;
     if (!src) return;
     try {
-      const blob = await (await fetch(src)).blob();
+      // a stored picture from our own origin (it may live in Vercel Blob: ?raw=1 keeps fetch() same-origin)
+      const blob = await (await fetch(String(src).startsWith('/api/media/') ? `${src}?raw=1` : src)).blob();
       const url = await new Promise((resolve) => setCropReq({ file: blob, resolve, adjust: true }));
       if (url) { setAdvanced((a) => ({ ...a, poster_image_url: url })); setNewPhoto(false); }
     } catch (e) {
