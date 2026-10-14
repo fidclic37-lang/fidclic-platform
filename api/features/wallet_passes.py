@@ -2124,6 +2124,8 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     (« Couleur du nom ») or the card's text colour."""
     try:
         pj = json.loads(files["pass.json"])
+        if pj.get("serialNumber") and pj["serialNumber"] in (card.get("apple_logo_text") or []):
+            return                         # test switch: Apple writes the name (logoText), the logo stays plain
         letters = letters_for(card, str(pj.get("logoText") or ""))   # « Nom stylé », on this card's name
         name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
         if not name.strip():
@@ -2749,7 +2751,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font", "apple_logo_text",
     "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
