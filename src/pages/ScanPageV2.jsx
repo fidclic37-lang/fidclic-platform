@@ -216,8 +216,6 @@ const ScanPage = () => {
   // Stamps of the customer's PAPER card, moved once onto the digital card
   // (user, 2026-10-10). The preview says whose card it is and how many it can take.
   const [paperStamps, setPaperStamps] = useState('');
-  const [preview, setPreview] = useState(null);       // { name, stamps, threshold, paper_max, paper_done, paper_message }
-  const [previewErr, setPreviewErr] = useState('');
   const [threshold, setThreshold] = useState(10);
   const [barcode, setBarcode] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
@@ -505,22 +503,6 @@ const ScanPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Whose card is it? Once a full card id is there (typed or scanned), the
-  // till shows the customer, their stamps and the paper stamps it can take.
-  useEffect(() => {
-    setPreview(null);
-    setPreviewErr('');
-    const bc = barcodeFrom(barcode);
-    if (!/^FT-[A-Z0-9]{8}$/.test(bc)) return undefined;
-    let alive = true;
-    const t0 = setTimeout(() => {
-      ownerAPI.scanPreview(bc)
-        .then(({ data }) => { if (alive) setPreview(data); })
-        .catch((e) => { if (alive) setPreviewErr(e?.response?.status === 404 ? 'Aucun client trouvé avec ce code.' : ''); });
-    }, 300);
-    return () => { alive = false; clearTimeout(t0); };
-  }, [barcode]);
-
   const startDetectionLoop = () => {
     // Hidden canvas for jsQR — re-used across frames so we don't allocate per tick.
     const canvas = document.createElement('canvas');
@@ -632,15 +614,6 @@ const ScanPage = () => {
   const clearPicker = () => setPickerQty({});
 
   // The paper-card field: digits only, 0 to what this card can still take.
-  const paperMax = preview ? preview.paper_max : threshold;
-  const paperCount = paperStamps === '' ? 0 : parseInt(paperStamps, 10) || 0;
-  const paperError = preview?.paper_done && paperCount > 0
-    ? 'La carte papier de ce client a déjà été transférée.'
-    : paperCount > paperMax
-      ? (preview && preview.stamps > 0
-        ? `Cette carte a déjà ${preview.stamps} tampon${preview.stamps > 1 ? 's' : ''} : ${paperMax} au maximum.`
-        : `${paperMax} tampons au maximum (une carte complète).`)
-      : null;
   const catalogMissing = catalog.length > 0 && pickedItems.length === 0;
 
   const handleScan = async (e) => {
@@ -788,8 +761,7 @@ const ScanPage = () => {
   // V2 — the card scanned, then one form (user, 2026-10-13)
   // ---------------------------------------------------------------------
   // `card` is the whole client in one answer (features/scan_page): balance,
-  // palier, everything applicable, the paper card. `preview` above stays for
-  // the barcode checks the old page already did.
+  // palier, everything applicable, the paper card — the till's one answer.
   const [card, setCard] = useState(null);
   const [cardErr, setCardErr] = useState('');
   const [picked, setPicked] = useState({});        // { catalogue item id: qty }
@@ -799,6 +771,19 @@ const ScanPage = () => {
   const [panelQ, setPanelQ] = useState('');
   const [panelCat, setPanelCat] = useState('Tous');
   const [paperOn, setPaperOn] = useState(false);
+
+  // Everything the paper card needs comes from /scan/card (features/scan_page),
+  // which already answers for this very client — asking /scan/preview for the
+  // same card a second time cost a round trip per lookup and told us nothing new.
+  const paperMax = card ? card.paper.max : threshold;
+  const paperCount = paperStamps === '' ? 0 : parseInt(paperStamps, 10) || 0;
+  const paperError = card?.paper?.done && paperCount > 0
+    ? 'La carte papier de ce client a déjà été transférée.'
+    : paperCount > paperMax
+      ? (card && card.balance.value > 0
+        ? `Cette carte a déjà ${card.balance.value} ${card.balance.unit} : ${paperMax} au maximum.`
+        : `${paperMax} tampons au maximum (une carte complète).`)
+      : null;
 
   const words = card?.wording || { one: 'produit', many: 'produits', picker: 'Choisir un produit',
     picker_sub: '', field: 'Produit du catalogue', catalogue: 'Catalogue produits', search: 'Rechercher…' };
