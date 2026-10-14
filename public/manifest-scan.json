@@ -1,0 +1,20 @@
+{
+  "id": "/dashboard/scan",
+  "name": "Scanner — FidClic",
+  "short_name": "Scanner",
+  "description": "La caisse : scannez la carte de vos clients, sans vous reconnecter.",
+  "start_url": "/dashboard/scan",
+  "scope": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FDFBF7",
+  "theme_color": "#1463FF",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "fr",
+  "dir": "ltr"
+}

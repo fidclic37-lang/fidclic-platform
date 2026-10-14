@@ -25,7 +25,8 @@ import { Smartphone, Share, Plus, X, Bell } from 'lucide-react';
  * Props:
  *   - onInstalled?: () => void   fires after the user accepts the Android
  *                                prompt (best-effort; iOS gives us no signal).
- *   - context?: 'card' | 'cta'   visual variant — 'card' renders inline,
+ *   - context?: 'card' | 'cta' | 'till'   visual variant — 'card' renders inline,
+ *     'till' is the Scan page's own button (« Installer le scanner »),
  *                                'cta' renders as a slim button.
  *   - force?: boolean            ignore the "dismissed recently" memory.
  */
@@ -121,6 +122,23 @@ export default function InstallPwaPrompt({ onInstalled, context = 'card', force 
   // desktop without install, so no need to nag.)
   if (!installable && !isIos) return null;
 
+  // The till (user, 2026-10-14). Installed from the Scan page, the app opens
+  // straight on the scanner — that is the whole point of putting it on the
+  // counter. Its own wording and the dashboard's blue: nothing here is about
+  // a customer's card or notifications.
+  if (context === 'till') {
+    return (
+      <>
+        <button type="button" onClick={handleInstallClick}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1463FF] px-4 py-2 text-[13px] font-semibold text-white">
+          <Smartphone size={15} />
+          Installer le scanner
+        </button>
+        {iosModalOpen && <IosInstallModal onClose={() => setIosModalOpen(false)} title="Installer le scanner" />}
+      </>
+    );
+  }
+
   // Collapsed iOS state: one quiet line that stays until the card is actually
   // installed. It costs the customer nothing and it is the only thing standing
   // between them and ever receiving an offer.
@@ -203,12 +221,12 @@ export default function InstallPwaPrompt({ onInstalled, context = 'card', force 
  * IosInstallModal — visual walkthrough of the Share → Add to Home Screen flow.
  * Apple gives no programmatic API, so this is the best we can do.
  */
-function IosInstallModal({ onClose }) {
+function IosInstallModal({ onClose, title = 'Installer la carte' }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm">
       <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl p-5 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-[#171412]">Installer la carte</h3>
+          <h3 className="text-lg font-bold text-[#171412]">{title}</h3>
           <button onClick={onClose} aria-label="Fermer" className="p-1 -mr-1">
             <X size={20} className="text-[#57504A]" />
           </button>
