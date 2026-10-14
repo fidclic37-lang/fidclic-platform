@@ -54,6 +54,33 @@ const barcodeFrom = (scanned) => {
   return raw.replace(/\/+$/, '').split('/').pop().split('?')[0].trim().toUpperCase();
 };
 
+/*
+ * A USB / Bluetooth barcode scanner (a « douchette ») is a keyboard: it types
+ * what it read, very fast, then Enter. Most are set to a US keyboard, and on a
+ * French (AZERTY) computer « FT-AB12CD34 » then arrives as « FT)QB&éCD"' ».
+ * So each burst is read twice — the characters, and the physical keys as a US
+ * keyboard has them — and whichever is a card code wins (user, 2026-10-14).
+ */
+const US_KEYS = { Minus: ['-', '_'], Equal: ['=', '+'], Slash: ['/', '?'], Period: ['.', '>'], Comma: [',', '<'],
+  Semicolon: [';', ':'], Quote: ["'", '"'], Backslash: ['\\', '|'], BracketLeft: ['[', '{'], BracketRight: [']', '}'],
+  Space: [' ', ' '], NumpadSubtract: ['-', '-'], NumpadDivide: ['/', '/'], NumpadDecimal: ['.', '.'] };
+const usChar = (e) => {
+  const c = e.code || '';
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3);
+  if (/^(Digit|Numpad)\d$/.test(c)) return c.slice(-1);
+  const k = US_KEYS[c];
+  return k ? k[e.shiftKey ? 1 : 0] : '';
+};
+export const CARD_CODE = /^FT-[A-Z0-9]{8}$/;
+export const codeFromBurst = (typed, physical) => {
+  for (const raw of [typed, physical]) {
+    const bc = barcodeFrom(raw);
+    if (CARD_CODE.test(bc)) return bc;
+  }
+  const bc = barcodeFrom(typed);
+  return bc && bc.length >= 4 ? bc : '';
+};
+
 function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
   const [showQR, setShowQR] = useState(false);
   const firstName = (customerName || '').split(' ')[0] || 'votre client';
@@ -874,6 +901,56 @@ const ScanPage = () => {
   const scanAnother = () => { resetVisit(); setBarcode(''); setCard(null); setScanResult(null); setStatus(null); setRecorded(null); setStep('items'); };
   // a new code read (camera, photo, typed): a new visit, not the last one's summary
   useEffect(() => { setRecorded(null); setStep('items'); }, [barcode]);
+
+  // The scanner (douchette) works from anywhere on this page, no field to click
+  // first: its burst opens the client, like the camera does — then the
+  // products, the offer or reward, « Enregistrer la visite » (user, 2026-10-14).
+  // A visit being filled in is never thrown away by a stray scan.
+  const busyVisit = Boolean(card) && !recorded && (step !== 'items' || lines.length > 0 || manual || Boolean(apply));
+  const scanState = useRef({});
+  scanState.current = { card, busyVisit, mode };
+  useEffect(() => {
+    let typed = '', physical = '', last = 0, timer = null;
+    const reset = () => { typed = ''; physical = ''; clearTimeout(timer); timer = null; };
+    const finish = () => {
+      const bc = typed.length >= 6 ? codeFromBurst(typed, physical) : '';
+      reset();
+      if (!bc) return false;
+      const st = scanState.current;
+      if (st.busyVisit) {
+        setStatus({ type: 'info', message: 'Une visite est en cours : enregistrez-la ou annulez-la avant de scanner un autre client.' });
+        return true;
+      }
+      if (st.mode === 'camera') { stopCamera(); setMode('manual'); }
+      if (st.card) {
+        scanAnother();                         // a new client, or the same one again: a new visit
+        setTimeout(() => setBarcode(bc), 0);
+      } else {
+        setBarcode(bc);
+      }
+      return true;
+    };
+    const onKey = (e) => {
+      const el = e.target;
+      const editable = el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+      if (editable && el.id !== 'scan-card-id') { reset(); return; }   // the amount, a search: theirs
+      if (e.ctrlKey || e.metaKey || e.altKey) { reset(); return; }
+      const now = performance.now();
+      if (now - last > 60) reset();           // a person types slower than a scanner
+      last = now;
+      if (e.key === 'Enter' || e.key === 'Tab' || e.code === 'NumpadEnter') {
+        if (typed.length >= 6 && finish()) { e.preventDefault(); e.stopPropagation(); }
+        return;
+      }
+      if (e.key.length !== 1) return;          // Shift and the like
+      typed += e.key;
+      physical += usChar(e);
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (typed.length >= 8) finish(); else reset(); }, 150);   // a scanner set without Enter
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); clearTimeout(timer); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const paperTooMany = paperOn && parseInt(paperStamps || '0', 10) > (card?.paper?.max ?? 0);
 
   const registerVisit = async () => {
@@ -972,6 +1049,7 @@ const ScanPage = () => {
               <input id="scan-card-id" value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="FT-A1B2C3D4"
                      translate="no" className="notranslate mt-1 w-full rounded-xl border border-[#E2E8F0] px-4 py-3 text-[16px] uppercase text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
             </label>
+            <p className="mt-1.5 text-[12.5px] text-[#64748B]">Douchette USB ou Bluetooth : scannez directement, sans cliquer ici.</p>
             {cardErr && <p className="mt-2 text-[13px] text-[#C0392B]">{cardErr}</p>}
             <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[13px] font-semibold text-[#2F6BFF]">
               <ImageUp size={15} /> Importer une photo du code
