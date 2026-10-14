@@ -284,9 +284,22 @@ def _payload(token: TokenData) -> Dict[str, Any]:
     all_ids = [s["id"] for s in st]
     names = {s["id"]: s["name"] for s in st}
     users = list(_db.users.find({"tenant_id": tid, "role": {"$in": ROLES}}, {"_id": 0, "hashed_password": 0}))
-    shown = [u for u in users if _visible(me, u, all_ids)]
-    shown.sort(key=lambda u: (RANK.get(u.get("role"), 9), _display_name(u).lower()))
+    everyone = [u for u in users if _visible(me, u, all_ids)]
+    everyone.sort(key=lambda u: (RANK.get(u.get("role"), 9), _display_name(u).lower()))
+    # The establishment chosen in the menu (user, 2026-10-14: « jisko jo stores
+    # alloted hai, woh keval usi stores k roles and access mein dikhe »): the
+    # list, the role counts and the pending invitations are its team — the
+    # owner and the accounts that have it. « Accès par établissement » still
+    # lists everyone (all_users): it is where a store is given or taken.
+    sel = None
+    if len(all_ids) > 1:
+        from features import store_cards as SC
+        sid = SC.store_for(tid)
+        sel = sid if sid in all_ids else None
+    shown = [u for u in everyone if sel is None or u.get("role") == "business_owner"
+             or u.get("email") == me.get("email") or sel in _covered(u, all_ids)]
     rows = [_public(u, me, all_ids, names) for u in shown]
+    all_rows = rows if sel is None else [_public(u, me, all_ids, names) for u in everyone]
     counts = {r: sum(1 for u in shown if u.get("role") == r) for r in ROLES}
     mine = _covered(me, all_ids)
     from features import role_perms as RP
@@ -312,6 +325,8 @@ def _payload(token: TokenData) -> Dict[str, Any]:
         "pages": RP.PAGES,
         "templates": list(tpls.values()),
         "users": rows,
+        "all_users": all_rows,
+        "store_id": sel,
         # Accounts handed out but never used — owners are not "invited".
         "pending": [r for r in rows if r["pending"] and not r["is_me"] and r["role"] != "business_owner"],
         "permissions": PERMISSIONS,
