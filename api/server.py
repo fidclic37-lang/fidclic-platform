@@ -105,6 +105,14 @@ else:
     client = pymongo.MongoClient(tz_aware=True)
     db = client.fidelitour_db
 
+# The same document is not fetched twice in one request (services/doc_cache,
+# 2026-10-14): a scan read the tenant six times and the card template five.
+# Installed BEFORE store_cards, so the store-aware proxy sits outside it and the
+# memo only ever sees a filter that already names its establishment.
+from services import doc_cache as _DC  # noqa: E402
+_DC.install(db)
+app.add_middleware(_DC.Middleware)
+
 # One card per establishment (multi-store, 2026-10-12): db.card_templates reads
 # and writes the card of the establishment in context — the menu's one on the
 # dashboard, the client's home store for their card, pass, scan and messages.
