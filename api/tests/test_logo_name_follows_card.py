@@ -55,7 +55,7 @@ def main():
     # Apple: the pass's logoText is the card's name, the logo image is drawn from it
     seen = {}
     real = WP.name_logo
-    WP.name_logo = lambda src, name, color, box=(160, 50), letters=None: (seen.setdefault("n", name), {})[1]
+    WP.name_logo = lambda src, name, color, box=(160, 50), letters=None, **kw: (seen.setdefault("n", name), {})[1]
     try:
         import json
         files = {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBERTÉ"}).encode(), "logo.png": b"x"}

@@ -15,6 +15,8 @@ async function asOwner(page, request) {
   await page.evaluate(([t, s]) => {
     localStorage.setItem('fidelitour_access_token', t);
     if (s) localStorage.setItem('ft_selected_branch_v1', s);
+    // the store gate waits for a choice; these tests have made it already
+    try { sessionStorage.removeItem('ft_pick_store'); } catch (_e) { /* ignore */ }
   }, [login.access_token, store]);
   return { H, store };
 }

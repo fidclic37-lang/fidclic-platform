@@ -1980,30 +1980,49 @@ def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, 
 
 
 def name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
-              box: Tuple[int, int] = (160, 50), letters=None) -> Dict[str, bytes]:
+              box: Tuple[int, int] = (160, 50), letters=None, logo_pct: Any = None,
+              font_key: Optional[str] = None) -> Dict[str, bytes]:
     """The shop's logo with its FULL name beside it, in one image (user,
     2026-10-12: « BLOO J… » on iOS 27 — Wallet cuts its own logoText — and the
     name's colour chosen by the owner, in every Wallet). Apple draws a logo up
     to 160 × 50 pt: the name is written as large as it fits (20 pt down to
     11 pt), on two lines if it must, never cut. {'':1x, '@2x', '@3x'}."""
+    pct = _logo_pct(logo_pct)
+    fk = font_key if font_key in NAME_FONTS else "dejavu"
     if letters:
-        return _cached("name_logo", (raw or b"", "styled", letters, color, box),
-                       lambda: _make_name_logo(raw, name, color, box, letters))
-    return _cached("name_logo", (raw or b"", name, color, box), lambda: _make_name_logo(raw, name, color, box))
+        return _cached("name_logo", (raw or b"", "styled", letters, color, box, pct),
+                       lambda: _make_name_logo(raw, name, color, box, letters, pct, fk))
+    return _cached("name_logo", (raw or b"", name, color, box, pct, fk),
+                   lambda: _make_name_logo(raw, name, color, box, None, pct, fk))
+
+
+def _logo_pct(v: Any) -> int:
+    """« Taille du logo » beside the name (user, 2026-10-14): 0 = the name
+    alone, 100 = the logo as large as it was (default)."""
+    try:
+        return max(0, min(100, int(v)))
+    except (TypeError, ValueError):
+        return 100
 
 
 def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
-                    box: Tuple[int, int], letters=None) -> Dict[str, bytes]:
+                    box: Tuple[int, int], letters=None, pct: int = 100,
+                    font_key: str = "dejavu") -> Dict[str, bytes]:
     from PIL import Image, ImageDraw, ImageFont
     fonts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
 
     def font(px: int):
+        # « Police du nom » (user, 2026-10-14): a condensed one writes a long
+        # name twice as large in the same room
         try:
-            return ImageFont.truetype(os.path.join(fonts_dir, "DejaVuSans-Bold.ttf"), px)
+            return _name_font(font_key, px)
         except Exception:
-            return ImageFont.load_default()
+            try:
+                return ImageFont.truetype(os.path.join(fonts_dir, "DejaVuSans-Bold.ttf"), px)
+            except Exception:
+                return ImageFont.load_default()
     base = None
-    if raw:
+    if raw and pct > 0:
         try:
             base = Image.open(io.BytesIO(raw)).convert("RGBA")
         except Exception:
@@ -2015,7 +2034,8 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
         k = k0 * box[1] / 50                  # the sizes below are for Apple's 50-pt-high logo
         logo = None
         if base is not None:
-            sc = min(H / base.height, (W * 0.4) / base.width)
+            # the logo takes up to 40 % of the width at 100 %, less as the owner shrinks it
+            sc = min(H * max(pct, 30) / 100 / base.height, (W * 0.4 * pct / 100) / base.width)
             logo = base.resize((max(1, round(base.width * sc)), max(1, round(base.height * sc))), Image.LANCZOS)
         lw = logo.width if logo is not None else 0
         gap = round(8 * k) if logo is not None and name else 0
@@ -2049,8 +2069,10 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
             # name above: the whole name, end to end, never on a second line
             # and never cut short.
             lines = [name]
-            f = font(max(2, round(20 * k)))
-            for _ in range(5):
+            # no 20 pt ceiling any more (user, 2026-10-14): as large as the
+            # 50 pt height and the room allow
+            f = font(max(2, round(50 * k)))
+            for _ in range(8):
                 w = width(name, f)
                 if w <= room and lh_of(f) <= H:
                     break
@@ -2126,7 +2148,8 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
                 continue
             color = chosen or (on_poster if base == "primaryLogo" else on_card)
             # the image is made from the plain logo (a design's logo may already be a disc)
-            for suffix, png in name_logo(src, name, color, letters=letters).items():
+            for suffix, png in name_logo(src, name, color, letters=letters, logo_pct=card.get("name_logo_size"),
+                                         font_key=card.get("name_font")).items():
                 files[f"{base}{suffix}.png"] = png
             done = True
         if done:
@@ -2725,7 +2748,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font",
     "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
@@ -3279,6 +3302,7 @@ def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     look = f"{bool(card.get('logo_round'))}{bool(card.get('logo_ring'))}{card.get('logo_ring_color') or ''}"
     if what == "name":                        # the name and its colour are in the image
         look += f"{card.get('logo_text_color') or ''}{card.get('_shop_name') or ''}"
+        look += f"{card.get('name_logo_size')}{card.get('name_font') or ''}"
         look += json.dumps(card.get("name_style") or {}, sort_keys=True)
     v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
     sid = _SC.store_for(tenant_id)
@@ -3606,7 +3630,8 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
         _, ring = _logo_look(card)
         color = _rgb(card.get("logo_text_color")) or (255, 255, 255)
         return name_logo(round_logo(_fetch_image(card.get("logo_url")), ring, size=400), card.get("_shop_name") or "",
-                         color, box=(640, 200), letters=letters_for(card, card.get("_shop_name") or "")).get("@2x")
+                         color, box=(640, 200), letters=letters_for(card, card.get("_shop_name") or ""),
+                         logo_pct=card.get("name_logo_size"), font_key=card.get("name_font")).get("@2x")
     return None
 
 

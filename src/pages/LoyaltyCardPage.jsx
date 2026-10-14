@@ -442,6 +442,8 @@ export default function LoyaltyCardPage() {
     stamp_shape: advanced?.stamp_shape ?? undefined,
     logo_text_color: advanced?.logo_text_color ?? undefined,
     name_style: advanced?.name_style ?? undefined,
+    name_logo_size: advanced?.name_logo_size ?? undefined,
+    name_font: advanced?.name_font ?? undefined,
   }), [design, programme, toggles, advanced, pdVersion]);
   // The server's preview starts from the saved card: a photo the owner has
   // not changed is not uploaded again on every keystroke (the « Aperçu » was
@@ -512,6 +514,33 @@ export default function LoyaltyCardPage() {
               )}
             </div>
             <p className="mt-1 text-[11.5px] text-[#64748B]">Le nom est écrit en entier à côté du logo, sur iOS 27, iOS 26 et Google Wallet. « Automatique » = la couleur du texte de la carte.</p>
+            {/* Apple gives the logo and the name 160 × 50 pt together (user,
+                2026-10-14: « naam bada, ek line mein »): a smaller logo or a
+                narrower font is what makes a long name larger */}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2" data-testid="name-size">
+              <label className="block">
+                <span className="mb-1 flex items-center justify-between text-[12.5px] font-medium text-[#334155]">
+                  Taille du logo à côté du nom
+                  <span className="text-[#2F6BFF]">{(advanced.name_logo_size ?? 100) === 0 ? 'Masqué' : `${advanced.name_logo_size ?? 100} %`}</span>
+                </span>
+                <input type="range" min={0} max={100} step={10} value={advanced.name_logo_size ?? 100}
+                       aria-label="Taille du logo à côté du nom" className="w-full accent-[#2F6BFF]"
+                       onChange={(e) => setAdvanced((a) => ({ ...a, name_logo_size: Number(e.target.value) }))} />
+                <span className="text-[11px] text-[#64748B]">Plus le logo est petit, plus le nom est grand. 0 % : le nom seul.</span>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[12.5px] font-medium text-[#334155]">Police du nom</span>
+                <select value={advanced.name_font || ''} aria-label="Police du nom"
+                        onChange={(e) => setAdvanced((a) => ({ ...a, name_font: e.target.value }))}
+                        className="h-10 w-full rounded-lg border border-[#E2E8F0] bg-white px-2 text-[13.5px] text-[#0B1C3F]">
+                  <option value="">Sans gras (par défaut)</option>
+                  {(advanced.name_fonts || []).filter((f) => f.key !== 'dejavu').map((f) => (
+                    <option key={f.key} value={f.key}>{f.label}{['bebas', 'oswald'].includes(f.key) ? ' — étroite, nom plus grand' : ''}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-[#64748B]">Toujours sur une ligne, en entier. Le « Nom stylé » garde ses propres polices.</span>
+              </label>
+            </div>
             <div className="mt-3">
               <NameStyleEditor value={advanced.name_style} fallbackText={design.card_name} fonts={advanced.name_fonts || []}
                                defaultColor={advanced.logo_text_color || '#FFFFFF'} ColorField={ColorField}
