@@ -161,7 +161,7 @@ const H = {
   // ── campaigns ────────────────────────────────────────────────────────────
   campaigns_sent: {
     t: 'Campagnes envoyées',
-    what: "Le nombre de campagnes parties sur la période.",
+    what: "Le nombre de campagnes parties sur la période (ce mois-ci sur Campagnes, la période choisie sur Analyses).",
     how: "Les campagnes envoyées (pas les brouillons ni les programmées à venir).",
     why: "Il montre votre rythme de communication.",
   },
@@ -180,19 +180,19 @@ const H = {
   clicks: {
     t: 'Clics',
     what: "Le nombre de clics sur le lien ou l'offre de vos messages.",
-    how: "Chaque clic sur le lien d'une campagne est compté.",
+    how: "Chaque clic sur l'offre (« Voir l'offre » dans le Wallet) ou sur le lien d'une campagne est compté — le même compteur sur Campagnes et Analyses.",
     why: "Il mesure l'intérêt pour votre offre, avant même la visite.",
   },
   sales: {
     t: 'Ventes attribuées',
-    what: "Les clients revenus en boutique après une campagne.",
-    how: "Un client compte une fois par campagne s'il est passé en caisse dans les 15 jours après l'avoir reçue.",
+    what: "Les passages en caisse des clients après une campagne.",
+    how: "Chaque passage d'un destinataire dans les 15 jours suivant l'envoi compte une fois, pour la campagne la plus récente reçue avant lui — même un passage à 0 €.",
     why: "C'est le résultat concret de vos campagnes : des clients en boutique.",
   },
   campaign_revenue: {
     t: 'CA généré',
     what: "Ce qu'ont dépensé les clients après avoir reçu une campagne.",
-    how: "La dépense des destinataires dans les 15 jours suivant l'envoi. C'est une association, pas une preuve : certains seraient venus quand même (voir « Effet »).",
+    how: "La dépense des destinataires dans les 15 jours suivant l'envoi. Une visite compte une seule fois, pour la campagne la plus récente reçue avant elle — le même calcul sur Campagnes et Analyses. C'est une association, pas une preuve : certains seraient venus quand même (voir « Effet »).",
     why: "Il donne l'ordre de grandeur de ce que vos campagnes accompagnent.",
   },
   effect: {

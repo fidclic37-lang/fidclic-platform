@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useBranch } from '../contexts/BranchContext';
+import { protectNames } from '../lib/translator';
 
 /* Paramètres › Établissement — built to the approved mockup (blocks 1–8),
    plus what lived nowhere else and the user asked to add: the opening hours,
@@ -155,9 +157,15 @@ function StoreModal({ store, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const save = async () => {
+    // Adresse, Code postal and Ville are required, as their « * » says (QA F26)
+    const missing = [['street', 'Adresse'], ['postal_code', 'Code postal'], ['city', 'Ville']]
+      .filter(([k]) => !String(f[k] || '').trim()).map(([, l]) => l);
+    if (!String(f.name || '').trim() && creating) { setErr('Donnez un nom au point de vente.'); return; }
+    if (missing.length) { setErr(`Complétez : ${missing.join(', ')}.`); return; }
     setBusy(true); setErr('');
     try {
       const body = { ...f };
+      protectNames([f.name]);
       if (!creating && store.is_main && store.id === 'main') delete body.name;
       const { data } = creating ? await ownerAPI.addStore(body) : await ownerAPI.editStore(store.id, body);
       onSaved(data, creating ? 'Point de vente ajouté.' : 'Point de vente enregistré.');
@@ -165,7 +173,7 @@ function StoreModal({ store, onClose, onSaved }) {
     finally { setBusy(false); }
   };
   return (
-    <Modal title={creating ? 'Ajouter un point de vente' : store.name} onClose={onClose}>
+    <Modal title={creating ? 'Ajouter un point de vente' : <span translate="no">{store.name}</span>} onClose={onClose}>
       <div className="space-y-3.5">
         <label className="block"><Label required>Nom</Label>
           <input className={inputCls} value={f.name} maxLength={80} disabled={!creating && store.id === 'main'}
@@ -208,6 +216,16 @@ function StoreModal({ store, onClose, onSaved }) {
   );
 }
 
+// A save that failed without the server's own sentence says why, so it can
+// be fixed (user, 2026-10-12: only « L'enregistrement n'a pas abouti »).
+function saveFailed(e) {
+  const st = e?.response?.status;
+  if (!e?.response) return "L'enregistrement n'a pas abouti : pas de réponse du serveur (connexion ou délai dépassé). Réessayez.";
+  if (st === 504 || st === 502) return `L'enregistrement n'a pas abouti : le serveur a mis trop de temps (erreur ${st}). Réessayez.`;
+  if (st === 413) return "L'enregistrement n'a pas abouti : les données envoyées sont trop lourdes (erreur 413).";
+  return `L'enregistrement n'a pas abouti (erreur ${st || 'inconnue'}).`;
+}
+
 export default function EtablissementPage() {
   const { checkAuth } = useAuth();
   const [d, setD] = useState(null);
@@ -225,6 +243,7 @@ export default function EtablissementPage() {
   const [err, setErr] = useState('');
   const [pin, setPin] = useState(false);
   const [store, setStore] = useState(null);
+  const { setBranches } = useBranch();
   const [menu, setMenu] = useState(null);
 
   const apply = useCallback((data) => {
@@ -253,6 +272,7 @@ export default function EtablissementPage() {
         && (owner.first_name.trim() !== (d.owner?.first_name || '') || owner.last_name.trim() !== (d.owner?.last_name || ''));
       if (renamed) body.owner = { first_name: owner.first_name, last_name: owner.last_name };
       if (can.brand) {
+        protectNames([biz.name]);      // the new name shows before the store list is read again
         body.business = { name: biz.name, phone: biz.phone, email: biz.email, sector: biz.sector, description: biz.description,
                           ...(biz.logo_url !== d.business.logo_url ? { logo_url: biz.logo_url } : {}) };
         body.address = { street: addr.street, postal_code: addr.postal_code, city: addr.city,
@@ -268,10 +288,12 @@ export default function EtablissementPage() {
         setDirtyHours({ weekly: false, annual: false, holidays: false });
       }
       apply(data);
+      // a renamed establishment: the menu shows its new name at once (only that one)
+      if (data.store) ownerAPI.getBranches().then(({ data: b }) => setBranches(b?.branches || b || [])).catch(() => {});
       // the new name shows at once everywhere the app greets the owner (« Bonjour … »)
       if (renamed) await checkAuth();
       say('Modifications enregistrées.');
-    } catch (e) { setErr(e?.response?.data?.detail || "L'enregistrement n'a pas abouti."); }
+    } catch (e) { setErr(e?.response?.data?.detail || saveFailed(e)); }
     finally { setSaving(false); }
   };
 
@@ -308,9 +330,15 @@ export default function EtablissementPage() {
       <fieldset disabled={!can.brand} className="m-0 min-w-0 border-0 p-0">
       <div className="grid gap-5 lg:grid-cols-[1.08fr_1fr]">
         {/* 1 */}
-        <Block n={1} title="Nom du commerce">
-          <label className="block"><Label required right={`${(biz.name || '').length}/100`}>Nom du commerce</Label>
+        <Block n={1} title={d.store ? "Nom de l'établissement" : 'Nom du commerce'}>
+          <label className="block"><Label required right={`${(biz.name || '').length}/100`}>{d.store ? "Nom de l'établissement" : 'Nom du commerce'}</Label>
             <input className={inputCls} value={biz.name} maxLength={100} onChange={(e) => setBiz({ ...biz, name: e.target.value })} /></label>
+          {d.store && (
+            <p data-testid="store-name-note" className="mt-2 text-[12.5px] leading-snug text-[#64748B]">
+              Le nom de cet établissement uniquement (menu, page d'inscription, carte de ses clients) — ses adresse et
+              téléphone aussi. Les autres établissements gardent les leurs.
+            </p>
+          )}
         </Block>
 
         {/* 2 */}
@@ -403,7 +431,7 @@ export default function EtablissementPage() {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2 text-[15px] font-bold text-[#0B1C3F]">
-                  {s.name}
+                  <span translate="no">{s.name}</span>
                   {s.is_main && <span className="rounded-md bg-[#EAF1FF] px-2 py-0.5 text-[12px] font-medium text-[#2F6BFF]">Principal</span>}
                   {s.status === 'closed' && <span className="rounded-md bg-[#F1F5F9] px-2 py-0.5 text-[12px] font-medium text-[#64748B]">Fermé</span>}
                 </p>
@@ -548,7 +576,12 @@ export default function EtablissementPage() {
       )}
       {store && (
         <StoreModal store={store.id ? store : null} onClose={() => setStore(null)}
-                    onSaved={(data, m) => { apply(data); setStore(null); say(m); }} />
+                    onSaved={(data, m) => {
+                      apply(data); setStore(null); say(m);
+                      // the menu's list of establishments too, at once (QA F27: a new one
+                      // appeared there only after a reload)
+                      ownerAPI.getBranches().then(({ data: b }) => setBranches(b?.branches || b || [])).catch(() => {});
+                    }} />
       )}
     </div>
   );

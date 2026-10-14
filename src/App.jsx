@@ -88,7 +88,10 @@ const DashboardLayout = lazyPage(() => import('./pages/DashboardLayout'));
 // import AnalyticsPage from './pages/AnalyticsPage';
 // import AnalyticsPage from './pages/AnalyticsPageV2';
 const AnalysesPage = lazyPage(() => import('./pages/AnalysesPage'));
-const ScanPage = lazyPage(() => import('./pages/ScanPage'));
+// The redesigned till (user, 2026-10-13). ScanPage stays in the repo,
+// unrouted, until the new one has been through a few real services.
+const ScanPage = lazyPage(() => import('./pages/ScanPage')); // eslint-disable-line no-unused-vars -- superseded by ScanPageV2, kept for rollback
+const ScanPageV2 = lazyPage(() => import('./pages/ScanPageV2'));
 const CampaignsPage = lazyPage(() => import('./pages/CampaignsPage'));
 const SettingsPage = lazyPage(() => import('./pages/SettingsPage'));
 const ParametresPage = lazyPage(() => import('./pages/ParametresPage'));
@@ -129,6 +132,8 @@ const CrmSequencesPage = lazyPage(() => import('./pages/crm/CrmSequencesPage'));
 const CrmTemplatesPage = lazyPage(() => import('./pages/crm/CrmTemplatesPage'));
 const AdminCardDesignerPage = lazyPage(() => import('./pages/AdminCardDesignerPage')); // eslint-disable-line no-unused-vars -- section removed (user, 2026-09-30), kept for rollback
 const LoyaltyCardPage = lazyPage(() => import('./pages/LoyaltyCardPage'));
+// Carte de fidélité before the 4-step redesign (2026-10-11), kept unrouted for rollback:
+// const LoyaltyCardPageLegacy = lazyPage(() => import('./pages/LoyaltyCardPageLegacy'));
 const ComingSoonPage = lazyPage(() => import('./pages/ComingSoonPage'));
 const HelpPage = lazyPage(() => import('./pages/HelpPage'));
 const GeolocationPage = lazyPage(() => import('./pages/GeolocationPage'));
@@ -167,8 +172,10 @@ const CabinetCases = lazyPage(() => import('./pages/CabinetCases'));
 const CabinetReview = lazyPage(() => import('./pages/CabinetReview'));
 import CabinetPasswordGate from './components/CabinetPasswordGate';
 import { EINVOICING_VISIBLE, OWNER_HOME } from './lib/modules';
+import { hasPagePerms, pageOfPath, canSee, firstAllowed as firstPage } from './lib/pagePerms';
 const CabinetSignup = lazyPage(() => import('./pages/CabinetSignup'));
 const ResetPasswordPage = lazyPage(() => import('./pages/ResetPasswordPage'));
+const ChangerEmailPage = lazyPage(() => import('./pages/ChangerEmailPage'));
 // Public marketing pages — one per product line, so each audience gets a whole
 // page instead of an anchor buried in the homepage.
 const FacturationLanding = lazyPage(() => import('./pages/FacturationLanding'));
@@ -216,9 +223,18 @@ function NoAccess({ first }) {
 
 const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, partialOk = false }) => {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to={onboardingPath(user)} replace />;
+  // An account with its own permissions (Équipe & accès): a /dashboard page
+  // opens if it may « Voir » it — the server checks every call too.
+  if (hasPagePerms(user) && location.pathname.startsWith('/dashboard')) {
+    const page = pageOfPath(location.pathname);
+    if (!page || canSee(user, page) || (page === 'settings' && (canSee(user, 'team') || canSee(user, 'billing')))) return children;
+    const first = firstPage(user);
+    return first && first !== location.pathname ? <Navigate to={first} replace /> : <Navigate to="/login" replace />;
+  }
   // Administrateurs, and managers covering only some establishments, reach
   // the data pages once those pages filter by establishment; until then they
   // work from Paramètres › Équipe & accès (the server refuses the rest too).
@@ -337,9 +353,12 @@ function App() {
           <Route path="/join/:slug" element={<JoinPage />} />
           {/* one link per channel (Paramètres › Lien d'inscription): /join/<slug>/insta, /wa… */}
           <Route path="/join/:slug/:channel" element={<JoinPage />} />
+          {/* an establishment's own link, then its channel: /join/<slug>/<store>/insta (multi-store) */}
+          <Route path="/join/:slug/:channel/:channel2" element={<JoinPage />} />
           {/* The French address the Paramètres page hands out; /join stays for every QR already printed. */}
           <Route path="/inscription/:slug" element={<JoinPage />} />
           <Route path="/inscription/:slug/:channel" element={<JoinPage />} />
+          <Route path="/inscription/:slug/:channel/:channel2" element={<JoinPage />} />
           <Route path="/card/:barcodeId/offres" element={<CardOffersPage />} />
           <Route path="/card/:barcodeId" element={<MyWalletCardPage />} />
           {/* a card given back by the shop: a one-time link (features/card_status) */}
@@ -368,6 +387,8 @@ function App() {
           ) : <Navigate to="/dashboard" replace />} />
           {/* Accountant (comptable) control tower over all their linked clients. */}
           <Route path="/reinitialiser" element={<ResetPasswordPage />} />
+          {/* where the « Confirmer cette adresse » link of the e-mail lands */}
+          <Route path="/changer-email" element={<ChangerEmailPage />} />
           <Route path="/cabinet/inscription" element={EINVOICING_VISIBLE ? (
             <PublicRoute><CabinetSignup /></PublicRoute>
           ) : <Navigate to="/" replace />} />
@@ -438,7 +459,7 @@ function App() {
             {/* Scan is the ONE page staff can reach. */}
             <Route path="scan" element={
               <ProtectedRoute allowedRoles={['business_owner', 'administrateur', 'manager', 'staff']}>
-                <ScanPage />
+                <ScanPageV2 />
               </ProtectedRoute>
             } />
             {/* Carte de fidélité — the merchant's single card. The old

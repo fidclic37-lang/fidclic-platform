@@ -148,7 +148,7 @@ def _name_map(ids: List[str]) -> Dict[str, Dict[str, Any]]:
     ids = [i for i in dict.fromkeys(ids) if i]
     if not ids:
         return {}
-    rows = _db.customers.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "barcode_id": 1})
+    rows = _db.customers.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "barcode_id": 1, "branch_id": 1})
     return {r["id"]: r for r in rows}
 
 
@@ -331,6 +331,9 @@ def _collect(tid: str, start: datetime, end: datetime, actions: List[str],
                 "icon": ACTIONS[action]["icon"],
                 "tone": ACTIONS[action]["tone"],
                 "at": at,
+                # where it happened: the visit's / reward's till (QA F29)
+                "branch_id": d.get("branch_id"),
+                "till": spec["coll"] in ("visits", "rewards_redeemed"),
                 **base,
             })
 
@@ -347,6 +350,23 @@ def _attach_names(rows: List[Dict[str, Any]]) -> None:
         r["customer_name"] = name or ("Système" if r.get("is_staff") else "Client supprimé")
         r["customer_barcode"] = person.get("barcode_id")
         r["initials"] = _initials(r["customer_name"])
+        # a row without a till of its own (a signup, a message): the client's
+        # establishment — a visit without one was recorded at the main till
+        if not r.get("branch_id") and not r.get("till"):
+            r["branch_id"] = person.get("branch_id")
+
+
+def _attach_stores(tid: str, rows: List[Dict[str, Any]]) -> None:
+    """The establishment of each row, by name (QA F29: « Toutes les branches »
+    showed no establishment; the CSV neither). A visit recorded before stores
+    existed — or without one — belongs to the main establishment."""
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "branches": 1}) or {}
+    names = {b.get("id"): b.get("name") or "" for b in t.get("branches") or [] if b.get("id")}
+    main = next((b.get("id") for b in t.get("branches") or [] if b.get("is_main")), "main")
+    for r in rows:
+        sid = r.get("branch_id") or main
+        r["store_id"] = sid
+        r["store_name"] = names.get(sid) or (t.get("name") or "" if sid == main else "")
 
 
 def _initials(name: str) -> str:
@@ -406,6 +426,7 @@ def activity(
     per_source = (page * per_page) if not needle else min(MAX_EXPORT_ROWS, 2000)
     rows, totals = _collect(tid, start, end, wanted_list, per_source, S.resolve(token_data, request))
     _attach_names(rows)
+    _attach_stores(tid, rows)
 
     if needle:
         rows = [r for r in rows if _matches_customer(r, needle)]
@@ -434,6 +455,7 @@ def _public(r: Dict[str, Any]) -> Dict[str, Any]:
         "customer_barcode": r.get("customer_barcode"), "initials": r["initials"],
         "detail": r.get("detail") or "", "points": r.get("points"),
         "amount": r.get("amount"),
+        "store_id": r.get("store_id"), "store": r.get("store_name") or "",
     }
 
 
@@ -498,6 +520,7 @@ def export_csv(
     rows, _ = _collect(tid, start, end, [a for a in ACTIONS if a in wanted], MAX_EXPORT_ROWS,
                        S.resolve(token_data, request))
     _attach_names(rows)
+    _attach_stores(tid, rows)
     needle = (customer or "").strip().lower()
     if needle:
         rows = [r for r in rows if _matches_customer(r, needle)]
@@ -505,10 +528,13 @@ def export_csv(
     buf = io.StringIO()
     # utf-8-sig via the BOM below: Excel in France opens CSV as latin-1 without it.
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["Date et heure", "Client", "Numéro de carte", "Type d'activité", "Détails", "Points", "Montant (€)"])
+    # the establishment and its stable id (QA F29: a combined export could not be split by branch)
+    w.writerow(["Date et heure", "Établissement", "ID établissement", "Client", "Numéro de carte", "Type d'activité",
+                "Détails", "Points", "Montant (€)"])
     for r in rows:
         w.writerow([
             r["at"].astimezone(LOCAL_TZ).strftime("%d/%m/%Y %H:%M"),
+            r.get("store_name") or "", r.get("store_id") or "",
             r["customer_name"], r.get("customer_barcode") or "",
             r["label"], r.get("detail") or "",
             "" if r.get("points") is None else r["points"],

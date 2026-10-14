@@ -100,8 +100,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("an unknown shop is ignored", J.record_view("nowhere", J.ViewIn(visitor="visitor-9999"))["ok"] is False)
 
     s = J.stats("t1")
-    check("scans QR are the visits that came through the QR code", s["qr_scans"]["value"] == 3)
-    check("no delta until a full previous window was measured", s["qr_scans"]["delta_pct"] is None)
+    # « Scans QR » = the cards scanned at the till, since the start (user, 2026-10-14),
+    # whatever channel the client signed up through — not the page's visits
+    check(f"scans QR are the till's visits ({s['qr_scans']['value']})",
+          s["qr_scans"]["value"] == db.visits.count_documents({"tenant_id": "t1"}))
+    db.visits.insert_many([{"id": f"vq{i}", "tenant_id": "t1", "customer_id": "x", "visit_time": days(400)} for i in range(2)])
+    check("…all of them, a year ago too", J.stats("t1")["qr_scans"]["value"] == db.visits.count_documents({"tenant_id": "t1"}))
     # measured from the first visit (seconds ago): 0 signups since then over 5 visits
     check("conversion compares signups and visits over the same span only", s["conversion"]["value"] == 0.0)
 
@@ -114,7 +118,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.customers.insert_many([{"id": f"q{i}", "tenant_id": "t1", "created_at": days(45),
                                "signup_channel": "join_page"} for i in range(2)])
     s = J.stats("t1")
-    check("with two full windows, scans get a delta (20 → 40 = +100 %)", s["qr_scans"]["delta_pct"] == 100.0)
     check("conversion now: 6 signups / 40 visits = 15 %", s["conversion"]["value"] == 15.0)
     check("and its change in points against the window before (2/20 = 10 % → +5)",
           s["conversion"]["delta_pts"] == 5.0)

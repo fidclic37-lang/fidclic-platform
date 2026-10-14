@@ -53,11 +53,15 @@ api.interceptors.request.use((config) => {
 // opens the upgrade prompt (components/PlanAccess.jsx). The caller still gets
 // the error, so its own « chargement impossible » stays quiet or short.
 // A settings tab saved: Paramètres' « Réinitialiser » refreshes what it can undo.
-const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules|join-link\/(slug|page)|team-access\/(users|stores)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
+const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules|join-link\/(slug|page)|team-access\/(users|stores|roles)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
 const settingsSaved = (r) => {
   try {
     const m = String(r?.config?.method || '').toLowerCase();
     if (m && m !== 'get' && SETTINGS_SAVE.test(r?.config?.url || '')) window.dispatchEvent(new Event('fidclic:settings-saved'));
+    // any owner change may have queued Wallet cards: the layout sends them
+    // (lib/walletRefresh) — never the follow-up call itself
+    const u = String(r?.config?.url || '');
+    if (m && m !== 'get' && /^\/?owner\//.test(u) && !/wallet\/refresh/.test(u)) window.dispatchEvent(new Event('fidclic:wallet-kick'));
   } catch (_e) { /* never in the way of a response */ }
   return r;
 };
@@ -177,6 +181,8 @@ export const onboardingAPI = {
   verifyState: () => api.get('/onboarding/verify'),
   verifySend: (channel) => api.post('/onboarding/verify/send', { channel }),
   verifyCheck: (code) => api.post('/onboarding/verify/check', { code }),
+  // « Modifier l'adresse e-mail » while the code is awaited (QA BUG-001)
+  verifyEmail: (email) => api.post('/onboarding/verify/email', { email }),
   // Step 2: suggestions inside the selected country (services/addresses.py).
   addressSearch: (params) => api.get('/onboarding/address-search', { params }),
 };
@@ -459,6 +465,9 @@ export const ownerAPI = {
   scanVisit: (data) => api.post('/owner/scan', data),
   // whose card, its stamps, and the paper-card stamps it can still take (2026-10-10)
   scanPreview: (barcode) => api.get('/owner/scan/preview', { params: { barcode } }),
+  // « Enregistrer une visite » V2 — the whole card in one answer
+  // (features/scan_page): balance, palier, offers and rewards, paper card.
+  scanCard: (barcode) => api.get('/owner/scan/card', { params: { barcode } }),
   scan: (data) => api.post('/owner/scan', data),
   register: (data) => api.post('/owner/register', data),
   getCardTemplate: () => api.get('/owner/card-template'),
@@ -510,6 +519,7 @@ export const ownerAPI = {
   // every parrainage of the period, 20 per page, searchable (QA R5 F25)
   referralList: (params) => api.get('/owner/referrals/list', { params }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
+  referralConfig: () => api.get('/owner/referrals/config'),
   // Automatisations · Push Wallet — the scenarios, their figures, and firing
   // one by hand.
   pushWalletScenarios: () => api.get('/owner/push-wallet/scenarios'),
@@ -534,6 +544,9 @@ export const ownerAPI = {
   automationPreview: (body) => api.post('/owner/automations/preview', body),
   automationAiDraft: (objective) => api.post('/owner/automations/ai-draft', { objective }),
   automationGeoZone: () => api.get('/owner/automations/geo/zone'),
+  // Nouvelle automatisation (2026-10-11): « Adresse ou établissement », the till's « Offre utilisée »
+  automationAddress: (q) => api.get('/owner/automations/address-search', { params: { q } }),
+  useOffer: (campaignId, body) => api.post(`/owner/offers/${encodeURIComponent(campaignId)}/use`, body),
   autoMessages: () => api.get('/owner/auto-messages'),
   saveAutoMessages: (body) => api.put('/owner/auto-messages', body),
   // Paramètres › Établissement
@@ -572,6 +585,17 @@ export const ownerAPI = {
   totpDisable: (password, code) => api.post('/security/2fa/disable', { password, code }),
   endSession: (sid) => api.delete(`/security/sessions/${sid}`),
   endOtherSessions: () => api.post('/security/sessions/revoke-others'),
+  // « Cet appareil est la caisse » — marks THIS session, nothing else
+  markCaisse: (store_id) => api.post('/security/caisse', { store_id }),
+  unmarkCaisse: () => api.delete('/security/caisse'),
+  // « Code de la caisse » — off by default; a lock on the counter, not a login
+  setCaisseCode: (body) => api.put('/security/caisse/code', body),
+  unlockCaisse: (code) => api.post('/security/caisse/unlock', { code }),
+  // Sécurité › changer l'adresse e-mail du compte (features/account_email)
+  emailState: () => api.get('/security/email'),
+  emailStart: (new_email, password, method) => api.post('/security/email/start', { new_email, password, method }),
+  emailConfirm: (proof) => api.post('/security/email/confirm', proof),
+  emailCancel: () => api.post('/security/email/cancel'),
   deleteAccount: (password, confirm) => api.post('/security/account/delete', { password, confirm }),
   restoreAccount: () => api.post('/security/account/restore'),
   resetTeamPassword: (uid) => api.post(`/owner/team-access/users/${uid}/password`),
@@ -643,6 +667,9 @@ export const ownerAPI = {
   // Clients › « Modifier la fiche » / « Ajuster points / tampons » (features/customer_edit.py)
   clientFiche: (id) => api.get(`/owner/clients/${id}/fiche`),
   saveClientFiche: (id, body) => api.put(`/owner/clients/${id}/fiche`, body),
+  // multi-store (2026-10-12): the client's home store, a store's link
+  setHomeStore: (id, branchId) => api.put(`/owner/customers/${encodeURIComponent(id)}/home-store`, { branch_id: branchId }),
+  setStoreSlug: (branchId, slug) => api.put(`/owner/stores/${encodeURIComponent(branchId)}/slug`, { slug }),
   adjustClient: (id, body) => api.post(`/owner/clients/${id}/ajustement`, body),
   // « Reprendre » / « Supprimer » a draft (QA F02)
   campaignDraft: (id) => api.get(`/owner/campaigns/drafts/${id}`),
@@ -654,6 +681,10 @@ export const ownerAPI = {
 
   // Segmentation — the page in one call, the builder counted live.
   segmentationPage: () => api.get('/owner/segmentation/page'),
+  // « Objectifs et récompenses » — les paliers que le commerce se fixe
+  // lui-même (features/milestones).
+  milestones: () => api.get('/owner/milestones'),
+  saveMilestones: (items) => api.put('/owner/milestones', { items }),
   cataloguePage: (days) => api.get('/owner/catalogue/page', { params: { days } }),
   createProduct: (body) => api.post('/owner/catalogue/products', body),
   updateProduct: (id, body) => api.put(`/owner/catalogue/products/${id}`, body),
@@ -677,11 +708,15 @@ export const ownerAPI = {
   teamStatus: (id, active) => api.post(`/owner/team-access/users/${encodeURIComponent(id)}/status`, { active }),
   teamPassword: (id) => api.post(`/owner/team-access/users/${encodeURIComponent(id)}/password`),
   teamDelete: (id) => api.delete(`/owner/team-access/users/${encodeURIComponent(id)}`),
+  teamRoleCreate: (body) => api.post('/owner/team-access/roles', body),
+  teamRoleUpdate: (key, body) => api.put(`/owner/team-access/roles/${encodeURIComponent(key)}`, body),
+  teamRoleDelete: (key) => api.delete(`/owner/team-access/roles/${encodeURIComponent(key)}`),
   teamStoreAccess: (storeId, id, enabled) => api.put(`/owner/team-access/stores/${encodeURIComponent(storeId)}/users/${encodeURIComponent(id)}`, { enabled }),
   joinLink: () => api.get('/owner/join-link'),
   joinSlugCheck: (slug) => api.get('/owner/join-link/slug-check', { params: { slug } }),
   saveJoinSlug: (slug) => api.put('/owner/join-link/slug', { slug }),
   saveJoinPage: (body) => api.put('/owner/join-link/page', body),
+  saveSignupImage: (image) => api.put('/owner/join-link/image', { image }),
   segmentPreview: (body) => api.post('/owner/segmentation/preview', body),
   createSegment: (body) => api.post('/owner/segmentation/segments', body),
   updateSegment: (id, body) => api.put(`/owner/segmentation/segments/${id}`, body),
@@ -708,6 +743,7 @@ export const ownerAPI = {
   copilotChatHistory: () => api.get('/owner/copilot/chat'),
 
   walletNotify: () => api.post('/owner/wallet/notify'),
+  walletRefresh: () => api.post('/owner/wallet/refresh'),
   clearCardOverrideForCustomer: (customerId) => api.delete('/owner/card-overrides/customer/' + customerId),
   clearAllCardOverrides: () => api.delete('/owner/card-overrides/all'),
   getActiveCardOverrideCount: () => api.get('/owner/card-overrides/active-count'),
@@ -966,7 +1002,7 @@ export const comptableAPI = {
 };
 
 export const publicAPI = {
-  getJoinInfo: (slug) => api.get('/join/' + slug),
+  getJoinInfo: (slug, store) => api.get('/join/' + slug, { params: store ? { store } : {} }),
   joinProgram: (slug, data) => api.post('/join/' + slug, data),
   // -- Real-time proximity push (wallet card calls this with device GPS) --
   proximityPing: (data) => api.post('/public/proximity-ping', data),
@@ -974,7 +1010,7 @@ export const publicAPI = {
   submitReview: (data) => api.post('/public/reviews', data),
   googleReviewClick: (barcode) => api.post(`/card/${barcode}/google-review-click`),
   // -- Signup page: its words (Paramètres › Lien d'inscription) and one visit --
-  joinPage: (slug) => api.get(`/join/${slug}/page`),
+  joinPage: (slug, store) => api.get(`/join/${slug}/page`, { params: store ? { store } : {} }),
   joinView: (slug, body) => api.post(`/join/${slug}/view`, body),
 };
 

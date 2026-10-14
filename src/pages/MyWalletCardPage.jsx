@@ -15,6 +15,7 @@ import WalletPassPreview from '../components/WalletPassPreview';
 import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
+import { protectNames } from '../lib/translator';
 
 // ---------------------------------------------------------------------------
 // Element / stamp rendering — mirrors the owner-side designer
@@ -283,6 +284,14 @@ const CardView = () => {
   // now — e.g. they cleared site data, switched device, or the browser rotated
   // the endpoint — silently re-register. This runs only when permission is
   // already granted, so we never prompt the user unexpectedly.
+  // The shop's name is a name, not words: « Royal Trim Liberté » must not read
+  // « Royal Trim Freedom » in English. This page lives outside the dashboard
+  // layout, which is the only place that registered names until now, so on the
+  // customer's own card nothing protected it (user, 2026-10-13).
+  useEffect(() => {
+    protectNames([data?.tenant?.name, data?.customer?.name]);
+  }, [data?.tenant?.name, data?.customer?.name]);
+
   useEffect(() => {
     if (!data?.prefs?.push_enabled) return;
     if (!isPushSupported()) return;
@@ -694,8 +703,12 @@ const CardView = () => {
       ? 'Dans Safari : bouton Partager, puis « Sur l’écran d’accueil ».'
       : 'Dans le menu du navigateur : « Ajouter à l’écran d’accueil ».');
   };
+  // the shop's view (?vue=commerce, from the dashboard) stays on through « Mes
+  // offres » and back — without it the page took the browser's own card for
+  // the shop and opened that one instead (QA F34, 2026-10-11)
+  const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
   const menu = [
-    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres` },
+    { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres${shopView ? '?vue=commerce' : ''}` },
     { key: 'program', icon: Gift, label: 'Le programme', hint: card.reward_description ? `${card.reward_description} après ${stampsTarget} visites` : 'Récompenses et points' },
     recentVisit && { key: 'review', icon: Star, label: 'Donner mon avis', hint: 'Sur votre dernière visite — anonyme' },
     { key: 'about', icon: Store, label: `À propos de ${tenant.name || 'la boutique'}`, hint: 'Adresse, horaires, contact' },
@@ -833,7 +846,8 @@ const CardView = () => {
               <p className="mt-1 font-semibold text-[#0B1C3F]">🎁 {card.reward_description || 'Une récompense fidélité'}</p>
               <p className="mt-1 text-[13px] text-[#475569]">Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
             </div>
-            {!!card.points_per_visit && (
+            {/* a Tampons card earns no points (QA BUG-009): no « points par visite » */}
+            {!!card.points_per_visit && card.show_points !== false && (
               <div className="rounded-2xl bg-[#F8FAFC] p-4">
                 <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Points par visite</p>
                 <p className="mt-1 font-semibold text-[#0B1C3F]">+{card.points_per_visit} pts à chaque passage</p>
@@ -843,7 +857,7 @@ const CardView = () => {
               <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Votre statut</p>
               <p className="mt-1 font-semibold text-[#0B1C3F]">
                 {({ bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' })[String(customer.tier || 'bronze').toLowerCase()] || customer.tier}
-                {' · '}{customer.points || 0} pts · {customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
+                {' · '}{card.show_points !== false ? `${customer.points || 0} pts · ` : ''}{customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
               </p>
             </div>
           </div>

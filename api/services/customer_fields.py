@@ -24,14 +24,15 @@ def name(v: Optional[str]) -> str:
     return s
 
 
-FR_PHONE_MESSAGE = "Numéro de téléphone français : 0 suivi de 9 chiffres (par exemple 06 12 34 56 78)."
+FR_PHONE_MESSAGE = "Numéro de téléphone français : 9 chiffres après +33 (par exemple 6 12 34 56 78)."
 
 
 def phone(v: Optional[str]) -> str:
     """Digits only (user, 2026-10-09: « # », « * » and letters got through).
 
-    France: 0 then exactly 9 digits — returned as « 0612345678 ». « +33 6 … »
-    is the same number and comes back in that form too.
+    France: the 9 digits after +33, a 0 in front or not (user, 2026-10-14: the
+    form shows +33, which does the 0's job) — returned as « 0612345678 ».
+    « +33 6 … » is the same number and comes back in that form too.
     Abroad: « + », a country code from the list (services/dial_codes, the
     same as the forms' list), then the number — returned as « +447700900123 ».
     Spaces, dots and dashes between digits are tolerated (a pasted number),
@@ -59,24 +60,38 @@ def phone(v: Optional[str]) -> str:
         if len(digits) - len(code) < 4 or len(digits) > 15:
             raise _bad("Numéro de téléphone invalide pour ce pays.")
         return "+" + digits
+    if re.fullmatch(r"[1-9]\d{8}", digits):              # « 612345678 »: +33 was the 0
+        digits = "0" + digits
     if not re.fullmatch(r"0[1-9]\d{8}", digits):
         raise _bad(FR_PHONE_MESSAGE)
     return digits
 
 
 def postal_code(v: Optional[str]) -> str:
+    """A real French postal code (user, 2026-10-11: « france ka valid pincodes
+    hi allowed »), not any five digits — La Poste's list, services/fr_postcodes."""
+    from services.fr_postcodes import CODES
     s = (v or "").strip()
     if not re.fullmatch(r"\d{5}", s):
         raise _bad("Code postal invalide : 5 chiffres (par exemple 37000).")
+    if s not in CODES:
+        raise _bad("Code postal inconnu en France : vérifiez-le (par exemple 37000).")
     return s
 
 
-def birth(v: Optional[str], need_year: bool = False) -> Dict[str, Optional[str]]:
+# Nobody older than this joins (user, 2026-10-11): a birth year far in the
+# past is a typing slip — or a made-up date — far more often than a real age.
+MAX_AGE = 85
+AGE_MESSAGE = f"Date de naissance : l'inscription est ouverte jusqu'à {MAX_AGE} ans. Vérifiez l'année."
+
+
+def birth(v: Optional[str], need_year: bool = False, max_age: bool = True) -> Dict[str, Optional[str]]:
     """The date of birth (user, 2026-10-09: the full date, so the age shows in
     Clients). Reads « 25/12/1990 », « 1990-12-25 », and the older « 25/12 » /
     « 12-25 » without a year. Returns {"birthday": "MM-DD" (the birthday
     automations' key, as before), "birth_date": "YYYY-MM-DD" or None}.
-    `need_year`: the signup form asks for the year."""
+    `need_year`: the signup form asks for the year. `max_age`: refuse an age
+    over MAX_AGE (off only to read back a date already on file)."""
     b = (v or "").strip()
     year = None
     m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", b)
@@ -105,6 +120,8 @@ def birth(v: Optional[str], need_year: bool = False) -> Dict[str, Optional[str]]
         if year < 1900 or (year, month, day) > (today.year, today.month, today.day):
             raise _bad("Date de naissance invalide : vérifiez l'année.")
         iso = f"{year:04d}-{month:02d}-{day:02d}"
+        if max_age and age_of(iso, today) > MAX_AGE:
+            raise _bad(AGE_MESSAGE)
     return {"birthday": f"{month:02d}-{day:02d}", "birth_date": iso}
 
 
@@ -129,11 +146,19 @@ def age_of(birth_date: Optional[str], today=None) -> Optional[int]:
     t = today or _paris_today()
     return t.year - y - ((t.month, t.day) < (mo, d))
 
-def email(v: Optional[str]) -> str:
-    """Optional: « » stays « »."""
-    s = (v or "").strip()
-    if s and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", s):
-        raise _bad("Adresse e-mail invalide.")
+def email(v: Optional[str], dns: bool = True) -> str:
+    """Optional: « » stays « ». Given, it must be a real address (user,
+    2026-10-11: « email kuch bhi daal de rhe toh chal jaa rha »): the same
+    checks as a shop's own sign-up — shape and a real extension, typos
+    (« Vouliez-vous dire …@gmail.com ? »), throwaway inboxes, and a domain
+    that receives mail (services/email_check; DNS unreachable → accepted)."""
+    from services import email_check
+    s = email_check.clean(v, lower=False)
+    if not s:
+        return s
+    verdict = email_check.check(s, dns=dns)
+    if not verdict["ok"]:
+        raise _bad(verdict["reason"] or "Adresse e-mail invalide.")
     return s
 
 

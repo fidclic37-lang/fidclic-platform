@@ -29,42 +29,76 @@
          actual card vs opening the landing page. -->
     <script>
       // « Même affichage partout » (user, 2026-10-11): the app is designed at
-      // 1536 px. On a desktop screen (1024 px and wider) the whole app is
-      // scaled to the window — down to 80 %, up to 125 % — so every computer
-      // and every browser shows the same layout, whatever its display
-      // settings (Mac « More space », Windows 125 / 150 %). The scale reads
-      // the WINDOW's size (outerWidth), not the page's, so the user's own
-      // browser zoom (Ctrl / ⌘ +) still works on top. Below 1024 px (tablets
-      // in portrait, phones) nothing is scaled: the responsive layout stays.
+      // 1536 px. On a desktop window (1024 px and wider) the whole app is
+      // scaled so that it is ALWAYS 1536 px wide inside the page — from
+      // 66.6 % (a 1024 px window) up to 125 % — so every computer and every
+      // browser shows the very same layout, whatever its display settings
+      // (Mac « More space », Windows 125 / 150 %), an open Safari sidebar,
+      // Chrome's side panel, DevTools, or a site zoom left in Safari
+      // (user, 2026-10-11: « layout fixed, zoom off » — the scale reads the
+      // page's own width, so ⌘+ / Ctrl+ no longer changes the layout until
+      // the page falls under 1024 px). Below 1024 px (tablets in portrait,
+      // phones) nothing is scaled: the responsive layout stays. Past 125 %
+      // (very wide screens) the 1536 px layout is centred.
       // vh / vw units are rebuilt on --fit-vh / --fit-vw, and the width
-      // breakpoints (Tailwind sm…2xl, index.css) become container queries on
-      // <body> (postcss.config.js), so they follow the scaled width — a
-      // 1280 px window lays out exactly like a 1536 px one, only smaller.
+      // breakpoints (Tailwind sm…2xl, index.css) are container queries on
+      // <body> (postcss.config.js), so they read the scaled width.
+      // ?fit=check shows the numbers in a corner (kept for the tab; ?fit=off hides).
       (function () {
-        var DESIGN = 1536, MIN = 0.8, MAX = 1.25, FROM = 1024;
+        var DESIGN = 1536, MIN = 0.666, MAX = 1.25, FROM = 1024;
+        var debug = false;
+        try {
+          if (/[?&]fit=check/.test(location.search)) sessionStorage.setItem('fitdebug', '1');
+          if (/[?&]fit=off/.test(location.search)) sessionStorage.removeItem('fitdebug');
+          debug = sessionStorage.getItem('fitdebug') === '1';
+        } catch (e) { /* storage blocked */ }
         function apply() {
           var de = document.documentElement;
-          var inner = window.innerWidth, W = window.outerWidth || 0;
-          // an embedded frame or an odd browser: fall back on the page width
-          if (!W || W < inner * 0.5) W = inner;
-          // no browser zoom (the window is the page, give or take borders):
-          // measure the page without its scrollbar, so the design width
-          // comes out exact on Windows too
-          var gap = W - inner;
-          if (gap >= 0 && gap <= 40) W = de.clientWidth || inner;
-          var z = inner >= FROM ? Math.min(MAX, Math.max(MIN, W / DESIGN)) : 1;
-          // rounded down, so the scaled width never falls a pixel short
-          z = Math.floor(z * 1000) / 1000;
+          // measured unscaled: the page's own width, its scrollbar left out
+          // (scrollbar-gutter is stable, index.css)
+          de.style.zoom = '';
+          var cw = de.clientWidth || window.innerWidth;
+          var z = 1;
+          if (cw >= FROM) {
+            z = Math.min(MAX, Math.max(MIN, cw / DESIGN));
+            z = Math.floor(z * 1000) / 1000;
+            // never a hair under 1536: half a pixel to spare, against rounding
+            while (z > MIN && cw / z < DESIGN + 0.5) z = Math.round((z - 0.001) * 1000) / 1000;
+          }
           de.style.zoom = z === 1 ? '' : String(z);
           de.style.setProperty('--fit-z', String(z));
           de.style.setProperty('--fit-vh', (window.innerHeight / z / 100) + 'px');
-          de.style.setProperty('--fit-vw', (inner / z / 100) + 'px');
-          // past 125 % (very wide screens) the layout keeps its width, centred
-          de.classList.toggle('fit-wide', (de.clientWidth || inner) / z > DESIGN + 1);
+          de.style.setProperty('--fit-vw', (window.innerWidth / z / 100) + 'px');
+          de.classList.toggle('fit-wide', cw / z > DESIGN + 1);
           window.__fitZoom = z;
+          if (debug) show(cw, z);
+        }
+        function show(cw, z) {
+          var box = document.getElementById('fit-debug');
+          if (!box) {
+            if (!document.body) { document.addEventListener('DOMContentLoaded', function () { show(cw, z); }); return; }
+            box = document.createElement('pre');
+            box.id = 'fit-debug';
+            box.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:99999;margin:0;padding:8px 10px;border-radius:8px;background:rgba(11,28,63,.88);color:#fff;font:11px/1.45 ui-monospace,Menlo,monospace;pointer-events:none;zoom:1';
+            document.body.appendChild(box);
+          }
+          var body = document.body ? document.body.getBoundingClientRect().width : 0;
+          box.textContent = 'page (clientWidth): ' + cw + ' px\ninnerWidth: ' + window.innerWidth + ' · outerWidth: ' + window.outerWidth +
+            '\ndevicePixelRatio: ' + window.devicePixelRatio + '\nscale: ' + z + '\nlogical width: ' + (cw / z).toFixed(2) +
+            ' px\nlayout: ' + (cw >= FROM ? (cw / z >= DESIGN ? '1536 (desktop)' : 'TOO NARROW') : 'responsive (< 1024)') +
+            '\nbody box: ' + body.toFixed(1) + ' px on screen';
         }
         apply();
         window.addEventListener('resize', apply);
+        // a width change that sends no « resize » (a side panel, some
+        // emulators): the page's own box tells — re-scaled only when the
+        // unscaled width really moved
+        var last = window.innerWidth;
+        if (window.ResizeObserver) {
+          new ResizeObserver(function () {
+            if (window.innerWidth !== last) { last = window.innerWidth; apply(); }
+          }).observe(document.documentElement);
+        }
         window.__applyFit = apply;
       })();
     </script>
@@ -160,6 +194,16 @@
             note('manifest link injected → /api/manifest/' + bc + (key ? ' (owner)' : ''));
             showHud();
             return; // we're already on the right URL, nothing to redirect
+          }
+
+          // The till (user, 2026-10-14): installed from the Scan page, the
+          // icon must open the scanner — not the dashboard home. Its own
+          // manifest, so it installs as its own app beside the main one.
+          if (pathname.indexOf('/dashboard/scan') === 0) {
+            addManifest('/manifest-scan.json');
+            note('manifest link injected → /manifest-scan.json (caisse)');
+            showHud();
+            return;
           }
 
           // Not on a card page → use the default site-wide manifest.

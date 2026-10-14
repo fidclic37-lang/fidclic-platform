@@ -52,7 +52,9 @@ def main():
                              ("birthday", "25/12", "naissance"),      # the year is asked now (2026-10-09)
                              ("email", "pas-un-mail", "e-mail"), ("name", "   ", "nom")):
         r = join(**{field: bad})
-        check(f"{field} « {bad} » is refused, in French ({r.status_code})", r.status_code == 400 and word in r.json()["detail"])
+        d = r.json()["detail"]                 # under its field on the page (2026-10-13)
+        msg = d.get("message", "") if isinstance(d, dict) else d
+        check(f"{field} « {bad} » is refused, in French ({r.status_code})", r.status_code == 400 and word in msg)
     r = join()
     check("a valid signup goes through", r.status_code == 200 and r.json().get("barcode_id"))
     c = db.customers.find_one({"barcode_id": r.json()["barcode_id"]})

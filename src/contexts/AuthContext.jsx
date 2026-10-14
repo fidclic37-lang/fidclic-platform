@@ -60,6 +60,11 @@ export const AuthProvider = ({ children }) => {
   const checkAuth = useCallback(async () => {
     try {
       const res = await authAPI.me();
+      // The session slides: the server hands back a token good for another
+      // month every time the app starts, so opening FidClic is what keeps you
+      // signed in. Not sent while looking at an account through « Accéder au
+      // compte » — that token renews on its own (user, 2026-10-14).
+      if (res.data?.access_token && !viewToken()) setAuthToken(res.data.access_token);
       setUser(res.data);
       // Paramètres › Préférences — currency, time zone, dates, links…
       applyPrefs(res.data?.preferences || {}, res.data?.currency || 'EUR');
@@ -87,6 +92,7 @@ export const AuthProvider = ({ children }) => {
     // Bearer header on every subsequent request — covers the case where
     // the cookie path / SameSite drops the cookie on cross-page POSTs.
     if (session?.access_token) setAuthToken(session.access_token);
+    try { sessionStorage.setItem('ft_pick_store', '1'); } catch (_e) { /* ignore */ }   // StoreGate: choose first
     const me = await checkAuth();
     return { ...session, default_page: me?.preferences?.default_page };
   };
@@ -107,6 +113,7 @@ export const AuthProvider = ({ children }) => {
       : await authAPI.oauthApple(payload);
     const session = await secondFactor(res.data);
     if (session?.access_token) setAuthToken(session.access_token);
+    try { sessionStorage.setItem('ft_pick_store', '1'); } catch (_e) { /* ignore */ }
     await checkAuth();
     return { ...res.data, ...session };
   };

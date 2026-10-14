@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import PosterCropper from '../components/PosterCropper';
 import { QRCodeCanvas } from 'qrcode.react';
 import {
   Users, Link2, QrCode, Share2, Copy, Info, Download, Printer, Store, Settings, CheckCircle2,
   XCircle, Loader2, Mail, MessageSquare, MoreHorizontal, Eye, Pencil, ExternalLink, Gift,
-  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin,
+  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin, ImagePlus,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
 import { CHANNEL_WORDS } from '../lib/sources';
 
 /* Paramètres › Lien d'inscription & QR — the shop's signup link, its QR code,
@@ -195,6 +198,76 @@ function PageModal({ initial, defaults, limits, onClose, onSaved }) {
 }
 
 /* ------------------------------------------------------------------ page -- */
+// « Image de la page d'inscription » (user, 2026-10-12): the picture at the top
+// of the signup page, chosen by each establishment; none: the card's logo.
+const MAX_IMG = 2 * 1024 * 1024;
+function SignupImage({ d, setD, shopName, canEdit }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const input = useRef(null);
+  const own = d.shop.signup_image || '';
+  const [crop, setCrop] = useState(null);      // the file being framed
+  const shown = own || d.shop.card_logo_url || '';
+  const save = async (image) => {
+    setBusy(true); setErr('');
+    try { const { data } = await ownerAPI.saveSignupImage(image); setD(data); }
+    catch (e) { setErr(e?.response?.data?.detail || "L'image n'a pas pu être enregistrée."); }
+    finally { setBusy(false); }
+  };
+  // The image is shown in a circle, here and on the registration page. Saved
+  // as it came, a logo wider than it is tall lost its edges — « ROYAL TRIM »
+  // read « OYAL TRI » (user, 2026-10-13). The owner frames it now, opening on
+  // the whole picture, and can zoom in if they want a detail instead.
+  const pick = (file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setErr('Choisissez une image (JPG, PNG, WebP).'); return; }
+    if (file.size > MAX_IMG) { setErr("L'image dépasse 2 Mo."); return; }
+    setErr('');
+    setCrop(file);
+  };
+  return (
+    <section className="mt-4 rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="signup-image">
+      {crop && (
+        <PosterCropper file={crop} outW={800} outH={800} round fit guides={false}
+                       title="Cadrer l'image"
+                       onCancel={() => setCrop(null)}
+                       onDone={(data) => { setCrop(null); save(data); }} />
+      )}
+      <CardHead icon={ImagePlus} title="Image de la page d'inscription"
+                subtitle={`L'image en haut de la page d'inscription de ${shopName}. Sans image choisie, c'est le logo de la carte.`} />
+      <div className="flex flex-wrap items-center gap-5">
+        <div className="flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E6EEFB] bg-[#F8FAFC]">
+          {shown ? <img src={shown} alt="" className="h-full w-full object-cover" />
+            : <ImagePlus size={28} className="text-[#94A3B8]" aria-hidden="true" />}
+        </div>
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-[13px] text-[#475569]">
+            {own ? 'Image propre à cet établissement.' : 'Actuellement : le logo de la carte de fidélité.'}
+            {' '}Format carré conseillé, 2 Mo maximum.
+          </p>
+          {canEdit && (
+            <div className="flex flex-wrap gap-2">
+              <input ref={input} type="file" accept="image/*" className="hidden" aria-label="Choisir l'image de la page d'inscription"
+                     onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+              <button type="button" onClick={() => input.current?.click()} disabled={busy}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#2F6BFF] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-60">
+                {busy ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />} {own ? "Changer l'image" : 'Choisir une image'}
+              </button>
+              {own && (
+                <button type="button" onClick={() => save('')} disabled={busy}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3.5 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] disabled:opacity-60">
+                  <RotateCcw size={14} /> Revenir au logo de la carte
+                </button>
+              )}
+            </div>
+          )}
+          {err && <p role="alert" className="text-[12.5px] text-[#B91C1C]">{err}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function LienInscriptionPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
@@ -224,13 +297,28 @@ export default function LienInscriptionPage() {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.fidclic.com';
   const host = typeof window !== 'undefined' ? window.location.host : 'app.fidclic.com';
   const slug = d?.shop.slug || '';
-  const url = `${origin}/inscription/${slug}`;
+  // multi-store (2026-10-12): every link and QR here is the chosen
+  // establishment's — a signup through it makes the client its member
+  const { branchId } = useBranch();
+  const { user } = useAuth();
+  const stores = d?.stores || [];
+  const store = stores.length > 1 ? stores.find((x) => x.id === branchId) || null : null;
+  const url = `${origin}/inscription/${slug}${store ? `/${store.slug}` : ''}`;
+  const [storeSlug, setStoreSlug] = useState('');
+  useEffect(() => { setStoreSlug(store?.slug || ''); }, [store?.slug]);
+  const saveStoreSlug = async () => {
+    try {
+      await ownerAPI.setStoreSlug(store.id, storeSlug);
+      say('Adresse de l’établissement enregistrée');
+      load();
+    } catch (e) { say(e?.response?.data?.detail || "L'adresse n'a pas pu être enregistrée."); }
+  };
   // One link per channel (user, 2026-10-08): /inscription/<slug>/insta, /wa…
   // The owner copies the Instagram one into the Instagram bio; every signup
   // through it is « Instagram » — nothing to add, nothing to explain.
   const tagged = (src) => `${url}/${CHANNEL_WORDS[src] || src}`;
   const qrUrl = tagged('qr_store');
-  const shopName = d?.shop.name || 'Votre commerce';
+  const shopName = store?.name || d?.shop.name || 'Votre commerce';
   const message = `Rejoignez le programme de fidélité de ${shopName} : `;
 
   // Live availability check for the custom name — a moment after typing stops.
@@ -273,7 +361,7 @@ export default function LienInscriptionPage() {
     const data = chanQr.current?.toDataURL('image/png');
     if (data) {
       const a = document.createElement('a');
-      a.href = data; a.download = `qr-${slug}-${CHANNEL_WORDS[qrFor] || qrFor}.png`;
+      a.href = data; a.download = `qr-${slug}${store ? `-${store.slug}` : ""}-${CHANNEL_WORDS[qrFor] || qrFor}.png`;
       document.body.appendChild(a); a.click(); a.remove();
       say('QR code téléchargé');
     }
@@ -285,7 +373,7 @@ export default function LienInscriptionPage() {
     const data = qrDataUrl();
     if (!data) return;
     const a = document.createElement('a');
-    a.href = data; a.download = `qr-code-${slug}.png`;
+    a.href = data; a.download = `qr-code-${slug}${store ? `-${store.slug}` : ""}.png`;
     document.body.appendChild(a); a.click(); a.remove();
     say('QR code téléchargé');
   };
@@ -362,9 +450,8 @@ export default function LienInscriptionPage() {
         <Kpi icon={Users} label="Nouveaux inscrits" hint={`(${s.window_days} jours)`} value={nf(s.new_signups.value)}
              delta={s.new_signups.delta_pct} note={`vs. ${s.window_days} jours précédents`} />
         <Kpi icon={Link2} label="Total des inscrits" value={nf(s.total.value)} note="Depuis le lancement" />
-        <Kpi icon={QrCode} label="Scans QR" hint={`(${s.window_days} jours)`} value={nf(s.qr_scans.value)}
-             delta={s.qr_scans.delta_pct}
-             note={s.qr_scans.delta_pct != null ? `vs. ${s.window_days} jours précédents` : measured(`Mesuré depuis le ${since}`)} />
+        <Kpi icon={QrCode} label="Scans QR" value={nf(s.qr_scans.value)}
+             note="Visites enregistrées en caisse, depuis le lancement" />
         <Kpi icon={Share2} label="Taux de conversion"
              value={s.conversion.value == null ? '—' : `${pct(s.conversion.value)}%`}
              delta={s.conversion.delta_pts} deltaUnit=" pt"
@@ -390,6 +477,21 @@ export default function LienInscriptionPage() {
               Personnaliser le lien
             </button>
           </div>
+          {store && (
+            <div className="mt-4 rounded-lg border border-[#E6EEFB] p-3">
+              <p className="text-[12.5px] font-semibold text-[#0B1C3F]">Établissement : {store.name}</p>
+              <p className="mb-2 text-[11.5px] text-[#64748B]">Ce lien et ce QR inscrivent les clients dans cet établissement. Changez d’établissement dans le menu pour obtenir les siens.</p>
+              {user?.role === 'business_owner' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] text-[#64748B]">…/{slug}/</span>
+                  <input value={storeSlug} onChange={(e) => setStoreSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40))}
+                         aria-label="Adresse de l'établissement" className="h-9 w-40 rounded-lg border border-[#E2E8F0] px-2.5 text-[13px] outline-none focus:border-[#2F6BFF]" />
+                  <button type="button" disabled={!storeSlug || storeSlug === store.slug} onClick={saveStoreSlug}
+                          className="h-9 rounded-lg bg-[#2F6BFF] px-3 text-[12.5px] font-semibold text-white disabled:opacity-50">Enregistrer</button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="mt-5 flex items-center gap-3 rounded-lg bg-[#F2F7FF] px-3.5 py-3">
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#2F6BFF] text-white"><Info size={12} strokeWidth={3} /></span>
             <p className="text-[12px] text-[#1E4FD8]">Vous pouvez personnaliser votre lien pour le rendre plus simple et mémorable.</p>
@@ -506,6 +608,8 @@ export default function LienInscriptionPage() {
       </div>
 
       {/* Un lien par canal — each channel's signups counted apart */}
+      <SignupImage d={d} setD={setD} shopName={shopName} canEdit={user?.role === 'business_owner'} />
+
       <section className={`${cardCls} mt-4`}>
         <CardHead icon={Link2} title="Un lien par canal"
                   subtitle="Mettez le lien Instagram dans votre bio Instagram, le lien WhatsApp dans vos messages… Chaque inscription est comptée dans son canal, sans rien demander au client." />

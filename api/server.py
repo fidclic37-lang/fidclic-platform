@@ -1,3 +1,9 @@
+# The start-up measures itself: a request that answered in 15 ms was seen to
+# take 9,6 s in production because the function was asleep, and `app`/`db` —
+# both measured inside the handler — can never show that (services/server_timing).
+import time as _boot_time
+_BOOT_T0 = _boot_time.perf_counter()
+
 from datetime import datetime, timezone, timedelta
 import uuid
 import contextvars
@@ -93,6 +99,10 @@ app.add_middleware(
 
 # Database Initialization — synchronous pymongo for Vercel serverless reliability
 MONGODB_URI = os.environ.get("MONGODB_URI", "")
+# Server-Timing on every /api answer: whole time, MongoDB time and calls
+# (services/server_timing — the listener must exist before the client).
+from services import server_timing as _ST  # noqa: E402
+_ST.install_listener()
 
 if MONGODB_URI:
     client = pymongo.MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, tz_aware=True)
@@ -100,6 +110,26 @@ if MONGODB_URI:
 else:
     client = pymongo.MongoClient(tz_aware=True)
     db = client.fidelitour_db
+
+# The same document is not fetched twice in one request (services/doc_cache,
+# 2026-10-14): a scan read the tenant six times and the card template five.
+# Installed BEFORE store_cards, so the store-aware proxy sits outside it and the
+# memo only ever sees a filter that already names its establishment.
+from services import doc_cache as _DC  # noqa: E402
+_DC.install(db)
+app.add_middleware(_DC.Middleware)
+
+# One card per establishment (multi-store, 2026-10-12): db.card_templates reads
+# and writes the card of the establishment in context — the menu's one on the
+# dashboard, the client's home store for their card, pass, scan and messages.
+from features import store_cards as _SC  # noqa: E402
+_SC.init(db)
+app.add_middleware(_SC.StoreMiddleware)
+# Pictures out of the documents every page reads (services/media, 2026-10-13):
+# the card, campaigns and notifications keep a « /api/media/<id> » link.
+from services import media as _MEDIA  # noqa: E402
+_MEDIA.install(db)
+app.add_middleware(_ST.TimingMiddleware)
 
 # ─────────────────────────────────────────────────────────────────────
 # RGPD / GDPR — Audit trail (Sprint 1)
@@ -449,6 +479,7 @@ PIXEL_PNG_BYTES = base64.b64decode(PIXEL_PNG_BASE64)
 # so personalised offers ("Bonjour {first_name}, il te reste
 # {points_to_next_reward} points pour une récompense !") work.
 # ============================================================
+@_SC.customer_store("customer")
 def _compute_points_to_next_reward(customer: dict, tenant_id: str) -> int:
     """How many more visits (≈ points) until the next reward for this customer.
 
@@ -486,6 +517,7 @@ def _tier_up(old: Optional[str], new: Optional[str]) -> bool:
     return n in TIER_ORDER and TIER_ORDER.index(n) > (TIER_ORDER.index(o) if o in TIER_ORDER else 0)
 
 
+@_SC.customer_store("customer")
 def render_template(content: str, customer: dict, tenant: dict = None) -> str:
     """Replace curly-brace placeholders in a campaign body with per-customer values.
     Missing values are silently replaced with a neutral fallback so the message never
@@ -707,6 +739,12 @@ def _campaign_html(tenant_name: str, subject: str, rendered_body: str, customer:
 
     image_block = ""
     if image_url:
+        # a picture kept in `media` is linked in full: an e-mail is read elsewhere
+        try:
+            from features.wallet_passes import _site_url as _site
+            image_url = _MEDIA.absolute(image_url, _site())
+        except Exception:
+            pass
         image_block = f"""
     <div style="margin:-30px -30px 25px -30px;border-top-left-radius:12px;border-top-right-radius:12px;overflow:hidden;">
       <img src="{image_url}" alt="" style="display:block;width:100%;max-height:320px;object-fit:cover;" />
@@ -2658,10 +2696,56 @@ def login_2fa(req: TwoFactorLogin, response: Response, request: Request = None):
     return _issue_session(response, user, request)
 
 
+CAISSE_SESSION_DAYS = 180
+
+
+def _slide_session(response: Response, token_data: TokenData) -> Dict[str, Any]:
+    """Hand back a token good for another month, and refresh the cookie with
+    it. Same session: the `sid` is carried over, so « Déconnecter » still ends
+    this device and nothing about revocation changes."""
+    if getattr(token_data, "view_by", None) or not getattr(token_data, "sid", None):
+        return {}
+    try:
+        # A till is left on a counter and opened every day; a shop that closes
+        # for the summer should not come back to a login screen either, so its
+        # window is six months rather than one (user, 2026-10-14).
+        life, caisse = None, False
+        try:
+            from features import security_page as _SEC
+            caisse = _SEC.is_caisse(token_data.sid)
+            if caisse:
+                life = timedelta(days=CAISSE_SESSION_DAYS)
+        except Exception:
+            life, caisse = None, False
+        fresh = create_access_token(data={"sub": token_data.email, "role": token_data.role,
+                                          "tenant_id": token_data.tenant_id, "sid": token_data.sid},
+                                    expires_delta=life)
+    except Exception as _e:
+        print(f"session not slid (non-fatal): {_e}")
+        return {}
+    seconds = int(life.total_seconds()) if life else ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    if response is not None:              # a direct call (tests) has no response to set
+        response.set_cookie(key="access_token", value=fresh, httponly=True,
+                            max_age=seconds,
+                            expires=seconds,
+                            samesite="lax", secure=True, path="/")
+    # the Scan page shows « Cet appareil est la caisse » from this
+    return {"access_token": fresh, "caisse": caisse}
+
+
 @app.get("/api/auth/me")
-def get_me(token_data: TokenData = Depends(get_current_user_data)):
+def get_me(token_data: TokenData = Depends(get_current_user_data), response: Response = None):
     """Identity + onboarding state. The route guards in App.jsx read
-    onboarding_status to keep a half-registered owner on step 2."""
+    onboarding_status to keep a half-registered owner on step 2.
+
+    The app asks this on every start, so this is also where the session slides:
+    a fresh token goes back with the answer and the month starts again. Opening
+    FidClic is what keeps you signed in — no one is asked for their password
+    because yesterday happened (user, 2026-10-14).
+
+    Not for a « Accéder au compte » token: that one is the super admin's view
+    of someone else's account, it has its own short life and its own renewal
+    (lib/api.renewView). Sliding it here would quietly make it permanent."""
     user = db.users.find_one({"email": token_data.email}) or {}
     tenant = db.tenants.find_one({"id": token_data.tenant_id}) if token_data.tenant_id else None
     return {
@@ -2688,6 +2772,7 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         # Team accounts: which establishments they cover, and whether that is
         # all of them ("all") or some ("partial" — data pages not open yet).
         **_team_identity(user),
+        **_slide_session(response, token_data),
     }
 
 
@@ -4355,6 +4440,16 @@ class ScanRequest(BaseModel):
     # card; they move the card's meter only — not visits, points or palier.
     # Any: validated by _paper_stamps_check (pydantic would turn `true` into 1)
     paper_stamps: Optional[Any] = None
+    # The one offer or reward the till put on this visit (user, 2026-10-13):
+    # "offer:<campaign id>" · "card" · "defi:<reward id>". One, never several —
+    # the staff picks from a single list. An offer's discount comes off the
+    # amount here, where the prices are, not in the browser.
+    apply: Optional[str] = None
+    # The staff typed a final amount over what the catalogue worked out — the
+    # till had the last word (a cash rounding, a gesture). Without this the
+    # catalogue's own total always wins, so a tampered browser cannot inflate
+    # revenue by sending a number of its own.
+    amount_manual: bool = False
 
 
 # ============================================================
@@ -4817,21 +4912,40 @@ def scan_visit(
     if _amount > MAX_VISIT_AMOUNT:
         raise HTTPException(status_code=400,
                             detail=f"Montant trop élevé (maximum {MAX_VISIT_AMOUNT:,.0f} €).".replace(",", " "))
-    # A team account scans in its own establishments: the visit is tagged with
-    # one of them — never with another shop's — so every establishment's
-    # figures stay its own (features/store_scope.py filters on this tag).
-    if token_data.role in ("administrateur", "manager", "staff"):
-        from features import store_scope as _S
+    # The visit's establishment (user, 2026-10-12): it counts where it is
+    # scanned. With several open establishments one must be named — the owner
+    # any of them, an administrateur one of its own, a manager / employé its
+    # only one (forced) — never untagged, never another shop's. A one-shop
+    # account is unchanged (its visits stay on the shop).
+    # A till with a code set scans only once the code has been typed on it
+    # (user, 2026-10-14). The session is untouched — this is a lock on the
+    # counter, not a login — so refusing here is what makes it real rather
+    # than a screen anyone can walk past.
+    try:
+        from features import security_page as _SEC
+        if _SEC.till_locked(token_data.tenant_id, getattr(token_data, "sid", None)):
+            raise HTTPException(status_code=423, detail={"code": "CAISSE_LOCKED",
+                                                         "message": "Saisissez le code de la caisse."})
+    except HTTPException:
+        raise
+    except Exception as _e:
+        print(f"till lock check skipped (non-fatal): {_e}")
+    from features import store_scope as _S
+    from features import team_access as _T
+    _open = [st["id"] for st in _T.stores(token_data.tenant_id)]
+    if token_data.role == "business_owner":
+        _allowed = _open
+    else:
         _sc = _S.resolve(token_data, requested="")
-        # Accounts covering every establishment scan as before (a visit may
-        # stay untagged); only accounts limited to some are held to them.
-        partial = set(_sc.allowed) != set(_sc.all_ids)
-        if partial and req.branch_id not in _sc.allowed:
-            if len(_sc.allowed) == 1:
-                req.branch_id = _sc.allowed[0]
+        _allowed = [x for x in _open if x in set(_sc.allowed)]
+    if len(_open) > 1 or (len(_open) == 1 and _open[0] != _T.MAIN):
+        if req.branch_id not in _allowed:
+            if len(_allowed) == 1:
+                req.branch_id = _allowed[0]
+            elif req.branch_id and req.branch_id in _open:
+                raise HTTPException(status_code=403, detail="Cet établissement ne fait pas partie de votre accès.")
             else:
-                raise HTTPException(status_code=400,
-                                    detail="Choisissez l'établissement où a lieu le passage.")
+                raise HTTPException(status_code=400, detail="Choisissez l'établissement où a lieu le passage.")
     try:
         result = _scan_visit_impl(req, token_data)
         # API & Intégrations: visit.created (and reward.unlocked when this very
@@ -4934,8 +5048,11 @@ def _offers_active_for(tenant_id: str, customer_id: str) -> List[Dict[str, Any]]
         for c in db.campaigns.find({"tenant_id": tenant_id, "status": "sent", "kind": {"$in": list(_K.OFFER_KINDS)},
                                     "recipient_ids": customer_id}, {"_id": 0}):
             if _K.active_now(c, now_utc):
+                # « Offre utilisée » (Nouvelle automatisation, 2026-10-11): once per client
+                used = db.offer_uses.find_one({"tenant_id": tenant_id, "campaign_id": c.get("id"),
+                                               "customer_id": customer_id}, {"_id": 0, "used_at": 1})
                 out.append({"id": c.get("id"), "title": c.get("name"), "label": _K.discount_label(c.get("offer")),
-                            "terms": _K.terms_label(c)})
+                            "terms": _K.terms_label(c), "used": bool(used)})
         return out
     except Exception as exc:
         print(f"scan: active offers unavailable (non-fatal): {exc}")
@@ -4979,6 +5096,39 @@ def scan_preview(barcode: str,
     }
 
 
+def _apply_to_visit(choice: str, token_data: "TokenData", cust: dict,
+                    branch_id: Optional[str]) -> Dict[str, Any]:
+    """Hand over the one offer or reward the till picked, once the visit is
+    written. Order matters: the visit is counted first, so a card completed by
+    THIS visit can be redeemed on the spot (user, 2026-10-13).
+
+    Never raises: the visit happened, and a scan that reported failure because
+    a reward could not be handed over would be lying about the visit. The
+    answer carries what went wrong instead, and the till shows it."""
+    kind, _, ident = (choice or "").partition(":")
+    try:
+        if kind == "offer":
+            from features import custom_rules as _CR
+            camp = db.campaigns.find_one({"tenant_id": token_data.tenant_id, "id": ident}, {"_id": 0})
+            if not camp:
+                return {"kind": "offer", "ok": False, "error": "Offre introuvable."}
+            _CR.offer_used(token_data.tenant_id, cust, camp,
+                           by=getattr(token_data, "email", None), branch_id=branch_id)
+            return {"kind": "offer", "ok": True, "label": camp.get("name")}
+        if kind == "card":
+            out = redeem_reward(RedeemRewardRequest(customer_id=cust["id"]), token_data)
+            return {"kind": "card", "ok": True, "label": (out or {}).get("reward_name")}
+        if kind == "defi":
+            from features import defis as _defis
+            _defis.redeem(ident, token_data)
+            return {"kind": "defi", "ok": True}
+    except HTTPException as e:
+        return {"kind": kind, "ok": False, "error": str(e.detail)}
+    except Exception as e:
+        return {"kind": kind, "ok": False, "error": str(e)}
+    return {"kind": kind or "?", "ok": False, "error": "Choix inconnu."}
+
+
 def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     """MINIMAL fast-path scan — does the essentials inline, defers every
     optional side effect to a best-effort try/except so a single bad
@@ -4990,6 +5140,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     normalized_barcode = barcode_from(req.barcode_id)
 
     cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": normalized_barcode})
+    if cust:                     # the rules of the client's home store, wherever they are scanned
+        _SC.set_for_customer(cust)
     if not cust:
         # Be diagnostic: distinguish "barcode doesn't exist anywhere" vs
         # "barcode exists but in a different tenant" so the staff knows
@@ -5075,8 +5227,26 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # Only override if at least one item resolved — otherwise fall
         # back to the client-sent amount_paid so a typo in an item id
         # doesn't silently zero out the visit.
-        if resolved_lines:
+        # `amount_manual` is the till saying it typed the final figure itself
+        # (a cash rounding, a gesture): the lines are still recorded, so « Top
+        # produits » keeps working, but the amount is the one the staff stands
+        # behind. Without that flag the catalogue's own total always wins.
+        if resolved_lines and not req.amount_manual:
             req.amount_paid = computed_amount
+    # « Appliquer » on an offer takes its discount off the amount (user,
+    # 2026-10-13). Done here, on the catalogue's own total — a browser never
+    # gets to say what a visit was worth. A staff member who typed a final
+    # amount keeps it (amount_manual).
+    _applied_offer = None
+    if req.apply and str(req.apply).startswith("offer:") and not req.amount_manual:
+        _applied_offer = db.campaigns.find_one({"tenant_id": token_data.tenant_id,
+                                                "id": str(req.apply).split(":", 1)[1]},
+                                               {"_id": 0, "id": 1, "name": 1, "offer": 1})
+        off = (_applied_offer or {}).get("offer") or {}
+        base, kind, val = float(req.amount_paid or 0), off.get("discount_type"), off.get("discount_value")
+        if base > 0 and val:
+            cut = base * float(val) / 100 if kind == "percent" else float(val)
+            req.amount_paid = round(max(0.0, base - cut), 2)
 
     # Compute points to add — owner-controlled via card_template.points_mode.
     # The client's `points` is ignored (user, 2026-10-04): the till has no
@@ -5089,9 +5259,16 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     mode = (card_template.get("points_mode") or "per_visit").lower()
     ppe = float(card_template.get("points_per_euro") or 10)
     ppv = int(card_template.get("points_per_visit", 10) or 10)
-    programme = (card_template.get("programme") or "").lower()
+    # the programme as the whole app reads it (features/loyalty_card._programme:
+    # a card saved before « programme » existed is a tampons card)
+    from features import loyalty_card as _LCP
+    programme = _LCP._programme(card_template)
     amount = float(req.amount_paid or 0)
-    if programme == "cashback":
+    if programme == "stamps":
+        # A Tampons programme gives tampons, never points (QA BUG-009, user
+        # 2026-10-13: « Haan, sirf tampons »). Points already on a card stay.
+        points_to_add = 0
+    elif programme == "cashback":
         # The customer builds a euro balance, held in cents so the ledger
         # stays in integers like every other points programme.
         rate = float(card_template.get("cashback_rate") or 5)
@@ -5113,6 +5290,12 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     update_set = {
         "visits": new_visits,
         "points": new_points,
+        # What was EARNED, never spent: the palier is read from this, so buying
+        # a reward with points cannot send the client back down a rung.
+        "points_lifetime": int(cust.get("points_lifetime") if cust.get("points_lifetime") is not None
+                             else current_points) + points_to_add,
+        # A rung reached is kept for good (user, 2026-10-13).
+        "tier_best": new_tier,
         "total_amount_paid": round(new_paid, 2),
         "last_visit_date": datetime.now(timezone.utc),
         "tier": new_tier,
@@ -5178,12 +5361,17 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception as _e:
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
 
+    # The visit exists now, so the card counts it: what the till chose is
+    # handed over against the figures of AFTER this visit.
+    applied = _apply_to_visit(req.apply, token_data, cust, req.branch_id) if req.apply else None
+
     # ---- ALL OPTIONAL SIDE EFFECTS BELOW — wrapped, never block response ----
     # Parrainage — this may be the visit the referral was waiting for. Points
     # are promised at signup and paid here, on a visit that really happened.
+    referral_paid = None
     try:
         from features.referrals import settle as _settle_referral
-        _settle_referral(token_data.tenant_id, cust["id"])
+        referral_paid = _settle_referral(token_data.tenant_id, cust["id"])
     except Exception as _e:
         print(f"scan_visit: referral settle failed (non-fatal): {_e}")
 
@@ -5209,11 +5397,22 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
 
     # Défis (Campagnes › Défi): does this visit win one?
     defis_won = []
+    fresh_for_goals = db.customers.find_one({"id": cid}, {"_id": 0}) or cust
     try:
         from features import defis as _defis
-        defis_won = _defis.after_scan(token_data.tenant_id, db.customers.find_one({"id": cid}, {"_id": 0}) or cust)
+        defis_won = _defis.after_scan(token_data.tenant_id, fresh_for_goals)
     except Exception as _e:
         print(f"scan_visit: defis failed (non-fatal): {_e}")
+
+    # « Objectifs et récompenses »: the shop's own milestones, read on the
+    # customer AFTER this visit, so one that is reached by this very scan is
+    # already « à remettre » when the till shows the receipt.
+    objectifs_won = []
+    try:
+        from features import milestones as _ms
+        objectifs_won = _ms.after_scan(token_data.tenant_id, fresh_for_goals)
+    except Exception as _e:
+        print(f"scan_visit: objectifs failed (non-fatal): {_e}")
 
     # Automatisations after a scan (features/automations): « Avis Google », and
     # « Atteinte d'un palier » when this visit moved the client up.
@@ -5223,8 +5422,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         if new_tier != previous_tier and _tier_up(previous_tier, new_tier):
             _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "tier"})     # « Changement de statut »
         _AU.fire("tier_up", token_data.tenant_id, _fresh, {"event": "visit"})        # points / visites / montant
-        _AU.fire("google_review", token_data.tenant_id, _fresh)
-        _AU.fire("custom", token_data.tenant_id, _fresh, {"event": "visit"})    # « Personnalisée »
+        _AU.fire("google_review", token_data.tenant_id, _fresh,             # the visit's établissement: its Google link
+                 {"event": "visit", "branch_id": req.branch_id or cust.get("branch_id")})
+        _AU.fire("custom", token_data.tenant_id, _fresh, {                    # « Personnalisée » / Nouvelle automatisation
+            "event": "visit", "amount": float(req.amount_paid or 0), "branch_id": req.branch_id or cust.get("branch_id"),
+            "points_before": int(cust.get("points") or 0), "visits_before": int(cust.get("visits") or 0)})
     except Exception as _e:
         print(f"scan_visit: automatic messages failed (non-fatal): {_e}")
 
@@ -5243,9 +5445,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         scan_tpl = db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     except Exception:
         scan_tpl = {}
+    per_stamp_scan = max(int(scan_tpl.get("visits_per_stamp", 1) or 1), 1)
     reward_threshold = max(
-        int(scan_tpl.get("reward_threshold_stamps", 10) or 10) *
-        int(scan_tpl.get("visits_per_stamp", 1) or 1),
+        int(scan_tpl.get("reward_threshold_stamps", 10) or 10) * per_stamp_scan,
         1,
     )
 
@@ -5325,10 +5527,19 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "points": new_points,
         # What this scan added, by the card's rules — the till shows it.
         "points_earned": points_to_add,
+        # The offer or reward the till put on this visit, and whether it went
+        # through. The visit stands either way; the receipt says if it did not.
+        "applied": applied,
+        # Objectifs this visit reached — the receipt congratulates, the till
+        # hands them over from the « à remettre » list like any other reward.
+        "objectifs_won": objectifs_won,
+        "amount_paid": round(float(req.amount_paid or 0), 2),
         "total_amount_paid": round(new_paid, 2),
         "tier": new_tier,
         "previous_tier": previous_tier,
         "tier_upgraded": tier_rank.get(new_tier, 0) > tier_rank.get(previous_tier, 0),
+        # where this visit counts (the scan's establishment, 2026-10-12)
+        "visit_branch_id": req.branch_id or None,
         "branch_id": req.branch_id or cust.get("branch_id"),
         # Cycle-aware stamps math — the staff page renders these directly.
         "stamps_in_cycle":  stamps_capped,
@@ -5343,6 +5554,17 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         "cycle_restarted": cycles_completed > 0,
         # stamps moved from a paper card at this scan (0 when none)
         "paper_stamps": paper["stamps"] if paper else 0,
+        # The receipt in the card's own unit (QA BUG-009): the programme, and
+        # for tampons what this scan gave and where the card stands, counted
+        # in tampons — « +1 tampon » was written whatever « visites par
+        # tampon » said, and 6/20 showed for 3 tampons out of 10.
+        "programme": programme,
+        "stamps_earned": (1 if per_stamp_scan == 1 or stamps_in_cycle % per_stamp_scan == 0 else 0)
+                         + (paper["stamps"] if paper else 0),
+        "stamps_on_card": stamps_capped // per_stamp_scan,
+        "stamps_target": reward_threshold // per_stamp_scan,
+        # the filleul's parrainage reward, when this visit validated it
+        "referral_reward": (referral_paid or {}).get("referee_reward") or "",
         # Campagnes (2026-10-10): défis this visit won, rewards to hand over,
         # and the offers valid right now — the till reminds the staff
         "defis_won": defis_won,
@@ -5400,6 +5622,7 @@ def _has_recent_notification(customer_id: str, tenant_id: str, notif_type: str,
     return db.push_notifications.find_one(q) is not None
 
 
+@_SC.customer_store("customer_doc")
 def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str, Any]:
     """Compute the customer's current reward state, fire any missing
     near_reward / reward_unlocked notifications, and return what changed.
@@ -5450,15 +5673,16 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     try:
         from features import auto_messages as _AM
         from features import automations as _AU
+        # « Récompense bientôt disponible » (2026-10-11): the X points / tampons
+        # rule needs no visits estimate; a row saved before reads visits_left
         _left = _AM.visits_to_reward(tenant_id, cust, card_template)
-        if _left:
-            _said = [x for x in _AU.fire("near_reward", tenant_id, cust,
-                                         {"visits_left": _left,
-                                          "cycle": cycle_start.isoformat() if cycle_start else "first"})
-                     if x.get("title")]
-            # the Wallet card was already told by the automation itself
-            fired["near_reward"] = ({"title": _said[0]["title"], "body": _said[0]["body"], "deferred": True}
-                                    if _said else False)
+        _said = [x for x in _AU.fire("near_reward", tenant_id, cust,
+                                     {"visits_left": _left or -1,
+                                      "cycle": cycle_start.isoformat() if cycle_start else "first"})
+                 if x.get("title")]
+        # the Wallet card was already told by the automation itself
+        fired["near_reward"] = ({"title": _said[0]["title"], "body": _said[0]["body"], "deferred": True}
+                                if _said else False)
     except Exception as _e:
         print(f"near_reward: not sent (non-fatal): {_e}")
 
@@ -5899,17 +6123,17 @@ def _ensure_branch_assignments(tid: str) -> None:
         _backfill_visits_from_customers(tid, branch_ids)
         return
 
+    # Multi-store (user, 2026-10-12): never a random store, never a visit
+    # moved — a visit counts where it was scanned. A customer from before the
+    # store links (no home store) belongs to the store of their first tagged
+    # visit, else the main store.
+    open_ids = [b.get("id") for b in branches if b.get("id") and b.get("status") != "closed"] or branch_ids
+    main = next((b.get("id") for b in branches if b.get("is_main") and b.get("id") in open_ids), None) or open_ids[0]
     for cust in needs_fix:
         cid = cust.get("id") or ""
-        idx = (sum(ord(ch) for ch in cid) if cid else 0) % n
-        target_branch = branch_ids[idx]
-        db.customers.update_one({"id": cid}, {"$set": {"branch_id": target_branch}})
-        # Mirror onto visits unconditionally — the customer's visits all happen
-        # at the same "home" branch in this deterministic mapping.
-        db.visits.update_many(
-            {"tenant_id": tid, "customer_id": cid},
-            {"$set": {"branch_id": target_branch}},
-        )
+        first = db.visits.find_one({"tenant_id": tid, "customer_id": cid, "branch_id": {"$in": open_ids}},
+                                   {"_id": 0, "branch_id": 1}, sort=[("visit_time", 1)])
+        db.customers.update_one({"id": cid}, {"$set": {"branch_id": (first or {}).get("branch_id") or main}})
 
 
 def _backfill_visits_from_customers(tid: str, branch_ids: list) -> None:
@@ -5935,9 +6159,13 @@ def _backfill_visits_from_customers(tid: str, branch_ids: list) -> None:
         bid = cust.get("branch_id") if cust else None
         if bid in valid:
             seen[cid] = bid
+    # only the untagged / stale visits — a visit tagged with the store where it
+    # was scanned keeps it (multi-store, 2026-10-12)
     for cid, bid in seen.items():
         db.visits.update_many(
-            {"tenant_id": tid, "customer_id": cid},
+            {"tenant_id": tid, "customer_id": cid, "$or": [
+                {"branch_id": None}, {"branch_id": {"$exists": False}}, {"branch_id": ""},
+                {"branch_id": {"$nin": list(valid)}}]},
             {"$set": {"branch_id": bid}},
         )
 
@@ -6238,10 +6466,15 @@ def _tenant_by_slug(slug: str):
 
 
 @app.get("/api/join/{slug}")
-def get_join_info(slug: str):
+def get_join_info(slug: str, store: Optional[str] = None):
     t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    if store:                    # an establishment's link: its own card (logo, reward…)
+        from features import store_links as _SL
+        _st = _SL.store_by(t, store)
+        if _st:
+            _SC.set_store(t["id"], _st["id"])
     t.pop("_id", None)
     # The shop's own consent sentence, privacy policy and cookie notice
     # (Paramètres › Données & confidentialité).
@@ -6293,8 +6526,11 @@ class JoinRequest(BaseModel):
     # customer actually comes in, because a signup is free to fake and a visit
     # is not.
     parrain_barcode: Optional[str] = None
+    # Multi-store (2026-10-12): the establishment of the link (its slug) or the
+    # one chosen on the form — the customer's home store (features/store_links)
+    store: Optional[str] = None
 
-def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> None:
+def _check_join_fields(req: "JoinRequest", profile_optional: bool = False, by_field: bool = False) -> None:
     """What the signup form says, checked by the server too (QA UX10,
     2026-10-08: « abc », « ABCDE » and « 13-99 » were never refused here —
     only the browser stood in the way). French messages naming the field;
@@ -6303,26 +6539,38 @@ def _check_join_fields(req: "JoinRequest", profile_optional: bool = False) -> No
     `profile_optional`: the merchant API (POST /api/v1/customers) documents
     postal code and birthday as optional — a till rarely has them. They are
     still checked when given. Requiring them there broke every API signup
-    without a postal code (found 2026-10-09)."""
+    without a postal code (found 2026-10-09).
+
+    `by_field`: the signup page shows each refusal under its own field
+    (detail {code: "invalid_field", field, message})."""
     from services import customer_fields as CF
-    req.name = CF.name(req.name)
-    req.phone = CF.phone(req.phone)
+
+    def field(name, fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except HTTPException as e:
+            if not by_field:
+                raise
+            raise HTTPException(status_code=400, detail={"code": "invalid_field", "field": name, "message": e.detail})
+
+    req.name = field("name", CF.name, req.name)
+    req.phone = field("phone", CF.phone, req.phone)
     if req.postal_code or not profile_optional:
-        req.postal_code = CF.postal_code(req.postal_code)
+        req.postal_code = field("postal_code", CF.postal_code, req.postal_code)
     if req.birthday or not profile_optional:
         # the full date on the signup page (user, 2026-10-09: the age shows in
         # Clients); the merchant API may still send day and month only
-        b = CF.birth(req.birthday, need_year=not profile_optional)
+        b = field("birth", CF.birth, req.birthday, need_year=not profile_optional)
         req.birthday = b["birthday"]
         req._birth_date = b["birth_date"]
-    req.email = CF.email(req.email)
+    req.email = field("email", CF.email, req.email)
 
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
     # Only in-process callers (the merchant API) come without a request: the
     # public page always has one, so it can never skip the profile fields.
-    _check_join_fields(req, profile_optional=request is None)
+    _check_join_fields(req, profile_optional=request is None, by_field=request is not None)
     # Where they came from (services/sources): the channel of the link they
     # opened, or their own answer — never a guess. An unknown word used to be
     # filed as « QR code en magasin », so a WhatsApp signup read as an in-store
@@ -6464,6 +6712,12 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     )
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
+    # The home store: the store of the link / the form, or the parrain's
+    # (features/store_links). Checked before anything is written.
+    from features import store_links as _SL
+    _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
+                                     {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
+    cust_doc["branch_id"] = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None)
     if getattr(req, "_birth_date", None):
         cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came
@@ -6534,18 +6788,18 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
             parrainage = _record_referral(tid, req.parrain_barcode, cust_doc)
         except Exception as _e:
             print(f"join: referral not recorded (non-fatal): {_e}")
-    # Bienvenue — automatic: the shop's message and points (Carte de fidélité).
+    # Bienvenue points (Carte de fidélité). The Bienvenue MESSAGE waits for
+    # the card to land in Apple / Google Wallet (features/automations
+    # .wallet_added, user 2026-10-11: « sirf Wallet add pe »).
     welcome = None
     try:
         from features import auto_messages as _AM
         from features import automations as _AU
         _pts = _AM.credit_welcome_points(tid, cust_doc)       # Carte de fidélité › points de bienvenue
         _fresh = db.customers.find_one({"id": cust_doc["id"]}, {"_id": 0}) or cust_doc
-        _said = [x for x in _AU.fire("welcome", tid, _fresh) if x.get("title")]
         _AU.fire("custom", tid, _fresh, {"event": "signup"})                    # « Personnalisée »
-        if _said or _pts:
-            welcome = {"title": _said[0]["title"] if _said else None,
-                       "message": _said[0]["body"] if _said else None, "points": _pts}
+        if _pts:
+            welcome = {"title": None, "message": None, "points": _pts}
     except Exception as _e:
         print(f"join: welcome not sent (non-fatal): {_e}")
     # API & Intégrations: the business's webhooks hear about the new card.
@@ -6688,7 +6942,31 @@ def _active_override_for(customer_id: str, tenant_id: str) -> dict:
     return row
 
 
+@_SC.customer_store("cust")
 def _serialize_card_payload(cust: dict) -> dict:
+    """The card as every surface reads it (pass, Google, the web card), with
+    the programme deciding points OR tampons (wallet_passes.apply_programme_rules,
+    user 2026-10-12)."""
+    payload = _serialize_card_payload_raw(cust)
+    card = payload.get("card") if isinstance(payload, dict) else None
+    if isinstance(card, dict):
+        try:
+            from features import wallet_passes as _WP
+            _WP.apply_programme_rules(card)
+        except Exception as exc:
+            print(f"card payload: programme rules not applied (non-fatal): {exc}")
+    if isinstance(payload, dict):
+        # whose card: the pass / Google build reads it (a preview sample: the menu's)
+        payload["store_id"] = (cust.get("branch_id") or _SC.store_for(cust.get("tenant_id"))
+                               or _SC.main_store(cust.get("tenant_id")))
+        _sn = _SC.store_name(cust.get("tenant_id"), payload["store_id"])
+        if _sn and isinstance(payload.get("tenant"), dict):     # the client's shop is their establishment
+            payload["tenant"] = {**payload["tenant"], "account_name": payload["tenant"].get("name"), "name": _sn}
+    return payload
+
+
+@_SC.customer_store("cust")
+def _serialize_card_payload_raw(cust: dict) -> dict:
     t = db.tenants.find_one({"id": cust["tenant_id"]}) or {}
     tpl = db.card_templates.find_one({"tenant_id": cust["tenant_id"]}) or {}
     prefs = _card_prefs_for(cust["id"])
@@ -6792,6 +7070,12 @@ def _serialize_card_payload(cust: dict) -> dict:
             **{k: v for k, v in brand_fields.items() if v is not None},
             "logo_url": tpl.get("logo_url"),
             "reward_description": tpl.get("reward_description", "Une récompense fidélité"),
+            # the programme (points OR tampons) and the reward's place on the card
+            "programme": tpl.get("programme"),
+            "points_mode": tpl.get("points_mode"),
+            "reward_points": tpl.get("reward_points"),
+            "reward_on_card": tpl.get("reward_on_card"),
+            "reward_place": tpl.get("reward_place"),
             "reward_threshold": reward_threshold,
             "stamps_earned": stamps,
             "points_per_visit": tpl.get("points_per_visit", 10),
@@ -6848,7 +7132,10 @@ def _serialize_card_payload(cust: dict) -> dict:
             # Onboarding step 3: "Nom sur la carte" + "Slogan" — read by
             # WalletCard / WalletPassPreview and the native pass builder.
             "card_name":            tpl.get("card_name"),
-            "tagline":              tpl.get("tagline"),
+            # « Texte d'accueil sur la carte » (Carte de fidélité) first: a text
+            # saved there before the two were kept in step still reaches the
+            # back of the card (user, 2026-10-12), else the onboarding slogan
+            "tagline":              (tpl.get("welcome_text") or "").strip() or tpl.get("tagline"),
             "surface":              tpl.get("surface"),
             "surface_color":        tpl.get("surface_color"),
             "code_type":            tpl.get("code_type"),
@@ -6856,6 +7143,13 @@ def _serialize_card_payload(cust: dict) -> dict:
             "logo_round":           tpl.get("logo_round"),
             "logo_ring":            tpl.get("logo_ring"),
             "logo_ring_color":      tpl.get("logo_ring_color"),
+            "poster_footer_color":  tpl.get("poster_footer_color"),
+            # the shop's name beside the logo, in that colour (wallet_passes.name_logo)
+            "logo_text_color":      tpl.get("logo_text_color"),
+            "name_logo_size":       tpl.get("name_logo_size"),   # « Taille du logo » beside the name
+            "name_font":            tpl.get("name_font"),        # « Police du nom »
+            "name_style":           tpl.get("name_style"),     # « Nom stylé » (wallet_passes.name_logo)
+            "stamp_shape":          tpl.get("stamp_shape"),
             "google_design":        tpl.get("google_design"),
             "hero_mode":            tpl.get("hero_mode"),
             "visits_label":         tpl.get("visits_label"),
@@ -7277,6 +7571,7 @@ class PushCardOverrideRequest(BaseModel):
 @app.post("/api/owner/card-overrides/push")
 def push_card_override(
     req: PushCardOverrideRequest,
+    request: Request = None,
     token_data: TokenData = Depends(require_role(["business_owner"])),
 ):
     """Write a middle-band overlay onto every customer matching `filters`.
@@ -7305,6 +7600,11 @@ def push_card_override(
             lv["$gte"] = now_utc - timedelta(days=int(f["inactive_days_max"]))
         query["last_visit_date"] = lv
 
+    # the members of the establishment chosen in the menu (multi-store PR5)
+    from features import store_scope as _S
+    _home = _S.home_customer_ids(_S.sending_scope(token_data, request))
+    if _home is not None:
+        query["id"] = {"$in": list(_home)}
     targets = list(db.customers.find(query, {
         "id": 1, "name": 1, "first_name": 1, "tenant_id": 1,
         "phone": 1, "tier": 1, "points": 1, "visits": 1,
@@ -7598,8 +7898,9 @@ def send_campaign_to_group(
     # Only the clients of the establishments the sender may see: an
     # administrateur or a manager never writes to another shop's clients.
     from features import store_scope as _S
-    _scope = _S.resolve(token_data, request)
-    _mine = _S.customer_ids(_scope)
+    # each establishment writes to its own members only (multi-store PR5)
+    _scope = _S.sending_scope(token_data, request)
+    _mine = _S.home_customer_ids(_scope)
     if _mine is not None:
         customer_ids = [c for c in customer_ids if c in _mine]
         if not customer_ids:
@@ -8848,7 +9149,8 @@ def create_branch(
         "address": req.get("address", ""),
         "postal_code": req.get("postal_code", ""),
         "phone": req.get("phone", ""),
-        "is_main": req.get("is_main", False)
+        "is_main": req.get("is_main", False),
+        "card_off": True,          # blank card, off until designed (features/store_cards)
     }
 
     branches = tenant.get("branches", [])
@@ -10760,6 +11062,7 @@ def redeem_reward(
     cust = db.customers.find_one(q)
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found")
+    _SC.set_for_customer(cust)       # the reward of the client's home store
 
     # Threshold for a full card (so decrement matches the real card)
     card_tpl = db.card_templates.find_one({"tenant_id": tid}) or {}
@@ -10771,7 +11074,20 @@ def redeem_reward(
     # visits than its size.
     on_card = current_visits - int(cust.get("visits_at_last_redemption") or 0)
     waiting = db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
-    if on_card < threshold and not waiting:
+    # A points card buys its reward with points — which is what the pass has
+    # always promised the customer (« {reward} dès N points »), even though
+    # nothing used to charge for it. A stamp card fills a card, as before.
+    from features import loyalty_card as _LCR
+    points_prog = _LCR._is_points(_LCR._programme(card_tpl))
+    price = max(int(card_tpl.get("reward_points") or 0), 0)
+    balance = int(cust.get("points") or 0)
+    if points_prog and price > 0:
+        if balance < price and not waiting:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Il manque {price - balance} points avant d'échanger cette récompense.",
+            )
+    elif on_card < threshold and not waiting:
         raise HTTPException(
             status_code=400,
             detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
@@ -10807,15 +11123,18 @@ def redeem_reward(
     # a 10-visit card keeps the 3 stamps they have already earned.
     last_red = int(cust.get("visits_at_last_redemption") or 0)
     new_marker = last_red if banked else last_red + threshold
-    db.customers.update_one(
-        {"id": cust["id"]},
-        {"$inc": {"rewards_redeemed_count": 1},
-         "$set": {
-             "last_reward_redeemed_at": reward["redeemed_at"],
-             "visits_at_last_redemption": new_marker,
-             "updated_at": datetime.now(timezone.utc),
-         }},
-    )
+    inc = {"rewards_redeemed_count": 1}
+    sets = {
+        "last_reward_redeemed_at": reward["redeemed_at"],
+        "updated_at": datetime.now(timezone.utc),
+    }
+    if points_prog and price > 0 and not banked:
+        # The balance pays; `points_lifetime` does not move, so the palier the
+        # client reached stays theirs (features/loyalty_card.tier_of).
+        inc["points"] = -min(price, balance)
+    else:
+        sets["visits_at_last_redemption"] = new_marker
+    db.customers.update_one({"id": cust["id"]}, {"$inc": inc, "$set": sets})
     refresh_wallet_pass(cust["id"])          # the meter resets — show it now
     reward.pop("_id", None)
     try:                                      # API & Intégrations: reward.redeemed
@@ -10977,6 +11296,15 @@ def proximity_ping(req: ProximityPingRequest):
         if (cust.get("tier") or "").lower() != "vip":
             return {"status": "ignored", "reason": "vip_only: customer not VIP"}
 
+    # Nouvelle automatisation › Géolocalisation: its own address and rayon
+    # (features/custom_rules, 2026-10-11) — checked before the shop's own zone
+    custom_said = []
+    try:
+        from features import custom_rules as _CR
+        custom_said = _CR.near(tid, cust, req.latitude, req.longitude)
+    except Exception as exc:
+        print(f"proximity: custom geolocation failed ({exc})")
+
     # The shop's establishments (features/geo_automation.anchors — the same
     # ids an automation's « établissements » use) and its one radius.
     from features import geo_automation as _GA
@@ -10990,6 +11318,9 @@ def proximity_ping(req: ProximityPingRequest):
             nearest = {**a, "distance_m": dist}
 
     if not nearest or nearest["distance_m"] > radius_m:
+        if custom_said:
+            return {"status": "sent", "title": custom_said[0]["title"], "body": custom_said[0]["body"],
+                    "button_label": custom_said[0].get("button_label"), "button_url": custom_said[0].get("click_url")}
         return {"status": "out_of_range", "distance_m": (nearest["distance_m"] if nearest else None)}
 
     # The owner's map: this client was near the shop (rounded ~50 m, kept 30 days).
@@ -11004,6 +11335,7 @@ def proximity_ping(req: ProximityPingRequest):
     from features import automations as _AU
     said = [x for x in _AU.fire("geo", tid, cust, {"store": nearest.get("name") or "", "store_id": nearest.get("id"),
                                                      "distance_m": int(nearest["distance_m"])}) if x.get("title")]
+    said = said or custom_said
     if not said:
         return {"status": "ignored", "reason": "no geolocation automation for this client"}
     db.push_notifications.update_one({"log_id": said[0]["id"]}, {"$set": {
@@ -11799,6 +12131,12 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         push_wallet_summary["geo_purged"] = _GA.purge(now)
     except Exception as _e:
         print(f"geo passes runner failed (non-fatal): {_e}")
+    # Wallet cards still waiting after a save (wallet_passes.queue_refresh)
+    try:
+        from features.wallet_passes import drain_all as _drain_wallet
+        push_wallet_summary["wallet_refresh"] = _drain_wallet()
+    except Exception as _e:
+        print(f"wallet refresh queue failed (non-fatal): {_e}")
 
     # FidClic IA Autopilot — prepares (never sends) the week's campaign steps
     # for the shops that switched it on. Sending waits for the merchant's OK.
@@ -12130,7 +12468,120 @@ def resolve_upgrade_request(
 # any existing endpoint or model. Safe to comment out to roll back.
 # ============================================================
 from features._loader import register_all
+_t_imports = (_boot_time.perf_counter() - _BOOT_T0) * 1000
 register_all(app, db)
+try:
+    _ST.boot_mark("imports", _t_imports)
+    _ST.boot_mark("features", (_boot_time.perf_counter() - _BOOT_T0) * 1000 - _t_imports)
+    _ST.boot_ready((_boot_time.perf_counter() - _BOOT_T0) * 1000)
+except Exception:  # noqa: BLE001 — a start must never fail on its own stopwatch
+    pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Pictures (services/media, 2026-10-13). A link « /api/media/<id> » is the
+# hash of the picture's bytes: it never changes, so the browser and Vercel's
+# edge keep it for a year — a page no longer carries its logo in every answer.
+# ─────────────────────────────────────────────────────────────────────
+@app.get("/api/media/{mid}")
+def get_media(mid: str, raw: int = 0):
+    # In Blob: the browser goes straight to Blob's CDN, which no deploy empties
+    # (2026-10-13 — the card preview waited on the free cluster after each merge).
+    # ?raw=1: the bytes from here, same origin (« Ajuster » reads a saved poster
+    # with fetch(), which a cross-origin answer could refuse)
+    url = None if raw else _MEDIA.blob_url(mid.split(".", 1)[0])
+    if url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url, status_code=307,
+                                headers={"Cache-Control": "public, max-age=31536000, s-maxage=31536000, immutable"})
+    got = _MEDIA.get(mid.split(".", 1)[0], cdn=False)     # this IS the CDN's source
+    if not got:
+        raise HTTPException(status_code=404, detail="Image introuvable")
+    mime, raw = got
+    return Response(content=raw, media_type=mime,
+                    headers={"Cache-Control": "public, max-age=31536000, s-maxage=31536000, immutable"})
+
+
+def _media_migrate_once() -> None:
+    """The pictures stored inline before 2026-10-13 move to `media`, once:
+    the first start after the deploy does it, the next ones see the marker."""
+    try:
+        done = db.platform_settings.find_one({"key": "media_migrated"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        moved = _MEDIA.migrate()
+        db.platform_settings.update_one({"key": "media_migrated"}, {"$set": {
+            "key": "media_migrated", "value": "v1", "at": datetime.now(timezone.utc), "moved": moved}}, upsert=True)
+        print(f"media: pictures moved out of documents {moved}", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it; retried next start
+        print(f"media: migration not finished ({exc})", flush=True)
+
+
+_media_migrate_once()
+
+
+def _points_split_once() -> None:
+    """Points become a balance that a reward can spend (2026-10-14), so the
+    palier had to stop reading it. Two fields are filled once, for everyone
+    already on the platform:
+
+      points_lifetime — what they EARNED. Nothing has ever spent points, so
+                        their current balance is exactly that.
+      tier_best       — the rung they stand on today becomes their floor, so
+                        this change cannot demote a single customer.
+
+    Idempotent, and never fatal: a start that fails here is retried next time.
+    """
+    try:
+        done = db.platform_settings.find_one({"key": "points_split"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        n = 0
+        for c in db.customers.find({"$or": [{"points_lifetime": {"$exists": False}},
+                                            {"tier_best": {"$exists": False}}]},
+                                   {"_id": 0, "id": 1, "points": 1, "tier": 1,
+                                    "points_lifetime": 1, "tier_best": 1}):
+            sets = {}
+            if c.get("points_lifetime") is None:
+                sets["points_lifetime"] = int(c.get("points") or 0)
+            if not c.get("tier_best"):
+                sets["tier_best"] = (c.get("tier") or "bronze").lower()
+            if sets:
+                db.customers.update_one({"id": c["id"]}, {"$set": sets})
+                n += 1
+        db.platform_settings.update_one({"key": "points_split"}, {"$set": {
+            "key": "points_split", "value": "v1", "at": datetime.now(timezone.utc), "customers": n}}, upsert=True)
+        print(f"points: balance split from lifetime for {n} customers", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it
+        print(f"points: split not finished ({exc})", flush=True)
+
+
+_points_split_once()
+
+
+def _cache_purge_once() -> None:
+    """The image caches kept in MongoDB (img_cache, pkpass_cache) made the free
+    cluster slower, not faster (2026-10-13): they are no longer used, and what
+    they hold — rebuildable images and passes, no customer data — is removed
+    once, to give the cluster its room back."""
+    try:
+        done = db.platform_settings.find_one({"key": "image_cache_purged"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        n = 0
+        for name in ("img_cache", "pkpass_cache"):
+            try:
+                n += db[name].delete_many({}).deleted_count or 0
+            except Exception as exc:  # noqa: BLE001
+                print(f"cache purge: {name} skipped ({exc})", flush=True)
+        db.platform_settings.update_one({"key": "image_cache_purged"}, {"$set": {
+            "key": "image_cache_purged", "value": "v1", "at": datetime.now(timezone.utc), "removed": n}}, upsert=True)
+        print(f"cache purge: {n} cached images removed", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it
+        print(f"cache purge: not finished ({exc})", flush=True)
+
+
+_cache_purge_once()
 
 
 if __name__ == "__main__":

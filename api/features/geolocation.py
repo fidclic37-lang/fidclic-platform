@@ -366,15 +366,18 @@ def compute(tid: str, start: datetime, end: datetime, mode: str, scope: str,
     zones_used = ZONES + ([FAR_ZONE] if wide else [])
     population = population if population in POPULATIONS else "periode"
 
+    # …and named after it: its name, its town, « Lyon et alentours » (QA F35:
+    # Paris and Lyon both read the main shop's « La Colle-sur-Loup »)
+    here = branch or tenant
     result: Dict[str, Any] = {
-        "shop": {"name": tenant.get("name") or "Votre établissement",
-                 "city": tenant.get("city") or "", "lat": shop_lat, "lng": shop_lng,
+        "shop": {"name": here.get("name") or tenant.get("name") or "Votre établissement",
+                 "city": here.get("city") or "", "lat": shop_lat, "lng": shop_lng,
                  "position_source": shop_src},
         "mode": mode if mode in MODES else "car",
         "speed_kmh": speed,
         "scope": scope if scope in SCOPES else "local",
         "population": population,
-        "local_label": _local_label(tenant),
+        "local_label": _local_label(here),
         "from": start.isoformat(), "to": end.isoformat(),
     }
     if shop_lat is None:

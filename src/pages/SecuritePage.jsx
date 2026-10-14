@@ -4,7 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import {
   Shield, ShieldCheck, Clock, ArrowRight, Lock, Monitor, Smartphone, Tablet, Users, User, MoreVertical,
   Database, CloudUpload, KeyRound, Trash2, CheckCircle2, X, Loader2, Check, LogOut, AlertTriangle,
-  ShieldAlert, Pencil, Download, UserPlus, Bell,
+  ShieldAlert, Pencil, Download, UserPlus, Bell, Mail,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,12 +67,26 @@ export default function SecuritePage() {
   const [form, setForm] = useState({});
   const [mErr, setMErr] = useState('');
 
+  // The pending e-mail change lives on its own endpoint: an account without
+  // the « Changer l'adresse e-mail » permission is refused it, and the card
+  // simply shows the address with no way to change it.
+  const [mailPending, setMailPending] = useState(null);
+  const [mayChangeEmail, setMayChangeEmail] = useState(false);
   const load = useCallback(() => {
     ownerAPI.security().then(({ data }) => setD(data)).catch((e) => setErr(e?.response?.data?.detail || 'Impossible de charger la sécurité.'));
+    ownerAPI.emailState()
+      .then(({ data }) => { setMailPending(data.pending); setMayChangeEmail(true); })
+      .catch(() => { setMailPending(null); setMayChangeEmail(false); });
   }, []);
   useEffect(() => { load(); }, [load]);
   const say = (m) => { setToast(m); setTimeout(() => setToast(''), 3500); };
   const open = (type, extra = {}) => { setForm({}); setMErr(''); setModal({ type, ...extra }); };
+  // « Code de la caisse » — the form's own state; d.caisse_pin is the truth
+  const [pin, setPin] = useState({ on: false, mode: 'shop', code: '' });
+  useEffect(() => {
+    if (d?.caisse_pin) setPin((p) => ({ ...p, on: d.caisse_pin.on, mode: d.caisse_pin.mode }));
+  }, [d?.caisse_pin?.on, d?.caisse_pin?.mode]);
+
   const run = async (key, fn, ok, after) => {
     setBusy(key); setMErr('');
     try { const r = await fn(); if (ok) say(ok); if (after) after(r?.data); else setModal(null); load(); }
@@ -118,6 +132,27 @@ export default function SecuritePage() {
 
         {/* row 2 */}
         <Card>
+          <Head icon={Mail} title="Adresse e-mail" sub="L'adresse avec laquelle vous vous connectez." />
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[13.5px] text-[#0B1C3F]">Adresse actuelle</p>
+              <p translate="no" className="notranslate truncate text-[14px] text-[#475569]">{d.me.email}</p>
+              {mailPending && (
+                <p className="mt-1 text-[12.5px] text-[#92400E]">
+                  En attente de confirmation sur <strong translate="no" className="notranslate">{mailPending.new_email}</strong>
+                  {' '}— {mailPending.method === 'code' ? 'par code' : 'par lien'}.
+                </p>
+              )}
+            </div>
+            {mayChangeEmail && (
+              <button type="button" onClick={() => open('email')}
+                      className="inline-flex items-center gap-2 rounded-xl border border-[#2F6BFF] px-5 py-2.5 text-[13.5px] font-medium text-[#2F6BFF]">
+                {mailPending ? 'Reprendre' : "Modifier l'adresse"} <ArrowRight size={14} />
+              </button>
+            )}
+          </div>
+        </Card>
+        <Card>
           <Head icon={Lock} title="Mot de passe" sub="Protégez votre compte avec un mot de passe fort." />
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -149,6 +184,56 @@ export default function SecuritePage() {
           </div>
         </Card>
 
+        {/* « Code de la caisse » — off by default (user, 2026-10-14): a till
+            should open on the scanner. A shop that wants a lock turns it on
+            and says who shares it. It is a lock, not a login: nobody is
+            signed out, the device simply does not scan until it is typed. */}
+        {d.caisse_pin && (
+        <Card>
+          <Head icon={KeyRound} title="Code de la caisse"
+                sub="Facultatif. Sans code, une caisse enregistrée scanne dès qu'on l'ouvre." />
+          <div className="space-y-3 pt-1">
+            <label className="flex items-start gap-2.5">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#2F6BFF]" checked={pin.on}
+                     onChange={(e) => setPin((p) => ({ ...p, on: e.target.checked }))} />
+              <span>
+                <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">Demander un code sur les caisses</span>
+                <span className="block text-[12.5px] text-[#64748B]">
+                  Une fois saisi, l'appareil scanne pour la journée.
+                </span>
+              </span>
+            </label>
+            {pin.on && (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {[['shop', 'Le même code pour la boutique'], ['device', 'Un code par appareil']].map(([k, l]) => (
+                    <button key={k} type="button" onClick={() => setPin((p) => ({ ...p, mode: k }))}
+                            className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${
+                              pin.mode === k ? 'border-[#2F6BFF] text-[#2F6BFF]' : 'border-[#E1E8F5] text-[#475569]'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <input value={pin.code} onChange={(e) => setPin((p) => ({ ...p, code: e.target.value.replace(/\D/g, '').slice(0, 8) }))}
+                       inputMode="numeric" placeholder={d.caisse_pin.set ? 'Nouveau code (4 à 8 chiffres)' : 'Code (4 à 8 chiffres)'}
+                       className="w-full max-w-[240px] rounded-xl border border-[#E1E8F5] px-3 py-2 text-[14px] tracking-[0.3em]" />
+                {pin.mode === 'device' && (
+                  <p className="text-[12.5px] text-[#64748B]">
+                    Le code est enregistré sur l'appareil où vous êtes. Répétez l'opération sur chaque caisse.
+                  </p>
+                )}
+              </>
+            )}
+            <button type="button" disabled={busy === 'pin'}
+                    onClick={() => run('pin', () => ownerAPI.setCaisseCode({ on: pin.on, mode: pin.mode, code: pin.code || undefined }),
+                                       'Code de la caisse enregistré.', () => setPin((p) => ({ ...p, code: '' })))}
+                    className="rounded-xl bg-[#2F6BFF] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+              Enregistrer
+            </button>
+          </div>
+        </Card>
+        )}
+
         {/* row 3 */}
         <Card>
           <Head icon={Monitor} title="Sessions actives" sub="Gérez les appareils connectés à votre compte." />
@@ -160,6 +245,12 @@ export default function SecuritePage() {
                   <Icon size={20} className="shrink-0 text-[#0B1C3F]" />
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-2 text-[14px] font-medium text-[#0B1C3F]">{s.device}
+                      {/* a device left scanning on a counter, never mistaken for someone's phone */}
+                      {s.caisse && (
+                        <span translate="no" className="rounded-md bg-[#EEF4FF] px-2 py-0.5 text-[11.5px] font-normal text-[#2F6BFF]">
+                          Caisse{s.caisse.store ? ` — ${s.caisse.store}` : ''}
+                        </span>
+                      )}
                       {s.current && <span className="rounded-md bg-[#E7F7EE] px-2 py-0.5 text-[11.5px] font-normal text-[#0F8B58]">Actuelle</span>}</p>
                     <p className="text-[12.5px] text-[#64748B]">{[s.browser, s.os, s.place].filter(Boolean).join(' • ')}</p>
                   </div>
@@ -276,6 +367,72 @@ export default function SecuritePage() {
       <div aria-live="polite" className="pointer-events-none fixed bottom-5 left-1/2 z-40 -translate-x-1/2 transition-opacity" style={{ opacity: toast ? 1 : 0 }}>
         <span className="inline-flex items-center gap-2 rounded-full bg-[#0B1C3F] px-4 py-2 text-[13px] font-medium text-white shadow-lg"><Check size={14} /> {toast}</span>
       </div>
+
+      {modal?.type === 'email' && (
+        <Modal title="Modifier l'adresse e-mail" onClose={() => setModal(null)}>
+          {!(form.sent || mailPending) ? (
+            <div className="space-y-3">
+              <label className="block text-[13px]">Nouvelle adresse
+                <input type="email" autoComplete="email" translate="no" className={`${inputCls} notranslate`} value={form.mail || ''}
+                       onChange={(e) => setForm({ ...form, mail: e.target.value })} /></label>
+              <label className="block text-[13px]">Votre mot de passe
+                <input type="password" autoComplete="current-password" className={inputCls} value={form.pw || ''}
+                       onChange={(e) => setForm({ ...form, pw: e.target.value })} /></label>
+              <div>
+                <p className="mb-1.5 text-[13px] text-[#334155]">Comment confirmer ?</p>
+                <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5" role="group" aria-label="Comment confirmer ?">
+                  {[['link', 'Par lien'], ['code', 'Par code']].map(([k, l]) => (
+                    <button key={k} type="button" aria-pressed={(form.method || 'link') === k}
+                            onClick={() => setForm({ ...form, method: k })}
+                            className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${(form.method || 'link') === k ? 'bg-white text-[#2F6BFF] shadow-sm' : 'text-[#64748B]'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <p className="text-[12px] text-[#64748B]">
+                FidClic envoie la confirmation à la <strong>nouvelle</strong> adresse. Tant qu'elle
+                n'est pas confirmée, vous vous connectez avec l'adresse actuelle — une faute de frappe
+                ne bloque donc rien.
+              </p>
+              {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+              <button type="button" disabled={busy === 'mail' || !form.mail || !form.pw}
+                      onClick={() => run('mail', () => ownerAPI.emailStart(form.mail.trim(), form.pw, form.method || 'link'),
+                                         null, (r) => { setForm({ ...form, sent: r }); load(); })}
+                      className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
+                Envoyer la confirmation
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {(() => { const p = form.sent || mailPending; return (
+                <>
+                  <p className="text-[13.5px] text-[#475569]">
+                    {p.method === 'code' ? 'Un code a été envoyé à ' : 'Un lien a été envoyé à '}
+                    <strong translate="no" className="notranslate">{p.sent_to || p.new_email}</strong>.
+                  </p>
+                  {p.method === 'code' ? (
+                    <>
+                      <label className="block text-[13px]">Code reçu
+                        <input inputMode="numeric" maxLength={6} className={`${inputCls} text-center text-[22px] tracking-[8px]`}
+                               value={form.code || ''} onChange={(e) => setForm({ ...form, code: e.target.value.replace(/\D/g, '') })} /></label>
+                      {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+                      <button type="button" disabled={busy === 'mailc' || (form.code || '').length < 6}
+                              onClick={() => run('mailc', () => ownerAPI.emailConfirm({ code: form.code }), 'Adresse e-mail modifiée.')}
+                              className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
+                        Confirmer
+                      </button>
+                    </>
+                  ) : (
+                    <p className="text-[12.5px] text-[#64748B]">Ouvrez ce lien depuis votre boîte mail pour terminer. Il est valable 30 minutes.</p>
+                  )}
+                  {mErr && p.method !== 'code' && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+                  <button type="button" onClick={() => run('mailx', () => ownerAPI.emailCancel(), 'Demande annulée.')}
+                          className="w-full rounded-xl border border-[#DCE3EE] py-2.5 text-[13.5px] text-[#334155]">Annuler la demande</button>
+                </>
+              ); })()}
+            </div>
+          )}
+        </Modal>
+      )}
 
       {modal?.type === 'password' && (
         <Modal title={d.me.has_password ? 'Modifier le mot de passe' : 'Créer un mot de passe'} onClose={() => setModal(null)}>

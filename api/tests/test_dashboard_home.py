@@ -122,7 +122,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           DH.overview(days=30, token_data=TD())["impact"]["value"] == 0.0)
     db.campaigns.insert_one({"id": "camp1", "tenant_id": "t1", "name": "Offre petit-déjeuner",
                              "sent_at": now - dt.timedelta(days=6), "status": "sent",
-                             "recipient_ids": ["c1"], "clicks": 4,
+                             "recipient_ids": ["c1"], "offer_clicks": 4,
                              "attributed_visit_customer_ids": ["c1"]})
     imp = DH.overview(days=30, token_data=TD())["impact"]
     check("a client who was sent something and then came in is counted",
@@ -150,8 +150,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     c = d["campaigns"]
     check("campaigns sent in the window are counted", c["sent"] == 1)
     check("clients touchés is the recipients", c["touched"] == 1)
-    check("clicks come from the campaign row", c["clicks"] == 4)
-    check("ventes attribuées are the attributed visitors", c["sales"] == 1)
+    # counted as on Campagnes and Analyses (services/campaign_figures, QA F32)
+    check("clicks: the offer's own counter", c["clicks"] == 4)
+    check(f"ventes attribuées: c1's visits in the 15 days after the send ({c['sales']})",
+          c["sales"] == sum(1 for cid, _, ago in THIS if cid == "c1" and ago < 6))
     check("the best campaign is named", c["best"]["name"] == "Offre petit-déjeuner")
     check("with its own conversion rate", c["best"]["conversion"] == 100.0)
 

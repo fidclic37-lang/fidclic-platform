@@ -57,9 +57,11 @@ from features import settings_versions as SV   # « Réinitialiser » (Paramètr
 router = APIRouter(tags=["team-access"])
 _db = None
 
-ROLES = ["business_owner", "administrateur", "manager", "staff"]
-RANK = {r: i for i, r in enumerate(ROLES)}
-TEAM_ROLES = ["administrateur", "manager", "staff"]
+# « membre »: an account in a role the owner created (features/role_perms) —
+# below the administrateur, beside the manager.
+ROLES = ["business_owner", "administrateur", "manager", "membre", "staff"]
+RANK = {"business_owner": 0, "administrateur": 1, "manager": 2, "membre": 2, "staff": 3}
+TEAM_ROLES = ["administrateur", "manager", "membre", "staff"]
 ALL_ROLES = ROLES
 MAIN = "main"
 NAME_MAX = 60
@@ -73,6 +75,8 @@ ROLE_META = {
                 "description": "Gère les clients, les campagnes et les employés de son établissement. Pas d'accès aux paramètres."},
     "staff": {"label": "Employé", "tone": "violet", "icon": "user",
               "description": "Scanne les cartes des clients dans son établissement."},
+    "membre": {"label": "Rôle personnalisé", "tone": "slate", "icon": "badge",
+               "description": "Les pages et les établissements choisis par le propriétaire."},
 }
 
 # What each role may do — fixed, as decided for the franchise model. Values:
@@ -158,12 +162,27 @@ def status_of(email: str) -> Optional[Dict[str, Any]]:
     return {"active": u.get("active", True) is not False, "scope": scope_of(u)}
 
 
+def role_label(user: Dict[str, Any]) -> str:
+    from features import role_perms as RP
+    if user.get("role") == RP.CUSTOM_ROLE:
+        return (RP.templates(user.get("tenant_id")).get(user.get("custom_role") or "") or {}).get("label") \
+            or ROLE_META["membre"]["label"]
+    return ROLE_META.get(user.get("role"), {}).get("label", user.get("role") or "")
+
+
 def identity(user: Dict[str, Any]) -> Dict[str, Any]:
     if not user or user.get("role") not in ROLES or not user.get("tenant_id"):
         return {}
+    from features import role_perms as RP
     all_ids = [s["id"] for s in stores(user["tenant_id"])]
     return {"branch_ids": _covered(user, all_ids), "scope": scope_of(user),
-            "role_label": ROLE_META[user["role"]]["label"]}
+            "role_label": role_label(user),
+            # « Peut changer d'établissement » — read by the sidebar's switcher
+            # and the Scan page (src/lib/storeSwitch.js)
+            **({"can_switch_store": bool(user["can_switch_store"])}
+               if isinstance(user.get("can_switch_store"), bool) else {}),
+            # the sidebar: this account's pages per establishment (None: the role's usual menu)
+            "page_perms": RP.nav_for(user)}
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +223,8 @@ def _check_assignment(role: str, branch_ids: List[str], me: Dict[str, Any], all_
         raise HTTPException(status_code=400, detail="Établissement inconnu.")
     if role == "administrateur" and not ids:
         raise HTTPException(status_code=400, detail="Un administrateur gère au moins un établissement.")
+    if role == "membre" and not ids:
+        raise HTTPException(status_code=400, detail="Choisissez au moins un établissement.")
     if role in ("manager", "staff") and len(ids) != 1:
         raise HTTPException(status_code=400,
                             detail=f"Un {ROLE_META[role]['label'].lower()} travaille dans un seul établissement.")
@@ -222,9 +243,12 @@ def _display_name(u: Dict[str, Any]) -> str:
 
 
 def _public(u: Dict[str, Any], me: Dict[str, Any], all_ids: List[str], store_names: Dict[str, str]) -> Dict[str, Any]:
+    from features import role_perms as RP
     role = u.get("role")
     covered = _covered(u, all_ids)
-    perms = [p["label"] for p in PERMISSIONS if MATRIX.get(role, {}).get(p["key"])]
+    eff = RP.effective(u)
+    perms = [p["label"] for p in RP.PAGES
+             if any(RP.RANKV[(lv or {}).get(p["key"], "none")] >= 1 for lv in (eff or {}).values())]
     if role == "business_owner":
         perms = ["Accès complet"]
     last = u.get("last_login_at")
@@ -232,8 +256,14 @@ def _public(u: Dict[str, Any], me: Dict[str, Any], all_ids: List[str], store_nam
         "id": u.get("id") or u.get("email"),
         "email": u.get("email"), "name": _display_name(u),
         "first_name": u.get("first_name") or "", "last_name": u.get("last_name") or "",
-        "role": role, "role_label": ROLE_META.get(role, {}).get("label", role),
+        "role": role, "role_label": role_label(u),
+        "role_key": RP.role_key(u) or role, "custom_role": u.get("custom_role"),
+        # per establishment {page: none|view|edit}; None for the owner (everything)
+        "perms": eff, "own_perms": isinstance(u.get("perms"), dict),
         "branch_ids": covered,
+        "can_switch_store": u.get("can_switch_store"),
+        "switches_store": (u.get("can_switch_store") if isinstance(u.get("can_switch_store"), bool)
+                           else role in ("business_owner", "administrateur")),
         "stores_label": "Tous" if role == "business_owner" or set(all_ids) <= set(covered)
         and len(all_ids) > 1 else ", ".join(store_names.get(b, b) for b in covered),
         "permissions": perms,
@@ -261,18 +291,49 @@ def _payload(token: TokenData) -> Dict[str, Any]:
     all_ids = [s["id"] for s in st]
     names = {s["id"]: s["name"] for s in st}
     users = list(_db.users.find({"tenant_id": tid, "role": {"$in": ROLES}}, {"_id": 0, "hashed_password": 0}))
-    shown = [u for u in users if _visible(me, u, all_ids)]
-    shown.sort(key=lambda u: (RANK.get(u.get("role"), 9), _display_name(u).lower()))
+    everyone = [u for u in users if _visible(me, u, all_ids)]
+    everyone.sort(key=lambda u: (RANK.get(u.get("role"), 9), _display_name(u).lower()))
+    # The establishment chosen in the menu (user, 2026-10-14: « jisko jo stores
+    # alloted hai, woh keval usi stores k roles and access mein dikhe »): the
+    # list, the role counts and the pending invitations are its team — the
+    # owner and the accounts that have it. « Accès par établissement » still
+    # lists everyone (all_users): it is where a store is given or taken.
+    sel = None
+    if len(all_ids) > 1:
+        from features import store_cards as SC
+        sid = SC.store_for(tid)
+        sel = sid if sid in all_ids else None
+    shown = [u for u in everyone if sel is None or u.get("role") == "business_owner"
+             or u.get("email") == me.get("email") or sel in _covered(u, all_ids)]
     rows = [_public(u, me, all_ids, names) for u in shown]
+    all_rows = rows if sel is None else [_public(u, me, all_ids, names) for u in everyone]
     counts = {r: sum(1 for u in shown if u.get("role") == r) for r in ROLES}
     mine = _covered(me, all_ids)
+    from features import role_perms as RP
+    tpls = RP.templates(tid)
+    custom_counts: Dict[str, int] = {}
+    for u in shown:
+        if u.get("role") == RP.CUSTOM_ROLE:
+            custom_counts[u.get("custom_role") or ""] = custom_counts.get(u.get("custom_role") or "", 0) + 1
     return {
         "me": {"email": me.get("email"), "role": me.get("role"), "branch_ids": mine,
-               "can_create": creatable(me.get("role")), "scope": scope_of(me)},
+               "can_create": [r for r in creatable(me.get("role")) if r != "membre"],
+               "can_assign_custom": "membre" in creatable(me.get("role")), "scope": scope_of(me),
+               # what the creator may hand out (an account never gets more), None: everything
+               "perms": RP.effective(me),
+               "can_define_roles": me.get("role") == "business_owner"},
         "stores": [s for s in st if s["id"] in mine],
         "all_stores_count": len(st),
-        "roles": [{"key": r, **ROLE_META[r], "count": counts[r]} for r in ROLES],
+        "roles": [{"key": r, **ROLE_META[r], "count": counts[r]} for r in ROLES if r != "membre"]
+        + [{"key": k, "label": d["label"], "tone": "slate", "icon": "badge", "custom": True,
+            "description": d.get("description") or "Rôle personnalisé.", "count": custom_counts.get(k, 0)}
+           for k, d in tpls.items() if not d["builtin"]],
+        # Rôles et permissions par page: the pages, every role's template
+        "pages": RP.PAGES,
+        "templates": list(tpls.values()),
         "users": rows,
+        "all_users": all_rows,
+        "store_id": sel,
         # Accounts handed out but never used — owners are not "invited".
         "pending": [r for r in rows if r["pending"] and not r["is_me"] and r["role"] != "business_owner"],
         "permissions": PERMISSIONS,
@@ -305,9 +366,46 @@ class UserIn(BaseModel):
     email: Optional[str] = None
     first_name: Optional[str] = ""
     last_name: Optional[str] = ""
-    role: str
+    role: str                                  # a built-in role, or a role the owner created (its key)
     branch_ids: List[str] = []
     password: Optional[str] = None
+    perms: Optional[Dict[str, Any]] = None     # {store: {page: none|view|edit}} — else the role's template
+
+
+def _system_role(tid: str, role: str):
+    """(system role, custom role key) of what was chosen."""
+    from features import role_perms as RP
+    if role in ROLES:
+        if role == RP.CUSTOM_ROLE:
+            raise HTTPException(status_code=400, detail="Choisissez un rôle.")
+        return role, None
+    if role in RP.templates(tid) and not RP.templates(tid)[role]["builtin"]:
+        return RP.CUSTOM_ROLE, role
+    raise HTTPException(status_code=400, detail="Rôle inconnu.")
+
+
+def _perms_for(tid: str, role_k: str, ids: List[str], raw: Optional[Dict[str, Any]],
+               me: Dict[str, Any], keep: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Dict[str, str]]]:
+    """The account's permissions per establishment: what was sent, else what it
+    had there, else its role's template. Never more than the creator has."""
+    from features import role_perms as RP
+    tpl = RP.templates(tid).get(role_k) or {}
+    if raw is None and keep is None and tpl.get("builtin") and not tpl.get("customized"):
+        return None                            # the role's usual rules, as before
+    if raw is not None and not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="Permissions invalides.")
+    out = {}
+    for sid in ids:
+        if raw is not None and sid in raw:
+            out[sid] = RP.clean_perms(raw[sid])
+        elif keep and isinstance(keep.get(sid), dict):
+            out[sid] = RP.clean_perms(keep[sid])
+        else:
+            out[sid] = RP.clean_perms(tpl.get("perms") or {})
+    over = RP.within(out, RP.effective(me))
+    if over:
+        raise HTTPException(status_code=403, detail=f"Vous ne pouvez pas donner plus que vos propres droits : « {RP.LABEL[over]} ».")
+    return out
 
 
 def _clean_names(body: UserIn) -> Dict[str, str]:
@@ -321,9 +419,11 @@ def _clean_names(body: UserIn) -> Dict[str, str]:
 def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
     me = _me(token)
     all_ids = [s["id"] for s in stores(token.tenant_id)]
-    if body.role not in creatable(me.get("role")):
+    sys_role, custom = _system_role(token.tenant_id, body.role)
+    if sys_role not in creatable(me.get("role")):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas créer ce rôle.")
-    email = (body.email or "").strip().lower()
+    from services import email_check   # a copied address's invisible characters (2026-10-14)
+    email = email_check.clean(body.email)
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="Adresse email invalide.")
     if _db.users.find_one({"email": email}):
@@ -335,11 +435,13 @@ def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, p
         raise HTTPException(status_code=403, detail={**plan_limits.locked(f, "staff_accounts"),
                             "message": f"Votre offre {f.get('label')} inclut {cap} comptes équipe (propriétaire compris).",
                             "upgrade": plan_limits._next_bigger(f, "staff_accounts")})
-    ids = _check_assignment(body.role, body.branch_ids, me, all_ids)
+    ids = _check_assignment(sys_role, body.branch_ids, me, all_ids)
+    perms = _perms_for(token.tenant_id, custom or sys_role, ids, body.perms, me)
     from services import password_policy
     password = (body.password or "").strip() or password_policy.generate()
     password_policy.assert_valid(password)
-    doc = {"id": str(uuid.uuid4()), "email": email, "role": body.role, "tenant_id": token.tenant_id,
+    doc = {"id": str(uuid.uuid4()), "email": email, "role": sys_role, "tenant_id": token.tenant_id,
+           **({"custom_role": custom} if custom else {}), **({"perms": perms} if perms is not None else {}),
            **_clean_names(body), "branch_ids": ids, "active": True, "auth_provider": "password",
            "hashed_password": hash_password(password), "created_at": _now(),
            "created_by": me.get("email")}
@@ -353,6 +455,12 @@ class UserUpdate(BaseModel):
     last_name: Optional[str] = ""
     role: Optional[str] = None
     branch_ids: Optional[List[str]] = None
+    perms: Optional[Dict[str, Any]] = None
+    # « Peut changer d'établissement » (user, 2026-10-14). Unset = the role
+    # decides: the owner and an administrateur choose, the others work where
+    # they are. Set, it wins — that is how the owner hands the choice to one
+    # account without changing its role.
+    can_switch_store: Optional[bool] = None
 
 
 @router.put("/api/owner/team-access/users/{uid}")
@@ -363,14 +471,38 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
     u = _find(token.tenant_id, uid)
     if not _can_manage(me, u, all_ids):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier ce compte.")
-    role = body.role or u["role"]
+    from features import role_perms as RP
+    chosen = body.role or RP.role_key(u) or u["role"]
+    role, custom = _system_role(token.tenant_id, chosen)
     if role not in creatable(me.get("role")):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas attribuer ce rôle.")
     ids = _check_assignment(role, body.branch_ids if body.branch_ids is not None
                             else _covered(u, all_ids), me, all_ids)
+    same_role = (custom or role) == (RP.role_key(u) or u["role"])
+    keep = u.get("perms") if same_role and isinstance(u.get("perms"), dict) else None
+    perms = _perms_for(token.tenant_id, custom or role, ids, body.perms, me, keep=keep)
     names = _clean_names(UserIn(role=role, first_name=body.first_name, last_name=body.last_name))
-    _db.users.update_one({"email": u["email"]}, {"$set": {**names, "role": role, "branch_ids": ids,
-                                                         "updated_at": _now()}})
+    sets = {**names, "role": role, "branch_ids": ids, "updated_at": _now()}
+    # Only the owner and an administrateur hand out the choice of establishment
+    # — and never to themselves beyond what their role already gives.
+    if body.can_switch_store is None:
+        unset_switch = True
+    else:
+        unset_switch = False
+        sets["can_switch_store"] = bool(body.can_switch_store)
+    unset = {}
+    if custom:
+        sets["custom_role"] = custom
+    else:
+        unset["custom_role"] = ""
+    if perms is not None:
+        sets["perms"] = perms
+    else:
+        unset["perms"] = ""
+    if unset_switch:
+        unset["can_switch_store"] = ""      # back to what the role says
+    _db.users.update_one({"email": u["email"]}, {"$set": sets, **({"$unset": unset} if unset else {})})
+    _audit("team.user_updated", token, u["email"])
     return _payload(token)
 
 
@@ -439,12 +571,123 @@ def store_access(store_id: str, uid: str, body: StoreAccessIn,
     if not _can_manage(me, u, all_ids):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier ce compte.")
     covered = _covered(u, all_ids)
-    if u["role"] == "administrateur":
+    if u["role"] in ("administrateur", "membre"):
         ids = sorted(set(covered) | {store_id}) if body.enabled else [b for b in covered if b != store_id]
     else:
         if not body.enabled:
             raise HTTPException(status_code=400, detail="Choisissez plutôt son nouvel établissement.")
         ids = [store_id]
     ids = _check_assignment(u["role"], ids, me, all_ids)
-    _db.users.update_one({"email": u["email"]}, {"$set": {"branch_ids": ids, "updated_at": _now()}})
+    sets: Dict[str, Any] = {"branch_ids": ids, "updated_at": _now()}
+    if isinstance(u.get("perms"), dict):       # a new establishment starts with the role's template
+        from features import role_perms as RP
+        sets["perms"] = _perms_for(token.tenant_id, RP.role_key(u) or u["role"], ids, None, me, keep=u["perms"])
+    _db.users.update_one({"email": u["email"]}, {"$set": sets})
+    return _payload(token)
+
+
+# ---------------------------------------------------------------------------
+# roles (the owner only): create, change a template, delete a role
+# ---------------------------------------------------------------------------
+class RoleIn(BaseModel):
+    label: Optional[str] = None
+    description: Optional[str] = None
+    perms: Optional[Dict[str, Any]] = None     # {page: none|view|edit}; None on a built-in role: back to its defaults
+    apply: str = "new"                         # "new": accounts created from now · "all": every account in it
+
+
+def _role_label(raw: Optional[str], tid: str, skip: Optional[str] = None) -> str:
+    from features import role_perms as RP
+    label = re.sub(r"\s+", " ", raw or "").strip()
+    if not 2 <= len(label) <= 40:
+        raise HTTPException(status_code=400, detail="Nom du rôle : 2 à 40 caractères.")
+    taken = {d["label"].lower() for k, d in RP.templates(tid).items() if k != skip} | {"propriétaire"}
+    if label.lower() in taken:
+        raise HTTPException(status_code=400, detail="Un rôle porte déjà ce nom.")
+    return label
+
+
+def _apply_to_accounts(tid: str, key: str, perms: Dict[str, str]) -> int:
+    from features import role_perms as RP
+    q = {"tenant_id": tid, **({"role": RP.CUSTOM_ROLE, "custom_role": key} if key not in RP.BUILTIN else {"role": key})}
+    all_ids = [s["id"] for s in stores(tid)]
+    n = 0
+    for u in _db.users.find(q, {"_id": 0, "email": 1, "branch_ids": 1, "role": 1}):
+        ids = _covered(u, all_ids)
+        _db.users.update_one({"email": u["email"]}, {"$set": {"perms": {sid: dict(perms) for sid in ids},
+                                                             "updated_at": _now()}})
+        n += 1
+    return n
+
+
+def _freeze(tid: str, key: str, old_perms: Dict[str, str]) -> None:
+    from features import role_perms as RP
+    q = {"tenant_id": tid, "perms": {"$exists": False},
+         **({"role": RP.CUSTOM_ROLE, "custom_role": key} if key not in RP.BUILTIN else {"role": key})}
+    all_ids = [s["id"] for s in stores(tid)]
+    for u in _db.users.find(q, {"_id": 0, "email": 1, "branch_ids": 1, "role": 1}):
+        _db.users.update_one({"email": u["email"]}, {"$set": {
+            "perms": {sid: dict(old_perms) for sid in _covered(u, all_ids)}}})
+
+
+@router.post("/api/owner/team-access/roles")
+@SV.records("equipe", token_arg="token")
+def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business_owner"]))):
+    from features import role_perms as RP
+    tid = token.tenant_id
+    label = _role_label(body.label, tid)
+    key = RP.new_role_key()
+    perms = RP.clean_perms(body.perms or {})
+    _db.tenants.update_one({"id": tid}, {"$set": {f"role_defs.{key}": {
+        "label": label, "description": (body.description or "").strip()[:160], "perms": perms,
+        "created_at": _now(), "created_by": token.email}}})
+    _audit("team.role_created", token, label)
+    return {"role": key, **_payload(token)}
+
+
+@router.put("/api/owner/team-access/roles/{key}")
+@SV.records("equipe", token_arg="token")
+def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(["business_owner"]))):
+    from features import role_perms as RP
+    tid = token.tenant_id
+    tpls = RP.templates(tid)
+    if key not in tpls:
+        raise HTTPException(status_code=404, detail="Rôle introuvable.")
+    if body.apply not in ("new", "all"):
+        raise HTTPException(status_code=400, detail="Choisissez à qui appliquer.")
+    sets: Dict[str, Any] = {}
+    if key in RP.BUILTIN:
+        perms = RP.clean_perms(body.perms) if body.perms is not None else dict(RP.DEFAULT_TEMPLATES[key])
+        sets[f"role_defs.{key}.perms"] = perms if body.perms is not None else None
+    else:
+        if body.label is not None:
+            sets[f"role_defs.{key}.label"] = _role_label(body.label, tid, skip=key)
+        if body.description is not None:
+            sets[f"role_defs.{key}.description"] = body.description.strip()[:160]
+        perms = RP.clean_perms(body.perms) if body.perms is not None else tpls[key]["perms"]
+        sets[f"role_defs.{key}.perms"] = perms
+    sets[f"role_defs.{key}.updated_at"] = _now()
+    if body.apply == "new":
+        # « Seulement les nouveaux comptes »: the accounts already in this role
+        # keep what they had (their own permissions, written down now)
+        _freeze(tid, key, tpls[key]["perms"])
+    _db.tenants.update_one({"id": tid}, {"$set": sets})
+    applied = _apply_to_accounts(tid, key, perms) if body.apply == "all" else 0
+    _audit("team.role_updated", token, key)
+    return {"applied": applied, **_payload(token)}
+
+
+@router.delete("/api/owner/team-access/roles/{key}")
+@SV.records("equipe", token_arg="token")
+def delete_role(key: str, token: TokenData = Depends(require_role(["business_owner"]))):
+    from features import role_perms as RP
+    tid = token.tenant_id
+    if key in RP.BUILTIN or key not in RP.templates(tid):
+        raise HTTPException(status_code=404, detail="Rôle introuvable.")
+    used = _db.users.count_documents({"tenant_id": tid, "role": RP.CUSTOM_ROLE, "custom_role": key})
+    if used:
+        raise HTTPException(status_code=400, detail=f"{used} compte{'s' if used > 1 else ''} ont ce rôle : "
+                                                    "changez-leur de rôle d'abord.")
+    _db.tenants.update_one({"id": tid}, {"$unset": {f"role_defs.{key}": ""}})
+    _audit("team.role_deleted", token, key)
     return _payload(token)

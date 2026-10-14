@@ -80,12 +80,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     p = D.dashboard(date_from=(now - dt.timedelta(days=7)).date().isoformat(), date_to=now.date().isoformat(), token_data=ADMIN)
     check("a shorter period counts less", {x["key"]: x for x in p["kpis"]}["ca"]["value"] < 315.0)
     db.tenants.update_one({"id": "c"}, {"$set": {"suspended_at": now}})
-    D._cache.clear()
+    D.invalidate()
     kk = {x["key"]: x for x in D.dashboard(token_data=ADMIN)["kpis"]}
     check("a suspended business leaves Commerces and counts as Impayé", kk["commerces"]["value"] == 3 and kk["impaye"]["value"] == 1
           and kk["impaye"]["suspendus"] == 1 and kk["impaye"]["mrr_at_stake"] == 450)
     db.tenants.update_one({"id": "c"}, {"$unset": {"suspended_at": ""}})
-    D._cache.clear()
+    D.invalidate()
 
     print("\nCharts")
     check("Évolution and the sector donut left the Dashboard", "evolution" not in d and "sectors" not in d)
@@ -97,6 +97,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("…the same figures as Analytics", an["cities"] == d["cities"] and an["revenue"] == d["revenue"] and an["sources"] == d["sources"])
     check("Analytics: six calendar months of « Évolution »", len(an["evolution"]) == 6 and an["evolution"][-1]["commerces"] == 4)
     check("…twelve on request", len(AN.analytics(months=12, token_data=ADMIN)["evolution"]) == 12)
+    # « Évolution » used to count each month from scratch — three queries per
+    # month. It is one pass per collection now, so pin it against the slow way.
+    for n_months in (6, 12):
+        slow = [{"month": a.strftime("%Y-%m"),
+                 "commerces": db.tenants.count_documents({"is_active": {"$ne": False}, "created_at": {"$lt": b}}),
+                 "clients": db.customers.count_documents({**D.LIVE, "created_at": {"$lt": b}}),
+                 "visites": db.visits.count_documents({"visit_time": {"$gte": a, "$lt": b}})}
+                for a, b in A.month_windows(D._now(), n_months)]
+        check(f"« Évolution » on {n_months} months: month by month, the slow count agrees",
+              D._evolution(n_months) == slow)
     check("Analytics: sector donut in French", {s["label"] for s in an["sectors_donut"]} == {"Boulangerie", "Café / Salon de thé", "Restauration / Fast-food"})
     check("plans incl. franchise and trial", {p_["key"]: p_["count"] for p_ in d["plans"]} == {"silver": 1, "gold": 1, "franchise": 1, "essai": 1})
 
@@ -156,7 +166,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
          "trial_ends_at": now - dt.timedelta(days=10), "subscription_started_at": now - dt.timedelta(days=10)},
     ])
     db.users.insert_one({"email": "owner@ex.fr", "role": "business_owner", "tenant_id": "e", "first_name": "Léa", "last_name": "Martin"})
-    D._cache.clear()
+    D.invalidate()
     d2 = D.dashboard(token_data=ADMIN)
     k2 = {x["key"]: x for x in d2["kpis"]}
     s2 = {x["key"]: x for x in d2["status_cards"]}

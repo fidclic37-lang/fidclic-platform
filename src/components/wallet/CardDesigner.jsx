@@ -5,11 +5,24 @@ import {
   Copy, Bell, Rows3, ImagePlus,
 } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { useBranch } from '../../contexts/BranchContext';
+
+// The last preview the server built, kept in this browser per account and
+// establishment (user, 2026-10-13: « PREVIEW OF LOYALTY CARD KYUN LOAD N HO
+// RHA »): the page opens on it at once and swaps in the fresh one when it
+// comes — a slow or failed first answer never leaves the phone empty.
+const pvStore = {
+  read(key) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch (_e) { return null; } },
+  write(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); } catch (_e) { /* full or private: no keep */ } },
+};
 import PassPreview, { PassBack, NEW_CODES } from './PassPreview';
 import FeaturedActionsEditor from './FeaturedActionsEditor';
 import GoogleDesignEditor from './GoogleDesignEditor';
 import GoogleWalletPreview from './GoogleWalletPreview';
 import PosterCropper from '../PosterCropper';
+import { WalletSwitch, VersionSwitch, IphoneFrame, Dots, screenWidth } from './PreviewStage';
+import { fitRect } from '../../lib/fit';
 import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHex, hexToRgb } from './walletLook';
 
 /**
@@ -33,8 +46,17 @@ import { STYLES, GROUPS, IMAGES, ICON_IMAGE, FIELD_VARS, TRANSIT, ALIGN, rgbToHe
  * card fields, for the preview), clientPreview (the web card, drawn by the
  * page), externalDirty + onSaveAll (one save for the page and the design),
  * onDirtyChange(bool), onSaved(). The ref exposes save() and reset().
+ *
+ * variant « v2 » (Carte de fidélité redesign, user 2026-10-11): the editor and
+ * the preview each in their own card, the Apple / Google switch as two big
+ * buttons, and one iPhone at a time chosen with « iOS 27 / iOS 26 et avant »
+ * (the customer's web card is the third view). Same editor, same data.
+ * `inspectorOverride` (v2): another step's content in the left column while
+ * the editor stays mounted, hidden — the live preview keeps showing, and the
+ * design's unsaved edits survive the step change (user, 2026-10-11).
  */
 const STYLE_KEYS = STYLES.map((s) => s.key);
+const PHONE_W = 300;      // the v2 preview's iPhone — a normal iPhone's size (user, 2026-10-12: « thoda chhota »)
 const styleOf = (p) => STYLE_KEYS.find((k) => p && typeof p[k] === 'object');
 const IMG_RE = /^(background|primaryLogo|logo|icon|thumbnail|strip|footer)(@[23]x)?\.png$/;
 const baseOf = (name) => name.replace(/(@[23]x)?\.png$/, '');
@@ -130,7 +152,7 @@ function ColorRow({ label, value, onChange, optional, hint }) {
   );
 }
 
-function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled }) {
+function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled, note }) {
   const [open, setOpen] = useState(false);
   const insert = (v) => onChange({ ...f, value: `${f.value || ''}${v}` });
   return (
@@ -156,6 +178,7 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
         </div>
         <button type="button" disabled={disabled} onClick={onRemove} aria-label="Supprimer le champ" className="shrink-0 rounded p-1 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={14} /></button>
       </div>
+      {note && <p className="mt-1.5 rounded-lg bg-[#FFF7E6] px-2 py-1 text-[11.5px] text-[#92400E]">{note}</p>}
       <button type="button" onClick={() => setOpen((o) => !o)} className="mt-1 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#64748B]">
         Options <ChevronDown size={12} className={open ? 'rotate-180' : ''} />
       </button>
@@ -190,8 +213,37 @@ function FieldRow({ f, group, onChange, onRemove, onMove, first, last, disabled 
 const CardDesigner = forwardRef(function CardDesigner({
   edit = true, types = [], formats = [], actions = [], onActionsChange, onSaved,
   identityPanel = null, previewCard = {}, clientPreview = null, externalDirty = false, onSaveAll, onDirtyChange,
-  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange,
+  googleDesign = {}, onGoogleChange, googleLinks = [], onGoogleLinksChange, variant = 'classic', inspectorOverride = null,
+  onPosterDesign,
 }, ref) {
+  const v2 = variant === 'v2';
+  const [view, setView] = useState('ios27');
+  // v2: the preview follows the scroll beside a long column (Paramètres).
+  // CSS sticky cannot: the layout's <main> is overflow:auto but the window
+  // scrolls, so the preview is moved by hand, within its column.
+  const gridRef = useRef(null);
+  const stageRef = useRef(null);
+  useEffect(() => {
+    if (!v2) return undefined;
+    let raf = 0;
+    const place = () => {
+      raf = 0;
+      const grid = gridRef.current; const st = stageRef.current;
+      if (!grid || !st) return;
+      const g = fitRect(grid);
+      const side = fitRect(st).left - g.left > 40;            // two columns, not stacked
+      const room = grid.offsetHeight - st.offsetHeight;
+      const y = side && room > 0 ? Math.max(0, Math.min(room, 16 - g.top)) : 0;
+      st.style.transform = y ? `translateY(${Math.round(y)}px)` : '';
+    };
+    const on = () => { if (!raf) raf = requestAnimationFrame(place); };
+    window.addEventListener('scroll', on, true);
+    window.addEventListener('resize', on);
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(on) : null;
+    if (ro && gridRef.current) ro.observe(gridRef.current);
+    on();
+    return () => { window.removeEventListener('scroll', on, true); window.removeEventListener('resize', on); ro && ro.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [v2]);
   // Apple and Google build their cards differently: one switch, two editors
   // (user, 2026-10-08), the identity tab and the save shared
   const [wallet, setWallet] = useState('apple');
@@ -204,6 +256,15 @@ const CardDesigner = forwardRef(function CardDesigner({
   const [tab, setTab] = useState('identite');
   const [preview, setPreview] = useState(null);
   const [pvState, setPvState] = useState('');
+  const { user } = useAuth();
+  const { branchId } = useBranch();
+  const pvCacheKey = `fidclic:pv:${user?.tenant_id || ''}:${branchId || ''}`;
+  const previewRef = useRef(null);
+  useEffect(() => { previewRef.current = preview; }, [preview]);
+  useEffect(() => {
+    const kept = pvStore.read(pvCacheKey);
+    if (kept) setPreview((p) => p || kept);
+  }, [pvCacheKey]);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState(null);
   const [crop, setCrop] = useState(null);
@@ -234,12 +295,20 @@ const CardDesigner = forwardRef(function CardDesigner({
     if (!pvKey) return undefined;
     const my = ++seq.current;
     setPvState('loading');
-    const t = setTimeout(() => {
-      ownerAPI.walletPreview({ card: { ...previewCard, featured_actions: actions }, visits: 3,
-        design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
-        .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); } })
-        .catch(() => { if (my === seq.current) setPvState('error'); });
-    }, 450);
+    // A first preview on a server that just started can run out of time
+    // (the free database slow on a big picture, 2026-10-13): asked again, a
+    // warm server answers in a second or two — so one failure retries once.
+    const ask = (retry) => ownerAPI.walletPreview({ card: { ...previewCard, featured_actions: actions }, visits: 3,
+      design: ready ? { pass: d.pass, images: d.images, options: d.options } : {} })
+      .then((r) => { if (my === seq.current) { setPreview(r.data); setPvState(''); pvStore.write(pvCacheKey, r.data); } })
+      .catch(() => {
+        if (my !== seq.current) return;
+        if (retry) setTimeout(() => { if (my === seq.current) ask(false); }, 800);
+        else setPvState(previewRef.current ? 'stale' : 'error');     // the last one stays on screen
+      });
+    // 0.8 s after the last change (2026-10-14: every keystroke built a preview —
+    // Fluid CPU over the plan's limit): typing a name builds one preview, not ten
+    const t = setTimeout(() => ask(true), 800);
     return () => clearTimeout(t);
   }, [pvKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -249,11 +318,14 @@ const CardDesigner = forwardRef(function CardDesigner({
     if (!gKey) return undefined;
     const my = ++gSeq.current;
     setGState('loading');
-    const t = setTimeout(() => {
-      ownerAPI.googlePreview({ card: previewCard, visits: 3 })
-        .then((r) => { if (my === gSeq.current) { setGPreview(r.data); setGState(''); } })
-        .catch(() => { if (my === gSeq.current) setGState('error'); });
-    }, 400);
+    const ask = (retry) => ownerAPI.googlePreview({ card: previewCard, visits: 3 })
+      .then((r) => { if (my === gSeq.current) { setGPreview(r.data); setGState(''); } })
+      .catch(() => {
+        if (my !== gSeq.current) return;
+        if (retry) setTimeout(() => { if (my === gSeq.current) ask(false); }, 800);   // once, as above
+        else setGState('error');
+      });
+    const t = setTimeout(() => ask(true), 800);   // as above: once typing stops
     return () => clearTimeout(t);
   }, [gKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -339,7 +411,19 @@ const CardDesigner = forwardRef(function CardDesigner({
       throw e;
     } finally { setBusy(''); }
   };
-  useImperativeHandle(ref, () => ({ save, reset: () => { setDirty(false); return load(); } }));
+  // A poster design (user, 2026-10-12): the page's « Image de fond » and
+  // « Bande du bas » are this design's too — it draws iOS 27 with ITS
+  // background and footer colour, so the page sets them here as well.
+  const posterDesign = Boolean(ready && style === 'posterGeneric');
+  const footerNow = posterDesign ? (d.pass.footerBackgroundColor || '') : null;
+  useEffect(() => {
+    onPosterDesign && onPosterDesign(posterDesign ? { footer: footerNow } : null);
+  }, [posterDesign, footerNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  useImperativeHandle(ref, () => ({
+    save,
+    reset: () => { setDirty(false); return load(); },
+    setPosterFooter: (rgb) => { if (posterDesign) setPass({ footerBackgroundColor: rgb || undefined }); },
+  }));
   const remove = async () => {
     if (!window.confirm('Revenir au design FidClic ? Ce design sera retiré des cartes de vos clients.')) return;
     setBusy('remove');
@@ -418,22 +502,119 @@ const CardDesigner = forwardRef(function CardDesigner({
 
   const groups = GROUPS[style] || [];
   const imgs = !ready ? [] : [...(IMAGES[style] || []), ...(style === 'posterGeneric' && d.options.fallback !== 'fidclic'
-    ? [d.options.fallback === 'storeCard' || d.options.fallback === 'coupon' ? ['strip', 'Bannière (iOS 26)', '375 × 144 pt'] : ['thumbnail', 'Vignette (iOS 26)', '90 × 90 pt'], ['logo', 'Logo (iOS 26)', '160 × 50 pt max']]
-    : style === 'posterGeneric' ? [['logo', 'Logo (iOS 26, à côté du nom)', '160 × 50 pt max']] : []), ICON_IMAGE]
-    .filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i);
+    ? [d.options.fallback === 'storeCard' || d.options.fallback === 'coupon' ? ['strip', 'Bannière (iOS 26)', '375 × 144 pt'] : ['thumbnail', 'Vignette (iOS 26)', '90 × 90 pt']]
+    : []), ICON_IMAGE]
+    .filter((x, i, a) => a.findIndex((y) => y[0] === x[0]) === i)
+    // the logo and the poster's photo are set once, in « Identité » (user,
+    // 2026-10-12: « images se htao »): the server draws the design with them
+    .filter(([base]) => !['logo', 'primaryLogo'].includes(base) && !(base === 'background' && style === 'posterGeneric'));
   const bc = (ready && (d.pass.barcodes || [])[0]) || { format: 'PKBarcodeFormatQR' };
   const ios27Only = (f) => formats.find((x) => x.format === f)?.ios27_only;
   const styles = preview?.styles || [];
   const fbStyle = styles.find((s2) => s2 !== 'posterGeneric');
   const G_TABS = [['identite', 'Identité', Fingerprint], ['g_couleur', 'Couleur et logo', Palette], ['g_banniere', 'Bannière', ImagePlus],
     ['g_lignes', 'Lignes', Rows3], ['g_code', 'Code-barres', Barcode], ['g_details', 'Détails et liens', ListTree], ['g_notif', 'Notifications', Bell]];
-  const TABS = wallet === 'google' ? G_TABS : [['identite', 'Identité', Fingerprint], ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
-    ['boutons', 'Boutons', MousePointerClick], ['champs', 'Champs', ListTree]];
+  // « Champs » right after Identité: it is the card's text (user, 2026-10-12)
+  const TABS = wallet === 'google' ? G_TABS : [['identite', 'Identité', Fingerprint], ['champs', 'Champs', ListTree],
+    ['style', 'Style', Palette], ['images', 'Images', ImageIcon], ['code', 'Code-barres', Barcode],
+    ['boutons', 'Boutons', MousePointerClick]];
+
+  // ── v2: one iPhone at a time, picked with the version buttons ──
+  const pj = preview?.pass_json;
+  const appleViews = [];
+  if (pj) {
+    const poster = styles.includes('posterGeneric');
+    const newCode = !poster && NEW_CODES.has((pj.barcodes || [])[0]?.format);
+    appleViews.push({ key: 'ios27', title: 'iOS 27', badge: 'Nouveau',
+      sub: poster ? 'Design moderne (Poster)' : 'Même carte que sur iOS 26',
+      render: (w) => <PassPreview pj={pj} style={poster ? 'posterGeneric' : styles[0]} images={preview.images} actions={poster ? preview.actions : []} width={w} /> });
+    const old = poster ? fbStyle : styles[0];
+    if (old) {
+      appleViews.push({ key: 'ios26', title: 'iOS 26 et avant', sub: newCode ? 'Code de secours' : 'Design classique', chrome: 'ios26',
+        render: (w) => <PassPreview pj={pj} style={old} images={preview.images} width={w} legacy={poster || newCode} /> });
+    }
+  }
+  const dotViews = [...appleViews, ...(clientPreview ? [{ key: 'web', title: 'Page web du client', render: () => clientPreview }] : [])];
+  const current = dotViews.find((x) => x.key === view) || dotViews[0];
+  const stageState = wallet === 'google' ? gState : pvState;
+  const stage = (
+    <div ref={stageRef} className="min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6">
+      <header className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[19px] font-bold tracking-[-0.01em] text-[#0B1C3F]">
+            {wallet === 'google' ? 'Aperçu de la carte Google Wallet' : 'Aperçu de la carte sur iPhone'}
+          </h2>
+          <p className="mt-0.5 text-[13px] text-[#64748B]">
+            {wallet === 'google' ? 'Prévisualisez le design de votre carte de fidélité.'
+              : 'Voyez exactement comment votre carte apparaîtra dans Apple Wallet selon la version d’iOS.'}
+          </p>
+        </div>
+        {stageState === 'loading' && <Loader2 size={16} className="mt-1 shrink-0 animate-spin text-[#94A3B8]" />}
+        {stageState === 'error' && <span className="mt-1 shrink-0 text-[11.5px] text-[#B91C1C]">Aperçu indisponible</span>}
+        {stageState === 'stale' && <span className="mt-1 shrink-0 text-[11.5px] text-[#64748B]">Dernier aperçu — mise à jour au prochain changement</span>}
+      </header>
+      {wallet === 'google' ? (
+        gPreview ? (
+          <div className="flex flex-col items-center py-2">
+            <GoogleWalletPreview data={gPreview} width={320} />
+            {!gPreview.configured && (
+              <p className="mt-4 max-w-[360px] text-center text-[11.5px] text-[#B45309]">
+                Les clients pourront ajouter cette carte dès que l’accès émetteur Google Wallet sera validé.
+              </p>
+            )}
+            <p className="mt-2 text-center text-[11px] text-[#94A3B8]">
+              Exemple : {gPreview.sample?.name} — construit par le serveur, comme la vraie carte Google.
+            </p>
+          </div>
+        ) : (
+          <div className="flex h-72 items-center justify-center text-[12.5px] text-[#94A3B8]">{gState === 'error' ? 'Aperçu indisponible' : 'Chargement de l’aperçu…'}</div>
+        )
+      ) : preview && current ? (
+        <>
+          {appleViews.length > 0 && <VersionSwitch views={appleViews} value={current.key} onChange={setView} />}
+          <div className="mt-5">
+            {/* the pass at ~88 % of the screen's width, as Wallet shows it */}
+            <IphoneFrame width={PHONE_W} chrome={current.chrome || 'none'}>
+              {current.key === 'web'
+                ? <div style={{ width: Math.round(screenWidth(PHONE_W) * 0.9) }}>{current.render()}</div>
+                : current.render(Math.round(screenWidth(PHONE_W) * 0.88))}
+            </IphoneFrame>
+            <Dots views={dotViews} value={current.key} onChange={setView} />
+            <p className="mt-2 text-center text-[11.5px] font-semibold text-[#64748B]">{current.title}</p>
+          </div>
+          {current.key !== 'web' && (
+            <>
+              <button type="button" onClick={() => setShowBack((b) => !b)}
+                      className="mx-auto mt-3 flex items-center gap-1 text-[12px] font-semibold text-[#2F6BFF]">
+                Au dos de la carte <ChevronDown size={14} className={showBack ? 'rotate-180' : ''} />
+              </button>
+              {showBack && <div className="mx-auto mt-2 max-w-[340px]"><PassBack pj={pj} style={styles[0]} /></div>}
+              <p className="mt-2 text-center text-[11px] text-[#94A3B8]">
+                Exemple : {preview.sample?.name}, {preview.sample?.visits} visites — construit par le serveur, comme le vrai pass.
+              </p>
+            </>
+          )}
+        </>
+      ) : (
+        <div className="flex h-72 items-center justify-center text-[12.5px] text-[#94A3B8]">Chargement de l’aperçu…</div>
+      )}
+    </div>
+  );
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-      {/* ── the inspector ── */}
-      <div className="min-w-0">
+    <div ref={gridRef} className={v2 ? 'grid items-start gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]' : 'grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]'}>
+      {/* ── the inspector (or, in v2, another step's content over it) ── */}
+      {v2 && inspectorOverride && <div className="min-w-0 space-y-4">{inspectorOverride}</div>}
+      <div className={v2 ? `min-w-0 rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)] sm:p-6${inspectorOverride ? ' hidden' : ''}` : 'min-w-0'}>
+        {v2 && (
+          <header className="mb-4">
+            <h2 className="text-[19px] font-bold tracking-[-0.01em] text-[#0B1C3F]">Design de la carte</h2>
+            <p className="mt-0.5 text-[13px] text-[#64748B]">Personnalisez l’apparence de votre carte de fidélité.</p>
+          </header>
+        )}
+        {v2 ? (
+          <div className="mb-4"><WalletSwitch value={wallet} onChange={(k) => { setWallet(k); setTab('identite'); }} /></div>
+        ) : (
         <div className="mb-3 inline-flex rounded-xl bg-[#F1F5F9] p-1">
           {[['apple', 'Apple Wallet'], ['google', 'Google Wallet']].map(([k, label]) => (
             <button key={k} type="button" onClick={() => { setWallet(k); setTab('identite'); }}
@@ -442,6 +623,7 @@ const CardDesigner = forwardRef(function CardDesigner({
             </button>
           ))}
         </div>
+        )}
         {wallet === 'apple' && ready && (
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <input className={`${inputCls} max-w-[240px] font-semibold`} value={d.name} disabled={!edit}
@@ -509,10 +691,7 @@ const CardDesigner = forwardRef(function CardDesigner({
                   </select>
                 </div>
               )}
-              <div>
-                <Lbl hint="à côté du logo, sur la carte iOS 26">Texte du logo</Lbl>
-                <input className={inputCls} value={d.pass.logoText || ''} placeholder="ex. ROYAL TRIM" onChange={(e) => setPass({ logoText: e.target.value })} />
-              </div>
+              {/* « Texte du logo » is gone: the shop's name is set in Identité (user, 2026-10-12) */}
               <div className="rounded-xl border border-[#E6EEFB] px-3 py-1">
                 <ColorRow label="Couleur du texte" value={d.pass.foregroundColor} onChange={(v) => setPass({ foregroundColor: v })} />
                 <ColorRow label="Couleur de fond" value={d.pass.backgroundColor} onChange={(v) => setPass({ backgroundColor: v })}
@@ -541,6 +720,12 @@ const CardDesigner = forwardRef(function CardDesigner({
           )}
 
           {tab === 'images' && (
+            <>
+            <p className="mb-3 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] px-3 py-2 text-[12px] text-[#475569]">
+              Le logo et l’image de fond (avec « Ajuster ») se règlent dans{' '}
+              <button type="button" onClick={() => setTab('identite')} className="font-semibold text-[#2F6BFF]">Identité</button> :
+              une seule fois, pour toutes les versions de la carte.
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {imgs.map(([base, label, size]) => {
                 const n = imgName(d.shown, base);
@@ -562,6 +747,7 @@ const CardDesigner = forwardRef(function CardDesigner({
                 );
               })}
             </div>
+            </>
           )}
 
           {tab === 'code' && (
@@ -615,6 +801,26 @@ const CardDesigner = forwardRef(function CardDesigner({
               {[...groups, ['backFields', 'Au dos (⋯ › Détails du pass)', 99]].map(([g, label, max]) => {
                 const rows = block[g] || [];
                 const set = (next) => setBlock({ [g]: next });
+                // what the card really shows (user, 2026-10-12: « ek field hai lekin
+                // usme changes krne se kuch dikhta hi nhi ») — read off the preview
+                const pjb = pvState ? null : (preview?.pass_json || {})[style];
+                const shown = pjb ? new Set(['headerFields', 'primaryFields', 'secondaryFields', 'auxiliaryFields', 'footerFields', 'backFields']
+                  .flatMap((k) => (pjb[k] || []).map((x) => x.key))) : null;
+                const keyOf = (x, i) => String(x.key || '').trim().replace(/[^A-Za-z0-9_]/g, '_') || `${g.slice(0, -6)}${i + 1}`;
+                const why = (x, i) => {
+                  if (!shown || shown.has(keyOf(x, i))) return null;
+                  const v = String(x.value || '');
+                  if (!v.trim() && !String(x.label || '').trim()) return 'Champ vide : il n’apparaît pas.';
+                  if (/\{points\}/i.test(v) && previewCard.programme === 'stamps') return 'Pas sur la carte : programme Tampons, les points ne s’affichent pas (Paramètres › Type de programme).';
+                  if (/\{(tampons|jauge|stamps)\}/i.test(v) && previewCard.programme && previewCard.programme !== 'stamps') return 'Pas sur la carte : programme à points, sans tampons.';
+                  if (/\{(offre|offer)\}/i.test(v)) return 'Visible seulement pendant une campagne.';
+                  if (/\{(recompense|reward)\}/i.test(v)) return 'Pas sur la carte : la récompense est réglée « Au dos » ou « Non » (Paramètres › Récompense).';
+                  return 'Pas affiché sur la carte.';
+                };
+                // what FidClic adds to this group, set elsewhere — in the footer row
+                // when the primary one already holds two fields (2026-10-12)
+                const added = ['primaryFields', 'footerFields'].includes(g) && pjb ? (pjb[g] || []).filter((x) => ['jauge', 'reward'].includes(x.key)
+                  && !rows.some((r, i) => keyOf(r, i) === x.key)) : [];
                 return (
                   <div key={g}>
                     <div className="mb-1.5 flex items-center justify-between">
@@ -625,12 +831,22 @@ const CardDesigner = forwardRef(function CardDesigner({
                     </div>
                     <div className="space-y-1.5">
                       {rows.map((f, i) => (
-                        <FieldRow key={f.key} f={f} group={g} first={i === 0} last={i === rows.length - 1}
+                        <FieldRow key={f.key} f={f} group={g} first={i === 0} last={i === rows.length - 1} note={why(f, i)}
                                   onChange={(nf) => set(rows.map((x, j) => (j === i ? nf : x)))}
                                   onRemove={() => set(rows.filter((_, j) => j !== i))}
                                   onMove={(dir) => { const n = [...rows]; [n[i], n[i + dir]] = [n[i + dir], n[i]]; set(n); }} />
                       ))}
-                      {!rows.length && <p className="text-[11.5px] text-[#94A3B8]">Aucun champ.</p>}
+                      {added.map((x) => (
+                        <div key={x.key} className="rounded-xl border border-dashed border-[#B9CCF5] bg-[#F8FAFF] px-3 py-2">
+                          <p className="text-[12px] text-[#334155]">
+                            <span className="font-semibold">{x.label}</span>{' '}<span translate="no">{String(x.value)}</span>
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-[#64748B]">
+                            Ajouté par FidClic, sur la carte de chaque client. Réglage : Paramètres › {x.key === 'jauge' ? 'Type de programme et Forme des tampons' : 'Récompense'}.
+                          </p>
+                        </div>
+                      ))}
+                      {!rows.length && !added.length && <p className="text-[11.5px] text-[#94A3B8]">Aucun champ.</p>}
                     </div>
                     {g === 'backFields' && (
                       <p className="mt-1.5 text-[11.5px] text-[#94A3B8]">
@@ -657,6 +873,7 @@ const CardDesigner = forwardRef(function CardDesigner({
       </div>
 
       {/* ── the live preview ── */}
+      {v2 ? stage : (
       <div className="min-w-0 rounded-2xl bg-[#F7FAFF] p-4">
         <div className="mb-3 flex items-center justify-between">
           <p className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[#0B1C3F]"><Smartphone size={14} /> Aperçu en direct</p>
@@ -732,6 +949,7 @@ const CardDesigner = forwardRef(function CardDesigner({
           <div className="flex h-64 items-center justify-center text-[12.5px] text-[#94A3B8]">Chargement de l’aperçu…</div>
         )}
       </div>
+      )}
 
       {crop && (
         <PosterCropper file={crop.file} outW={crop.w} outH={crop.h} guides={crop.base === 'background' && style === 'posterGeneric'}

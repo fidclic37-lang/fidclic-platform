@@ -6,8 +6,8 @@ spécial, Relance panier, Heures creuses and Nouveaux produits, data included):
 
     birthday       Anniversaire               time   the day of the birthday (± X days)
     tier_up        Atteinte d'un palier       event  the scan that moves the client up
-    welcome        Bienvenue                  event  the signup
-    near_reward    Proche de la récompense    event  the scan that leaves X visits to go
+    welcome        Bienvenue                  event  the card added to Apple / Google Wallet
+    near_reward    Récompense bientôt dispo.  event  the scan that leaves X points / tampons to the next reward
     referral       Parrainage                 event  a parrainage reward is earned
     geo            Géolocalisation            event  the card sees the client near a shop
     google_review  Avis Google                event  after a visit
@@ -53,6 +53,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
+from features import store_cards as _SC  # one card per establishment (multi-store)
 
 router = APIRouter(tags=["automations"])
 _db = None
@@ -62,12 +63,16 @@ EDITORS = ["business_owner", "administrateur"]
 TITLE_MAX = 80                 # the palier mockups (user, 2026-10-11): 80 / 350
 BODY_MAX = 350
 BUTTON_MAX = 30
-NAME_MAX = 60
+NAME_MAX = 100                 # the Avis Google mockups (user, 2026-10-11): name 100, description 500
+DESC_MAX = 500
+READY_IMAGES = ("/automations/avis-google.png",)   # the Avis Google default (public/)
 
 
 def init(db):
     global _db
     _db = db
+    from features import custom_rules as CR
+    CR.init(db)
     try:
         _db.automation_log.create_index([("tenant_id", 1), ("automation_id", 1), ("customer_id", 1)])
         _db.automation_log.create_index("id", unique=True)
@@ -96,6 +101,21 @@ def _aware(value: Any) -> Optional[datetime]:
 def _paris(at: datetime) -> datetime:
     from features import period as P
     return P.local(at)
+
+
+def _loc(at: datetime, sched: Optional[Dict[str, Any]]) -> datetime:
+    """Wall clock in the automation's « Fuseau horaire » (Paris unless chosen)."""
+    if not (sched or {}).get("tz"):
+        return _paris(at)
+    from features import custom_rules as CR
+    return CR.local(at, sched)
+
+
+def _from_loc(d: date, hh: int, mm: int, sched: Optional[Dict[str, Any]]) -> datetime:
+    if not (sched or {}).get("tz"):
+        return _from_paris(d, hh, mm)
+    from features import custom_rules as CR
+    return CR.from_local(d, hh, mm, sched)
 
 
 def _from_paris(d: date, hh: int, mm: int) -> datetime:
@@ -129,27 +149,33 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "button": "Voir ma récompense",
     },
     "welcome": {
-        "label": "Bienvenue", "sub": "Accueillez chaque client dès son inscription.",
-        "icon": "hand", "tone": "blue", "kind": "event", "trigger_label": "Inscription du client",
+        # Bienvenue (mockups 2026-10-11): sent when the card lands in Apple /
+        # Google Wallet — never at the web signup (user: « sirf Wallet add pe »)
+        "label": "Bienvenue", "sub": "Accueillez chaque client dès qu'il ajoute sa carte dans Wallet.",
+        "icon": "hand", "tone": "blue", "kind": "event", "trigger_label": "Après l'ajout de la carte dans Wallet",
         "push_kind": "welcome", "google": "automation",
         "title": "Bienvenue chez {nom_commerce} 🎉",
         "body": "Merci {prénom} ! Votre carte de fidélité est prête : à chaque visite, vous vous rapprochez de votre récompense.",
         "button": "Voir ma carte",
     },
     "near_reward": {
-        "label": "Proche de la récompense", "sub": "Prévenez vos clients quand la récompense est toute proche.",
-        "icon": "gift", "tone": "violet", "kind": "event", "trigger_label": "À X visites de la récompense",
+        # Récompense bientôt disponible (mockups 2026-10-11): X points (or
+        # tampons) before the nearest reward — the card's, or the next palier's
+        "label": "Récompense bientôt disponible", "sub": "Prévenez vos clients quand leur prochaine récompense est presque atteinte.",
+        "icon": "gift", "tone": "violet", "kind": "event", "trigger_label": "Seuil presque atteint",
         "push_kind": "near_reward", "google": "near_reward",
-        "title": "Plus que {visites_restantes} {visite_s}, {prénom} !",
-        "body": "Encore {visites_restantes} {visite_s} chez {nom_commerce} et {prochaine_récompense} est à vous.",
+        "title": "Plus que quelques points ! 🎁",
+        "body": "Plus que {points_restants} avant votre prochaine récompense, {prénom} : {récompense} !",
         "button": "Voir ma récompense",
     },
+    # Parrainage (mockups 2026-10-11): ONE automation, the parrain's message
+    # and the filleul's (FILLEUL_DEFAULT), sent when the points are credited
     "referral": {
         "label": "Parrainage", "sub": "Remerciez parrains et filleuls quand la récompense est gagnée.",
-        "icon": "users", "tone": "green", "kind": "event", "trigger_label": "Récompense de parrainage gagnée",
+        "icon": "users", "tone": "green", "kind": "event", "trigger_label": "Un client parraine un ami",
         "push_kind": "parrainage", "google": "parrainage",
-        "title": "Parrainage réussi 🎉",
-        "body": "Votre ami {filleul} {visite_ami} chez {nom_commerce} : +{points_gagnés} points.",
+        "title": "Merci pour votre parrainage ! 🎁",
+        "body": "Votre ami a rejoint notre établissement grâce à vous. Merci ! Profitez de votre récompense de parrainage. 🎉",
         "button": "Voir mes points",
     },
     "geo": {
@@ -164,8 +190,8 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "label": "Avis Google", "sub": "Demandez un avis à vos clients après leur visite.",
         "icon": "star", "tone": "violet", "kind": "event", "trigger_label": "Après une visite",
         "push_kind": "google_review", "google": "automation",
-        "title": "Votre avis compte ⭐",
-        "body": "Bonjour {prénom}, votre expérience chez {nom_commerce} nous intéresse. Laissez-nous un avis, cela nous aide beaucoup !",
+        "title": "Votre avis compte ! ⭐",
+        "body": "Merci pour votre visite !\nSi vous avez apprécié votre expérience chez nous, laissez-nous un avis sur Google. Cela nous aide énormément ! 🙏",
         "button": "Laisser un avis",
     },
     "inactive": {
@@ -186,6 +212,9 @@ SCENARIOS: Dict[str, Dict[str, Any]] = {
         "title": "", "body": "", "button": "En savoir plus",
     },
 }
+FILLEUL_DEFAULT = {"title": "Bienvenue et merci ! 🎉",
+                   "body": "Votre première visite est validée ! Vos points de parrainage ont été ajoutés à votre carte. 🎁"}
+SIDES = ("parrain", "filleul")
 ORDER = ["custom", "birthday", "tier_up", "welcome", "near_reward", "referral", "geo", "google_review", "inactive"]
 CUSTOM_TYPES = ("visits", "after_signup", "after_visit", "date")
 DATE_MODES = ("once", "weekly", "monthly", "yearly")
@@ -194,15 +223,22 @@ DATE_MODES = ("once", "weekly", "monthly", "yearly")
 def is_timed(scenario: str, trigger: Optional[Dict[str, Any]] = None) -> bool:
     """Sent at an hour (daily run / tick) rather than on an event."""
     kind = SCENARIOS[scenario]["kind"]
-    return kind == "time" or (kind == "custom" and (trigger or {}).get("type") == "date")
+    if scenario == "custom" and (trigger or {}).get("type") in CR_V2:
+        from features import custom_rules as CR
+        return CR.is_timed(trigger or {})
+    return kind == "time" or (scenario in ("custom", "google_review") and (trigger or {}).get("type") == "date")
+
+
+# « Nouvelle automatisation » (mockups 2026-10-11): features/custom_rules
+CR_V2 = ("on_date", "recurring", "action", "loyalty", "behavior", "geo", "other")
 # Removed by the user (2026-10-11) — with their data.
 REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products", "special_event"}
 
 VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
-    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": [], "near_reward": ["visites_restantes", "visite_s"],
-    "referral": ["filleul", "parrain", "points_gagnés", "visite_ami"], "geo": ["établissement"],
-    "google_review": [], "inactive": ["jours_absence"], "custom": [],
+    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["points_restants", "tampons_restants", "tampons", "récompense", "visites_restantes", "visite_s"],
+    "referral": ["filleul", "parrain", "points_gagnés", "visite_ami", "récompense", "lien", "amis_parraines"], "geo": ["établissement"],
+    "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": ["prénom", "nom", "points", "récompense", "nom_commerce", "date", "montant", "nombre_visites"],
 }
 VARIABLES["geo"] = ["établissement", "distance", "offre"]
 LINK_TYPES = ("card", "rewards", "offer", "google_review", "url")
@@ -227,7 +263,31 @@ def as_list(value: Any, allowed: Iterable[str]) -> List[str]:
         return []
     vals = value if isinstance(value, (list, tuple)) else [value]
     return [v for v in dict.fromkeys(str(x) for x in vals) if v in allowed]
-GR_FREQS = ("every_scan", "days", "once")
+GR_FREQS = ("every_scan", "days", "once", "smart")
+# Avis Google (updated mockups, 2026-10-11): after the visit (délai), at the
+# N-th visit (« Client fidèle »), or on a date
+GR_TYPES = ("after_visit", "loyal", "date")
+# « Type de client » = the card's statut (user, 2026-10-11 — replaces « Fréquence de visite »)
+CLIENT_TYPES = {"new": ("bronze",), "regular": ("silver",), "loyal": ("gold", "vip")}
+# Client inactif (mockups, 2026-10-11): the five « Condition d'inactivité » tiles,
+# and the filters of its Ciblage — usable by every automation.
+INACTIVE_DAYS = (30, 60, 90, 120, 180)
+# « Fréquence d'achat passée »: visits per month while the client came, [lo, hi)
+PAST_FREQS = {"<1": (0, 1), "1-2": (1, 2.5), "3-4": (2.5, 4.5), ">4": (4.5, None)}
+# « Programme de fidélité »: the card's statut
+TIERS = ("bronze", "silver", "gold", "vip")
+# « Dernière offre reçue » (an offer campaign): never / under 30 days / over 30 days
+LAST_OFFER = ("none", "<30", ">30")
+# « Origine du client »: services/sources keys, « none » = Non renseigné
+from services.sources import SOURCES as _SOURCES, UNKNOWN as _UNKNOWN, normalize as _source_key
+ORIGINS = tuple(_SOURCES) + (_UNKNOWN,)
+# « Répartition de l'audience » — the channel groups of the mockup
+CHANNEL_GROUPS = {"qr_store": "store", "referral": "other", "import": "other", "autre": "other", _UNKNOWN: "other"}
+RECENT_CONTACT_DAYS = 30        # « Exclure les clients déjà contactés récemment »
+DAILY_LIMIT_MAX = 100000
+IMPACT_WINDOW_DAYS = 15         # a client « réactivé » = a visit within 15 days (fidclic_impact)
+IMPACT_MIN_SENDS = 20           # the shop's own history counts from 20 measured sends
+IMPACT_MIN_SHOPS = 3            # the sector's pool, anonymous, from 3 shops (campaign_learning)
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +303,15 @@ def _default_trigger(scenario: str) -> Dict[str, Any]:
         "tier_up": {"condition": "points", "threshold": 200, "repeat": "each", "min_days": 7,
                     "custom_tiers": False, "tiers": []},
         "welcome": {},
+        # a row with « threshold » (X points / tampons, mockups 2026-10-11) is the
+        # new rule; one with only « visits_left » keeps the old one until re-saved
         "near_reward": {"visits_left": 1},
-        "referral": {"side": "parrain"},
+        "referral": {"sides": ["parrain", "filleul"]},
         # Géolocalisation (mockups 2026-10-11): the gap per client, the weather
         # asked (none = any), the establishments watched (none = all)
         "geo": {"cooldown_days": 7, "weather": [], "stores": []},
-        "google_review": {"frequency": "days", "every_days": 30, "stop_after_click": True},
+        "google_review": {"type": "after_visit", "frequency": "once", "every_days": 30, "stop_after_click": True,
+                          "visits": 5, "date": None},
         "inactive": {"days": 30, "repeat": "once", "every_days": 30},
         "custom": {"type": "after_visit", "visits": 5, "visits_repeat": "once", "cooldown_days": 0,
                    "date_mode": "once", "date": None, "weekday": 0, "monthday": 1},
@@ -279,6 +342,10 @@ def new_doc(tid: str, scenario: str, **over: Any) -> Dict[str, Any]:
         "schedule": _default_schedule(scenario),
         "created_at": now, "updated_at": now, "last_run_at": None, "store_ids": None,
     }
+    if scenario == "referral":
+        doc["message_filleul"] = {"title": FILLEUL_DEFAULT["title"], "body": FILLEUL_DEFAULT["body"], "image_url": None,
+                                  "button": {"enabled": False, "label": meta["button"], "link_type": "card",
+                                             "offer_id": None, "url": None}}
     for k, v in over.items():
         if isinstance(v, dict) and isinstance(doc.get(k), dict):
             doc[k] = {**doc[k], **v}
@@ -348,12 +415,8 @@ def migrate(tid: str) -> None:
                                  "button": {"enabled": True, "label": "Laisser un avis",
                                             "link_type": "google_review", "offer_id": None, "url": None}}))
     ref_on = bool((_db.referral_config.find_one({"tenant_id": tid}) or {}).get("enabled"))
-    docs.append(new_doc(tid, "referral", name="Parrainage — parrain", status="active" if ref_on else "paused",
-                        trigger={"side": "parrain"}))
-    docs.append(new_doc(tid, "referral", name="Parrainage — filleul", status="active" if ref_on else "paused",
-                        trigger={"side": "filleul"},
-                        message={"title": "Parrainage 🎉",
-                                 "body": "Merci d'être venu grâce à {parrain} : +{points_gagnés} points de parrainage."}))
+    # one automation, both messages, the mockup's words (user, 2026-10-11)
+    docs.append(new_doc(tid, "referral", name="Parrainage", status="active" if ref_on else "paused"))
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "geo_enabled": 1, "geo_cooldown_days": 1}) or {}
     docs.append(new_doc(tid, "geo", status="active" if tenant.get("geo_enabled") else "paused",
                         trigger={"cooldown_days": int(tenant.get("geo_cooldown_days") or 7)}))
@@ -392,10 +455,52 @@ def _visits_30(tid: str, cid: str, at: datetime) -> int:
 
 
 def _store_people(tid: str, stores: List[str]) -> Optional[set]:
+    """The MEMBERS of these establishments (their home store): each store's
+    automations write to its own clients only (multi-store PR5)."""
     if not stores:
         return None
     from features import store_scope as S
-    return S.customer_ids(S.Scope(tenant_id=tid, ids=list(stores)))
+    return S.home_customer_ids(S.Scope(tenant_id=tid, ids=list(stores)))
+
+
+def _open_store_ids(tid: str) -> List[str]:
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    return [b["id"] for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+
+
+def split_per_store(tid: str) -> int:
+    """Automatisations par établissement (user, 2026-10-12): with several
+    establishments, every automation belongs to ONE. One made for the whole
+    shop (or for several) becomes one per establishment — the same words, the
+    same switch — so every store's clients keep receiving it; the first store
+    keeps the row (and its history)."""
+    stores = _open_store_ids(tid)
+    if len(stores) < 2:
+        return 0
+    if not _db.automations.find_one({"tenant_id": tid, "$or": [{"store_ids": None}, {"store_ids": []},
+                                                               {"store_ids.1": {"$exists": True}}]}, {"_id": 1}):
+        return 0                                   # already one establishment each (the usual case)
+    made = 0
+    for row in list(_db.automations.find({"tenant_id": tid}, {"_id": 0})):
+        ids = [x for x in (row.get("store_ids") or []) if x in stores]
+        if row.get("store_ids") and len(ids) == 1 and len(row["store_ids"]) == 1:
+            continue
+        targets = ids or stores
+        _db.automations.update_one({"id": row["id"]}, {"$set": {"store_ids": [targets[0]]}})
+        for sid in targets[1:]:
+            copy = {**row, "id": str(uuid.uuid4()), "store_ids": [sid], "split_from": row["id"],
+                    "created_at": row.get("created_at") or _now(), "last_run_at": None}
+            _db.automations.insert_one(copy)
+            made += 1
+    return made
+
+
+def _menu_store(tid: str, token: TokenData, request: Any = None) -> Optional[str]:
+    """The establishment chosen in the menu (several stores), else None."""
+    if len(_open_store_ids(tid)) < 2:
+        return None
+    from features import store_scope as S
+    return S.resolve(token, request).single
 
 
 def _segment_ids(tid: str, key: Optional[str], at: datetime) -> Optional[set]:
@@ -406,6 +511,80 @@ def _segment_ids(tid: str, key: Optional[str], at: datetime) -> Optional[set]:
         return {c["id"] for c in CP._segment_people(tid, key, at, None)}
     except Exception:
         return set()
+
+
+def visits_per_month(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[float]:
+    """« Fréquence d'achat passée »: visits per month between the signup and
+    the last visit (a month at least) — None for a client who never came."""
+    n = int(cust.get("visits") or 0)
+    if n <= 0:
+        return None
+    first = _aware(cust.get("created_at"))
+    last = _aware(cust.get("last_visit_date")) or at or _now()
+    span = (last - first).days if first and last and last > first else 0
+    return n / max(1.0, span / 30.0)
+
+
+def origin_of(cust: Dict[str, Any]) -> str:
+    """« Origine du client »: the signup channel, as services/sources reads it."""
+    return _source_key(cust.get("acquisition_source")) or _UNKNOWN
+
+
+def _offer_history(tid: str) -> Tuple[Dict[str, datetime], set]:
+    """Who received an offer (Campagnes › Offre / Push Wallet offers): the last
+    time each client got one, and who holds one still running."""
+    last: Dict[str, datetime] = {}
+    live: set = set()
+    try:
+        from features import campaign_kinds as K
+        at = _now()
+        for c in _db.campaigns.find({"tenant_id": tid, "status": "sent", "kind": {"$in": list(K.OFFER_KINDS)}},
+                                    {"_id": 0}):
+            sent = _aware(c.get("sent_at"))
+            on = K.is_live(c, at)
+            for cid in c.get("recipient_ids") or []:
+                if sent and (cid not in last or sent > last[cid]):
+                    last[cid] = sent
+                if on:
+                    live.add(cid)
+    except Exception:
+        pass
+    try:
+        for m in _db.push_wallet_log.find({"tenant_id": tid}, {"_id": 0, "customer_id": 1, "sent_at": 1}):
+            t = _aware(m.get("sent_at"))
+            cid = m.get("customer_id")
+            if cid and t and (cid not in last or t > last[cid]):
+                last[cid] = t
+    except Exception:
+        pass
+    return last, live
+
+
+def _recent_ids(tid: str, at: datetime) -> set:
+    """« Déjà contactés récemment »: a campaign, an offer or an automation in
+    the last RECENT_CONTACT_DAYS days (features/resend_guard draws the line)."""
+    try:
+        from features import resend_guard as RG
+        ids = [c["id"] for c in _db.customers.find({"tenant_id": tid}, {"_id": 0, "id": 1})]
+        return set(RG.recently_contacted(tid, ids, at, days=RECENT_CONTACT_DAYS))
+    except Exception:
+        return set()
+
+
+def excluded(tid: str, tg: Dict[str, Any], cust: Dict[str, Any], at: datetime, cache: Dict[str, Any]) -> bool:
+    """The « Exclusions » of the Ciblage — on top of the base and the filters."""
+    ex = tg.get("exclusions") or {}
+    if ex.get("recent_contact"):
+        if "recent" not in cache:
+            cache["recent"] = _recent_ids(tid, at)
+        if cust["id"] in cache["recent"]:
+            return True
+    if ex.get("active_offer"):
+        if "offers" not in cache:
+            cache["offers"] = _offer_history(tid)
+        if cust["id"] in cache["offers"][1]:
+            return True
+    return False
 
 
 def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[datetime] = None,
@@ -437,6 +616,8 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
         n = int(cust.get("visits") or 0)
         if n < span[0] or (span[1] is not None and n > span[1]):
             return False
+    if excluded(tid, tg, cust, at, cache):
+        return False
     # « Tous mes clients » = everyone: no filter applies (as in Campagnes, 2026-10-10);
     # « filtered » (géolocalisation) = everyone, through the filters
     f = {} if mode == "all" else (tg.get("filters") or {})
@@ -464,9 +645,24 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
         last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
         if not within((at - last).days if last else None, [LAST_VISIT[x] for x in lv]):
             return False
-    fr = as_list(f.get("frequency"), FREQS)
-    if fr and not within(int(cust.get("visits") or 0), [FREQS[x] for x in fr]):
+    # « Fréquence de visite » was removed (user, 2026-10-11): an old value no longer filters
+    ct = as_list(f.get("client_type"), CLIENT_TYPES)
+    if ct and (cust.get("tier") or "bronze").lower() not in {t for k in ct for t in CLIENT_TYPES[k]}:
         return False
+    n_visits = int(cust.get("visits") or 0)
+    if f.get("visits_min") not in (None, "") and n_visits < int(f["visits_min"]):
+        return False
+    if f.get("visits_max") not in (None, "") and n_visits > int(f["visits_max"]):
+        return False
+    if f.get("age_min") not in (None, "") or f.get("age_max") not in (None, ""):
+        from services import customer_fields as CF
+        age = CF.age_of(cust.get("birth_date"))
+        if age is None:
+            return False
+        if f.get("age_min") not in (None, "") and age < int(f["age_min"]):
+            return False
+        if f.get("age_max") not in (None, "") and age > int(f["age_max"]):
+            return False
     if f.get("stores"):
         key = ("stores", tuple(sorted(f["stores"])))
         if key not in cache:
@@ -484,6 +680,61 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
             except Exception:
                 cache[key] = set()             # no shop position: nobody is « within »
         if cust["id"] not in cache[key]:
+            return False
+    # « Statut client » (Récompense bientôt disponible): the shop's Règles clients
+    acts = [str(x) for x in (f.get("activity") or []) if x]
+    if acts:
+        if "rules" not in cache:
+            from features import customer_rules as R
+            cache["rules"] = R.load(tid)
+        from features import clients_page as CPg
+        if CPg.status_of(cust, at, cache["rules"]) not in acts:
+            return False
+    since = f.get("signed_since")
+    if since:
+        joined = _aware(cust.get("created_at"))
+        try:
+            if not joined or _paris(joined).date() < date.fromisoformat(str(since)[:10]):
+                return False
+        except ValueError:
+            pass
+    # Nouvelle automatisation › Ciblage (2026-10-11)
+    pts = int(cust.get("points") or 0)
+    if f.get("points_min") not in (None, "") and pts < int(f["points_min"]):
+        return False
+    if f.get("points_max") not in (None, "") and pts > int(f["points_max"]):
+        return False
+    paid = float(cust.get("total_amount_paid") or 0)
+    if f.get("spent_min") not in (None, "") and paid < float(f["spent_min"]):
+        return False
+    if f.get("spent_max") not in (None, "") and paid > float(f["spent_max"]):
+        return False
+    if f.get("last_visit_days") not in (None, ""):
+        last = _aware(cust.get("last_visit_date"))
+        idle = (at - last).days if last else None
+        n = int(f["last_visit_days"])
+        if f.get("last_visit_op") == "less":
+            if idle is None or idle > n:
+                return False
+        elif idle is not None and idle < n:
+            return False                          # « il y a plus de N jours » (never came = counts)
+    # Client inactif's filters (mockups, 2026-10-11) — every automation reads them
+    pf = as_list(f.get("past_freq"), PAST_FREQS)
+    if pf and not within(visits_per_month(cust, at), [PAST_FREQS[x] for x in pf], half_open=True):
+        return False
+    tiers = as_list(f.get("tiers"), TIERS)
+    if tiers and (cust.get("tier") or "bronze").lower() not in tiers:
+        return False
+    orig = as_list(f.get("origin"), ORIGINS)
+    if orig and origin_of(cust) not in orig:
+        return False
+    lo = as_list(f.get("last_offer"), LAST_OFFER)
+    if lo:
+        if "offers" not in cache:
+            cache["offers"] = _offer_history(tid)
+        got = cache["offers"][0].get(cust["id"])
+        bucket = "none" if not got else ("<30" if (at - got).days < 30 else ">30")
+        if bucket not in lo:
             return False
     return True
 
@@ -558,15 +809,15 @@ def slots_of(sched: Dict[str, Any]) -> List[Tuple[Tuple[int, int], Tuple[int, in
 def next_window(sched: Dict[str, Any], at: datetime) -> datetime:
     """The first moment at or after `at` inside the days, hours, dates and
     holidays of an event scenario. A window that never opens answers far away."""
-    loc = _paris(at)
+    loc = _loc(at, sched)
     best: Optional[datetime] = None
     for i in range(-1, 15):                   # yesterday: a night slot may still run
         d = (loc + timedelta(days=i)).date()
         if not _day_ok(sched, d):
             continue
         for (fh, fm), (th, tm) in slots_of(sched):
-            start = _from_paris(d, fh, fm)
-            end = _from_paris(d, th, tm) if (th, tm) > (fh, fm) else _from_paris(d + timedelta(days=1), th, tm)
+            start = _from_loc(d, fh, fm, sched)
+            end = _from_loc(d, th, tm, sched) if (th, tm) > (fh, fm) else _from_loc(d + timedelta(days=1), th, tm, sched)
             if (th, tm) == (23, 59):
                 end += timedelta(seconds=59)
             if end < at:
@@ -587,7 +838,7 @@ def ended(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
     if not raw:
         return False
     try:
-        return _paris(at or _now()).date() > date.fromisoformat(str(raw)[:10])
+        return _loc(at or _now(), row.get("schedule")).date() > date.fromisoformat(str(raw)[:10])
     except ValueError:
         return False
 
@@ -596,7 +847,7 @@ def running(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
     """Active and inside its period (not « Terminée », already started)."""
     if row.get("status") != "active" or ended(row, at):
         return False
-    return _valid_on(row.get("schedule") or {}, _paris(at or _now()).date())
+    return _valid_on(row.get("schedule") or {}, _loc(at or _now(), row.get("schedule")).date())
 
 
 def status_of(row: Dict[str, Any], at: Optional[datetime] = None) -> str:
@@ -650,10 +901,47 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
         left = int(ctx.get("visits_left") or 1)
         out.update({"visites_restantes": left, "visite_s": "visite" if left == 1 else "visites",
                     "visits_left": left})
+        # a row saved before the mockups (« X visites ») speaks the new words too:
+        # its seuil is in visits, and the reward is the card's
+        word = "visite" if left == 1 else "visites"
+        out["points_restants"] = out["tampons_restants"] = f"{left} {word}"
+        out["récompense"] = out["recompense"] = reward
+        if ctx.get("remaining") is not None:
+            unit = reward_unit(tpl)
+            n = int(ctx["remaining"])
+            word = {"points": "point" if n == 1 else "points", "tampons": "tampon" if n == 1 else "tampons"}.get(unit, unit)
+            out["points_restants"] = out["tampons_restants"] = f"{n} {word}"
+            out["récompense"] = out["recompense"] = ctx.get("reward") or reward
+        per_stamp = max(1, int(tpl.get("visits_per_stamp") or 1))
+        out["tampons"] = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0)) // per_stamp
+    if scenario == "custom":
+        out["récompense"] = out["recompense"] = reward
+        today = _paris(_now()).date()
+        months = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+                  "novembre", "décembre"]
+        out["date"] = f"{today.day} {months[today.month - 1]}"
+        out["montant"] = f"{float(cust.get('total_amount_paid') or 0):.2f} €".replace(".", ",")
+        out["nombre_visites"] = int(cust.get("visits") or 0)
+        if ctx.get("offre"):
+            out["offre"] = ctx["offre"]
+        if ctx.get("palier"):
+            out["palier"] = ctx["palier"]
     if scenario == "referral":
         out.update({"visite_ami": "est revenu" if ctx.get("kind") == "next" else "est venu",
                     "filleul": ctx.get("filleul") or "votre ami", "parrain": ctx.get("parrain") or "votre parrain",
                     "points_gagnés": ctx.get("points") or 0, "points_gagnes": ctx.get("points") or 0})
+        # mockup chips « Récompense », « Lien », « Nombre d'amis parrainés » (validated ones)
+        # the reward in words — points, tampons or the shop's own offer (2026-10-13)
+        pts = int(ctx.get("points") or 0)
+        got = ctx.get("reward") or (f"{pts} point{'s' if pts > 1 else ''}" if pts else "")
+        out["récompense"] = out["recompense"] = got or "votre récompense"
+        try:
+            from services import card_owner as CO
+            out["lien"] = CO.owner_url(public_base(), cust.get("barcode_id") or "")
+        except Exception:
+            out["lien"] = ""
+        out["amis_parraines"] = _db.referral_redemptions.count_documents(
+            {"referrer_customer_id": cust.get("id"), "referrer_pending": False})
     if scenario == "geo":
         out["établissement"] = ctx.get("store") or ""
         out["etablissement"] = ctx.get("store") or ""
@@ -662,15 +950,36 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
         d = ctx.get("distance_m")
         out["distance"] = f"{int(round(float(d) / 10.0) * 10)} m" if d is not None else "deux pas"
         out["offre"] = _live_offer(cust.get("tenant_id") or ctx.get("tenant_id") or "") or "notre offre du moment"
+    if scenario == "google_review":
+        b = ctx.get("branch_id")
+        tid = cust.get("tenant_id") or ctx.get("tenant_id") or ""
+        branch = next((x for x in _branches(tid) if x["id"] == b), None) if tid else None
+        tenant_name = (_db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1}) or {}).get("name") or ""
+        out["établissement"] = out["etablissement"] = (branch or {}).get("name") or tenant_name
+        out["lien_avis"] = f"{public_base()}/api/avis/{cust.get('barcode_id') or ''}" + (f"?b={b}" if b else "")
     if scenario == "inactive":
         last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
         out["jours_absence"] = (_now() - last).days if last else ""
+    if scenario in ("inactive", "welcome"):
+        # mockup chips « Offre » and « Lien »: the offer running now, the client's card
+        out["offre"] = _live_offer(cust.get("tenant_id") or ctx.get("tenant_id") or "") or "notre offre du moment"
+        try:
+            from services import card_owner as CO
+            out["lien"] = CO.owner_url(public_base(), cust.get("barcode_id") or "")
+        except Exception:
+            out["lien"] = ""
     return out
 
 
-def _target_url(tid: str, row: Dict[str, Any], cust: Dict[str, Any]) -> Optional[str]:
+def _target_url(tid: str, row: Dict[str, Any], cust: Dict[str, Any],
+                ctx: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Where the action button goes — any link the owner put."""
-    btn = ((row.get("message") or {}).get("button") or {})
+    msg = row.get("message") or {}
+    if row.get("scenario") == "referral" and (ctx or {}).get("side") == "filleul" and row.get("message_filleul"):
+        msg = row["message_filleul"]                  # the filleul's own button
+    if row.get("scenario") == "custom" and (ctx or {}).get("reminder") and row.get("message_reminder"):
+        msg = row["message_reminder"]
+    btn = (msg.get("button") or {})
     if not btn.get("enabled"):
         return None
     from services import card_owner as CO
@@ -679,7 +988,8 @@ def _target_url(tid: str, row: Dict[str, Any], cust: Dict[str, Any]) -> Optional
     if t == "url":
         return safe_url(btn.get("url"))
     if t == "google_review":
-        return f"{public_base()}/api/avis/{serial}"
+        b = (ctx or {}).get("branch_id")
+        return f"{public_base()}/api/avis/{serial}" + (f"?b={b}" if b else "")
     if t == "rewards":                              # « Page Récompenses »: the card's offers and rewards
         return CO.owner_url(public_base(), serial, path="/offres")
     if t == "offer" and btn.get("offer_id"):
@@ -697,6 +1007,7 @@ def safe_url(raw: Optional[str]) -> Optional[str]:
     return s if (s and len(s) <= 500 and _URL.match(s)) else None
 
 
+@_SC.customer_store("cust")
 def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any],
              at: datetime) -> Optional[Dict[str, Any]]:
     """One client, one message. Returns what was said, or None."""
@@ -706,12 +1017,16 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     extra = _extra(scenario, cust, ctx, tpl)
     msg = row.get("message") or {}
+    if scenario == "referral" and ctx.get("side") == "filleul" and row.get("message_filleul"):
+        msg = row["message_filleul"]                  # one automation, each side its own words
+    if scenario == "custom" and ctx.get("reminder") and row.get("message_reminder"):
+        msg = row["message_reminder"]                 # Annuelle › « Rappel avant la date »
     # a palier of its own (paliers personnalisés) speaks its own words
     raw_title = ctx.get("tier_title") or msg.get("title") or meta["title"]
     raw_body = ctx.get("tier_body") or msg.get("body") or meta["body"]
     title = _render(raw_title, cust, tenant, extra)[:160]
     body = _render(raw_body, cust, tenant, extra)[:600]
-    target = _target_url(tid, row, cust)
+    target = _target_url(tid, row, cust, ctx)
     log_id = str(uuid.uuid4())
     click = f"{public_base()}/api/auto/c/{log_id}" if target else None
     btn = (msg.get("button") or {})
@@ -722,6 +1037,10 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
            "clicked_at": None, "status": "sent"}
     if ctx.get("cycle"):
         log["cycle"] = ctx["cycle"]
+    if ctx.get("year"):
+        log["year"] = ctx["year"]
+    if ctx.get("reminder"):
+        log["reminder"] = True
     if ctx.get("level") is not None:
         log["level"] = ctx["level"]
     _db.automation_log.insert_one(dict(log))
@@ -748,7 +1067,7 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
         # the Wallet card: « Dernier message » + the button's link on the pass
         news = {"log_id": log_id, "title": title, "body": body, "label": label, "url": click, "at": at,
                 "image_url": msg.get("image_url")}
-        if scenario == "referral":
+        if scenario == "referral" and (ctx or {}).get("reward_kind", "points") == "points":
             # rides on the points field's own banner (« … Vous avez maintenant %@ points. »):
             # one notification, not two; the card page still shows it with its button
             news["pass"] = False
@@ -770,6 +1089,7 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
 # events
 # ---------------------------------------------------------------------------
 def _active(tid: str, scenario: str) -> List[Dict[str, Any]]:
+    split_per_store(tid)
     return list(_db.automations.find({"tenant_id": tid, "scenario": scenario, "status": "active"},
                                      {"_id": 0}).sort("order", 1))
 
@@ -850,11 +1170,76 @@ def _tier_level(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[s
     return {"level": level, "label": palier_label(cond, level), "tier": None}
 
 
+# Récompense bientôt disponible (mockups, 2026-10-11) -------------------------
+def reward_unit(tpl: Dict[str, Any]) -> str:
+    """The seuil's unit, from the card's programme: « points » (points per euro
+    / per visit), « tampons » (stamps), « € » (cagnotte: paliers only)."""
+    from features import loyalty_card as LC
+    prog = LC._programme(tpl)
+    return "tampons" if prog == "stamps" else ("€" if prog == "cashback" else "points")
+
+
+@_SC.customer_store("cust")
+def reward_targets(tid: str, cust: Dict[str, Any], tpl: Optional[Dict[str, Any]] = None,
+                   cycle: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The rewards ahead of this client, in the seuil's unit (user's answer:
+    « jo pehle aaye »): the card's own reward — redeemable, its cycle restarting
+    at each redemption — and the next palier, when the owner wrote a reward
+    for it. Each: {kind, key, remaining, reward}. Nothing already reached."""
+    from features import loyalty_card as LC
+    tpl = tpl if tpl is not None else (_db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {})
+    prog = LC._programme(tpl)
+    per_stamp = max(1, int(tpl.get("visits_per_stamp") or 1))
+    visits = int(cust.get("visits") or 0)
+    in_cycle = max(0, visits - int(cust.get("visits_at_last_redemption") or 0))
+    cyc = cycle or "first"
+    out: List[Dict[str, Any]] = []
+    if prog in ("points_euro", "points_visit"):
+        goal = int(tpl.get("reward_points") or 100)
+        left = goal - int(cust.get("points") or 0)
+        if left > 0:
+            out.append({"kind": "card", "key": f"card:{cyc}", "remaining": left,
+                        "reward": (tpl.get("reward_description") or "").strip() or "votre récompense"})
+    elif prog == "stamps":
+        goal = max(1, int(tpl.get("reward_threshold_stamps") or 10))
+        left = goal - in_cycle // per_stamp
+        if left > 0:
+            out.append({"kind": "card", "key": f"card:{cyc}", "remaining": left,
+                        "reward": (tpl.get("reward_description") or "").strip() or "votre récompense"})
+    # the next palier — measured as tier_of measures it (points, or visits on a stamps card)
+    value = visits if prog == "stamps" else int(cust.get("points") or 0)
+    # the first palier above with a reward written (one without is not a reward)
+    for t in LC.tiers_for(tid):
+        if t["min"] > value and t.get("reward"):
+            gap = t["min"] - value
+            left = -(-gap // per_stamp) if prog == "stamps" else gap      # visits → tampons
+            out.append({"kind": "tier", "key": f"tier:{t['key']}:{cyc}", "remaining": left,
+                        "reward": t["reward"], "tier": t["key"], "tier_label": t["label"]})
+            break
+    out.sort(key=lambda x: (x["remaining"], 0 if x["kind"] == "card" else 1))
+    return out
+
+
+def nearest_reward(tid: str, cust: Dict[str, Any], tpl: Optional[Dict[str, Any]] = None,
+                   cycle: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    got = reward_targets(tid, cust, tpl, cycle)
+    return got[0] if got else None
+
+
 def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str, Any], at: datetime) -> bool:
     """The scenario's own rule, on top of the targeting."""
     sc, tr = row["scenario"], row.get("trigger") or {}
     q = {"tenant_id": tid, "automation_id": row["id"], "customer_id": cust["id"]}
-    if sc == "near_reward":
+    if sc == "near_reward" and tr.get("threshold") is not None:
+        # X points / tampons before the nearest reward, once per reward and cycle
+        hit = nearest_reward(tid, cust, None, ctx.get("cycle"))
+        if not hit or not (0 < hit["remaining"] <= int(tr["threshold"])):
+            return False
+        if _db.automation_log.find_one({**q, "cycle": hit["key"]}) or \
+                _db.automation_queue.find_one({**q, "ctx.cycle": hit["key"]}):
+            return False
+        ctx.update({"cycle": hit["key"], "remaining": hit["remaining"], "reward": hit["reward"]})
+    elif sc == "near_reward":                     # saved before the mockups: X visits
         if int(ctx.get("visits_left") or -1) != int(tr.get("visits_left") or 1):
             return False
         cyc = ctx.get("cycle")
@@ -862,11 +1247,14 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
                 _db.automation_queue.find_one({**q, **({"ctx.cycle": cyc} if cyc else {})}):
             return False
     elif sc == "referral":
-        if (tr.get("side") or "parrain") != ctx.get("side"):
-            return False
+        sides = tr.get("sides") if isinstance(tr.get("sides"), list) else [tr.get("side") or "parrain"]
+        if ctx.get("side") not in sides:
+            return False                          # that side's message is switched off
     elif sc == "welcome":
+        if ctx.get("event") != "wallet":
+            return False                         # only the card landing in a Wallet (2026-10-11)
         if _db.automation_log.find_one(q) or _db.automation_queue.find_one(q):
-            return False
+            return False                         # once per client: a re-add or a 2nd phone says nothing
     elif sc == "geo":
         from features import geo_automation as GA
         want = set(tr.get("stores") or [])
@@ -882,19 +1270,31 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
         if not GA.weather_ok(tid, tr, spot, at):
             return False
     elif sc == "google_review":
-        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "google_review_url": 1, "google_reviews_enabled": 1}) or {}
-        if not (tenant.get("google_review_url") and tenant.get("google_reviews_enabled")):
+        t = gr_type(tr)
+        if t == "loyal" and int(cust.get("visits") or 0) != int(tr.get("visits") or 0):
+            return False                         # « Client fidèle »: at the N-th visit
+        if t in ("after_visit", "loyal") and ctx.get("event", "visit") != "visit":
             return False
+        if t == "date" and ctx.get("event") != "date":
+            return False
+        # the établissement visited speaks with ITS Google link (2+ établissements)
+        branch = ctx.get("branch_id") if t != "date" else None
+        if not branch and t == "date":
+            branch = _last_branch(tid, cust)
+        if not review_link(tid, branch):
+            return False
+        ctx["branch_id"] = branch
         if tr.get("stop_after_click", True) and _db.google_review_clicks.find_one({"tenant_id": tid,
                                                                                   "customer_id": cust["id"]}):
-            return False
+            return False                         # already opened the review page: not asked again
         if _db.automation_queue.find_one(q):
             return False
         last = _db.automation_log.find_one(q, sort=[("sent_at", -1)])
-        freq = tr.get("frequency") if tr.get("frequency") in GR_FREQS else "days"
-        if freq == "once" and last:
+        freq = gr_freq(tr)
+        if freq in ("once", "smart") and last:
             return False
-        if freq == "days" and last and at - _aware(last["sent_at"]) < timedelta(days=max(1, int(tr.get("every_days") or 30))):
+        every = 1 if tr.get("frequency") == "every_scan" else max(1, int(tr.get("every_days") or 30))
+        if freq == "days" and last and at - _aware(last["sent_at"]) < timedelta(days=every):
             return False
     elif sc == "tier_up":
         if _db.automation_queue.find_one(q):
@@ -914,6 +1314,12 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
         ctx.update({"level": hit["level"], "palier": hit["label"],
                     **({"tier_title": hit["tier"].get("title"), "tier_body": hit["tier"].get("body"),
                         "tier_reward": hit["tier"].get("reward")} if hit.get("tier") else {})})
+    elif sc == "custom" and tr.get("type") in CR_V2:
+        from features import custom_rules as CR
+        if not CR.eligible(tid, row, cust, ctx, at) or not CR.rules_ok(row, cust, at, ctx):
+            return False
+        if tr.get("type") == "geo" and (row.get("schedule") or {}).get("window") and not in_window(row["schedule"], at):
+            return False                         # outside the plage horaire: a passer-by does not wait
     elif sc == "custom":
         t = tr.get("type")
         want = {"visits": "visit", "after_visit": "visit", "after_signup": "signup"}.get(t)
@@ -938,6 +1344,81 @@ def _eligible(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str
             if cool and last and at - _aware(last["sent_at"]) < timedelta(days=cool):
                 return False
     return True
+
+
+def gr_type(tr: Dict[str, Any]) -> str:
+    return tr.get("type") if tr.get("type") in GR_TYPES else "after_visit"
+
+
+def gr_freq(tr: Dict[str, Any]) -> str:
+    """Une seule fois / Répétition régulière / Envoi intelligent (« after
+    each visit » before the mockups = every day at most)."""
+    f = tr.get("frequency")
+    return "days" if f == "every_scan" else (f if f in GR_FREQS else "days")
+
+
+def _branches(tid: str) -> List[Dict[str, Any]]:
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    return [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+
+
+def review_link(tid: str, branch_id: Optional[str] = None) -> Optional[str]:
+    """The Google review page a client is sent to: with 2+ établissements,
+    the one they visited (each has its own, required); else the shop's link
+    (Insights › Avis Google). None = not configured → nothing is sent."""
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "google_review_url": 1, "google_reviews_enabled": 1,
+                                           "branches": 1}) or {}
+    if not t.get("google_reviews_enabled"):
+        return None
+    branches = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    if len(branches) > 1:
+        b = next((x for x in branches if x["id"] == branch_id), None)
+        return (b or {}).get("google_review_url") or None
+    return t.get("google_review_url") or (branches[0].get("google_review_url") if branches else None) or None
+
+
+def _last_branch(tid: str, cust: Dict[str, Any]) -> Optional[str]:
+    v = _db.visits.find_one({"tenant_id": tid, "customer_id": cust["id"], "branch_id": {"$nin": [None, ""]}},
+                            {"_id": 0, "branch_id": 1}, sort=[("visit_time", -1)])
+    return (v or {}).get("branch_id") or cust.get("branch_id")
+
+
+def usual_hour(tid: str, cust: Dict[str, Any]) -> int:
+    """« Envoi intelligent »: the hour this client usually comes (their last
+    visits, Paris), else the shop's busiest hour — always between 8h and 20h."""
+    hours = []
+    for v in _db.visits.find({"tenant_id": tid, "customer_id": cust["id"]}, {"_id": 0, "visit_time": 1}
+                             ).sort("visit_time", -1).limit(20):
+        t = _aware(v.get("visit_time"))
+        if t:
+            hours.append(_paris(t).hour)
+    if len(hours) >= 3:
+        h = sorted(hours)[len(hours) // 2]
+    else:
+        h = 10
+        try:
+            from features import campaigns_page as CP
+            best = CP.best_slot(tid)
+            if best:
+                h = int(best["from"][:2])
+        except Exception:
+            pass
+    return max(8, min(19, h))
+
+
+def smart_due(tid: str, cust: Dict[str, Any], sched: Dict[str, Any], earliest: datetime) -> datetime:
+    """The first day (ticked, inside the period) at the client's usual hour,
+    not before `earliest`."""
+    h = usual_hour(tid, cust)
+    loc = _paris(earliest)
+    for i in range(0, 15):
+        d = (loc + timedelta(days=i)).date()
+        if not _day_ok(sched, d):
+            continue
+        cand = _from_paris(d, h, 0)
+        if cand >= earliest:
+            return cand
+    return next_window(sched, earliest)
 
 
 def date_due(tr: Dict[str, Any], d: date) -> bool:
@@ -966,6 +1447,33 @@ def _delay(tr: Dict[str, Any]) -> timedelta:
     return timedelta(minutes=v) if unit == "minutes" else timedelta(days=v) if unit == "days" else timedelta(hours=v)
 
 
+def _sent_on(row: Dict[str, Any], day: date) -> int:
+    """Messages this automation sent on that Paris day (its daily limit)."""
+    a = _from_paris(day, 0, 0)
+    return _db.automation_log.count_documents({"automation_id": row["id"], "status": {"$ne": "deferred"},
+                                               "sent_at": {"$gte": a, "$lt": a + timedelta(days=1)}})
+
+
+def _over_limit(row: Dict[str, Any], due: datetime) -> Optional[datetime]:
+    """« Limite d'envoi quotidienne » of an event automation: when that day is
+    full (sent + already waiting for it), the first moment of the next day's
+    plage — nobody is dropped (user, 2026-10-11). None = room that day."""
+    sched = row.get("schedule") or {}
+    limit = sched.get("daily_limit")
+    if not limit:
+        return None
+    moved = None
+    for _ in range(60):                       # the first day with room, two months at most
+        day = _paris(due).date()
+        a = _from_paris(day, 0, 0)
+        waiting = _db.automation_queue.count_documents({"automation_id": row["id"],
+                                                        "due_at": {"$gte": a, "$lt": a + timedelta(days=1)}})
+        if _sent_on(row, day) + waiting < int(limit):
+            return moved
+        due = moved = next_window(sched, _from_paris(day + timedelta(days=1), 0, 0))
+    return moved
+
+
 def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, Any]] = None,
          at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """An event happened to a client: every active automation of that scenario
@@ -987,8 +1495,18 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
                 if not matches(tid, row, cust, at, cache) or not _eligible(tid, row, cust, ctx, at):
                     continue
                 due = at + _delay(row.get("trigger") or {})
-                if scenario != "geo":
+                v2 = scenario == "custom" and (row.get("trigger") or {}).get("type") in CR_V2
+                if v2:
+                    from features import custom_rules as CR
+                    due = CR.send_moment(row, due)             # « à une date / heure spécifique »
+                if v2 and (row.get("trigger") or {}).get("type") == "geo":
+                    pass                                     # a passer-by does not wait (checked in _eligible)
+                elif scenario == "google_review" and gr_freq(row.get("trigger") or {}) == "smart":
+                    due = smart_due(tid, cust, row.get("schedule") or {}, due)   # the client's own time
+                elif scenario != "geo":
                     due = next_window(row.get("schedule") or {}, due)
+                if scenario != "geo":
+                    due = _over_limit(row, due) or due      # the day is full: the next one
                 if due <= at + timedelta(seconds=30):
                     said = _deliver(tid, row, cust, ctx, at)
                     if said:
@@ -1003,6 +1521,15 @@ def fire(scenario: str, tid: str, cust: Dict[str, Any], ctx: Optional[Dict[str, 
     except Exception as exc:
         print(f"automations: fire {scenario} failed ({exc})")
     return out
+
+
+def wallet_added(tid: str, cust: Dict[str, Any], wallet: str) -> List[Dict[str, Any]]:
+    """The card just landed in a Wallet (Apple: the device registered the
+    pass; Google: its « save » callback): the Bienvenue goes, once per client."""
+    if not tid or not cust or not cust.get("id"):
+        return []
+    fresh = _db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust
+    return fire("welcome", tid, fresh, {"event": "wallet", "wallet": wallet})
 
 
 # ---------------------------------------------------------------------------
@@ -1034,11 +1561,18 @@ def _birthday_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
 
 
 def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
+    """Clients past the inactivity, not told for this absence yet (or due a
+    relance), not already waiting in today's spread — the most recently
+    lapsed first: they are the likeliest to come back, and a daily limit
+    keeps them."""
     tr = row.get("trigger") or {}
     days = max(1, int(tr.get("days") or 30))
     cutoff = at - timedelta(days=days)
+    waiting = set(_db.automation_queue.distinct("customer_id", {"automation_id": row["id"]}))
     out = []
     for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}):
+        if c["id"] in waiting:
+            continue
         last = _aware(c.get("last_visit_date")) or _aware(c.get("created_at"))
         if not last or last > cutoff:
             continue
@@ -1051,7 +1585,21 @@ def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
             if tr.get("repeat") == "every" and at - sent < timedelta(days=max(1, int(tr.get("every_days") or 30))):
                 continue
         out.append(c)
+    out.sort(key=lambda c: _aware(c.get("last_visit_date")) or _aware(c.get("created_at")) or at, reverse=True)
     return out
+
+
+def _spread(sched: Dict[str, Any], at: datetime, n: int) -> List[datetime]:
+    """« Limite d'envoi par jour »: the day's sends shared out evenly from now
+    to the end of the plage horaire (« lisser l'envoi sur la journée »)."""
+    if n <= 1 or not sched.get("window"):
+        return [at] * n
+    th, tm = _hm(sched.get("window_to"), (20, 0))
+    end = _from_paris(_paris(at).date(), th, tm)
+    if end <= at + timedelta(minutes=15):
+        return [at] * n
+    step = (end - at) / n
+    return [at + step * i for i in range(n)]
 
 
 def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, Any]:
@@ -1073,16 +1621,32 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         if not row or not cust or not _plan_ok(row["tenant_id"]) or not running(row, at) \
                 or not matches(row["tenant_id"], row, cust, at):
             continue
+        limit = (row.get("schedule") or {}).get("daily_limit")
+        if limit and not is_timed(row["scenario"], row.get("trigger")) \
+                and _sent_on(row, _paris(at).date()) >= int(limit):
+            # today is full: the next day with room, at its plage (nobody dropped)
+            nxt = next_window(row.get("schedule") or {}, _from_paris(_paris(at).date() + timedelta(days=1), 0, 0))
+            _db.automation_queue.insert_one({**q, "due_at": _over_limit(row, nxt) or nxt})
+            continue
+        if row["scenario"] == "custom" and (row.get("trigger") or {}).get("type") in CR_V2:
+            from features import custom_rules as CR
+            if not CR.rules_ok(row, cust, at, q.get("ctx")):
+                continue                          # the limit / anti-doublon filled up meanwhile
+        if row["scenario"] == "inactive":         # came back while waiting: nothing to say
+            last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
+            if not last or at - last < timedelta(days=max(1, int((row.get("trigger") or {}).get("days") or 30))):
+                continue
         try:
             if _deliver(row["tenant_id"], row, cust, q.get("ctx") or {}, at):
                 summary["queued_sent"] += 1
         except Exception:
             summary["errors"] += 1
     # 2. the time scenarios, once a day each, at their hour
-    for row in list(_db.automations.find({"status": "active", "scenario": {"$in": ["birthday", "inactive", "custom"]}},
+    for row in list(_db.automations.find({"status": "active",
+                                          "scenario": {"$in": ["birthday", "inactive", "custom", "google_review"]}},
                                          {"_id": 0})):
-        if row["scenario"] == "custom" and (row.get("trigger") or {}).get("type") != "date":
-            continue
+        if row["scenario"] in ("custom", "google_review") and (row.get("trigger") or {}).get("type") != "date":
+            continue                               # (« Nouvelle automatisation »: run_custom below)
         tid = row["tenant_id"]
         try:
             sched = row.get("schedule") or {}
@@ -1094,21 +1658,76 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             hh, mm = _send_hour(tid, sched)
             if strict and at < _from_paris(loc_today, hh, mm):
                 continue
-            if row["scenario"] == "custom":
+            if row["scenario"] in ("custom", "google_review"):
                 if not date_due(row.get("trigger") or {}, loc_today):
                     continue
                 people = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
             else:
                 people = _birthday_due(tid, row, at) if row["scenario"] == "birthday" else _inactive_due(tid, row, at)
             cache: Dict[str, Any] = {}
+            chosen = []
             for c in people:
-                if matches(tid, row, c, at, cache) and _deliver(tid, row, c, {}, at):
-                    summary["time_sent"] += 1
+                ctx: Dict[str, Any] = {"event": "date"}
+                if not matches(tid, row, c, at, cache):
+                    continue
+                if row["scenario"] == "google_review" and not _eligible(tid, row, c, ctx, at):
+                    continue                       # its link, the click, « une seule fois »…
+                chosen.append((c, ctx))
+            limit = sched.get("daily_limit")
+            if limit:
+                chosen = chosen[:int(limit)]       # the rest are still due tomorrow
+            # with a limit and the 15-minute tick, the day's sends are spread
+            # over the plage horaire; without the tick they all go now
+            times = _spread(sched, at, len(chosen)) if limit and strict else [at] * len(chosen)
+            for (c, ctx), when in zip(chosen, times):
+                if when <= at + timedelta(seconds=30):
+                    if _deliver(tid, row, c, ctx, at):
+                        summary["time_sent"] += 1
+                else:
+                    _db.automation_queue.insert_one({"id": str(uuid.uuid4()), "tenant_id": tid,
+                                                     "automation_id": row["id"], "customer_id": c["id"],
+                                                     "due_at": when, "ctx": ctx, "created_at": at})
+                    summary.setdefault("spread", 0)
+                    summary["spread"] += 1
             _db.automations.update_one({"id": row["id"]}, {"$set": {"last_run_at": at}})
         except Exception as exc:
             summary["errors"] += 1
             print(f"automations: {row.get('id')} failed ({exc})")
+    run_custom(at, strict, summary)
     return summary
+
+
+def run_custom(at: datetime, strict: bool, summary: Dict[str, Any]) -> None:
+    """« Nouvelle automatisation » on a clock (date, récurrent, comportement,
+    autre › inactivité / anniversaire / 1re visite): once a day each, at its
+    hour in its own « Fuseau horaire »."""
+    from features import custom_rules as CR
+    rows = [r for r in _db.automations.find({"status": "active", "scenario": "custom",
+                                             "trigger.type": {"$in": list(CR_V2)}}, {"_id": 0})
+            if CR.is_timed(r.get("trigger") or {})]
+    for row in rows:
+        tid = row["tenant_id"]
+        try:
+            sched = row.get("schedule") or {}
+            if not _plan_ok(tid) or not running(row, at):
+                continue
+            today = CR.local(at, sched).date()
+            last = _aware(row.get("last_run_at"))
+            if last and CR.local(last, sched).date() == today:
+                continue
+            hh, mm = _hm(sched.get("hour"), (10, 0))
+            if strict and at < CR.from_local(today, hh, mm, sched):
+                continue
+            cache: Dict[str, Any] = {}
+            for c, ctx in CR.due_people(tid, row, at):
+                if not matches(tid, row, c, at, cache) or not CR.rules_ok(row, c, at, ctx):
+                    continue
+                if _deliver(tid, row, c, ctx, at):
+                    summary["time_sent"] += 1
+            _db.automations.update_one({"id": row["id"]}, {"$set": {"last_run_at": at}})
+        except Exception as exc:
+            summary["errors"] += 1
+            print(f"automations: custom {row.get('id')} failed ({exc})")
 
 
 # ---------------------------------------------------------------------------
@@ -1201,12 +1820,15 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     reach = len({x["customer_id"] for x in logs})
     opened = _opened(tid, logs) if logs else 0
     clicks = sum(1 for x in logs if x.get("clicked_at"))
-    out = {k: r.get(k) for k in ("id", "scenario", "name", "status", "trigger", "message", "targeting", "schedule",
-                                 "store_ids")}
+    out = {k: r.get(k) for k in ("id", "scenario", "name", "description", "status", "trigger", "message", "targeting",
+                                 "schedule", "store_ids", "message_filleul", "message_reminder")}
     out["status"] = status_of(r)                  # « Terminée » once its period is over
     if r["scenario"] == "geo":
         from features import geo_automation as GA
         out["results"] = GA.results(tid, r["id"])
+    if r["scenario"] == "custom" and (r.get("trigger") or {}).get("type") in CR_V2:
+        from features import custom_rules as CR
+        out["next_dates"] = CR.next_dates(r, CR.local(_now(), r.get("schedule")).date())
     out.update({"label": meta["label"], "sub": meta["sub"], "icon": meta["icon"], "tone": meta["tone"],
                 "kind": "time" if is_timed(r["scenario"], r.get("trigger")) else "event",
                 "trigger_text": trigger_text(r), "schedule_text": schedule_text(r),
@@ -1273,10 +1895,33 @@ def tier_text(tr: Dict[str, Any]) -> str:
     return (f"À {label}" if rep_ == "first" else f"Tous les {label}") + gap
 
 
+def review_text(tr: Dict[str, Any]) -> str:
+    """« Après la visite · 2 heures après · une seule fois » — the list's words."""
+    t, f = gr_type(tr), gr_freq(tr)
+    if t == "loyal":
+        n = int(tr.get("visits") or 0)
+        head = f"Client fidèle · à la {n}{'re' if n == 1 else 'e'} visite"
+    elif t == "date":
+        try:
+            on = date.fromisoformat(str(tr.get("date") or "")[:10])
+            head = f"Le {on.day}{'er' if on.day == 1 else ''} {MONTHS_FR[on.month - 1]} {on.year}"
+        except ValueError:
+            head = "Date à choisir"
+    else:
+        head = "Après la visite" + (f" · {_span(tr)} après" if int(tr.get("delay_value") or 0) else "")
+    n = int(tr.get("every_days") or 30)
+    tail = {"once": "une seule fois", "smart": "envoi intelligent",
+            "days": "au plus une fois par jour" if n == 1 else f"au plus tous les {n} jours"}[f]
+    return f"{head} · {tail}"
+
+
 def trigger_text(r: Dict[str, Any]) -> str:
     sc, tr = r["scenario"], r.get("trigger") or {}
     if sc == "tier_up":
         return tier_text(tr)
+    if sc == "custom" and tr.get("type") in CR_V2:
+        from features import custom_rules as CR
+        return CR.trigger_text(tr, r.get("schedule"))
     if sc == "custom":
         return custom_text(tr)
     if sc == "birthday":
@@ -1284,6 +1929,12 @@ def trigger_text(r: Dict[str, Any]) -> str:
         return "Le jour même" if off == 0 else (f"{-off} jour{'s' if off < -1 else ''} avant" if off < 0
                                                  else f"{off} jour{'s' if off > 1 else ''} après")
     if sc == "near_reward":
+        if tr.get("threshold") is not None:
+            n = int(tr["threshold"])
+            unit = reward_unit(_db.card_templates.find_one({"tenant_id": r.get("tenant_id")}, {"_id": 0}) or {}) \
+                if r.get("tenant_id") else (tr.get("unit") or "points")
+            word = {"points": "point" if n == 1 else "points", "tampons": "tampon" if n == 1 else "tampons"}.get(unit, unit)
+            return f"Seuil presque atteint · {n} {word} avant la récompense"
         n = int(tr.get("visits_left") or 1)
         return f"À {n} visite{'s' if n > 1 else ''} de la récompense"
     if sc == "inactive":
@@ -1291,12 +1942,13 @@ def trigger_text(r: Dict[str, Any]) -> str:
         return f"Après {n} jours sans visite" + (" · puis tous les " + str(int(tr.get('every_days') or 30)) + " j"
                                                 if tr.get("repeat") == "every" else "")
     if sc == "referral":
-        return "Au parrain" if (tr.get("side") or "parrain") == "parrain" else "Au filleul"
+        sides = tr.get("sides") if isinstance(tr.get("sides"), list) else [tr.get("side") or "parrain"]
+        who = " et ".join({"parrain": "au parrain", "filleul": "au filleul"}[x] for x in SIDES if x in sides) or "à personne"
+        return f"Un client parraine un ami · points crédités · message {who}"
+    if sc == "welcome":
+        return "Après l'ajout de la carte dans Wallet"
     if sc == "google_review":
-        f = tr.get("frequency")
-        n = int(tr.get("every_days") or 30)
-        return ("Après chaque visite" if f == "every_scan" else "Une seule fois" if f == "once"
-                else "Au plus une fois par jour" if n == 1 else f"Au plus tous les {n} jours")
+        return review_text(tr)
     if sc == "geo":
         n = int(tr.get("cooldown_days") or 7)
         base = "Entrée dans la zone · " + ("au plus une fois par jour" if n == 1 else f"au plus tous les {n} jours")
@@ -1318,6 +1970,9 @@ def _fr_date(raw: Any) -> str:
 
 def schedule_text(r: Dict[str, Any]) -> str:
     s = r.get("schedule") or {}
+    if r.get("scenario") == "custom" and (r.get("trigger") or {}).get("type") in CR_V2:
+        from features import custom_rules as CR
+        return CR.rules_text(s)
     days = {"all": "Tous les jours", "weekdays": "Jours ouvrés"}.get(s.get("days") or "all") or \
         ", ".join(DAY_NAMES[int(d)] for d in sorted(s.get("weekdays") or []))
     period = ""
@@ -1325,17 +1980,99 @@ def schedule_text(r: Dict[str, Any]) -> str:
         a, b = _fr_date(s.get("valid_from")), _fr_date(s.get("valid_to"))
         period = f" · du {a} au {b}" if a and b else (f" · à partir du {a}" if a else f" · jusqu'au {b}")
     if is_timed(r["scenario"], r.get("trigger")):
-        return f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}{period}"
+        out = f"{days} · {'plage intelligente' if s.get('smart') else (s.get('hour') or '10:00')}"
+        if r["scenario"] == "inactive" and s.get("window"):
+            out += f" · entre {s.get('window_from') or '09:00'} et {s.get('window_to') or '21:00'}"
+        if s.get("daily_limit"):
+            out += f" · {int(s['daily_limit'])} max/jour"
+        return out + period
     if not s.get("window", True):
         return f"{days} · {'toute la journée' if r['scenario'] == 'geo' else 'immédiat'}{period}"
     hours = " / ".join(f"{a[0]:02d}h{a[1]:02d}–{b[0]:02d}h{b[1]:02d}".replace("h00", "h") for a, b in slots_of(s))
     return f"{days} · {hours}{period}"
 
 
-def _list(tid: str, token: TokenData) -> Dict[str, Any]:
+OLD_NEAR_LABEL = "Proche de la récompense"
+
+
+def merge_referrals(tid: str) -> None:
+    """Parrainage is ONE automation with both messages (user, 2026-10-11).
+    The older rows — one per side (« Parrainage — parrain / — filleul ») —
+    become that: each side keeps its words and its on/off; the first parrain
+    row and the first filleul row merge (the filleul's sends counted under
+    the merged one); any further one stays, holding its own side only."""
+    rows = list(_db.automations.find({"tenant_id": tid, "scenario": "referral", "trigger.side": {"$exists": True}},
+                                     {"_id": 0}).sort([("order", 1), ("created_at", 1)]))
+    if not rows:
+        return
+    parrains = [r for r in rows if (r["trigger"].get("side") or "parrain") == "parrain"]
+    filleuls = [r for r in rows if r["trigger"].get("side") == "filleul"]
+    for r in rows:                                 # each on its own first: one side, its words, its status
+        side = r["trigger"].get("side") or "parrain"
+        upd = {"trigger": {**{k: v for k, v in r["trigger"].items() if k != "side"}, "sides": [side]},
+               "message_filleul": r.get("message") if side == "filleul" else
+               {"title": FILLEUL_DEFAULT["title"], "body": FILLEUL_DEFAULT["body"], "image_url": None,
+                "button": {"enabled": False, "label": SCENARIOS["referral"]["button"], "link_type": "card",
+                           "offer_id": None, "url": None}}}
+        if side == "filleul":
+            upd["message"] = {**(r.get("message") or {}), "title": SCENARIOS["referral"]["title"],
+                              "body": SCENARIOS["referral"]["body"]}
+        _db.automations.update_one({"id": r["id"]}, {"$set": upd})
+    if parrains and filleuls:
+        p_row, f_row = parrains[0], filleuls[0]
+        p_on, f_on = p_row.get("status") == "active", f_row.get("status") == "active"
+        sides = [x for x, on in (("parrain", p_on), ("filleul", f_on)) if on]
+        _db.automations.update_one({"id": p_row["id"]}, {"$set": {
+            "name": "Parrainage" if p_row.get("name") in ("Parrainage — parrain", "Parrainage") else p_row.get("name"),
+            "trigger": {**{k: v for k, v in p_row["trigger"].items() if k != "side"},
+                        # both sides were off: the automation is paused, each message ready
+                        "sides": sides or ["parrain", "filleul"]},
+            "status": "active" if sides else p_row.get("status"),
+            "message_filleul": f_row.get("message"), "updated_at": _now()}})
+        _db.automation_log.update_many({"automation_id": f_row["id"]}, {"$set": {"automation_id": p_row["id"]}})
+        _db.automation_queue.update_many({"automation_id": f_row["id"]}, {"$set": {"automation_id": p_row["id"]}})
+        _db.automations.delete_one({"id": f_row["id"]})
+
+
+def referral_page(tid: str) -> Dict[str, Any]:
+    """The Parrainage programme's rules, for the editor's « Récompenses »."""
+    cfg = _db.referral_config.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    return {"enabled": bool(cfg.get("enabled")),
+            "referrer_reward_points": int(cfg.get("referrer_reward_points", 50) or 0),
+            "referee_reward_points": int(cfg.get("referee_reward_points", 25) or 0),
+            "reward_mode": cfg.get("reward_mode") or "once",
+            "referrer_reward_points_next": int(cfg.get("referrer_reward_points_next") or 0),
+            "referee_reward_points_next": int(cfg.get("referee_reward_points_next") or 0),
+            "minimum_visits_to_earn": int(cfg.get("minimum_visits_to_earn") or 1)}
+
+
+def near_page(tid: str) -> Dict[str, Any]:
+    """What the Récompense bientôt disponible editor needs of the card: the
+    programme's unit and the card's own reward (its « exemple de scénario »)."""
+    from features import loyalty_card as LC
+    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    prog = LC._programme(tpl)
+    goal = int(tpl.get("reward_points") or 100) if prog in ("points_euro", "points_visit") else \
+        (max(1, int(tpl.get("reward_threshold_stamps") or 10)) if prog == "stamps" else None)
+    return {"programme": prog, "unit": reward_unit(tpl), "card_goal": goal,
+            "card_reward": (tpl.get("reward_description") or "").strip() or "votre récompense",
+            "tiers": [{"key": t["key"], "label": t["label"], "min": t["min"], "reward": t.get("reward") or ""}
+                      for t in LC.tiers_for(tid)]}
+
+
+def _list(tid: str, token: TokenData, request: Any = None) -> Dict[str, Any]:
     migrate(tid)
+    split_per_store(tid)
     at = _now()
+    # the scenario's new name (user, 2026-10-11) on the rows that kept the default one
+    _db.automations.update_many({"tenant_id": tid, "scenario": "near_reward", "name": OLD_NEAR_LABEL},
+                                {"$set": {"name": SCENARIOS["near_reward"]["label"]}})
+    merge_referrals(tid)
+    split_per_store(tid)
     q: Dict[str, Any] = {"tenant_id": tid}
+    menu = _menu_store(tid, token, request)
+    if menu:                                       # the establishment chosen: its automations
+        q["store_ids"] = [menu]
     rows = [_row_view(r, tid) for r in _db.automations.find(q, {"_id": 0}).sort([("order", 1), ("created_at", 1)])]
     active = sum(1 for r in rows if r["status"] == "active")
     counts = {"all": len(rows), "active": active, "paused": sum(1 for r in rows if r["status"] == "paused"),
@@ -1348,6 +2085,8 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
     for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}).sort("sent_at", -1).limit(40):
         try:
             from features import campaign_kinds as K
+            if menu and c.get("store_ids") and menu not in c["store_ids"]:
+                continue                           # another establishment's offer
             if K.is_live(c, at) and c.get("kind") != "defi":
                 offers.append({"id": c["id"], "name": c.get("name") or "Offre", "terms": K.terms_label(c)})
         except Exception:
@@ -1364,14 +2103,28 @@ def _list(tid: str, token: TokenData) -> Dict[str, Any]:
         "offers": offers,
         "best_slot": CP.best_slot(tid),
         "has_position": CP._has_position(tid),
-        "google_review_ready": bool(tenant.get("google_review_url") and tenant.get("google_reviews_enabled")),
+        "google_review_ready": bool(tenant.get("google_reviews_enabled") and any(current_links(tid).values())),
+        "google": {"links": current_links(tid), "enabled": bool(tenant.get("google_reviews_enabled")),
+                   "stores": [{"id": b["id"], "name": b.get("name") or "Établissement"} for b in _branches(tid)]
+                   if len(_branches(tid)) > 1 else []},
         "geo_ready": bool(tenant.get("geo_enabled")),
         "geo": _geo_page(tid, tenant),
         "shop": tenant.get("campaign_sender_name") or tenant.get("name") or "",
         "logo_url": (tpl.get("brand_fields") or {}).get("logo_url") or tpl.get("logo_url") or "",
         "can_edit": token.role in EDITORS,
         "tick": tick_seen(at),
+        "near": near_page(tid),
+        "referral": {**referral_page(tid), "can_edit": token.role == "business_owner"},
+        "statuses": _statuses(tid),
     }
+
+
+def _statuses(tid: str) -> List[Dict[str, str]]:
+    try:
+        from features import customer_rules as R
+        return R.statuses(R.load(tid))
+    except Exception:
+        return []
 
 
 def _geo_page(tid: str, tenant: Dict[str, Any]) -> Dict[str, Any]:
@@ -1406,8 +2159,8 @@ def geo_zone(token_data: TokenData = Depends(require_role(READERS, partial_ok=Tr
 
 
 @router.get("/api/owner/automations")
-def list_automations(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    return _list(token_data.tenant_id, token_data)
+def list_automations(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    return _list(token_data.tenant_id, token_data, request)
 
 
 class ButtonIn(BaseModel):
@@ -1428,18 +2181,43 @@ class MessageIn(BaseModel):
 class FiltersIn(BaseModel):
     gender: Any = []
     age: Any = []
-    frequency: Any = []
+    frequency: Any = []                 # removed from the page (2026-10-11): ignored
     spent: Any = []
     last_visit: Any = []
     stores: List[str] = []
     radius_km: Any = None
+    client_type: Any = []               # « Type de client » = card statut
+    visits_min: Any = None              # « Nombre de visites »: owner-typed
+    visits_max: Any = None
+    age_min: Any = None                 # « Âge »: two dropdowns, « Tous » = none
+    age_max: Any = None
+    past_freq: Any = []                 # Client inactif (2026-10-11): « Fréquence d'achat passée »
+    tiers: Any = []                     # « Programme de fidélité » (statut)
+    origin: Any = []                    # « Origine du client »
+    last_offer: Any = []                # « Dernière offre reçue »
+    points_min: Any = None              # Nouvelle automatisation › Ciblage (2026-10-11)
+    points_max: Any = None
+    spent_min: Any = None
+    spent_max: Any = None
+    last_visit_op: Any = None           # « Date de dernière visite » : il y a plus / moins de
+    last_visit_days: Any = None
+    activity: Any = []                  # « Statut client » (Règles clients keys)
+    signed_since: Optional[str] = None  # « Inscription depuis » (a date)
+
+
+class ExclusionsIn(BaseModel):
+    recent_contact: bool = False        # a message in the last 30 days
+    active_offer: bool = False          # an offer still running
 
 
 class TargetingIn(BaseModel):
     mode: str = "all"
+    pick: Optional[str] = None          # Nouvelle automatisation: the card chosen (all, active, inactive…)
+    inactive_days: Any = None
     segment: Optional[str] = None
     passants: Optional[str] = "all"
     filters: FiltersIn = FiltersIn()
+    exclusions: ExclusionsIn = ExclusionsIn()
 
 
 class ScheduleIn(BaseModel):
@@ -1454,14 +2232,27 @@ class ScheduleIn(BaseModel):
     holidays: bool = True
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
+    daily_limit: Any = None             # « Limite d'envoi par jour » (optionnel)
+    # Nouvelle automatisation (features/custom_rules): Planification + Règles d'envoi
+    tz: Optional[str] = None
+    limit: Optional[Dict[str, Any]] = None
+    dedupe: bool = False
+    min_gap_days: Any = None
+    send_mode: Optional[str] = None
+    send_at: Optional[str] = None
+    rules_note: Optional[str] = None
 
 
 class AutomationIn(BaseModel):
     scenario: str
     name: Optional[str] = None
+    description: Optional[str] = None
+    google_links: Optional[Dict[str, Any]] = None   # Avis Google: {"main": url} or {branch_id: url}
     status: str = "active"
     trigger: Dict[str, Any] = {}
     message: MessageIn
+    message_reminder: Optional["MessageIn"] = None   # Annuelle › « Rappel avant la date »
+    message_filleul: Optional[MessageIn] = None      # Parrainage: the filleul's own words
     targeting: TargetingIn = TargetingIn()
     schedule: ScheduleIn = ScheduleIn()
 
@@ -1476,6 +2267,55 @@ def _int(v: Any, lo: int, hi: int, label: str) -> int:
     if not (lo <= n <= hi):
         raise HTTPException(status_code=400, detail=f"{label} : entre {lo} et {hi}.")
     return n
+
+
+def clean_message(m: "MessageIn", sc: str, tid: str, required: bool, who: str = "") -> Dict[str, Any]:
+    """One message of an automation, checked (the parrain's and the filleul's
+    go through the same rules). `who` prefixes the errors (« Filleul : … »)."""
+    try:
+        return _clean_message(m, sc, tid, required)
+    except HTTPException as exc:
+        if who:
+            raise HTTPException(status_code=exc.status_code, detail=f"{who} : {exc.detail}")
+        raise
+
+
+def _clean_message(m: "MessageIn", sc: str, tid: str, required: bool) -> Dict[str, Any]:
+    title, text = re.sub(r"\s+", " ", m.title or "").strip(), re.sub(r"[ \t]+", " ", m.body or "").strip()
+    if required and (not title or not text):
+        raise HTTPException(status_code=400, detail="Le titre et le message sont obligatoires.")
+    if len(title) > TITLE_MAX:
+        raise HTTPException(status_code=400, detail=f"Titre : {TITLE_MAX} caractères au maximum.")
+    if len(text) > BODY_MAX:
+        raise HTTPException(status_code=400, detail=f"Message : {BODY_MAX} caractères au maximum.")
+    img = (m.image_url or "").strip() or None
+    # FidClic's own ready images (public/automations/…) are allowed by their path
+    from services import media as _M
+    if img and not (_M.is_image_value(img) or img in READY_IMAGES):
+        raise HTTPException(status_code=400, detail="Image invalide.")
+    if img and len(img) > 2_800_000:
+        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
+    b = m.button
+    button = {"enabled": bool(b.enabled), "label": (b.label or "").strip()[:BUTTON_MAX] or SCENARIOS[sc]["button"],
+              "link_type": b.link_type if b.link_type in LINK_TYPES else "card", "offer_id": None, "url": None}
+    if b.enabled:
+        if not (b.label or "").strip():
+            raise HTTPException(status_code=400, detail="Indiquez le texte du bouton.")
+        if len((b.label or "").strip()) > BUTTON_MAX:
+            raise HTTPException(status_code=400, detail=f"Texte du bouton : {BUTTON_MAX} caractères au maximum.")
+        if button["link_type"] == "url":
+            u = safe_url(b.url)
+            if not u:
+                raise HTTPException(status_code=400, detail="Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.")
+            button["url"] = u
+        if button["link_type"] == "offer":
+            if not b.offer_id or not _db.campaigns.find_one({"tenant_id": tid, "id": b.offer_id}):
+                raise HTTPException(status_code=400, detail="Choisissez une offre.")
+            button["offer_id"] = b.offer_id
+        if button["link_type"] == "google_review" and sc != "google_review" \
+                and not any(current_links(tid).values()):
+            raise HTTPException(status_code=400, detail="Ajoutez d'abord votre lien Google (Insights › Avis Google).")
+    return {"title": title, "body": text, "image_url": img, "button": button}
 
 
 def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
@@ -1495,15 +2335,34 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     if sc == "birthday":
         tr["offset_days"] = _int(tr_in.get("offset_days", 0), -30, 30, "Jours avant / après")
     elif sc == "near_reward":
-        tr["visits_left"] = _int(tr_in.get("visits_left", 1), 1, 50, "Visites avant la récompense")
+        if tr_in.get("threshold") is not None:                # the mockups' seuil
+            tr.pop("visits_left", None)
+            tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+            unit = reward_unit(tpl)
+            label = {"points": "Seuil (points)", "tampons": "Seuil (tampons)"}.get(unit, "Seuil (€)")
+            tr["threshold"] = _int(tr_in["threshold"], 1, 100000, label)
+            from features import loyalty_card as LC
+            prog = LC._programme(tpl)
+            goal = int(tpl.get("reward_points") or 100) if prog in ("points_euro", "points_visit") else \
+                (max(1, int(tpl.get("reward_threshold_stamps") or 10)) if prog == "stamps" else None)
+            if goal and tr["threshold"] >= goal:
+                raise HTTPException(status_code=400, detail=f"Le seuil doit être inférieur à la récompense de la carte ({goal} {unit}).")
+        else:
+            tr["visits_left"] = _int(tr_in.get("visits_left", 1), 1, 50, "Visites avant la récompense")
     elif sc == "inactive":
         tr["days"] = _int(tr_in.get("days", 30), 7, 365, "Jours sans visite")
         tr["repeat"] = "every" if tr_in.get("repeat") == "every" else "once"
         tr["every_days"] = _int(tr_in.get("every_days", 30), 7, 365, "Répéter tous les")
     elif sc == "referral":
-        if tr_in.get("side") not in ("parrain", "filleul"):
-            raise HTTPException(status_code=400, detail="Choisissez qui reçoit le message : parrain ou filleul.")
-        tr["side"] = tr_in["side"]
+        raw = tr_in.get("sides")
+        if raw is None and tr_in.get("side") in SIDES:          # an older client
+            raw = [tr_in["side"]]
+        if not isinstance(raw, list) or any(x not in SIDES for x in raw):
+            raise HTTPException(status_code=400, detail="Choisissez qui reçoit le message : parrain et/ou filleul.")
+        tr.pop("side", None)
+        tr["sides"] = [x for x in SIDES if x in raw]
+        if not tr["sides"] and not draft:
+            raise HTTPException(status_code=400, detail="Envoyez au moins un message : au parrain ou au filleul.")
     elif sc == "geo":
         tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 7), 1, 90, "Délai entre deux messages")
         weather = tr_in.get("weather") or []
@@ -1521,11 +2380,31 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         if tr_in.get("radius_m") not in (None, ""):
             tr["radius_m"] = _int(tr_in.get("radius_m"), 50, 2000, "Rayon de détection (m)")
     elif sc == "google_review":
-        if tr_in.get("frequency", "days") not in GR_FREQS:
+        t = tr_in.get("type", "after_visit")
+        if t not in GR_TYPES:
+            raise HTTPException(status_code=400, detail="Choisissez quand demander l'avis.")
+        f_in = "days" if tr_in.get("frequency") == "every_scan" else tr_in.get("frequency", "once")
+        if f_in not in ("once", "days", "smart"):
             raise HTTPException(status_code=400, detail="Fréquence inconnue.")
-        tr["frequency"] = tr_in.get("frequency", "days")
-        tr["every_days"] = _int(tr_in.get("every_days", 30), 1, 365, "Fréquence (jours)")
-        tr["stop_after_click"] = bool(tr_in.get("stop_after_click", True))
+        if f_in == "smart" and t == "date":
+            raise HTTPException(status_code=400, detail="L'envoi intelligent suit chaque client après sa visite : pour une date, choisissez l'heure d'envoi.")
+        tr.update(type=t, frequency=f_in, stop_after_click=True)
+        tr["every_days"] = 1 if tr_in.get("frequency") == "every_scan" else \
+            _int(tr_in.get("every_days", 30), 1, 365, "Répéter tous les (jours)")
+        if t == "after_visit" and tr_in.get("delay_unit") == "minutes":
+            raise HTTPException(status_code=400, detail="Délai après la visite : en heures ou en jours.")
+        if t == "loyal":
+            tr["visits"] = _int(tr_in.get("visits", 5), 1, 1000, "Nombre de visites")
+        if t == "date":
+            try:
+                on = date.fromisoformat(str(tr_in.get("date") or "")[:10])
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Choisissez la date d'envoi.")
+            if not draft and on < _paris(_now()).date():
+                raise HTTPException(status_code=400, detail="Cette date est déjà passée.")
+            tr["date"] = on.isoformat()
+            tr["date_mode"] = "once"
+            tr["delay_value"] = 0
     elif sc == "tier_up":
         cond = tr_in.get("condition", "points")
         if cond not in TIER_CONDITIONS:
@@ -1563,6 +2442,9 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
                         raise HTTPException(status_code=400, detail=f"Palier {palier_label(cond, v)} : récompense de 80 caractères au maximum.")
                     tiers.append({"value": v, "title": tt, "body": tb, "reward": rw})
                 tr.update(custom_tiers=True, tiers=sorted(tiers, key=lambda t: t["value"]))
+    elif sc == "custom" and tr_in.get("type") in CR_V2:
+        from features import custom_rules as CR
+        tr = CR.clean_trigger(tid, tr_in, draft, _paris(_now()).date())
     elif sc == "custom":
         t = tr_in.get("type")
         if t not in CUSTOM_TYPES:
@@ -1590,40 +2472,13 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
                 tr["weekday"] = _int(tr_in.get("weekday", 0), 0, 6, "Jour de la semaine")
             if mode == "monthly":
                 tr["monthday"] = _int(tr_in.get("monthday", 1), 1, 31, "Jour du mois")
-    m = body.message
-    title, text = re.sub(r"\s+", " ", m.title or "").strip(), re.sub(r"[ \t]+", " ", m.body or "").strip()
-    if not draft and (not title or not text):
-        raise HTTPException(status_code=400, detail="Le titre et le message sont obligatoires.")
-    if len(title) > TITLE_MAX:
-        raise HTTPException(status_code=400, detail=f"Titre : {TITLE_MAX} caractères au maximum.")
-    if len(text) > BODY_MAX:
-        raise HTTPException(status_code=400, detail=f"Message : {BODY_MAX} caractères au maximum.")
-    img = (m.image_url or "").strip() or None
-    if img and not (img.startswith("data:image/") or img.startswith("https://")):
-        raise HTTPException(status_code=400, detail="Image invalide.")
-    if img and len(img) > 2_800_000:
-        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
-    b = m.button
-    button = {"enabled": bool(b.enabled), "label": (b.label or "").strip()[:BUTTON_MAX] or SCENARIOS[sc]["button"],
-              "link_type": b.link_type if b.link_type in LINK_TYPES else "card", "offer_id": None, "url": None}
-    if b.enabled:
-        if not (b.label or "").strip():
-            raise HTTPException(status_code=400, detail="Indiquez le texte du bouton.")
-        if len((b.label or "").strip()) > BUTTON_MAX:
-            raise HTTPException(status_code=400, detail=f"Texte du bouton : {BUTTON_MAX} caractères au maximum.")
-        if button["link_type"] == "url":
-            u = safe_url(b.url)
-            if not u:
-                raise HTTPException(status_code=400, detail="Lien invalide : saisissez une adresse web, par exemple https://monsite.fr.")
-            button["url"] = u
-        if button["link_type"] == "offer":
-            if not b.offer_id or not _db.campaigns.find_one({"tenant_id": tid, "id": b.offer_id}):
-                raise HTTPException(status_code=400, detail="Choisissez une offre.")
-            button["offer_id"] = b.offer_id
-        if button["link_type"] == "google_review":
-            t = _db.tenants.find_one({"id": tid}, {"_id": 0, "google_review_url": 1}) or {}
-            if not t.get("google_review_url"):
-                raise HTTPException(status_code=400, detail="Ajoutez d'abord votre lien Google (Insights › Avis Google).")
+    sides_on = (tr.get("sides") or []) if sc == "referral" else None
+    message = clean_message(body.message, sc, tid, not draft and (sc != "referral" or "parrain" in sides_on),
+                            "Parrain" if sc == "referral" else "")
+    message_filleul = None
+    if sc == "referral":
+        mf = body.message_filleul or MessageIn(title=FILLEUL_DEFAULT["title"], body=FILLEUL_DEFAULT["body"])
+        message_filleul = clean_message(mf, sc, tid, not draft and "filleul" in sides_on, "Filleul")
     t = body.targeting
     if t.mode not in TARGET_MODES:
         raise HTTPException(status_code=400, detail="Ciblage inconnu.")
@@ -1635,13 +2490,50 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     f = t.filters
     picked: Dict[str, List[str]] = {}
     for key, val, allowed, label in (("gender", f.gender, GENDERS, "Genre"), ("age", f.age, AGES, "Âge"),
-                                     ("frequency", f.frequency, FREQS, "Fréquence de visite"),
                                      ("spent", f.spent, SPENT, "Montant total des achats"),
-                                     ("last_visit", f.last_visit, LAST_VISIT, "Dernière visite")):
+                                     ("last_visit", f.last_visit, LAST_VISIT, "Dernière visite"),
+                                     ("client_type", f.client_type, CLIENT_TYPES, "Type de client"),
+                                     ("past_freq", f.past_freq, PAST_FREQS, "Fréquence d'achat passée"),
+                                     ("tiers", f.tiers, TIERS, "Programme de fidélité"),
+                                     ("origin", f.origin, ORIGINS, "Origine du client"),
+                                     ("last_offer", f.last_offer, LAST_OFFER, "Dernière offre reçue")):
         raw = [] if val in (None, "", "all") else (val if isinstance(val, list) else [val])
         if any(str(x) not in allowed for x in raw):
             raise HTTPException(status_code=400, detail=f"{label} : valeur inconnue.")
         picked[key] = as_list(raw, allowed)
+    v2 = sc == "custom" and tr.get("type") in CR_V2
+    PICKS = ("all", "active", "inactive", "points", "segment", "stores")
+    pick = (t.pick if t.pick in PICKS else None) if v2 else None
+    if v2 and pick is None:
+        pick = {"segment": "segment"}.get(t.mode, "all")
+    for key, lo, hi, label in (("points_min", 0, 10000000, "Nombre de points (minimum)"),
+                               ("points_max", 0, 10000000, "Nombre de points (maximum)"),
+                               ("spent_min", 0, 10000000, "Montant total d'achats (minimum)"),
+                               ("spent_max", 0, 10000000, "Montant total d'achats (maximum)"),
+                               ("last_visit_days", 1, 3650, "Date de dernière visite (jours)")):
+        v = getattr(f, key)
+        picked[key] = None if v in (None, "") else _int(v, lo, hi, label)
+    for a_, b_, label in (("points_min", "points_max", "Nombre de points"), ("spent_min", "spent_max", "Montant total d'achats")):
+        if picked[a_] is not None and picked[b_] is not None and picked[b_] < picked[a_]:
+            raise HTTPException(status_code=400, detail=f"{label} : le maximum doit être au moins égal au minimum.")
+    picked["last_visit_op"] = (f.last_visit_op if f.last_visit_op in ("more", "less") else "more") \
+        if picked["last_visit_days"] is not None else None
+    if pick == "inactive":
+        picked["last_visit_op"], picked["last_visit_days"] = "more", _int(t.inactive_days if t.inactive_days not in (None, "") else 30, 1, 3650, "Clients inactifs depuis (jours)")
+    if pick == "points" and picked["points_min"] is None and picked["points_max"] is None:
+        raise HTTPException(status_code=400, detail="Indiquez le nombre de points des clients ciblés.")
+    if pick == "stores" and not [x for x in f.stores or [] if x]:
+        raise HTTPException(status_code=400, detail="Choisissez au moins un établissement.")
+    nums: Dict[str, Optional[int]] = {}
+    for key, lo, hi, label in (("visits_min", 0, 100000, "Nombre de visites (minimum)"),
+                               ("visits_max", 0, 100000, "Nombre de visites (maximum)"),
+                               ("age_min", 10, 100, "Âge (à partir de)"), ("age_max", 10, 100, "Âge (jusqu'à)")):
+        v = getattr(f, key)
+        nums[key] = None if v in (None, "") else _int(v, lo, hi, label)
+    if nums["visits_min"] is not None and nums["visits_max"] is not None and nums["visits_max"] < nums["visits_min"]:
+        raise HTTPException(status_code=400, detail="Nombre de visites : le maximum doit être au moins égal au minimum.")
+    if nums["age_min"] is not None and nums["age_max"] is not None and nums["age_max"] < nums["age_min"]:
+        raise HTTPException(status_code=400, detail="Âge : la fin doit être après le début.")
     radius = None
     if f.radius_km not in (None, "", 0, "0"):
         radius = _int(f.radius_km, 1, 50, "Rayon (km)")
@@ -1654,12 +2546,29 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     from features import team_access as T
     known = {s["id"] for s in T.stores(tid)}
     stores = [s for s in dict.fromkeys(f.stores or []) if s in known]
+    acts = [] if f.activity in (None, "", "all") else (f.activity if isinstance(f.activity, list) else [f.activity])
+    if pick == "active":                          # « Clients actifs uniquement »: the shop's active statuts
+        from features import customer_rules as R
+        acts = [x["key"] for x in R.statuses(R.load(tid)) if ACTIVITY_GROUPS.get(x["key"]) == "active"]
+    if acts:
+        from features import customer_rules as R
+        allowed_acts = {x["key"] for x in R.statuses(R.load(tid))}
+        if any(str(x) not in allowed_acts for x in acts):
+            raise HTTPException(status_code=400, detail="Statut client : valeur inconnue.")
+        acts = list(dict.fromkeys(str(x) for x in acts))
+    signed = None
+    if f.signed_since not in (None, ""):
+        try:
+            signed = date.fromisoformat(str(f.signed_since)[:10]).isoformat()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Inscription depuis : date invalide.")
     s = body.schedule
     if s.days not in DAY_MODES:
         raise HTTPException(status_code=400, detail="Jours d'envoi inconnus.")
     weekdays = sorted({_int(d, 0, 6, "Jour") for d in (s.weekdays or [])})
     if s.days == "specific" and not weekdays:
         raise HTTPException(status_code=400, detail="Cochez au moins un jour d'envoi.")
+    day_mode = "all" if s.days == "specific" and len(weekdays) == 7 else s.days   # every day ticked = « Tous les jours »
     timed = is_timed(sc, tr)
     hour = None
     if timed:
@@ -1670,6 +2579,21 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     wf, wt = (s.window_from or "09:00").strip(), (s.window_to or "21:00").strip()
     hm = r"([01]\d|2[0-3]):([0-5]\d)"
     slots: List[Dict[str, str]] = []
+    # Client inactif (mockups 2026-10-11): an hour (Déclencheur) AND a plage
+    # horaire (Planification) — the hour sits inside the plage, which the
+    # daily limit spreads the sends over
+    windowed = bool(s.window) and (not timed or sc == "inactive")
+    if timed and windowed:
+        for v in (wf, wt):
+            if not re.fullmatch(hm, v):
+                raise HTTPException(status_code=400, detail="Plage horaire invalide.")
+        if wt <= wf:
+            raise HTTPException(status_code=400, detail="La fin de la plage horaire doit être après son début.")
+        if not s.smart and not (wf <= hour < wt):
+            raise HTTPException(status_code=400, detail=f"L'heure d'envoi ({hour}) doit être comprise dans la plage horaire ({wf} – {wt}).")
+    limit = None
+    if s.daily_limit not in (None, "", 0, "0", False):
+        limit = _int(s.daily_limit, 1, DAILY_LIMIT_MAX, "Limite d'envoi par jour")
     if not timed and s.window:
         if s.slots:
             # « Plages horaires spécifiques » (géolocalisation): several, a night one may pass midnight
@@ -1707,20 +2631,98 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="La date de fin doit être après la date de début.")
     if not draft and body.status == "active" and valid["valid_to"] and valid["valid_to"] < _paris(_now()).date().isoformat():
         raise HTTPException(status_code=400, detail="La date de fin est déjà passée : choisissez une nouvelle date pour l'activer.")
-    name = re.sub(r"\s+", " ", body.name or "").strip()[:NAME_MAX] or SCENARIOS[sc]["label"]
-    return {
-        "scenario": sc, "name": name, "status": body.status, "trigger": tr,
-        "message": {"title": title, "body": text, "image_url": img, "button": button},
+    raw_name = re.sub(r"\s+", " ", body.name or "").strip()
+    if len(raw_name) > NAME_MAX:
+        raise HTTPException(status_code=400, detail=f"Nom de l'automatisation : {NAME_MAX} caractères au maximum.")
+    name = raw_name or SCENARIOS[sc]["label"]
+    desc = "" if sc == "google_review" else re.sub(r"[ \t]+", " ", body.description or "").strip()
+    if len(desc) > DESC_MAX:
+        raise HTTPException(status_code=400, detail=f"Description : {DESC_MAX} caractères au maximum.")
+    links = _clean_links(tid, body.google_links, draft) if sc == "google_review" else None
+    out = {
+        "scenario": sc, "name": name, "description": desc, "status": body.status, "trigger": tr,
+        "message": message,
         "targeting": {"mode": t.mode, "segment": t.segment if t.mode == "segment" else None, "passants": passants,
-                      "filters": ({"gender": [], "age": [], "frequency": [], "spent": [], "last_visit": [],
-                                   "stores": [], "radius_km": None} if t.mode == "all" else
-                                  {**picked, "stores": stores, "radius_km": radius})},
-        "schedule": {"days": s.days, "weekdays": weekdays if s.days == "specific" else [0, 1, 2, 3, 4, 5, 6],
+                      "filters": ({"gender": [], "age": [], "spent": [], "last_visit": [], "client_type": [],
+                                   "stores": [], "radius_km": None, "visits_min": None, "visits_max": None,
+                                   "age_min": None, "age_max": None, "past_freq": [], "tiers": [], "origin": [],
+                                   "last_offer": [], "activity": [], "signed_since": None} if t.mode == "all" else
+                                  {**picked, **nums, "stores": stores, "radius_km": radius,
+                                   "activity": acts, "signed_since": signed}),
+                      "exclusions": {"recent_contact": bool(t.exclusions.recent_contact),
+                                     "active_offer": bool(t.exclusions.active_offer)}},
+        "schedule": {"days": day_mode, "weekdays": weekdays if day_mode == "specific" else [0, 1, 2, 3, 4, 5, 6],
                      "hour": hour, "smart": bool(s.smart) if timed else False,
-                     "window": bool(s.window) if not timed else False,
+                     "window": windowed, "daily_limit": limit,
                      "window_from": wf, "window_to": wt, "slots": slots,
                      "holidays": bool(s.holidays), **valid},
     }
+    if v2:
+        from features import custom_rules as CR
+        today = _paris(_now()).date()
+        out["schedule"] = CR.clean_schedule(body.schedule, tr, draft, body.status, today)
+        fl = {**picked, **nums, "stores": stores, "radius_km": radius, "activity": acts, "signed_since": signed}
+        has = any(v not in (None, [], "") for k, v in fl.items() if k != "last_visit_op")
+        mode = "segment" if pick == "segment" else ("filtered" if pick != "all" or has else "all")
+        out["targeting"] = {**out["targeting"], "mode": mode, "pick": pick,
+                            "segment": t.segment if pick == "segment" else None,
+                            "inactive_days": picked["last_visit_days"] if pick == "inactive" else None,
+                            "filters": fl if mode != "all" else out["targeting"]["filters"]}
+        rem = (tr.get("reminder") or {}).get("enabled") and tr.get("period") == "yearly"
+        if rem:
+            out["message_reminder"] = clean_message(body.message_reminder or MessageIn(title="", body=""), sc, tid,
+                                                    not draft, "Rappel")
+        else:
+            out["message_reminder"] = clean_message(body.message_reminder, sc, tid, False, "Rappel") \
+                if body.message_reminder else None
+    if links is not None:
+        out["google_links"] = links
+    if message_filleul is not None:
+        out["message_filleul"] = message_filleul
+    return out
+
+
+def current_links(tid: str) -> Dict[str, str]:
+    """The Google review links as the page shows them: {"main": url}, or one per établissement."""
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "google_review_url": 1, "branches": 1}) or {}
+    branches = _branches(tid)
+    if len(branches) > 1:
+        return {b["id"]: b.get("google_review_url") or "" for b in branches}
+    return {"main": t.get("google_review_url") or (branches[0].get("google_review_url") if branches else "") or ""}
+
+
+def _clean_links(tid: str, raw: Any, draft: bool) -> Dict[str, str]:
+    """1 établissement: the shop's link (the one in Insights › Avis Google).
+    2+: each établissement's own link, all required (user, 2026-10-11)."""
+    raw = raw if isinstance(raw, dict) else current_links(tid)
+    branches = _branches(tid)
+    spots = [(b["id"], b.get("name") or "Établissement") for b in branches] if len(branches) > 1 else [("main", None)]
+    out: Dict[str, str] = {}
+    for key, label in spots:
+        v = str(raw.get(key) or "").strip()
+        u = safe_url(v) if v else None
+        if v and not u:
+            raise HTTPException(status_code=400, detail=(f"Lien Google de « {label} » invalide." if label else
+                                                         "Lien Google invalide : collez l'adresse de votre fiche, par exemple https://g.page/r/…/review."))
+        if not u and not draft:
+            raise HTTPException(status_code=400, detail=(f"Ajoutez le lien Google de « {label} »." if label else
+                                                         "Ajoutez le lien vers votre fiche Google Avis."))
+        if u:
+            out[key] = u
+    return out
+
+
+def _save_links(tid: str, links: Optional[Dict[str, str]]) -> None:
+    """The links live on the shop (and on each établissement): Insights shows
+    the same; saving them switches the Google review requests on."""
+    if not links:
+        return
+    for key, url in links.items():
+        if key == "main":
+            _db.tenants.update_one({"id": tid}, {"$set": {"google_review_url": url}})
+        else:
+            _db.tenants.update_one({"id": tid, "branches.id": key}, {"$set": {"branches.$.google_review_url": url}})
+    _db.tenants.update_one({"id": tid}, {"$set": {"google_reviews_enabled": True}})
 
 
 def _own(tid: str, aid: str) -> Dict[str, Any]:
@@ -1733,8 +2735,10 @@ def _own(tid: str, aid: str) -> Dict[str, Any]:
 def _guard(token: TokenData, row: Optional[Dict[str, Any]] = None) -> None:
     if token.role not in EDITORS:
         raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
-    if row and token.role != "business_owner" and row.get("store_ids") != _own_stores(token):
-        raise HTTPException(status_code=403, detail="Cette automatisation concerne d'autres établissements.")
+    if row and token.role != "business_owner":
+        own = _own_stores(token)                   # None: every establishment
+        if own is not None and not (row.get("store_ids") and set(row["store_ids"]) <= set(own)):
+            raise HTTPException(status_code=403, detail="Cette automatisation concerne d'autres établissements.")
 
 
 def _geo_saved(tid: str, data: Optional[Dict[str, Any]]) -> None:
@@ -1755,16 +2759,20 @@ def _wake_geo(tid: str) -> None:
 
 
 @router.post("/api/owner/automations")
-def create_automation(body: AutomationIn, token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+def create_automation(body: AutomationIn, request: Request = None,
+                      token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id
     _guard(token_data)
     migrate(tid)
     data = clean(body, tid)
     if data["scenario"] == "geo":
         _geo_saved(tid, data)
+    _save_links(tid, data.pop("google_links", None))
     doc = new_doc(tid, data["scenario"])
     doc.update(data)
-    doc["store_ids"] = _own_stores(token_data)
+    # the establishment chosen in the menu (multi-store PR5); else, as before
+    menu = _menu_store(tid, token_data, request)
+    doc["store_ids"] = [menu] if menu else _own_stores(token_data)
     doc["order"] = _db.automations.count_documents({"tenant_id": tid})
     doc["created_by"] = token_data.email
     _db.automations.insert_one(dict(doc))
@@ -1782,6 +2790,7 @@ def update_automation(aid: str, body: AutomationIn,
     if body.scenario != row["scenario"]:
         raise HTTPException(status_code=400, detail="Le scénario d'une automatisation ne change pas : créez-en une nouvelle.")
     data = clean(body, tid)
+    _save_links(tid, data.pop("google_links", None))
     if data["scenario"] == "geo":
         r = (data.get("trigger") or {}).pop("radius_m", None)
         if r:
@@ -1810,7 +2819,7 @@ def set_status(aid: str, body: StatusIn, token_data: TokenData = Depends(require
         if ended(row):
             raise HTTPException(status_code=400, detail="Sa période de validité est terminée : modifiez la date de fin pour la réactiver.")
         # a draft is checked as a whole before it may run
-        clean(AutomationIn(**{**row, "status": "active"}), tid)
+        clean(AutomationIn(**{**row, "status": "active", "google_links": current_links(tid)}), tid)
     _db.automations.update_one({"id": aid}, {"$set": {"status": body.status, "updated_at": _now()}})
     if body.status != "active":
         _db.automation_queue.delete_many({"automation_id": aid})
@@ -1852,7 +2861,7 @@ _HINTS = [
     ("birthday", ("anniversaire", "birthday")),
     ("google_review", ("avis", "google", "note", "review")),
     ("referral", ("parrain", "filleul", "ami", "recommand")),
-    ("welcome", ("bienvenue", "inscri", "nouveau client", "nouveaux clients")),
+    ("welcome", ("bienvenue", "inscri", "nouveau client", "nouveaux clients", "wallet", "ajout de la carte")),
     ("tier_up", ("palier", "niveau", "vip", "statut")),
     ("near_reward", ("récompense", "recompense", "tampon", "presque")),
     ("geo", ("proximité", "proximite", "passe", "à côté", "autour", "quartier")),
@@ -1902,6 +2911,179 @@ def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS,
 class PreviewIn(BaseModel):
     scenario: str
     targeting: TargetingIn = TargetingIn()
+    trigger: Dict[str, Any] = {}          # Client inactif: its « X jours »
+    full: bool = False                    # Nouvelle automatisation: « Voir la liste »
+
+
+AGE_BARS = (("18-25", 18, 25), ("26-35", 26, 35), ("36-50", 36, 50), ("50+", 51, 200))
+
+
+def _last_seen(c: Dict[str, Any]) -> Optional[datetime]:
+    return _aware(c.get("last_visit_date")) or _aware(c.get("created_at"))
+
+
+def _reactivation(tid: str, at: datetime) -> Optional[Dict[str, Any]]:
+    """How often a Client inactif message brought the client back within
+    IMPACT_WINDOW_DAYS: this shop's own sends first (from IMPACT_MIN_SENDS),
+    else its sector's, pooled and anonymous (from IMPACT_MIN_SHOPS shops) —
+    else nothing: no number is made up."""
+    def measure(tids: List[str]) -> Tuple[int, int, int]:
+        n = came = 0
+        shops = set()
+        cutoff = at - timedelta(days=IMPACT_WINDOW_DAYS)
+        for lg in _db.automation_log.find({"tenant_id": {"$in": tids}, "scenario": "inactive",
+                                           "status": {"$ne": "deferred"}, "sent_at": {"$lte": cutoff}},
+                                          {"_id": 0, "tenant_id": 1, "customer_id": 1, "sent_at": 1}):
+            sent = _aware(lg.get("sent_at"))
+            if not sent:
+                continue
+            n += 1
+            shops.add(lg["tenant_id"])
+            if _db.visits.find_one({"tenant_id": lg["tenant_id"], "customer_id": lg["customer_id"],
+                                    "visit_time": {"$gt": sent, "$lte": sent + timedelta(days=IMPACT_WINDOW_DAYS)}}):
+                came += 1
+        return n, came, len(shops)
+    n, came, _ = measure([tid])
+    if n >= IMPACT_MIN_SENDS:
+        return {"rate": round(came / n, 4), "basis": "shop", "sends": n}
+    sector = (_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1}) or {}).get("sector")
+    if sector:
+        peers = [t["id"] for t in _db.tenants.find({"sector": sector, "id": {"$ne": tid}}, {"_id": 0, "id": 1})]
+        if peers:
+            n, came, shops = measure(peers)
+            if shops >= IMPACT_MIN_SHOPS and n >= IMPACT_MIN_SENDS:
+                return {"rate": round(came / n, 4), "basis": "sector", "sends": n}
+    return None
+
+
+# the 4 boxes of « Répartition estimée » over the shop's own statuses (user, 2026-10-11)
+ACTIVITY_GROUPS = {"actif": "active", "regulier": "active", "fidele": "active", "vip": "active",
+                   "bientot_perdu": "risk", "dormant": "inactive", "inactif": "inactive", "nouveau": "new"}
+
+
+def near_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, Any]:
+    """Récompense bientôt disponible's right panels, real data only: the
+    clients within the seuil of their nearest reward now (and a month ago,
+    from the points / visits on record), and their statuts in four boxes."""
+    from features import clients_page as CPg
+    from features import customer_rules as R
+    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    tr = row.get("trigger") or {}
+    seuil = max(1, min(100000, int(tr.get("threshold") or 10)))
+    own = _store_people(tid, row["store_ids"]) if row.get("store_ids") else None
+    people = [c for c in _db.customers.find({"tenant_id": tid, "deleted_at": None}, {"_id": 0})
+              if own is None or c["id"] in own]
+    cache: Dict[str, Any] = {}
+
+    def within(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        hit = nearest_reward(tid, c, tpl)
+        return hit if hit and 0 < hit["remaining"] <= seuil else None
+    now_in = [c for c in people if within(c) and matches(tid, row, c, at, cache)]
+    # a month ago: points / visits then = now minus what came since; a client
+    # who redeemed since is left out of that count (their balance then is unknown)
+    then = at - timedelta(days=30)
+    since_pts: Dict[str, int] = {}
+    since_vis: Dict[str, int] = {}
+    for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": then}}, {"_id": 0, "customer_id": 1, "points_awarded": 1}):
+        since_pts[v["customer_id"]] = since_pts.get(v["customer_id"], 0) + int(v.get("points_awarded") or 0)
+        since_vis[v["customer_id"]] = since_vis.get(v["customer_id"], 0) + 1
+    redeemed = set(_db.rewards_redeemed.distinct("customer_id", {"tenant_id": tid, "redeemed_at": {"$gte": then}}))
+    was = 0
+    for c in people:
+        joined = _aware(c.get("created_at"))
+        if c["id"] in redeemed or not joined or joined > then:
+            continue
+        past = {**c, "points": int(c.get("points") or 0) - since_pts.get(c["id"], 0),
+                "visits": int(c.get("visits") or 0) - since_vis.get(c["id"], 0)}
+        if within(past):
+            was += 1
+    rules = R.load(tid)
+    boxes = {"active": 0, "risk": 0, "inactive": 0, "new": 0, "other": 0}
+    for c in now_in:
+        boxes[ACTIVITY_GROUPS.get(CPg.status_of(c, at, rules), "other")] += 1
+    n = len(now_in)
+    pct = lambda k: round(boxes[k] / n * 100) if n else 0  # noqa: E731
+    return {"threshold": seuil, "unit": reward_unit(tpl), "count": n, "month_ago": was,
+            "delta": (round((n - was) / was * 100) if was else None),
+            "groups": [{"key": k, "n": boxes[k], "pct": pct(k)} for k in ("active", "risk", "inactive", "new", "other")]}
+
+
+def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, Any]:
+    """The Client inactif editor's right panels, from real data only:
+    « Estimation de l'audience » (now, and a month ago), the inactive clients
+    the filters / exclusions leave out, « Répartition de l'audience » and
+    « Estimation de l'impact »."""
+    from services import customer_fields as CF
+    days = max(7, min(365, int(((row.get("trigger") or {}).get("days")) or 30)))
+    cache: Dict[str, Any] = {}
+    own = None
+    if row.get("store_ids"):
+        own = _store_people(tid, row["store_ids"]) or set()
+    people = [c for c in _db.customers.find({"tenant_id": tid, "deleted_at": None}, {"_id": 0})
+              if own is None or c["id"] in own]
+    cutoff = at - timedelta(days=days)
+    lapsed = [c for c in people if (_last_seen(c) or at) <= cutoff]
+    targeted = [c for c in lapsed if matches(tid, row, c, at, cache)]
+    # a month ago: each client's last visit BEFORE that day, from the visits
+    then = at - timedelta(days=30)
+    before: Dict[str, datetime] = {}
+    for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$lt": then}}, {"_id": 0, "customer_id": 1, "visit_time": 1}):
+        t = _aware(v.get("visit_time"))
+        if t and (v["customer_id"] not in before or t > before[v["customer_id"]]):
+            before[v["customer_id"]] = t
+    was = 0
+    for c in people:
+        joined = _aware(c.get("created_at"))
+        if not joined or joined > then:
+            continue                               # not a client yet
+        seen = before.get(c["id"]) or joined
+        if seen <= then - timedelta(days=days) and matches(tid, row, c, then, {}):
+            was += 1
+    count = len(targeted)
+    ages: Dict[str, int] = {k: 0 for k, _, _ in AGE_BARS}
+    genders = {"F": 0, "M": 0}
+    channels = {"store": 0, "online": 0, "other": 0}
+    for c in targeted:
+        a = CF.age_of(c.get("birth_date"))
+        for k, lo, hi in AGE_BARS:
+            if a is not None and lo <= a <= hi:
+                ages[k] += 1
+        if c.get("gender") in genders:
+            genders[c["gender"]] += 1
+        channels[CHANNEL_GROUPS.get(origin_of(c), "online")] += 1
+    pct = lambda n, d: round(n / d * 100) if d else 0  # noqa: E731
+    known_age, known_g = sum(ages.values()), sum(genders.values())
+    rate = _reactivation(tid, at)
+    paid = sum(float(c.get("total_amount_paid") or 0) for c in targeted)
+    visits = sum(int(c.get("visits") or 0) for c in targeted)
+    basket = (paid / visits) if visits and paid else None
+    back = round(count * rate["rate"]) if rate else None
+    return {
+        "days": days, "count": count, "lapsed": len(lapsed), "excluded": len(lapsed) - count,
+        "month_ago": was, "delta": (round((count - was) / was * 100) if was else None),
+        "cutoff": cutoff.date().isoformat(),
+        "breakdown": {"age": [{"key": k, "n": n, "pct": pct(n, known_age)} for k, n in ages.items()],
+                      "gender": [{"key": k, "n": n, "pct": pct(n, known_g)} for k, n in genders.items()],
+                      "channel": [{"key": k, "n": n, "pct": pct(n, count)} for k, n in channels.items()]},
+        "impact": {"rate": rate["rate"] if rate else None, "basis": rate["basis"] if rate else None,
+                   "sends": rate["sends"] if rate else 0, "reactivated": back,
+                   "basket": round(basket, 2) if basket else None,
+                   "revenue": round(back * basket) if back is not None and basket else None},
+    }
+
+
+def pick_targeting(tid: str, tg: Dict[str, Any]) -> Dict[str, Any]:
+    """Nouvelle automatisation › Ciblage: the chosen card as filters (as clean() saves it)."""
+    pick = tg.get("pick") or "all"
+    f = dict(tg.get("filters") or {})
+    if pick == "active":
+        from features import customer_rules as R
+        f["activity"] = [x["key"] for x in R.statuses(R.load(tid)) if ACTIVITY_GROUPS.get(x["key"]) == "active"]
+    if pick == "inactive":
+        f["last_visit_op"], f["last_visit_days"] = "more", int(tg.get("inactive_days") or 30)
+    has = any(v not in (None, [], "") for k, v in f.items() if k != "last_visit_op")
+    mode = "segment" if pick == "segment" else ("filtered" if pick != "all" or has else "all")
+    return {**tg, "mode": mode, "filters": f}
 
 
 @router.post("/api/owner/automations/preview")
@@ -1910,8 +3092,11 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
     tid = token_data.tenant_id
     if body.scenario not in SCENARIOS:
         raise HTTPException(status_code=400, detail="Scénario inconnu.")
+    tg = body.targeting.model_dump()
+    if body.scenario == "custom" and tg.get("pick"):
+        tg = pick_targeting(tid, tg)              # Nouvelle automatisation: the card chosen → its filters
     row = {"id": "preview", "scenario": body.scenario, "store_ids": _own_stores(token_data),
-           "targeting": body.targeting.model_dump()}
+           "targeting": tg, "trigger": body.trigger or {}}
     at = _now()
     cache: Dict[str, Any] = {}
     people = [c for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}) if matches(tid, row, c, at, cache)]
@@ -1925,6 +3110,85 @@ def preview(body: PreviewIn, token_data: TokenData = Depends(require_role(READER
     if people:
         c = people[0]
         tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "reward_description": 1}) or {}
-        sample = {"first_name": (c.get("name") or "").split(" ")[0] or "Sarah", "points": int(c.get("points") or 0),
+        sample = {"first_name": (c.get("name") or "").split(" ")[0] or "Sarah", "name": c.get("name") or "",
+                  "points": int(c.get("points") or 0),
                   "visits": int(c.get("visits") or 0), "next_reward": tpl.get("reward_description") or "votre récompense"}
-    return {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}
+    out = {"count": len(people), "sample": sample, "reachable": {"total": either, "wallet": wallet, "push": push}}
+    if body.scenario == "custom":
+        # « Aperçu du ciblage »: out of how many, three real clients, and the list
+        out["total"] = _db.customers.count_documents({"tenant_id": tid, "deleted_at": None})
+        def brief(c):
+            lv = _aware(c.get("last_visit_date"))
+            return {"id": c["id"], "name": c.get("name") or "", "points": int(c.get("points") or 0),
+                    "last_visit": _paris(lv).date().isoformat() if lv else None}
+        ordered = sorted(people, key=lambda c: _aware(c.get("last_visit_date")) or datetime.min.replace(tzinfo=timezone.utc),
+                         reverse=True)
+        out["examples"] = [brief(c) for c in ordered[:3]]
+        if body.full:
+            out["list"] = [brief(c) for c in ordered[:500]]
+    if body.scenario == "inactive":
+        out["inactive"] = inactive_insights(tid, row, at)
+    if body.scenario == "near_reward":
+        out["near"] = near_insights(tid, row, at)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Nouvelle automatisation: the address search (Géolocalisation) and the till's
+# « Offre utilisée » (Après une action client › Utilisation d'une offre)
+# ---------------------------------------------------------------------------
+@router.get("/api/owner/automations/address-search")
+def address_search(q: str = "", token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    """« Adresse ou établissement »: the shop's own establishments first, then
+    any address (Base Adresse Nationale / Photon)."""
+    tid = token_data.tenant_id
+    q = (q or "").strip()
+    out: List[Dict[str, Any]] = []
+    from features import geo_automation as GA
+    fold = lambda x: re.sub(r"\s+", " ", (x or "").lower())  # noqa: E731
+    for a in GA.anchors(tid):
+        if a.get("lat") is None:
+            continue
+        label = " – ".join(x for x in (a.get("name"), a.get("address")) if x)
+        if not q or fold(q) in fold(label):
+            out.append({"kind": "store", "label": label, "lat": a["lat"], "lng": a["lng"], "id": a.get("id")})
+    if len(q) >= 3:
+        try:
+            from services import addresses
+            t = _db.tenants.find_one({"id": tid}, {"_id": 0, "country": 1}) or {}
+            for r in addresses.search(q, t.get("country") or "FR", "address", 6):
+                if r.get("lat") is not None:
+                    out.append({"kind": "address", "label": r["label"], "lat": r["lat"], "lng": r["lng"]})
+        except Exception as exc:              # noqa: BLE001 — a geocoder outage is a message
+            if not out:
+                print(f"automations: address search failed ({exc})")
+                raise HTTPException(status_code=503, detail="La recherche d'adresse est momentanément indisponible. Réessayez dans un instant.")
+    return {"results": out[:10]}
+
+
+class OfferUseIn(BaseModel):
+    customer_id: str
+    branch_id: Optional[str] = None
+
+
+@router.post("/api/owner/offers/{campaign_id}/use")
+def use_offer(campaign_id: str, body: OfferUseIn,
+              token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
+    """The till: the client used this offer now (once per offer and client)."""
+    tid = token_data.tenant_id
+    cust = _db.customers.find_one({"id": body.customer_id, "tenant_id": tid, "deleted_at": None}, {"_id": 0})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Client introuvable.")
+    offer = _db.campaigns.find_one({"id": campaign_id, "tenant_id": tid}, {"_id": 0})
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offre introuvable.")
+    try:
+        from features import campaign_kinds as K
+        live = offer.get("status") == "sent" and offer.get("kind") in K.OFFER_KINDS and \
+            cust["id"] in (offer.get("recipient_ids") or []) and K.active_now(offer, _now())
+    except Exception:
+        live = False
+    if not live:
+        raise HTTPException(status_code=400, detail="Cette offre n'est pas valable pour ce client en ce moment.")
+    from features import custom_rules as CR
+    return {"ok": True, "use": CR.offer_used(tid, cust, offer, getattr(token_data, "email", None), body.branch_id)}

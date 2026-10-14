@@ -150,21 +150,13 @@ class Reader:
         return R.load(self.tid)
 
     def campaigns(self) -> List[Dict[str, Any]]:
+        """The campaigns SENT in the period, for the establishment chosen —
+        the Campagnes page's own choice (campaigns_page._limit), so both pages
+        count the same campaigns (QA F32)."""
+        from features import campaigns_page as CPG
         rows = list(_db.campaigns.find(
-            {"tenant_id": self.tid, "sent_at": {"$gte": self.start, "$lte": self.end}},
-            {"_id": 0, "id": 1, "name": 1, "status": 1, "sent_at": 1, "recipient_ids": 1,
-             "opens": 1, "clicks": 1, "attributed_visit_customer_ids": 1}))
-        if self.mine is None:
-            return rows
-        # A campaign counts for the clients of these establishments only.
-        out = []
-        for c in rows:
-            ids = [i for i in c.get("recipient_ids") or [] if i in self.mine]
-            if ids:
-                out.append({**c, "recipient_ids": ids,
-                            "attributed_visit_customer_ids": [i for i in c.get("attributed_visit_customer_ids") or []
-                                                              if i in self.mine]})
-        return out
+            {"tenant_id": self.tid, "status": "sent", "sent_at": {"$gte": self.start, "$lte": self.end}}, {"_id": 0}))
+        return CPG._limit(rows, self.mine, self.scope)
 
     def reviews(self) -> List[Dict[str, Any]]:
         try:
@@ -352,20 +344,25 @@ def _tab_campagnes(r: Reader) -> Dict[str, Any]:
     if not rows:
         return {"empty": True, "message": "Aucune campagne envoyée sur cette période.",
                 "strip": [], "table": []}
-    visits = {v["customer_id"]: float(v.get("amount_paid") or 0) for v in r.visits()}
+    # one count with the Campagnes page (services/campaign_figures, QA F32):
+    # clicks from the offer's counter, opens as card_opens, each visit once
+    from features import campaigns_page as CPG
+    from features import store_scope as SS
+    from services import campaign_figures as CF
+    att = CF.attribution(_db, r.tid, rows, SS.visit_filter(r.scope) if r.scope else None)
     table = []
     for c in rows:
-        reach = len(c.get("recipient_ids") or [])
-        attributed = c.get("attributed_visit_customer_ids") or []
-        revenue = sum(visits.get(cid, 0.0) for cid in attributed)
+        ids = list(c.get("recipient_ids") or [])
+        reach = len(ids)
+        a = att.get(c.get("id")) or {"revenue": 0.0, "sales": 0, "buyers": 0}
         table.append({
             "id": c.get("id"), "name": c.get("name") or "Campagne",
             "status": c.get("status") or "sent",
             "sent_at": (_aware(c.get("sent_at")) or r.at).isoformat(),
-            "reach": reach, "opens": int(c.get("opens") or 0),
-            "clicks": int(c.get("clicks") or 0), "sales": len(attributed),
-            "revenue": _money(revenue),
-            "conversion": round(len(attributed) / reach * 100, 1) if reach else 0.0,
+            "reach": reach, "opens": len(CPG._opened_ids(r.tid, ids, _aware(c.get("sent_at")), c)),
+            "clicks": CF.clicks(c), "sales": a["sales"],
+            "revenue": _money(a["revenue"]),
+            "conversion": round(a["buyers"] / reach * 100, 1) if reach else 0.0,
         })
     table.sort(key=lambda t: -t["revenue"])
     totals = {k: sum(t[k] for t in table) for k in ("reach", "opens", "clicks", "sales")}
@@ -378,8 +375,7 @@ def _tab_campagnes(r: Reader) -> Dict[str, Any]:
         ],
         "table": table,
         "revenue_attributed": _money(sum(t["revenue"] for t in table)),
-        "note": f"Une visite compte pour une campagne si elle a lieu dans les "
-                f"{ATTRIBUTION_DAYS} jours suivant l'envoi.",
+        "note": CF.REVENUE_NOTE,
     }
 
 

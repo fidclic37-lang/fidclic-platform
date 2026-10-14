@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { ownerAPI } from '../lib/api';
+import api, { ownerAPI } from '../lib/api';
 import BarcodeSvg, { SQUARE_CODES } from './wallet/BarcodeSvg';
 import { ActionTile } from './wallet/walletLook';
 
@@ -15,6 +15,9 @@ import { ActionTile } from './wallet/walletLook';
  * fonts, spacing) is drawn here, after Apple's storeCard layout.
  *
  * Props: card (the designer's current fields), width (px for a 375-pt pass).
+ * barcodeId: a real customer's card instead (GET /api/card/{id}/pass-view —
+ * the owner's current design with their own name and progress, 2026-10-13);
+ * fallback: what to show if that cannot be read.
  *
  * iOS 27 (WWDC26): when the pass carries the « poster » style, the preview
  * opens on it — full-bleed background, primary logo, header, the member's
@@ -116,7 +119,7 @@ function PosterPass({ p, s, width, bc, colors = {} }) {
   );
 }
 
-export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
+export default function WalletPassLive({ card = {}, width = 292, visits = 3, barcodeId = null, fallback = null }) {
   const [pass, setPass] = useState(null);
   const [error, setError] = useState(false);
   const [back, setBack] = useState(false);
@@ -126,15 +129,17 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
 
   useEffect(() => {
     const my = ++seq.current;
+    const load = () => (barcodeId ? api.get(`/card/${barcodeId}/pass-view`) : ownerAPI.walletPreview({ card, visits }));
     const timer = setTimeout(() => {
-      ownerAPI.walletPreview({ card, visits })
+      load()
         .then((r) => { if (my === seq.current) { setPass(r.data); setError(false); } })
         .catch(() => { if (my === seq.current) setError(true); });
-    }, 350);
+    }, barcodeId ? 0 : 800);         // after typing stops: one preview, not one per keystroke
     return () => clearTimeout(timer);
-  }, [key, visits]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, visits, barcodeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const s = width / 375;
+  if (!pass && error && fallback) return fallback;
   if (!pass) {
     return (
       <div className="flex items-center justify-center rounded-xl bg-[#1C1D22] text-[12px] text-white/70"
@@ -167,9 +172,11 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
       <div translate="no" style={{ width }}>
         {osSwitch}
         <PosterPass p={pass.poster} s={s} width={width} bc={bc} colors={pass.colors} />
-        <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
-          Exemple : {pass.sample?.name}, {pass.sample?.visits} visites · nouvelle carte iOS 27
-        </p>
+        {!barcodeId && (                       /* a customer's own card is no « exemple » */
+          <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
+            Exemple : {pass.sample?.name}, {pass.sample?.visits} visites · nouvelle carte iOS 27
+          </p>
+        )}
       </div>
     );
   }
@@ -226,9 +233,11 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3 }) {
           ))}
         </dl>
       )}
-      <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
-        Exemple : {pass.sample?.name}, {pass.sample?.visits} visites
-      </p>
+      {!barcodeId && (
+        <p className="mt-1.5 text-center text-[11px] text-[#94A3B8]">
+          Exemple : {pass.sample?.name}, {pass.sample?.visits} visites
+        </p>
+      )}
     </div>
   );
 }

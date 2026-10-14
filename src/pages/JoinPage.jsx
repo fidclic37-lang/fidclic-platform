@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
-import { User, Mail, Phone, CalendarDays, ArrowRight, Check, Share2, Smartphone, Printer } from 'lucide-react';
+import { User, Mail, Phone, CalendarDays, ArrowRight, Check, Share2, Smartphone, Printer, Store } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
 import { SIGNUP_SOURCES, normalizeSource } from '../lib/sources';
 import { addMine, ownerLink } from '../lib/myCards';
 import PhoneField, { phoneValueError } from '../components/PhoneField';
 import WalletButtons from '../components/WalletButtons';
 import WalletPassPreview from '../components/WalletPassPreview';
+import WalletPassLive from '../components/WalletPassLive';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import Fireworks from '../components/Fireworks';
 
@@ -45,8 +46,19 @@ export function birthError(value) {
   if (mo < 1 || mo > 12 || dt.getUTCDate() !== d || dt.getUTCMonth() !== mo - 1) return 'Date de naissance invalide : ce jour n’existe pas.';
   const now = new Date();
   if (y < 1900 || dt > now) return 'Date de naissance invalide : vérifiez l’année.';
+  // nobody older than 85 joins (user, 2026-10-11) — the server says the same
+  const age = now.getFullYear() - y - ((now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) ? 1 : 0);
+  if (age > MAX_AGE) return `Date de naissance : l’inscription est ouverte jusqu’à ${MAX_AGE} ans. Vérifiez l’année.`;
   return null;
 }
+
+export const MAX_AGE = 85;
+// the shape only; the server also catches typos, throwaway inboxes and a
+// domain that receives no mail (services/email_check)
+export const emailError = (v) => {
+  const s = String(v || '').trim();
+  return s && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(s) ? 'Adresse e-mail invalide. Exemple : prenom.nom@gmail.com' : null;
+};
 
 function resolveSourceFromUrl(searchParams, channel) {
   const raw = channel || searchParams.get('src') || searchParams.get('source') || searchParams.get('utm_source') || '';
@@ -107,6 +119,9 @@ function Success({ result, tenant }) {
   const bc = result.barcode_id;
   const [data, setData] = useState(null);
   const [toast, setToast] = useState('');
+  // a Wallet button for this phone? (null: not known yet) — « Voir ma carte »
+  // only without one (user, 2026-10-13, BUG-008: the card must go to the Wallet)
+  const [walletShown, setWalletShown] = useState(null);
   useEffect(() => {
     api.get(`/card/${bc}`).then(({ data: d }) => setData(d)).catch(() => setData(null));
   }, [bc]);
@@ -138,22 +153,21 @@ function Success({ result, tenant }) {
       {tenant?.name && <p className="mt-1 text-[18px] font-semibold text-[#0B1C3F]">Bienvenue chez {tenant.name} !</p>}
       <p className="mt-1 text-[16px] text-[#64748B]">Votre carte de fidélité est prête.</p>
 
+      {/* the card as the owner designed it — the very pass the Wallet gets
+          (iOS 27 poster included), not a drawing of an older layout (BUG-008) */}
       <div className="mt-6 flex justify-center">
-        {data?.card ? (
-          data.card.layout_style === 'wallet' ? (
-            <div style={{ maxWidth: 360, width: '100%' }}>
-              <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
-            </div>
-          ) : (
-            <div className="w-full max-w-[360px]"><PremiumLoyaltyCard customer={data.customer} tenant={data.tenant} card={data.card} /></div>
-          )
-        ) : (
-          <div className="h-56 w-full max-w-[360px] animate-pulse rounded-2xl bg-[#E2E8F0]" />
-        )}
+        <div className="w-fit">
+          <WalletPassLive barcodeId={bc} width={Math.min(360, (typeof window !== 'undefined' ? window.innerWidth : 360) - 40)}
+                          fallback={data?.card ? (
+                            data.card.layout_style === 'wallet'
+                              ? <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
+                              : <div className="w-full max-w-[360px]"><PremiumLoyaltyCard customer={data.customer} tenant={data.tenant} card={data.card} /></div>
+                          ) : null} />
+        </div>
       </div>
 
       <div className="mx-auto mt-5 max-w-[360px] space-y-3 text-left">
-        <WalletButtons barcodeId={bc} onError={say} />
+        <WalletButtons barcodeId={bc} onError={say} phoneOnly onShown={setWalletShown} />
         <div className="grid grid-cols-3 gap-2">
           {[[Share2, 'Partager / copier', share], [Smartphone, 'Sur l’écran d’accueil', home], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
             <button key={label} type="button" onClick={fn}
@@ -162,10 +176,12 @@ function Success({ result, tenant }) {
             </button>
           ))}
         </div>
-        <Link to={ownerLink(bc, result.card_key)}
-              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
-          Voir ma carte <ArrowRight size={18} />
-        </Link>
+        {walletShown === false && (
+          <Link to={ownerLink(bc, result.card_key)}
+                className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
+            Voir ma carte <ArrowRight size={18} />
+          </Link>
+        )}
       </div>
       {toast && <p role="status" className="mx-auto mt-4 max-w-[360px] rounded-xl bg-[#0B1C3F] px-4 py-2.5 text-[13px] text-white">{toast}</p>}
     </div>
@@ -173,17 +189,30 @@ function Success({ result, tenant }) {
 }
 
 const JoinPage = () => {
-  const { slug, channel } = useParams();
+  // /join/<compte>/<établissement>[/<canal>] or /join/<compte>/<canal> (multi-store, 2026-10-12)
+  const { slug, channel: seg, channel2 } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [page, setPage] = useState(null);
+  const stores = page?.stores || [];                    // only when the account has several
+  const urlStore = stores.find((x) => x.slug === String(seg || '').toLowerCase()) || null;
+  const channel = urlStore ? channel2 : seg;
+  const [chosenStore, setChosenStore] = useState('');
+  // a store whose card is not designed yet takes no signup (multi-store, 2026-10-12)
+  const openStores = stores.filter((x) => !x.card_off);
+  const askStore = openStores.length > 1 && !urlStore && !searchParams.get('p');
   const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams, channel), [searchParams, channel]);
   // ?p=FT-… — a friend's card brought them: parrainage
   const parrainBarcode = (searchParams.get('p') || '').trim().toUpperCase();
   const [inviter, setInviter] = useState(null);
   const [tenant, setTenant] = useState(null);
+  // several establishments: the shop is the one of the link (or chosen on the form) —
+  // its name in the welcome, the consent and the card, never the account's (2026-10-12)
+  const storeName = urlStore?.name || openStores.find((x) => x.slug === chosenStore)?.name
+    || (openStores.length === 1 ? openStores[0].name : '');
+  const shop = tenant && storeName ? { ...tenant, name: storeName } : tenant;
   const [closed, setClosed] = useState(null);
-  const [page, setPage] = useState(null);
   const [logoBroken, setLogoBroken] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', postal_code: '', birth: '' });
   const [consent, setConsent] = useState(false);
@@ -202,19 +231,25 @@ const JoinPage = () => {
   }, [parrainBarcode]);
 
   useEffect(() => {
-    publicAPI.getJoinInfo(slug).then((res) => {
+    publicAPI.getJoinInfo(slug, seg).then((res) => {
       const live = res.data?.slug;                 // a name from before a rename
       if (live && live !== slug) {
         const base = location.pathname.startsWith('/inscription/') ? '/inscription/' : '/join/';
-        navigate(`${base}${live}${location.search}`, { replace: true });
+        const rest = location.pathname.split('/').slice(3).filter(Boolean).join('/');   // the store / channel stay
+        navigate(`${base}${live}${rest ? `/${rest}` : ''}${location.search}`, { replace: true });
         return;
       }
       setTenant(res.data);
     }).catch((e) => {
       if (e?.response?.status === 410) setClosed(e.response.data?.detail || "Ce programme de fidélité n'est plus disponible.");
     });
-    publicAPI.joinPage(slug).then(({ data }) => setPage(data)).catch(() => {});
-  }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
+    publicAPI.joinPage(slug, seg).then(({ data }) => setPage(data)).catch(() => {});
+  }, [slug, seg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the link of an establishment whose card is not designed yet: no signup there
+  useEffect(() => {
+    if (urlStore?.card_off) setClosed(page?.card_off_message || "Cet établissement prépare encore sa carte de fidélité.");
+  }, [urlStore, page]);
 
   // one visit per browser per day for Paramètres › Lien d'inscription (not the owner's preview)
   useEffect(() => {
@@ -227,7 +262,8 @@ const JoinPage = () => {
         localStorage.setItem('fidclic:visitor', visitor);
       }
     } catch (_e) { /* private mode */ }
-    if (visitor) publicAPI.joinView(slug, { visitor, src: lockedSource }).catch(() => {});
+    // the 2nd part of the address may be the establishment (the server checks it)
+    if (visitor) publicAPI.joinView(slug, { visitor, src: lockedSource || resolveSourceFromUrl(searchParams, channel2), store: seg || undefined }).catch(() => {});
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (lockedSource) recordTouchpoint(slug, lockedSource); }, [slug, lockedSource]);
 
@@ -236,12 +272,15 @@ const JoinPage = () => {
     const postal = postalDigits(postalRef.current?.value ?? form.postal_code);
     const errs = {};
     if (!form.name.trim()) errs.name = 'Indiquez votre nom.';
+    const ee = emailError(form.email);
+    if (ee) errs.email = ee;
     const pe = phoneValueError(form.phone);
     if (pe) errs.phone = pe;
     if (!/^\d{5}$/.test(postal)) errs.postal_code = 'Code postal : 5 chiffres, par exemple 37000.';
     const be = birthError(form.birth);
     if (be) errs.birth = be;
     if (!consent) errs.consent = 'Cochez la case pour créer votre carte.';
+    if (askStore && !chosenStore) errs.store = 'Choisissez votre établissement.';
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setBusy(true); setJoinError(null);
@@ -256,6 +295,7 @@ const JoinPage = () => {
         consent: true, consent_policy_version: '2026-10-09',
         ...(position || {}),
         ...(parrainBarcode ? { parrain_barcode: parrainBarcode } : {}),
+        ...(urlStore ? { store: urlStore.slug } : chosenStore ? { store: chosenStore } : {}),
       };
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);
@@ -264,7 +304,15 @@ const JoinPage = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       const detail = err?.response?.data?.detail_raw ?? err?.response?.data?.detail;
-      if (err?.response?.status === 409 && detail && typeof detail === 'object') {
+      if (detail && typeof detail === 'object' && detail.code === 'invalid_field') {
+        // the server's word on one field (a postal code unknown in France, an
+        // e-mail domain that receives no mail…), shown under that field
+        setErrors((x) => ({ ...x, [detail.field]: detail.message }));
+        setJoinError(null);
+      } else if (detail && typeof detail === 'object' && detail.code === 'store_required') {
+        setErrors((x) => ({ ...x, store: detail.message }));
+        setJoinError(null);
+      } else if (err?.response?.status === 409 && detail && typeof detail === 'object') {
         setJoinError({ tone: 'amber', title: detail.code === 'email_taken' ? 'E-mail déjà utilisé' : 'Vous avez déjà une carte', message: detail.message });
       } else if (err?.response?.status === 403 && detail && typeof detail === 'object' && detail.code === 'plan_limit_reached') {
         setJoinError({ tone: 'amber', title: 'Programme complet', message: detail.message || 'Ce programme de fidélité est complet pour le moment.' });
@@ -275,7 +323,7 @@ const JoinPage = () => {
     } finally { setBusy(false); }
   };
 
-  if (closed) return <div className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8"><p className="mb-2 font-semibold text-[#0B1C3F]">Programme terminé</p><p className="text-sm text-[#64748B]">{closed}</p></div></div>;
+  if (closed) return <div className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8"><p className="mb-2 font-semibold text-[#0B1C3F]">{urlStore?.card_off ? 'Bientôt disponible' : 'Programme terminé'}</p><p className="text-sm text-[#64748B]">{closed}</p></div></div>;
   if (!tenant) return <div className="p-8 text-center text-[#64748B]">Chargement…</div>;
 
   const logo = page?.logo_url;
@@ -285,15 +333,15 @@ const JoinPage = () => {
   return (
     <div className="min-h-screen bg-[#F8FAFC] px-4 py-10 font-['Inter']">
       <div className="mx-auto w-full max-w-md">
-        {success ? <Success result={success} tenant={tenant} /> : (
+        {success ? <Success result={success} tenant={shop} /> : (
           <>
             <header className="text-center">
               {logo && !logoBroken ? (
-                <img src={logo} alt={tenant.name} onError={() => setLogoBroken(true)}
+                <img src={logo} alt={shop.name} onError={() => setLogoBroken(true)}
                      className="mx-auto h-28 w-28 rounded-full object-cover shadow-[0_12px_30px_-12px_rgba(11,28,63,.45)]" />
               ) : (
                 <span translate="no" className="notranslate mx-auto flex h-28 w-28 items-center justify-center rounded-full bg-[#0B1C3F] text-[40px] font-bold text-white">
-                  {(tenant.name || '?').slice(0, 1).toUpperCase()}
+                  {(shop.name || '?').slice(0, 1).toUpperCase()}
                 </span>
               )}
               <h1 className="mt-6 text-[30px] font-extrabold leading-[1.12] text-[#0B1C3F]">{title}</h1>
@@ -308,8 +356,9 @@ const JoinPage = () => {
                 </span>
                 <p className="text-[13px] leading-snug text-[#0B1C3F]">
                   Vous êtes invité par <strong translate="no" className="notranslate">{inviter.first_name || 'un client'}</strong>.
-                  {inviter.referee_points > 0 && (
-                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_points} points</strong> à votre
+                  {/* points, tampons or the shop's own offer (2026-10-13) */}
+                  {(inviter.referee_reward ?? (inviter.referee_points > 0 ? `${inviter.referee_points} points` : '')) && (
+                    <> Créez votre carte et vous recevrez <strong>{inviter.referee_reward ?? `${inviter.referee_points} points`}</strong> à votre
                       {Number(inviter.minimum_visits || 1) <= 1 ? ' première' : ` ${inviter.minimum_visits}e`} visite
                       {inviter.reward_mode === 'every' ? ', puis à chaque visite' : ''}.</>
                   )}
@@ -318,6 +367,26 @@ const JoinPage = () => {
             )}
 
             <form id="join-form" onSubmit={submit} noValidate className="mt-7 space-y-3.5">
+              {urlStore && (
+                <p className="flex items-center justify-center gap-2 rounded-2xl bg-[#F3F7FF] px-4 py-2.5 text-[13.5px] text-[#0B1C3F]">
+                  <Store size={17} className="text-[#2F6BFF]" aria-hidden="true" />
+                  Établissement : <strong translate="no" className="notranslate">{urlStore.name}</strong>
+                </p>
+              )}
+              {askStore && (
+                <div>
+                  <label className={box(errors.store)}>
+                    <Store size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
+                    <select aria-label="Votre établissement" required className={`${inputCls} bg-transparent`} value={chosenStore}
+                            onChange={(e) => { setChosenStore(e.target.value); setErrors((x) => ({ ...x, store: undefined })); }}>
+                      <option value="">Votre établissement</option>
+                      {openStores.map((x) => <option key={x.id} value={x.slug}>{x.name}{x.city ? ` — ${x.city}` : ''}</option>)}
+                    </select>
+                    <Star />
+                  </label>
+                  <FieldError id="join-store-error">{errors.store}</FieldError>
+                </div>
+              )}
               <div>
                 <label className={box(errors.name)}>
                   <User size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
@@ -328,11 +397,15 @@ const JoinPage = () => {
                 </label>
                 <FieldError id="join-name-error">{errors.name}</FieldError>
               </div>
-              <label className={box(false)}>
-                <Mail size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
-                <input type="email" autoComplete="email" placeholder="Email (optionnel)" aria-label="Email (optionnel)"
-                       className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} />
-              </label>
+              <div>
+                <label className={box(errors.email)}>
+                  <Mail size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
+                  <input type="email" autoComplete="email" placeholder="Email (optionnel)" aria-label="Email (optionnel)"
+                         aria-invalid={errors.email ? 'true' : undefined}
+                         className={inputCls} value={form.email} onChange={(e) => set('email', e.target.value)} />
+                </label>
+                <FieldError id="join-email-error">{errors.email}</FieldError>
+              </div>
               <div>
                 <div className={box(errors.phone)}>
                   <Phone size={22} className="shrink-0 text-[#64748B]" aria-hidden="true" />
@@ -379,7 +452,7 @@ const JoinPage = () => {
                        className="mt-0.5 h-6 w-6 shrink-0 cursor-pointer rounded-md accent-[#2F6BFF]" />
                 <span className="text-[14px] leading-relaxed text-[#1E293B]">
                   {tenant.privacy_public?.consent_text || (
-                    <>J’accepte que <strong translate="no" className="notranslate">{tenant.name}</strong> et FidClic utilisent mes
+                    <>J’accepte que <strong translate="no" className="notranslate">{shop.name}</strong> et FidClic utilisent mes
                       données personnelles pour gérer ma carte de fidélité, mon compte et m’envoyer des offres personnalisées,
                       y compris des offres pertinentes à proximité si j’autorise ma position.</>
                   )}

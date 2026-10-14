@@ -89,10 +89,17 @@ export function FicheModal({ clientId, onClose, onSaved }) {
       const y2 = (f.birth_date || '').slice(0, 4);
       body.birthday = y2 && m2 && d2 ? `${y2}-${m2}-${d2}` : f.birthday;
     }
-    if (!Object.keys(body).length) { onClose(); return; }
+    // « Établissement d'origine » (multi-store, 2026-10-12): its own call
+    const storeMoved = f.branch_id && f.branch_id !== d.client.branch_id;
+    if (!Object.keys(body).length && !storeMoved) { onClose(); return; }
     try {
-      const { data } = await ownerAPI.saveClientFiche(clientId, body);
-      onSaved(data.changed.length ? 'Fiche enregistrée.' : 'Aucun changement.');
+      let changed = false;
+      if (Object.keys(body).length) {
+        const { data } = await ownerAPI.saveClientFiche(clientId, body);
+        changed = data.changed.length > 0;
+      }
+      if (storeMoved) { await ownerAPI.setHomeStore(clientId, f.branch_id); changed = true; }
+      onSaved(changed ? 'Fiche enregistrée.' : 'Aucun changement.');
     } catch (e) { setMsg(err(e, "La fiche n'a pas pu être enregistrée.")); } finally { setBusy(false); }
   };
   return (
@@ -105,6 +112,13 @@ export function FicheModal({ clientId, onClose, onSaved }) {
            </>)}>
       {!f ? (msg ? null : <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</p>) : (
         <div className="grid gap-3 sm:grid-cols-2">
+          {/* how often this client comes, read only (QA BUG-005) */}
+          <p className="sm:col-span-2 rounded-lg bg-[#F4F7FC] px-3 py-2 text-[13px] text-[#334155]" data-testid="fiche-visits">
+            {d.client.visits
+              ? <><b>{d.client.visits} visite{d.client.visits > 1 ? 's' : ''}</b>{d.client.last_visit
+                ? ` · dernière le ${new Date(d.client.last_visit).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris' })}` : ''}</>
+              : 'Aucune visite pour l’instant'}
+          </p>
           <label className="sm:col-span-2"><Label>Nom</Label>
             <input translate="no" value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} className={field} />
           </label>
@@ -134,13 +148,26 @@ export function FicheModal({ clientId, onClose, onSaved }) {
               <select aria-label="Année" value={yy || ''} className={field}
                       onChange={(e) => setF({ ...f, birth_date: e.target.value ? `${e.target.value}-${mm || '01'}-${dd || '01'}` : '' })}>
                 <option value="">Année</option>
-                {Array.from({ length: THIS_YEAR - 1899 }, (_, i) => String(THIS_YEAR - i)).map((y) => <option key={y} value={y}>{y}</option>)}
+                {/* 85 at most (user, 2026-10-11) — a year already on file still shows */}
+                {[...Array.from({ length: 87 }, (_, i) => String(THIS_YEAR - i)), ...(yy && Number(yy) < THIS_YEAR - 86 ? [yy] : [])]
+                  .map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
             </div>
           </div>
           <label><Label>Code postal</Label>
             <input inputMode="numeric" maxLength={5} value={f.postal_code} onChange={(e) => setF({ ...f, postal_code: e.target.value.replace(/\D/g, '').slice(0, 5) })} className={field} />
           </label>
+          {d.home_store?.choices?.length > 0 && (
+            <label className="sm:col-span-2"><Label>Établissement d'origine</Label>
+              <select value={f.branch_id || ''} onChange={(e) => setF({ ...f, branch_id: e.target.value })} className={field}
+                      disabled={d.home_store.choices.length < 2 && f.branch_id === d.home_store.choices[0]?.id}>
+                {!f.branch_id && <option value="">—</option>}
+                {f.branch_id && !d.home_store.choices.some((x) => x.id === f.branch_id) && <option value={f.branch_id}>{d.home_store.name || f.branch_id}</option>}
+                {d.home_store.choices.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+              </select>
+              <span className="mt-1 block text-[11.5px] text-[#64748B]">Sa carte et ses messages sont ceux de cet établissement ; ses passages comptent là où ils sont scannés.</span>
+            </label>
+          )}
           <label><Label>Comment nous a-t-il connu ?</Label>
             <select value={f.acquisition_source || ''} onChange={(e) => setF({ ...f, acquisition_source: e.target.value })} className={field}>
               <option value="">Non renseigné</option>

@@ -98,7 +98,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.campaigns.insert_one({"id": "k1", "tenant_id": "t1", "name": "Offre petit-déjeuner",
                              "status": "sent", "sent_at": now - dt.timedelta(days=5),
                              "recipient_ids": ["c1", "c2", "c3", "c4"],
-                             "opens": 3, "clicks": 2,
+                             "opens": 3, "offer_clicks": 2,
                              "attributed_visit_customer_ids": ["c1", "c2"]})
     db.reviews.insert_many([
         {"tenant_id": "t1", "rating": 10, "text": "Excellent accueil", "topics": ["staff"],
@@ -192,11 +192,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     row = c["table"][0]
     check("the campaign is listed", row["name"] == "Offre petit-déjeuner")
     check("reach is the recipients", row["reach"] == 4)
-    check("clicks come from the row", row["clicks"] == 2)
-    check("sales are the attributed visitors", row["sales"] == 2)
-    check("conversion is sales over reach", row["conversion"] == 50.0)
-    check("attributed revenue is those visitors' spend in the window",
-          row["revenue"] == 70.0)         # c1 40 + c2 30
+    # one count with the Campagnes page (services/campaign_figures, QA F32)
+    check("clicks: the offer's own counter (offer_clicks)", row["clicks"] == 2)
+    check("sales: the recipients' visits in the 15 days after the send", row["sales"] == 3)
+    check("conversion: clients who came back over reach", row["conversion"] == 75.0)
+    check("attributed revenue is those visits' spend in the window",
+          row["revenue"] == 90.0)         # c1 40 + c2 30 + c3 20 (c4 did not come; c1's visit 40 days ago is before)
     check("the attribution rule is printed, not assumed",
           f"{A.ATTRIBUTION_DAYS} jours" in c["note"])
     check("the strip totals the table",

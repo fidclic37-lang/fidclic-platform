@@ -16,14 +16,45 @@ import { keyOf } from '../lib/myCards';
  * glyph, French label); swap in the official SVG assets from their brand
  * kits when the marketing site ships them.
  */
-export default function WalletButtons({ barcodeId, onError }) {
+// The phone's own Wallet (user, 2026-10-13): an iPhone gets Apple's, an
+// Android phone Google's; a computer or another phone, none.
+export function phoneWallet(ua = navigator.userAgent, touch = navigator.maxTouchPoints || 0) {
+  if (/iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && touch > 1)) return 'apple';
+  if (/Android/.test(ua)) return 'google';
+  return null;
+}
+
+/* phoneOnly: only the button of this phone's Wallet (the signup's
+   « Félicitations », BUG-008). onShown(bool): told once the wallets are known
+   whether a button is on screen — the page offers « Voir ma carte » if not. */
+export default function WalletButtons({ barcodeId, onError, phoneOnly = false, onShown }) {
   const [cfg, setCfg] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [googleUrl, setGoogleUrl] = useState(null);
 
   useEffect(() => {
     // The card's business plan decides too (Super admin › Plan Limits › Wallet).
     api.get('/wallet/config', { params: { barcode: barcodeId } }).then((r) => setCfg(r.data || {})).catch(() => setCfg({}));
   }, [barcodeId]);
+
+  // Ready before the tap (user, 2026-10-12: « wallet khulne mein bahut time »):
+  // the server builds and keeps the Apple pass and makes the Google link while
+  // the customer reads the page, so the button opens the Wallet at once.
+  const mine = phoneWallet();
+  const wanted = phoneOnly ? (mine ? [mine] : []) : ['apple', 'google'];
+  const shownCount = cfg ? wanted.filter((k) => cfg[k]).length : null;
+  useEffect(() => {
+    if (!cfg || !shownCount) return undefined;          // no button here: nothing to get ready
+    let alive = true;
+    api.post(`/card/${barcodeId}/wallet-prepare`).then((r) => {
+      if (alive && r.data?.google_url) setGoogleUrl(r.data.google_url);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [cfg, barcodeId]);
+
+  useEffect(() => {
+    if (shownCount !== null) onShown?.(shownCount > 0);
+  }, [shownCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!cfg || (!cfg.apple && !cfg.google)) return null;
 
@@ -33,6 +64,7 @@ export default function WalletButtons({ barcodeId, onError }) {
   const order = isAndroid ? ['google', 'apple'] : ['apple', 'google'];
 
   const saveGoogle = async () => {
+    if (googleUrl) { window.location.href = googleUrl; return; }     // prepared: no wait
     setBusy(true);
     try {
       const r = await api.get(`/card/${barcodeId}/google-wallet`);
@@ -48,6 +80,7 @@ export default function WalletButtons({ barcodeId, onError }) {
   return (
     <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
       {order.map((k) => {
+        if (!wanted.includes(k)) return null;
         if (k === 'apple' && cfg.apple) {
           return (
             <a key="apple" href={`/api/card/${barcodeId}/apple-wallet.pkpass${keyOf(barcodeId) ? `?k=${encodeURIComponent(keyOf(barcodeId))}` : ''}`}

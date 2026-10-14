@@ -70,6 +70,8 @@ from pydantic import BaseModel
 
 from auth import require_role, TokenData
 
+from features import store_cards as _SC  # one card per establishment (multi-store)
+
 router = APIRouter(tags=["wallet-passes"])
 _db = None
 
@@ -82,6 +84,7 @@ def init(db):
         _db.pass_registrations.create_index([("serial", 1)])
         _db.pass_push_log.create_index([("serial", 1), ("sent_at", -1)])
         _db.pass_push_log.create_index([("device_id", 1), ("checked_at", 1)])
+        _db.img_cache.create_index("at", expireAfterSeconds=30 * 24 * 3600)
     except Exception:
         pass
 
@@ -322,17 +325,40 @@ def derive_colors(card: Dict[str, Any]) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # Images
 # ---------------------------------------------------------------------------
+_FETCHED: Dict[str, Tuple[float, bytes]] = {}
+_MISSED: Dict[str, float] = {}                    # links that failed, and when
+
+
 def _fetch_image(src: Optional[str]) -> Optional[bytes]:
     """data: URL or https URL → raw bytes (None on any failure)."""
     if not src:
         return None
     try:
+        from services import media as _M
+        if _M.is_ref(src):                         # our own picture: straight from the database
+            return _M.resolve(src)
         if src.startswith("data:"):
             head, _, data = src.partition(",")
             return base64.b64decode(data) if ";base64" in head else urllib.parse.unquote_to_bytes(data)
         if src.startswith("http"):
-            with urllib.request.urlopen(src, timeout=8) as r:  # noqa: S310 — merchant-provided image URL
-                return r.read()
+            hit = _FETCHED.get(src)
+            if hit and time.time() - hit[0] < 600:          # the same photo on every preview keystroke
+                return hit[1]
+            miss = _MISSED.get(src)
+            if miss and time.time() - miss < 300:            # a dead link is not waited for again
+                return None
+            try:
+                with urllib.request.urlopen(src, timeout=4) as r:  # noqa: S310 — merchant-provided image URL
+                    data = r.read()
+            except Exception:
+                _MISSED[src] = time.time()
+                while len(_MISSED) > 64:
+                    _MISSED.pop(next(iter(_MISSED)))
+                return None
+            _FETCHED[src] = (time.time(), data)
+            while len(_FETCHED) > 16:
+                _FETCHED.pop(next(iter(_FETCHED)))
+            return data
     except Exception:
         return None
     return None
@@ -340,6 +366,12 @@ def _fetch_image(src: Optional[str]) -> Optional[bytes]:
 
 def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = False,
                   fallback_rgb: Tuple[int, int, int] = (28, 29, 34), tight: bool = False) -> Dict[str, bytes]:
+    return _cached("png_variants", (raw or b"", box, cover, fallback_rgb, tight),
+                   lambda: _make_png_variants(raw, box, cover, fallback_rgb, tight))
+
+
+def _make_png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = False,
+                       fallback_rgb: Tuple[int, int, int] = (28, 29, 34), tight: bool = False) -> Dict[str, bytes]:
     """Return {'':1x, '@2x':2x, '@3x':3x} PNGs fitted (contain) or filling (cover)
     the given point box. Falls back to a flat brand tile when Pillow is missing
     or the image is unreadable — a pass MUST ship icon.png.
@@ -377,7 +409,7 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
                 canvas.paste(img, ((cw - img.width) // 2, (h - img.height) // 2), img)
                 img = canvas
             buf = io.BytesIO()
-            img.save(buf, format="PNG", optimize=True)
+            img.save(buf, format="PNG", compress_level=3)
             out[suffix] = buf.getvalue()
         return out
     except ImportError:
@@ -398,6 +430,235 @@ def _png_variants(raw: Optional[bytes], box: Tuple[int, int], cover: bool = Fals
 
 
 # ---------------------------------------------------------------------------
+# Tampon shapes (user, 2026-10-11: the owner picks the shape, for Android
+# and iOS alike) — one choice for every jauge: the iOS 27 text jauge under
+# the QR, Google's jauge row, and the jauge painted into the iOS 26 strip and
+# Google's banner. No choice yet → the painted bars of before and ● in text.
+# ---------------------------------------------------------------------------
+STAMP_SHAPES: Dict[str, Tuple[str, str, str]] = {
+    # key → (label, filled glyph, empty glyph). U+FE0E keeps ♥ a text glyph:
+    # iOS would otherwise draw the red emoji, whatever the card's colours.
+    "rond": ("Rond", "●", "○"),
+    "etoile": ("Étoile", "★", "☆"),
+    "coeur": ("Cœur", "♥︎", "♡"),
+    "carre": ("Carré", "■", "□"),
+    "losange": ("Losange", "◆", "◇"),
+}
+JAUGE_MAX = 15          # past 15 tampons a spaced row no longer fits: « 3 / 25 » instead
+
+
+def stamp_shape(card: Dict[str, Any]) -> Optional[str]:
+    """The owner's shape, or None for the default (bars painted, ● in text)."""
+    s = card.get("stamp_shape")
+    return s if s in STAMP_SHAPES else None
+
+
+def apply_programme_rules(card: Dict[str, Any]) -> Dict[str, Any]:
+    """Points OR tampons on the card, never both (user, 2026-10-12: « dono is
+    not good »), decided by the programme itself: a tampons programme shows
+    the jauge and no points, every other one its balance and no jauge. The
+    old « Afficher le solde de points » / « Indicateur de progression »
+    switches no longer decide. Also the reward's defaults: on the card, on
+    its back. In place; returns the card."""
+    from features.loyalty_card import _programme
+    prog = _programme(card)
+    stamps = prog == "stamps"
+    card["programme"] = prog
+    card["show_points"] = not stamps
+    card["show_meter"] = stamps
+    card["show_stamps"] = stamps
+    card["reward_on_card"] = card.get("reward_on_card") is not False
+    card["reward_place"] = "front" if card.get("reward_place") == "front" else "back"
+    return card
+
+
+def jauge_text(stamps: int, threshold: int, shape: Optional[str]) -> Optional[str]:
+    """« ● ● ● ○ ○ ○ ○ ○ ○ ○ » — the jauge Wallet writes itself, crisp on any
+    photo, a space between the tampons (user, 2026-10-12: « symbols k beech
+    mein gap do »). None when there is nothing to draw or too many tampons
+    for one line."""
+    if threshold <= 0 or threshold > JAUGE_MAX:
+        return None
+    _, full, empty = STAMP_SHAPES.get(shape or "rond", STAMP_SHAPES["rond"])
+    done = max(0, min(threshold, int(stamps)))
+    return " ".join([full] * done + [empty] * (threshold - done))
+
+
+def _shape_points(shape: str, cx: float, cy: float, r: float) -> List[Tuple[float, float]]:
+    import math
+    if shape == "losange":
+        return [(cx, cy - r), (cx + r * 0.82, cy), (cx, cy + r), (cx - r * 0.82, cy)]
+    if shape == "etoile":
+        pts = []
+        for i in range(10):
+            a = -math.pi / 2 + i * math.pi / 5
+            k = r if i % 2 == 0 else r * 0.46
+            pts.append((cx + k * math.cos(a), cy + k * math.sin(a) + r * 0.06))
+        return pts
+    if shape == "coeur":
+        pts = []
+        for i in range(48):
+            t = 2 * math.pi * i / 48
+            x = 16 * math.sin(t) ** 3
+            y = -(13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t))
+            pts.append((cx + x * r / 16.5, cy + (y + 2) * r / 16.5))
+        return pts
+    return []
+
+
+def paint_stamps(d: Any, shape: str, x0: float, x1: float, cy: float, max_size: float, threshold: int,
+                 stamps: int, fill: Tuple[int, int, int], empty_fill: Tuple[int, ...],
+                 empty_line: Tuple[int, ...], line_w: int = 2) -> None:
+    """A row of `threshold` shapes centred between x0 and x1, the first
+    `stamps` filled with the brand colour — the painted jauge's shapes."""
+    if threshold <= 0:
+        return
+    gap_k = 0.32
+    size = min(max_size, (x1 - x0) / (threshold + gap_k * (threshold - 1)))
+    gap = size * gap_k
+    total = threshold * size + (threshold - 1) * gap
+    left = x0 + ((x1 - x0) - total) / 2
+    done = max(0, min(threshold, stamps))
+    r = size / 2
+    for i in range(threshold):
+        cx = left + i * (size + gap) + r
+        on = i < done
+        kw = {"fill": fill + (255,)} if on else {"fill": empty_fill, "outline": empty_line, "width": line_w}
+        if shape == "rond":
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], **kw)
+        elif shape == "carre":
+            k = r * 0.9
+            d.rounded_rectangle([cx - k, cy - k, cx + k, cy + k], radius=max(1, round(k * 0.22)), **kw)
+        else:
+            pts = _shape_points(shape, cx, cy, r)
+            if on:
+                d.polygon(pts, fill=kw["fill"])
+            else:
+                d.polygon(pts, fill=empty_fill)
+                d.line(pts + [pts[0]], fill=empty_line, width=line_w, joint="curve")
+
+
+# ---------------------------------------------------------------------------
+# Composed images, remembered (the « Aperçu » was slow, user 2026-10-11):
+# typing a name rebuilt the same photo, strip and poster on every keystroke.
+# Keyed by a hash of every input, so a changed photo or count is new work.
+# ---------------------------------------------------------------------------
+_IMG_CACHE: Dict[str, Any] = {}
+_IMG_CACHE_MAX = 48
+_IMG_CACHE_BYTES = 48 * 1024 * 1024      # a serverless instance has memory to spare, not to waste
+
+
+def _size(v: Any) -> int:
+    if isinstance(v, (bytes, str)):
+        return len(v)
+    if isinstance(v, dict):
+        return sum(_size(x) for x in v.values())
+    return 64
+
+
+# The images a pass is made of, shared by every server instance (user,
+# 2026-10-12: « preview 20 seconds »): on Vercel each new instance started
+# with an empty memory cache and rebuilt the poster, the strip and the logos
+# — seconds of image work every time. Built once, kept 30 days in Mongo.
+#
+# 2026-10-13 (« Aperçu indisponible »), measured on production: the free
+# cluster hands back megabytes slowly — 1 to 4.5 s for one picture — while
+# rebuilding a poster takes 0.1–0.4 s. So only the small results are shared
+# (the name beside the logo, the round logo); photos are rebuilt in memory.
+#
+# Same day, after #240, on production: a cold preview still spent 4.5 s in
+# ONE write of the small name image to img_cache. Nothing is shared any more:
+# every image is rebuilt in memory (milliseconds for these), and the old cache
+# collections are emptied once (server._cache_purge_once).
+_SHARED_KINDS: set = set()
+_SHARED_MAX = 300 * 1024
+
+
+# 2026-10-14 (Hobby paused for « Fluid Active CPU »): built images are shared
+# again — through Vercel Blob (services/media.cache_get/put), read from the
+# edge, never through the cluster. A new instance no longer rebuilds what
+# another one already built. Without a Blob token: memory only, as before.
+_BLOB_KINDS = {"poster", "poster_variants", "strip", "strip_variants", "png_variants", "name_logo",
+               "round_logo", "template_scaled", "preview_jpeg", "slim_photo"}
+_PACK = b"FCI1"
+
+
+def _pack(value: Any) -> Optional[bytes]:
+    if isinstance(value, (bytes, bytearray)):
+        return b"B" + bytes(value)
+    if isinstance(value, str):
+        return b"S" + value.encode("utf-8")
+    if isinstance(value, dict) and value and all(isinstance(v, (bytes, bytearray)) for v in value.values()):
+        head = json.dumps([[str(k), len(v)] for k, v in value.items()]).encode("utf-8")
+        return b"D" + len(head).to_bytes(4, "big") + head + b"".join(bytes(v) for v in value.values())
+    return None
+
+
+def _unpack(raw: bytes) -> Any:
+    if not raw:
+        return None
+    tag, body = raw[:1], raw[1:]
+    if tag == b"B":
+        return body
+    if tag == b"S":
+        return body.decode("utf-8")
+    if tag == b"D":
+        n = int.from_bytes(body[:4], "big")
+        head = json.loads(body[4:4 + n].decode("utf-8"))
+        out, pos = {}, 4 + n
+        for k, ln in head:
+            out[k] = body[pos:pos + ln]
+            pos += ln
+        return out
+    return None
+
+
+def _shared_get(kind: str, key: str) -> Any:
+    if kind not in _BLOB_KINDS:
+        return None
+    try:
+        from services import media as M
+        raw = M.cache_get(key)
+        return _unpack(raw[len(_PACK):]) if raw and raw.startswith(_PACK) else None
+    except Exception:
+        return None
+
+
+def _shared_put(kind: str, key: str, value: Any) -> None:
+    if kind not in _BLOB_KINDS:
+        return
+    try:
+        packed = _pack(value)
+        if packed is not None:
+            from services import media as M
+            M.cache_put(key, _PACK + packed)
+    except Exception as exc:                               # a cache that fails is just a slower preview
+        print(f"wallet: image not shared ({exc})")
+
+
+def _cached(kind: str, parts: Tuple[Any, ...], make):
+    h = hashlib.sha1(kind.encode())
+    for p in parts:
+        h.update(b"\x00")
+        h.update(p if isinstance(p, (bytes, bytearray)) else repr(p).encode())
+    key = h.hexdigest()
+    if key in _IMG_CACHE:
+        _IMG_CACHE[key] = _IMG_CACHE.pop(key)          # most recent last
+        return _IMG_CACHE[key]
+    out = _shared_get(kind, key)
+    if out is None:
+        out = make()
+        if out is not None:
+            _shared_put(kind, key, out)
+    if out is not None:
+        _IMG_CACHE[key] = out
+        while len(_IMG_CACHE) > 1 and (len(_IMG_CACHE) > _IMG_CACHE_MAX
+                                       or sum(_size(v) for v in _IMG_CACHE.values()) > _IMG_CACHE_BYTES):
+            _IMG_CACHE.pop(next(iter(_IMG_CACHE)))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # The strip — the only place a pass can show a progress meter
 # ---------------------------------------------------------------------------
 # PassKit has no progress element: a pass can show text, images and a barcode,
@@ -408,7 +669,13 @@ STRIP_W, STRIP_H = 1125, 432          # Apple's 375 × 144 pt at 3×
 
 
 def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
-                  with_meter: bool, title: str = "", subtitle: str = "") -> Optional[bytes]:
+                  with_meter: bool, title: str = "", subtitle: str = "", shape: Optional[str] = None) -> Optional[bytes]:
+    return _cached("strip", (raw or b"", sorted(theme.items()), stamps, threshold, with_meter, title, subtitle, shape),
+                   lambda: _make_strip(raw, theme, stamps, threshold, with_meter, title, subtitle, shape))
+
+
+def _make_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
+                with_meter: bool, title: str = "", subtitle: str = "", shape: Optional[str] = None) -> Optional[bytes]:
     """Build the strip: the merchant's photo (or a brand gradient when there is
     none), the current offer written across it, and a segmented progress meter
     burnt into the bottom band. Returns PNG bytes at 3×, or None without Pillow."""
@@ -489,7 +756,7 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
             d0.text((x, y + dy), text, font=font, fill=ink + (alpha,))
 
     if not with_meter or threshold <= 0:
-        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True); return buf.getvalue()
+        buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3); return buf.getvalue()
 
     # ---- meter: scrim + segmented track, one segment per stamp -------------
     # The scrim follows the card: dark on a dark surface, light on a crème or
@@ -507,6 +774,11 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
 
     pad, bar_h = 64, 26
     y0 = STRIP_H - 62
+    if shape in STAMP_SHAPES:                  # the owner's tampon shape, not bars
+        paint_stamps(d, shape, pad, STRIP_W - pad, y0 + bar_h / 2 - 4, 58, threshold, stamps,
+                     brand, empty_fill, empty_line, 3)
+        buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
+        return buf.getvalue()
     inner = STRIP_W - 2 * pad
     gap = 10
     seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
@@ -520,7 +792,7 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
             d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
             d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
 
-    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
     return buf.getvalue()
 
 
@@ -534,14 +806,21 @@ def compose_strip(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thre
 POSTER_W, POSTER_H = 1035, 1515       # 345 × 505 pt at 3×
 
 
-def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, threshold: int,
-                   with_meter: bool) -> Optional[bytes]:
-    """The poster's background: the merchant's photo (or the brand gradient),
-    a soft scrim at the top so the logo and the header read on any photo, and
-    the progress meter painted under them (user, 2026-10-05: « meter photo
-    mein + text »). PNG at 3×, None without Pillow."""
+def compose_poster(raw: Optional[bytes], theme: Dict[str, str], scrim: bool = True) -> Optional[bytes]:
+    """The poster's background, as an iOS 27 poster is meant to be: the
+    merchant's photo over the whole card (user, 2026-10-11: « jaise poster
+    aata hai woh rhe default, pure mein as bg image »), or the brand gradient,
+    with a soft scrim at the top so the logo and the header read on any photo.
+    Nothing else is painted: the tampons are a jauge Wallet writes in the
+    band under the QR (build_pass_json). To frame the photo another way the
+    owner uses « Ajuster » (poster_image_url, already the poster's shape).
+    PNG at 3×, None without Pillow."""
+    return _cached("poster", (raw or b"", sorted(theme.items()), scrim), lambda: _make_poster(raw, theme, scrim))
+
+
+def _make_poster(raw: Optional[bytes], theme: Dict[str, str], scrim: bool = True) -> Optional[bytes]:
     try:
-        from PIL import Image, ImageDraw, ImageFilter
+        from PIL import Image, ImageFilter
     except ImportError:
         return None
     surface = _rgb(theme.get("surface_hex")) or (28, 29, 34)
@@ -552,47 +831,13 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
             base = Image.open(io.BytesIO(raw)).convert("RGB")
         except Exception:
             base = None
-    poster_ratio = POSTER_W / POSTER_H
-    if base is not None and abs(base.width / max(1, base.height) - poster_ratio) / poster_ratio < 0.04:
-        # already the poster's shape: fills the card
-        img = base.resize((POSTER_W, POSTER_H), Image.LANCZOS)
-    elif base is not None:
-        # Any other shape is shown WHOLE, resized, never cropped (user,
-        # 2026-10-06: « puri photo dikhe, kati hui nhi »), over the same photo
-        # blurred and dimmed behind. Filling the card instead zoomed a banner
-        # ~3.5× and turned it to pixels.
+    if base is not None:
+        # full bleed: the photo covers the card, centred
         scale = max(POSTER_W / base.width, POSTER_H / base.height)
-        back = base.resize((max(1, round(base.width * scale)), max(1, round(base.height * scale))), Image.BILINEAR)
-        left, top = (back.width - POSTER_W) // 2, (back.height - POSTER_H) // 2
-        img = back.crop((left, top, left + POSTER_W, top + POSTER_H)).filter(ImageFilter.GaussianBlur(28))
-        img = Image.blend(img, Image.new("RGB", img.size, (0, 0, 0)), 0.25)
-        if base.width / base.height >= 1.2:
-            # wide: full width, in the band between the meter and the barcode
-            fw, fh = POSTER_W, round(base.height * POSTER_W / base.width)
-            x, y = 0, int(POSTER_H * 0.265)
-            fh = min(fh, POSTER_H - y)
-        else:
-            k = min(POSTER_W / base.width, POSTER_H / base.height)
-            fw, fh = round(base.width * k), round(base.height * k)
-            x, y = (POSTER_W - fw) // 2, (POSTER_H - fh) // 2
-        sharp = base.resize((fw, fh), Image.LANCZOS)
-        # soft edges wherever the photo meets its blur
-        mask = Image.new("L", (fw, fh), 255)
-        md = ImageDraw.Draw(mask)
-        # thin, so the photo's own edges stay visible (« puri photo dikhe »)
-        fy, fx = max(1, min(24, fh // 8)), max(1, min(24, fw // 8))
-        for i in range(fy):
-            a = int(255 * (i / fy) ** 1.2)
-            if y > 0:
-                md.line([(0, i), (fw, i)], fill=a)
-            if y + fh < POSTER_H:
-                md.line([(0, fh - 1 - i), (fw, fh - 1 - i)], fill=a)
-        for i in range(fx):
-            if x > 0:
-                a = int(255 * (i / fx) ** 1.2)
-                md.line([(i, 0), (i, fh)], fill=min(a, 255))
-                md.line([(fw - 1 - i, 0), (fw - 1 - i, fh)], fill=min(a, 255))
-        img.paste(sharp, (x, y), mask)
+        big = base.resize((max(POSTER_W, round(base.width * scale)), max(POSTER_H, round(base.height * scale))),
+                          Image.LANCZOS)
+        left, top = (big.width - POSTER_W) // 2, (big.height - POSTER_H) // 2
+        img = big.crop((left, top, left + POSTER_W, top + POSTER_H))
     else:
         def mix(a, b, t):
             return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
@@ -603,40 +848,35 @@ def compose_poster(raw: Optional[bytes], theme: Dict[str, str], stamps: int, thr
                           (diag.width + POSTER_W) // 2, (diag.height + POSTER_H) // 2))
         img = Image.composite(sheen, img, diag.point(lambda v: 255 - v)).filter(ImageFilter.GaussianBlur(18))
 
-    light = raw is None and _lum(surface) > 0.45
-    scrim = (255, 255, 255) if light else (0, 0, 0)
-    d = ImageDraw.Draw(img, "RGBA")
-    band = int(POSTER_H * 0.30)
-    for i in range(band):                          # top scrim: logo + header + meter
-        a = int((120 if light else 150) * (1 - i / band) ** 1.4)
-        d.line([(0, i), (POSTER_W, i)], fill=scrim + (a,))
-    if with_meter and threshold > 0:
-        pad, bar_h, gap = 60, 24, 10
-        y0 = int(POSTER_H * 0.205)
-        inner = POSTER_W - 2 * pad
-        seg = (inner - gap * (threshold - 1)) / threshold if threshold > 1 else inner
-        done = max(0, min(threshold, stamps))
-        empty_fill = (0, 0, 0, 38) if light else (255, 255, 255, 52)
-        empty_line = (0, 0, 0, 64) if light else (255, 255, 255, 90)
-        for i in range(threshold):
-            x0 = pad + i * (seg + gap)
-            box = [x0, y0, x0 + seg, y0 + bar_h]
-            if i < done:
-                d.rounded_rectangle(box, radius=bar_h // 2, fill=brand + (255,))
-            else:
-                d.rounded_rectangle(box, radius=bar_h // 2, fill=empty_fill)
-                d.rounded_rectangle(box, radius=bar_h // 2, outline=empty_line, width=2)
-    buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    if scrim:     # a Pass Designer design has Apple's own (« Assombrir le haut de l'image »)
+        _paint_top_scrim(img, light=raw is None and _lum(surface) > 0.45)
+    buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
     return buf.getvalue()
 
 
+def _paint_top_scrim(img: Any, light: bool = False) -> None:
+    """A soft shade at the top so the logo and the header read on any photo."""
+    from PIL import ImageDraw
+    W, H = img.size
+    scrim = (255, 255, 255) if light else (0, 0, 0)
+    d = ImageDraw.Draw(img, "RGBA")
+    band = int(H * 0.30)
+    for i in range(band):
+        a = int((120 if light else 150) * (1 - i / band) ** 1.4)
+        d.line([(0, i), (W, i)], fill=scrim + (a,))
+
+
 def _poster_variants(png3x: bytes) -> Dict[str, bytes]:
+    return _cached("poster_variants", (png3x,), lambda: _make_poster_variants(png3x))
+
+
+def _make_poster_variants(png3x: bytes) -> Dict[str, bytes]:
     from PIL import Image
     big = Image.open(io.BytesIO(png3x))
-    out: Dict[str, bytes] = {}
-    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
-        im = big if k == 3 else big.resize((345 * k, 505 * k), Image.LANCZOS)
-        b = io.BytesIO(); im.save(b, "PNG", optimize=True); out[suffix] = b.getvalue()
+    out: Dict[str, bytes] = {"@3x": png3x}            # the master is already the @3x PNG
+    for suffix, k in (("", 1), ("@2x", 2)):
+        im = big.resize((345 * k, 505 * k), Image.LANCZOS)
+        b = io.BytesIO(); im.save(b, "PNG", compress_level=3); out[suffix] = b.getvalue()
     return out
 
 
@@ -829,15 +1069,19 @@ def build_barcodes(fmt: str, fallback: Optional[str], serial: str, alt: Optional
 
 def _strip_variants(png3x: bytes) -> Dict[str, bytes]:
     """3× master → the @2x and 1× Wallet also asks for."""
+    return _cached("strip_variants", (png3x,), lambda: _make_strip_variants(png3x))
+
+
+def _make_strip_variants(png3x: bytes) -> Dict[str, bytes]:
     try:
         from PIL import Image
     except ImportError:
         return {"@3x": png3x}
     master = Image.open(io.BytesIO(png3x)).convert("RGB")
-    out: Dict[str, bytes] = {}
-    for suffix, k in (("", 1), ("@2x", 2), ("@3x", 3)):
-        img = master if k == 3 else master.resize((375 * k, 144 * k), Image.LANCZOS)
-        buf = io.BytesIO(); img.save(buf, "PNG", optimize=True)
+    out: Dict[str, bytes] = {"@3x": png3x}            # the master is already the @3x PNG
+    for suffix, k in (("", 1), ("@2x", 2)):
+        img = master.resize((375 * k, 144 * k), Image.LANCZOS)
+        buf = io.BytesIO(); img.save(buf, "PNG", compress_level=3)
         out[suffix] = buf.getvalue()
     return out
 
@@ -901,7 +1145,7 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
             {"tenant_id": cust.get("tenant_id"), "status": "sent",
              "wallet_offer": True, "recipient_ids": cust.get("id")},
             {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1, "status": 1,
-             "kind": 1, "offer": 1, "event": 1, "defi": 1})
+             "kind": 1, "offer": 1, "event": 1, "defi": 1, "wallet_photo": 1})
         newest, newest_at = None, None
         for c in rows:
             at = _parse_dt(c.get("sent_at"))
@@ -917,7 +1161,8 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
             except Exception:
                 pass
             card["campaign_offer"] = {"title": title, "subtitle": sub, "id": newest.get("id"),
-                                      "image_url": newest.get("image_url") or None}
+                                      "image_url": newest.get("image_url") or None,
+                                      "wallet_photo": bool(newest.get("wallet_photo"))}
     except Exception as exc:        # a missing offer must never cost the pass
         print(f"wallet: campaign offer lookup failed (non-fatal): {exc}")
 
@@ -927,8 +1172,15 @@ def _campaign_photo(card: Dict[str, Any]) -> Optional[str]:
     « photo bhi attach ki thi, toh woh kidhar dikhegi »). Apple shows no image
     in a notification or on the back of a pass — the strip is the only place a
     picture can live — so while the campaign is the card's offer, its photo is
-    the banner. When the campaign expires the merchant's own banner returns."""
+    the banner. When the campaign expires the merchant's own banner returns.
+
+    Only when the owner chose it for that campaign (QA BUG-006, user
+    2026-10-13: « Afficher la photo sur la carte Wallet », off by default —
+    a campaign sent before the switch counts as off): otherwise the card keeps
+    its own picture and the photo shows in « Mes offres »."""
     campaign = card.get("campaign_offer") if isinstance(card.get("campaign_offer"), dict) else {}
+    if not campaign.get("wallet_photo"):
+        return None
     return campaign.get("image_url") or None
 
 
@@ -1072,6 +1324,7 @@ def _points_news(card: Dict[str, Any], points: int) -> Optional[str]:
     return str(news["text"])
 
 
+@_SC.payload_store
 def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     cust, tenant, card = payload["customer"], payload["tenant"], payload["card"]
     serial = cust["barcode_id"]
@@ -1094,6 +1347,13 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     first_name = full_name if card.get("use_full_name") else full_name.split(" ")[0]
     reward = card.get("reward_description") or "Une récompense fidélité"
 
+    apply_programme_rules(card)
+    stamp_prog = card["programme"] == "stamps"
+    # The reward (user, 2026-10-12): the owner's own words, shown or not,
+    # under the QR or on the back — never added to the card by itself.
+    reward_on = card["reward_on_card"]
+    reward_front = reward_on and card["reward_place"] == "front"
+    reward_field = {"key": "reward", "label": "RÉCOMPENSE", "value": reward}
     show = lambda k, default=True: card.get(k) is not False if card.get(k) is not None else default  # noqa: E731
 
     # A banner (strip) image changes the layout. In a storeCard, Wallet draws
@@ -1121,21 +1381,22 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # RÉCOM… · Encore 9 tampons · Un café gra… » (user's iPhone, 2026-10-04).
     # Three fields at most: who, how far, and the offer (or the statut).
     secondary: List[Dict[str, Any]] = [{"key": "member", "label": (card.get("greeting_label") or "Membre").upper(), "value": first_name}]
-    if show("show_stamps"):
+    if reward_front:
+        secondary.append(reward_field)
+    if stamp_prog:
+        # changeMessage is what makes Wallet raise a lock-screen notification
+        # when the value changes after an update push.
         secondary.append({"key": "stamps", "label": (card.get("stamps_label") or "Tampons").upper(),
                           "value": f"{stamps} / {threshold}",
                           "changeMessage": (card.get("stamps_change_message") or "Tampons : %@")})
-    else:
-        # changeMessage is what makes Wallet raise a lock-screen notification
-        # when the value changes after an update push.
-        secondary.append({"key": "reward", "label": "RÉCOMPENSE",
-                          "value": "Débloquée !" if remaining <= 0 else f"Encore {remaining}",
-                          "changeMessage": "Récompense : %@"})
     offer_title, offer_sub = _offer_text(card)
+    header_fields = _header_fields(card, has_banner, show("show_points"), show_tier,
+                                   points_field, tier_field, visits, card.get("visits_label"))
+    tier_up = any(f["key"] == "tier" for f in header_fields)      # never twice on one card
     tier_front = False
     if offer_title:
         secondary.append({"key": "offer_title", "label": "OFFRE", "value": offer_title})
-    elif show_tier and (has_banner or not show("show_points")):
+    elif show_tier and not tier_up and (has_banner or not show("show_points")):
         secondary.append(tier_field)
         tier_front = True
     elif show("show_visits"):
@@ -1148,21 +1409,42 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # receives must change this field, not create it.
     offer_full = (f"{offer_title} — {offer_sub}" if offer_sub else offer_title) if offer_title \
         else "Aucune offre en ce moment."
+    reward_points = int(card.get("reward_points") or 0)
+    # What the balance still owes for the reward — a points card's own count.
+    points_left = max(0, reward_points - points) if reward_points else 0
     back = [
         {"key": "offer", "label": "Offre du moment", "value": offer_full, "changeMessage": "%@"},
+        # A points card counts in points, not in stamps: it used to say
+        # « Encore 3 tampons » to someone who has never had a stamp.
         {"key": "next_reward", "label": "Prochaine récompense",
-         "value": "Récompense débloquée : présentez votre carte !" if remaining <= 0
-         else f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}"},
+         "value": "Récompense débloquée : présentez votre carte !"
+         if (remaining <= 0 if stamp_prog else (reward_points and points_left <= 0))
+         else (f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}" if stamp_prog
+               else (f"Encore {points_left} point{'s' if points_left > 1 else ''} avant : {reward}"
+                     if reward_points else f"{reward}."))},
         # a full card restarts on the next visit; its reward stays valid
         # until handed over (user, 2026-10-09)
         {"key": "pending_rewards", "label": "Récompense à récupérer",
          "value": (f"{pending} récompense{'s' if pending > 1 else ''} à récupérer : {reward}. "
                    "Présentez votre carte en caisse.") if pending else "Aucune pour le moment.",
          "changeMessage": "%@"},
-        {"key": "program", "label": "Programme de fidélité", "value": f"{reward} tous les {threshold} tampons."},
+        {"key": "program", "label": "Programme de fidélité",
+         "value": f"{reward} tous les {threshold} tampons." if stamp_prog
+         else (f"{reward} dès {reward_points} points." if reward_points else f"{reward}.")},
         {"key": "card", "label": "Ma carte en ligne", "value": CO.owner_url(_site_url(), serial)},
     ]
-    if show_tier and not tier_front:
+    if not stamp_prog:                    # « Encore N tampons » means nothing on a points card
+        back = [f for f in back if f["key"] != "next_reward"]
+    else:
+        # No points on a tampons card's face (user, 2026-10-12), but the
+        # balance stays on its back: a parrainage credits points, and Wallet
+        # only rings for a field that was already there — « Votre ami Lina
+        # est venu… » rides on this one (_points_news).
+        back.insert(next((i + 1 for i, f in enumerate(back) if f["key"] == "pending_rewards"), len(back)),
+                    {**points_field, "label": (card.get("points_label") or "Points")})
+    if not reward_on:                     # « Non »: no reward on the card, front or back
+        back = [f for f in back if f["key"] not in ("next_reward", "program")]
+    if show_tier and not tier_front and not tier_up:
         back.insert(1, {"key": "tier_back", "label": "Statut", "value": tier_field["value"]})
     # Tapping a Wallet notification only opens the pass, and the back of a pass
     # holds text only: the link opens the campaign itself — photo, full text —
@@ -1218,7 +1500,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "passTypeIdentifier": _env("APPLE_PASS_TYPE_ID"),
         "teamIdentifier": _env("APPLE_TEAM_ID"),
         "serialNumber": serial,
-        "organizationName": tenant.get("name") or org,
+        # the card's name, as typed in « Nom de la carte » (user, 2026-10-14)
+        "organizationName": org,
         "description": f"Carte de fidélité {org}",
         "logoText": org,
         "webServiceURL": f"{_site_url()}/api/passes",
@@ -1240,8 +1523,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             # With a banner: points in the header, nothing over the image.
             # Without: the classic big number, statut in the header. The
             # merchant can override which value sits top-right.
-            "headerFields": _header_fields(card, has_banner, show("show_points"), show_tier,
-                                           points_field, tier_field, visits, card.get("visits_label")),
+            "headerFields": header_fields,
             "primaryFields": [] if has_banner
             else ([points_field] if show("show_points") else []),
             "secondaryFields": secondary[:3],
@@ -1311,13 +1593,25 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Apple's sample (user, 2026-10-06): labelled fields — who, and how
         # far. The offer lives on the back, where its changeMessage still
         # raises the notification.
-        progress = next((f for f in secondary if f["key"] in ("stamps", "reward")), None)
         member_field = next((f for f in secondary if f["key"] == "member"),
                             {"key": "member", "label": "MEMBRE", "value": first_name})
         primary: List[Dict[str, Any]] = [member_field]
+        if reward_front:
+            primary.append(reward_field)
+        # The tampons as a jauge Wallet writes in the band under the QR (user,
+        # 2026-10-11): crisp on any photo, never painted over it. The count
+        # moves to the label: « TAMPONS · 3/10 » over « ●●●○○○○○○○ ».
+        # It takes the progress slot, whichever it was (« Tampons » or the
+        # reward): the mockup's MEMBRE | TAMPONS ●●●○○○○○○○ 3/10.
+        progress = None
+        if stamp_prog:
+            jauge = jauge_text(stamps, threshold, stamp_shape(card))
+            progress = ({"key": "stamps", "label": f"{(card.get('stamps_label') or 'Tampons').upper()} · {stamps}/{threshold}",
+                         "value": jauge, "changeMessage": card.get("stamps_change_message") or "Tampons : %@"} if jauge
+                        else next((f for f in secondary if f["key"] == "stamps"), None))
         if progress:
             primary.append(progress)
-        elif show_tier:
+        elif len(primary) == 1 and show_tier and show("show_points"):
             primary.append(tier_field)
         header = ([points_field] if show("show_points") else ([tier_field] if show_tier else []))
         pass_json["posterGeneric"] = {
@@ -1332,6 +1626,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         }
         # logoText stays: it is the iOS 26 card's shop name next to the logo
         # (the poster draws its primaryLogo only).
+        # The band under the fields: Apple's blur by default, or the owner's
+        # colour, as in Pass Designer (user, 2026-10-11: « footer jidhar blur
+        # aata hai udhar color daalne ka option »).
+        foot = _rgb(card.get("poster_footer_color"))
+        if foot:
+            pass_json["footerBackgroundColor"] = _css(foot)
     fa = featured_json(clean_featured(card.get("featured_actions"), tenant), serial)
     if fa:
         pass_json["featuredActions"] = fa
@@ -1346,15 +1646,55 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         since = cust.get("created_at")
         values = {
             "name": full_name if card.get("use_full_name") is not False else first_name,
-            "first_name": full_name.split(" ")[0], "card": serial, "points": points,
-            "stamps": f"{stamps} / {threshold}", "tier": tier_field["value"],
-            "reward": ("Récompense débloquée !" if remaining <= 0 else f"Encore {remaining} avant : {reward}"),
+            # points OR tampons, by the programme: a field showing the other
+            # one is left out (an empty {placeholder} field disappears)
+            "first_name": full_name.split(" ")[0], "card": serial, "points": points if not stamp_prog else "",
+            "stamps": f"{stamps} / {threshold}" if stamp_prog else "", "tier": tier_field["value"],
+            # the reward: the owner's words, only where the owner put it
+            "reward": reward if reward_front else "",
             # the running campaign's offer, short, or nothing (a front field
             # holding only {offre} then disappears)
             "offer": offer_title or "", "visits": visits, "shop": org,
+            # {jauge}: the tampons as shapes, « ●●●○○○○○○○ »
+            "meter": ((jauge_text(stamps, threshold, stamp_shape(card)) or f"{stamps} / {threshold}") if stamp_prog else ""),
             "member_since": since.strftime("%d/%m/%Y") if isinstance(since, datetime) else "",
         }
         pass_json = PD.apply(pass_json, tpl, values)
+        # iOS 27 with a design (user, 2026-10-12: « tampons preview mein nhi aa
+        # rhe in ios27 »): nothing is painted on a poster since 2026-10-11, so a
+        # design without a {jauge} field had no tampons at all. The jauge goes
+        # under the QR anyway: a field showing « 3 / 10 » becomes the jauge,
+        # else one is added (Wallet takes 4 primary fields).
+        pg = pass_json.get("posterGeneric")
+
+        def place(field: Dict[str, Any], at: Optional[int] = None) -> None:
+            """A field we add to a design's poster: in the primary row while it
+            holds one field, else in the footer row — a third primary field
+            squeezed the customer's name into « AK-SHANSH » (user, 2026-10-12)."""
+            prim = pg.setdefault("primaryFields", [])
+            foot = pg.setdefault("footerFields", [])
+            if len(prim) < 2 or (len(foot) >= 2 and len(prim) < 4):
+                # (a footer already full — Wallet draws two — keeps the old place)
+                prim.insert(len(prim) if at is None else min(at, len(prim)), field)
+            elif len(foot) < 2:
+                foot.append(field)
+        if isinstance(pg, dict) and reward_front:          # « Sous le QR code »: the design gets it too
+            front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
+            if not any(f.get("value") == reward for f in front):
+                place(dict(reward_field), 1)
+        jauge = jauge_text(stamps, threshold, stamp_shape(card)) if stamp_prog else None
+        if isinstance(pg, dict) and jauge:
+            front = [f for g in ("headerFields", "primaryFields", "footerFields") for f in pg.get(g) or []]
+            if not any(f.get("value") == jauge for f in front):
+                prim = pg.setdefault("primaryFields", [])
+                label = f"{(card.get('stamps_label') or 'Tampons').upper()} · {stamps}/{threshold}"
+                hit = next((f for f in prim if str(f.get("value")) == f"{stamps} / {threshold}"), None)
+                if hit:
+                    hit.update({"label": label, "value": jauge})
+                    hit.setdefault("changeMessage", "Tampons : %@")
+                else:
+                    place({"key": "jauge", "label": label, "value": jauge,
+                           "changeMessage": card.get("stamps_change_message") or "Tampons : %@"})
     return pass_json
 
 
@@ -1377,6 +1717,7 @@ def _sign_manifest(manifest: bytes) -> bytes:
             .sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.DetachedSignature, pkcs7.PKCS7Options.Binary]))
 
 
+@_SC.payload_store
 def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
     """The 1125×432 strip a card ships with — the merchant's banner with the
     progress meter painted into it, or the brand gradient with the meter when
@@ -1394,22 +1735,458 @@ def strip_png(payload: Dict[str, Any]) -> Optional[bytes]:
                  else int(cust.get("visits") or 0) // visits_per_stamp)
     title, sub = _offer_text(card)
     return compose_strip(hero_raw, derive_colors(card), stamps, threshold, with_meter,
-                         title=title, subtitle=sub)
+                         title=title, subtitle=sub, shape=stamp_shape(card))
 
 
-def poster_png(payload: Dict[str, Any]) -> Optional[bytes]:
-    """The iOS 27 poster background (1035×1515): same photo as the strip — the
-    live campaign's, else the merchant's banner, else the brand gradient."""
+def _stamp_state(payload: Dict[str, Any]) -> Tuple[int, int]:
+    """(stamps on the card now, stamps for the reward) — what every meter draws."""
     card, cust = payload["card"], payload["customer"]
     threshold = max(1, int(card.get("reward_threshold") or card.get("reward_threshold_stamps") or 10))
     visits_per_stamp = max(1, int(card.get("visits_per_stamp") or 1))
     stamps = int(card.get("stamps_earned") if card.get("stamps_earned") is not None
                  else int(cust.get("visits") or 0) // visits_per_stamp)
-    with_meter = card.get("show_meter") is not False
+    return stamps, threshold
+
+
+@_SC.payload_store
+def poster_png(payload: Dict[str, Any], scrim: bool = True) -> Optional[bytes]:
+    """The iOS 27 poster background (1035×1515): same photo as the strip — the
+    live campaign's, else the merchant's banner, else the brand gradient."""
+    card = payload["card"]
     raw = None
     if not _campaign_photo(card) and card.get("poster_image_url"):
-        raw = _fetch_image(card.get("poster_image_url"))     # the portrait made for the poster
-    return compose_poster(raw or _hero_raw(card), derive_colors(card), stamps, threshold, with_meter)
+        raw = _fetch_image(card.get("poster_image_url"))     # the owner's « Ajuster », poster-shaped
+    return compose_poster(raw or _hero_raw(card), derive_colors(card), scrim)
+
+
+def _css_rgb(v: Any) -> Optional[Tuple[int, int, int]]:
+    """« rgb(1, 2, 3) » (pass.json) or « #010203 » → (1, 2, 3)."""
+    m = re.match(r"\s*rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)", str(v or ""))
+    if m:
+        return tuple(int(x) for x in m.groups())  # type: ignore[return-value]
+    return _rgb(v)
+
+
+# ---------------------------------------------------------------------------
+# « Nom stylé » (user, 2026-10-13: « MUSEUM mein M bada »): the name beside the
+# logo, letter by letter — each its size, colour and font, symbols included —
+# drawn into the logo image, so Apple (iOS 26 and 27) and Google show exactly it.
+# card_templates.name_style = {"letters": [{"c": "M", "s": 140, "color": "#D4AF37", "font": "cinzel"}, …]}
+# ---------------------------------------------------------------------------
+NAME_FONTS: Dict[str, Tuple[str, Optional[int], str]] = {
+    "dejavu": ("DejaVuSans-Bold.ttf", None, "Sans gras"),
+    "dejavu-light": ("DejaVuSans.ttf", None, "Sans"),
+    "cinzel": ("Cinzel.ttf", 700, "Cinzel"),
+    "playfair": ("PlayfairDisplay.ttf", 700, "Playfair Display"),
+    "montserrat": ("Montserrat.ttf", 700, "Montserrat"),
+    "bebas": ("BebasNeue.ttf", None, "Bebas Neue"),
+    "oswald": ("Oswald.ttf", 600, "Oswald"),
+    "greatvibes": ("GreatVibes.ttf", None, "Great Vibes"),
+    "pacifico": ("Pacifico.ttf", None, "Pacifico"),
+}
+NAME_MAX_LETTERS = 40
+NAME_SIZE_MIN, NAME_SIZE_MAX = 50, 200
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
+_FONT_OBJ: Dict[Tuple[str, int], Any] = {}
+_GLYPH: Dict[Tuple[str, str], bool] = {}
+
+
+def _name_font(key: str, px: int):
+    from PIL import ImageFont
+    k = (key if key in NAME_FONTS else "dejavu", max(1, int(px)))
+    f = _FONT_OBJ.get(k)
+    if f is None:
+        file, weight, _ = NAME_FONTS[k[0]]
+        try:
+            f = ImageFont.truetype(os.path.join(_FONTS_DIR, file), k[1])
+            if weight:
+                try:
+                    f.set_variation_by_axes([weight])
+                except Exception:
+                    pass
+        except Exception:
+            f = ImageFont.load_default()
+        if len(_FONT_OBJ) > 400:
+            _FONT_OBJ.clear()
+        _FONT_OBJ[k] = f
+    return f
+
+
+def _has_glyph(key: str, ch: str) -> bool:
+    """Does this font draw `ch`? (else its empty box would show: DejaVu draws it)"""
+    k = (key, ch)
+    if k not in _GLYPH:
+        try:
+            from PIL import Image, ImageDraw
+            f = _name_font(key, 40)
+
+            def ink(t: str) -> bytes:
+                im = Image.new("L", (80, 80), 0)
+                ImageDraw.Draw(im).text((10, 10), t, font=f, fill=255)
+                return im.tobytes()
+            _GLYPH[k] = ch == " " or ink(ch) != ink("\U0010FFFD")
+        except Exception:
+            _GLYPH[k] = key == "dejavu"
+    return _GLYPH[k]
+
+
+def clean_name_style(raw: Any) -> Optional[Dict[str, Any]]:
+    """The owner's styled name, checked (a French 400 on anything odd). None or
+    no letters: the plain name, as before."""
+    if raw in (None, "", {}):
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("letters"), list):
+        raise HTTPException(status_code=400, detail="Nom stylé invalide.")
+    letters = raw["letters"]
+    if len(letters) > NAME_MAX_LETTERS:
+        raise HTTPException(status_code=400, detail=f"Nom stylé : {NAME_MAX_LETTERS} caractères au plus.")
+    out = []
+    for x in letters:
+        if not isinstance(x, dict):
+            raise HTTPException(status_code=400, detail="Nom stylé invalide.")
+        c = str(x.get("c") or "")
+        if len(c) != 1 or (not c.isprintable() and c != " "):
+            raise HTTPException(status_code=400, detail="Nom stylé : un caractère par case.")
+        try:
+            size = int(x.get("s") or 100)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Taille de lettre invalide.")
+        if not NAME_SIZE_MIN <= size <= NAME_SIZE_MAX:
+            raise HTTPException(status_code=400, detail=f"Taille de lettre : {NAME_SIZE_MIN} à {NAME_SIZE_MAX} %.")
+        color = x.get("color") or None
+        if color and not re.match(r"^#[0-9A-Fa-f]{6}$", str(color)):
+            raise HTTPException(status_code=400, detail="Couleur de lettre invalide.")
+        fnt = x.get("font") or None
+        if fnt and fnt not in NAME_FONTS:
+            raise HTTPException(status_code=400, detail="Police inconnue.")
+        out.append({"c": c, "s": size, "color": color.upper() if color else None, "font": fnt})
+    while out and out[-1]["c"] == " ":
+        out.pop()
+    while out and out[0]["c"] == " ":
+        out.pop(0)
+    return {"letters": out} if out else None
+
+
+def styled_letters(card: Dict[str, Any]) -> Optional[Tuple[Tuple[str, int, Optional[str], Optional[str]], ...]]:
+    ns = card.get("name_style") if isinstance(card, dict) else None
+    letters = (ns or {}).get("letters") if isinstance(ns, dict) else None
+    if not letters:
+        return None
+    try:
+        return tuple((str(x["c"])[:1], int(x.get("s") or 100), x.get("color"), x.get("font"))
+                     for x in letters if x.get("c"))
+    except Exception:
+        return None
+
+
+def _name_key(text: str) -> str:
+    """Letters and digits only, without case or accents: « ★ Royal Trim ★ » is
+    the same name as « ROYAL TRIM »."""
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text or "").casefold() if ch.isalnum())
+
+
+def letters_for(card: Dict[str, Any], name: str):
+    """« Nom stylé » drawn on THIS card's name. The letters keep their own text
+    (an owner adds ★, changes case) as long as they spell the card's name; once
+    they spell another — the card renamed, or a store's card copied from the
+    account's (user, 2026-10-14: Liberté's logo said « ROYAL TRIM PALISSY »,
+    its footer « ROYAL TRIM LIBERTÉ ») — the name's text replaces them and each
+    letter keeps its style where the start and the end still match."""
+    letters = styled_letters(card)
+    name = (name or "").strip()
+    if not letters or not name or _name_key("".join(x[0] for x in letters)) == _name_key(name):
+        return letters
+    chars = list(name)[:40]
+    a = 0
+    while a < len(chars) and a < len(letters) and letters[a][0] == chars[a]:
+        a += 1
+    b = 0
+    while (b < len(chars) - a and b < len(letters) - a
+           and letters[len(letters) - 1 - b][0] == chars[len(chars) - 1 - b]):
+        b += 1
+    mid = tuple((c, 100, None, None) for c in chars[a:len(chars) - b])
+    return tuple(letters[:a]) + mid + tuple(letters[len(letters) - b:])
+
+
+def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, k: float):
+    """The styled name on ONE line, as large as the box allows: an RGBA image,
+    or None. Never wrapped, never cut, never an ellipsis."""
+    from PIL import Image, ImageDraw
+    glyphs = []
+    for c, size, col, fkey in letters:
+        key = fkey if fkey in NAME_FONTS else "dejavu"
+        if not _has_glyph(key, c):
+            key = "dejavu"                       # a symbol the font lacks: drawn, not boxed
+        glyphs.append((c, size / 100.0, _rgb(col) if col else tuple(color), key))
+    words: List[List[Any]] = [[]]
+    for g in glyphs:
+        if g[0] == " ":
+            words.append([])
+        else:
+            words[-1].append(g)
+    words = [w for w in words if w]
+    if not words:
+        return None
+
+    def metrics(gl, base):
+        f = _name_font(gl[3], round(base * gl[1]))
+        a, d = f.getmetrics()
+        return f, f.getlength(gl[0]), a, d
+
+    def line_box(line, base):
+        """(width, ascent, descent, left overhang) — a script letter's swash
+        reaches past its advance: the ink decides the width, never cut."""
+        x, asc, desc, left, right = 0.0, 0, 0, 0.0, 0.0
+        sp = _name_font("dejavu", round(base)).getlength(" ")
+        for i, word in enumerate(line):
+            if i:
+                x += sp
+            for gl in word:
+                f, adv, a, d = metrics(gl, base)
+                l0, _, r0, _ = f.getbbox(gl[0], anchor="ls")
+                left, right = min(left, x + l0), max(right, x + r0, x + adv)
+                x, asc, desc = x + adv, max(asc, a), max(desc, d)
+        return right - left, asc, desc, -left
+
+    # ONE line, always (user, 2026-10-14): a shop's name is its name, and half
+    # of it on a second line — or trailing « … » — is not. So the size is not
+    # picked from a list any more: it is computed from the box itself.
+    #
+    # That also makes the per-letter size mean something. It used to be capped
+    # at 20 pt, so a short name could not grow past it however large its
+    # letters were set; and when every letter was raised together the whole
+    # line was simply re-normalised to the same width — 100 % and 200 % drew
+    # the identical picture. Now the only limits are `room` and `H`: raise the
+    # letters and the name really does get bigger, until it touches an edge.
+    REF = 100.0
+    # A couple of pixels kept clear: the line is measured from the ink, and a
+    # letter that ends exactly on the edge is a letter one pixel from being
+    # shaved off.
+    fit_w, fit_h = max(10.0, room - 2.0), max(10.0, H - 2.0)
+    w0, a0, d0, _ = line_box(words, REF)
+    if w0 <= 0 or (a0 + d0) <= 0:
+        return None
+    base = REF * min(fit_w / w0, fit_h / (a0 + d0))
+    # Fonts are hinted, so a measured line is not exactly linear in its size:
+    # measure again and correct, a few times, always downwards.
+    for _ in range(4):
+        w, a, d, _lead = line_box(words, base)
+        if w <= fit_w and (a + d) <= fit_h:
+            break
+        base *= min(fit_w / max(w, 1.0), fit_h / max(a + d, 1.0)) * 0.99
+    # 100 % is a real size, not « whatever fills the box »: without this the
+    # line was always stretched to the edges, so raising every letter together
+    # just shrank the base and drew the exact same picture. The box is only
+    # the ceiling now — 200 % grows until it touches it.
+    base = max(2.0, min(base, 20.0 * k))
+    rows = [words]
+    boxes = [line_box(words, base)]
+    tw = int(max(b[0] for b in boxes)) + 1
+    th = sum(b[1] + b[2] for b in boxes)
+    img = Image.new("RGBA", (max(1, min(room, tw)), max(1, min(H, th))), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    y = 0
+    sp = _name_font("dejavu", round(base)).getlength(" ")
+    for row, (_, asc, desc, lead) in zip(rows, boxes):
+        x, baseline = lead, y + asc
+        for i, word in enumerate(row):
+            if i:
+                x += sp
+            for gl in word:
+                f, adv, _, _ = metrics(gl, base)
+                d.text((x, baseline), gl[0], font=f, fill=tuple(gl[2]) + (255,), anchor="ls")
+                x += adv
+        y += asc + desc
+    return img
+
+
+def name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
+              box: Tuple[int, int] = (160, 50), letters=None, logo_pct: Any = None,
+              font_key: Optional[str] = None) -> Dict[str, bytes]:
+    """The shop's logo with its FULL name beside it, in one image (user,
+    2026-10-12: « BLOO J… » on iOS 27 — Wallet cuts its own logoText — and the
+    name's colour chosen by the owner, in every Wallet). Apple draws a logo up
+    to 160 × 50 pt: the name is written as large as it fits (20 pt down to
+    11 pt), on two lines if it must, never cut. {'':1x, '@2x', '@3x'}."""
+    pct = _logo_pct(logo_pct)
+    fk = font_key if font_key in NAME_FONTS else "dejavu"
+    if letters:
+        return _cached("name_logo", (raw or b"", "styled", letters, color, box, pct),
+                       lambda: _make_name_logo(raw, name, color, box, letters, pct, fk))
+    return _cached("name_logo", (raw or b"", name, color, box, pct, fk),
+                   lambda: _make_name_logo(raw, name, color, box, None, pct, fk))
+
+
+def _logo_pct(v: Any) -> int:
+    """« Taille du logo » beside the name (user, 2026-10-14): 0 = the name
+    alone, 100 = the logo as large as it was (default)."""
+    try:
+        return max(0, min(100, int(v)))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
+                    box: Tuple[int, int], letters=None, pct: int = 100,
+                    font_key: str = "dejavu") -> Dict[str, bytes]:
+    from PIL import Image, ImageDraw, ImageFont
+    fonts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
+
+    def font(px: int):
+        # « Police du nom » (user, 2026-10-14): a condensed one writes a long
+        # name twice as large in the same room
+        try:
+            return _name_font(font_key, px)
+        except Exception:
+            try:
+                return ImageFont.truetype(os.path.join(fonts_dir, "DejaVuSans-Bold.ttf"), px)
+            except Exception:
+                return ImageFont.load_default()
+    base = None
+    if raw and pct > 0:
+        try:
+            base = Image.open(io.BytesIO(raw)).convert("RGBA")
+        except Exception:
+            base = None
+    name = re.sub(r"\s+", " ", name or "").strip()
+    out: Dict[str, bytes] = {}
+    for suffix, k0 in (("", 1), ("@2x", 2), ("@3x", 3)):
+        W, H = box[0] * k0, box[1] * k0
+        k = k0 * box[1] / 50                  # the sizes below are for Apple's 50-pt-high logo
+        logo = None
+        if base is not None:
+            # the logo takes up to 40 % of the width at 100 %, less as the owner shrinks it
+            sc = min(H * max(pct, 30) / 100 / base.height, (W * 0.4 * pct / 100) / base.width)
+            logo = base.resize((max(1, round(base.width * sc)), max(1, round(base.height * sc))), Image.LANCZOS)
+        lw = logo.width if logo is not None else 0
+        gap = round(8 * k) if logo is not None and name else 0
+        room = max(10, W - lw - gap)
+        if letters:                                    # « Nom stylé »: letter by letter
+            gap = round(8 * k) if logo is not None else 0
+            room = max(10, W - lw - gap)
+            text = _styled_name_image(letters, color, room, H, k)
+            cw = min(W, lw + gap + (text.width if text else 0)) if text else max(lw, 1)
+            img = Image.new("RGBA", (max(1, cw), H), (0, 0, 0, 0))
+            if logo is not None:
+                img.paste(logo, (0, (H - logo.height) // 2), logo)
+            if text is not None:
+                img.paste(text, (lw + gap, (H - text.height) // 2), text)
+            b = io.BytesIO()
+            img.save(b, "PNG")
+            out[suffix] = b.getvalue()
+            continue
+        draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+
+        def width(t: str, f) -> int:
+            return int(draw.textlength(t, font=f))
+        lines, f = [name], font(round(20 * k))
+
+        def lh_of(fnt) -> int:
+            a, d = fnt.getmetrics() if hasattr(fnt, "getmetrics") else (12 * k, 3 * k)
+            return a + d
+
+        if name:
+            # ONE line, always (user, 2026-10-14) — the same rule as the styled
+            # name above: the whole name, end to end, never on a second line
+            # and never cut short.
+            lines = [name]
+            # no 20 pt ceiling any more (user, 2026-10-14): as large as the
+            # 50 pt height and the room allow
+            f = font(max(2, round(50 * k)))
+            for _ in range(8):
+                w = width(name, f)
+                if w <= room and lh_of(f) <= H:
+                    break
+                px = max(2, int(f.size * min(room / max(w, 1), H / max(lh_of(f), 1)) * 0.99))
+                if px >= f.size:
+                    px = f.size - 1
+                if px < 2:
+                    break
+                f = font(px)
+        asc, desc = f.getmetrics() if hasattr(f, "getmetrics") else (12 * k, 3 * k)
+        lh = asc + desc
+        tw = max((width(t, f) for t in lines), default=0) if name else 0
+        cw = min(W, lw + gap + tw) if name else max(lw, 1)
+        img = Image.new("RGBA", (max(1, cw), H), (0, 0, 0, 0))
+        if logo is not None:
+            img.paste(logo, (0, (H - logo.height) // 2), logo)
+        if name:
+            d = ImageDraw.Draw(img)
+            top = (H - lh * len(lines)) // 2
+            for i, t in enumerate(lines):
+                d.text((lw + gap, top + i * lh), t, font=f, fill=tuple(color) + (255,))
+        b = io.BytesIO()
+        img.save(b, "PNG")
+        out[suffix] = b.getvalue()
+    return out
+
+
+def _best_file(files: Dict[str, bytes], base: str) -> Optional[bytes]:
+    for suffix in ("@3x", "@2x", ""):
+        if f"{base}{suffix}.png" in files:
+            return files[f"{base}{suffix}.png"]
+    return None
+
+
+def _poster_ink(card: Dict[str, Any], files: Dict[str, bytes]) -> Tuple[int, int, int]:
+    """What « Automatique » means on the iOS 27 poster — the same rule the
+    poster's own text follows (compose_strip): white over a photo or a dark
+    card, near-black over a light one."""
+    surface = (_rgb(card.get("surface_color"))
+               or _rgb(SURFACE_PRESETS.get(card.get("surface") or ""))
+               or (25, 25, 28))
+    photo = _best_file(files, "background") is not None
+    return (255, 255, 255) if (photo or _lum(surface) <= 0.45) else (25, 25, 28)
+
+
+# iOS 27's primaryLogo: 30 pt high, at most ~126 pt wide (tested on a real
+# iPhone, 2026-10-14: drawn at 160 × 50 Wallet showed it ~96 × 30; at 126 × 30
+# the name was larger; a 189-pt-wide image was shrunk back to the same width).
+# iOS 26's logo keeps Apple's 160 × 50.
+POSTER_LOGO_BOX = (126, 30)
+
+
+def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
+    """Apple: the shop's name moves from logoText into the logo images (iOS 26
+    logo.png, iOS 27 primaryLogo.png) — written in full, in the owner's colour
+    (« Couleur du nom ») or the card's text colour."""
+    try:
+        pj = json.loads(files["pass.json"])
+        letters = letters_for(card, str(pj.get("logoText") or ""))   # « Nom stylé », on this card's name
+        name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
+        if not name.strip():
+            return
+        chosen = _rgb(card.get("logo_text_color"))
+        # « Automatique » cannot be one colour: the two cards stand on different
+        # grounds. iOS 26's logo sits on the card, so the card's own text colour
+        # is right there. iOS 27's primaryLogo sits on the poster, over the
+        # photo — and reading the card's colour there asked the wrong question:
+        # a white card gives dark ink, and on a dark photo the name simply
+        # disappeared, until the owner picked a colour by hand (user,
+        # 2026-10-13). The poster now follows the rule its own artwork already
+        # uses: white over a photo or a dark card, near-black over a light one.
+        on_card = _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
+        on_poster = _poster_ink(card, files)
+        done = False
+        for base in ("logo", "primaryLogo"):
+            src = _best_file(files, base)
+            if src is None and base == "logo":
+                continue
+            if src is None:
+                continue
+            color = chosen or (on_poster if base == "primaryLogo" else on_card)
+            # the image is made from the plain logo (a design's logo may already be a disc)
+            for suffix, png in name_logo(src, name, color, letters=letters, logo_pct=card.get("name_logo_size"),
+                                         font_key=card.get("name_font"),
+                                         box=POSTER_LOGO_BOX if base == "primaryLogo" else (160, 50)).items():
+                files[f"{base}{suffix}.png"] = png
+            done = True
+        if done:
+            pj.pop("logoText", None)
+            files["pass.json"] = json.dumps(pj, ensure_ascii=False).encode("utf-8")
+    except Exception as exc:          # a pass without its name image still has logoText
+        print(f"wallet: name image failed ({exc})")
 
 
 def round_logo(raw: Optional[bytes], ring: Optional[str] = None, size: int = 600) -> Optional[bytes]:
@@ -1474,15 +2251,35 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
     from features import pass_designer as PD
     imgs = dict(PD.images(tpl))
     brand = _rgb(card.get("brand_color")) or (184, 92, 56)
-    logo_raw = PD.best(imgs, "logo") or PD.best(imgs, "primaryLogo") or _fetch_image(card.get("logo_url"))
+    # « Identité » is the one place for the logo and the photo (user,
+    # 2026-10-12: « logo and bg image identity and images dono jagah hai,
+    # images se htao »): a design draws the card's own, framed as the owner
+    # framed it (« Ajuster »). The design's images are only what a card
+    # without them falls back on.
+    card_logo = _fetch_image(card.get("logo_url"))
+    if card_logo:
+        imgs = {n: v for n, v in imgs.items() if not re.match(r"^(logo|primaryLogo)(@[23]x)?\.png$", n)}
+        for base in ("logo", "primaryLogo"):
+            for suffix, png in _png_variants(card_logo, (100, 50), fallback_rgb=brand, tight=True).items():
+                imgs[f"{base}{suffix}.png"] = png
+    if isinstance((tpl.get("pass") or {}).get("posterGeneric"), dict) and \
+            (card.get("poster_image_url") or _hero_raw(card)):
+        bg = poster_png({"card": card}, scrim=False)
+        if bg:
+            imgs = {n: v for n, v in imgs.items() if not re.match(r"^background(@[23]x)?\.png$", n)}
+            for suffix, png in _poster_variants(bg).items():
+                imgs[f"background{suffix}.png"] = png
+    logo_raw = card_logo or PD.best(imgs, "logo") or PD.best(imgs, "primaryLogo")
     try:
         from PIL import Image
 
         def scaled(data: bytes, k: float) -> bytes:
-            im = Image.open(io.BytesIO(data))
-            b = io.BytesIO()
-            im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS).save(b, "PNG")
-            return b.getvalue()
+            def make() -> bytes:
+                im = Image.open(io.BytesIO(data))
+                b = io.BytesIO()
+                im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS).save(b, "PNG", compress_level=3)
+                return b.getvalue()
+            return _cached("template_scaled", (data, k), make)       # the same design on every preview
         for name in list(imgs):
             if name.endswith("@3x.png"):
                 for suffix, k in (("@2x", 2 / 3), ("", 1 / 3)):
@@ -1509,6 +2306,7 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
     return imgs
 
 
+@_SC.payload_store
 def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
     """Every file of the pass but the manifest and signature — what the
     owner's preview shows and what build_pkpass signs."""
@@ -1560,11 +2358,51 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
                     files[f"background{suffix}.png"] = png
             for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
                 files[f"primaryLogo{suffix}.png"] = png
+    _name_into_logos(files, card)
     return files
 
 
+# The pass a customer downloads (user, 2026-10-12: « Add to Apple Wallet takes
+# ages »): its photo layers were 3–7 MB of lossless PNG — seconds on a phone
+# network before Wallet even opens. Wallet only takes PNG. 6 bits per colour
+# only halved them: Royal Trim's pass still weighed 2,6 Mo on 2026-10-13
+# (36 s cold, 5 s even ready). The photos are now 256-colour PNG with
+# Floyd–Steinberg dithering — the same look on a phone (checked side by side
+# on the barber chair poster), about a third of the bytes: 2,1 Mo → 0,76 Mo
+# of photos. Logos, icons and the name keep every bit.
+_PHOTO_LAYERS = ("background", "strip", "thumbnail")
+
+
+def _slim_photo(png: bytes) -> bytes:
+    def make() -> bytes:
+        try:
+            from PIL import Image
+            im = Image.open(io.BytesIO(png))
+            if im.mode not in ("RGB", "L"):
+                return png                        # a transparent layer stays exact
+            rgb = im.convert("RGB")
+            if rgb.getcolors(256) is not None:
+                # 256 colours or fewer (a flat brand colour, a drawn gradient):
+                # the palette holds them exactly — not one value moves
+                q = rgb.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+            else:
+                q = rgb.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.FLOYDSTEINBERG)
+            out = io.BytesIO()
+            q.save(out, "PNG", optimize=True)
+            return out.getvalue() if out.tell() < len(png) else png
+        except Exception:
+            return png
+    return _cached("slim_photo_256b", (png,), make)
+
+
+def slim_pass_files(files: Dict[str, bytes]) -> Dict[str, bytes]:
+    return {n: (_slim_photo(b) if n.endswith(".png") and n.startswith(_PHOTO_LAYERS) else b) for n, b in files.items()}
+
+
+@_SC.payload_store
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
-    files = pass_files(payload)
+    _prefetch_pictures((payload.get("tenant") or {}).get("id"), payload.get("card"))
+    files = slim_pass_files(pass_files(payload))
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
     files["signature"] = _sign_manifest(manifest)
@@ -1576,11 +2414,68 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     return buf.getvalue()
 
 
+# A signed pass ready before the customer taps « Ajouter à Apple Wallet »
+# (user, 2026-10-12: « wallet khulne mein bahut time lagta hai »): the card page
+# asks for it as soon as it opens (POST …/wallet-prepare) and the tap gets the
+# bytes at once. The key is the pass itself — its fields and its design — so a
+# visit or a design change since builds a fresh one.
+_PKPASS_MEM: Dict[str, Tuple[str, bytes]] = {}
+_PKPASS_TTL = 24 * 3600
+
+
+def _pkpass_key(payload: Dict[str, Any]) -> str:
+    h = hashlib.sha1(json.dumps(build_pass_json(payload), sort_keys=True, default=str).encode())
+    h.update(json.dumps(payload.get("card") or {}, sort_keys=True, default=str).encode())
+    h.update(str(payload.get("store_id") or "").encode())
+    return h.hexdigest()
+
+
+def _pkpass_cache_get(serial: str, key: str) -> Optional[bytes]:
+    hit = _PKPASS_MEM.get(serial)
+    if hit and hit[0] == key:
+        return hit[1]
+    if _db is None:
+        return None
+    try:
+        row = _db.pkpass_cache.find_one({"_id": serial, "key": key})
+    except Exception:
+        return None
+    if row and row.get("data"):
+        data = bytes(row["data"])
+        _PKPASS_MEM[serial] = (key, data)
+        return data
+    return None
+
+
+def _pkpass_cache_put(serial: str, key: str, data: bytes) -> None:
+    _PKPASS_MEM[serial] = (key, data)
+    while len(_PKPASS_MEM) > 50:
+        _PKPASS_MEM.pop(next(iter(_PKPASS_MEM)))
+    if _db is None or len(data) > _SHARED_MAX:
+        return
+    try:
+        from bson.binary import Binary
+        _db.pkpass_cache.update_one({"_id": serial}, {"$set": {"key": key, "data": Binary(data),
+                                                              "at": datetime.now(timezone.utc)}}, upsert=True)
+        _db.pkpass_cache.create_index("at", expireAfterSeconds=_PKPASS_TTL)
+    except Exception as exc:
+        print(f"wallet: pass not cached ({exc})")
+
+
+def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> bytes:
+    payload = payload or _card_payload(barcode_id)
+    key = _pkpass_key(payload)
+    data = _pkpass_cache_get(barcode_id, key)
+    if data is None:
+        data = build_pkpass(payload)
+        _pkpass_cache_put(barcode_id, key, data)
+    return data
+
+
 def _pkpass_response(barcode_id: str) -> Response:
     if not apple_configured():
         raise HTTPException(status_code=503, detail="Apple Wallet n'est pas encore configuré")
-    payload = _card_payload(barcode_id)
-    data = build_pkpass(payload)
+    data = signed_pass(barcode_id)
     fname = f"fidclic-{barcode_id}.pkpass"
     return StreamingResponse(io.BytesIO(data), media_type="application/vnd.apple.pkpass",
                             headers={"Content-Disposition": f'attachment; filename="{fname}"',
@@ -1597,6 +2492,7 @@ def notify_passes(serials: Iterable[str], google_notify: Any = None,
     res = _notify_apple(serials)
     try:
         res["google"] = google_sync(serials, notify=google_notify, update_class=design_changed)
+        res["google"].pop("done", None)
     except Exception as exc:                       # noqa: BLE001
         res["google"] = {"errors": [str(exc)[:160]]}
     return res
@@ -1649,12 +2545,126 @@ def notify_customer(customer_id: str, message: Optional[str] = None,
 
 def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
     """Every registered pass of a tenant (or just the given customers) — used
-    when the card design or an offer changes."""
+    when the card design or an offer changes. Queued, then worked for a few
+    seconds: a save never waits for every card (see queue_refresh)."""
     q: Dict[str, Any] = {"tenant_id": tenant_id}
     if customer_ids:
         q["id"] = {"$in": list(customer_ids)}
+    else:                      # one establishment's card changed: only its members' cards
+        sid = _SC.store_for(tenant_id)
+        if sid:
+            # the main store's members include the clients never given a store
+            q["branch_id"] = {"$in": [sid, None, ""]} if sid == _SC.main_store(tenant_id) else sid
     serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
-    return notify_passes(serials, design_changed=not customer_ids)
+    queue_refresh(tenant_id, serials, design_changed=not customer_ids)
+    return drain_refresh(tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# Wallet refresh queue (2026-10-13). Renaming an establishment answered
+# « erreur 504 » (user): the save sent every card to Apple and, one request
+# per card, to Google, inside the request — past Vercel's 30 s the request
+# was cut. Every card to refresh is now queued per account, then worked for
+# REFRESH_BUDGET_S; what is left is worked by the page right after (POST
+# /api/owner/wallet/refresh, until nothing is left) and by the daily cron.
+# Nothing is dropped: a card leaves the queue only once it was sent.
+# ---------------------------------------------------------------------------
+REFRESH_BUDGET_S = 6.0
+APPLE_CHUNK = 100
+# what is left of this request's budget: a save that changes the card twice
+# (its name, then its sector's reward) still waits REFRESH_BUDGET_S at most
+import contextvars as _cv
+_SPENT: "_cv.ContextVar[float]" = _cv.ContextVar("fidclic_wallet_spent", default=0.0)
+
+
+def queue_refresh(tenant_id: str, serials: Iterable[str], design_changed: bool = False) -> int:
+    serials = [s for s in dict.fromkeys(serials) if s]
+    if not serials or not tenant_id:
+        return 0
+    sets: Dict[str, Any] = {"tenant_id": tenant_id, "queued_at": datetime.now(timezone.utc)}
+    if design_changed:
+        sets["design"] = True
+    _db.wallet_refresh.update_one({"tenant_id": tenant_id},
+                                  {"$addToSet": {"apple": {"$each": serials}, "google": {"$each": serials}},
+                                   "$set": sets}, upsert=True)
+    return len(serials)
+
+
+def refresh_left(tenant_id: str) -> int:
+    doc = _db.wallet_refresh.find_one({"tenant_id": tenant_id}, {"_id": 0, "apple": 1, "google": 1}) or {}
+    return len(set(doc.get("apple") or []) | set(doc.get("google") or []))
+
+
+def drain_refresh(tenant_id: str, budget: Optional[float] = None) -> Dict[str, Any]:
+    """Send queued cards until `budget` seconds are spent (default: what this
+    request has left of REFRESH_BUDGET_S); returns what was done and how many
+    cards are still waiting (`left`)."""
+    out: Dict[str, Any] = {"devices": 0, "sent": 0, "google": {"cards": 0, "synced": 0, "errors": []}, "left": 0}
+    doc = _db.wallet_refresh.find_one({"tenant_id": tenant_id}, {"_id": 0})
+    if not doc:
+        return out
+    shared = budget is None
+    if shared:
+        budget = REFRESH_BUDGET_S - _SPENT.get()
+        if budget <= 0:                            # this request already spent its share
+            out["left"] = refresh_left(tenant_id)
+            return out
+    started = time.monotonic()
+    deadline = started + max(0.5, budget)
+    apple, google = list(doc.get("apple") or []), list(doc.get("google") or [])
+    done_apple: List[str] = []
+    for i in range(0, len(apple), APPLE_CHUNK):
+        if done_apple and time.monotonic() > deadline:
+            break
+        chunk = apple[i:i + APPLE_CHUNK]
+        try:
+            r = _notify_apple(chunk)
+            out["devices"] += int(r.get("devices") or 0)
+            out["sent"] += int(r.get("sent") or 0)
+        except Exception as exc:                   # noqa: BLE001 — a push never breaks the queue
+            print(f"wallet refresh: apple failed ({exc})")
+        done_apple += chunk
+    done_google: List[str] = []
+    if google and time.monotonic() < deadline:
+        try:
+            g = google_sync(google, update_class=bool(doc.get("design")), deadline=deadline)
+            done_google = g.pop("done", [])
+            out["google"] = g
+        except Exception as exc:                   # noqa: BLE001
+            out["google"]["errors"].append(str(exc)[:160])
+    if done_apple or done_google:
+        _db.wallet_refresh.update_one({"tenant_id": tenant_id},
+                                      {"$pull": {"apple": {"$in": done_apple}, "google": {"$in": done_google}}})
+    left = refresh_left(tenant_id)
+    if not left:
+        _db.wallet_refresh.delete_one({"tenant_id": tenant_id, "apple": {"$size": 0}, "google": {"$size": 0}})
+    out["left"] = left
+    if shared:
+        _SPENT.set(_SPENT.get() + (time.monotonic() - started))
+    return out
+
+
+def drain_all(budget_each: float = 5.0) -> int:
+    """The cron's pass over every account with cards still waiting."""
+    n = 0
+    for d in list(_db.wallet_refresh.find({}, {"_id": 0, "tenant_id": 1})):
+        try:
+            drain_refresh(d["tenant_id"], budget_each)
+            n += 1
+        except Exception as exc:                   # noqa: BLE001
+            print(f"wallet refresh: {d.get('tenant_id')} failed ({exc})")
+    return n
+
+
+@router.post("/api/owner/wallet/refresh")
+def owner_wallet_refresh(token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"]))):
+    """The page's follow-up after a save: send what is still waiting (a few
+    seconds' worth) and say how many cards are left."""
+    tid = token_data.tenant_id
+    if not _db.wallet_refresh.find_one({"tenant_id": tid}, {"_id": 1}):
+        return {"left": 0}
+    r = drain_refresh(tid, budget=20.0)
+    return {"left": r["left"], "sent": r["sent"], "google_synced": (r.get("google") or {}).get("synced", 0)}
 
 
 def _iso_or_none(d: Any) -> Optional[str]:
@@ -1769,6 +2779,8 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font",
+    "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
 
@@ -1790,9 +2802,22 @@ def _preview_payload(tid: str, body: "PassPreviewIn"):
     if (body.card or {}).get("reward_threshold_stamps"):
         card["reward_threshold"] = body.card["reward_threshold_stamps"]
     card.pop("stamps_earned", None)            # recomputed from the sample's visits
+    apply_programme_rules(card)                # the draft's programme decides points or tampons
     sample["points"] = visits * int(card.get("points_per_visit") or 10)
     payload["customer"] = {**payload.get("customer", {}), **sample}
+    _prefetch_pictures(tid, card, body.design)
     return payload, sample, visits
+
+
+def _prefetch_pictures(tid: str, *more: Any) -> None:
+    """All the pictures this card will use, fetched together before the work
+    (services/media.prefetch) — never one after the other on a cold server."""
+    try:
+        from services import media as M
+        from features import pass_designer as PD
+        M.prefetch(PD.load(tid) or {}, *[m for m in more if m])
+    except Exception as exc:              # a slower preview, never a broken one
+        print(f"wallet: pictures not prefetched ({exc})")
 
 
 @router.post("/api/owner/wallet/preview")
@@ -1805,18 +2830,38 @@ def owner_wallet_preview(body: PassPreviewIn,
     preview still showed the old layout after the pass changed)."""
     tid = token_data.tenant_id
     payload, sample, visits = _preview_payload(tid, body)
-    card = payload["card"]
 
     if body.design is not None:
         from features import pass_designer as PD
         with PD.preview_design(tid, PD.design_from_body(tid, body.design)):
             return _design_preview(payload, sample, visits)
+    return _live_view(payload, sample["name"], visits)
 
-    pj = build_pass_json(payload)
-    strip3x = strip_png(payload)
-    strip2x = _strip_variants(strip3x).get("@2x") if strip3x else None
-    logo2x = _png_variants(_fetch_image(card.get("logo_url")), (100, 50),
-                           fallback_rgb=_rgb(card.get("brand_color")) or (184, 92, 56), tight=True).get("@2x")
+
+@router.get("/api/card/{barcode_id}/pass-view")
+def card_pass_view(barcode_id: str, request: Request = None):
+    """The customer's own pass as the server builds it — the owner's current
+    design (iOS 27 poster included), their name, points and tampons — for the
+    signup's « Félicitations » page (user, 2026-10-13: « card updated waala
+    nhi dikhta, old style waala dikhta hai »). Same answer as the owner's
+    preview, for this real card; the owner key, like the card itself."""
+    import server as core
+    cust = core._card_customer(barcode_id, request)
+    payload = _card_payload(cust["barcode_id"])
+    return _live_view(payload, cust.get("name") or "", int(cust.get("visits") or 0))
+
+
+@_SC.payload_store
+def _live_view(payload: Dict[str, Any], name: str, visits: int) -> Dict[str, Any]:
+    """What WalletPassLive draws: the pass.json fields and images build_pkpass ships."""
+    card = payload["card"]
+    # the very files the pass ships (user, 2026-10-12: « preview mein change,
+    # wallet mein nahi ») — the logo carries the shop's name since then
+    files = pass_files(payload)
+    pj = json.loads(files["pass.json"])
+    strip2x = files.get("strip@2x.png")
+    logo2x = files.get("logo@2x.png") or _png_variants(_fetch_image(card.get("logo_url")), (100, 50),
+                                                      fallback_rgb=_rgb(card.get("brand_color")) or (184, 92, 56), tight=True).get("@2x")
     logo_w = 50
     try:
         from PIL import Image
@@ -1833,11 +2878,11 @@ def owner_wallet_preview(body: PassPreviewIn,
         "secondaryFields": sc.get("secondaryFields", []), "auxiliaryFields": sc.get("auxiliaryFields", []),
         "backFields": sc.get("backFields", []),
         "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
-        "strip": _data_url(strip2x) if "storeCard" in pj else None,
+        "strip": (_preview_image("strip", strip2x) if strip2x else None) if "storeCard" in pj else None,
         "logo": _data_url(logo2x), "logo_width": logo_w,
-        "sample": {"name": sample["name"], "visits": visits},
+        "sample": {"name": name, "visits": visits},
         # iOS 27 « poster » — the same fields and background the pass ships
-        "poster": _poster_preview(pj, payload, logo2x),
+        "poster": _poster_preview(pj, payload, files.get("primaryLogo@2x.png") or logo2x, own=True),
     }
 
 
@@ -1845,16 +2890,21 @@ def _preview_image(name: str, png: bytes) -> Optional[str]:
     """A file of the pass for the page: photos as JPEG (a poster PNG is a
     megabyte), artwork with transparency as PNG."""
     if name.split("@")[0].split(".")[0] in ("background", "strip"):
-        try:
-            from PIL import Image
-            b = io.BytesIO()
-            Image.open(io.BytesIO(png)).convert("RGB").save(b, "JPEG", quality=82)
-            return "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
-        except Exception:
-            pass
+        def jpeg() -> Optional[str]:
+            try:
+                from PIL import Image
+                b = io.BytesIO()
+                Image.open(io.BytesIO(png)).convert("RGB").save(b, "JPEG", quality=82)
+                return "data:image/jpeg;base64," + base64.b64encode(b.getvalue()).decode()
+            except Exception:
+                return None
+        out = _cached("preview_jpeg", (png,), jpeg)
+        if out:
+            return out
     return _data_url(png)
 
 
+@_SC.payload_store
 def _design_preview(payload: Dict[str, Any], sample: Dict[str, Any], visits: int) -> Dict[str, Any]:
     """The card editor's preview: the whole pass.json the customer's iPhone
     gets — every style it carries — and its images (@2x), from the very
@@ -1877,7 +2927,9 @@ def _design_preview(payload: Dict[str, Any], sample: Dict[str, Any], visits: int
     }
 
 
-def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes]) -> Optional[Dict[str, Any]]:
+@_SC.payload_store
+def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optional[bytes],
+                    own: bool = False) -> Optional[Dict[str, Any]]:
     pg = pj.get("posterGeneric")
     if not pg:
         return None
@@ -1886,15 +2938,17 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
         tpl = PD.load((payload.get("tenant") or {}).get("id"))
     except Exception:
         tpl = None
-    if tpl:                                   # a Pass Designer template: its own images
-        imgs = PD.images(tpl)
-        bg2x = PD.best(imgs, "background")
-        logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
+    if tpl:                                   # a Pass Designer template: the card's photo and logo first
+        imgs = _template_files(tpl, payload["card"])
+        bg2x = imgs.get("background@2x.png") or PD.best(imgs, "background")
+        if not own:                           # `own`: the pass's own primaryLogo (with the name)
+            logo2x = PD.best(imgs, "primaryLogo") or PD.best(imgs, "logo") or logo2x
     else:
         bg3x = poster_png(payload)
         bg2x = _poster_variants(bg3x).get("@2x") if bg3x else None
     return {"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
-            "footerFields": pg.get("footerFields", []), "background": _data_url(bg2x), "logo": _data_url(logo2x),
+            "footerFields": pg.get("footerFields", []), "background": _preview_image("background", bg2x) if bg2x else None,
+            "logo": _data_url(logo2x),
             "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}
                         for a in clean_featured(payload["card"].get("featured_actions"), payload.get("tenant"))]}
 
@@ -1969,6 +3023,13 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
     if not existing:
         # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
         _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
+        try:                                     # Bienvenue (once per client, features/automations)
+            from features import automations as AU
+            full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
+            if full:
+                AU.wallet_added(full.get("tenant_id"), full, "apple")
+        except Exception as exc:
+            print(f"wallet: welcome not sent (non-fatal): {exc}")
     return Response(status_code=200 if existing else 201)
 
 
@@ -2040,9 +3101,10 @@ def featured_action_click(serial: str, identifier: str, k: Optional[str] = None)
     from fastapi.responses import RedirectResponse
     owner = CO.valid(serial, k)
     home = CO.owner_url(_site_url(), serial) if owner else f"{_site_url()}/card/{serial}"
-    cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1})
+    cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1, "branch_id": 1})
     if not cust:
         return RedirectResponse(_site_url(), status_code=302)
+    _SC.set_for_customer(cust)
     tpl = _db.card_templates.find_one({"tenant_id": cust.get("tenant_id")}, {"_id": 0, "featured_actions": 1}) or {}
     kind = identifier.split("-", 1)[1] if "-" in identifier else identifier
     tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0}) or {}
@@ -2189,8 +3251,12 @@ def _hex6(rgb_css: str) -> str:
 
 
 def _gw_ids(tenant_id: str, serial: str) -> Tuple[str, str]:
+    """The Google class is the card's design: one per establishment that has
+    its own card (multi-store), else the account's."""
     issuer = _gw_issuer()
-    return (f"{issuer}.fidclic_{tenant_id}".replace("-", "_"),
+    sid = _SC.store_for(tenant_id)
+    cls = f"fidclic_{tenant_id}_{sid}" if sid and _SC.own_card(tenant_id, sid) else f"fidclic_{tenant_id}"
+    return (f"{issuer}.{cls}".replace("-", "_"),
             f"{issuer}.{serial}".replace("-", "_"))
 
 
@@ -2224,7 +3290,8 @@ _HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 def _img_ok(v: Any, limit: int = 3_500_000) -> bool:
-    return isinstance(v, str) and (v.startswith("data:image/") or v.startswith("https://")) and len(v) <= limit
+    from services import media as _M
+    return _M.is_image_value(v) and len(v) <= limit
 
 
 def clean_google_design(d: Any) -> Dict[str, Any]:
@@ -2261,10 +3328,18 @@ def clean_google_design(d: Any) -> Dict[str, Any]:
 def _gw_image_url(tenant_id: str, what: str, card: Dict[str, Any]) -> str:
     # the version changes with the image, so Google fetches the new one
     src = {"logo": card.get("logo_url"), "wide": (card.get("google_design") or {}).get("wide_logo"),
-           "hero": (card.get("google_design") or {}).get("hero_image")}[what] or ""
+           "hero": (card.get("google_design") or {}).get("hero_image"),
+           "name": card.get("logo_url")}[what] or ""
     look = f"{bool(card.get('logo_round'))}{bool(card.get('logo_ring'))}{card.get('logo_ring_color') or ''}"
+    if what == "name":                        # the name and its colour are in the image
+        look += f"{card.get('logo_text_color') or ''}{card.get('_shop_name') or ''}"
+        look += f"{card.get('name_logo_size')}{card.get('name_font') or ''}"
+        look += json.dumps(card.get("name_style") or {}, sort_keys=True)
     v = hashlib.sha1((src + look).encode()).hexdigest()[:10]
-    return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}"
+    sid = _SC.store_for(tenant_id)
+    own = sid and (_SC.own_card(tenant_id, sid) or (what == "name" and _SC.store_name(tenant_id, sid)))
+    store_q = f"&store={sid}" if own else ""
+    return f"{_site_url()}/api/wallet/google/{tenant_id}/{what}.png?v={v}{store_q}"
 
 
 def _gw_callback_url() -> str:
@@ -2272,6 +3347,7 @@ def _gw_callback_url() -> str:
     return callback_url()
 
 
+@_SC.payload_store
 def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
     tenant, card = payload["tenant"], payload["card"]
     gd = clean_google_design(card.get("google_design"))
@@ -2291,6 +3367,13 @@ def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
         cls["programLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "logo", card)}}
     if gd["logo"] == "wide":
         cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(tenant["id"], "wide", card)}}
+    elif card.get("logo_text_color") or styled_letters(card):
+        # « Couleur du nom » (user, 2026-10-12): Google picks its own text colour,
+        # so the logo and the shop's name come as one wide logo, which replaces
+        # Google's logo + issuer name; the line under it then says what the card is
+        cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(
+            tenant["id"], "name", {**card, "_shop_name": org})}}
+        cls["programName"] = gd.get("program_name") or "Carte de fidélité"
     if gd["rows"]:
         def item(key: str) -> Dict[str, Any]:
             return {"firstValue": {"fields": [{"fieldPath": GOOGLE_ROW_FIELDS[key][1]}]}}
@@ -2317,6 +3400,7 @@ def _fill_vars(text: str, cust: Dict[str, Any], card: Dict[str, Any]) -> str:
     return re.sub(r"\{([a-z_]{2,20})\}", lambda m: str(values.get(m.group(1), m.group(0))), text or "")
 
 
+@_SC.payload_store
 def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     """The Google card, read off the SAME pass.json Apple gets (build_pass_json):
     the member, the progress and the offer say the same thing on both phones."""
@@ -2356,7 +3440,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:   # Google has no strip either: it gets the same painted banner, meter in.
         hero = (f"{_site_url()}/api/card/{serial}/wallet-strip.png"
                 f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"
-                f"-{(card.get('campaign_offer') or {}).get('id') or 0}")
+                f"-{(card.get('campaign_offer') or {}).get('id') or 0}-{stamp_shape(card) or 'barre'}")
     obj: Dict[str, Any] = {
         "id": object_id, "classId": class_id, "state": "INACTIVE" if pj.get("voided") else "ACTIVE",
         "accountId": serial, "accountName": str(member),
@@ -2379,7 +3463,19 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
                                     for l in pj["locations"][:10]]
     if points:
         obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": {"int": int(points["value"] or 0)}}
-    if progress:
+    # The jauge rides in the banner (hero « fidclic »). With a photo or no
+    # banner it would be gone: then Google's own row carries it, in the
+    # owner's shape (user, 2026-10-11: « agar meter nhi h toh add kr do »).
+    jauge = None
+    if gd["hero"] != "fidclic" and card.get("show_meter") is not False:
+        st, th = _stamp_state(payload)
+        st = max(0, min(st, th))
+        jauge = jauge_text(st, th, stamp_shape(card))
+    if jauge:
+        label = (card.get("stamps_label") or "Tampons").strip().title()
+        obj["secondaryLoyaltyPoints" if points else "loyaltyPoints"] = {
+            "label": f"{label} · {st}/{th}", "balance": {"string": jauge}}
+    elif progress:
         obj["secondaryLoyaltyPoints" if points else "loyaltyPoints"] = {
             "label": str(progress["label"]).title(), "balance": {"string": str(progress["value"])}}
     # The campaign stays as a message in the card (Google's banner element).
@@ -2391,6 +3487,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     return obj
 
 
+@_SC.payload_store
 def google_save_url(payload: Dict[str, Any]) -> str:
     import jwt
     sa = _gw_sa()
@@ -2406,9 +3503,40 @@ def google_save_url(payload: Dict[str, Any]) -> str:
         {"serial": cust["barcode_id"]},
         {"$set": {"object_id": obj["id"], "tenant_id": payload["tenant"]["id"], "updated_at": datetime.now(timezone.utc)},
          "$setOnInsert": {"created_at": datetime.now(timezone.utc)}}, upsert=True)
+    return _gw_save_link(obj["id"])
+
+
+def _gw_save_link(object_id: str) -> str:
+    """The « Save to Google Wallet » link of an object Google already has."""
+    import jwt
+    sa = _gw_sa()
     claims = {"iss": sa["client_email"], "aud": "google", "typ": "savetowallet", "iat": int(time.time()),
-              "origins": [_site_url()], "payload": {"loyaltyObjects": [{"id": obj["id"]}]}}
+              "origins": [_site_url()], "payload": {"loyaltyObjects": [{"id": object_id}]}}
     return "https://pay.google.com/gp/v/save/" + jwt.encode(claims, sa["private_key"], algorithm="RS256")
+
+
+def google_link_fast(barcode_id: str) -> str:
+    """The object exists at Google already (made once, kept in step by
+    google_sync on every change): its link needs no call to Google — instant.
+    Otherwise the full round (class, object) once."""
+    row = _db.google_wallet_objects.find_one({"serial": barcode_id, "object_id": {"$exists": True}}, {"_id": 0})
+    if row and row.get("object_id") and row.get("linked_class") == _gw_class_id_for(barcode_id):
+        return _gw_save_link(row["object_id"])
+    payload = _card_payload(barcode_id)
+    url = google_save_url(payload)
+    _db.google_wallet_objects.update_one({"serial": barcode_id},
+                                         {"$set": {"linked_class": _gw_class_id_for(barcode_id, payload)}})
+    return url
+
+
+def _gw_class_id_for(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> str:
+    """The Google class this card belongs to now (its establishment's)."""
+    cust = (payload or {}).get("customer") or _db.customers.find_one({"barcode_id": barcode_id},
+                                                                      {"_id": 0, "tenant_id": 1, "branch_id": 1}) or {}
+    tid = (payload or {}).get("tenant", {}).get("id") or cust.get("tenant_id")
+    sid = (payload or {}).get("store_id") or cust.get("branch_id")
+    with _SC.store(tid, sid) if sid else _SC.store(None, None):
+        return _gw_ids(tid, barcode_id)[0]
 
 
 # Notifications on Google (user, 2026-10-04): a campaign, a reward unlock and
@@ -2422,7 +3550,8 @@ def _gw_reason(body: Dict[str, Any]) -> str:
     return str(err.get("message") or err.get("status") or "")[:160]
 
 
-def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool = False) -> Dict[str, Any]:
+def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool = False,
+                deadline: Optional[float] = None) -> Dict[str, Any]:
     """Push the current card to Google for every customer who added it.
 
     Apple pulls a changed pass after a push; Google does not — the server has
@@ -2431,15 +3560,19 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
     `notify` ("campaign" | "reward" | {"kind": "birthday" | "parrainage" | "near_reward", "header", "body"})
     adds a TEXT_AND_NOTIFY message; anything
     else updates the card without a notification. `update_class`: the design
-    changed (colours, logo, name) — only then is the class sent again."""
+    changed (colours, logo, name) — only then is the class sent again.
+    `deadline` (time.monotonic()): stop there; `done` lists the serials
+    handled (the refresh queue keeps the others)."""
     serials = [x for x in dict.fromkeys(serials) if x]
     kind = notify.get("kind") if isinstance(notify, dict) else notify
-    out: Dict[str, Any] = {"cards": 0, "synced": 0, "notified": 0, "errors": []}
+    out: Dict[str, Any] = {"cards": 0, "synced": 0, "notified": 0, "errors": [], "done": list(serials)}
     if not serials or not google_configured():
         return out
     rows = list(_db.google_wallet_objects.find({"serial": {"$in": serials}}, {"_id": 0}))
     if not rows:
         return out
+    have = {r["serial"] for r in rows}
+    out["done"] = [x for x in serials if x not in have]      # no Google card: nothing to send
     out["cards"] = len(rows)
     try:
         token = _gw_access_token()
@@ -2450,7 +3583,11 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
         out["errors"].append(msg)
         return out
     classes_done = set()
+    worked = 0
     for row in rows:
+        if deadline is not None and worked and time.monotonic() > deadline:
+            break                                  # at least one card per call, then the clock
+        worked += 1
         result = "ok"
         try:
             payload = _card_payload(row["serial"])
@@ -2503,6 +3640,7 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             out["errors"].append(result)
         _db.google_wallet_objects.update_one({"serial": row["serial"]}, {"$set": {
             "last_sync_at": datetime.now(timezone.utc), "last_sync_result": result[:200]}})
+        out["done"].append(row["serial"])
     out["errors"] = out["errors"][:3]
     return out
 
@@ -2519,16 +3657,38 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
         return _png_variants(_fetch_image(gd.get("wide_logo")), (640, 200), tight=True).get("@2x")
     if what == "hero":
         return _png_variants(_fetch_image(gd.get("hero_image")), (516, 168), cover=True).get("@2x")
+    if what == "name":
+        _, ring = _logo_look(card)
+        color = _rgb(card.get("logo_text_color")) or (255, 255, 255)
+        return name_logo(round_logo(_fetch_image(card.get("logo_url")), ring, size=400), card.get("_shop_name") or "",
+                         color, box=(640, 200), letters=letters_for(card, card.get("_shop_name") or ""),
+                         logo_pct=card.get("name_logo_size"), font_key=card.get("name_font")).get("@2x")
     return None
 
 
+@router.get("/api/wallet/name-fonts/{key}.ttf")
+def name_font_file(key: str):
+    """The fonts of « Nom stylé », for the editor to show each letter as the
+    card will (public, OFL-licensed files from assets/fonts)."""
+    if key not in NAME_FONTS:
+        raise HTTPException(status_code=404, detail="Police inconnue")
+    with open(os.path.join(_FONTS_DIR, NAME_FONTS[key][0]), "rb") as fh:
+        data = fh.read()
+    return Response(content=data, media_type="font/ttf", headers={"Cache-Control": "public, max-age=2592000, immutable"})
+
+
 @router.get("/api/wallet/google/{tenant_id}/{what}.png")
-def google_image(tenant_id: str, what: str):
-    """Public: Google's servers fetch these when they draw the card."""
-    if what not in ("logo", "wide", "hero"):
+def google_image(tenant_id: str, what: str, store: Optional[str] = None):
+    """Public: Google's servers fetch these when they draw the card
+    (`store`: an establishment with its own card)."""
+    if what not in ("logo", "wide", "hero", "name"):
         raise HTTPException(status_code=404, detail="Image inconnue")
-    tpl = _db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
+    with _SC.store(tenant_id, store):
+        tpl = _db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0}) or {}
     card = {**(tpl.get("brand_fields") or {}), **tpl}
+    if what == "name":
+        t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
+        card["_shop_name"] = card.get("card_name") or _SC.store_name(tenant_id, store) or t.get("name") or ""
     png = _gw_image(card, what)
     if not png:
         raise HTTPException(status_code=404, detail="Image absente")
@@ -2552,13 +3712,42 @@ def owner_google_preview(body: PassPreviewIn,
         hero = strip_png(payload)
     return {
         "class": cls, "object": obj,
-        "images": {"logo": _data_url(_gw_image(card, "logo")), "wide": _data_url(_gw_image(card, "wide")) if gd["logo"] == "wide" else None,
+        "images": {"logo": _data_url(_gw_image(card, "logo")),
+                   "wide": _data_url(_gw_image(card, "wide")) if gd["logo"] == "wide" else (
+                       # « Couleur du nom »: the logo + the name, as Google gets it
+                       _data_url(_gw_image({**card, "_shop_name": card.get("card_name")
+                                            or (payload.get("tenant") or {}).get("name") or ""}, "name"))
+                       if card.get("logo_text_color") or styled_letters(card) else None),
                    "hero": _preview_image("strip", hero) if hero else None},
         "row_fields": {k: v[0] for k, v in GOOGLE_ROW_FIELDS.items()},
         "codes": {k: v[0] for k, v in GOOGLE_CODES.items()},
         "configured": google_configured(),
         "sample": {"name": sample["name"], "visits": visits},
     }
+
+
+@router.post("/api/card/{barcode_id}/wallet-prepare")
+def wallet_prepare(barcode_id: str, request: Request = None):
+    """Asked by the card page as it opens: the signed Apple pass is built and
+    kept, the Google link is made — so « Ajouter à … » opens the Wallet at once."""
+    _owner_only(barcode_id, request)
+    out: Dict[str, Any] = {"apple": False, "google_url": None}
+    if not _wallet_in_plan(barcode_id):
+        return out
+    payload = None
+    if apple_configured():
+        try:
+            payload = _card_payload(barcode_id)
+            signed_pass(barcode_id, payload)
+            out["apple"] = True
+        except Exception as exc:
+            print(f"wallet prepare: apple ({exc})")
+    if google_configured():
+        try:
+            out["google_url"] = google_link_fast(barcode_id)
+        except Exception as exc:
+            print(f"wallet prepare: google ({exc})")
+    return out
 
 
 @router.get("/api/card/{barcode_id}/google-wallet")
@@ -2569,7 +3758,7 @@ def google_wallet_link(barcode_id: str, request: Request = None):
     if not google_configured():
         raise HTTPException(status_code=503, detail="Google Wallet n'est pas encore configuré")
     try:
-        return {"url": google_save_url(_card_payload(barcode_id))}
+        return {"url": google_link_fast(barcode_id)}
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001 — surface Google's message to the merchant

@@ -10,6 +10,7 @@ const C_SCAN = {
   ochre: '#2F6BFF', amber: '#4F7BFF', terracotta: '#7C3AED',
 };
 import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 import CardReaddModal from '../components/CardReaddModal';
 
@@ -139,9 +140,20 @@ function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
 
 // Campagnes (2026-10-10): what the staff must not forget for this client —
 // an offer valid right now (dates and happy hours) and a défi's reward won.
-function TillReminders({ offers = [], rewards = [], onRedeemed }) {
+// The card's programme, as features/loyalty_card._programme reads it: a card
+// saved before « programme » existed is a Tampons card unless it earns per euro.
+const PROGRAMMES = ['points_euro', 'points_visit', 'stamps', 'cashback'];
+export function programmeOf(tpl) {
+  const p = String(tpl?.programme || '').trim().toLowerCase();
+  const q = p === 'points' ? 'points_euro' : p;
+  if (PROGRAMMES.includes(q)) return q;
+  return tpl?.points_mode === 'per_euro' ? 'points_euro' : 'stamps';
+}
+
+function TillReminders({ offers = [], rewards = [], onRedeemed, customerId, branchId }) {
   const [busy, setBusy] = useState('');
   const [done, setDone] = useState({});
+  const [used, setUsed] = useState({});
   const [err, setErr] = useState('');
   if (!offers.length && !rewards.length) return null;
   const give = async (r) => {
@@ -150,17 +162,34 @@ function TillReminders({ offers = [], rewards = [], onRedeemed }) {
     catch (e) { setErr(e?.response?.data?.detail || "La récompense n'a pas pu être remise."); }
     finally { setBusy(''); }
   };
+  // « Offre utilisée » (Nouvelle automatisation › Après une action client, 2026-10-11): once per client
+  const useIt = async (o) => {
+    setBusy(o.id); setErr('');
+    try { await ownerAPI.useOffer(o.id, { customer_id: customerId, branch_id: branchId || null }); setUsed((d) => ({ ...d, [o.id]: true })); }
+    catch (e) {
+      if (e?.response?.status === 409) setUsed((d) => ({ ...d, [o.id]: true }));
+      setErr(e?.response?.data?.detail || "L'offre n'a pas pu être marquée comme utilisée.");
+    } finally { setBusy(''); }
+  };
   return (
     <div className="mt-3 space-y-2">
       {offers.map((o) => (
-        <p key={o.id} className="flex items-start gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2.5 text-[13.5px] text-[#92400E]">
+        <div key={o.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2.5 text-[13.5px] text-[#92400E]">
           <span aria-hidden="true">%</span>
-          <span><b>Offre active{o.label ? ` : ${o.label}` : ''}</b> — {o.title}{o.terms ? ` (${o.terms})` : ''}. Pensez à l'appliquer.</span>
-        </p>
+          <span className="min-w-0 flex-1"><b>Offre active{o.label ? ` : ${o.label}` : ''}</b> — {o.title}{o.terms ? ` (${o.terms})` : ''}.{o.used || used[o.id] ? ' Déjà utilisée par ce client.' : " Pensez à l'appliquer."}</span>
+          {customerId && (o.used || used[o.id] ? <span className="font-semibold text-[#15803D]">Utilisée ✓</span> : (
+            <button type="button" onClick={() => useIt(o)} disabled={busy === o.id}
+                    className="rounded-lg bg-[#D97706] px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60">
+              {busy === o.id ? '…' : 'Offre utilisée'}
+            </button>
+          ))}
+        </div>
       ))}
       {rewards.map((r) => (
         <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-2.5 text-[13.5px] text-[#14532D]">
-          <span className="flex-1"><b>🏆 Défi réussi : {r.reward}</b> — « {r.title} »{r.expires_at ? `, valable jusqu'au ${new Date(r.expires_at).toLocaleDateString('fr-FR')}` : ''}.</span>
+          <span className="flex-1">{r.kind === 'parrainage'
+            ? <><b>🎁 Parrainage : {r.reward}</b> — à remettre au client.</>
+            : <><b>🏆 Défi réussi : {r.reward}</b> — « {r.title} »{r.expires_at ? `, valable jusqu'au ${new Date(r.expires_at).toLocaleDateString('fr-FR')}` : ''}.</>}</span>
           {done[r.id] ? <span className="font-semibold text-[#15803D]">Remise ✓</span> : (
             <button type="button" onClick={() => give(r)} disabled={busy === r.id}
                     className="rounded-lg bg-[#16A34A] px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-60">
@@ -200,6 +229,9 @@ const ScanPage = () => {
   const [pointsPerEuro, setPointsPerEuro] = useState(10);
   const [pointsPerVisit, setPointsPerVisit] = useState(10);
   const [cashback, setCashback] = useState(false);
+  // the card's programme, read as the server reads it (loyalty_card._programme):
+  // a Tampons card gives tampons, never points (QA BUG-009)
+  const [stampsProgramme, setStampsProgramme] = useState(false);
   // Tenant identity — shown as a banner so staff knows which shop they're in.
   const [tenantInfo, setTenantInfo] = useState(null);
   const [status, setStatus] = useState(null); // { type: 'success' | 'error' | 'info', message: '' }
@@ -224,9 +256,18 @@ const ScanPage = () => {
   const [pickerQty, setPickerQty] = useState({}); // { [item.id]: qty }
   // App-wide branch context (item #18). Picking a branch here also reflects on every other page.
   const { branchId: _branchIdRaw, setBranchId: _setBranchIdGlobal, branches: _branchesCtx, setBranches: _setBranchesCtx } = useBranch();
-  const branches = _branchesCtx;
-  const branchId = _branchIdRaw || '';
+  // The establishment of the visit (user, 2026-10-12): the owner picks among
+  // all, an administrateur among its own, a manager / employé has one and no
+  // menu — the visit counts where it is scanned, never « non taguée ».
+  const { user } = useAuth();
+  const role = user?.role;
+  const open = (Array.isArray(_branchesCtx) ? _branchesCtx : []).filter((b) => b && b.id && b.status !== 'closed');
+  const mine = Array.isArray(user?.branch_ids) ? user.branch_ids : null;
+  const branches = role === 'business_owner' || !mine ? open : open.filter((b) => mine.includes(b.id));
+  const fixedStore = role === 'manager' || role === 'staff' || branches.length === 1;
+  const branchId = fixedStore ? (branches[0]?.id || '') : (branches.some((b) => b.id === _branchIdRaw) ? _branchIdRaw : '');
   const setBranchId = (id) => _setBranchIdGlobal(id || null);
+  const needStore = branches.length > 1 && !branchId;   // several stores, none chosen yet
 
   useEffect(() => {
     (async () => {
@@ -252,6 +293,7 @@ const ScanPage = () => {
         const visit = Number(t.data?.points_per_visit);
         setPointsMode(m === 'per_euro' ? 'per_euro' : 'per_visit');
         setCashback((t.data?.programme || '').toLowerCase() === 'cashback');
+        setStampsProgramme(programmeOf(t.data || {}) === 'stamps');
         if (rate && rate > 0) setPointsPerEuro(rate);
         if (visit && visit > 0) setPointsPerVisit(visit);
         const size = Number(t.data?.reward_threshold_stamps);
@@ -562,11 +604,18 @@ const ScanPage = () => {
   const pickerLineItems = pickedItems.map(({ item, qty }) => ({ item_id: item.id, qty }));
   // When the picker has at least one selection, force amount_paid to the
   // picker total — the field is shown read-only in that mode so the
-  // cashier can't accidentally type a different number.
+  // cashier can't accidentally type a different number. Every product taken
+  // off again: the catalogue's total goes too (QA BUG-004: « − » down to 0
+  // left « 10,00 € » in the field, editable again, read as a real amount).
+  const amountFromPicker = React.useRef(false);
   React.useEffect(() => {
     if (pickedItems.length > 0) {
       setAmountPaid(pickerTotal.toFixed(2));
       setAmountError(null);                // the catalogue's total replaces what was typed
+      amountFromPicker.current = true;
+    } else if (amountFromPicker.current) {
+      setAmountPaid('');
+      amountFromPicker.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickerTotal, pickedItems.length]);
@@ -613,6 +662,10 @@ const ScanPage = () => {
     }
     if (paperError) {
       setStatus({ type: 'error', message: paperError });
+      return;
+    }
+    if (needStore) {
+      setStatus({ type: 'error', message: "Choisissez l'établissement où a lieu le passage." });
       return;
     }
 
@@ -662,7 +715,8 @@ const ScanPage = () => {
         tier: customerData.tier || null,
         previous_tier: customerData.previous_tier || null,
         tier_upgraded: !!customerData.tier_upgraded,
-        branch_id: branchId || customerData.branch_id || null,
+        // where this visit was scanned (not the customer's home store)
+        branch_id: customerData.visit_branch_id || branchId || null,
         // Notification subscription status — drives the "encourage enable
         // notifications" prompt staff sees post-scan. Customers without
         // push subscriptions get a QR code they can scan to enable.
@@ -672,6 +726,12 @@ const ScanPage = () => {
         defis_won: customerData.defis_won || [],
         defi_rewards: customerData.defi_rewards || [],
         offers_active: customerData.offers_active || [],
+        // in the card's own unit (QA BUG-009)
+        programme: customerData.programme || null,
+        stamps_earned: customerData.stamps_earned ?? (1 + (customerData.paper_stamps || 0)),
+        stamps_on_card: customerData.stamps_on_card,
+        stamps_target: customerData.stamps_target,
+        referral_reward: customerData.referral_reward || '',
       });
       setStatus({ type: 'success', message: t('scan.success') });
       setBarcode('');
@@ -714,7 +774,9 @@ const ScanPage = () => {
       ? 'Cashback : un pourcentage du montant est crédité au client.'
       : pointsMode === 'per_euro'
         ? `${pointsPerEuro} point${pointsPerEuro > 1 ? 's' : ''} par euro dépensé.`
-        : 'Le montant ne change pas les points dans ce mode (forfait par visite). Le commerçant peut le modifier dans les réglages.';
+        : stampsProgramme
+          ? 'Le montant ne change pas les tampons : ils se comptent par visite.'
+          : 'Le montant ne change pas les points dans ce mode (forfait par visite). Le commerçant peut le modifier dans les réglages.';
   const switchMode = (key) => {
     setMode(key);
     if (status?.type === 'error') setStatus(null);      // a camera error does not follow to the form
@@ -732,23 +794,29 @@ const ScanPage = () => {
         </span>
         <h1 className="mt-4 text-[34px] font-extrabold leading-tight tracking-tight text-[#0B1C3F] sm:text-[40px]">Enregistrer une visite</h1>
         <p className="mx-auto mt-2 max-w-[520px] text-[15.5px] leading-relaxed text-[#64748B]">
-          Scannez le code de la carte client ou saisissez-le manuellement pour créditer les points de fidélité.
+          Scannez le code de la carte client ou saisissez-le manuellement pour créditer {stampsProgramme ? 'les tampons' : 'les points'} de fidélité.
         </p>
       </div>
 
       {/* Establishment and « give a card back » — only what the shop needs */}
       {(
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {branches.length > 0 ? (
-            <label className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 text-[12.5px] text-[#334155]">
+          {branches.length > 1 && !fixedStore ? (
+            <label className={`inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-[12.5px] text-[#334155] ${needStore ? 'border-[#F59E0B] ring-2 ring-[#F59E0B]/20' : 'border-[#E2E8F0]'}`}>
               <Building2 size={14} className="text-[#2F6BFF]" />
               <span className="font-semibold">{t('scan.scanning_at_branch')}</span>
-              <select value={branchId} onChange={(e) => setBranchId(e.target.value)}
-                      className="max-w-[180px] !border-0 bg-transparent !p-0 text-[12.5px] font-semibold text-[#0B1C3F] !outline-none">
-                <option value="">{t('scan.branch_not_tagged')}</option>
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
+              <select value={branchId} onChange={(e) => setBranchId(e.target.value)} aria-label="Établissement du passage"
+                      className="max-w-[200px] !border-0 bg-transparent !p-0 text-[12.5px] font-semibold text-[#0B1C3F] !outline-none">
+                {!branchId && <option value="" disabled>Choisir l'établissement…</option>}
+                {branches.map((b) => <option key={b.id} value={b.id} translate="no">{b.name || b.id}</option>)}
               </select>
             </label>
+          ) : branches.length >= 1 ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#E2E8F0] bg-white px-3 py-1.5 text-[12.5px] text-[#334155]">
+              <Building2 size={14} className="text-[#2F6BFF]" />
+              <span className="font-semibold">{t('scan.scanning_at_branch')}</span>
+              <span className="font-semibold text-[#0B1C3F]">{branches[0]?.name}</span>
+            </span>
           ) : <span />}
           <button type="button" onClick={() => setReadd({ find: true })}
                   className="inline-flex items-center gap-1.5 rounded-full border border-[#E2E8F0] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
@@ -825,7 +893,7 @@ const ScanPage = () => {
           </label>
           <p className="mx-auto flex max-w-[600px] items-start gap-3 rounded-2xl bg-[#EEF4FF] px-5 py-3.5 text-[14px] leading-relaxed text-[#1D4ED8]">
             <Info size={20} className="mt-0.5 shrink-0" />
-            <span>Les points sont ajoutés automatiquement selon les règles de votre carte. La carte du client (Apple Wallet comprise) se met à jour toute seule.</span>
+            <span>{stampsProgramme ? 'Les tampons' : 'Les points'} sont ajoutés automatiquement selon les règles de votre carte. La carte du client (Apple Wallet comprise) se met à jour toute seule.</span>
           </p>
         </div>
       )}
@@ -948,7 +1016,7 @@ const ScanPage = () => {
           )}
           <button type="submit" disabled={loading || !barcode.trim() || !!amountError || !!paperError || catalogMissing}
                   className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl bg-[#1463FF] px-4 text-[16px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] transition hover:bg-[#0F54E0] disabled:opacity-50">
-            <Gift size={20} /> {loading ? t('scan.submitting') : 'Enregistrer la visite et ajouter les points'} {!loading && <ArrowRight size={20} />}
+            <Gift size={20} /> {loading ? t('scan.submitting') : `Enregistrer la visite et ajouter ${stampsProgramme ? 'le tampon' : 'les points'}`} {!loading && <ArrowRight size={20} />}
           </button>
         </form>
       )}
@@ -970,41 +1038,60 @@ const ScanPage = () => {
                     🎉 Défi réussi : {scanResult.defis_won.map((w) => w.reward).join(', ')} !
                   </p>
                 )}
-                <TillReminders offers={scanResult.offers_active} rewards={scanResult.defi_rewards} />
+                <TillReminders offers={scanResult.offers_active} rewards={scanResult.defi_rewards} customerId={scanResult.customer_id} branchId={scanResult.branch_id} />
                 {/* Points & Stamps Summary */}
                 <div className="grid grid-cols-2 gap-4 mb-6 text-center">
-                  <div className="bg-white p-4 rounded-lg">
-                    <p className="text-3xl font-bold text-[#2F6BFF]">+{scanResult.points_earned || 0}</p>
-                    <p className="text-sm text-[#475569]">{t('scan.label_points')}</p>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg">
-                    <p className="text-3xl font-bold text-[#0F8B58]">+{1 + (scanResult.paper_stamps || 0)}</p>
-                    <p className="text-sm text-[#475569]">
-                      {scanResult.paper_stamps > 0
-                        ? `tampons, dont ${scanResult.paper_stamps} de la carte papier`
-                        : t('scan.label_stamp')}
-                    </p>
-                  </div>
+                  {/* one unit: the programme's (QA BUG-009 — « +10 points » and
+                      « +1 tampon » both showed on a Tampons card) */}
+                  {(scanResult.programme ? scanResult.programme !== 'stamps' : !stampsProgramme) && (
+                    <div className="bg-white p-4 rounded-lg">
+                      <p className="text-3xl font-bold text-[#2F6BFF]">+{scanResult.points_earned || 0}</p>
+                      <p className="text-sm text-[#475569]">{t('scan.label_points')}</p>
+                    </div>
+                  )}
+                  {(scanResult.programme ? scanResult.programme === 'stamps' : stampsProgramme) && (
+                    <div className="bg-white p-4 rounded-lg">
+                      <p className="text-3xl font-bold text-[#0F8B58]">+{scanResult.stamps_earned || 0}</p>
+                      <p className="text-sm text-[#475569]">
+                        {scanResult.paper_stamps > 0
+                          ? `tampons, dont ${scanResult.paper_stamps} de la carte papier`
+                          : (scanResult.stamps_earned === 1 ? 'tampon' : scanResult.stamps_earned ? 'tampons'
+                            : 'tampon à la prochaine visite')}
+                      </p>
+                    </div>
+                  )}
+                  {scanResult.referral_reward && (
+                    <div className="bg-white p-4 rounded-lg">
+                      <p className="text-xl font-bold text-[#EA580C]">🎁 {scanResult.referral_reward}</p>
+                      <p className="text-sm text-[#475569]">de parrainage</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Progress Bar */}
-                {scanResult.stamps_current !== undefined && scanResult.stamps_required !== undefined && (
+                {scanResult.stamps_current !== undefined && scanResult.stamps_required !== undefined && (() => {
+                  // a Tampons card counts in tampons (« 3 / 10 »), not in visits (« 6 / 20 »)
+                  const inStamps = scanResult.programme === 'stamps' && scanResult.stamps_target != null;
+                  const cur = inStamps ? scanResult.stamps_on_card : scanResult.stamps_current;
+                  const req = inStamps ? scanResult.stamps_target : scanResult.stamps_required;
+                  return (
                   <div className="mb-6">
                     <div className="flex justify-between items-center mb-2">
                       <p className="text-sm font-semibold text-[#0B1C3F]">{t('scan.progress_to_reward')}</p>
-                      <p className="text-sm font-bold text-[#2F6BFF]">{scanResult.stamps_current} / {scanResult.stamps_required}</p>
+                      <p className="text-sm font-bold text-[#2F6BFF]">{cur} / {req}</p>
                     </div>
                     <div className="w-full h-3 bg-[#E6EEFB] rounded-full overflow-hidden">
                       <div
                         className="h-full bg-[#2F6BFF] rounded-full transition-all"
-                        style={{ width: `${Math.min((scanResult.stamps_current / scanResult.stamps_required) * 100, 100)}%` }}
+                        style={{ width: `${Math.min((cur / req) * 100, 100)}%` }}
                       />
                     </div>
                     <p className="text-xs text-[#64748B] mt-2">
-                      {t('scan.stamps_until_reward', { count: scanResult.stamps_required - scanResult.stamps_current })}
+                      {t('scan.stamps_until_reward', { count: req - cur })}
                     </p>
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Rewards to hand over: the card just completed (10/10) and
                     any earlier full card not yet claimed — the meter restarts

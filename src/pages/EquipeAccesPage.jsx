@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FREE_ROLES as DEFAULT_SWITCH } from '../lib/storeSwitch';
 import {
   Users, UserPlus, Crown, ShieldCheck, User, Search, ChevronDown, SlidersHorizontal, Pencil,
   MoreVertical, KeyRound, Power, Trash2, X, Check, Loader2, Copy, Hourglass, Settings, Building2,
-  Store, Send,
+  Store, Send, BadgeCheck, Plus, RotateCcw,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { flash } from '../lib/flash';
+import PermsEditor, { PageTable, fromTemplate } from '../components/team/PermsEditor';
 
 /* Paramètres › Équipe & accès — the franchise's accounts, their roles and
    their establishments.
@@ -21,7 +23,13 @@ const ROLE_STYLE = {
   administrateur: { icon: ShieldCheck, fg: '#10A36B', bg: '#E7F7EE', tint: '#F3FBF6' },
   manager: { icon: Users, fg: '#E8741A', bg: '#FFF1E4', tint: '#FFF8F0' },
   staff: { icon: User, fg: '#7C3AED', bg: '#F1EBFF', tint: '#F8F4FF' },
+  // a role the owner created (« membre » accounts)
+  membre: { icon: BadgeCheck, fg: '#475569', bg: '#EEF2F7', tint: '#F7F9FC' },
 };
+const styleOf = (key) => ROLE_STYLE[key] || ROLE_STYLE.membre;
+const BUILTIN = ['business_owner', 'administrateur', 'manager', 'staff'];
+// several establishments: an administrateur, or a role the owner created
+const isMulti = (roleKey) => roleKey === 'administrateur' || !BUILTIN.includes(roleKey);
 const AVATARS = ['#2F6BFF', '#3B82F6', '#EC4899', '#A855F7', '#22C55E', '#EAB308', '#F97316', '#14B8A6'];
 const avatarColour = (s) => AVATARS[[...(s || '?')].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATARS.length];
 
@@ -49,7 +57,7 @@ function Toggle({ on, onChange, label, disabled }) {
 }
 
 function RolePill({ role, label }) {
-  const st = ROLE_STYLE[role] || ROLE_STYLE.staff;
+  const st = styleOf(role);
   const Icon = st.icon;
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-medium" style={{ background: st.bg, color: st.fg }}>
@@ -95,6 +103,7 @@ const btnGhost = 'inline-flex h-11 items-center justify-center rounded-xl border
 
 /* Establishments: one for a manager / an employé, several for an administrateur. */
 function StorePicker({ role, stores, value, onChange, compact = false, disabled = false }) {
+  const multi = isMulti(role);
   const [open, setOpen] = useState(false);
   const box = useRef(null);
   useEffect(() => {
@@ -105,7 +114,7 @@ function StorePicker({ role, stores, value, onChange, compact = false, disabled 
   }, [open]);
   const names = Object.fromEntries(stores.map((s) => [s.id, s.name]));
   const height = compact ? 'h-9 text-[12.5px]' : 'h-11 text-[13.5px]';
-  if (role !== 'administrateur') {
+  if (!multi) {
     return (
       <span className="relative block">
         <select value={value[0] || ''} disabled={disabled} onChange={(e) => onChange([e.target.value])}
@@ -165,25 +174,50 @@ function Credentials({ creds, onClose }) {
   );
 }
 
+/* the roles one may hand out: the built-in ones below one's own, and the
+   owner's roles (an owner or an administrateur) */
+function roleOptions(d) {
+  const tpl = Object.fromEntries((d.templates || []).map((t) => [t.key, t]));
+  const out = d.me.can_create.map((k) => ({ key: k, label: tpl[k]?.label || d.roles.find((r) => r.key === k)?.label || k }));
+  if (d.me.can_assign_custom) (d.templates || []).filter((t) => !t.builtin).forEach((t) => out.push({ key: t.key, label: t.label }));
+  return out;
+}
+const tplOf = (d, key) => (d.templates || []).find((t) => t.key === key);
+const storesOf = (d, ids) => d.stores.filter((s) => ids.includes(s.id));
+
 function EditModal({ user, d, onClose, onSaved }) {
   const [first, setFirst] = useState(user.first_name || user.name.split(' ')[0] || '');
   const [last, setLast] = useState(user.last_name || user.name.split(' ').slice(1).join(' ') || '');
-  const [role, setRole] = useState(user.role);
+  const [role, setRole] = useState(user.role_key || user.role);
   const [ids, setIds] = useState(user.branch_ids);
+  // « Peut changer d'établissement » (user, 2026-10-14). null = the role decides.
+  const [switcher, setSwitcher] = useState(
+    typeof user.can_switch_store === 'boolean' ? user.can_switch_store : null);
+  const [perms, setPerms] = useState(() => user.perms || fromTemplate(tplOf(d, user.role_key || user.role), user.branch_ids));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const roles = d.roles.filter((r) => d.me.can_create.includes(r.key));
+  const roles = roleOptions(d);
+  const pickRole = (k) => {                    // another role: its template, everywhere
+    const nextIds = isMulti(k) ? ids : ids.slice(0, 1);
+    setRole(k); setIds(nextIds); setPerms(fromTemplate(tplOf(d, k), nextIds));
+  };
+  const pickStores = (next) => {               // a new establishment starts with the role's template
+    setIds(next);
+    setPerms((p) => Object.fromEntries(next.map((id) => [id, p?.[id] || { ...(tplOf(d, role)?.perms || {}) }])));
+  };
   const save = async (e) => {
     e.preventDefault();
     setSaving(true); setError('');
     try {
+      const finalIds = isMulti(role) ? ids : ids.slice(0, 1);
       const { data } = await ownerAPI.teamUpdate(user.id, { first_name: first, last_name: last, role,
-        branch_ids: role === 'administrateur' ? ids : ids.slice(0, 1) });
+        branch_ids: finalIds, can_switch_store: switcher,
+        perms: Object.fromEntries(finalIds.map((id) => [id, perms?.[id] || {}])) });
       onSaved(data, 'Utilisateur mis à jour');
     } catch (err) { setError(err?.response?.data?.detail || 'Enregistrement impossible.'); setSaving(false); }
   };
   return (
-    <Modal title="Modifier l'utilisateur" subtitle={user.email} onClose={onClose}>
+    <Modal title="Modifier l'utilisateur" subtitle={user.email} onClose={onClose} width="max-w-[680px]">
       <form onSubmit={save}>
         <div className="mb-4 grid gap-3 sm:grid-cols-2">
           <label className="block"><span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Prénom</span>
@@ -194,13 +228,31 @@ function EditModal({ user, d, onClose, onSaved }) {
         <div className="mb-5 grid gap-3 sm:grid-cols-2">
           <label className="block"><span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Rôle</span>
             <span className="relative block">
-              <select value={role} onChange={(e) => setRole(e.target.value)} className={`${field} appearance-none pr-8`}>
+              <select value={role} onChange={(e) => pickRole(e.target.value)} className={`${field} appearance-none pr-8`}>
                 {roles.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
               </select>
               <ChevronDown size={15} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
             </span></label>
           <div><span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Établissement(s)</span>
-            <StorePicker role={role} stores={d.stores} value={ids} onChange={setIds} /></div>
+            <StorePicker role={role} stores={d.stores} value={ids} onChange={pickStores} /></div>
+        </div>
+        {isMulti(role) && (
+          <label className="mb-5 flex items-start gap-2.5">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#2F6BFF]"
+                   checked={switcher === null ? DEFAULT_SWITCH.includes(role) : switcher}
+                   onChange={(e) => setSwitcher(e.target.checked)} />
+            <span>
+              <span className="block text-[13px] font-semibold text-[#334155]">Peut changer d'établissement</span>
+              <span className="block text-[12.5px] text-[#64748B]">
+                Sinon, ce compte travaille dans l'établissement où il est — c'est ce qu'on veut d'une caisse posée sur un comptoir.
+              </span>
+            </span>
+          </label>
+        )}
+        <div className="mb-5">
+          <span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Permissions, par établissement</span>
+          <PermsEditor pages={d.pages} stores={storesOf(d, isMulti(role) ? ids : ids.slice(0, 1))} value={perms} onChange={setPerms}
+                       max={d.me.perms} />
         </div>
         {error && <p className="mb-4 rounded-lg bg-[#FEF2F2] px-3 py-2.5 text-[13px] text-[#B91C1C]">{error}</p>}
         <div className="flex justify-end gap-2">
@@ -254,7 +306,11 @@ export default function EquipeAccesPage() {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [toast, setToast] = useState('');
-  const [invite, setInvite] = useState({ name: '', email: '', role: '', branch_ids: [] });
+  const [invite, setInvite] = useState({ name: '', email: '', role: '', branch_ids: [], perms: null });
+  const [roleSel, setRoleSel] = useState('administrateur');   // Permissions tab: the role shown
+  const [draft, setDraft] = useState(null);                   // its template being changed
+  const [roleModal, setRoleModal] = useState(null);           // « Créer un rôle »
+  const [applyAsk, setApplyAsk] = useState(null);             // « nouveaux comptes » / « tous »
   const [inviteError, setInviteError] = useState('');
   const [inviting, setInviting] = useState(false);
   const [storeSel, setStoreSel] = useState('');
@@ -272,8 +328,11 @@ export default function EquipeAccesPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!d) return;
-    setInvite((v) => ({ ...v, role: v.role || d.me.can_create[0] || '',
-      branch_ids: v.branch_ids.length ? v.branch_ids : (d.stores.length === 1 ? [d.stores[0].id] : []) }));
+    setInvite((v) => {
+      const role = v.role || d.me.can_create[0] || '';
+      const ids = v.branch_ids.length ? v.branch_ids : (d.stores.length === 1 ? [d.stores[0].id] : []);
+      return { ...v, role, branch_ids: ids, perms: v.perms || fromTemplate(tplOf(d, role), ids) };
+    });
     setStoreSel((v) => v || d.stores[0]?.id || '');
   }, [d]);
 
@@ -286,7 +345,7 @@ export default function EquipeAccesPage() {
     if (!d) return [];
     const needle = q.trim().toLowerCase();
     return d.users.filter((u) => (!needle || `${u.name} ${u.email}`.toLowerCase().includes(needle))
-      && (!roleFilter || u.role === roleFilter)
+      && (!roleFilter || (u.role_key || u.role) === roleFilter)
       && (!statusFilter || (statusFilter === 'active' ? u.active : !u.active)));
   }, [d, q, roleFilter, statusFilter]);
 
@@ -303,10 +362,13 @@ export default function EquipeAccesPage() {
     setInviting(true); setInviteError('');
     const [first, ...rest] = invite.name.trim().split(/\s+/);
     try {
+      const ids = isMulti(invite.role) ? invite.branch_ids : invite.branch_ids.slice(0, 1);
       const { data } = await ownerAPI.teamCreate({ email: invite.email, role: invite.role, first_name: first || '',
-        last_name: rest.join(' '), branch_ids: invite.role === 'administrateur' ? invite.branch_ids : invite.branch_ids.slice(0, 1) });
+        last_name: rest.join(' '), branch_ids: ids,
+        perms: Object.fromEntries(ids.map((id) => [id, invite.perms?.[id] || { ...(tplOf(d, invite.role)?.perms || {}) }])) });
       setD(data); setCreds(data.credentials);
-      setInvite({ name: '', email: '', role: invite.role, branch_ids: d.stores.length === 1 ? [d.stores[0].id] : [] });
+      const keep = d.stores.length === 1 ? [d.stores[0].id] : [];
+      setInvite({ name: '', email: '', role: invite.role, branch_ids: keep, perms: fromTemplate(tplOf(d, invite.role), keep) });
     } catch (err) {
       setInviteError(typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : 'Création impossible.');
     } finally { setInviting(false); }
@@ -320,7 +382,6 @@ export default function EquipeAccesPage() {
     );
   }
 
-  const roleLabel = Object.fromEntries(d.roles.map((r) => [r.key, r.label]));
   const canCreate = d.me.can_create.length > 0;
   const TABS = [
     { key: 'users', label: 'Utilisateurs', icon: Users },
@@ -339,7 +400,7 @@ export default function EquipeAccesPage() {
 
   const StoreAccess = ({ compact }) => {
     const sid = storeSel || d.stores[0]?.id;
-    const list = d.users;
+    const list = d.all_users || d.users;      // every account: this is where a store is given or taken
     return (
       <div>
         <span className="relative mb-3 block">
@@ -392,10 +453,10 @@ export default function EquipeAccesPage() {
         )}
       </header>
 
-      {/* the four roles */}
+      {/* the four roles, and the ones the owner created */}
       <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {d.roles.map((r) => {
-          const st = ROLE_STYLE[r.key]; const Icon = st.icon;
+          const st = styleOf(r.key); const Icon = st.icon;
           return (
             <div key={r.key} className="flex gap-4 rounded-2xl border border-[#E6EEFB] p-4" style={{ background: st.tint }}>
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white" style={{ color: st.fg }}><Icon size={24} /></span>
@@ -407,6 +468,12 @@ export default function EquipeAccesPage() {
             </div>
           );
         })}
+        {d.me.can_define_roles && (
+          <button type="button" onClick={() => setRoleModal({ label: '', description: '', perms: { ...(tplOf(d, 'staff')?.perms || {}) } })}
+                  className="flex min-h-[110px] items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#C9D8F5] p-4 text-[14px] font-semibold text-[#2F6BFF] hover:border-[#2F6BFF] hover:bg-[#F6F9FF]">
+            <Plus size={18} /> Créer un rôle
+          </button>
+        )}
       </div>
 
       <nav className="mb-4 flex gap-1 overflow-x-auto border-b border-[#E6EEFB]" role="tablist">
@@ -480,8 +547,8 @@ export default function EquipeAccesPage() {
                       <td><RolePill role={u.role} label={u.role_label} /></td>
                       <td className="w-[190px] pr-3">
                         {u.role === 'business_owner' || !u.manageable ? <span className="text-[#0B1C3F]">{u.stores_label || 'Tous'}</span> : (
-                          <StorePicker compact role={u.role} stores={d.stores} value={u.branch_ids}
-                                       onChange={(ids) => ids.length && run(() => ownerAPI.teamUpdate(u.id, { first_name: u.first_name, last_name: u.last_name, role: u.role, branch_ids: ids }), 'Établissements mis à jour')} />
+                          <StorePicker compact role={u.role_key || u.role} stores={d.stores} value={u.branch_ids}
+                                       onChange={(ids) => ids.length && run(() => ownerAPI.teamUpdate(u.id, { first_name: u.first_name, last_name: u.last_name, role: u.role_key || u.role, branch_ids: ids }), 'Établissements mis à jour')} />
                         )}
                       </td>
                       <td>
@@ -544,41 +611,65 @@ export default function EquipeAccesPage() {
         </section>
       )}
 
-      {tab === 'permissions' && (
-        <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
-          {cardHead(ShieldCheck, 'Permissions par rôle', 'Ce que chaque rôle peut faire, et sur quels établissements.')}
-          <div className="overflow-x-auto rounded-xl border border-[#EEF3FB]">
-            <table className="w-full min-w-[760px] text-[13.5px]">
-              <thead><tr className="border-b border-[#EEF3FB]">
-                <th className="py-3 pl-4 text-left font-medium text-[#0B1C3F]">Permission</th>
-                {d.roles.map((r) => <th key={r.key} className="px-3 py-3"><RolePill role={r.key} label={r.label} /></th>)}
-              </tr></thead>
-              <tbody>
-                {d.permissions.map((p) => (
-                  <tr key={p.key} className="border-b border-[#F1F5F9] last:border-0">
-                    <td className="py-3 pl-4 text-[#0B1C3F]">{p.full}</td>
-                    {d.roles.map((r) => {
-                      const v = d.matrix[r.key][p.key];
-                      return (
-                        <td key={r.key} className="px-3 py-3 text-center">
-                          {v ? (
-                            <span className="inline-flex items-center gap-1.5 text-[12.5px] font-medium" style={{ color: v === 'all' ? '#2F6BFF' : '#0F8B58' }}>
-                              <Check size={15} /> {v === 'all' ? 'Tous les établissements' : r.key === 'administrateur' ? 'Ses établissements' : 'Son établissement'}
-                            </span>
-                          ) : <X size={15} className="mx-auto text-[#CBD5E1]" />}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <ul className="mt-4 grid gap-2 text-[12.5px] text-[#475569] md:grid-cols-2">
-            {d.roles.map((r) => <li key={r.key}><b className="text-[#0B1C3F]">{r.label} :</b> {d.notes[r.key]}</li>)}
-          </ul>
-        </section>
-      )}
+      {tab === 'permissions' && (() => {
+        const chips = [{ key: 'business_owner', label: 'Propriétaire' }, ...(d.templates || [])];
+        const isOwnerRole = roleSel === 'business_owner';
+        const t = tplOf(d, roleSel);
+        const levels = isOwnerRole ? Object.fromEntries(d.pages.map((p) => [p.key, 'edit'])) : (draft?.key === roleSel ? draft.perms : t?.perms) || {};
+        const editable = d.me.can_define_roles && !isOwnerRole;
+        const changed = draft?.key === roleSel && JSON.stringify(draft.perms) !== JSON.stringify(t?.perms);
+        const count = d.roles.find((r) => r.key === roleSel)?.count || 0;
+        return (
+          <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="role-templates">
+            {cardHead(ShieldCheck, 'Permissions par rôle', 'Pour chaque page : Voir et Modifier. Ce sont les droits proposés quand on crée un compte de ce rôle — ajustables ensuite, établissement par établissement.', d.me.can_define_roles && (
+              <button type="button" onClick={() => setRoleModal({ label: '', description: '', perms: { ...(tplOf(d, 'staff')?.perms || {}) } })}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#2F6BFF] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#2559DB]"><Plus size={15} /> Créer un rôle</button>
+            ))}
+            <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Rôles">
+              {chips.map((r) => (
+                <button key={r.key} type="button" role="tab" aria-selected={roleSel === r.key} onClick={() => { setRoleSel(r.key); setDraft(null); }}
+                        className={`rounded-lg border px-1 py-1 ${roleSel === r.key ? 'border-[#2F6BFF] ring-2 ring-[#2F6BFF]/20' : 'border-transparent'}`}>
+                  <RolePill role={r.key} label={r.label} />
+                </button>
+              ))}
+            </div>
+            <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
+              <PageTable pages={d.pages} levels={levels} readOnly={!editable}
+                         onChange={(lv) => setDraft({ key: roleSel, perms: lv })} />
+              <aside className="space-y-3 text-[12.5px] text-[#475569]">
+                {isOwnerRole && <p><b className="text-[#0B1C3F]">Propriétaire :</b> toutes les permissions, sur tous les établissements. Ne se modifie pas.</p>}
+                {!isOwnerRole && t?.builtin && d.notes?.[roleSel] && <p><b className="text-[#0B1C3F]">{t.label} :</b> {d.notes[roleSel]}</p>}
+                {!isOwnerRole && !t?.builtin && t?.description && <p>{t.description}</p>}
+                {!isOwnerRole && <p>{count} compte{count > 1 ? 's' : ''} avec ce rôle.</p>}
+                {!d.me.can_define_roles && <p className="rounded-lg bg-[#F8FAFC] p-2.5">Seul le propriétaire modifie les rôles.</p>}
+                {editable && (
+                  <div className="flex flex-col gap-2">
+                    <button type="button" disabled={!changed} onClick={() => setApplyAsk({ key: roleSel, perms: draft.perms, count })}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#2F6BFF] px-4 text-[13px] font-semibold text-white disabled:opacity-50">
+                      <Check size={15} /> Enregistrer ce rôle
+                    </button>
+                    {changed && <button type="button" onClick={() => setDraft(null)} className="text-[12.5px] font-semibold text-[#64748B] hover:underline">Annuler les changements</button>}
+                    {t?.builtin && t?.customized && (
+                      <button type="button" onClick={() => setApplyAsk({ key: roleSel, perms: null, count, reset: true })}
+                              className="inline-flex items-center justify-center gap-1.5 text-[12.5px] font-semibold text-[#2F6BFF] hover:underline"><RotateCcw size={13} /> Revenir aux droits par défaut</button>
+                    )}
+                    {t && !t.builtin && (
+                      <>
+                        <button type="button" onClick={() => setRoleModal({ key: t.key, label: t.label, description: t.description || '', perms: t.perms, rename: true })}
+                                className="inline-flex items-center justify-center gap-1.5 text-[12.5px] font-semibold text-[#2F6BFF] hover:underline"><Pencil size={13} /> Renommer</button>
+                        <button type="button" disabled={count > 0} title={count > 0 ? 'Changez d\'abord le rôle de ses comptes.' : ''}
+                                onClick={() => setConfirm({ title: `Supprimer le rôle « ${t.label} » ?`, body: 'Il ne sera plus proposé.', cta: 'Supprimer', danger: true,
+                                  go: async () => { if (await run(() => ownerAPI.teamRoleDelete(t.key), 'Rôle supprimé')) setRoleSel('administrateur'); } })}
+                                className="inline-flex items-center justify-center gap-1.5 text-[12.5px] font-semibold text-[#E11D48] hover:underline disabled:opacity-40"><Trash2 size={13} /> Supprimer le rôle</button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </aside>
+            </div>
+          </section>
+        );
+      })()}
 
       {tab === 'stores' && (
         <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
@@ -590,7 +681,7 @@ export default function EquipeAccesPage() {
       {/* the three cards of the design, under the list */}
       {tab === 'users' && (
         <div className="mt-4 grid gap-4 xl:grid-cols-3">
-          <section ref={inviteBox} className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
+          <section ref={inviteBox} className="rounded-2xl border border-[#E6EEFB] bg-white p-5 xl:row-span-2">
             {cardHead(UserPlus, 'Inviter un utilisateur', canCreate ? 'Créez son accès et transmettez-lui ses identifiants.' : "Votre rôle ne permet pas de créer d'accès.")}
             {canCreate && (
               <form onSubmit={create}>
@@ -603,15 +694,25 @@ export default function EquipeAccesPage() {
                 <div className="mb-4 grid gap-3 sm:grid-cols-2">
                   <label className="block"><span className="mb-1.5 block text-[13px] font-semibold text-[#0B1C3F]">Rôle</span>
                     <span className="relative block">
-                      <select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value, branch_ids: e.target.value === 'administrateur' ? invite.branch_ids : invite.branch_ids.slice(0, 1) })}
+                      <select value={invite.role} aria-label="Rôle du nouvel utilisateur"
+                              onChange={(e) => { const k = e.target.value; const ids = isMulti(k) ? invite.branch_ids : invite.branch_ids.slice(0, 1);
+                                setInvite({ ...invite, role: k, branch_ids: ids, perms: fromTemplate(tplOf(d, k), ids) }); }}
                               className={`${field} h-10 appearance-none pr-8`}>
-                        {d.me.can_create.map((k) => <option key={k} value={k}>{roleLabel[k]}</option>)}
+                        {roleOptions(d).map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
                       </select>
                       <ChevronDown size={15} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
                     </span></label>
                   <div><span className="mb-1.5 block text-[13px] font-semibold text-[#0B1C3F]">Établissement(s)</span>
-                    <StorePicker compact role={invite.role} stores={d.stores} value={invite.branch_ids} onChange={(ids) => setInvite({ ...invite, branch_ids: ids })} /></div>
+                    <StorePicker compact role={invite.role} stores={d.stores} value={invite.branch_ids}
+                                 onChange={(ids) => setInvite({ ...invite, branch_ids: ids,
+                                   perms: Object.fromEntries(ids.map((id) => [id, invite.perms?.[id] || { ...(tplOf(d, invite.role)?.perms || {}) }])) })} /></div>
                 </div>
+                <details className="mb-4 rounded-xl border border-[#EEF3FB] p-3" open>
+                  <summary className="cursor-pointer text-[13px] font-semibold text-[#0B1C3F]">Permissions — Voir / Modifier, par établissement</summary>
+                  <p className="mb-2 mt-1 text-[11.5px] text-[#64748B]">Remplies avec celles du rôle : changez ce qu&apos;il faut, établissement par établissement.</p>
+                  <PermsEditor pages={d.pages} stores={storesOf(d, isMulti(invite.role) ? invite.branch_ids : invite.branch_ids.slice(0, 1))}
+                               value={invite.perms} onChange={(p) => setInvite({ ...invite, perms: p })} max={d.me.perms} />
+                </details>
                 {inviteError && <p className="mb-3 rounded-lg bg-[#FEF2F2] px-3 py-2 text-[12.5px] text-[#B91C1C]">{inviteError}</p>}
                 <button type="submit" disabled={inviting} className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#2F6BFF] px-4 text-[13.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-60">
                   {inviting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Créer l&apos;accès
@@ -624,14 +725,18 @@ export default function EquipeAccesPage() {
               <button type="button" onClick={() => setTab('permissions')} className="text-[12.5px] font-semibold text-[#2F6BFF] hover:underline">Détail</button>
             ))}
             <ul className="space-y-3">
-              {d.roles.map((r) => (
-                <li key={r.key} className="grid grid-cols-[150px_1fr] items-start gap-3">
-                  <span className="inline-flex items-center gap-2 text-[13px] font-semibold" style={{ color: ROLE_STYLE[r.key].fg }}>
-                    {React.createElement(ROLE_STYLE[r.key].icon, { size: 15 })} {r.label}
-                  </span>
-                  <span className="text-[12px] text-[#475569]">{({ business_owner: 'Toutes les permissions', administrateur: 'Tout sur ses établissements, sauf la facturation et la suppression', manager: 'Clients, campagnes et employés de son établissement', staff: 'Scan des cartes clients' })[r.key]}</span>
-                </li>
-              ))}
+              {d.roles.map((r) => {
+                const t = tplOf(d, r.key);
+                const n = t ? d.pages.filter((p) => (t.perms[p.key] || 'none') !== 'none').length : d.pages.length;
+                return (
+                  <li key={r.key} className="grid grid-cols-[150px_1fr] items-start gap-3">
+                    <span className="inline-flex items-center gap-2 text-[13px] font-semibold" style={{ color: styleOf(r.key).fg }}>
+                      {React.createElement(styleOf(r.key).icon, { size: 15 })} {r.label}
+                    </span>
+                    <span className="text-[12px] text-[#475569]">{r.key === 'business_owner' ? 'Toutes les permissions' : `${n} page${n > 1 ? 's' : ''} sur ${d.pages.length}${t?.customized && t?.builtin ? ' · modifié' : ''}`}</span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
           <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5">
@@ -646,6 +751,56 @@ export default function EquipeAccesPage() {
       </div>
       {creds && <Credentials creds={creds} onClose={() => setCreds(null)} />}
       {editing && <EditModal user={editing} d={d} onClose={() => setEditing(null)} onSaved={(data, msg) => { setD(data); setEditing(null); say(msg); }} />}
+      {roleModal && (
+        <Modal title={roleModal.rename ? 'Renommer le rôle' : 'Créer un rôle'} subtitle={roleModal.rename ? '' : 'Un nom, et ce que ce rôle peut voir et modifier. Vous l\'attribuerez en créant un compte.'}
+               onClose={() => setRoleModal(null)} width="max-w-[640px]">
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            const body = { label: roleModal.label, description: roleModal.description, perms: roleModal.perms };
+            const ok = roleModal.rename
+              ? await run(() => ownerAPI.teamRoleUpdate(roleModal.key, { ...body, apply: 'new' }), 'Rôle renommé')
+              : await run(async () => { const r = await ownerAPI.teamRoleCreate(body); setRoleSel(r.data.role); setTab('permissions'); return r; }, 'Rôle créé');
+            if (ok) setRoleModal(null);
+          }}>
+            <label className="mb-3 block"><span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Nom du rôle</span>
+              <input required maxLength={40} value={roleModal.label} onChange={(e) => setRoleModal({ ...roleModal, label: e.target.value })}
+                     placeholder="Ex. Responsable caisse" className={field} /></label>
+            <label className="mb-4 block"><span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Description (facultatif)</span>
+              <input maxLength={160} value={roleModal.description} onChange={(e) => setRoleModal({ ...roleModal, description: e.target.value })} className={field} /></label>
+            {!roleModal.rename && (
+              <div className="mb-4">
+                <span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Permissions</span>
+                <PageTable pages={d.pages} levels={roleModal.perms} onChange={(lv) => setRoleModal({ ...roleModal, perms: lv })} />
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRoleModal(null)} className={btnGhost}>Annuler</button>
+              <button type="submit" className={btnPrimary}><Check size={16} /> {roleModal.rename ? 'Enregistrer' : 'Créer le rôle'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {applyAsk && (
+        <Modal title={applyAsk.reset ? 'Revenir aux droits par défaut ?' : 'Appliquer les nouveaux droits à qui ?'} onClose={() => setApplyAsk(null)} width="max-w-[480px]">
+          <p className="mb-4 text-[13.5px] text-[#475569]">
+            {applyAsk.count > 0 ? `${applyAsk.count} compte${applyAsk.count > 1 ? 's ont' : ' a'} déjà ce rôle.` : 'Aucun compte n\'a encore ce rôle.'}
+          </p>
+          <div className="space-y-2">
+            {[['new', 'Seulement les nouveaux comptes', 'Les comptes existants gardent leurs droits actuels.'],
+              ['all', 'Tous les comptes de ce rôle', 'Remplace les droits de chaque compte, dans tous ses établissements.']].map(([k, l, sub]) => (
+              <button key={k} type="button"
+                      onClick={async () => {
+                        const a = applyAsk; setApplyAsk(null);
+                        if (await run(() => ownerAPI.teamRoleUpdate(a.key, { perms: a.perms, apply: k }), a.reset ? 'Droits par défaut rétablis' : 'Rôle enregistré')) setDraft(null);
+                      }}
+                      className="block w-full rounded-xl border border-[#E6EEFB] px-4 py-3 text-left hover:border-[#2F6BFF] hover:bg-[#F6F9FF]">
+                <span className="block text-[14px] font-semibold text-[#0B1C3F]">{l}</span>
+                <span className="block text-[12.5px] text-[#64748B]">{sub}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
       {confirm && (
         <Modal title={confirm.title} onClose={() => setConfirm(null)} width="max-w-[440px]">
           <p className="text-[13.5px] text-[#475569]">{confirm.body}</p>

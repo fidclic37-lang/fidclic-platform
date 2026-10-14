@@ -142,6 +142,8 @@ function ClassicPass({ pj, style, images, width, legacy }) {
   );
 }
 
+const JAUGE_RE = /^[●○★☆♥♡■□◆◇\ufe0e ]+$/;
+
 function PosterPass({ pj, images, width }) {
   // What Wallet (and Pass Designer) draw for iOS 27 « Poster Generic »: the
   // artwork full-bleed, the logo top-left, the header top-right, the barcode
@@ -190,7 +192,7 @@ function PosterPass({ pj, images, width }) {
       <div className="absolute inset-x-0 bottom-0" style={{ padding: `0 ${12 * s}px ${11 * s}px` }}>
         <div className="flex items-end justify-between" style={{ gap: 10 * s }}>
           {title && (
-            <div className="min-w-0">
+            <div className="min-w-0 shrink-0" style={{ maxWidth: rest.length > 1 ? '34%' : '55%' }}>
               {!titleBold && <div style={{ fontSize: 10.5 * s, fontFamily: MONO, color: lab }}>{title.label}</div>}
               <div className="truncate" style={titleBold
                 ? { fontSize: 19 * s, fontWeight: 700, lineHeight: 1.15 }
@@ -198,13 +200,19 @@ function PosterPass({ pj, images, width }) {
             </div>
           )}
           {rest.length > 0 && (
-            <div className="flex shrink-0 text-right" style={{ gap: 12 * s }}>
-              {rest.slice(0, 3).map((f) => (
-                <div key={f.key} className="min-w-0">
-                  {f.label && <div style={{ fontSize: 10.5 * s, color: lab, fontWeight: 600 }}>{f.label}</div>}
-                  <div className="truncate" style={{ fontSize: 13 * s, fontFamily: MONO, maxWidth: 120 * s }}>{val(f)}</div>
-                </div>
-              ))}
+            <div className="flex min-w-0 shrink justify-end text-right" style={{ gap: 12 * s }}>
+              {rest.slice(0, 3).map((f) => {
+                // the tampons' jauge (●●●○○○○○○○): Wallet's own text, as wide as it needs
+                const jauge = JAUGE_RE.test(String(f.value ?? ''));
+                return (
+                  <div key={f.key} className="min-w-0">
+                    {f.label && <div style={{ fontSize: 10.5 * s, color: lab, fontWeight: 600 }}>{f.label}</div>}
+                    <div className={jauge ? 'whitespace-nowrap' : 'truncate'}
+                         style={jauge ? { fontSize: 13 * s, letterSpacing: 1 * s, maxWidth: 210 * s }
+                           : { fontSize: 13 * s, fontFamily: MONO, maxWidth: 120 * s }}>{val(f)}</div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

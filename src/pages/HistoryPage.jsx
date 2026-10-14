@@ -6,6 +6,7 @@ import {
   Search, Calendar, RotateCcw, Loader2, MoreHorizontal, X, ArrowUpRight,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { useBranch } from '../contexts/BranchContext';
 import { perPage as prefPerPage } from '../lib/prefs';
 
 /**
@@ -162,6 +163,7 @@ const RowDrawer = ({ row, onClose, onGoCustomer }) => {
   const Icon = ICONS[row.icon] || QrCode;
   const lines = [
     ['Date et heure', prettyStamp(row.at)],
+    ...(row.store ? [['Établissement', row.store]] : []),
     ['Client', row.customer_name],
     ['Numéro de carte', row.customer_barcode || '—'],
     ["Type d'activité", row.label],
@@ -221,6 +223,10 @@ export default function HistoryPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(() => prefPerPage());
   const [feed, setFeed] = useState({ rows: [], total: 0, pages: 1 });
+  // « Établissement » (QA F29): where each row happened, as soon as the shop has several
+  const { branches } = useBranch();
+  const showStore = (branches || []).length > 1 || new Set(feed.rows.map((r) => r.store_id)).size > 1;
+  const heads = ['Date et heure', ...(showStore ? ['Établissement'] : []), 'Client', "Type d'activité", 'Détails', 'Points', 'Action'];
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -398,10 +404,10 @@ export default function HistoryPage() {
           <table className="w-full min-w-[920px] border-collapse">
             <thead>
               <tr className="border-b border-[#EEF3FB] text-left">
-                {['Date et heure', 'Client', "Type d'activité", 'Détails', 'Points', 'Action'].map((h, i) => (
+                {heads.map((h) => (
                   <th key={h}
                       className={`px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.04em] text-[#64748B] ${
-                        i === 4 ? 'text-right' : ''}`}>
+                        h === 'Points' ? 'text-right' : ''}`}>
                     {h}
                     {/* How many on this page, out of all (user, 2026-10-03): 20/31, then 11/31. */}
                     {h === 'Client' && feed.total > 0 && (
@@ -416,12 +422,12 @@ export default function HistoryPage() {
             </thead>
             <tbody>
               {loading && feed.rows.length === 0 && (
-                <tr key="loading"><td colSpan={6} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                <tr key="loading"><td colSpan={heads.length} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                   <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement de l'historique…
                 </td></tr>
               )}
               {!loading && feed.rows.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-14 text-center">
+                <tr><td colSpan={heads.length} className="px-4 py-14 text-center">
                   <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Aucune activité sur cette période</p>
                   <p className="mt-1 text-[12.5px] text-[#64748B]">
                     Élargissez la période ou retirez un filtre pour voir plus d'activités.
@@ -437,6 +443,11 @@ export default function HistoryPage() {
                     <td className="whitespace-nowrap px-4 py-3 text-[12.5px] text-[#475569] tabular-nums">
                       {prettyStamp(r.at)}
                     </td>
+                    {showStore && (
+                      <td className="max-w-[180px] px-4 py-3">
+                        <span translate="no" className="notranslate block truncate text-[12.5px] text-[#334155]" title={r.store}>{r.store || '—'}</span>
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-2.5">
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold"

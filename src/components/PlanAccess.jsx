@@ -8,7 +8,7 @@ import { ownerAPI } from '../lib/api';
    it — or any call the server refuses with PLAN_FEATURE_DISABLED — shows the
    upgrade prompt. The server enforces it too (features/plan_limits.py). */
 
-const OWNER_ROLES = ['business_owner', 'administrateur', 'manager', 'staff'];
+const OWNER_ROLES = ['business_owner', 'administrateur', 'manager', 'staff', 'membre'];
 export const PlanAccessContext = createContext(null);
 export const usePlanAccess = () => useContext(PlanAccessContext);
 

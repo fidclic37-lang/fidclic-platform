@@ -218,15 +218,78 @@ function applyUnit(u, t) {
   u.nodes.forEach((n, i) => write(n, i === 0 ? leading + t + trailing : ''));
 }
 
+
+// ---------------------------------------------------------------------------
+// A name inside a sentence
+// ---------------------------------------------------------------------------
+// Protecting whole text nodes only covers a name standing on its own. The card
+// page says « À propos de Royal Trim Liberté » and « Votre retour aide Royal
+// Trim Liberté à progresser » — one sentence, which has to be translated, with
+// a name inside it that must not be. Word by word, « Liberté » came back as
+// « Freedom » (user, 2026-10-13).
+//
+// So each name is swapped for a marker before the sentence leaves, and put back
+// when it returns. If a marker does not come back — the engine dropped or
+// mangled it — the sentence is left as written rather than shown with a
+// translated name.
+const MARK = (i) => `QQ${i}ZZ`;
+// Accented letters are letters: « fid » must not match inside « fidélité »,
+// and « clic » must not match inside « Cliquez ».
+const EDGE = '[^\\p{L}\\p{N}]';
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function maskProtected(text) {
+  // Longest first, so « royal trim liberté » wins over « royal trim ».
+  const names = [...PROTECTED].sort((a, b) => b.length - a.length);
+  let out = text;
+  const marks = [];
+  names.forEach((name) => {
+    const re = new RegExp(`(^|${EDGE})(${escapeRe(name)})(?=${EDGE}|$)`, 'giu');
+    out = out.replace(re, (_m, before, hit) => {
+      const i = marks.push(hit) - 1;
+      return before + MARK(i);
+    });
+  });
+  return { text: out, marks };
+}
+
+function unmaskProtected(text, marks) {
+  let out = text;
+  for (let i = 0; i < marks.length; i += 1) {
+    const re = new RegExp(escapeRe(MARK(i)), 'gi');
+    if (!re.test(out)) return null;        // the marker never came back
+    out = out.replace(new RegExp(escapeRe(MARK(i)), 'gi'), marks[i]);
+  }
+  return out;
+}
+
 async function translateNodes(nodes) {
   const units = unitsOf(nodes).filter((u) => {
     const t = u.source.trim();
     return t.length >= 2 && LATIN.test(t) && !PROTECTED.has(t.toLowerCase());
   });
   if (!units.length) return;
-  const translated = await translateBatch(units.map((u) => u.source.trim()), currentLang);
+  // what each node held when it was sent for translation
+  const sent = units.map((u) => u.nodes.map((n) => n.nodeValue));
+  // names travel as markers, so the engine never sees them
+  const masked = units.map((u) => maskProtected(u.source.trim()));
+  const translated = await translateBatch(masked.map((m) => m.text), currentLang);
   if (currentLang === SOURCE_LANG) return;
-  units.forEach((u, i) => applyUnit(u, translated[i]));
+  units.forEach((u, i) => {
+    // React wrote new text while the translation was on its way (the menu's
+    // « Mon établissement » became « ROYAL TRIM » once the stores arrived):
+    // the old translation must not overwrite it — the new text is queued
+    // by the observer and translated on its own (user, 2026-10-12).
+    if (u.nodes.some((n, j) => n.nodeValue !== sent[i][j])) return;
+    // …and a name protected while its translation was on its way stays as written
+    if (PROTECTED.has(u.source.trim().toLowerCase())) return;
+    const back = masked[i].marks.length
+      ? unmaskProtected(translated[i] || '', masked[i].marks)
+      : translated[i];
+    // a lost marker would mean showing a translated name: keep the source
+    if (back === null) return;
+    applyUnit(u, back);
+  });
 }
 
 // Names are data, not words (QA F08, 2026-10-08: in Arabic the business
@@ -238,11 +301,28 @@ async function translateNodes(nodes) {
 // 2026-10-10: the logo « Fid » « Clic » read « فيدانقر » — « Clic » as
 // « click » — and « FidClic IA » became « FidClic Amnesty International »).
 const PROTECTED = new Set(['fidclic', 'fid', 'clic', 'fidclic ia', 'fidclic ai']);
+// A name that arrives late (a store renamed: the new name shows before the
+// list of stores is read again) may have been translated meanwhile — « ROYAL
+// TRIM LIBERTÉ » read « ROYAL TRIM FREEDOM » (user, 2026-10-13). Protecting
+// it puts the name back wherever it was already replaced.
 export function protectNames(names) {
+  let added = false;
   (names || []).forEach((n) => {
     const t = String(n || '').trim().toLowerCase();
-    if (t) PROTECTED.add(t);
+    if (t && !PROTECTED.has(t)) { PROTECTED.add(t); added = true; }
   });
+  if (added) restoreProtected();
+}
+
+function restoreProtected() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const src = n[ORIGINAL];
+    if (src != null && n[WRITTEN] !== undefined && n.nodeValue === n[WRITTEN]
+        && PROTECTED.has(src.trim().toLowerCase())) write(n, src);
+  }
 }
 
 function shouldTranslateNode(node) {

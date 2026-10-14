@@ -188,9 +188,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           pj2["barcodes"][0]["format"] == "PKBarcodeFormatCode128" and pj2["barcodes"][0]["message"] == "FT-ADV2")
     check("statut hidden when asked",
           all(f["key"] != "tier" for grp in pj2["storeCard"].values() for f in grp))
+    # points OR tampons (user, 2026-10-12): the points wording is a points
+    # programme's — checked on one
+    _prev = db.card_templates.find_one({"tenant_id": "t1"}).get("programme")
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": "points_visit"}})
+    pj2p = WP.build_pass_json(WP._card_payload("FT-ADV2"))
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": _prev}} if _prev else {"$unset": {"programme": ""}})
     check("custom update wording on the pass", any(
         f.get("changeMessage") == "Nouveau solde : %@ points"
-        for grp in pj2["storeCard"].values() for f in grp))
+        for grp in pj2p["storeCard"].values() for f in grp))
     db.customers.delete_one({"id": "cadv2"})
     for bad, field in (("hologramme", "code_type"), ("milieu", "header_field"),
                        ("video", "hero_mode"), ("nfc", "code_content")):

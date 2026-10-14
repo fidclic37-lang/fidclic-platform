@@ -32,7 +32,16 @@ if SECRET_KEY == _LEGACY_INSECURE_SECRET:
         "env JWT_SECRET -> redeploy."
     )
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 24 * 60
+# A session lasts a month, and every time the app is opened it starts again
+# (server.get_me re-issues the token). Someone who uses FidClic is never asked
+# to sign in; someone who disappears for a month is. The clock was 24 h, so a
+# merchant logged in every single morning — and a till could not be left to
+# scan on its own at all (user, 2026-10-14).
+#
+# What actually ends a session is not this clock: every request checks the
+# token's `sid` against user_sessions, so « Déconnecter » on Paramètres ›
+# Sécurité kills a device at once, and changing the password kills the others.
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60
 
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()
@@ -54,7 +63,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
 _session_check = None
 _tenant_check = None
 _act_hook = None          # (admin_email, tenant_id, method, path) — set by server.py
-SUSPENDABLE = {"business_owner", "administrateur", "manager", "staff"}
+SUSPENDABLE = {"business_owner", "administrateur", "manager", "staff", "membre"}
 READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -176,8 +185,10 @@ async def get_current_user_data(request: Request) -> TokenData:
 # partial_ok=True (the team page); endpoints open to staff (scan, the
 # catalogue picker) act on one shop by nature and stay open.
 # ─────────────────────────────────────────────────────────────────────
-TEAM_ROLES = {"administrateur", "manager", "staff"}
+TEAM_ROLES = {"administrateur", "manager", "staff", "membre"}
 _team_status = None
+# Rôles et permissions par page (features/role_perms): True / False / None (no say)
+_perm_check = None
 
 
 def set_team_status_lookup(fn):
@@ -185,9 +196,22 @@ def set_team_status_lookup(fn):
     _team_status = fn
 
 
+def set_perm_check(fn):
+    global _perm_check
+    _perm_check = fn
+
+
 def require_role(roles: list[str], partial_ok: bool = False):
-    async def role_checker(token_data: TokenData = Depends(get_current_user_data)):
-        if token_data.role not in roles:
+    async def role_checker(request: Request = None, token_data: TokenData = Depends(get_current_user_data)):
+        verdict = None
+        if token_data.role in TEAM_ROLES and _perm_check is not None and request is not None:
+            verdict = _perm_check(token_data, request, roles)
+        if verdict is False:
+            from features.role_perms import denied_message
+            # a plain sentence: every page shows `detail` as it is
+            raise HTTPException(status_code=403, detail=denied_message(
+                getattr(request.state, "perm_denied", None), request.method))
+        if verdict is None and token_data.role not in roles:
             raise HTTPException(status_code=403, detail="Not enough permissions")
         if token_data.role in TEAM_ROLES and _team_status is not None:
             status = _team_status(token_data.email) or {}

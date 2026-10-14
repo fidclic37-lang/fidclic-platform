@@ -65,7 +65,7 @@ function Stat({ s }) {
           <p className="mt-1 flex items-center gap-1 text-[13.5px] font-medium text-[#334155]">
             {s.label} <InfoTip k={{ sent: 'campaigns_sent', revenue: 'campaign_revenue' }[s.key] || s.key} size={13} />
           </p>
-          <p className="text-[12px] text-[#64748B]">vs. mois précédent</p>
+          <p className="text-[12px] text-[#64748B]">Ce mois-ci · vs. mois précédent</p>
         </div>
       </div>
     </div>
@@ -143,7 +143,7 @@ export default function CampagnesPage() {
       const kind = d.kind || 'offre';
       const st = emptyState(kind);
       Object.assign(st, { title: d.title || '', message: d.message || '', details: d.details || '', image: d.image_url || '',
-        link: d.link_url || '', draftId: d.id, template: d.template || null });
+        link: d.link_url || '', draftId: d.id, template: d.template || null, walletPhoto: !!d.wallet_photo });
       if (d.offer) st.offer = { ...st.offer, ...d.offer, discount_type: d.offer.discount_type || 'percent',
         discount_value: d.offer.discount_value ?? '', start_date: d.offer.start_date || '', end_date: d.offer.end_date || '',
         time_from: d.offer.time_from || '17:00', time_to: d.offer.time_to || '19:00' };

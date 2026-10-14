@@ -87,7 +87,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "v3", "tenant_id": "t1", "customer_id": "c3", "branch_id": "orleans", "amount_paid": 40.0, "visit_time": now - dt.timedelta(days=1)},
         {"id": "v4", "tenant_id": "t1", "customer_id": "c3", "branch_id": None, "amount_paid": 5.0, "visit_time": now - dt.timedelta(days=1)},
     ])
-    db.campaigns.insert_one({"id": "k1", "tenant_id": "t1", "name": "Promo", "sent_at": now - dt.timedelta(days=3),
+    db.campaigns.insert_one({"id": "k1", "tenant_id": "t1", "name": "Promo", "status": "sent",   # only sent ones count (QA F32)
+                             "sent_at": now - dt.timedelta(days=3),
                              "recipient_ids": ["c1", "c2", "c3"], "attributed_visit_customer_ids": ["c2", "c3"]})
 
     print("\nLe menu des établissements")
@@ -115,8 +116,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = dash(ALI)
     check("administrateur: Tours + Blois only (30 €)", cards(d)["revenue"] == 30.0)
     check("its clients only (Ana, Ben, Dan)", cards(d)["clients"] == 3)
+    # Ana (Tours) and Ben (Blois) both came after it — each visit counts (QA F32)
     check("a campaign counts only the recipients from its establishments",
-          d["campaigns"]["touched"] == 2 and d["campaigns"]["sales"] == 1)
+          d["campaigns"]["touched"] == 2 and d["campaigns"]["sales"] == 2)
     d = dash(SARA, "orleans")
     check("manager: Blois only, even when asking for Orléans (20 €)", cards(d)["revenue"] == 20.0)
     check("the page says which establishments it shows", d["scope"]["label"] == "Blois")
@@ -160,9 +162,23 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     except HTTPException:
         refused = True
     check("but not another shop's, when it has several to choose from", refused)
-    # (an untagged scan falls back to the client's home establishment, as before)
-    check("an older employé covering the whole shop scans as before, nothing forced",
-          scanned_branch(as_("old.staff@c.fr", "staff"), None) == db.customers.find_one({"id": "c1"}).get("branch_id"))
+    # 2026-10-12: a visit counts where it is scanned — with several
+    # establishments one must be named, never left untagged or put on the
+    # client's home establishment
+    def refused_(tok, branch):
+        try:
+            scanned_branch(tok, branch)
+            return None
+        except HTTPException as e:
+            return e.status_code
+    check("an employé covering the whole shop must name the establishment",
+          refused_(as_("old.staff@c.fr", "staff"), None) == 400)
+    check("the owner too, when nothing is chosen", refused_(OWNER, None) == 400)
+    home = db.customers.find_one({"id": "c1"}).get("branch_id")
+    other = next(b for b in ("tours", "blois", "orleans") if b != home)
+    check(f"the owner's scan counts where it is scanned ({other}), not at home ({home})",
+          scanned_branch(OWNER, other) == other)
+    check("an unknown establishment is refused", refused_(OWNER, "nope") == 400)
 
     print("\nLa page Clients, limitée")
     total = lambda tok, store=None: CP.overview(request=Req(store), token_data=tok)["cards"][0]["value"]
@@ -178,9 +194,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the Clients page opens to them", guard(SARA, CP.READERS, partial_ok=True) == 200)
 
     print("\nContacter un groupe")
-    out = server.send_campaign_to_group({"customer_ids": ["c2", "c3"], "name": "Hello", "content": "Bonjour"},
+    out = server.send_campaign_to_group({"customer_ids": ["c2", "c3", "c4"], "name": "Hello", "content": "Bonjour"},
                                         request=Req(), token_data=SARA)
-    check("a manager's campaign reaches only its establishment's clients", out["recipient_ids"] == ["c2"])
+    # multi-store PR5: only its establishment's MEMBERS (Dan signed up at Blois;
+    # Ben only visited it)
+    check("a manager's campaign reaches only its establishment's members", out["recipient_ids"] == ["c4"])
     check("and records for which establishments it was sent",
           db.campaigns.find_one({"id": out["id"]})["store_ids"] == ["blois"])
     try:
@@ -189,8 +207,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     except HTTPException:
         refused = True
     check("nobody from another establishment → refused, nothing sent", refused)
-    out = server.send_campaign_to_group({"customer_ids": ["c1", "c3"], "content": "x"}, request=Req(), token_data=OWNER)
-    check("the owner, on 'all', reaches anyone", sorted(out["recipient_ids"]) == ["c1", "c3"])
+    try:
+        server.send_campaign_to_group({"customer_ids": ["c1", "c3"], "content": "x"}, request=Req(), token_data=OWNER)
+        refused = False
+    except HTTPException as e:
+        refused = e.status_code == 400
+    check("the owner must choose the establishment it writes for (several stores)", refused)
+    out = server.send_campaign_to_group({"customer_ids": ["c1", "c3", "c4"], "content": "x"}, request=Req("blois"), token_data=OWNER)
+    # Ana was moved to Blois above (home store); Dan signed up there
+    check("…then reaches that establishment's members", out["recipient_ids"] == ["c1", "c4"])
 
     print("\nFiltres enregistrés")
     seg = server.create_saved_segment(server.SavedSegmentRequest(name="Mes fidèles", filters={}), token_data=SARA)
@@ -215,20 +240,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     out = KP.compose(KP.Compose(title="Café offert", message="Venez !", segment="all", draft=True),
                      request=Req(), token_data=SARA)
     doc = db.campaigns.find_one({"id": out["id"]})
-    check("a manager's campaign goes to its establishment's clients", sorted(doc["recipient_ids"]) == ["c1", "c2", "c4"])
+    check("a manager's campaign goes to its establishment's members", sorted(doc["recipient_ids"]) == ["c1", "c4"])
     check("and records its establishment and sender", doc["store_ids"] == ["blois"] and doc["sent_by"] == "sara@c.fr")
     out = KP.compose(KP.Compose(title="x", message="y", customer_ids=["c2", "c3"], draft=True), request=Req(), token_data=SARA)
-    check("hand-picked clients from another establishment are dropped",
-          db.campaigns.find_one({"id": out["id"]})["recipient_ids"] == ["c2"])
+    check("hand-picked clients who are not its members are dropped (Ben only visited Blois)",
+          db.campaigns.find_one({"id": out["id"]})["recipient_ids"] == [])
     try:
         KP.compose(KP.Compose(title="x", message="y", customer_ids=["c3"]), request=Req(), token_data=SARA)
         refused = False
     except HTTPException:
         refused = True
     check("none of its own → refused, nothing sent", refused)
-    check("the administrateur reaches Tours + Blois",
+    check("the administrateur reaches Tours + Blois members (no store yet: the main one, Tours)",
           sorted(db.campaigns.find_one({"id": KP.compose(KP.Compose(title="a", message="b", draft=True),
-                                                         request=Req(), token_data=ALI)["id"]})["recipient_ids"]) == ["c1", "c2", "c4"])
+                                                         request=Req(), token_data=ALI)["id"]})["recipient_ids"]) == ["c1", "c2", "c3", "c4"])
     check("Campagnes opens to them", guard(SARA, KP.SENDERS, partial_ok=True) == 200)
 
     print("\nLa page Analyses, limitée")

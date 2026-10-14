@@ -63,8 +63,10 @@ def main():
           ok("+33 6 12 34 56 78") == ok("0033612345678") == ok("+33 06 12 34 56 78") == "0612345678")
     check("abroad: +44 7700 900123 → +447700900123", ok("+44 7700 900123") == "+447700900123")
     check("« # », « * », letters are refused", ok("06#1234567") is None and ok("0612*45678") is None and ok("06abc45678") is None)
-    check("France: 9 or 11 digits refused, so is a number without its 0", ok("061234567") is None
-          and ok("06123456789") is None and ok("612345678") is None)
+    check("France: 9 digits after +33, the 0 is not needed (user, 2026-10-14) → 0612345678",
+          ok("612345678") == ok("6 12 34 56 78") == "0612345678")
+    check("France: too short or too long refused", ok("061234567") is None and ok("06123456789") is None
+          and ok("61234567") is None and ok("6123456789") is None)
     check("« 0000000051 » (00 is not a French number) refused", ok("0000000051") is None)
     check("an unknown country code refused", ok("+999 12345678") is None)
     check("the key compares the same person written two ways",

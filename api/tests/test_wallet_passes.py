@@ -109,15 +109,26 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("storeCard + ids", pj["formatVersion"] == 1 and pj["passTypeIdentifier"] == "pass.com.fidclic.test" and pj["teamIdentifier"] == "TEAM123456" and "storeCard" in pj)
     check("serial = barcode; QR altText", pj["serialNumber"] == "FT-TEST0001" and pj["barcodes"][0]["format"] == "PKBarcodeFormatQR" and pj["barcodes"][0]["altText"] == "FT-TEST0001")
     check("design → colours (black surface, light ink)", pj["backgroundColor"] == "rgb(0, 0, 0)" and pj["foregroundColor"] == "rgb(244, 243, 240)")
-    check("card_name → logoText", pj["logoText"] == "ROYAL TRIM")
+    # the shop's name is written into the logo, in full (user, 2026-10-12:
+    # « BLOO J… » on iOS 27 — Wallet cut its own logoText)
+    from PIL import Image as _Im
+    _logo = _Im.open(io.BytesIO(z.read("logo@3x.png")))
+    check("card_name → written beside the logo (no logoText to cut)", "logoText" not in pj and _logo.height == 150
+          and _logo.width > 250)
+    _px = _logo.convert("RGBA").getdata()
+    check("…in the card's text colour by default", any(p[:3] == (244, 243, 240) and p[3] == 255 for p in _px))
     sc = pj["storeCard"]
-    check("points in the header (nothing over the strip)", sc["headerFields"][0]["value"] == 70)
+    # a tampons programme shows tampons, never points (user, 2026-10-12)
+    check("tampons programme: statut in the header, no points anywhere",
+          [f["key"] for f in sc["headerFields"]] == ["tier"] and sc["headerFields"][0]["value"] == "Or"
+          and not any(f["key"] == "points" for g in ("headerFields", "primaryFields", "secondaryFields") for f in sc[g]))
     check("primaryFields empty with a strip", sc["primaryFields"] == [])
     sec = {f["key"]: f["value"] for f in sc["secondaryFields"]}
     # Three fields, not four: a storeCard row squeezes four values to the point
     # where the stamps — the one that matters — become hard to read.
-    check("member/tier/stamps in one readable row", sec == {"member": "Marie", "tier": "Or", "stamps": "7 / 10"})
-    check("points = the customer's real balance", sc["headerFields"][0]["value"] == 70)
+    check("member/stamps/visits in one readable row, the statut not twice",
+          sec == {"member": "Marie", "stamps": "7 / 10", "visits": 7})
+    check("no « Récompense » added to the front by itself", "reward" not in sec)
     back_by_key = {f["key"]: f for f in sc["backFields"]}
     check("reward spelt out on the back, not squeezed in the front row",
           back_by_key["next_reward"]["value"] == "Encore 3 tampons avant : Une coupe offerte"
@@ -128,7 +139,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           back_by_key["offer"]["value"] == "Aucune offre en ce moment." and back_by_key["offer"]["changeMessage"] == "%@")
     from PIL import Image as _LI
     lw, lh = _LI.open(io.BytesIO(z.read("logo.png"))).size
-    check(f"logo only as wide as it is (no 160-pt padding eating the name): {lw}x{lh}", lw <= 50 and lh == 50)
+    # logo + name: within Apple's 160 × 50 pt, no blank padding past the name
+    _im = _LI.open(io.BytesIO(z.read("logo.png"))).convert("RGBA")
+    _edge = any(_im.getpixel((x, y))[3] > 0 for x in range(lw - 3, lw) for y in range(lh))
+    check(f"logo + name within 160 × 50 pt, nothing blank after the name: {lw}x{lh}", lw <= 160 and lh == 50 and _edge)
     check("tagline on the back", any(f.get("value") == "Coupe • Barbe • Soin" for f in sc["backFields"]))
     check("webServiceURL + auth token ≥16", pj["webServiceURL"].endswith("/api/passes") and len(pj["authenticationToken"]) >= 16)
     tok = pj["authenticationToken"]
@@ -162,13 +176,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     banner = ("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsL"
               "DBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB"
               "AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==")
-    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": banner, "hero_mode": "image"}})
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": banner, "hero_mode": "image",
+                                                               "programme": "points_visit"}})
     pj2 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     sc2 = pj2["storeCard"]
     check("banner: nothing drawn over the artwork (primaryFields empty)", sc2["primaryFields"] == [])
     check("banner: points move to the header", [f["key"] for f in sc2["headerFields"]] == ["points"]
           and sc2["headerFields"][0]["value"] == 70)
     check("banner: statut joins the secondary row", "tier" in [f["key"] for f in sc2["secondaryFields"]])
+    check("points programme: points = the customer's real balance, no tampons",
+          sc2["headerFields"][0]["value"] == 70 and "stamps" not in [f["key"] for f in sc2["secondaryFields"]])
     data2 = WP.build_pkpass(WP._card_payload("FT-TEST0001"))
     z2 = zipfile.ZipFile(io.BytesIO(data2))
     check("banner: strip.png at 1x/2x/3x", {"strip.png", "strip@2x.png", "strip@3x.png"} <= set(z2.namelist()))
@@ -181,17 +198,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     w3, h3 = _I.open(io.BytesIO(z2.read("strip@3x.png"))).size
     check("banner: strip@3x is 1125x432", (w3, h3) == (1125, 432))
     # ---- meter off + no photo → the classic layout (big number) -----------
-    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": "", "hero_mode": "none",
-                                                               "show_meter": False}})
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"hero_image_url": "", "hero_mode": "none"}})
     pj3 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
-    check("meter off, no photo: classic layout (points primary, statut header)",
+    check("points programme (no jauge), no photo: classic layout (points primary, statut header)",
           pj3["storeCard"]["primaryFields"][0]["key"] == "points"
           and pj3["storeCard"]["headerFields"][0]["key"] == "tier")
     z3 = zipfile.ZipFile(io.BytesIO(WP.build_pkpass(WP._card_payload("FT-TEST0001"))))
     check("meter off, no photo: no strip at all", "strip.png" not in z3.namelist())
 
     # ---- the meter is really painted into the strip ------------------------
-    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"show_meter": True}})
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"programme": "stamps"}})
     from PIL import Image as _IM
     def strip_of(visits):
         db.customers.update_one({"id": "c1"}, {"$set": {"visits": visits}})
@@ -217,7 +233,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.campaigns.delete_many({})
     db.campaigns.insert_one({"id": "camp-photo", "tenant_id": "t1", "name": "Séance offerte",
                              "content": "Venez cette semaine", "status": "sent", "wallet_offer": True,
-                             "recipient_ids": ["c1"], "sent_at": dt.datetime.now(dt.timezone.utc), "image_url": photo})
+                             "recipient_ids": ["c1"], "sent_at": dt.datetime.now(dt.timezone.utc), "image_url": photo,
+                             # the owner chose « Afficher la photo sur la carte Wallet » (QA BUG-006, off by default)
+                             "wallet_photo": True})
     pjc = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     backc = {f["key"]: f for f in pjc["storeCard"]["backFields"]}
     check("campaign photo: the back links to the campaign on the web card",
@@ -236,7 +254,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           "?offre=camp-photo&k=" in gobj["linksModuleData"]["uris"][0]["uri"]
           and not any(t["id"] == "offer_link" for t in gobj["textModulesData"]))
     check("campaign photo: Google's banner URL changes with the campaign",
-          gobj["heroImage"]["sourceUri"]["uri"].endswith("-camp-photo"))
+          "-camp-photo-" in gobj["heroImage"]["sourceUri"]["uri"])
     db.campaigns.update_one({"id": "camp-photo"}, {"$set": {
         "sent_at": dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=WP.CAMPAIGN_OFFER_DAYS + 1)}})
     pje = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
@@ -328,7 +346,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     offer_back = next(f for f in pjc["storeCard"]["backFields"] if f["key"] == "offer")
     check("campaign: full text on the back, it is what the notification says",
           offer_back["value"] == "Salut — On vous attend pour un cadeau" and offer_back["changeMessage"] == "%@")
-    check("campaign: statut kept on the back", any(f["key"] == "tier_back" for f in pjc["storeCard"]["backFields"]))
+    check("campaign: statut kept (top right, or on the back)",
+          any(f["key"] == "tier" for f in pjc["storeCard"]["headerFields"])
+          or any(f["key"] == "tier_back" for f in pjc["storeCard"]["backFields"]))
     db.campaigns.delete_one({"id": "camp1"})
 
     # ---- nothing written over the merchant's photo ------------------------
@@ -346,9 +366,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("preview: same front fields as the real pass (keys, order)",
           [f["key"] for f in pv["secondaryFields"]] == [f["key"] for f in real["secondaryFields"]]
           and [f["key"] for f in pv["headerFields"]] == [f["key"] for f in real["headerFields"]])
-    check("preview: the unsaved name is used", pv["logoText"] == "NOUVEAU NOM")
-    check("preview: strip and logo are the real images", (pv["strip"] or "").startswith("data:image/png;base64,")
-          and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 100)
+    _pvlogo = _Im.open(io.BytesIO(base64.b64decode(pv["logo"].split(",", 1)[1])))
+    check("preview: the unsaved name is in the logo, as on the pass", not pv["logoText"] and pv["logo_width"] > 50)
+    check("preview: strip and logo are the real images", (pv["strip"] or "").startswith("data:image/jpeg;base64,")
+          and pv["logo"].startswith("data:image/png;base64,") and pv["logo_width"] <= 160 and _pvlogo.height == 100)
+    pv2 = WP.owner_wallet_preview(WP.PassPreviewIn(card={"card_name": "NOUVEAU NOM", "logo_text_color": "#FF0000"}, visits=3), _OT())
+    _red = _Im.open(io.BytesIO(base64.b64decode(pv2["logo"].split(",", 1)[1]))).convert("RGBA").getdata()
+    check("« Couleur du nom »: the name in that colour (preview = pass)", any(p[:3] == (255, 0, 0) and p[3] == 255 for p in _red))
+    files = WP.pass_files(WP._card_payload("FT-TEST0001"))
+    check("iOS 27: the poster's primaryLogo carries the name too",
+          "primaryLogo@3x.png" not in files or _Im.open(io.BytesIO(files["primaryLogo@3x.png"])).width > 250)
     check("preview: the offer is on the back, like the pass", any(f["key"] == "offer" for f in pv["backFields"]))
     check("preview: a sample customer, never a real one", pv["sample"]["name"] == "Marie Dupont"
           and pv["barcode"]["altText"] == "FT-5A3C91E2")
@@ -455,8 +482,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         check("a scan sends the new card to Google", res["google"]["synced"] == 1 and len(put) == 1)
         check("a plain scan does not notify", not any(c[1].endswith("/addMessage") for c in gcalls))
         obj = put[0][2]
-        check("same content as Apple: member, points, offer on the details",
-              obj["accountName"] == "Marie" and obj["loyaltyPoints"]["label"] == "Points"
+        check("same content as Apple: member, tampons (a tampons programme), offer on the details",
+              obj["accountName"] == "Marie" and obj["loyaltyPoints"]["label"].startswith("Tampons")
+              and "secondaryLoyaltyPoints" not in obj
               and any(t["header"] == "Offre du moment" for t in obj["textModulesData"]))
         gcalls.clear()
         WP.notify_customer("c1", google_notify="reward")

@@ -79,6 +79,12 @@ def _tier(tid: str, visits: int, points: int, paid: float) -> str:
     return LC.tier_of({"visits": visits, "points": points, "total_amount_paid": paid}, tid)
 
 
+def _aware(v: Any) -> Optional[datetime]:
+    if not isinstance(v, datetime):
+        return None
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
     visits = int(c.get("visits") or 0)
     return {
@@ -87,6 +93,8 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
         "birth_date": c.get("birth_date") or "", "age": CF.age_of(c.get("birth_date")),
         "is_student": bool(c.get("is_student")), "acquisition_source": c.get("acquisition_source") or "",
         "barcode_id": c.get("barcode_id"), "points": int(c.get("points") or 0), "visits": visits,
+        # « 12 visites · dernière le 10/10 » at the top of the fiche (QA BUG-005)
+        "last_visit": (lv.isoformat() if (lv := _aware(c.get("last_visit_date"))) else None),
         "stamps_in_cycle": max(0, visits - int(c.get("visits_at_last_redemption") or 0)),
         "visits_at_last_redemption": int(c.get("visits_at_last_redemption") or 0),
         "tier": (c.get("tier") or "bronze").lower(),
@@ -105,7 +113,21 @@ def get_fiche(customer_id: str, request: Request = None,
     rows = list(_db.customer_changes.find({"customer_id": customer_id, "tenant_id": token_data.tenant_id},
                                           {"_id": 0}).sort("at", -1).limit(20))
     from services import sources as SRC
-    return {"client": _view(c),
+    # « Établissement d'origine » (multi-store, 2026-10-12): the stores this
+    # account may move the client between — the owner all, an administrateur its own
+    t = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "branches": 1}) or {}
+    open_ = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    if token_data.role != "business_owner":
+        from features import store_scope as S
+        mine = set(S.resolve(token_data, requested="").allowed)
+        movable = [b for b in open_ if b["id"] in mine] if (not c.get("branch_id") or c.get("branch_id") in mine) else []
+    else:
+        movable = open_
+    return {"client": {**_view(c), "branch_id": c.get("branch_id")},
+            "home_store": {"id": c.get("branch_id"),
+                           "name": next((b.get("name") for b in open_ if b["id"] == c.get("branch_id")), None),
+                           "choices": [{"id": b["id"], "name": b.get("name") or "Établissement"} for b in movable]
+                           if len(open_) > 1 else []},
             "sources": [{"key": k, "label": SRC.label(k)} for k in SRC.SIGNUP_SOURCES],
             "changes": [{"at": r["at"].isoformat() if isinstance(r.get("at"), datetime) else r.get("at"),
                          "kind": r["kind"], "text": r["text"], "by": r.get("by"), "reason": r.get("reason")}
@@ -132,16 +154,23 @@ def save_fiche(customer_id: str, body: FicheIn, request: Request = None,
         new["name"] = CF.name(body.name)
     if body.phone is not None:
         new["phone"] = CF.phone(body.phone)
+    # The page sends every field back. The rules of 2026-10-11 (a real e-mail,
+    # a French postal code, 85 at most) judge what the owner changes: a
+    # client already on file with an older value can still be edited.
     if body.email is not None:
-        new["email"] = CF.email(body.email).lower()
+        same = (body.email or "").strip().lower() == (c.get("email") or "").strip().lower()
+        new["email"] = (body.email or "").strip().lower() if same else CF.email(body.email).lower()
     if body.birthday is not None:
         # « 25/12/1990 » keeps the year (the age in Clients); « 25/12 » only the day
-        b = CF.birth(body.birthday)
+        b = CF.birth(body.birthday, max_age=False)
+        if b["birth_date"] and b["birth_date"] != c.get("birth_date"):
+            b = CF.birth(body.birthday)
         new["birthday"] = b["birthday"]
         if b["birth_date"]:
             new["birth_date"] = b["birth_date"]
     if body.postal_code is not None:
-        new["postal_code"] = CF.postal_code(body.postal_code)
+        same = (body.postal_code or "").strip() == (c.get("postal_code") or "").strip()
+        new["postal_code"] = (body.postal_code or "").strip() if same else CF.postal_code(body.postal_code)
     if body.is_student is not None:
         new["is_student"] = bool(body.is_student)
     if body.acquisition_source is not None:

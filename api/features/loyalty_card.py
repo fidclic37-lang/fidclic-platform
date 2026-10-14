@@ -106,6 +106,11 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _name_fonts():
+    from features.wallet_passes import NAME_FONTS
+    return NAME_FONTS
+
+
 def _template(tenant_id: str) -> Dict[str, Any]:
     tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
     tpl.pop("_id", None)
@@ -183,13 +188,39 @@ def vip_shortcut(tpl: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def earned_points(customer: Dict[str, Any]) -> int:
+    """Points the client has EARNED over their life with the shop.
+
+    Since a reward can be bought with points, `points` is a balance and goes
+    down. The palier must not: it was earned by coming back. Cards written
+    before the split have no `points_lifetime` — their balance has never been
+    spent, so it IS what they earned."""
+    v = customer.get("points_lifetime")
+    return int(v if v is not None else (customer.get("points") or 0))
+
+
+def floor_of(customer: Dict[str, Any]) -> str:
+    """The highest rung this client has ever stood on.
+
+    A palier is never taken back (user, 2026-10-13): « usne woh tier earn kiya
+    hai loyalty dikha ke ». Cards from before carry no `tier_best`, so their
+    current `tier` is their floor — nobody is demoted by this arriving."""
+    best = (customer.get("tier_best") or customer.get("tier") or "bronze").lower()
+    return best if best in TIER_ORDER else "bronze"
+
+
 def tier_of(customer: Dict[str, Any], tenant_id: str, tpl: Optional[Dict[str, Any]] = None) -> str:
     """Points or visits against the ladder, per the programme; then the VIP
-    shortcut (visits + average basket), if the owner keeps it on."""
+    shortcut (visits + average basket), if the owner keeps it on — and never
+    below a rung already reached.
+
+    A palier only ever goes up. Spending points on a reward, an owner raising
+    the ladder, a correction at the till: none of them can send a client back
+    down. What they earned, they keep."""
     tpl = tpl if tpl is not None else _template(tenant_id)
     programme = _programme(tpl)
     visits = int(customer.get("visits") or 0)
-    value = int(customer.get("points") or 0) if _is_points(programme) else visits
+    value = earned_points(customer) if _is_points(programme) else visits
     tier = "bronze"
     for row in tiers_for(tenant_id):
         if value >= row["min"]:
@@ -199,7 +230,8 @@ def tier_of(customer: Dict[str, Any], tenant_id: str, tpl: Optional[Dict[str, An
         avg = float(customer.get("total_amount_paid") or 0) / visits if visits else 0.0
         if avg >= sc["min_avg"]:
             tier = "vip"
-    return tier
+    floor = floor_of(customer)
+    return tier if TIER_ORDER.index(tier) >= TIER_ORDER.index(floor) else floor
 
 
 def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
@@ -214,6 +246,8 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
     tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1, "campaign_sender_name": 1}) or {}
     shop = tenant.get("campaign_sender_name") or tenant.get("name") or "votre commerce"
     rewards = {r["key"]: r.get("reward") or "" for r in tiers_for(tenant_id)}
+    # "down" stays at zero now that a palier is a floor — kept so callers
+    # and the page that reads this answer do not have to change.
     out = {"up": 0, "down": 0, "same": 0}
     quiet: List[str] = []                      # cards to refresh without a word
     live = {"tenant_id": tenant_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
@@ -226,7 +260,9 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
             continue
         up = TIER_ORDER.index(new) > (TIER_ORDER.index(old) if old in TIER_ORDER else 0)
         out["up" if up else "down"] += 1
+        # `tier_best` is the floor from now on: a rung reached is never lost.
         _db.customers.update_one({"id": c["id"]}, {"$set": {"tier": new, "previous_tier": old,
+                                                            "tier_best": new,
                                                             "tier_recomputed_at": _now(), "updated_at": _now()}})
         if not (up and announce):
             quiet.append(c["id"])
@@ -289,6 +325,21 @@ class CardSettings(BaseModel):
     logo_round: Optional[bool] = None
     logo_ring: Optional[bool] = None
     logo_ring_color: Optional[str] = None
+    # iOS 27 + every jauge (user, 2026-10-11): the band under the poster's
+    # fields — "" = Apple's blur, "#RRGGBB" = that colour — and the tampons'
+    # shape ("" = bars painted, ● in text; else wallet_passes.STAMP_SHAPES)
+    poster_footer_color: Optional[str] = None
+    stamp_shape: Optional[str] = None
+    # the reward on the card (user, 2026-10-12): shown or not, and where —
+    # "front" (under the QR) or "back" (⋯ › Détails du pass)
+    reward_on_card: Optional[bool] = None
+    reward_place: Optional[str] = None
+    # the shop's name beside the logo, in every Wallet (user, 2026-10-12):
+    # "" = the card's text colour, "#RRGGBB" = that colour (wallet_passes.name_logo)
+    logo_text_color: Optional[str] = None
+    name_logo_size: Optional[int] = None           # « Taille du logo » beside the name, 0–100 (0: the name alone)
+    name_font: Optional[str] = None                # « Police du nom » (wallet_passes.NAME_FONTS), "" = default
+    name_style: Optional[Dict[str, Any]] = None    # « Nom stylé »: letter by letter (wallet_passes.clean_name_style)
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None
@@ -332,6 +383,11 @@ def _barcode_formats():
     return [{"format": k, "label": v, "ios27_only": k in NEW_BARCODES} for k, v in BARCODE_FORMATS.items()]
 
 
+def _stamp_shapes():
+    from features.wallet_passes import STAMP_SHAPES
+    return [{"key": k, "label": lbl, "full": f.replace("\ufe0e", ""), "empty": e} for k, (lbl, f, e) in STAMP_SHAPES.items()]
+
+
 def _featured_types():
     from features.wallet_passes import FEATURED_TYPES
     return FEATURED_TYPES
@@ -347,6 +403,10 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
     tid = token_data.tenant_id
     tpl = _template(tid)
     tenant = _db.tenants.find_one({"id": tid}) or {}
+    from features import store_cards as SC          # several establishments: the chosen one's name
+    _sn = SC.store_name(tid, SC.store_for(tid))
+    if _sn:
+        tenant = {**tenant, "name": _sn}
     programme = _programme(tpl)
     return {
         "tenant": {"name": tenant.get("name"), "slug": tenant.get("slug"), "city": tenant.get("city"),
@@ -357,7 +417,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "brand_color": tpl.get("brand_color") or "#B85C38",
             "logo_url": tpl.get("logo_url") or "",
             "hero_image_url": tpl.get("hero_image_url") or "",
-            "welcome_text": tpl.get("welcome_text") or "",
+            "welcome_text": tpl.get("welcome_text") or tpl.get("tagline") or "",
             "card_message": tpl.get("card_message") or tpl.get("offer_box_text") or "",
         },
         "programme": {
@@ -386,6 +446,16 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "logo_round": bool(tpl.get("logo_round")),
             "logo_ring": bool(tpl.get("logo_ring")),
             "logo_ring_color": tpl.get("logo_ring_color") or "",
+            "poster_footer_color": tpl.get("poster_footer_color") or "",
+            "logo_text_color": tpl.get("logo_text_color") or "",
+            "name_logo_size": 100 if tpl.get("name_logo_size") is None else int(tpl.get("name_logo_size")),
+            "name_font": tpl.get("name_font") or "",
+            "name_style": tpl.get("name_style") or None,
+            "name_fonts": [{"key": k, "label": v[2]} for k, v in _name_fonts().items()],
+            "stamp_shape": tpl.get("stamp_shape") or "",
+            "reward_on_card": tpl.get("reward_on_card") is not False,
+            "reward_place": "front" if tpl.get("reward_place") == "front" else "back",
+            "stamp_shapes": _stamp_shapes(),
             "google_design": _google_design(tpl.get("google_design")),
             "barcode_formats": _barcode_formats(),
             "show_card_number": tpl.get("show_card_number") is not False,
@@ -464,6 +534,25 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Code de secours inconnu")
     if payload.get("logo_ring_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_ring_color"]):
         raise HTTPException(status_code=400, detail="Couleur de bordure invalide.")
+    if payload.get("poster_footer_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["poster_footer_color"]):
+        raise HTTPException(status_code=400, detail="Couleur du pied invalide.")
+    if payload.get("reward_place") is not None and payload["reward_place"] not in ("front", "back"):
+        raise HTTPException(status_code=400, detail="Emplacement de la récompense inconnu.")
+    if payload.get("logo_text_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_text_color"]):
+        raise HTTPException(status_code=400, detail="Couleur du nom invalide.")
+    if payload.get("name_logo_size") is not None and not 0 <= int(payload["name_logo_size"]) <= 100:
+        raise HTTPException(status_code=400, detail="Taille du logo : de 0 à 100 %.")
+    if payload.get("name_font"):
+        from features.wallet_passes import NAME_FONTS
+        if payload["name_font"] not in NAME_FONTS:
+            raise HTTPException(status_code=400, detail="Police du nom inconnue.")
+    if "name_style" in payload:
+        from features.wallet_passes import clean_name_style
+        payload["name_style"] = clean_name_style(payload["name_style"])
+    if payload.get("stamp_shape"):
+        from features.wallet_passes import STAMP_SHAPES
+        if payload["stamp_shape"] not in STAMP_SHAPES:
+            raise HTTPException(status_code=400, detail="Forme de tampon inconnue.")
     if payload.get("google_design") is not None:
         payload["google_design"] = _google_design(payload["google_design"])
     if payload.get("header_field") is not None and payload["header_field"] not in ("auto", "tier", "points", "visits", "none"):
@@ -490,7 +579,8 @@ def put_card_settings(body: CardSettings,
         ]
     if payload.get("poster_image_url"):
         v = payload["poster_image_url"]
-        if not (v.startswith("data:image/") or v.startswith("https://")):
+        from services import media as _M
+        if not _M.is_image_value(v):        # a link to our own media is the saved picture
             raise HTTPException(status_code=400, detail="Image poster invalide.")
         if len(v) > 3_500_000:
             raise HTTPException(status_code=400, detail="L'image poster dépasse 2,5 Mo.")
@@ -519,6 +609,10 @@ def put_card_settings(body: CardSettings,
         payload["show_offer_box"] = bool(payload["card_message"])
     if "welcome_text" in payload:
         payload["greeting_label"] = payload.get("greeting_label") or "Membre"
+        # the pass reads `tagline` (the onboarding's slogan): the « Texte
+        # d'accueil » IS that text — it was saved apart and never reached the
+        # card, only the preview (user, 2026-10-12)
+        payload["tagline"] = (payload["welcome_text"] or "").strip()
 
     # The toggle switches the Automatisations page's "Anniversaire" scenario
     # (it used to write a collection nothing read).

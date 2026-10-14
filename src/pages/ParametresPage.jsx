@@ -4,6 +4,7 @@ import { Settings2, ArrowRight, Lock } from 'lucide-react';
 import { sectionsFor, sectionPath } from './parametres/sections';
 import { useAuth } from '../contexts/AuthContext';
 import ReglesClientsPage from './ReglesClientsPage';
+import ObjectifsPage from './parametres/ObjectifsPage';
 import LienInscriptionPage from './LienInscriptionPage';
 import EquipeAccesPage from './EquipeAccesPage';
 import EtablissementPage from './EtablissementPage';
@@ -23,7 +24,7 @@ import ResetSection from '../components/ResetSection';
    Sub-pages whose design has not arrived yet show an empty state; where the
    same settings exist on the older all-in-one page, it links straight to
    them so nothing goes out of reach in the meantime. */
-const PAGES = { etablissement: EtablissementPage, 'regles-clients': ReglesClientsPage,
+const PAGES = { etablissement: EtablissementPage, objectifs: ObjectifsPage, 'regles-clients': ReglesClientsPage,
                 'lien-inscription': LienInscriptionPage, equipe: EquipeAccesPage,
                 notifications: NotificationsSettingsPage, abonnement: AbonnementPage,
                 donnees: DonneesPage, securite: SecuritePage, preferences: PreferencesPage,
@@ -55,7 +56,7 @@ export default function ParametresPage() {
   const { section: slug } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const sections = sectionsFor(user?.role);
+  const sections = sectionsFor(user?.role, user);
   const access = usePlanAccess();             // a tab the plan does not include shows a lock
   const [version, setVersion] = useState(0);  // a reset reloads the tab from the server
   const section = sections.find((s) => s.slug === slug);

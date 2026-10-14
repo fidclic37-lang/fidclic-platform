@@ -25,7 +25,9 @@ THE ONE FIGURE THAT COULD LIE
     than letting it be read as an email open rate.
 
     "CA généré" is the spend of recipients in the ATTRIBUTION_DAYS after the
-    send. It is an association, not a proof, and it carries its own note.
+    send, each visit once (the latest campaign before it) — counted by
+    services/campaign_figures, the same for Analyses › Campagnes (QA F32). It
+    is an association, not a proof, and it carries its own note.
 
 NOTHING IS INVENTED
     A merchant who has never sent a campaign reads zeros and is told so. No
@@ -56,8 +58,9 @@ _db = None
 INACTIVE_DAYS = 30          # "Clients inactifs · Plus de 30 jours"
 LOYAL_VISITS = 3            # "Clients fidèles · Plus de 3 achats" — strictly more
 BIRTHDAY_DAYS = 7           # "Anniversaire · Cette semaine"
-OPEN_WINDOW_H = 72          # a card opened this long after a send counts as an open
-ATTRIBUTION_DAYS = 15       # a visit inside this window counts for the campaign
+from services import campaign_figures as CF
+OPEN_WINDOW_H = CF.OPEN_WINDOW_H        # a card opened this long after a send counts as an open
+ATTRIBUTION_DAYS = CF.ATTRIBUTION_DAYS  # a visit inside this window counts for the campaign
 WALLET_OFFER_DAYS = 30      # how long a campaign stays the card's current offer
 
 TITLE_MAX = 50
@@ -288,7 +291,8 @@ def audience_preview(req: PreviewIn, request: Request = None,
     real recipient to fill the phone preview's variables."""
     tid = token_data.tenant_id
     at = _now()
-    mine = S.customer_ids(S.resolve(token_data, request))
+    # only the members of the establishment chosen in the menu (multi-store PR5)
+    mine = S.home_customer_ids(S.resolve(token_data, request))
     people, label = resolve_audience(tid, req.audience, at, mine)
     from features.resend_guard import without
     people = without(people, req.exclude_ids)
@@ -353,9 +357,10 @@ def list_campaigns(tab: str = "all", search: str = "", page: int = 1, per_page: 
     if tab not in K.TABS:
         raise HTTPException(status_code=400, detail="Onglet inconnu.")
     per_page = max(1, min(int(per_page or 5), 50))
-    mine = S.customer_ids(S.resolve(token_data, request))
-    # an administrateur or a manager sees the campaigns that reach its clients
-    docs = _limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine)
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
+    # the campaigns of the establishment chosen (an older one: if it reached its clients)
+    docs = _limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine, scope)
     rows = [_row(c, tid, at) for c in docs]
     q = (search or "").strip().lower()
     if q:
@@ -392,7 +397,7 @@ def campaign_detail(campaign_id: str, request: Request = None,
     at = _now()
     scope = S.resolve(token_data, request)
     mine = S.customer_ids(scope)
-    found = _limit([c for c in [_db.campaigns.find_one({"tenant_id": tid, "id": campaign_id}, {"_id": 0})] if c], mine)
+    found = _limit([c for c in [_db.campaigns.find_one({"tenant_id": tid, "id": campaign_id}, {"_id": 0})] if c], mine, scope)
     if not found:
         raise HTTPException(status_code=404, detail="Campagne introuvable.")
     c = found[0]
@@ -409,9 +414,9 @@ def campaign_detail(campaign_id: str, request: Request = None,
         delivered = int(c.get("delivered_count") or 0)
         stats = {"recipients": len(ids), "delivered": min(delivered, len(ids)) if delivered else None,
                  "opened": len(opened), "open_rate": _pct(len(opened), len(ids)),
-                 "clicks": int(c.get("offer_clicks") or 0), "came_back": len(back),
+                 "clicks": CF.clicks(c), "came_back": len(back),
                  "came_back_rate": _pct(len(back), len(ids)),
-                 "revenue": _attributed_revenue(tid, ids, sent_at, scope),
+                 "revenue": CF.attribution(_db, tid, [c], S.visit_filter(scope))[c["id"]]["revenue"],
                  "window_days": ATTRIBUTION_DAYS, "open_window_h": OPEN_WINDOW_H}
     _, until = K.window(c) if sent_at else (None, None)
     st = row["status"]
@@ -437,29 +442,22 @@ def _opened_ids(tid: str, recipients: List[str], sent_at: datetime,
     return card_opens.opened_ids(_db, tid, recipients, sent_at, campaign, OPEN_WINDOW_H)
 
 
-def _attributed_revenue(tid: str, recipients: List[str], sent_at: datetime,
-                        scope: Optional["S.Scope"] = None) -> float:
-    if not recipients or not sent_at:
-        return 0.0
-    rows = _db.visits.find(
-        {"tenant_id": tid, "customer_id": {"$in": recipients},
-         "visit_time": {"$gte": sent_at, "$lte": sent_at + timedelta(days=ATTRIBUTION_DAYS)},
-         **(S.visit_filter(scope) if scope else {})},
-        {"_id": 0, "amount_paid": 1})
-    return round(sum(float(r.get("amount_paid") or 0) for r in rows), 2)
-
-
 def _pct(part: float, whole: float) -> int:
     return round(part / whole * 100) if whole else 0
 
 
-def _limit(rows: List[Dict[str, Any]], mine: Optional[set]) -> List[Dict[str, Any]]:
-    """For an administrateur or a manager, a campaign counts for the clients of
-    its establishments only; one that reached none of them is not shown."""
+def _limit(rows: List[Dict[str, Any]], mine: Optional[set], scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
+    """The campaigns of the establishment chosen in the menu: those it sent
+    (store_ids, multi-store PR5); older ones, sent for the whole shop, count
+    for the clients of its establishments only."""
     if mine is None:
         return rows
     out = []
     for c in rows:
+        if c.get("store_ids") and scope is not None and not scope.is_all:
+            if set(c["store_ids"]) & set(scope.ids or []):
+                out.append(c)
+            continue
         ids = [i for i in c.get("recipient_ids") or [] if i in mine]
         if ids:
             out.append({**c, "recipient_ids": ids, "delivered_count": min(int(c.get("delivered_count") or 0), len(ids)),
@@ -467,22 +465,23 @@ def _limit(rows: List[Dict[str, Any]], mine: Optional[set]) -> List[Dict[str, An
     return out
 
 
-def _sent_between(tid: str, start: datetime, end: datetime, mine: Optional[set] = None) -> List[Dict[str, Any]]:
+def _sent_between(tid: str, start: datetime, end: datetime, mine: Optional[set] = None,
+                  scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     rows = list(_db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}))
     return _limit([c for c in rows
-                   if (d := _aware(c.get("sent_at"))) and start <= d <= end], mine)
+                   if (d := _aware(c.get("sent_at"))) and start <= d <= end], mine, scope)
 
 
 def _totals(tid: str, rows: List[Dict[str, Any]], scope: Optional["S.Scope"] = None) -> Dict[str, float]:
     reach = opened = clicks = 0
-    revenue = 0.0
+    att = CF.attribution(_db, tid, rows, S.visit_filter(scope) if scope else None)
     for c in rows:
         ids = list(c.get("recipient_ids") or [])
         at = _aware(c.get("sent_at"))
         reach += len(ids)
         opened += len(_opened_ids(tid, ids, at, c))
-        clicks += int(c.get("offer_clicks") or 0)
-        revenue += _attributed_revenue(tid, ids, at, scope)
+        clicks += CF.clicks(c)
+    revenue = sum(a["revenue"] for a in att.values())
     return {"campaigns": len(rows), "reach": reach, "opened": opened,
             "clicks": clicks, "revenue": round(revenue, 2)}
 
@@ -501,8 +500,8 @@ def page(request: Request = None,
     # (Paris), as the user chose for the redesign (2026-10-10)
     start, prev_start, _ = K.month_bounds(at)
 
-    now_rows = _sent_between(tid, start, at, mine)
-    prev_rows = _sent_between(tid, prev_start, start, mine)
+    now_rows = _sent_between(tid, start, at, mine, scope)
+    prev_rows = _sent_between(tid, prev_start, start, mine, scope)
     cur, was = _totals(tid, now_rows, scope), _totals(tid, prev_rows, scope)
 
     strip = [
@@ -524,7 +523,7 @@ def page(request: Request = None,
         segments.append({**s, "count": len(audience(tid, s["key"], at, mine))})
 
     recent = []
-    for c in sorted(_limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine),
+    for c in sorted(_limit(list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0})), mine, scope),
                     key=lambda c: _aware(c.get("sent_at")) or _aware(c.get("created_at")) or at,
                     reverse=True)[:8]:
         ids = list(c.get("recipient_ids") or [])
@@ -571,8 +570,7 @@ def page(request: Request = None,
                      "ouverte (« Voir l'offre » dans le Wallet) ou son lien cliqué. Une notification wallet "
                      "ne renvoie pas d'accusé de lecture : un client qui regarde seulement la carte dans "
                      "Apple Wallet ou Google Wallet n'est pas compté.",
-        "revenue_note": f"Le CA généré est la dépense des destinataires dans les "
-                        f"{ATTRIBUTION_DAYS} jours suivant l'envoi.",
+        "revenue_note": CF.REVENUE_NOTE,
         "empty": not recent,
         "scope": scope.describe(),
         # the redesign's wizard: segments to pick from, the best time to send,
@@ -601,6 +599,9 @@ class Compose(BaseModel):
     schedule_at: Optional[str] = None
     push: bool = True
     wallet: bool = True
+    # the photo on the Wallet card too, while the campaign runs (QA BUG-006,
+    # user 2026-10-13: the owner chooses; off by default — « Mes offres » then)
+    wallet_photo: bool = False
     draft: bool = False
     # Reprendre un brouillon (QA F02): the draft this save / send replaces —
     # saved again, scheduled or sent, it stays one campaign.
@@ -680,6 +681,7 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "image_url": d.get("image_url") or "", "link_url": d.get("link_url") or "",
         "push": bool((d.get("channels") or {}).get("push", True)),
         "wallet": bool((d.get("channels") or {}).get("wallet", True)),
+        "wallet_photo": bool(d.get("wallet_photo")),
         "template": d.get("template"),
         "status": d.get("status"),
         "scheduled_for": when.isoformat() if when else None,
@@ -729,8 +731,9 @@ def compose(req: Compose, request: Request = None,
     previous = _own_draft(tid, req.draft_id) if req.draft_id else None
 
     at = _now()
-    scope = S.resolve(token_data, request)
-    mine = S.customer_ids(scope)
+    # each establishment writes to its own members (multi-store PR5)
+    scope = S.sending_scope(token_data, request)
+    mine = S.home_customer_ids(scope)
     when_req = _aware(req.schedule_at)
     send_at = when_req if (when_req and when_req > at and not req.draft) else at
     # the kind and its terms (step 1), checked against the moment it leaves
@@ -792,6 +795,7 @@ def compose(req: Compose, request: Request = None,
         # How long this stays the card's current offer once sent. Read by the
         # wallet pass builder, so the pass and the web card agree.
         "wallet_offer": bool(req.wallet),
+        "wallet_photo": bool(req.wallet_photo and req.image_url),
         "template": (req.template or "").strip()[:40] or None,
         "kind": kind, **terms, "details": details,
         "audience_spec": req.audience.dict() if req.audience is not None else None,

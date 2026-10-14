@@ -118,8 +118,9 @@ def main():
           by["near_reward"][0]["trigger"]["visits_left"] == 2 and "{visites_restantes}" in by["near_reward"][0]["message"]["title"])
     check("Avis Google keeps every 10 days, with its review button",
           by["google_review"][0]["trigger"]["every_days"] == 10 and by["google_review"][0]["message"]["button"]["link_type"] == "google_review")
-    check("Parrainage: one for the parrain, one for the filleul",
-          sorted(r["trigger"]["side"] for r in by["referral"]) == ["filleul", "parrain"])
+    check("Parrainage: ONE automation, the parrain's and the filleul's messages (mockups 2026-10-11)",
+          len(by["referral"]) == 1 and by["referral"][0]["trigger"]["sides"] == ["parrain", "filleul"]
+          and by["referral"][0]["message_filleul"]["body"].startswith("Votre première visite est validée !"))
     check("Offre spéciale, Relance panier and the shop's own « Plage horaire » are gone, data included",
           db.push_scenarios.count_documents({"tenant_id": "t1"}) == 0
           and not db.push_wallet_log.find_one({"id": "l1"}) and db.push_wallet_log.find_one({"id": "l2"}))
@@ -202,7 +203,7 @@ def main():
     AU._segment_ids = real_seg
     check("a real client fills the preview", pv(mode="all")["sample"]["first_name"] in ("Alice", "Bruno", "Chloé"))
 
-    print("\n4. Bienvenue, à l'inscription, dans sa plage horaire")
+    print("\n4. Bienvenue, quand la carte arrive dans Wallet, dans sa plage horaire")
     wel = [r for r in http("GET", "/api/owner/automations").json()["rows"] if r["scenario"] == "welcome"][0]
     http("PUT", f"/api/owner/automations/{wel['id']}", json={
         "scenario": "welcome", "status": "active", "trigger": {},
@@ -213,11 +214,19 @@ def main():
     r = http("POST", "/api/join/cafe", headers={}, json={"name": "Dina Sow", "phone": "0611111111", "postal_code": "37000",
                                                          "birthday": "02/03/1995", "consent": True})
     dina = db.customers.find_one({"barcode_id": r.json().get("barcode_id")}) or {}
-    check(f"signing up sends the welcome at once ({r.status_code})",
+    check(f"signing up alone sends no welcome (user, 2026-10-11: « sirf Wallet add pe ») ({r.status_code})",
+          r.status_code == 200 and not [p for p in pushed if p["cid"] == dina.get("id")])
+    reg = lambda dev: http("POST", f"/api/passes/v1/devices/{dev}/registrations/pass.x/{dina['barcode_id']}",  # noqa: E731
+                           headers={"Authorization": "ApplePass " + WP._auth_token(dina["barcode_id"])}, json={"pushToken": "tok"})
+    r = reg("iphone-1")
+    check(f"the card added to Apple Wallet sends the welcome at once ({r.status_code})",
           [p["title"] for p in pushed if p["cid"] == dina.get("id")] == ["Bienvenue Dina 🎉"])
     check("its tap goes through the counted link, the button's text riding on it",
           (pushed[-1]["url"] or "").startswith(AU.public_base() + "/api/auto/c/") and "?b=Voir%20ma%20carte" in pushed[-1]["url"])
-    check("the welcome is never sent twice", AU.fire("welcome", "t1", dina) == [])
+    check("the welcome is never sent twice", AU.fire("welcome", "t1", dina, {"event": "wallet"}) == [])
+    reg("ipad-2")
+    check("…not even when a second device adds the card", len([p for p in pushed if p["cid"] == dina["id"]]) == 1)
+    check("a call without the Wallet event sends nothing", AU.fire("welcome", "t1", person("c-nowallet", "Sans Wallet")) == [])
     card = server._serialize_card_payload(db.customers.find_one({"id": dina["id"]}))
     check("the card shows it at the top with its button", card["auto_message"]["title"] == "Bienvenue Dina 🎉"
           and card["auto_message"]["button_label"] == "Voir ma carte")
@@ -236,7 +245,7 @@ def main():
     late = dt.datetime(2026, 10, 14, 21, 0, tzinfo=UTC)           # 23:00 in Paris
     eva = person("c4", "Eva Petit")
     pushed.clear()
-    res = AU.fire("welcome", "t1", eva, at=late)
+    res = AU.fire("welcome", "t1", eva, {"event": "wallet"}, at=late)
     q = db.automation_queue.find_one({"customer_id": "c4"})
     check("at 23:00 it is not sent, it waits", not pushed and res and res[0].get("queued") and q)
     check("…for 09:00 Paris the next morning", q["due_at"].replace(tzinfo=UTC) == dt.datetime(2026, 10, 15, 7, 0, tzinfo=UTC))
@@ -338,9 +347,10 @@ def main():
     from features import referrals as RF
     RF._announce("t1", "c1", db.customers.find_one({"id": "c2"}), "first", 50, 25)
     who = {p["cid"]: p["body"] for p in pushed if p["kind"] == "parrainage"}
-    check("the parrain hears his friend came, with his points",
-          "Bruno" in who.get("c1", "") and "+50" in who.get("c1", ""))
-    check("the filleul hears whom he owes it to", "Alice" in who.get("c2", "") and "+25" in who.get("c2", ""))
+    check("the parrain gets the parrain's message",
+          who.get("c1", "").startswith("Votre ami a rejoint notre établissement grâce à vous."))
+    check("the filleul gets the filleul's message",
+          who.get("c2", "").startswith("Votre première visite est validée !"))
     check("the parrainage rides on the points banner, not a second one",
           (db.customers.find_one({"id": "c1"})["auto_news"].get("pass") is False)
           and "%@" in db.customers.find_one({"id": "c1"})["points_news"]["text"])
@@ -376,6 +386,9 @@ def main():
           "news" in back3)
     defer["on"] = True
     db.customers.update_one({"id": "c3"}, {"$unset": {"auto_news": ""}})
+    # « après chaque visite » is now « au plus une fois par jour » (Avis Google mockups): a new day for Chloé
+    db.automation_log.update_many({"customer_id": "c3", "scenario": "google_review"},
+                                  {"$set": {"sent_at": now - dt.timedelta(days=2)}})
     AU.fire("google_review", "t1", db.customers.find_one({"id": "c3"}))
     check("held by the shop's daily limits: logged « deferred », the card stays quiet",
           db.automation_log.find_one({"customer_id": "c3", "status": "deferred"})

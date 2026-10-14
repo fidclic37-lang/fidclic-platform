@@ -255,34 +255,28 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
                    if prev_start <= (_aware(c.get("created_at")) or at) <= prev_end)
 
     # ---- campaigns -------------------------------------------------------------
-    sent = list(_db.campaigns.find(
-        {"tenant_id": tid, "sent_at": {"$gte": start, "$lte": end}},
-        {"_id": 0, "id": 1, "name": 1, "content": 1, "image_url": 1, "status": 1,
-         "recipient_ids": 1, "clicks": 1, "opens": 1, "attributed_visit_customer_ids": 1}))
-    if not scope.is_all:
-        # A campaign counts here for the clients of these establishments only.
-        mine = {c["id"] for c in customers}
-        kept = []
-        for c in sent:
-            r = [i for i in c.get("recipient_ids") or [] if i in mine]
-            if r:
-                c["recipient_ids"] = r
-                c["attributed_visit_customer_ids"] = [i for i in c.get("attributed_visit_customer_ids") or [] if i in mine]
-                kept.append(c)
-        sent = kept
+    # the campaigns SENT in the period, for this establishment, counted as on
+    # Campagnes and Analyses (services/campaign_figures, QA F32)
+    from features import campaigns_page as CPG
+    from services import campaign_figures as CF
+    sent = CPG._limit(list(_db.campaigns.find(
+        {"tenant_id": tid, "status": "sent", "sent_at": {"$gte": start, "$lte": end}}, {"_id": 0})),
+        None if scope.is_all else {c["id"] for c in customers}, scope)
+    att = CF.attribution(_db, tid, sent, S.visit_filter(scope))
     touched = sum(len(c.get("recipient_ids") or []) for c in sent)
-    clicks = sum(int(c.get("clicks") or 0) for c in sent)
-    attributed = sum(len(c.get("attributed_visit_customer_ids") or []) for c in sent)
+    clicks = sum(CF.clicks(c) for c in sent)
+    attributed = sum((att.get(c["id"]) or {}).get("sales", 0) for c in sent)
     best = None
     for c in sent:
+        a = att.get(c["id"]) or {"sales": 0, "buyers": 0}
         reach = len(c.get("recipient_ids") or []) or 1
-        rate = len(c.get("attributed_visit_customer_ids") or []) / reach
+        rate = a["buyers"] / reach
         if best is None or rate > best["_rate"]:
             best = {"_rate": rate, "name": c.get("name") or "Campagne",
                     "image_url": c.get("image_url"), "status": c.get("status") or "sent",
                     "touched": len(c.get("recipient_ids") or []),
-                    "clicks": int(c.get("clicks") or 0),
-                    "sales": len(c.get("attributed_visit_customer_ids") or []),
+                    "clicks": CF.clicks(c),
+                    "sales": a["sales"],
                     "conversion": round(rate * 100, 1)}
     if best:
         best.pop("_rate", None)

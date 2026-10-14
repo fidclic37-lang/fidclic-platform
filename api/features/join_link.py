@@ -30,7 +30,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
@@ -48,7 +48,6 @@ RESERVED = {
     "card", "carte", "fidclic", "fidelitour", "support", "aide", "help", "www",
     "static", "assets", "public", "modules", "onboarding", "cabinet", "facturation",
 }
-QR_SOURCE = "qr_store"
 from services.sources import SIGNUP_SOURCES as _SIGNUP  # one list (services/sources)
 KNOWN_SOURCES = set(_SIGNUP)
 
@@ -68,8 +67,56 @@ def init(db):
     try:
         db.join_views.create_index([("tenant_id", 1), ("visitor", 1), ("day", 1)], unique=True)
         db.join_views.create_index([("tenant_id", 1), ("at", -1)])
+        db.signup_images.create_index([("tenant_id", 1), ("store_id", 1)], unique=True)
     except Exception:
         pass
+    try:
+        move_inline_images()
+    except Exception as exc:                       # never in the way of a start
+        print(f"join_link: signup images not moved ({exc})")
+
+
+# ---------------------------------------------------------------------------
+# The signup-page images live in their own collection (2026-10-12). Stored
+# inside the account (tenant.signup_image, branches[].signup_image) each 2 Mo
+# image rode along on every read of the account — the menu's store check
+# alone reads its branches on each card read — and a three-store account's
+# every page took seconds (user: « platform takes so much time to load now »).
+# ---------------------------------------------------------------------------
+def image_of(tid: str, store: Optional[str]) -> str:
+    doc = _db.signup_images.find_one({"tenant_id": tid, "store_id": store}, {"_id": 0, "data": 1})
+    return (doc or {}).get("data") or ""
+
+
+def set_image(tid: str, store: Optional[str], img: str) -> None:
+    from services import media as _M
+    img = _M.put(img) if img else img                # a link: the signup page answer stays small
+    if img:
+        _db.signup_images.update_one({"tenant_id": tid, "store_id": store},
+                                     {"$set": {"tenant_id": tid, "store_id": store, "data": img, "at": _now()}},
+                                     upsert=True)
+    else:
+        _db.signup_images.delete_one({"tenant_id": tid, "store_id": store})
+
+
+def move_inline_images() -> int:
+    """Images still kept inside an account move to signup_images; returns how many."""
+    moved = 0
+    q = {"$or": [{"signup_image": {"$exists": True}}, {"branches.signup_image": {"$exists": True}}]}
+    for t in _db.tenants.find(q, {"_id": 0, "id": 1, "signup_image": 1, "branches": 1}):
+        unset: Dict[str, str] = {}
+        if "signup_image" in t:
+            if t.get("signup_image"):
+                set_image(t["id"], None, t["signup_image"]); moved += 1
+            unset.update({"signup_image": "", "signup_image_at": ""})
+        for i, b in enumerate(t.get("branches") or []):
+            if isinstance(b, dict) and "signup_image" in b:
+                if b.get("signup_image") and b.get("id"):
+                    set_image(t["id"], b["id"], b["signup_image"]); moved += 1
+                unset.update({f"branches.{i}.signup_image": "", f"branches.{i}.signup_image_at": ""})
+        if unset:
+            _db.tenants.update_one({"id": t["id"]}, {"$unset": unset})
+    return moved
 
 
 def _now() -> datetime:
@@ -134,28 +181,36 @@ def _pct(now_value: float, was_value: float) -> Optional[float]:
     return round((now_value - was_value) / was_value * 100, 1)
 
 
-def stats(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
+def stats(tid: str, at: Optional[datetime] = None, store: Optional[str] = None) -> Dict[str, Any]:
+    """The page's figures — one establishment's (its members, its link's
+    visits) when the account has several (multi-store, 2026-10-12)."""
     at = at or _now()
     start, prev_start = at - timedelta(days=WINDOW_DAYS), at - timedelta(days=2 * WINDOW_DAYS)
-    customers = list(_db.customers.find({"tenant_id": tid},
-                                        {"_id": 0, "created_at": 1, "signup_channel": 1}))
+    # The establishment's clients and visits as every other page counts them
+    # (user, 2026-10-14: Paramètres said 3 clients where Clients said 5 — the
+    # main store's clients from before it had establishments carry no store).
+    from features import store_scope as S
+    scope = S.Scope(tenant_id=tid, ids=[store] if store else None)
+    customers = list(_db.customers.find(S.customer_filter(scope), {"_id": 0, "created_at": 1, "signup_channel": 1}))
     created = [(_aware(c.get("created_at")), c.get("signup_channel")) for c in customers]
     new_now = sum(1 for d, _ in created if d and d >= start)
     new_prev = sum(1 for d, _ in created if d and prev_start <= d < start)
 
-    first = _db.join_views.find_one({"tenant_id": tid}, sort=[("at", 1)])
+    # a page opened through the shop's own link (no establishment in it) is the main one's
+    vq: Dict[str, Any] = {"tenant_id": tid, **({"store": {"$in": S._branch_values(scope)}} if store else {})}
+    first = _db.join_views.find_one(vq, sort=[("at", 1)])
     since = _aware(first.get("at")) if first else None
 
     def views(lo, hi, src=None):
-        q: Dict[str, Any] = {"tenant_id": tid, "at": {"$gte": lo, "$lt": hi}}
+        q: Dict[str, Any] = {**vq, "at": {"$gte": lo, "$lt": hi}}
         if src:
             q["src"] = src
         return _db.join_views.count_documents(q)
 
-    scans_now = views(start, at + timedelta(seconds=1), QR_SOURCE)
-    # A comparison is only fair once the previous window was fully measured.
+    # « Scans QR » (user, 2026-10-14): every card scanned at this shop's till
+    # since the start — whatever channel the client signed up through.
+    scans = _db.visits.count_documents({"tenant_id": tid, **S.visit_filter(scope)})
     full_prev = bool(since and since <= prev_start)
-    scans_prev = views(prev_start, start, QR_SOURCE) if full_prev else None
 
     def conversion(lo, hi):
         """Signups through the page over visits of the page, same span —
@@ -177,8 +232,7 @@ def stats(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
         "window_days": WINDOW_DAYS,
         "new_signups": {"value": new_now, "delta_pct": _pct(new_now, new_prev)},
         "total": {"value": len(customers)},
-        "qr_scans": {"value": scans_now,
-                     "delta_pct": _pct(scans_now, scans_prev) if scans_prev is not None else None},
+        "qr_scans": {"value": scans},
         "conversion": {"value": conv_now,
                        "delta_pts": (round(conv_now - conv_prev, 1)
                                      if conv_now is not None and conv_prev is not None else None)},
@@ -196,10 +250,42 @@ def page_of(tenant: Dict[str, Any]) -> Dict[str, Any]:
     return page
 
 
-def _brand(tid: str) -> Dict[str, str]:
-    """The shop's logo, as set on its Carte de fidélité."""
-    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
-    return {"logo_url": tpl.get("logo_url") or ""}
+MAX_SIGNUP_IMAGE = 2_800_000      # a 2 Mo image, as a data URI
+
+
+def _open_stores(t: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+
+
+def _signup_image(t: Dict[str, Any], store: Optional[str]) -> str:
+    """« Image de la page d'inscription » (user, 2026-10-12): each establishment
+    chooses its own; the account's link shows the main store's; a one-shop
+    account keeps it on the account."""
+    stores = _open_stores(t)
+    if len(stores) < 2:
+        return image_of(t["id"], None)
+    b = next((b for b in stores if b["id"] == store), None) if store else None
+    if b is None:
+        b = next((b for b in stores if b.get("is_main") or b["id"] == "main"), None)
+    return image_of(t["id"], b["id"]) if b else ""
+
+
+def _brand(tid: str, store: Optional[str] = None) -> Dict[str, str]:
+    """The picture at the top of the signup page: the establishment's own image,
+    else its card's logo (Carte de fidélité)."""
+    from features import store_cards as SC
+    with SC.store(tid, store) if store else _nullctx():
+        tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "id": 1, "branches.id": 1, "branches.status": 1,
+                                           "branches.is_main": 1}) or {"id": tid}
+    own = _signup_image(t, store)
+    return {"logo_url": own or tpl.get("logo_url") or "", "card_logo_url": tpl.get("logo_url") or "",
+            "signup_image": own}
+
+
+def _nullctx():
+    from contextlib import nullcontext
+    return nullcontext()
 
 
 # ---------------------------------------------------------------------------
@@ -224,13 +310,27 @@ def channels(tid: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
             for k, w in SRC.CHANNEL_WORDS.items()]
 
 
-def _payload(tid: str) -> Dict[str, Any]:
+def _store_of(token: TokenData, request: Optional[Request]) -> Optional[str]:
+    """The establishment chosen in the menu, when the account has several."""
+    try:
+        from features import store_scope as S
+        sc = S.resolve(token, request)
+        return sc.ids[0] if sc.ids and len(sc.ids) == 1 else None
+    except Exception:
+        return None
+
+
+def _payload(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
     t = _db.tenants.find_one({"id": tid}) or {}
+    from features import store_links as SL
     return {
+        # multi-store (2026-10-12): each establishment's own link and QR
+        "stores": SL.public_stores(t) if t else [],
         "channels": channels(tid),
         "shop": {"name": t.get("name") or "", "city": t.get("city") or "",
-                 "slug": t.get("slug") or "", **_brand(tid)},
-        "stats": stats(tid),
+                 "slug": t.get("slug") or "", **_brand(tid, store)},
+        "stats": stats(tid, store=store),
+        "store_id": store,
         "page": page_of(t),
         "defaults": DEFAULT_PAGE,
         "limits": {**LIMITS, "slug_min": SLUG_MIN, "slug_max": SLUG_MAX},
@@ -238,8 +338,9 @@ def _payload(tid: str) -> Dict[str, Any]:
 
 
 @router.get("/api/owner/join-link")
-def get_join_link(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    return _payload(token_data.tenant_id)
+def get_join_link(request: Request = None,
+                  token_data: TokenData = Depends(require_role(["business_owner", "manager"], partial_ok=True))):
+    return _payload(token_data.tenant_id, _store_of(token_data, request))
 
 
 @router.get("/api/owner/join-link/slug-check")
@@ -254,7 +355,7 @@ class SlugIn(BaseModel):
 
 @router.put("/api/owner/join-link/slug")
 @SV.records("lien-inscription")
-def put_slug(body: SlugIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def put_slug(body: SlugIn, request: Request = None, token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
     result = check_slug(body.slug, tid)
     if not result["available"]:
@@ -268,7 +369,7 @@ def put_slug(body: SlugIn, token_data: TokenData = Depends(require_role(["busine
         _db.tenants.update_one({"id": tid}, update)
         # Taking back a name the shop once had: it is live again, not "previous".
         _db.tenants.update_one({"id": tid}, {"$pull": {"previous_slugs": new}})
-    return _payload(tid)
+    return _payload(tid, _store_of(token_data, request))
 
 
 class PageIn(BaseModel):
@@ -280,7 +381,7 @@ class PageIn(BaseModel):
 
 @router.put("/api/owner/join-link/page")
 @SV.records("lien-inscription")
-def put_page(body: PageIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def put_page(body: PageIn, request: Request = None, token_data: TokenData = Depends(require_role(["business_owner"]))):
     title, subtitle, button = body.title.strip(), body.subtitle.strip(), body.button.strip()
     benefits = [b.strip() for b in body.benefits if b and b.strip()]
     if not title or not button:
@@ -293,24 +394,64 @@ def put_page(body: PageIn, token_data: TokenData = Depends(require_role(["busine
     _db.tenants.update_one({"id": token_data.tenant_id}, {"$set": {"join_page": {
         "title": title, "subtitle": subtitle, "benefits": benefits, "button": button,
         "updated_at": _now()}}})
-    return _payload(token_data.tenant_id)
+    return _payload(token_data.tenant_id, _store_of(token_data, request))
+
+
+class SignupImageIn(BaseModel):
+    image: Optional[str] = None          # data:image/… or https://…; empty: back to the card's logo
+
+
+@router.put("/api/owner/join-link/image")
+@SV.records("lien-inscription")
+def put_signup_image(body: SignupImageIn, request: Request = None,
+                     token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """The establishment chosen in the menu gets its own signup-page image."""
+    tid = token_data.tenant_id
+    img = (body.image or "").strip()
+    from services import media as _M
+    if img and not _M.is_image_value(img):
+        raise HTTPException(status_code=400, detail="Image invalide.")
+    if len(img) > MAX_SIGNUP_IMAGE:
+        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches.id": 1, "branches.status": 1}) or {}
+    stores = _open_stores(t)
+    store = None
+    if len(stores) >= 2:
+        from features import store_cards as SC
+        store = SC.store_for(tid)
+        if not any(b["id"] == store for b in stores):
+            raise HTTPException(status_code=400, detail="Choisissez d'abord l'établissement dans le menu.")
+    set_image(tid, store, img)
+    return _payload(tid, store or _store_of(token_data, request))
 
 
 # ---------------------------------------------------------------------------
 # public endpoints — the signup page itself
 # ---------------------------------------------------------------------------
 @router.get("/api/join/{slug}/page")
-def public_page(slug: str):
+def public_page(slug: str, store: Optional[str] = None):
+    """`store`: the link's second segment — an establishment's slug (its own
+    card and logo) or a channel word (ignored)."""
     t = tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Commerce introuvable")
+    from features import store_links as SL
+    from features import store_cards as SC
+    stores = SL.public_stores(t)
+    st = SL.store_by(t, store)
+    brand = _brand(t["id"], st["id"] if st else None)
     return {"slug": t.get("slug"), "name": t.get("name") or "", "city": t.get("city") or "",
-            "page": page_of(t), **_brand(t["id"])}
+            "page": page_of(t), **brand,
+            # « Votre établissement »: the stores of the account (one → no question);
+            # a store whose card is off is listed (its link says so) but not offered
+            "stores": stores if len(stores) > 1 else [],
+            "card_off_message": SL.CARD_OFF_MSG}
 
 
 class ViewIn(BaseModel):
     visitor: str
     src: Optional[str] = None
+    store: Optional[str] = None          # the establishment of the link (its slug)
 
 
 @router.post("/api/join/{slug}/view")
@@ -323,13 +464,16 @@ def record_view(slug: str, body: ViewIn):
         return {"ok": False}
     from services.sources import normalize
     src = normalize(body.src) or ""
+    from features import store_links as SL
+    st = SL.store_by(t, body.store)
     at = _now()
     try:
         _db.join_views.update_one(
             {"tenant_id": t["id"], "visitor": visitor, "day": at.strftime("%Y-%m-%d")},
             {"$setOnInsert": {"tenant_id": t["id"], "visitor": visitor,
                               "day": at.strftime("%Y-%m-%d"), "at": at,
-                              "src": src if src in KNOWN_SOURCES else None}},
+                              "src": src if src in KNOWN_SOURCES else None,
+                              "store": st["id"] if st else None}},
             upsert=True)
     except Exception:
         # Two tabs racing on the unique index: the visit is already counted.

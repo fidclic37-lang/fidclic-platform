@@ -92,11 +92,13 @@ PLACEHOLDERS = {
     "statut": "tier", "tier": "tier", "recompense": "reward", "reward": "reward",
     "offre": "offer", "offer": "offer", "visites": "visits", "visits": "visits",
     "membre_depuis": "member_since", "member_since": "member_since", "commerce": "shop", "shop": "shop",
+    "jauge": "meter", "meter": "meter",
 }
 # values that change, and so notify the customer when they do. The offer is
 # not here: FidClic's own « Offre du moment » on the back already notifies,
 # and two changed fields would ring twice.
-NOTIFY = {"points": "Vous avez maintenant %@ points", "stamps": "Tampons : %@", "tier": "Nouveau statut : %@"}
+NOTIFY = {"points": "Vous avez maintenant %@ points", "stamps": "Tampons : %@", "meter": "Tampons : %@",
+          "tier": "Nouveau statut : %@"}
 _ONLY = re.compile(r"^\s*\{([^{}]{1,30})\}\s*$")
 
 # The owner's preview: a design not saved yet stands in for the saved one
@@ -198,17 +200,51 @@ def _fill(text: Any, values: Dict[str, Any]) -> Any:
     return re.sub(r"\{([^{}]{1,30})\}", rep, text)
 
 
-def _fields(rows: List[Dict[str, Any]], values: Dict[str, Any]) -> List[Dict[str, Any]]:
+# A field whose KEY names a customer value (Pass Designer's CUST_NAME,
+# CUST_ID…) used to show that value whatever its text — « SPIRIT OF ECSTACY »
+# in the editor, « Marie » on the card (user, 2026-10-12: « fields mein jo
+# bhi hai woh directly card mein dikhni chahiye »). Such a text is written as
+# the matching {placeholder} once (import, or the editor opening an older
+# design), and from then on the text IS the field: what the owner types is
+# what the card shows.
+KIND_PLACEHOLDER = {"name": "{nom}", "first_name": "{prenom}", "card": "{carte}", "points": "{points}",
+                    "stamps": "{tampons}", "tier": "{statut}", "reward": "{recompense}", "offer": "{offre}",
+                    "visits": "{visites}", "member_since": "{membre_depuis}"}
+
+
+def show_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """The design with every key-filled field written as its placeholder."""
+    t = copy.deepcopy(raw)
+    for style in STYLES:
+        block = t.get(style)
+        if not isinstance(block, dict):
+            continue
+        for g in GROUPS:
+            for f in block.get(g) or []:
+                if not isinstance(f, dict):
+                    continue
+                kind = _kind_of_key(f.get("key"))
+                val = f.get("value")
+                if kind and not (isinstance(val, str) and _ONLY.match(val)
+                                 and PLACEHOLDERS.get(_ONLY.match(val).group(1).strip().lower()) == kind):
+                    f["value"] = KIND_PLACEHOLDER[kind]
+    return t
+
+
+def _fields(rows: List[Dict[str, Any]], values: Dict[str, Any], by_key: bool = True) -> List[Dict[str, Any]]:
+    """`by_key`: an older design, saved before show_keys — its key-named
+    fields still show the customer's value."""
     out = []
     for f in rows or []:
         f = dict(f)
-        kind = _kind_of_key(f.get("key"))
+        kind = _kind_of_key(f.get("key")) if by_key else None
         if kind:
             f["value"] = values.get(kind, f.get("value"))
         else:
             only = _ONLY.match(f["value"]) if isinstance(f.get("value"), str) else None
             kind = PLACEHOLDERS.get(only.group(1).strip().lower()) if only else None
-            f["value"] = _fill(f.get("value"), values)
+            # a lone {points} keeps the number (Wallet formats it), else text
+            f["value"] = values.get(kind, f.get("value")) if kind else _fill(f.get("value"), values)
         if kind and f["value"] in (None, ""):
             continue                                    # {offre} with no campaign running: no empty row
         if kind in NOTIFY and "changeMessage" not in f:
@@ -254,7 +290,8 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
     our_back = (pj.get(ours_style) or {}).get("backFields", []) if ours_style else []
     out = {k: v for k, v in pj.items() if k not in STYLES and k != "logoText"}
 
-    block = {g: _fields(rows, values) for g, rows in t[style].items() if g in GROUPS}
+    by_key = not tpl.get("literal")
+    block = {g: _fields(rows, values, by_key) for g, rows in t[style].items() if g in GROUPS}
     for k, v in t[style].items():                       # transitType and other style keys
         if k not in GROUPS:
             block[k] = v
@@ -267,7 +304,7 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
     if style == "posterGeneric":
         own = next((st for st in STYLES if st != "posterGeneric" and isinstance(t.get(st), dict)), None)
         if fb == "template" and own:
-            out[own] = {g: _fields(rows, values) for g, rows in t[own].items() if g in GROUPS}
+            out[own] = {g: _fields(rows, values, by_key) for g, rows in t[own].items() if g in GROUPS}
             out[own]["backFields"] = block["backFields"]
         elif fb in ("fidclic", "template") and isinstance(pj.get("storeCard"), dict):
             fb = "fidclic"
@@ -286,8 +323,9 @@ def apply(pj: Dict[str, Any], tpl: Dict[str, Any], values: Dict[str, Any]) -> Di
         if pj.get("backgroundColor"):
             out["backgroundColor"] = pj["backgroundColor"]
         out["logoText"] = pj.get("logoText") or values.get("shop") or ""
-    if t.get("logoText"):
-        out["logoText"] = _fill(t["logoText"], values)
+    # The shop's name is set once, in Identité (user, 2026-10-12: « logo text
+    # style se htao, already hai in the identity »): a design's own logoText
+    # no longer overrides it.
 
     # the barcode: the design's format and fallback, carrying OUR message
     from features.wallet_passes import build_barcodes, BARCODE_FORMATS
@@ -320,8 +358,15 @@ def actions_of(t: Dict[str, Any]) -> List[Dict[str, str]]:
 def images(tpl: Dict[str, Any]) -> Dict[str, bytes]:
     """The template's images as pass files (PNG bytes by name)."""
     out: Dict[str, bytes] = {}
+    from services import media as _M
     for name, url in _image_items(tpl):
-        if IMAGE_RE.match(name) and isinstance(url, str) and url.startswith("data:image/"):
+        if not (IMAGE_RE.match(name) and isinstance(url, str)):
+            continue
+        if _M.is_ref(url):                             # stored in `media` (2026-10-13)
+            raw = _M.resolve(url)
+            if raw:
+                out[name] = raw
+        elif url.startswith("data:image/"):
             try:
                 out[name] = base64.b64decode(url.split(",", 1)[1])
             except Exception:
@@ -395,7 +440,7 @@ def png_data(name: str, url: str) -> Optional[str]:
         k = {"@3x": 1, "@2x": 2 / 3, None: 1 / 3}[m.group(2)]
         im.thumbnail((max(1, int(mw * k)), max(1, int(mh * k))), Image.LANCZOS)
         b = io.BytesIO()
-        im.save(b, "PNG", optimize=True)
+        im.save(b, "PNG", compress_level=3)           # optimize=True took seconds on Vercel
         return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
     except Exception:
         return None
@@ -411,6 +456,10 @@ def _images_in(body_images: Dict[str, str], saved: List[Dict[str, Any]]) -> List
         if url == "saved":
             if have.get(name):
                 imgs.append({"name": name, "data": have[name]})
+            continue
+        from services import media as _M
+        if _M.is_ref(url) and _M.resolve(url) is not None:   # a picture already stored: kept as it is
+            imgs.append({"name": name, "data": url})
             continue
         if not isinstance(url, str) or len(url) > MAX_IMAGE * 3:
             raise HTTPException(status_code=400, detail=f"Image {name} trop lourde.")
@@ -432,7 +481,8 @@ def design_from_body(tid: str, body: Dict[str, Any]) -> Optional[Dict[str, Any]]
         imgs = _images_in(body.get("images") or {}, stored.get("images") or [])
     except HTTPException:
         imgs = []
-    return {"active": True, "name": "aperçu", "pass": raw, "images": imgs, "options": _clean_options(body.get("options"))}
+    return {"active": True, "name": "aperçu", "pass": raw, "images": imgs, "options": _clean_options(body.get("options")),
+            "literal": True}
 
 
 MAX_ZIP = 12_000_000
@@ -472,7 +522,9 @@ def get_template(full: bool = False,
            "imported_at": t.get("imported_at").isoformat() if isinstance(t.get("imported_at"), datetime) else t.get("imported_at"),
            "images": sorted(n for n, _ in _image_items(t))}
     if full:                                   # the editor opens it
-        out.update({"pass": _strip_ids(t["pass"]), "options": options_of(t),
+        # an older design opens with its key-filled fields as placeholders,
+        # so the editor shows what the card shows
+        out.update({"pass": _strip_ids(t["pass"] if t.get("literal") else show_keys(t["pass"])), "options": options_of(t),
                     "image_data": {n: d for n, d in _image_items(t)}})
     return out
 
@@ -494,7 +546,10 @@ def get_starter(token_data: TokenData = Depends(require_role(["business_owner", 
     header = ([{"key": "POINTS", "label": (card.get("points_label") or "Points").upper(), "value": "{points}"}]
               if card.get("show_points") is not False else
               [{"key": "STATUT", "label": "STATUT", "value": "{statut}"}])
-    progress = ({"key": "STAMPS", "label": (card.get("stamps_label") or "Tampons").upper(), "value": "{tampons}"}
+    # the tampons as a jauge under the QR, the count in its label (user, 2026-10-11)
+    # (key JAUGE: a STAMPS key would be filled with « 3 / 10 », see KEY_MAP)
+    progress = ({"key": "JAUGE", "label": (card.get("stamps_label") or "Tampons").upper() + " · {tampons}",
+                 "value": "{jauge}"}
                 if card.get("show_stamps") is not False else
                 {"key": "REWARD", "label": "RÉCOMPENSE", "value": "{recompense}"})
     raw = {
@@ -517,7 +572,7 @@ def get_starter(token_data: TokenData = Depends(require_role(["business_owner", 
         photo = None
         if card.get("poster_image_url"):
             photo = WP._fetch_image(card.get("poster_image_url"))
-        bg = WP.compose_poster(photo or WP._hero_raw(card), colors, 0, 10, False)
+        bg = WP.compose_poster(photo or WP._hero_raw(card), colors)
         if bg:
             images["background@3x.png"] = "data:image/png;base64," + base64.b64encode(bg).decode()
         logo = WP._fetch_image(card.get("logo_url"))
@@ -550,9 +605,12 @@ def put_template(body: TemplateIn, token_data: TokenData = Depends(require_role(
     tid = token_data.tenant_id
     stored = (_db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "pass_designer": 1}) or {}).get("pass_designer") or {}
     imgs = _images_in(body.images or {}, stored.get("images") or [])
+    # the editor sends what it shows; an import is written out first
+    raw = raw if body.source == "editor" else show_keys(raw)
+    raw.pop("logoText", None)                    # the name is Identité's
     doc = {"active": True, "name": (body.name or "Modèle Pass Designer")[:80], "pass": raw, "images": imgs,
            "options": _clean_options(body.options), "source": "editor" if body.source == "editor" else "import",
-           "imported_at": _now(), "imported_by": token_data.email}
+           "imported_at": _now(), "imported_by": token_data.email, "literal": True}
     sets: Dict[str, Any] = {"tenant_id": tid, "pass_designer": doc, "poster_style": True, "updated_at": _now()}
     from features.wallet_passes import clean_featured
     if body.featured_actions is not None:            # the editor's buttons
@@ -561,6 +619,19 @@ def put_template(body: TemplateIn, token_data: TokenData = Depends(require_role(
         acts = clean_featured(actions_of(raw), keep_empty=True)
         if acts or raw.get("featuredActions") is not None:
             sets["featured_actions"] = acts
+    # An imported template's photo and logo become the card's (« Identité »,
+    # the one place they are set — user, 2026-10-12), so the owner sees and
+    # frames them there. A logo the card already has is kept.
+    if doc["source"] == "import":
+        have = {row["name"]: row["data"] for row in imgs if isinstance(row, dict)}
+        bg = next((have[n] for n in ("background@3x.png", "background@2x.png", "background.png") if have.get(n)), None)
+        if bg and style_of(raw) == "posterGeneric" and len(bg) <= 3_500_000:
+            sets["poster_image_url"] = bg
+        cur = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
+        lg = next((have[n] for n in ("primaryLogo@3x.png", "primaryLogo@2x.png", "logo@3x.png", "logo@2x.png",
+                                     "primaryLogo.png", "logo.png") if have.get(n)), None)
+        if lg and not cur.get("logo_url"):
+            sets["logo_url"] = lg
     _db.card_templates.update_one({"tenant_id": tid}, {"$set": sets}, upsert=True)
     try:
         from features.wallet_passes import notify_tenant

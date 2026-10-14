@@ -214,6 +214,18 @@ def _problem(r: Dict[str, Any]) -> Optional[str]:
         return "Ni email ni téléphone"
     if r["email"] and not EMAIL_RE.match(r["email"]):
         return "Email invalide"
+    # The signup form's rules (user, 2026-10-11): a real address — shape,
+    # typos, throwaway inboxes (no DNS here: a file may hold hundreds of
+    # domains) — and a French postal code.
+    if r["email"]:
+        from services import email_check
+        verdict = email_check.check(r["email"], dns=False)
+        if not verdict["ok"]:
+            return verdict["reason"] or "Email invalide"
+    if r["postal_code"]:
+        from services.fr_postcodes import CODES
+        if r["postal_code"] not in CODES:
+            return "Code postal inconnu en France"
     if r["phone"] and not (8 <= len(r["phone"].lstrip("+")) <= 15):
         return "Téléphone invalide"
     return None

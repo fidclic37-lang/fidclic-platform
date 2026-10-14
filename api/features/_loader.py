@@ -30,6 +30,8 @@ MODULES = [
     "features.invoices",
     "features.privacy_page",
     "features.security_page",
+    "features.scan_page",               # « Enregistrer une visite » — la carte scannée
+    "features.account_email",           # Sécurité › changer l'adresse e-mail du compte
     "features.preferences",
     "features.platform_access",
     "features.platform_reset",
@@ -101,8 +103,10 @@ MODULES = [
     "features.customer_status",         # configurable active/inactive definition
     "features.customer_rules",          # Paramètres › Règles clients (drives the Clients page statuses)
     "features.team_access",             # Paramètres › Équipe & accès (roles, establishments, accounts)
+    "features.role_perms",              # rôles et permissions par page (Voir / Modifier, par établissement)
     "features.store_scope",             # which establishments a request is about (the logo dropdown)
     "features.join_link",               # Paramètres › Lien d'inscription & QR (+ signup-page visits)
+    "features.store_links",             # each establishment's link + QR, the client's home store (multi-store)
     "features.tier_definitions",        # custom tier thresholds + big-spender rule
     "features.auto_campaigns",          # auto birthday + inactive rescue messages
     # Automatisations · Push Wallet — scenarios that fire on their own and land
@@ -136,6 +140,7 @@ MODULES = [
     "features.pass_designer",           # Apple Pass Designer templates as the card's design
     # Carte de fidélité — design, programme rules, tiers and the page's figures.
     "features.loyalty_card",
+    "features.milestones",              # Objectifs et récompenses (paliers que le commerce se fixe)
     # Besoin d'aide ? — FAQ knowledge base + the support assistant that answers
     # from it. Answers from the KB even with no LLM key configured.
     "features.support_assistant",
