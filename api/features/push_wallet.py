@@ -192,6 +192,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _paris(at: datetime) -> datetime:
+    from features import period as P
+    return P.local(at)
+
+
+def _ran_today(row: Dict[str, Any], at: datetime) -> bool:
+    """A « Plage horaire » scenario runs once a day, when its window opens —
+    the 15-minute tick (server.tick_pass) would otherwise run it again and
+    again inside the window."""
+    last = _aware(row.get("last_run_at"))
+    return bool(last and _paris(last).date() == _paris(at).date())
+
+
 def _aware(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -328,9 +341,13 @@ def _audience(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any
     base = {"tenant_id": tid}
     fields = {"_id": 0, "id": 1, "name": 1, "barcode_id": 1, "tier": 1, "points": 1,
               "visits": 1, "birthday": 1, "last_visit_date": 1}
+    # Days, weekdays and hours are the shop's — Paris — not the server's UTC
+    # (2026-10-09: « 11h–13h » ran two hours late, a birthday or a date near
+    # midnight landed on the wrong day).
+    loc = _paris(at)
 
     if trigger == "birthday":
-        base["birthday"] = at.strftime("%m-%d")
+        base["birthday"] = loc.strftime("%m-%d")
 
     elif trigger == "tier_up":
         # Levelled up since the last run — the scan stamps tier_changed_at.
@@ -345,24 +362,24 @@ def _audience(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any
         base["last_visit_date"] = {"$lt": at - timedelta(days=days)}
 
     elif trigger == "date_event":
-        if int(cfg.get("day_of_month") or 0) != at.day:
+        if int(cfg.get("day_of_month") or 0) != loc.day:
             return []
 
     elif trigger == "specific_date":
-        if str(cfg.get("date") or "")[:10] != at.date().isoformat():
+        if str(cfg.get("date") or "")[:10] != loc.date().isoformat():
             return []
 
     elif trigger == "time_slot":
         # weekdays are 0 = Monday, matching Python's weekday()
         days = cfg.get("weekdays") or []
-        if days and at.weekday() not in [int(d) for d in days]:
+        if days and loc.weekday() not in [int(d) for d in days]:
             return []
         start, end = int(cfg.get("from_hour") or 0), int(cfg.get("to_hour") or 24)
         if end <= start:
             # An empty window can never come round; treat it as unconfigured
             # rather than as "every hour" or as silently never.
             return []
-        if not (start <= at.hour < end):
+        if not (start <= loc.hour < end):
             return []
 
     elif trigger == "new_product":
@@ -514,7 +531,11 @@ def prepare_scenario(tid: str, row: Dict[str, Any], at: Optional[datetime] = Non
     return result
 
 
-def run_due_for_tenant(tid: str, at: Optional[datetime] = None) -> Dict[str, Any]:
+TIME_TRIGGERS = {"time_slot"}       # run by the 15-minute tick, at their hour
+
+
+def run_due_for_tenant(tid: str, at: Optional[datetime] = None, only: Optional[set] = None) -> Dict[str, Any]:
+    """`only`: these triggers alone (the tick: « Plage horaire »)."""
     at = at or _now()
     out = {"tenant_id": tid, "ran": [], "sent": 0, "prepared": 0}
     # Switched on for the shop, or by an establishment for itself.
@@ -523,6 +544,11 @@ def run_due_for_tenant(tid: str, at: Optional[datetime] = None) -> Dict[str, Any
         row.pop("_id", None)
         if not row.get("enabled") and row["id"] not in on_somewhere:
             continue
+        if only is not None and row.get("trigger") not in only:
+            continue
+        if row.get("trigger") in TIME_TRIGGERS:
+            if _ran_today(row, at) or not _audience_open(row, at):
+                continue
         if row.get("trigger") in AUTOMATIC:
             res = run_scenario(tid, row, at, scheduled=True)
             out["sent"] += res["sent"]
@@ -534,8 +560,20 @@ def run_due_for_tenant(tid: str, at: Optional[datetime] = None) -> Dict[str, Any
     return out
 
 
-def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
-    """Called by the daily cron. One tenant's failure never stops the others."""
+def _audience_open(row: Dict[str, Any], at: datetime) -> bool:
+    """Is a « Plage horaire » window open now (its day, its hours, in Paris)?"""
+    cfg = row.get("config") or {}
+    loc = _paris(at)
+    days = cfg.get("weekdays") or []
+    if days and loc.weekday() not in [int(d) for d in days]:
+        return False
+    start, end = int(cfg.get("from_hour") or 0), int(cfg.get("to_hour") or 24)
+    return end > start and start <= loc.hour < end
+
+
+def run_all_due(at: Optional[datetime] = None, only: Optional[set] = None) -> Dict[str, Any]:
+    """Called by the daily cron (everything) and the 15-minute tick (`only` =
+    TIME_TRIGGERS). One tenant's failure never stops the others."""
     at = at or _now()
     summary = {"tenants": 0, "sent": 0, "prepared": 0, "at": at.isoformat()}
     try:
@@ -548,7 +586,7 @@ def run_all_due(at: Optional[datetime] = None) -> Dict[str, Any]:
         if not plan_limits.allows_tenant(tid, "automations"):    # Automatisation not in the plan
             continue
         try:
-            res = run_due_for_tenant(tid, at)
+            res = run_due_for_tenant(tid, at, only)
             summary["tenants"] += 1
             summary["sent"] += res["sent"]
             summary["prepared"] += res["prepared"]

@@ -179,17 +179,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # ---- time slot --------------------------------------------------------------
     print("\nHeure creuse fires inside its window only")
     slot = db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "off_peak"})
-    at = now.replace(hour=15)
+    # the window is read on the shop's clock — Paris (2026-10-09)
+    from zoneinfo import ZoneInfo
+    paris = lambda d, h: d.astimezone(ZoneInfo("Europe/Paris")).replace(hour=h).astimezone(dt.timezone.utc)
+    at = paris(now, 15)
     db.push_scenarios.update_one({"id": slot["id"]}, {"$set": {
         "config": {"weekdays": [at.weekday()], "from_hour": 14, "to_hour": 17}}})
     check("inside the hours and on the right weekday, it fires",
           fire("off_peak", at)["targeted"] == 5)
     db.push_wallet_log.delete_many({"scenario_id": slot["id"]})
     check("an hour outside the window does nothing",
-          fire("off_peak", now.replace(hour=9))["targeted"] == 0)
+          fire("off_peak", paris(now, 9))["targeted"] == 0)
     other_day = at + dt.timedelta(days=1)
     check("the right hour on the wrong weekday does nothing",
-          fire("off_peak", other_day.replace(hour=15))["targeted"] == 0)
+          fire("off_peak", paris(other_day, 15))["targeted"] == 0)
 
     # ---- new product --------------------------------------------------------------
     print("\nNouveautés waits for something new")

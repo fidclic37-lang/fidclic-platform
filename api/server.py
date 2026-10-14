@@ -6592,10 +6592,21 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     #   • An e-mail is one customer too (QA F16): a new phone with someone
     #     else's e-mail is refused, as « Modifier la fiche » already does.
     # Erased customers (deleted_at) no longer count.
+    #   • Per establishment (user, 2026-10-14): a client of Liberté who signs
+    #     up at Palissy is a new client there, with a card of his own. The
+    #     home store is known first (the link, the form, the parrain's).
     from services import customer_fields as _CF
+    from features import store_links as _SL
+    _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
+                                     {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
+    home = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None,
+                               parrain_link=bool(str(req.parrain_barcode or "").strip()))
     norm_email = (req.email or "").strip().lower()
     phone_key = _CF.phone_digits(req.phone)
     live = {"tenant_id": tid, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    if home:
+        # the main store's clients include those never given a store
+        live = {"$and": [live, {"branch_id": {"$in": [home, None, ""]} if home == _SC.main_store(tid) else home}]}
     phone_match = next((c for c in db.customers.find(live, {"_id": 1, "id": 1, "barcode_id": 1, "phone": 1})
                         if phone_key and _CF.phone_digits(c.get("phone")) == phone_key), None)
     email_match = None
@@ -6614,7 +6625,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         # 2026-10-09): typing someone's number used to open THEIR card, owner
         # key included — points, « Télécharger / Supprimer mes données ».
         # Their own card is in their Wallet, or shown at the counter.
-        shop = t.get("name") or "ce commerce"
+        shop = (_SC.store_name(tid, home) if home else None) or t.get("name") or "ce commerce"
         if phone_match:
             code = "already_member"
             message = (f"Ce numéro a déjà une carte chez {shop}. "
@@ -6716,12 +6727,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
     # The home store: the store of the link / the form, or the parrain's
-    # (features/store_links). Checked before anything is written.
-    from features import store_links as _SL
-    _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
-                                     {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
-    cust_doc["branch_id"] = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None,
-                                              parrain_link=bool(str(req.parrain_barcode or "").strip()))
+    # (features/store_links) — found above, before anything is written.
+    cust_doc["branch_id"] = home
     if getattr(req, "_birth_date", None):
         cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came
@@ -8011,7 +8018,7 @@ def _heuristic_campaign_recap(campaign: Dict[str, Any], audience: Dict[str, Any]
     sent_hour = None
     if campaign.get("sent_at"):
         try:
-            sent_hour = campaign["sent_at"].hour
+            sent_hour = _paris_time(campaign["sent_at"]).hour
         except Exception:
             pass
 
@@ -9697,6 +9704,7 @@ def get_time_segmentation(token_data: TokenData = Depends(require_role(["busines
         vt = v.get("visit_time") or v.get("created_at")
         if not vt:
             continue
+        vt = _paris_time(vt)               # the shop's hours, not UTC's (2026-10-09)
         h = vt.hour
         wd = vt.weekday()
         hour_buckets[h] += 1
@@ -10443,7 +10451,7 @@ def get_ai_suggestions(
     for v in visits_recent:
         ts = v.get("created_at")
         if isinstance(ts, datetime):
-            by_weekday[ts.weekday()] += 1
+            by_weekday[_paris_time(ts).weekday()] += 1
     if visits_recent:
         avg = sum(by_weekday.values()) / 7
         quietest_day = min(range(7), key=lambda d: by_weekday[d])
@@ -11809,6 +11817,65 @@ def _supersede_pending(tenant_id: str, kind: str) -> int:
 
 
 LEGACY_AUTO_ENGINE = False
+
+
+def _paris_time(t: datetime) -> datetime:
+    """A stored (UTC) time on the shop's clock."""
+    from features import period as _P
+    return _P.local(t)
+
+
+def _cron_ok(request: Request) -> None:
+    provided = (
+        request.headers.get("x-cron-secret")
+        or (request.headers.get("authorization", "").replace("Bearer ", "") if request.headers.get("authorization") else "")
+        or request.query_params.get("secret", "")
+    )
+    if CRON_SECRET and provided != CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+
+@app.get("/api/cron/tick")
+@app.post("/api/cron/tick")
+def run_tick(request: Request):
+    """Every 15 minutes (vercel.json; needs Vercel Pro — 2026-10-09). The
+    daily run is once a day at 07:00 UTC, so a campaign planned for 18:30
+    left the next morning, and a « Plage horaire » 11h–13h never ran."""
+    _cron_ok(request)
+    return tick_pass()
+
+
+def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What must happen at its time, not once a day. Idempotent: running it
+    twice sends nothing twice (a campaign leaves `scheduled` before it sends;
+    a time slot runs once a day)."""
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, Any] = {"at": now.isoformat(), "failures": []}
+    try:                         # planned campaigns — the merchant's and the Autopilot's
+        from features.campaigns_page import run_due as _run_due_campaigns
+        out["campaigns"] = _run_due_campaigns(now)
+    except Exception as e:
+        out["failures"].append({"step": "campaigns", "error": str(e)[:120]})
+    try:                         # Automatisations (features/automations): each at its hour,
+        # event messages released the moment their window opens
+        from features.automations import run_due as _auto_run_due
+        out["automations"] = _auto_run_due(now, source="tick")
+    except Exception as e:
+        out["failures"].append({"step": "automations", "error": str(e)[:120]})
+    try:                         # Géolocalisation: Wallet passes follow the hours and the weather
+        from features.geo_automation import sync_passes as _geo_sync
+        out["geo_passes"] = _geo_sync(now)
+    except Exception as e:
+        out["failures"].append({"step": "geo_passes", "error": str(e)[:120]})
+    try:                         # CRM « Séquences » mails at their hour (was #80's own 15-min cron:
+        # one tick for everything wakes the server half as often — 2026-10-14, Fluid CPU)
+        from features import crm_email as _CE
+        if _CE._cfg():
+            out["crm_mail"] = {"replies": (_CE.check_replies() or {}).get("replies", 0),
+                               **_CE.run_due(max_send=40, budget_s=15)}
+    except Exception as e:
+        out["failures"].append({"step": "crm_mail", "error": str(e)[:120]})
+    return out
 
 
 @app.get("/api/cron/daily-triggers")

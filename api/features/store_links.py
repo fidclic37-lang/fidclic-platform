@@ -139,7 +139,7 @@ def parrain_store(t: Dict[str, Any], parrain: Optional[Dict[str, Any]]) -> Optio
         return None
     pid = (parrain or {}).get("branch_id")
     return next((b for b in stores if b["id"] == pid), None) \
-        or next((b for b in stores if b.get("is_main")), None) or stores[0]
+        or next((b for b in stores if b.get("is_main") or b["id"] == "main"), None) or stores[0]
 
 
 def home_for_signup(t: Dict[str, Any], store: Optional[str], parrain: Optional[Dict[str, Any]],

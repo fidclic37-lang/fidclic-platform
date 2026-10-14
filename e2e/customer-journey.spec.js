@@ -159,7 +159,8 @@ test.describe.serial('a customer, end to end', () => {
     const page = await ctx.newPage();
     const w = watch(page);
     await page.goto(`/card/${me.barcode}`);
-    await expect(page).toHaveURL(new RegExp(`/join/${SLUG}\\?p=${me.barcode}`));
+    // the signup of the friend's own establishment (one card per store, 2026-10-14)
+    await expect(page).toHaveURL(new RegExp(`/join/${SLUG}(/[a-z0-9-]+)?\\?p=${me.barcode}`));
     const friend = await signup(page, { name: 'Lou Ami', tel: phone(), path: null });
     expect(friend.barcode).not.toBe(me.barcode);
     await w.clean("friend's new card");
