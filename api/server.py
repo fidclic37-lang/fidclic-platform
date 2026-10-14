@@ -1,3 +1,9 @@
+# The start-up measures itself: a request that answered in 15 ms was seen to
+# take 9,6 s in production because the function was asleep, and `app`/`db` —
+# both measured inside the handler — can never show that (services/server_timing).
+import time as _boot_time
+_BOOT_T0 = _boot_time.perf_counter()
+
 from datetime import datetime, timezone, timedelta
 import uuid
 import contextvars
@@ -12397,7 +12403,14 @@ def resolve_upgrade_request(
 # any existing endpoint or model. Safe to comment out to roll back.
 # ============================================================
 from features._loader import register_all
+_t_imports = (_boot_time.perf_counter() - _BOOT_T0) * 1000
 register_all(app, db)
+try:
+    _ST.boot_mark("imports", _t_imports)
+    _ST.boot_mark("features", (_boot_time.perf_counter() - _BOOT_T0) * 1000 - _t_imports)
+    _ST.boot_ready((_boot_time.perf_counter() - _BOOT_T0) * 1000)
+except Exception:  # noqa: BLE001 — a start must never fail on its own stopwatch
+    pass
 
 
 # ─────────────────────────────────────────────────────────────────────
