@@ -177,6 +177,10 @@ def identity(user: Dict[str, Any]) -> Dict[str, Any]:
     all_ids = [s["id"] for s in stores(user["tenant_id"])]
     return {"branch_ids": _covered(user, all_ids), "scope": scope_of(user),
             "role_label": role_label(user),
+            # « Peut changer d'établissement » — read by the sidebar's switcher
+            # and the Scan page (src/lib/storeSwitch.js)
+            **({"can_switch_store": bool(user["can_switch_store"])}
+               if isinstance(user.get("can_switch_store"), bool) else {}),
             # the sidebar: this account's pages per establishment (None: the role's usual menu)
             "page_perms": RP.nav_for(user)}
 
@@ -257,6 +261,9 @@ def _public(u: Dict[str, Any], me: Dict[str, Any], all_ids: List[str], store_nam
         # per establishment {page: none|view|edit}; None for the owner (everything)
         "perms": eff, "own_perms": isinstance(u.get("perms"), dict),
         "branch_ids": covered,
+        "can_switch_store": u.get("can_switch_store"),
+        "switches_store": (u.get("can_switch_store") if isinstance(u.get("can_switch_store"), bool)
+                           else role in ("business_owner", "administrateur")),
         "stores_label": "Tous" if role == "business_owner" or set(all_ids) <= set(covered)
         and len(all_ids) > 1 else ", ".join(store_names.get(b, b) for b in covered),
         "permissions": perms,
@@ -449,6 +456,11 @@ class UserUpdate(BaseModel):
     role: Optional[str] = None
     branch_ids: Optional[List[str]] = None
     perms: Optional[Dict[str, Any]] = None
+    # « Peut changer d'établissement » (user, 2026-10-14). Unset = the role
+    # decides: the owner and an administrateur choose, the others work where
+    # they are. Set, it wins — that is how the owner hands the choice to one
+    # account without changing its role.
+    can_switch_store: Optional[bool] = None
 
 
 @router.put("/api/owner/team-access/users/{uid}")
@@ -471,6 +483,13 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
     perms = _perms_for(token.tenant_id, custom or role, ids, body.perms, me, keep=keep)
     names = _clean_names(UserIn(role=role, first_name=body.first_name, last_name=body.last_name))
     sets = {**names, "role": role, "branch_ids": ids, "updated_at": _now()}
+    # Only the owner and an administrateur hand out the choice of establishment
+    # — and never to themselves beyond what their role already gives.
+    if body.can_switch_store is None:
+        unset_switch = True
+    else:
+        unset_switch = False
+        sets["can_switch_store"] = bool(body.can_switch_store)
     unset = {}
     if custom:
         sets["custom_role"] = custom
@@ -480,6 +499,8 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
         sets["perms"] = perms
     else:
         unset["perms"] = ""
+    if unset_switch:
+        unset["can_switch_store"] = ""      # back to what the role says
     _db.users.update_one({"email": u["email"]}, {"$set": sets, **({"$unset": unset} if unset else {})})
     _audit("team.user_updated", token, u["email"])
     return _payload(token)

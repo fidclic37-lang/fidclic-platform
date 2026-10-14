@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { canSwitchStore } from '../lib/storeSwitch';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, Check, Plus, Store, Link2 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
@@ -47,7 +48,7 @@ export default function EstablishmentSwitcher({ tenant, collapsed }) {
   // always chosen (StoreGate, after login); this menu switches to another.
   const role = user?.role;
   const list = allowedStores(branches, user);
-  const fixed = role === 'manager' || role === 'staff';
+  const fixed = !canSwitchStore(user);
   const active = branchId ? list.find((b) => b.id === branchId) : null;
   const label = active?.name || list[0]?.name || tenant?.name || 'Mon établissement';
 

@@ -198,5 +198,28 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the rows carry their permission chips",
           {u["email"]: u for u in d["users"]}["sara@corner.fr"]["permissions"][:2] == ["Enregistrer une visite", "Analyses"])
 
+    # « Peut changer d'établissement » (user, 2026-10-14): the role decides by
+    # default — the owner and an administrateur choose, the others work where
+    # they are — and the owner can hand the choice to one account.
+    print("\nQui change d'établissement")
+    def ident(email):
+        return T.identity(db.users.find_one({"email": email}))
+    def row(email):
+        return next(u for u in T.get_team(token=OWNER)["users"] if u["email"] == email)
+
+    check("by default a manager does not choose", row("sara@corner.fr")["switches_store"] is False)
+    check("…and an administrateur does", row("ali@corner.fr")["switches_store"] is True)
+    check("nothing is stored until someone decides", "can_switch_store" not in ident("sara@corner.fr"))
+
+    T.update_user("sara@corner.fr", T.UserUpdate(first_name="Sara", last_name="K.", role="manager",
+                                                 branch_ids=["b-blois"], can_switch_store=True), token=OWNER)
+    check("the owner can hand the choice to one account", row("sara@corner.fr")["switches_store"] is True)
+    check("…and the app is told", ident("sara@corner.fr").get("can_switch_store") is True)
+
+    T.update_user("sara@corner.fr", T.UserUpdate(first_name="Sara", last_name="K.", role="manager",
+                                                 branch_ids=["b-blois"], can_switch_store=None), token=OWNER)
+    check("left unset, the role decides again", row("sara@corner.fr")["switches_store"] is False
+          and "can_switch_store" not in ident("sara@corner.fr"))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
