@@ -118,8 +118,14 @@ _PREFIX.sort(key=lambda x: -len(x[0]))
 # its own security and preferences, help).
 _COMMON_READ = ("/api/owner/branches", "/api/owner/tenant", "/api/owner/plan-access", "/api/owner/trial-status",
                 "/api/owner/usage", "/api/owner/limit-alerts", "/api/onboarding/status")
+# « Cet appareil est la caisse » marks the account's OWN session, like the rest
+# of /api/security — it only sits outside /sessions/ because that path ends in
+# a session id and swallowed « caisse » (features/security_page). Being common
+# exempts it from the PAGE permissions, not from its own role check: the
+# endpoint still answers only the owner and an administrateur.
 _COMMON_ANY = ("/api/owner/support", "/api/me/", "/api/security/2fa", "/api/security/activity",
-               "/api/security/overview", "/api/security/password", "/api/security/sessions")
+               "/api/security/overview", "/api/security/password", "/api/security/sessions",
+               "/api/security/caisse")
 
 # A few reads that other pages need for their own work (never a page's list):
 # the scan reads the card's rules and the product picker, a campaign reads the
