@@ -77,6 +77,17 @@ def main():
           pj.get("organizationName") == "ROYAL TRIM LIBERTÉ")
     check("logoText = the card's name", pj.get("logoText") == "ROYAL TRIM LIBERTÉ")
 
+    # test switch « apple_logo_text »: Apple writes the name, no name image
+    seen.clear()
+    WP.name_logo = lambda src, name, color, **k: (seen.setdefault("n", name), {})[1]
+    try:
+        files = {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ"}).encode(), "logo.png": b"x"}
+        WP._name_into_logos(files, {"apple_logo_text": True})
+    finally:
+        WP.name_logo = real
+    check("apple_logo_text: no name image, logoText kept",
+          "n" not in seen and json.loads(files["pass.json"]).get("logoText") == "ROYAL TRIM LIBÉRTÉ")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 
