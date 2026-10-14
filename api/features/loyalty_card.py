@@ -343,6 +343,7 @@ class CardSettings(BaseModel):
     # test, no control on the page (user, 2026-10-14): the card numbers whose
     # iOS 27 logo + name is drawn at 126 × 30 pt (wallet_passes._name_into_logos)
     poster_logo_test: Optional[List[str]] = None
+    poster_logo_test_box: Optional[List[int]] = None   # its box in pt, [width, height] (default [126, 30])
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None
