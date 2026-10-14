@@ -97,7 +97,8 @@ def main():
                          schedule={"window": True, "window_from": "12:00", "window_to": "14:00", "days": "all"},
                          message={"title": "Bienvenue", "body": "Merci !"})
     db.automations.insert_one(dict(welcome))
-    AU.fire("welcome", "t1", db.customers.find_one({"id": "b"}, {"_id": 0}), at=at_1130_paris)
+    AU.fire("welcome", "t1", db.customers.find_one({"id": "b"}, {"_id": 0}),
+            {"event": "wallet"}, at=at_1130_paris)   # welcome = the card landing in a Wallet (main, 2026-10-11)
     check("a signup at 11:30 waits for its 12:00 window", ("b", "Bienvenue") not in sent
           and db.automation_queue.count_documents({"automation_id": welcome["id"]}) == 1)
     server.tick_pass(at_1130_paris + dt.timedelta(minutes=35))                        # 12:05 Paris

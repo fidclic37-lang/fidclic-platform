@@ -11856,6 +11856,14 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["geo_passes"] = _geo_sync(now)
     except Exception as e:
         out["failures"].append({"step": "geo_passes", "error": str(e)[:120]})
+    try:                         # CRM « Séquences » mails at their hour (was #80's own 15-min cron:
+        # one tick for everything wakes the server half as often — 2026-10-14, Fluid CPU)
+        from features import crm_email as _CE
+        if _CE._cfg():
+            out["crm_mail"] = {"replies": (_CE.check_replies() or {}).get("replies", 0),
+                               **_CE.run_due(max_send=40, budget_s=15)}
+    except Exception as e:
+        out["failures"].append({"step": "crm_mail", "error": str(e)[:120]})
     return out
 
 
