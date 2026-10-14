@@ -450,9 +450,8 @@ export default function LienInscriptionPage() {
         <Kpi icon={Users} label="Nouveaux inscrits" hint={`(${s.window_days} jours)`} value={nf(s.new_signups.value)}
              delta={s.new_signups.delta_pct} note={`vs. ${s.window_days} jours précédents`} />
         <Kpi icon={Link2} label="Total des inscrits" value={nf(s.total.value)} note="Depuis le lancement" />
-        <Kpi icon={QrCode} label="Scans QR" hint={`(${s.window_days} jours)`} value={nf(s.qr_scans.value)}
-             delta={s.qr_scans.delta_pct}
-             note={s.qr_scans.delta_pct != null ? `vs. ${s.window_days} jours précédents` : measured(`Mesuré depuis le ${since}`)} />
+        <Kpi icon={QrCode} label="Scans QR" value={nf(s.qr_scans.value)}
+             note="Visites enregistrées en caisse, depuis le lancement" />
         <Kpi icon={Share2} label="Taux de conversion"
              value={s.conversion.value == null ? '—' : `${pct(s.conversion.value)}%`}
              delta={s.conversion.delta_pts} deltaUnit=" pt"

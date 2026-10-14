@@ -48,7 +48,6 @@ RESERVED = {
     "card", "carte", "fidclic", "fidelitour", "support", "aide", "help", "www",
     "static", "assets", "public", "modules", "onboarding", "cabinet", "facturation",
 }
-QR_SOURCE = "qr_store"
 from services.sources import SIGNUP_SOURCES as _SIGNUP  # one list (services/sources)
 KNOWN_SOURCES = set(_SIGNUP)
 
@@ -187,13 +186,18 @@ def stats(tid: str, at: Optional[datetime] = None, store: Optional[str] = None) 
     visits) when the account has several (multi-store, 2026-10-12)."""
     at = at or _now()
     start, prev_start = at - timedelta(days=WINDOW_DAYS), at - timedelta(days=2 * WINDOW_DAYS)
-    cq: Dict[str, Any] = {"tenant_id": tid, **({"branch_id": store} if store else {})}
-    customers = list(_db.customers.find(cq, {"_id": 0, "created_at": 1, "signup_channel": 1}))
+    # The establishment's clients and visits as every other page counts them
+    # (user, 2026-10-14: Paramètres said 3 clients where Clients said 5 — the
+    # main store's clients from before it had establishments carry no store).
+    from features import store_scope as S
+    scope = S.Scope(tenant_id=tid, ids=[store] if store else None)
+    customers = list(_db.customers.find(S.customer_filter(scope), {"_id": 0, "created_at": 1, "signup_channel": 1}))
     created = [(_aware(c.get("created_at")), c.get("signup_channel")) for c in customers]
     new_now = sum(1 for d, _ in created if d and d >= start)
     new_prev = sum(1 for d, _ in created if d and prev_start <= d < start)
 
-    vq: Dict[str, Any] = {"tenant_id": tid, **({"store": store} if store else {})}
+    # a page opened through the shop's own link (no establishment in it) is the main one's
+    vq: Dict[str, Any] = {"tenant_id": tid, **({"store": {"$in": S._branch_values(scope)}} if store else {})}
     first = _db.join_views.find_one(vq, sort=[("at", 1)])
     since = _aware(first.get("at")) if first else None
 
@@ -203,10 +207,10 @@ def stats(tid: str, at: Optional[datetime] = None, store: Optional[str] = None) 
             q["src"] = src
         return _db.join_views.count_documents(q)
 
-    scans_now = views(start, at + timedelta(seconds=1), QR_SOURCE)
-    # A comparison is only fair once the previous window was fully measured.
+    # « Scans QR » (user, 2026-10-14): every card scanned at this shop's till
+    # since the start — whatever channel the client signed up through.
+    scans = _db.visits.count_documents({"tenant_id": tid, **S.visit_filter(scope)})
     full_prev = bool(since and since <= prev_start)
-    scans_prev = views(prev_start, start, QR_SOURCE) if full_prev else None
 
     def conversion(lo, hi):
         """Signups through the page over visits of the page, same span —
@@ -228,8 +232,7 @@ def stats(tid: str, at: Optional[datetime] = None, store: Optional[str] = None) 
         "window_days": WINDOW_DAYS,
         "new_signups": {"value": new_now, "delta_pct": _pct(new_now, new_prev)},
         "total": {"value": len(customers)},
-        "qr_scans": {"value": scans_now,
-                     "delta_pct": _pct(scans_now, scans_prev) if scans_prev is not None else None},
+        "qr_scans": {"value": scans},
         "conversion": {"value": conv_now,
                        "delta_pts": (round(conv_now - conv_prev, 1)
                                      if conv_now is not None and conv_prev is not None else None)},
