@@ -70,15 +70,20 @@ export const onlyDigits = (s) => String(s ?? '').replace(/\D/g, '');
  * → { iso, national } for the field. The longest matching code wins; a code
  * shared by several countries (+1, +7) opens on the first of them.
  */
+// France (user, 2026-10-14): « +33 » is already shown next to the field — it
+// does the 0's job — so the field holds the 9 digits after it (« 612345678 »).
+// A 0 typed or pasted in front is dropped; the value stored stays « 0612345678 ».
+const frNational = (digits) => digits.replace(/^0+/, '').slice(0, 9);
+
 export function splitPhone(value, fallbackIso = 'FR') {
   const raw = String(value ?? '').trim();
-  if (!raw.startsWith('+') && !raw.startsWith('00')) return { iso: fallbackIso, national: onlyDigits(raw) };
+  if (!raw.startsWith('+') && !raw.startsWith('00')) {
+    const digits = onlyDigits(raw);
+    return { iso: fallbackIso, national: fallbackIso === 'FR' ? frNational(digits) : digits };
+  }
   let digits = onlyDigits(raw);
   if (raw.startsWith('00')) digits = digits.slice(2);
-  if (digits.startsWith('33')) {
-    const rest = digits.slice(2);
-    return { iso: 'FR', national: rest.startsWith('0') ? rest : `0${rest}` };
-  }
+  if (digits.startsWith('33')) return { iso: 'FR', national: frNational(digits.slice(2)) };
   for (let n = 3; n >= 1; n -= 1) {
     const hit = COUNTRIES.find(([, , dial]) => dial === digits.slice(0, n));
     if (hit) return { iso: hit[0], national: digits.slice(n) };
@@ -90,7 +95,7 @@ export function splitPhone(value, fallbackIso = 'FR') {
 export function joinPhone(iso, national) {
   const digits = onlyDigits(national);
   if (!digits) return '';
-  if (iso === 'FR') return digits;
+  if (iso === 'FR') return `0${frNational(digits)}`;
   const { dial } = country(iso);
   // the trunk 0 (« 07700 900123 » in the UK) is not dialled from abroad — but Italy keeps it
   const rest = dial === '39' ? digits : digits.replace(/^0/, '');
@@ -102,9 +107,9 @@ export function phoneError(iso, national) {
   const digits = onlyDigits(national);
   if (!digits) return 'Indiquez votre numéro de téléphone.';
   if (iso === 'FR') {
-    return /^0[1-9]\d{8}$/.test(digits)
+    return /^[1-9]\d{8}$/.test(frNational(digits))
       ? null
-      : 'Numéro de téléphone français : 0 suivi de 9 chiffres (par exemple 06 12 34 56 78).';
+      : 'Numéro de téléphone français : 9 chiffres après +33 (par exemple 6 12 34 56 78).';
   }
   const full = joinPhone(iso, digits).slice(1);
   const rest = full.length - country(iso).dial.length;

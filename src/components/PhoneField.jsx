@@ -56,7 +56,7 @@ export default function PhoneField({
       return;
     }
     let digits = onlyDigits(text);
-    if (iso === 'FR') digits = digits.slice(0, 10);
+    if (iso === 'FR') digits = digits.replace(/^0+/, '').slice(0, 9);   // +33 is the 0
     else digits = digits.slice(0, 14);
     setNational(digits);
     emit(iso, digits);
@@ -86,7 +86,7 @@ export default function PhoneField({
         inputMode="tel"
         data-keep-zeros=""
         autoComplete={autoComplete}
-        placeholder={placeholder || (iso === 'FR' ? '06 12 34 56 78' : `Numéro sans +${country(iso).dial}`)}
+        placeholder={placeholder || (iso === 'FR' ? '6 12 34 56 78' : `Numéro sans +${country(iso).dial}`)}
         {...rest}
         value={national}
         onChange={(e) => take(e.target.value)}
