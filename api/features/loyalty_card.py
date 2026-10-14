@@ -337,6 +337,8 @@ class CardSettings(BaseModel):
     # the shop's name beside the logo, in every Wallet (user, 2026-10-12):
     # "" = the card's text colour, "#RRGGBB" = that colour (wallet_passes.name_logo)
     logo_text_color: Optional[str] = None
+    name_logo_size: Optional[int] = None           # « Taille du logo » beside the name, 0–100 (0: the name alone)
+    name_font: Optional[str] = None                # « Police du nom » (wallet_passes.NAME_FONTS), "" = default
     name_style: Optional[Dict[str, Any]] = None    # « Nom stylé »: letter by letter (wallet_passes.clean_name_style)
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
@@ -446,6 +448,8 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "logo_ring_color": tpl.get("logo_ring_color") or "",
             "poster_footer_color": tpl.get("poster_footer_color") or "",
             "logo_text_color": tpl.get("logo_text_color") or "",
+            "name_logo_size": 100 if tpl.get("name_logo_size") is None else int(tpl.get("name_logo_size")),
+            "name_font": tpl.get("name_font") or "",
             "name_style": tpl.get("name_style") or None,
             "name_fonts": [{"key": k, "label": v[2]} for k, v in _name_fonts().items()],
             "stamp_shape": tpl.get("stamp_shape") or "",
@@ -536,6 +540,12 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Emplacement de la récompense inconnu.")
     if payload.get("logo_text_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_text_color"]):
         raise HTTPException(status_code=400, detail="Couleur du nom invalide.")
+    if payload.get("name_logo_size") is not None and not 0 <= int(payload["name_logo_size"]) <= 100:
+        raise HTTPException(status_code=400, detail="Taille du logo : de 0 à 100 %.")
+    if payload.get("name_font"):
+        from features.wallet_passes import NAME_FONTS
+        if payload["name_font"] not in NAME_FONTS:
+            raise HTTPException(status_code=400, detail="Police du nom inconnue.")
     if "name_style" in payload:
         from features.wallet_passes import clean_name_style
         payload["name_style"] = clean_name_style(payload["name_style"])
