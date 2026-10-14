@@ -24,14 +24,15 @@ def name(v: Optional[str]) -> str:
     return s
 
 
-FR_PHONE_MESSAGE = "Numéro de téléphone français : 0 suivi de 9 chiffres (par exemple 06 12 34 56 78)."
+FR_PHONE_MESSAGE = "Numéro de téléphone français : 9 chiffres après +33 (par exemple 6 12 34 56 78)."
 
 
 def phone(v: Optional[str]) -> str:
     """Digits only (user, 2026-10-09: « # », « * » and letters got through).
 
-    France: 0 then exactly 9 digits — returned as « 0612345678 ». « +33 6 … »
-    is the same number and comes back in that form too.
+    France: the 9 digits after +33, a 0 in front or not (user, 2026-10-14: the
+    form shows +33, which does the 0's job) — returned as « 0612345678 ».
+    « +33 6 … » is the same number and comes back in that form too.
     Abroad: « + », a country code from the list (services/dial_codes, the
     same as the forms' list), then the number — returned as « +447700900123 ».
     Spaces, dots and dashes between digits are tolerated (a pasted number),
@@ -59,6 +60,8 @@ def phone(v: Optional[str]) -> str:
         if len(digits) - len(code) < 4 or len(digits) > 15:
             raise _bad("Numéro de téléphone invalide pour ce pays.")
         return "+" + digits
+    if re.fullmatch(r"[1-9]\d{8}", digits):              # « 612345678 »: +33 was the 0
+        digits = "0" + digits
     if not re.fullmatch(r"0[1-9]\d{8}", digits):
         raise _bad(FR_PHONE_MESSAGE)
     return digits

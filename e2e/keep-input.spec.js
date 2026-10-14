@@ -65,6 +65,6 @@ test.describe.serial('typed input survives a tap beside the window', () => {
     await tapBeside(page);
     await page.waitForTimeout(400);
     await expect(dialog, 'still open after a tap beside it').toBeVisible();
-    await expect(phone).toHaveValue(/0612340000|06 12 34 00 00/);
+    await expect(phone).toHaveValue('612340000');   // next to +33, the 9 digits (2026-10-14)
   });
 });
