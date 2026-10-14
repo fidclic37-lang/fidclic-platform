@@ -13,6 +13,7 @@ import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 import CardReaddModal from '../components/CardReaddModal';
+import InstallPwaPrompt from '../components/InstallPwaPrompt';
 
 const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
 
@@ -1247,6 +1248,20 @@ const ScanPage = () => {
           {pairErr && <p className="w-full text-[12.5px] text-[#E11D48]">{pairErr}</p>}
         </div>
       )}
+
+      {/* Put the scanner on the counter (user, 2026-10-14): installed from
+          here, the icon opens straight on this page. The prompt shows itself
+          only where it can install — Android and desktop Chrome natively, iOS
+          with Safari's own « Sur l'écran d'accueil ». */}
+      <div className="mx-auto mt-6 flex max-w-[640px] flex-wrap items-center gap-3 rounded-2xl border border-[#E6EEFB] bg-white px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Garder le scanner sous la main</p>
+          <p className="text-[12.5px] text-[#64748B]">
+            Ajoutez-le à l’écran d’accueil : une icône, et vous scannez — sans passer par le menu.
+          </p>
+        </div>
+        <InstallPwaPrompt context="till" />
+      </div>
 
       {panel && (
         <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setPanel(false)}>

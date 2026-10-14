@@ -196,6 +196,16 @@
             return; // we're already on the right URL, nothing to redirect
           }
 
+          // The till (user, 2026-10-14): installed from the Scan page, the
+          // icon must open the scanner — not the dashboard home. Its own
+          // manifest, so it installs as its own app beside the main one.
+          if (pathname.indexOf('/dashboard/scan') === 0) {
+            addManifest('/manifest-scan.json');
+            note('manifest link injected → /manifest-scan.json (caisse)');
+            showHud();
+            return;
+          }
+
           // Not on a card page → use the default site-wide manifest.
           // (Same content as before; we just inject it from here now.)
           addManifest('/manifest.json');
