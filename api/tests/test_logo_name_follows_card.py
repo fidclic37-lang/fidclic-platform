@@ -90,6 +90,11 @@ def main():
         WP._name_into_logos(files, {"poster_logo_test": ["FT-7DA5BB50"]})
         return {n: Image.open(io.BytesIO(files[n])).size for n in ("logo@3x.png", "primaryLogo@3x.png")}
     t, o = built("FT-7DA5BB50"), built("FT-B2295A08")
+    files = {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ", "serialNumber": "FT-7DA5BB50"}).encode(),
+             "logo.png": b.getvalue(), "primaryLogo.png": b.getvalue()}
+    WP._name_into_logos(files, {"poster_logo_test": ["FT-7DA5BB50"], "poster_logo_test_box": [200, 30]})
+    wide = Image.open(io.BytesIO(files["primaryLogo.png"])).size
+    check(f"poster_logo_test_box [200, 30]: 30 pt high, wider than 126 pt ({wide})", wide[1] == 30 and wide[0] > 126)
     check(f"listed card: primaryLogo 90 px high (30 pt @3x) {t}", t["primaryLogo@3x.png"][1] == 90)
     check("…its iOS 26 logo unchanged (150 px high)", t["logo@3x.png"][1] == 150)
     check(f"another card: as before {o}", o["primaryLogo@3x.png"][1] == 150)
