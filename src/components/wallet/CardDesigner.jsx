@@ -306,7 +306,9 @@ const CardDesigner = forwardRef(function CardDesigner({
         if (retry) setTimeout(() => { if (my === seq.current) ask(false); }, 800);
         else setPvState(previewRef.current ? 'stale' : 'error');     // the last one stays on screen
       });
-    const t = setTimeout(() => ask(true), 300);   // the server keeps composed images: a short wait is enough
+    // 0.8 s after the last change (2026-10-14: every keystroke built a preview —
+    // Fluid CPU over the plan's limit): typing a name builds one preview, not ten
+    const t = setTimeout(() => ask(true), 800);
     return () => clearTimeout(t);
   }, [pvKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -323,7 +325,7 @@ const CardDesigner = forwardRef(function CardDesigner({
         if (retry) setTimeout(() => { if (my === gSeq.current) ask(false); }, 800);   // once, as above
         else setGState('error');
       });
-    const t = setTimeout(() => ask(true), 400);
+    const t = setTimeout(() => ask(true), 800);   // as above: once typing stops
     return () => clearTimeout(t);
   }, [gKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
