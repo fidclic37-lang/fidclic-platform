@@ -2118,6 +2118,22 @@ def _poster_ink(card: Dict[str, Any], files: Dict[str, bytes]) -> Tuple[int, int
     return (255, 255, 255) if (photo or _lum(surface) <= 0.45) else (25, 25, 28)
 
 
+def _trim_logos(files: Dict[str, bytes]) -> None:
+    """The logo images cut to their visible pixels: a transparent border in the
+    shop's own file still takes room beside logoText (test, user 2026-10-14)."""
+    try:
+        from PIL import Image
+        for n in [n for n in files if re.match(r"^(logo|primaryLogo)(@[23]x)?\.png$", n)]:
+            im = Image.open(io.BytesIO(files[n])).convert("RGBA")
+            box = im.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox()
+            if box and box != (0, 0, im.width, im.height):
+                buf = io.BytesIO()
+                im.crop(box).save(buf, format="PNG")
+                files[n] = buf.getvalue()
+    except Exception as exc:
+        print(f"wallet: logo trim failed ({exc})")
+
+
 def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     """Apple: the shop's name moves from logoText into the logo images (iOS 26
     logo.png, iOS 27 primaryLogo.png) — written in full, in the owner's colour
@@ -2125,7 +2141,8 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     try:
         pj = json.loads(files["pass.json"])
         if pj.get("serialNumber") and pj["serialNumber"] in (card.get("apple_logo_text") or []):
-            return                         # test switch: Apple writes the name (logoText), the logo stays plain
+            _trim_logos(files)             # test switch: Apple writes the name (logoText), the logo stays plain
+            return
         letters = letters_for(card, str(pj.get("logoText") or ""))   # « Nom stylé », on this card's name
         name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
         if not name.strip():
