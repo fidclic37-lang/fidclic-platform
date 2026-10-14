@@ -121,7 +121,9 @@ def main():
           pal["tenant"]["name"] == "ROYAL TRIM PALISSY CENTRE")
     check("PL-MONSTER's client: its own name", mon["tenant"]["name"] == "ROYAL TRIM PL-MONSTER")
     pj = WP.build_pass_json(pal)
-    check(f"Apple pass: organizationName ({pj.get('organizationName')})", pj.get("organizationName") == "ROYAL TRIM PALISSY CENTRE")
+    # organizationName is the card's « Nom de la carte » (user, 2026-10-14), like the logo
+    check(f"Apple pass: organizationName = the card's name ({pj.get('organizationName')})",
+          pj.get("organizationName") == pj.get("logoText") == (pal["card"].get("card_name") or "ROYAL TRIM PALISSY CENTRE"))
     WP._gw_issuer = lambda: "333"
     with SC.store("t1", "pal"):
         url = WP._gw_image_url("t1", "name", {"logo_url": "x", "_shop_name": "ROYAL TRIM PALISSY CENTRE"})
