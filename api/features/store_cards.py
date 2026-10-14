@@ -43,11 +43,26 @@ def set_store(tenant_id: Optional[str], store_id: Optional[str]) -> None:
     _STORE.set((tenant_id, store_id) if store_id else None)
 
 
+def main_store(tid: Optional[str]) -> Optional[str]:
+    """The account's main establishment when it has several (None for a
+    one-shop account). A client never given a store belongs to it — as
+    store_scope and server._ensure_branch_assignments count them."""
+    if not tid or _db is None:
+        return None
+    open_ = [b for b in _branches(tid) if b.get("id") and b.get("status") != "closed"]
+    if len(open_) < 2:
+        return None
+    return next((b["id"] for b in open_ if b.get("is_main") or b["id"] == "main"), open_[0]["id"])
+
+
 def set_for_customer(cust: Optional[Dict[str, Any]]) -> None:
-    """A client's home store. A client without one (a one-shop account, the
-    owner's preview sample) keeps the establishment already in context."""
-    if cust and cust.get("tenant_id") and cust.get("branch_id"):
-        set_store(cust["tenant_id"], cust["branch_id"])
+    """A client's home store. A client without one keeps the establishment
+    already in context (the owner's preview sample), else the main store."""
+    if not cust or not cust.get("tenant_id"):
+        return
+    sid = cust.get("branch_id") or (None if current() else main_store(cust["tenant_id"]))
+    if sid:
+        set_store(cust["tenant_id"], sid)
 
 
 @contextmanager
@@ -75,9 +90,13 @@ def customer_store(argname: str = "cust"):
                 cust = sig.bind_partial(*a, **k).arguments.get(argname)
             except TypeError:
                 pass
-            if isinstance(cust, dict) and cust.get("tenant_id") and cust.get("branch_id"):
-                with store(cust["tenant_id"], cust["branch_id"]):
-                    return fn(*a, **k)
+            if isinstance(cust, dict) and cust.get("tenant_id"):
+                # no store of their own: the main one (the owner's preview
+                # sample keeps the establishment of the menu)
+                sid = cust.get("branch_id") or (None if current() else main_store(cust["tenant_id"]))
+                if sid:
+                    with store(cust["tenant_id"], sid):
+                        return fn(*a, **k)
             return fn(*a, **k)
         return wrapper
     return deco

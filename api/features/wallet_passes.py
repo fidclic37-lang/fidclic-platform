@@ -1478,7 +1478,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "passTypeIdentifier": _env("APPLE_PASS_TYPE_ID"),
         "teamIdentifier": _env("APPLE_TEAM_ID"),
         "serialNumber": serial,
-        "organizationName": tenant.get("name") or org,
+        # the card's name, as typed in « Nom de la carte » (user, 2026-10-14)
+        "organizationName": org,
         "description": f"Carte de fidélité {org}",
         "logoText": org,
         "webServiceURL": f"{_site_url()}/api/passes",
@@ -2522,7 +2523,8 @@ def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> D
     else:                      # one establishment's card changed: only its members' cards
         sid = _SC.store_for(tenant_id)
         if sid:
-            q["branch_id"] = sid
+            # the main store's members include the clients never given a store
+            q["branch_id"] = {"$in": [sid, None, ""]} if sid == _SC.main_store(tenant_id) else sid
     serials = [c.get("barcode_id") for c in _db.customers.find(q, {"barcode_id": 1})]
     queue_refresh(tenant_id, serials, design_changed=not customer_ids)
     return drain_refresh(tenant_id)

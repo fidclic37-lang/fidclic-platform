@@ -6938,7 +6938,8 @@ def _serialize_card_payload(cust: dict) -> dict:
             print(f"card payload: programme rules not applied (non-fatal): {exc}")
     if isinstance(payload, dict):
         # whose card: the pass / Google build reads it (a preview sample: the menu's)
-        payload["store_id"] = cust.get("branch_id") or _SC.store_for(cust.get("tenant_id"))
+        payload["store_id"] = (cust.get("branch_id") or _SC.store_for(cust.get("tenant_id"))
+                               or _SC.main_store(cust.get("tenant_id")))
         _sn = _SC.store_name(cust.get("tenant_id"), payload["store_id"])
         if _sn and isinstance(payload.get("tenant"), dict):     # the client's shop is their establishment
             payload["tenant"] = {**payload["tenant"], "account_name": payload["tenant"].get("name"), "name": _sn}
