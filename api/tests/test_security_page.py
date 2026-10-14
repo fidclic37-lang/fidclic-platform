@@ -166,5 +166,35 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and db.customers.count_documents({"tenant_id": "t1"}) == 0 and db.users.count_documents({"tenant_id": "t1"}) == 0)
     check("FidClic's invoices stay (legal retention)", db.fidclic_invoices.count_documents({"tenant_id": "t1"}) == 1)
 
+    # The session slides (user, 2026-10-14: « ye platform login hai roz jo karna
+    # padega user ko »). Opening the app starts the month again; what ends a
+    # session is still « Déconnecter », not the clock.
+    import jwt as _jwt
+    db.users.insert_one({"id": "u9", "email": "caisse@c.fr", "role": "business_owner",
+                         "tenant_id": "t1", "hashed_password": pw, "first_name": "Till"})
+    sess = login("caisse@c.fr")
+    tok = sess["access_token"]
+    claims = _jwt.decode(tok, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+    check("a month, not a day", 29 * 24 * 3600 < claims["exp"] - dt.datetime.now(dt.timezone.utc).timestamp())
+
+    own = TokenData(email="caisse@c.fr", role="business_owner", tenant_id="t1", sid=claims["sid"])
+    out = server.get_me(own, Response())
+    fresh = out.get("access_token")
+    check("opening the app hands back a token", bool(fresh))
+    if fresh:
+        c2 = _jwt.decode(fresh, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        check("…for another month, same session", c2["sid"] == claims["sid"] and c2["sub"] == "caisse@c.fr")
+        check("a slid session is still a live one", SEC.session_ok("caisse@c.fr", claims["sid"]) is True)
+        SEC.revoke({"sid": claims["sid"]})
+        check("…and « Déconnecter » ends it, slid or not",
+              SEC.session_ok("caisse@c.fr", claims["sid"]) is False)
+
+    # « Accéder au compte »: the super admin's view of someone else's account
+    # keeps its own short life — sliding it here would make it permanent.
+    view = TokenData(email="caisse@c.fr", role="business_owner", tenant_id="t1",
+                     sid=claims["sid"], view_by="admin@fidclic.com")
+    out2 = server.get_me(view, Response())
+    check("a « Accéder au compte » token is never slid", "access_token" not in out2)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
