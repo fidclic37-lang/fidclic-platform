@@ -196,5 +196,37 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     out2 = server.get_me(view, Response())
     check("a « Accéder au compte » token is never slid", "access_token" not in out2)
 
+    # « Cet appareil est la caisse » (user, 2026-10-14): a till is left on a
+    # counter, it must not be mistaken for someone's phone in the list, and it
+    # must not be sent back to a login screen after a seasonal closure.
+    caisse_tok = TokenData(email="caisse@c.fr", role="business_owner", tenant_id="t1", sid=claims["sid"])
+    db.tenants.update_one({"id": "t1"}, {"$set": {"id": "t1", "branches": [    # the deletion test above emptied it
+        {"id": "tours", "name": "Tours"}, {"id": "blois", "name": "Blois"}]}}, upsert=True)
+    db.user_sessions.update_one({"sid": claims["sid"]}, {"$set": {"revoked_at": None}})   # the revoke test above
+    SEC.mark_caisse(SEC.CaisseIn(store_id="tours"), Req(), token_data=caisse_tok)
+    row = next(x for x in SEC.overview(request=Req(), token_data=caisse_tok)["sessions"]
+               if x["sid"] == claims["sid"])
+    check("the list says « Caisse », and where it sits",
+          row["caisse"] and row["caisse"]["store_id"] == "tours")
+    check("a till is a till", SEC.is_caisse(claims["sid"]) is True)
+
+    slid = server.get_me(caisse_tok, Response()).get("access_token")
+    c3 = _jwt.decode(slid, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+    left = c3["exp"] - dt.datetime.now(dt.timezone.utc).timestamp()
+    check("a till's session is six months, not one", left > 170 * 24 * 3600)
+
+    try:
+        SEC.mark_caisse(SEC.CaisseIn(store_id="nowhere"), Req(), token_data=caisse_tok)
+        check("an establishment that does not exist is refused", False)
+    except HTTPException as e:
+        check("an establishment that does not exist is refused", e.status_code == 400)
+
+    SEC.revoke({"sid": claims["sid"]})
+    check("« Déconnecter » ends a till like any other device",
+          SEC.session_ok("caisse@c.fr", claims["sid"]) is False)
+    db.user_sessions.update_one({"sid": claims["sid"]}, {"$set": {"revoked_at": None}})
+    SEC.unmark_caisse(Req(), token_data=caisse_tok)
+    check("…and it can go back to being an ordinary device", SEC.is_caisse(claims["sid"]) is False)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

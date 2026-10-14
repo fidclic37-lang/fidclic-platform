@@ -265,6 +265,16 @@ const ScanPage = () => {
   const mine = Array.isArray(user?.branch_ids) ? user.branch_ids : null;
   const branches = role === 'business_owner' || !mine ? open : open.filter((b) => mine.includes(b.id));
   const fixedStore = role === 'manager' || role === 'staff' || branches.length === 1;
+  // « Cet appareil est la caisse » (user, 2026-10-14). A till is left on a
+  // counter: marking it keeps its session alive for six months instead of one,
+  // and names it in Paramètres › Sécurité so the owner can tell it from their
+  // own phone — and cut it from there if it is lost.
+  const canPair = role === 'business_owner' || role === 'administrateur';
+  const [caisse, setCaisse] = useState(Boolean(user?.caisse));
+  const [pairing, setPairing] = useState(false);
+  const [pairErr, setPairErr] = useState('');
+  useEffect(() => { setCaisse(Boolean(user?.caisse)); }, [user?.caisse]);
+
   const branchId = fixedStore ? (branches[0]?.id || '') : (branches.some((b) => b.id === _branchIdRaw) ? _branchIdRaw : '');
   const setBranchId = (id) => _setBranchIdGlobal(id || null);
   const needStore = branches.length > 1 && !branchId;   // several stores, none chosen yet
@@ -1220,6 +1230,39 @@ const ScanPage = () => {
       )}
 
       {/* the catalogue, as a drawer */}
+      {canPair && (
+        <div className="mx-auto mt-6 flex max-w-[640px] flex-wrap items-center gap-3 rounded-2xl border border-[#E6EEFB] bg-white px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-[13.5px] font-semibold text-[#0B1C3F]">
+              {caisse ? 'Cet appareil est la caisse' : 'Faire de cet appareil la caisse'}
+            </p>
+            <p className="text-[12.5px] text-[#64748B]">
+              {caisse
+                ? 'Il reste connecté et scanne sans redemander de mot de passe. Vous pouvez le déconnecter dans Paramètres › Sécurité.'
+                : 'Il restera connecté pour scanner toute la journée, sans redemander de mot de passe.'}
+            </p>
+          </div>
+          <button type="button" disabled={pairing}
+                  onClick={async () => {
+                    setPairing(true);
+                    setPairErr('');
+                    try {
+                      if (caisse) { await ownerAPI.unmarkCaisse(); setCaisse(false); }
+                      else { await ownerAPI.markCaisse(branchId || undefined); setCaisse(true); }
+                    } catch (e) {
+                      // silence here would leave the owner thinking it worked
+                      setPairErr(e?.response?.data?.detail || "L'appareil n'a pas pu être enregistré.");
+                    }
+                    setPairing(false);
+                  }}
+                  className={`rounded-xl px-4 py-2 text-[13px] font-semibold disabled:opacity-50 ${
+                    caisse ? 'border border-[#E1E8F5] text-[#475569]' : 'bg-[#1463FF] text-white'}`}>
+            {caisse ? 'Ce n\u2019est plus la caisse' : 'Enregistrer cet appareil'}
+          </button>
+          {pairErr && <p className="w-full text-[12.5px] text-[#E11D48]">{pairErr}</p>}
+        </div>
+      )}
+
       {panel && (
         <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setPanel(false)}>
           <aside role="dialog" aria-modal="true" aria-label={words.picker} onClick={(e) => e.stopPropagation()}
