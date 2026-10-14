@@ -13,6 +13,7 @@ import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 import CardReaddModal from '../components/CardReaddModal';
+import { canSwitchStore } from '../lib/storeSwitch';
 import InstallPwaPrompt from '../components/InstallPwaPrompt';
 
 const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
@@ -263,7 +264,7 @@ const ScanPage = () => {
   const open = (Array.isArray(_branchesCtx) ? _branchesCtx : []).filter((b) => b && b.id && b.status !== 'closed');
   const mine = Array.isArray(user?.branch_ids) ? user.branch_ids : null;
   const branches = role === 'business_owner' || !mine ? open : open.filter((b) => mine.includes(b.id));
-  const fixedStore = role === 'manager' || role === 'staff' || branches.length === 1;
+  const fixedStore = !canSwitchStore(user) || branches.length === 1;
   // « Cet appareil est la caisse » (user, 2026-10-14). A till is left on a
   // counter: marking it keeps its session alive for six months instead of one,
   // and names it in Paramètres › Sécurité so the owner can tell it from their

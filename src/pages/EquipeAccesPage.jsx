@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FREE_ROLES as DEFAULT_SWITCH } from '../lib/storeSwitch';
 import {
   Users, UserPlus, Crown, ShieldCheck, User, Search, ChevronDown, SlidersHorizontal, Pencil,
   MoreVertical, KeyRound, Power, Trash2, X, Check, Loader2, Copy, Hourglass, Settings, Building2,
@@ -189,6 +190,9 @@ function EditModal({ user, d, onClose, onSaved }) {
   const [last, setLast] = useState(user.last_name || user.name.split(' ').slice(1).join(' ') || '');
   const [role, setRole] = useState(user.role_key || user.role);
   const [ids, setIds] = useState(user.branch_ids);
+  // « Peut changer d'établissement » (user, 2026-10-14). null = the role decides.
+  const [switcher, setSwitcher] = useState(
+    typeof user.can_switch_store === 'boolean' ? user.can_switch_store : null);
   const [perms, setPerms] = useState(() => user.perms || fromTemplate(tplOf(d, user.role_key || user.role), user.branch_ids));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -207,7 +211,8 @@ function EditModal({ user, d, onClose, onSaved }) {
     try {
       const finalIds = isMulti(role) ? ids : ids.slice(0, 1);
       const { data } = await ownerAPI.teamUpdate(user.id, { first_name: first, last_name: last, role,
-        branch_ids: finalIds, perms: Object.fromEntries(finalIds.map((id) => [id, perms?.[id] || {}])) });
+        branch_ids: finalIds, can_switch_store: switcher,
+        perms: Object.fromEntries(finalIds.map((id) => [id, perms?.[id] || {}])) });
       onSaved(data, 'Utilisateur mis à jour');
     } catch (err) { setError(err?.response?.data?.detail || 'Enregistrement impossible.'); setSaving(false); }
   };
@@ -231,6 +236,19 @@ function EditModal({ user, d, onClose, onSaved }) {
           <div><span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Établissement(s)</span>
             <StorePicker role={role} stores={d.stores} value={ids} onChange={pickStores} /></div>
         </div>
+        {isMulti(role) && (
+          <label className="mb-5 flex items-start gap-2.5">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#2F6BFF]"
+                   checked={switcher === null ? DEFAULT_SWITCH.includes(role) : switcher}
+                   onChange={(e) => setSwitcher(e.target.checked)} />
+            <span>
+              <span className="block text-[13px] font-semibold text-[#334155]">Peut changer d'établissement</span>
+              <span className="block text-[12.5px] text-[#64748B]">
+                Sinon, ce compte travaille dans l'établissement où il est — c'est ce qu'on veut d'une caisse posée sur un comptoir.
+              </span>
+            </span>
+          </label>
+        )}
         <div className="mb-5">
           <span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Permissions, par établissement</span>
           <PermsEditor pages={d.pages} stores={storesOf(d, isMulti(role) ? ids : ids.slice(0, 1))} value={perms} onChange={setPerms}
