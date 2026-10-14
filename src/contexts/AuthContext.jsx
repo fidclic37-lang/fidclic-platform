@@ -60,6 +60,11 @@ export const AuthProvider = ({ children }) => {
   const checkAuth = useCallback(async () => {
     try {
       const res = await authAPI.me();
+      // The session slides: the server hands back a token good for another
+      // month every time the app starts, so opening FidClic is what keeps you
+      // signed in. Not sent while looking at an account through « Accéder au
+      // compte » — that token renews on its own (user, 2026-10-14).
+      if (res.data?.access_token && !viewToken()) setAuthToken(res.data.access_token);
       setUser(res.data);
       // Paramètres › Préférences — currency, time zone, dates, links…
       applyPrefs(res.data?.preferences || {}, res.data?.currency || 'EUR');
