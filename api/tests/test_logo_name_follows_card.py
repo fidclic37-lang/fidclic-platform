@@ -77,6 +77,23 @@ def main():
           pj.get("organizationName") == "ROYAL TRIM LIBERTÉ")
     check("logoText = the card's name", pj.get("logoText") == "ROYAL TRIM LIBERTÉ")
 
+    # test « poster_logo_test »: the listed card's iOS 27 logo is drawn at 126 × 30
+    import io
+    from PIL import Image
+    im = Image.new("RGBA", (300, 300), (200, 150, 20, 255))
+    b = io.BytesIO()
+    im.save(b, format="PNG")
+
+    def built(serial):
+        files = {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ", "serialNumber": serial}).encode(),
+                 "logo.png": b.getvalue(), "primaryLogo.png": b.getvalue()}   # (_best_file is patched above)
+        WP._name_into_logos(files, {"poster_logo_test": ["FT-7DA5BB50"]})
+        return {n: Image.open(io.BytesIO(files[n])).size for n in ("logo@3x.png", "primaryLogo@3x.png")}
+    t, o = built("FT-7DA5BB50"), built("FT-B2295A08")
+    check(f"listed card: primaryLogo 90 px high (30 pt @3x) {t}", t["primaryLogo@3x.png"][1] == 90)
+    check("…its iOS 26 logo unchanged (150 px high)", t["logo@3x.png"][1] == 150)
+    check(f"another card: as before {o}", o["primaryLogo@3x.png"][1] == 150)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 

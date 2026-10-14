@@ -2139,6 +2139,11 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
         # uses: white over a photo or a dark card, near-black over a light one.
         on_card = _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
         on_poster = _poster_ink(card, files)
+        # test (user, 2026-10-14): iOS 27's primaryLogo is 30 pt high, 30–126 pt
+        # wide (WWDC26 / Pass Designer, as reported) — not iOS 26's 160 × 50.
+        # Drawn at 160 × 50, Wallet shrinks it to ~96 × 30. The listed cards get
+        # it drawn at 126 × 30.
+        poster_box = (126, 30) if pj.get("serialNumber") in (card.get("poster_logo_test") or []) else (160, 50)
         done = False
         for base in ("logo", "primaryLogo"):
             src = _best_file(files, base)
@@ -2149,7 +2154,8 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
             color = chosen or (on_poster if base == "primaryLogo" else on_card)
             # the image is made from the plain logo (a design's logo may already be a disc)
             for suffix, png in name_logo(src, name, color, letters=letters, logo_pct=card.get("name_logo_size"),
-                                         font_key=card.get("name_font")).items():
+                                         font_key=card.get("name_font"),
+                                         box=poster_box if base == "primaryLogo" else (160, 50)).items():
                 files[f"{base}{suffix}.png"] = png
             done = True
         if done:
@@ -2749,7 +2755,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font", "poster_logo_test",
     "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
