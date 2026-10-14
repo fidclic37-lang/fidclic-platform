@@ -402,10 +402,16 @@ def inviter(barcode_id: str):
     the card, the points, or anything else about that customer.
     """
     cust = _db.customers.find_one({"barcode_id": (barcode_id or "").strip().upper()},
-                                  {"_id": 0, "tenant_id": 1, "name": 1})
+                                  {"_id": 0, "tenant_id": 1, "name": 1, "branch_id": 1})
     if not cust:
         raise HTTPException(status_code=404, detail="Carte inconnue")
-    tenant = _db.tenants.find_one({"id": cust["tenant_id"]}, {"_id": 0, "slug": 1, "name": 1}) or {}
+    tenant = _db.tenants.find_one({"id": cust["tenant_id"]}, {"_id": 0, "id": 1, "slug": 1, "name": 1, "branches": 1}) or {}
+    # the friend joins the inviter's store (store_links.parrain_store): the
+    # form names it and never asks (user, 2026-10-14)
+    from features import store_links as SL
+    if tenant.get("branches"):
+        SL.ensure_slugs(tenant)
+    home = SL.parrain_store(tenant, cust)
     cfg = _db.referral_config.find_one({"tenant_id": cust["tenant_id"]}) or {}
     first = (cust.get("name") or "").strip().split(" ")[0]
     return {
@@ -413,6 +419,7 @@ def inviter(barcode_id: str):
         "first_name": first,
         "slug": tenant.get("slug"),
         "business_name": tenant.get("name"),
+        "store": {"slug": home.get("slug"), "name": home.get("name")} if home else None,
         "referee_points": int(cfg.get("referee_reward_points", 25)),
         "referrer_points": int(cfg.get("referrer_reward_points", 50)),
         # what each side receives, in words (« 25 points », « 1 tampon », « 1 café offert »)
