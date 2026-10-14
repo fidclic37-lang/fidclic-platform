@@ -84,6 +84,12 @@ def main():
             loose += [f"{m} {r.path}" for m in r.methods if RP.page_of(r.path) is None and not RP.is_common(r.path, m)]
     check(f"no team endpoint outside a page ({loose[:5]})", not loose)
     check("one row per sidebar page (18 + e-mail change + account deletion)", len(RP.PAGES) == 20)
+    # « Cet appareil est la caisse » acts on the account's own session, like the
+    # rest of /api/security — common to the pages, never to the roles.
+    check("« caisse » is a device setting, not a page",
+          RP.is_common("/api/security/caisse", "POST")
+          and RP.is_common("/api/security/caisse", "DELETE")
+          and RP.page_of("/api/security/caisse") is None)
 
     print("\n1. The owner creates a role, its name, its pages")
     r = http("POST", "/api/owner/team-access/roles", headers=H(OWNER),
