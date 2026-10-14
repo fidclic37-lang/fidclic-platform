@@ -140,6 +140,7 @@ MODULES = [
     "features.pass_designer",           # Apple Pass Designer templates as the card's design
     # Carte de fidélité — design, programme rules, tiers and the page's figures.
     "features.loyalty_card",
+    "features.milestones",              # Objectifs et récompenses (paliers que le commerce se fixe)
     # Besoin d'aide ? — FAQ knowledge base + the support assistant that answers
     # from it. Answers from the KB even with no LLM key configured.
     "features.support_assistant",
