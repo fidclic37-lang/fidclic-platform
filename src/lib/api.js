@@ -585,6 +585,9 @@ export const ownerAPI = {
   totpDisable: (password, code) => api.post('/security/2fa/disable', { password, code }),
   endSession: (sid) => api.delete(`/security/sessions/${sid}`),
   endOtherSessions: () => api.post('/security/sessions/revoke-others'),
+  // « Cet appareil est la caisse » — marks THIS session, nothing else
+  markCaisse: (store_id) => api.post('/security/caisse', { store_id }),
+  unmarkCaisse: () => api.delete('/security/caisse'),
   // Sécurité › changer l'adresse e-mail du compte (features/account_email)
   emailState: () => api.get('/security/email'),
   emailStart: (new_email, password, method) => api.post('/security/email/start', { new_email, password, method }),

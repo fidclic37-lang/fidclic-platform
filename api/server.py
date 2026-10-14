@@ -2682,6 +2682,9 @@ def login_2fa(req: TwoFactorLogin, response: Response, request: Request = None):
     return _issue_session(response, user, request)
 
 
+CAISSE_SESSION_DAYS = 180
+
+
 def _slide_session(response: Response, token_data: TokenData) -> Dict[str, Any]:
     """Hand back a token good for another month, and refresh the cookie with
     it. Same session: the `sid` is carried over, so « Déconnecter » still ends
@@ -2689,17 +2692,31 @@ def _slide_session(response: Response, token_data: TokenData) -> Dict[str, Any]:
     if getattr(token_data, "view_by", None) or not getattr(token_data, "sid", None):
         return {}
     try:
+        # A till is left on a counter and opened every day; a shop that closes
+        # for the summer should not come back to a login screen either, so its
+        # window is six months rather than one (user, 2026-10-14).
+        life, caisse = None, False
+        try:
+            from features import security_page as _SEC
+            caisse = _SEC.is_caisse(token_data.sid)
+            if caisse:
+                life = timedelta(days=CAISSE_SESSION_DAYS)
+        except Exception:
+            life, caisse = None, False
         fresh = create_access_token(data={"sub": token_data.email, "role": token_data.role,
-                                          "tenant_id": token_data.tenant_id, "sid": token_data.sid})
+                                          "tenant_id": token_data.tenant_id, "sid": token_data.sid},
+                                    expires_delta=life)
     except Exception as _e:
         print(f"session not slid (non-fatal): {_e}")
         return {}
+    seconds = int(life.total_seconds()) if life else ACCESS_TOKEN_EXPIRE_MINUTES * 60
     if response is not None:              # a direct call (tests) has no response to set
         response.set_cookie(key="access_token", value=fresh, httponly=True,
-                            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-                            expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                            max_age=seconds,
+                            expires=seconds,
                             samesite="lax", secure=True, path="/")
-    return {"access_token": fresh}
+    # the Scan page shows « Cet appareil est la caisse » from this
+    return {"access_token": fresh, "caisse": caisse}
 
 
 @app.get("/api/auth/me")

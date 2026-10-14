@@ -198,6 +198,27 @@ def session_ok(email: str, sid: Optional[str]) -> bool:
     return True
 
 
+def is_caisse(sid: Optional[str]) -> bool:
+    """Read by server._slide_session: a till keeps its session far longer, so a
+    shop that closes for the summer does not come back to a login screen."""
+    if not sid:
+        return False
+    s = _db.user_sessions.find_one({"sid": sid}, {"_id": 0, "till_store": 1, "till_since": 1})
+    return bool(s and s.get("till_since"))
+
+
+def _caisse_of(tid: str, s: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not s.get("till_since"):
+        return None
+    name = None
+    try:
+        from features import store_cards as SC
+        name = SC.store_name(tid, s.get("till_store"))
+    except Exception:
+        pass
+    return {"store_id": s.get("till_store"), "store": name or ""}
+
+
 def revoke(q: Dict[str, Any]) -> int:
     return _db.user_sessions.update_many({**q, "revoked_at": None}, {"$set": {"revoked_at": _now()}}).modified_count
 
@@ -319,6 +340,9 @@ def overview(request: Request = None, token_data: TokenData = Depends(require_ro
         "sessions": [{"sid": s["sid"], "device": s.get("device") or "Appareil", "browser": s.get("browser") or "",
                       "os": s.get("os") or "", "kind": s.get("kind") or "desktop",
                       "place": ", ".join(x for x in (s.get("city"), s.get("country")) if x),
+                      # a till, and the establishment it sits in — so a device
+                      # left scanning is never mistaken for someone's phone
+                      "caisse": _caisse_of(token_data.tenant_id, s),
                       "current": s["sid"] == (current or {}).get("sid"), "seen": _ago(s.get("last_seen"))} for s in sessions],
         "team": team,
         "activity": _activity(token_data, [m["email"] for m in team])[:12],
@@ -424,6 +448,50 @@ def end_session(sid: str, request: Request = None, token_data: TokenData = Depen
     if not revoke({"email": token_data.email, "sid": sid}):
         raise HTTPException(status_code=404, detail="Appareil introuvable")
     _audit("security.session_revoked", token_data, request)
+    return {"ok": True}
+
+
+class CaisseIn(BaseModel):
+    store_id: Optional[str] = None
+
+
+@router.post("/api/security/caisse")
+def mark_caisse(body: CaisseIn, request: Request = None,
+                token_data: TokenData = Depends(require_role(["business_owner", "administrateur"]))):
+    """« Cet appareil est la caisse ».
+
+    The till is left on a counter and scans all day: it should never be sent
+    back to a login screen, and the owner should be able to tell it apart from
+    their own phone in the list below — « Caisse — Plumereau », not a third
+    « Chrome sur Windows » (user, 2026-10-14).
+
+    It marks THIS session, nothing else: same sid, same « Déconnecter ».
+
+    Not under /sessions/: that path already ends in {sid}, and « caisse » was
+    swallowed as a session id — the call came back « Appareil introuvable ».
+    """
+    sid = getattr(token_data, "sid", None)
+    if not sid:
+        raise HTTPException(status_code=400, detail="Reconnectez-vous sur cet appareil pour l'enregistrer.")
+    store = (body.store_id or "").strip() or None
+    if store:
+        t = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "branches": 1}) or {}
+        open_ = {b["id"] for b in (t.get("branches") or []) if b.get("id") and b.get("status") != "closed"}
+        if open_ and store not in open_:
+            raise HTTPException(status_code=400, detail="Cet établissement n'existe pas.")
+    _db.user_sessions.update_one({"sid": sid}, {"$set": {"till_store": store, "till_since": _now()}})
+    _audit("security.caisse_on", token_data, request, meta={"store": store})
+    return {"ok": True, "store_id": store}
+
+
+@router.delete("/api/security/caisse")
+def unmark_caisse(request: Request = None,
+                  token_data: TokenData = Depends(require_role(["business_owner", "administrateur"]))):
+    """This device goes back to being an ordinary one."""
+    sid = getattr(token_data, "sid", None)
+    if sid:
+        _db.user_sessions.update_one({"sid": sid}, {"$unset": {"till_store": "", "till_since": ""}})
+        _audit("security.caisse_off", token_data, request)
     return {"ok": True}
 
 

@@ -189,6 +189,12 @@ export default function SecuritePage() {
                   <Icon size={20} className="shrink-0 text-[#0B1C3F]" />
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-2 text-[14px] font-medium text-[#0B1C3F]">{s.device}
+                      {/* a device left scanning on a counter, never mistaken for someone's phone */}
+                      {s.caisse && (
+                        <span translate="no" className="rounded-md bg-[#EEF4FF] px-2 py-0.5 text-[11.5px] font-normal text-[#2F6BFF]">
+                          Caisse{s.caisse.store ? ` — ${s.caisse.store}` : ''}
+                        </span>
+                      )}
                       {s.current && <span className="rounded-md bg-[#E7F7EE] px-2 py-0.5 text-[11.5px] font-normal text-[#0F8B58]">Actuelle</span>}</p>
                     <p className="text-[12.5px] text-[#64748B]">{[s.browser, s.os, s.place].filter(Boolean).join(' • ')}</p>
                   </div>
