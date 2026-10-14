@@ -212,7 +212,7 @@ def main():
     # Whose phone the card is on is decided by the server since 2026-10-08
     # (services/card_owner, tests/test_card_owner.py): the page asks first.
     check("a phone with no card of its own is sent to the signup form",
-          "/card/${bc}/whose" in my_src and "/join/${data.slug}?p=" in my_src)
+          "/card/${bc}/whose" in my_src and "/join/${data.slug}${data.store ?" in my_src and "?p=${" in my_src)
     check("nothing of the card loads before the answer",
           "if (view === 'card') return <CardView />;" in my_src)
     html = open(os.path.join(os.path.dirname(__file__), "..", "..", "index.html")).read()

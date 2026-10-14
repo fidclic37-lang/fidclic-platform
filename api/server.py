@@ -6589,10 +6589,20 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     #   • An e-mail is one customer too (QA F16): a new phone with someone
     #     else's e-mail is refused, as « Modifier la fiche » already does.
     # Erased customers (deleted_at) no longer count.
+    #   • Per establishment (user, 2026-10-14): a client of Liberté who signs
+    #     up at Palissy is a new client there, with a card of his own. The
+    #     home store is known first (the link, the form, the parrain's).
     from services import customer_fields as _CF
+    from features import store_links as _SL
+    _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
+                                     {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
+    home = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None)
     norm_email = (req.email or "").strip().lower()
     phone_key = _CF.phone_digits(req.phone)
     live = {"tenant_id": tid, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    if home:
+        # the main store's clients include those never given a store
+        live = {"$and": [live, {"branch_id": {"$in": [home, None, ""]} if home == _SC.main_store(tid) else home}]}
     phone_match = next((c for c in db.customers.find(live, {"_id": 1, "id": 1, "barcode_id": 1, "phone": 1})
                         if phone_key and _CF.phone_digits(c.get("phone")) == phone_key), None)
     email_match = None
@@ -6611,7 +6621,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         # 2026-10-09): typing someone's number used to open THEIR card, owner
         # key included — points, « Télécharger / Supprimer mes données ».
         # Their own card is in their Wallet, or shown at the counter.
-        shop = t.get("name") or "ce commerce"
+        shop = (_SC.store_name(tid, home) if home else None) or t.get("name") or "ce commerce"
         if phone_match:
             code = "already_member"
             message = (f"Ce numéro a déjà une carte chez {shop}. "
@@ -6713,11 +6723,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     cust_doc = c.model_dump()
     cust_doc["is_student"] = bool(req.is_student)
     # The home store: the store of the link / the form, or the parrain's
-    # (features/store_links). Checked before anything is written.
-    from features import store_links as _SL
-    _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
-                                     {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
-    cust_doc["branch_id"] = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None)
+    # (features/store_links) — found above, before anything is written.
+    cust_doc["branch_id"] = home
     if getattr(req, "_birth_date", None):
         cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came

@@ -137,8 +137,12 @@ def home_for_signup(t: Dict[str, Any], store: Optional[str], parrain: Optional[D
     stores = _signup(t)
     if not stores:
         return None
-    if parrain and parrain.get("branch_id") in {b["id"] for b in stores}:
-        return parrain["branch_id"]
+    if parrain:
+        # a parrain never given a store belongs to the main one (as store_scope counts them)
+        main = next((b["id"] for b in _open(t) if b.get("is_main") or b["id"] == "main"), None)
+        pb = parrain.get("branch_id") or main
+        if pb in {b["id"] for b in stores}:
+            return pb
     hit = store_by(t, store)
     if hit and hit.get("card_off"):
         raise HTTPException(status_code=400, detail={"code": "store_card_off", "message": CARD_OFF_MSG})

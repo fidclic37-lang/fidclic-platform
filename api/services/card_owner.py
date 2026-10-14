@@ -19,6 +19,8 @@ THE OWNER KEY
 
         • X is one of them               → the card
         • another of them is the same shop → that card (my own, not my friend's)
+                                            — the same ESTABLISHMENT when the
+                                            account has several (2026-10-14)
         • none                           → the signup form, the scanned card
                                             as parrain (Parrainage, never QR)
 
@@ -87,7 +89,7 @@ def whose(db, barcode_id: str, key: Optional[str], mine: Dict[str, str],
     """What /card/{barcode_id} shows on this phone. None when the card does
     not exist (the page shows its own « carte introuvable »)."""
     bc = (barcode_id or "").strip().upper()
-    card = db.customers.find_one({"barcode_id": bc}, {"_id": 0, "tenant_id": 1, "barcode_id": 1})
+    card = db.customers.find_one({"barcode_id": bc}, {"_id": 0, "tenant_id": 1, "barcode_id": 1, "branch_id": 1})
     if not card:
         return None
     tid = card.get("tenant_id")
@@ -97,7 +99,7 @@ def whose(db, barcode_id: str, key: Optional[str], mine: Dict[str, str],
     drop = [b for b in (mine or {}) if b.strip().upper() not in proven]
     rows = {c["barcode_id"]: c for c in db.customers.find(
         {"barcode_id": {"$in": list(proven)}},
-        {"_id": 0, "barcode_id": 1, "tenant_id": 1, "wallet_removed_at": 1, "card_claimed_at": 1})}
+        {"_id": 0, "barcode_id": 1, "tenant_id": 1, "branch_id": 1, "wallet_removed_at": 1, "card_claimed_at": 1})}
     for b in list(proven):
         if b not in rows or not held(rows[b]):
             drop.append(b)
@@ -112,11 +114,22 @@ def whose(db, barcode_id: str, key: Optional[str], mine: Dict[str, str],
     if viewer and (viewer.get("role") == "super_admin" or
                    (viewer.get("tenant_id") == tid and viewer.get("role") in ("business_owner", "manager", "staff"))):
         return {**out, "view": "card", "shop": True}
-    own = next((b for b in proven if rows[b].get("tenant_id") == tid), None)
+    # An account with several establishments: one card per establishment
+    # (user, 2026-10-14: my Liberté card opened when I scanned my friend's
+    # Palissy card — I must get Palissy's signup, as a new client there). A
+    # client never given a store belongs to the main one.
+    tenant = db.tenants.find_one({"id": tid}, {"_id": 0, "slug": 1, "branches": 1}) or {}
+    open_ = [b for b in tenant.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    main = next((b["id"] for b in open_ if b.get("is_main") or b["id"] == "main"), open_[0]["id"] if open_ else None)
+
+    def store_of(row: Dict[str, Any]) -> Optional[str]:
+        return (row.get("branch_id") or main) if len(open_) >= 2 else None
+    here = store_of(card)
+    own = next((b for b in proven if rows[b].get("tenant_id") == tid and store_of(rows[b]) == here), None)
     if own:
         return {**out, "view": "own", "barcode_id": own}
-    tenant = db.tenants.find_one({"id": tid}, {"_id": 0, "slug": 1}) or {}
-    return {**out, "view": "join", "slug": tenant.get("slug"), "parrain": bc}
+    store = next((b.get("slug") for b in open_ if b["id"] == here), None) if here else None
+    return {**out, "view": "join", "slug": tenant.get("slug"), "parrain": bc, **({"store": store} if store else {})}
 
 
 def owned_from(pairs: Iterable) -> Dict[str, str]:

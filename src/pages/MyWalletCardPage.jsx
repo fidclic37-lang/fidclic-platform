@@ -1474,7 +1474,8 @@ const CardOwnerGate = () => {
           window.location.replace(`/card/${data.barcode_id}`);
         } else if (data?.view === 'join' && data.slug) {
           // a friend's card: the signup form, filed as « Parrainage », never « QR en magasin »
-          window.location.replace(`/join/${data.slug}?p=${encodeURIComponent(data.parrain || bc)}`);
+          // …of the friend's establishment (an account with several: one card per store)
+          window.location.replace(`/join/${data.slug}${data.store ? `/${encodeURIComponent(data.store)}` : ''}?p=${encodeURIComponent(data.parrain || bc)}`);
         } else {
           setView('card');
         }
