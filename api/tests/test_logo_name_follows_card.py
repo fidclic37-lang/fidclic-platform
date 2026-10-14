@@ -81,12 +81,16 @@ def main():
     seen.clear()
     WP.name_logo = lambda src, name, color, **k: (seen.setdefault("n", name), {})[1]
     try:
-        files = {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ"}).encode(), "logo.png": b"x"}
-        WP._name_into_logos(files, {"apple_logo_text": True})
+        pj_of = lambda sn: {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ", "serialNumber": sn}).encode(),  # noqa: E731
+                            "logo.png": b"x"}
+        files = pj_of("FT-7DA5BB50")
+        WP._name_into_logos(files, {"apple_logo_text": ["FT-7DA5BB50"]})
+        check("apple_logo_text: the listed card — no name image, logoText kept",
+              "n" not in seen and json.loads(files["pass.json"]).get("logoText") == "ROYAL TRIM LIBÉRTÉ")
+        WP._name_into_logos(pj_of("FT-B2295A08"), {"apple_logo_text": ["FT-7DA5BB50"]})
+        check("…another card: as before", seen.get("n") == "ROYAL TRIM LIBÉRTÉ")
     finally:
         WP.name_logo = real
-    check("apple_logo_text: no name image, logoText kept",
-          "n" not in seen and json.loads(files["pass.json"]).get("logoText") == "ROYAL TRIM LIBÉRTÉ")
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

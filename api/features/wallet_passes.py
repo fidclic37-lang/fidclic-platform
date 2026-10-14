@@ -2122,10 +2122,10 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     """Apple: the shop's name moves from logoText into the logo images (iOS 26
     logo.png, iOS 27 primaryLogo.png) — written in full, in the owner's colour
     (« Couleur du nom ») or the card's text colour."""
-    if card.get("apple_logo_text"):       # test switch: Apple writes the name (logoText), the logo stays plain
-        return
     try:
         pj = json.loads(files["pass.json"])
+        if pj.get("serialNumber") and pj["serialNumber"] in (card.get("apple_logo_text") or []):
+            return                         # test switch: Apple writes the name (logoText), the logo stays plain
         letters = letters_for(card, str(pj.get("logoText") or ""))   # « Nom stylé », on this card's name
         name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
         if not name.strip():
