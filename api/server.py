@@ -2682,10 +2682,39 @@ def login_2fa(req: TwoFactorLogin, response: Response, request: Request = None):
     return _issue_session(response, user, request)
 
 
+def _slide_session(response: Response, token_data: TokenData) -> Dict[str, Any]:
+    """Hand back a token good for another month, and refresh the cookie with
+    it. Same session: the `sid` is carried over, so « Déconnecter » still ends
+    this device and nothing about revocation changes."""
+    if getattr(token_data, "view_by", None) or not getattr(token_data, "sid", None):
+        return {}
+    try:
+        fresh = create_access_token(data={"sub": token_data.email, "role": token_data.role,
+                                          "tenant_id": token_data.tenant_id, "sid": token_data.sid})
+    except Exception as _e:
+        print(f"session not slid (non-fatal): {_e}")
+        return {}
+    if response is not None:              # a direct call (tests) has no response to set
+        response.set_cookie(key="access_token", value=fresh, httponly=True,
+                            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                            expires=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                            samesite="lax", secure=True, path="/")
+    return {"access_token": fresh}
+
+
 @app.get("/api/auth/me")
-def get_me(token_data: TokenData = Depends(get_current_user_data)):
+def get_me(token_data: TokenData = Depends(get_current_user_data), response: Response = None):
     """Identity + onboarding state. The route guards in App.jsx read
-    onboarding_status to keep a half-registered owner on step 2."""
+    onboarding_status to keep a half-registered owner on step 2.
+
+    The app asks this on every start, so this is also where the session slides:
+    a fresh token goes back with the answer and the month starts again. Opening
+    FidClic is what keeps you signed in — no one is asked for their password
+    because yesterday happened (user, 2026-10-14).
+
+    Not for a « Accéder au compte » token: that one is the super admin's view
+    of someone else's account, it has its own short life and its own renewal
+    (lib/api.renewView). Sliding it here would quietly make it permanent."""
     user = db.users.find_one({"email": token_data.email}) or {}
     tenant = db.tenants.find_one({"id": token_data.tenant_id}) if token_data.tenant_id else None
     return {
@@ -2712,6 +2741,7 @@ def get_me(token_data: TokenData = Depends(get_current_user_data)):
         # Team accounts: which establishments they cover, and whether that is
         # all of them ("all") or some ("partial" — data pages not open yet).
         **_team_identity(user),
+        **_slide_session(response, token_data),
     }
 
 

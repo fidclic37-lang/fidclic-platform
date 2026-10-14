@@ -32,7 +32,16 @@ if SECRET_KEY == _LEGACY_INSECURE_SECRET:
         "env JWT_SECRET -> redeploy."
     )
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 24 * 60
+# A session lasts a month, and every time the app is opened it starts again
+# (server.get_me re-issues the token). Someone who uses FidClic is never asked
+# to sign in; someone who disappears for a month is. The clock was 24 h, so a
+# merchant logged in every single morning — and a till could not be left to
+# scan on its own at all (user, 2026-10-14).
+#
+# What actually ends a session is not this clock: every request checks the
+# token's `sid` against user_sessions, so « Déconnecter » on Paramètres ›
+# Sécurité kills a device at once, and changing the password kills the others.
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60
 
 def hash_password(password: str) -> str:
     salt = bcrypt.gensalt()
