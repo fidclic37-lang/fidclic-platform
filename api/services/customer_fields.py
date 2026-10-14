@@ -152,10 +152,10 @@ def email(v: Optional[str], dns: bool = True) -> str:
     checks as a shop's own sign-up — shape and a real extension, typos
     (« Vouliez-vous dire …@gmail.com ? »), throwaway inboxes, and a domain
     that receives mail (services/email_check; DNS unreachable → accepted)."""
-    s = (v or "").strip()
+    from services import email_check
+    s = email_check.clean(v, lower=False)
     if not s:
         return s
-    from services import email_check
     verdict = email_check.check(s, dns=dns)
     if not verdict["ok"]:
         raise _bad(verdict["reason"] or "Adresse e-mail invalide.")

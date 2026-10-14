@@ -94,9 +94,22 @@ def domain_receives_mail(domain: str) -> Optional[bool]:
     return verdict
 
 
+# The invisible characters a copied address brings
+# along (zero-width space, non-breaking space, soft hyphen, BOM…) — user,
+# 2026-10-14: « ye email toh theek hai toh fir kyun access nhi de paa rha ».
+_INVISIBLE = re.compile("[\u00A0\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E"
+                        "\u2000-\u200F\u2028-\u202F\u205F-\u206F\u3000\u3164\uFEFF\uFFA0]")
+
+
+def clean(email: Optional[str], lower: bool = True) -> str:
+    """The address as typed, without what cannot be in one (lower-case by default)."""
+    s = _INVISIBLE.sub("", email or "").strip()     # a plain space inside stays: it is refused
+    return s.lower() if lower else s
+
+
 def check(email: str, dns: bool = True) -> Dict[str, Optional[str]]:
     """{ok, reason, suggestion}. `reason` is the French sentence to show."""
-    e = (email or "").strip().lower()
+    e = clean(email)
     if not e:
         return {"ok": False, "reason": "L'adresse e-mail est requise.", "suggestion": None}
     if " " in e or ".." in e or not _SHAPE.match(e) or e.split("@")[0].startswith(".") or e.split("@")[0].endswith("."):

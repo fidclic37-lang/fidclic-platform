@@ -400,7 +400,8 @@ def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, p
     sys_role, custom = _system_role(token.tenant_id, body.role)
     if sys_role not in creatable(me.get("role")):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas créer ce rôle.")
-    email = (body.email or "").strip().lower()
+    from services import email_check   # a copied address's invisible characters (2026-10-14)
+    email = email_check.clean(body.email)
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(status_code=400, detail="Adresse email invalide.")
     if _db.users.find_one({"email": email}):

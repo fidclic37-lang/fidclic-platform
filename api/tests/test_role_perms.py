@@ -216,6 +216,23 @@ def main():
     r = http("DELETE", f"/api/owner/team-access/roles/{caisse}", headers=H(OWNER))
     check("unused: deleted", r.status_code == 200 and caisse not in {x["key"] for x in r.json()["templates"]})
 
+    print("\n7. A copied address with an invisible character (user, 2026-10-14)")
+    from services import email_check as EC, customer_fields as CF
+    pasted = "Mza1989fr\u200b@gmail.com\u00a0"            # a zero-width space, a non-breaking space
+    check("email_check.clean drops them", EC.clean(pasted) == "mza1989fr@gmail.com")
+    check("…every kind: soft hyphen, BOM, word joiner",
+          EC.clean(" a\u00adb\ufeff\u2060c@x.fr ") == "abc@x.fr")
+    check("a plain space inside stays, so « marie dupont@… » is still refused",
+          EC.clean("marie dupont@gmail.com") == "marie dupont@gmail.com")
+    check("a client's e-mail too, case kept", CF.email("Lea\u200b@gmail.com", dns=False) == "Lea@gmail.com")
+    r = http("POST", "/api/owner/team-access/users", headers=H(OWNER), json={
+        "email": pasted, "first_name": "Hamza", "role": "manager", "branch_ids": ["pal"],
+        "password": "Caisse!Royal2026"})
+    check(f"the account is created ({r.status_code} {r.text[:120]})", r.status_code == 200)
+    check("…under the clean address, so its owner can log in",
+          db.users.find_one({"email": "mza1989fr@gmail.com"}) is not None
+          and db.users.find_one({"email": {"$regex": "\u200b"}}) is None)
+
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
 
