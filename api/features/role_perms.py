@@ -119,7 +119,11 @@ _PREFIX.sort(key=lambda x: -len(x[0]))
 _COMMON_READ = ("/api/owner/branches", "/api/owner/tenant", "/api/owner/plan-access", "/api/owner/trial-status",
                 "/api/owner/usage", "/api/owner/limit-alerts", "/api/onboarding/status")
 _COMMON_ANY = ("/api/owner/support", "/api/me/", "/api/security/2fa", "/api/security/activity",
-               "/api/security/overview", "/api/security/password", "/api/security/sessions")
+               "/api/security/overview", "/api/security/password", "/api/security/sessions",
+               # « Cet appareil est la caisse » — an action on this device, not
+               # on a page, like the sessions beside it. It carries its own
+               # gate (propriétaire / administrateur) in security_page.
+               "/api/security/caisse")
 
 # A few reads that other pages need for their own work (never a page's list):
 # the scan reads the card's rules and the product picker, a campaign reads the
