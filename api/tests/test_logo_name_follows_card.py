@@ -92,6 +92,19 @@ def main():
     finally:
         WP.name_logo = real
 
+    # …and its logo is cut to its visible pixels
+    import io
+    from PIL import Image
+    im = Image.new("RGBA", (300, 150), (0, 0, 0, 0))
+    im.paste((200, 150, 20, 255), (100, 25, 200, 125))
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    files = {"pass.json": json.dumps({"logoText": "X", "serialNumber": "FT-7DA5BB50"}).encode(),
+             "primaryLogo@3x.png": buf.getvalue()}
+    WP._name_into_logos(files, {"apple_logo_text": ["FT-7DA5BB50"]})
+    check("the test card's logo is trimmed (300×150 → 100×100)",
+          Image.open(io.BytesIO(files["primaryLogo@3x.png"])).size == (100, 100))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 
