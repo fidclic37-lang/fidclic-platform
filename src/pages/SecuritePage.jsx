@@ -81,6 +81,12 @@ export default function SecuritePage() {
   useEffect(() => { load(); }, [load]);
   const say = (m) => { setToast(m); setTimeout(() => setToast(''), 3500); };
   const open = (type, extra = {}) => { setForm({}); setMErr(''); setModal({ type, ...extra }); };
+  // « Code de la caisse » — the form's own state; d.caisse_pin is the truth
+  const [pin, setPin] = useState({ on: false, mode: 'shop', code: '' });
+  useEffect(() => {
+    if (d?.caisse_pin) setPin((p) => ({ ...p, on: d.caisse_pin.on, mode: d.caisse_pin.mode }));
+  }, [d?.caisse_pin?.on, d?.caisse_pin?.mode]);
+
   const run = async (key, fn, ok, after) => {
     setBusy(key); setMErr('');
     try { const r = await fn(); if (ok) say(ok); if (after) after(r?.data); else setModal(null); load(); }
@@ -177,6 +183,56 @@ export default function SecuritePage() {
             </button>
           </div>
         </Card>
+
+        {/* « Code de la caisse » — off by default (user, 2026-10-14): a till
+            should open on the scanner. A shop that wants a lock turns it on
+            and says who shares it. It is a lock, not a login: nobody is
+            signed out, the device simply does not scan until it is typed. */}
+        {d.caisse_pin && (
+        <Card>
+          <Head icon={KeyRound} title="Code de la caisse"
+                sub="Facultatif. Sans code, une caisse enregistrée scanne dès qu'on l'ouvre." />
+          <div className="space-y-3 pt-1">
+            <label className="flex items-start gap-2.5">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#2F6BFF]" checked={pin.on}
+                     onChange={(e) => setPin((p) => ({ ...p, on: e.target.checked }))} />
+              <span>
+                <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">Demander un code sur les caisses</span>
+                <span className="block text-[12.5px] text-[#64748B]">
+                  Une fois saisi, l'appareil scanne pour la journée.
+                </span>
+              </span>
+            </label>
+            {pin.on && (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {[['shop', 'Le même code pour la boutique'], ['device', 'Un code par appareil']].map(([k, l]) => (
+                    <button key={k} type="button" onClick={() => setPin((p) => ({ ...p, mode: k }))}
+                            className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${
+                              pin.mode === k ? 'border-[#2F6BFF] text-[#2F6BFF]' : 'border-[#E1E8F5] text-[#475569]'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <input value={pin.code} onChange={(e) => setPin((p) => ({ ...p, code: e.target.value.replace(/\D/g, '').slice(0, 8) }))}
+                       inputMode="numeric" placeholder={d.caisse_pin.set ? 'Nouveau code (4 à 8 chiffres)' : 'Code (4 à 8 chiffres)'}
+                       className="w-full max-w-[240px] rounded-xl border border-[#E1E8F5] px-3 py-2 text-[14px] tracking-[0.3em]" />
+                {pin.mode === 'device' && (
+                  <p className="text-[12.5px] text-[#64748B]">
+                    Le code est enregistré sur l'appareil où vous êtes. Répétez l'opération sur chaque caisse.
+                  </p>
+                )}
+              </>
+            )}
+            <button type="button" disabled={busy === 'pin'}
+                    onClick={() => run('pin', () => ownerAPI.setCaisseCode({ on: pin.on, mode: pin.mode, code: pin.code || undefined }),
+                                       'Code de la caisse enregistré.', () => setPin((p) => ({ ...p, code: '' })))}
+                    className="rounded-xl bg-[#2F6BFF] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+              Enregistrer
+            </button>
+          </div>
+        </Card>
+        )}
 
         {/* row 3 */}
         <Card>
