@@ -72,7 +72,7 @@ test("each establishment's link signs up its own members", async ({ page, reques
   await page.locator('input[name="bday"]').pressSequentially('01021990');
   await page.locator('input[type="checkbox"][required]').check();
   await page.getByRole('button', { name: /Rejoindre le programme/ }).click();
-  await expect(page.getByText('Choisissez votre établissement.')).toBeVisible();
+  await expect(page.locator('#join-store-error')).toHaveText('Choisissez votre établissement.');
   // a store's own link names it, asks nothing, and makes its member
   const s2 = stores[1];
   await page.goto(`/join/${SLUG}/${s2.slug}/insta`);

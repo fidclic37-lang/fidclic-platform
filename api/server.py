@@ -6470,6 +6470,7 @@ def get_join_info(slug: str, store: Optional[str] = None):
     t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    _st = None
     if store:                    # an establishment's link: its own card (logo, reward…)
         from features import store_links as _SL
         _st = _SL.store_by(t, store)
@@ -6477,10 +6478,12 @@ def get_join_info(slug: str, store: Optional[str] = None):
             _SC.set_store(t["id"], _st["id"])
     t.pop("_id", None)
     # The shop's own consent sentence, privacy policy and cookie notice
-    # (Paramètres › Données & confidentialité).
+    # (Paramètres › Données & confidentialité) — naming the establishment
+    # the customer joins, not the account (2026-10-14: « ROYAL TRIM LIBÉRTÉ »
+    # on a PALISSY signup)
     try:
         from features.privacy_page import public_view
-        t["privacy_public"] = public_view(t)
+        t["privacy_public"] = public_view({**t, "name": _st.get("name") or t.get("name")} if _st else t)
     except Exception:
         pass
     return t
@@ -6717,7 +6720,8 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     from features import store_links as _SL
     _parrain = db.customers.find_one({"tenant_id": tid, "barcode_id": str(req.parrain_barcode or "").strip().upper()},
                                      {"_id": 0, "branch_id": 1}) if req.parrain_barcode else None
-    cust_doc["branch_id"] = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None)
+    cust_doc["branch_id"] = _SL.home_for_signup(t, req.store, _parrain, strict=request is not None,
+                                              parrain_link=bool(str(req.parrain_barcode or "").strip()))
     if getattr(req, "_birth_date", None):
         cust_doc["birth_date"] = req._birth_date           # YYYY-MM-DD → the age in Clients
     # Brought by a friend's card: « Parrainage », whatever link or answer came

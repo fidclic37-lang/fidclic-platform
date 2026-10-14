@@ -128,17 +128,32 @@ def store_by(t: Dict[str, Any], key: Optional[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def parrain_store(t: Dict[str, Any], parrain: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The store a friend's card brings its filleul into — always one, never a
+    question (user, 2026-10-14: « jis store ka card scan kiya gya hai usi store
+    ka card banayega »). The parrain's own store; a card from before the stores
+    (no store, or one closed / not taking signups since) belongs to the main
+    shop, as every card did then. None only for a one-shop account."""
+    stores = _signup(t)
+    if not stores:
+        return None
+    pid = (parrain or {}).get("branch_id")
+    return next((b for b in stores if b["id"] == pid), None) \
+        or next((b for b in stores if b.get("is_main")), None) or stores[0]
+
+
 def home_for_signup(t: Dict[str, Any], store: Optional[str], parrain: Optional[Dict[str, Any]],
-                    strict: bool = True) -> Optional[str]:
+                    strict: bool = True, parrain_link: bool = False) -> Optional[str]:
     """The new customer's home store, or a French 400.
-    - a friend's card: the parrain's store (if it is still open);
+    - a friend's card (`parrain_link`, even one not found): the parrain's store,
+      see parrain_store — the form never asks;
     - else the store of the link, or the one chosen on the form;
     - one open store: that one; none (a one-shop account): None."""
     stores = _signup(t)
     if not stores:
         return None
-    if parrain and parrain.get("branch_id") in {b["id"] for b in stores}:
-        return parrain["branch_id"]
+    if parrain or parrain_link:
+        return parrain_store(t, parrain)["id"]
     hit = store_by(t, store)
     if hit and hit.get("card_off"):
         raise HTTPException(status_code=400, detail={"code": "store_card_off", "message": CARD_OFF_MSG})

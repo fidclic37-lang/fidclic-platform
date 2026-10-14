@@ -131,6 +131,26 @@ def main():
           r.status_code == 200 and home(r.json()["barcode_id"]) == "pal")
     r = join(parrain_barcode=pal_client)
     check("…and with no store chosen at all", r.status_code == 200 and home(r.json()["barcode_id"]) == "pal")
+    # 2026-10-14 (prod, ROYAL TRIM): a card from before the stores has none; the
+    # form shows no store on a friend's link, so the server must never ask
+    db.customers.insert_one({"id": "legacy", "tenant_id": "t1", "name": "Mahdi Ancien", "barcode_id": "FT-LEGACY01",
+                             "phone": "0611111111", "deleted_at": None})
+    r = join(parrain_barcode="FT-LEGACY01")
+    check(f"a friend of a card with no store: the main shop, nothing asked ({r.status_code})",
+          r.status_code == 200 and home(r.json()["barcode_id"]) == "main")
+    db.customers.update_one({"id": "legacy"}, {"$set": {"branch_id": "old"}})
+    r = join(parrain_barcode="FT-LEGACY01")
+    check("…a parrain whose store has closed: the main shop", r.status_code == 200 and home(r.json()["barcode_id"]) == "main")
+    r = join(parrain_barcode="FT-NOSUCH99")
+    check(f"…a friend's link with a card number not found: the main shop, never « Choisissez » ({r.status_code})",
+          r.status_code == 200 and home(r.json()["barcode_id"]) == "main")
+    inv = http("GET", f"/api/card/{pal_client}/inviter").json()
+    check(f"the form is told the friend's store, to name it ({inv.get('store')})",
+          (inv.get("store") or {}).get("name") == "ROYAL TRIM PALISSY")
+    check("…and the main shop for a card from before the stores",
+          (http("GET", "/api/card/FT-LEGACY01/inviter").json().get("store") or {}).get("name") == "ROYAL TRIM")
+    solo = join(slug="solo").json()["barcode_id"]
+    check("a one-shop account: no store to name", http("GET", f"/api/card/{solo}/inviter").json().get("store") is None)
 
     print("\n4. A visit counts where it is scanned")
     r = http("POST", "/api/owner/scan", headers=OWNER, json={"barcode_id": pal_client, "amount_paid": 5, "branch_id": "mon"})

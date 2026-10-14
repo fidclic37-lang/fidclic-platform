@@ -201,15 +201,17 @@ const JoinPage = () => {
   const [chosenStore, setChosenStore] = useState('');
   // a store whose card is not designed yet takes no signup (multi-store, 2026-10-12)
   const openStores = stores.filter((x) => !x.card_off);
+  // a friend's card: always the friend's own store, never asked (user, 2026-10-14)
   const askStore = openStores.length > 1 && !urlStore && !searchParams.get('p');
   const lockedSource = useMemo(() => resolveSourceFromUrl(searchParams, channel), [searchParams, channel]);
   // ?p=FT-… — a friend's card brought them: parrainage
   const parrainBarcode = (searchParams.get('p') || '').trim().toUpperCase();
   const [inviter, setInviter] = useState(null);
+  const [parrainShop, setParrainShop] = useState(null);   // the store the friend's card belongs to
   const [tenant, setTenant] = useState(null);
   // several establishments: the shop is the one of the link (or chosen on the form) —
   // its name in the welcome, the consent and the card, never the account's (2026-10-12)
-  const storeName = urlStore?.name || openStores.find((x) => x.slug === chosenStore)?.name
+  const storeName = urlStore?.name || parrainShop?.name || openStores.find((x) => x.slug === chosenStore)?.name
     || (openStores.length === 1 ? openStores[0].name : '');
   const shop = tenant && storeName ? { ...tenant, name: storeName } : tenant;
   const [closed, setClosed] = useState(null);
@@ -226,7 +228,11 @@ const JoinPage = () => {
   useEffect(() => {
     if (!parrainBarcode) return undefined;
     let alive = true;
-    api.get(`/card/${parrainBarcode}/inviter`).then(({ data }) => { if (alive && data?.enabled) setInviter(data); }).catch(() => {});
+    api.get(`/card/${parrainBarcode}/inviter`).then(({ data }) => {
+      if (!alive) return;
+      if (data?.enabled) setInviter(data);
+      if (data?.store) setParrainShop(data.store);
+    }).catch(() => {});
     return () => { alive = false; };
   }, [parrainBarcode]);
 
@@ -245,6 +251,16 @@ const JoinPage = () => {
     });
     publicAPI.joinPage(slug, seg).then(({ data }) => setPage(data)).catch(() => {});
   }, [slug, seg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // a friend's card on the account's link: the page of the friend's store —
+  // its name in the consent, its signup picture (user, 2026-10-14)
+  useEffect(() => {
+    if (!parrainShop?.slug || seg) return undefined;
+    let alive = true;
+    publicAPI.getJoinInfo(slug, parrainShop.slug).then((res) => { if (alive && res.data?.slug === slug) setTenant(res.data); }).catch(() => {});
+    publicAPI.joinPage(slug, parrainShop.slug).then(({ data }) => { if (alive) setPage(data); }).catch(() => {});
+    return () => { alive = false; };
+  }, [slug, seg, parrainShop]);
 
   // the link of an establishment whose card is not designed yet: no signup there
   useEffect(() => {
@@ -484,10 +500,17 @@ const JoinPage = () => {
                 </div>
               )}
 
+              {/* every refusal in words, here too: a line that only says « en rouge »
+                  left the customer stuck whenever that field was off screen or
+                  not shown at all (user, 2026-10-14) */}
               {!joinError && Object.values(errors).some(Boolean) && (
-                <p role="status" className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-3.5 text-[13.5px] font-semibold text-[#7F1D1D]">
-                  Corrigez les champs en rouge ci-dessus.
-                </p>
+                <div role="status" data-testid="join-errors"
+                     className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-3.5 text-[13.5px] text-[#7F1D1D]">
+                  <p className="font-semibold">Corrigez les champs en rouge ci-dessus :</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                    {[...new Set(Object.values(errors).filter(Boolean))].map((m) => <li key={m}>{m}</li>)}
+                  </ul>
+                </div>
               )}
 
               <button type="submit" disabled={busy}
