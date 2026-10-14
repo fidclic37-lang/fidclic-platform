@@ -267,6 +267,13 @@ const JoinPage = () => {
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (lockedSource) recordTouchpoint(slug, lockedSource); }, [slug, lockedSource]);
 
+  // A field in error may sit far above the button (the store, at the top):
+  // the page goes to the first one, so « nothing happens » is never what the
+  // customer sees (user, 2026-10-14: « Rejoindre le programme ne marche pas »).
+  const showFirstError = () => requestAnimationFrame(() => {
+    const el = document.querySelector('#join-form p[role="alert"]');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
   const submit = async (e) => {
     e.preventDefault();
     const postal = postalDigits(postalRef.current?.value ?? form.postal_code);
@@ -282,7 +289,7 @@ const JoinPage = () => {
     if (!consent) errs.consent = 'Cochez la case pour créer votre carte.';
     if (askStore && !chosenStore) errs.store = 'Choisissez votre établissement.';
     setErrors(errs);
-    if (Object.keys(errs).length) return;
+    if (Object.keys(errs).length) { showFirstError(); return; }
     setBusy(true); setJoinError(null);
     const position = await askPosition();          // asked now, never required
     try {
@@ -309,9 +316,11 @@ const JoinPage = () => {
         // e-mail domain that receives no mail…), shown under that field
         setErrors((x) => ({ ...x, [detail.field]: detail.message }));
         setJoinError(null);
+        showFirstError();
       } else if (detail && typeof detail === 'object' && detail.code === 'store_required') {
         setErrors((x) => ({ ...x, store: detail.message }));
         setJoinError(null);
+        showFirstError();
       } else if (err?.response?.status === 409 && detail && typeof detail === 'object') {
         setJoinError({ tone: 'amber', title: detail.code === 'email_taken' ? 'E-mail déjà utilisé' : 'Vous avez déjà une carte', message: detail.message });
       } else if (err?.response?.status === 403 && detail && typeof detail === 'object' && detail.code === 'plan_limit_reached') {
@@ -473,6 +482,12 @@ const JoinPage = () => {
                   <p className="font-semibold">{joinError.title}</p>
                   <p className="mt-0.5 leading-relaxed">{joinError.message}</p>
                 </div>
+              )}
+
+              {!joinError && Object.values(errors).some(Boolean) && (
+                <p role="status" className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-3.5 text-[13.5px] font-semibold text-[#7F1D1D]">
+                  Corrigez les champs en rouge ci-dessus.
+                </p>
               )}
 
               <button type="submit" disabled={busy}
