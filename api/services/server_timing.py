@@ -63,6 +63,34 @@ def note(key: str, value: Any = 1) -> None:
             tally.setdefault("notes", {})[key] = tally.get("notes", {}).get(key, 0) + value
 
 
+# ---------------------------------------------------------------------------
+# What a cold start costs (2026-10-14)
+#
+# A request measured at 9 609 ms in production answered in 15 ms of app time:
+# the 9,6 s went before the handler ran — the function was asleep and this
+# request woke it. `app` and `db` are measured inside the handler, so they can
+# never show that, and no amount of reading the code settles how the time
+# splits between unzipping the bundle, importing 109 feature modules, opening
+# the MongoDB connection and the round trips the modules make at import.
+#
+# So the boot measures itself, once, and every answer carries it: `boot` is how
+# long this instance took to come up, `age` how long ago that was. A request
+# with a small `age` is a request that paid for the wake-up — which is the one
+# worth looking at.
+# ---------------------------------------------------------------------------
+_BOOT: Dict[str, float] = {}
+
+
+def boot_mark(phase: str, ms: float) -> None:
+    """Record a slice of the start-up, from server.py."""
+    _BOOT[phase] = ms
+
+
+def boot_ready(total_ms: float) -> None:
+    _BOOT["total"] = total_ms
+    _BOOT["at"] = time.time()
+
+
 def install_listener() -> None:
     """Before the MongoClient is created."""
     try:
@@ -101,6 +129,16 @@ class TimingMiddleware:
                     value += f', slow;dur={tally["slow_us"] / 1000:.0f};desc="{_clean(tally["slow"])}"'
                 for k, v in (tally.get("notes") or {}).items():
                     value += f', {_clean(k)};desc="{_clean(str(v))}"'
+                # How this instance came up, and how long ago — the only way to
+                # see a cold start from the outside.
+                if _BOOT.get("total"):
+                    # `_clean` keeps only a safe alphabet — « : » survives, « = » does not
+                    parts = [f'{k}:{_BOOT[k]:.0f}' for k in ("imports", "features", "db")
+                             if _BOOT.get(k)]
+                    value += f', boot;dur={_BOOT["total"]:.0f}'
+                    if parts:
+                        value += f';desc="{_clean(" ".join(parts))}"'
+                    value += f', age;dur={(time.time() - _BOOT["at"]) * 1000:.0f}'
                 headers = list(message.get("headers") or [])
                 headers.append((b"server-timing", value.encode("latin-1")))
                 message = {**message, "headers": headers}
