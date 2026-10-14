@@ -1856,6 +1856,36 @@ def styled_letters(card: Dict[str, Any]) -> Optional[Tuple[Tuple[str, int, Optio
         return None
 
 
+def _name_key(text: str) -> str:
+    """Letters and digits only, without case or accents: « ★ Royal Trim ★ » is
+    the same name as « ROYAL TRIM »."""
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text or "").casefold() if ch.isalnum())
+
+
+def letters_for(card: Dict[str, Any], name: str):
+    """« Nom stylé » drawn on THIS card's name. The letters keep their own text
+    (an owner adds ★, changes case) as long as they spell the card's name; once
+    they spell another — the card renamed, or a store's card copied from the
+    account's (user, 2026-10-14: Liberté's logo said « ROYAL TRIM PALISSY »,
+    its footer « ROYAL TRIM LIBERTÉ ») — the name's text replaces them and each
+    letter keeps its style where the start and the end still match."""
+    letters = styled_letters(card)
+    name = (name or "").strip()
+    if not letters or not name or _name_key("".join(x[0] for x in letters)) == _name_key(name):
+        return letters
+    chars = list(name)[:40]
+    a = 0
+    while a < len(chars) and a < len(letters) and letters[a][0] == chars[a]:
+        a += 1
+    b = 0
+    while (b < len(chars) - a and b < len(letters) - a
+           and letters[len(letters) - 1 - b][0] == chars[len(chars) - 1 - b]):
+        b += 1
+    mid = tuple((c, 100, None, None) for c in chars[a:len(chars) - b])
+    return tuple(letters[:a]) + mid + tuple(letters[len(letters) - b:])
+
+
 def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, k: float):
     """The styled name on ONE line, as large as the box allows: an RGBA image,
     or None. Never wrapped, never cut, never an ellipsis."""
@@ -2093,7 +2123,7 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     (« Couleur du nom ») or the card's text colour."""
     try:
         pj = json.loads(files["pass.json"])
-        letters = styled_letters(card)               # « Nom stylé »: the owner's letters, in its place
+        letters = letters_for(card, str(pj.get("logoText") or ""))   # « Nom stylé », on this card's name
         name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
         if not name.strip():
             return
@@ -3310,7 +3340,7 @@ def _gw_class(payload: Dict[str, Any]) -> Dict[str, Any]:
         # so the logo and the shop's name come as one wide logo, which replaces
         # Google's logo + issuer name; the line under it then says what the card is
         cls["wideProgramLogo"] = {"sourceUri": {"uri": _gw_image_url(
-            tenant["id"], "name", {**card, "_shop_name": tenant.get("name") or org})}}
+            tenant["id"], "name", {**card, "_shop_name": org})}}
         cls["programName"] = gd.get("program_name") or "Carte de fidélité"
     if gd["rows"]:
         def item(key: str) -> Dict[str, Any]:
@@ -3599,8 +3629,8 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
         _, ring = _logo_look(card)
         color = _rgb(card.get("logo_text_color")) or (255, 255, 255)
         return name_logo(round_logo(_fetch_image(card.get("logo_url")), ring, size=400), card.get("_shop_name") or "",
-                         color, box=(640, 200), letters=styled_letters(card), logo_pct=card.get("name_logo_size"),
-                         font_key=card.get("name_font")).get("@2x")
+                         color, box=(640, 200), letters=letters_for(card, card.get("_shop_name") or ""),
+                         logo_pct=card.get("name_logo_size"), font_key=card.get("name_font")).get("@2x")
     return None
 
 
@@ -3626,7 +3656,7 @@ def google_image(tenant_id: str, what: str, store: Optional[str] = None):
     card = {**(tpl.get("brand_fields") or {}), **tpl}
     if what == "name":
         t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
-        card["_shop_name"] = _SC.store_name(tenant_id, store) or t.get("name") or card.get("card_name") or ""
+        card["_shop_name"] = card.get("card_name") or _SC.store_name(tenant_id, store) or t.get("name") or ""
     png = _gw_image(card, what)
     if not png:
         raise HTTPException(status_code=404, detail="Image absente")
@@ -3653,8 +3683,8 @@ def owner_google_preview(body: PassPreviewIn,
         "images": {"logo": _data_url(_gw_image(card, "logo")),
                    "wide": _data_url(_gw_image(card, "wide")) if gd["logo"] == "wide" else (
                        # « Couleur du nom »: the logo + the name, as Google gets it
-                       _data_url(_gw_image({**card, "_shop_name": (payload.get("tenant") or {}).get("name")
-                                            or card.get("card_name") or ""}, "name"))
+                       _data_url(_gw_image({**card, "_shop_name": card.get("card_name")
+                                            or (payload.get("tenant") or {}).get("name") or ""}, "name"))
                        if card.get("logo_text_color") or styled_letters(card) else None),
                    "hero": _preview_image("strip", hero) if hero else None},
         "row_fields": {k: v[0] for k, v in GOOGLE_ROW_FIELDS.items()},

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Type, Sparkles, RotateCcw } from 'lucide-react';
 
 /**
@@ -14,6 +14,9 @@ const SYMBOLS = ['★', '✦', '✧', '♛', '♚', '✂', '❤', '♥', '✿', 
 const API = '/api';
 
 const blank = (c) => ({ c, s: 100, color: null, font: null });
+
+// letters and digits only, without case or accents (« ★ Royal Trim ★ » = « ROYAL TRIM »)
+const nameKey = (t) => (t || '').normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
 // keep each letter's style when the text changes: same start, same end
 function retext(letters, text) {
@@ -34,6 +37,13 @@ export default function NameStyleEditor({ value, fallbackText, fonts = [], defau
   const text = letters.map((l) => l.c).join('');
 
   const set = (next) => onChange(next.length ? { letters: next } : {});
+  // the letters follow the card's name (wallet_passes.letters_for): a renamed
+  // card, or a store's card copied from the account's, never keeps another name
+  const follow = () => {
+    const name = (fallbackText || '').trim();
+    if (on && name && nameKey(text) !== nameKey(name)) set(retext(letters, name));
+  };
+  useEffect(follow, [fallbackText]); // eslint-disable-line react-hooks/exhaustive-deps
   const start = () => { const t = (fallbackText || '').trim() || 'Mon commerce'; set(Array.from(t).slice(0, MAX).map(blank)); setSel([0]); };
   const patch = (p) => set(letters.map((l, i) => (sel.includes(i) ? { ...l, ...p } : l)));
   const toggle = (i) => setSel((s) => (s.includes(i) ? s.filter((x) => x !== i) : [...s, i].sort((x, y) => x - y)));
@@ -67,8 +77,8 @@ export default function NameStyleEditor({ value, fallbackText, fonts = [], defau
       {on && (
         <div className="mt-3 space-y-3">
           <label className="block">
-            <span className="mb-1 block text-[12px] font-medium text-[#475569]">Texte ({text.length}/{MAX})</span>
-            <input value={text} maxLength={MAX} aria-label="Texte du nom stylé"
+            <span className="mb-1 block text-[12px] font-medium text-[#475569]">Texte ({text.length}/{MAX}) — suit le nom de la carte ; ajoutez des symboles ou changez la casse</span>
+            <input value={text} maxLength={MAX} aria-label="Texte du nom stylé" onBlur={follow}
                    onChange={(e) => { const next = retext(letters, e.target.value); set(next); setSel((s) => s.filter((i) => i < next.length)); }}
                    className="h-10 w-full rounded-lg border border-[#E2E8F0] bg-white px-3 text-[14px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
           </label>
