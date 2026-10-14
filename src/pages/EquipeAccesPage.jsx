@@ -382,7 +382,7 @@ export default function EquipeAccesPage() {
 
   const StoreAccess = ({ compact }) => {
     const sid = storeSel || d.stores[0]?.id;
-    const list = d.users;
+    const list = d.all_users || d.users;      // every account: this is where a store is given or taken
     return (
       <div>
         <span className="relative mb-3 block">
