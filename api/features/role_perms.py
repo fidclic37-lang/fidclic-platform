@@ -110,7 +110,6 @@ _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/facturation", "billing"), ("/api/owner/upgrade-plan", "billing"),
     ("/api/owner/request-upgrade", "billing"),
     ("/api/security/account", "delete"),
-    ("/api/security/caisse", "settings"),           # « Cet appareil est la caisse » (Paramètres › Sécurité)
     ("/api/security/email", "email_change"),
 ]
 _PREFIX.sort(key=lambda x: -len(x[0]))
