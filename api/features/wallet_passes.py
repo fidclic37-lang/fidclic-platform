@@ -2118,31 +2118,12 @@ def _poster_ink(card: Dict[str, Any], files: Dict[str, bytes]) -> Tuple[int, int
     return (255, 255, 255) if (photo or _lum(surface) <= 0.45) else (25, 25, 28)
 
 
-def _trim_logos(files: Dict[str, bytes]) -> None:
-    """The logo images cut to their visible pixels: a transparent border in the
-    shop's own file still takes room beside logoText (test, user 2026-10-14)."""
-    try:
-        from PIL import Image
-        for n in [n for n in files if re.match(r"^(logo|primaryLogo)(@[23]x)?\.png$", n)]:
-            im = Image.open(io.BytesIO(files[n])).convert("RGBA")
-            box = im.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox()
-            if box and box != (0, 0, im.width, im.height):
-                buf = io.BytesIO()
-                im.crop(box).save(buf, format="PNG")
-                files[n] = buf.getvalue()
-    except Exception as exc:
-        print(f"wallet: logo trim failed ({exc})")
-
-
 def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
     """Apple: the shop's name moves from logoText into the logo images (iOS 26
     logo.png, iOS 27 primaryLogo.png) — written in full, in the owner's colour
     (« Couleur du nom ») or the card's text colour."""
     try:
         pj = json.loads(files["pass.json"])
-        if pj.get("serialNumber") and pj["serialNumber"] in (card.get("apple_logo_text") or []):
-            _trim_logos(files)             # test switch: Apple writes the name (logoText), the logo stays plain
-            return
         letters = letters_for(card, str(pj.get("logoText") or ""))   # « Nom stylé », on this card's name
         name = "".join(x[0] for x in letters) if letters else str(pj.get("logoText") or "").strip()
         if not name.strip():
@@ -2158,6 +2139,11 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
         # uses: white over a photo or a dark card, near-black over a light one.
         on_card = _css_rgb(pj.get("foregroundColor")) or (255, 255, 255)
         on_poster = _poster_ink(card, files)
+        # test (user, 2026-10-14): iOS 27's primaryLogo is 30 pt high, 30–126 pt
+        # wide (WWDC26 / Pass Designer, as reported) — not iOS 26's 160 × 50.
+        # Drawn at 160 × 50, Wallet shrinks it to ~96 × 30. The listed cards get
+        # it drawn at 126 × 30.
+        poster_box = (126, 30) if pj.get("serialNumber") in (card.get("poster_logo_test") or []) else (160, 50)
         done = False
         for base in ("logo", "primaryLogo"):
             src = _best_file(files, base)
@@ -2168,7 +2154,8 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
             color = chosen or (on_poster if base == "primaryLogo" else on_card)
             # the image is made from the plain logo (a design's logo may already be a disc)
             for suffix, png in name_logo(src, name, color, letters=letters, logo_pct=card.get("name_logo_size"),
-                                         font_key=card.get("name_font")).items():
+                                         font_key=card.get("name_font"),
+                                         box=poster_box if base == "primaryLogo" else (160, 50)).items():
                 files[f"{base}{suffix}.png"] = png
             done = True
         if done:
@@ -2768,7 +2755,7 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font", "apple_logo_text",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font", "poster_logo_test",
     "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 

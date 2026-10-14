@@ -340,10 +340,9 @@ class CardSettings(BaseModel):
     name_logo_size: Optional[int] = None           # « Taille du logo » beside the name, 0–100 (0: the name alone)
     name_font: Optional[str] = None                # « Police du nom » (wallet_passes.NAME_FONTS), "" = default
     name_style: Optional[Dict[str, Any]] = None    # « Nom stylé »: letter by letter (wallet_passes.clean_name_style)
-    # test switch, no control on the page (user, 2026-10-14): Apple writes the
-    # name itself (logoText) instead of our logo + name image — does it cut it?
-    # The card numbers to test on (["FT-…"]), [] = off.
-    apple_logo_text: Optional[List[str]] = None
+    # test, no control on the page (user, 2026-10-14): the card numbers whose
+    # iOS 27 logo + name is drawn at 126 × 30 pt (wallet_passes._name_into_logos)
+    poster_logo_test: Optional[List[str]] = None
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
     google_design: Optional[Dict[str, Any]] = None
     show_card_number: Optional[bool] = None

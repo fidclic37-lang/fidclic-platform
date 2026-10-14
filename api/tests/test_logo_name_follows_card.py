@@ -77,33 +77,22 @@ def main():
           pj.get("organizationName") == "ROYAL TRIM LIBERTÉ")
     check("logoText = the card's name", pj.get("logoText") == "ROYAL TRIM LIBERTÉ")
 
-    # test switch « apple_logo_text »: Apple writes the name, no name image
-    seen.clear()
-    WP.name_logo = lambda src, name, color, **k: (seen.setdefault("n", name), {})[1]
-    try:
-        pj_of = lambda sn: {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ", "serialNumber": sn}).encode(),  # noqa: E731
-                            "logo.png": b"x"}
-        files = pj_of("FT-7DA5BB50")
-        WP._name_into_logos(files, {"apple_logo_text": ["FT-7DA5BB50"]})
-        check("apple_logo_text: the listed card — no name image, logoText kept",
-              "n" not in seen and json.loads(files["pass.json"]).get("logoText") == "ROYAL TRIM LIBÉRTÉ")
-        WP._name_into_logos(pj_of("FT-B2295A08"), {"apple_logo_text": ["FT-7DA5BB50"]})
-        check("…another card: as before", seen.get("n") == "ROYAL TRIM LIBÉRTÉ")
-    finally:
-        WP.name_logo = real
-
-    # …and its logo is cut to its visible pixels
+    # test « poster_logo_test »: the listed card's iOS 27 logo is drawn at 126 × 30
     import io
     from PIL import Image
-    im = Image.new("RGBA", (300, 150), (0, 0, 0, 0))
-    im.paste((200, 150, 20, 255), (100, 25, 200, 125))
-    buf = io.BytesIO()
-    im.save(buf, format="PNG")
-    files = {"pass.json": json.dumps({"logoText": "X", "serialNumber": "FT-7DA5BB50"}).encode(),
-             "primaryLogo@3x.png": buf.getvalue()}
-    WP._name_into_logos(files, {"apple_logo_text": ["FT-7DA5BB50"]})
-    check("the test card's logo is trimmed (300×150 → 100×100)",
-          Image.open(io.BytesIO(files["primaryLogo@3x.png"])).size == (100, 100))
+    im = Image.new("RGBA", (300, 300), (200, 150, 20, 255))
+    b = io.BytesIO()
+    im.save(b, format="PNG")
+
+    def built(serial):
+        files = {"pass.json": json.dumps({"logoText": "ROYAL TRIM LIBÉRTÉ", "serialNumber": serial}).encode(),
+                 "logo.png": b.getvalue(), "primaryLogo.png": b.getvalue()}   # (_best_file is patched above)
+        WP._name_into_logos(files, {"poster_logo_test": ["FT-7DA5BB50"]})
+        return {n: Image.open(io.BytesIO(files[n])).size for n in ("logo@3x.png", "primaryLogo@3x.png")}
+    t, o = built("FT-7DA5BB50"), built("FT-B2295A08")
+    check(f"listed card: primaryLogo 90 px high (30 pt @3x) {t}", t["primaryLogo@3x.png"][1] == 90)
+    check("…its iOS 26 logo unchanged (150 px high)", t["logo@3x.png"][1] == 150)
+    check(f"another card: as before {o}", o["primaryLogo@3x.png"][1] == 150)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

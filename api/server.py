@@ -7149,7 +7149,7 @@ def _serialize_card_payload_raw(cust: dict) -> dict:
             "name_logo_size":       tpl.get("name_logo_size"),   # « Taille du logo » beside the name
             "name_font":            tpl.get("name_font"),        # « Police du nom »
             "name_style":           tpl.get("name_style"),     # « Nom stylé » (wallet_passes.name_logo)
-            "apple_logo_text":      tpl.get("apple_logo_text"),  # test: Apple's own logoText
+            "poster_logo_test":     tpl.get("poster_logo_test"),  # test: iOS 27 logo at 126 × 30
             "stamp_shape":          tpl.get("stamp_shape"),
             "google_design":        tpl.get("google_design"),
             "hero_mode":            tpl.get("hero_mode"),
