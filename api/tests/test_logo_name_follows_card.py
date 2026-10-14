@@ -65,6 +65,18 @@ def main():
         WP.name_logo = real
     check("Apple logo drawn with the card's name", seen.get("n") == "ROYAL TRIM LIBERTÉ")
 
+    # organizationName (Wallet's details, notifications): the card's name too
+    import server as S
+    db = S.db
+    db.tenants.insert_one({"id": "t9", "name": "ROYAL TRIM PALISSY", "slug": "rt9"})
+    db.card_templates.insert_one({"tenant_id": "t9", "card_name": "ROYAL TRIM LIBERTÉ"})
+    db.customers.insert_one({"id": "c9", "tenant_id": "t9", "barcode_id": "FT-T9000001", "name": "Mahdi",
+                             "visits": 0, "points": 0})
+    pj = WP.build_pass_json(S._serialize_card_payload(db.customers.find_one({"id": "c9"}, {"_id": 0})))
+    check(f"organizationName = the card's name ({pj.get('organizationName')})",
+          pj.get("organizationName") == "ROYAL TRIM LIBERTÉ")
+    check("logoText = the card's name", pj.get("logoText") == "ROYAL TRIM LIBERTÉ")
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 

@@ -1478,7 +1478,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         "passTypeIdentifier": _env("APPLE_PASS_TYPE_ID"),
         "teamIdentifier": _env("APPLE_TEAM_ID"),
         "serialNumber": serial,
-        "organizationName": tenant.get("name") or org,
+        # the card's name, as typed in « Nom de la carte » (user, 2026-10-14)
+        "organizationName": org,
         "description": f"Carte de fidélité {org}",
         "logoText": org,
         "webServiceURL": f"{_site_url()}/api/passes",
