@@ -574,42 +574,64 @@ _SHARED_KINDS: set = set()
 _SHARED_MAX = 300 * 1024
 
 
-def _shared_get(kind: str, key: str) -> Any:
-    if kind not in _SHARED_KINDS or _db is None:
-        return None
-    try:
-        doc = _db.img_cache.find_one({"_id": key})
-    except Exception:
-        return None
-    if not doc:
-        return None
-    if "b" in doc:
-        return bytes(doc["b"])
-    if "s" in doc:
-        return str(doc["s"])
-    if "d" in doc:
-        return {k[1:]: bytes(v) for k, v in doc["d"].items()}         # stored as "k" + key
+# 2026-10-14 (Hobby paused for « Fluid Active CPU »): built images are shared
+# again — through Vercel Blob (services/media.cache_get/put), read from the
+# edge, never through the cluster. A new instance no longer rebuilds what
+# another one already built. Without a Blob token: memory only, as before.
+_BLOB_KINDS = {"poster", "poster_variants", "strip", "strip_variants", "png_variants", "name_logo",
+               "round_logo", "template_scaled", "preview_jpeg", "slim_photo"}
+_PACK = b"FCI1"
+
+
+def _pack(value: Any) -> Optional[bytes]:
+    if isinstance(value, (bytes, bytearray)):
+        return b"B" + bytes(value)
+    if isinstance(value, str):
+        return b"S" + value.encode("utf-8")
+    if isinstance(value, dict) and value and all(isinstance(v, (bytes, bytearray)) for v in value.values()):
+        head = json.dumps([[str(k), len(v)] for k, v in value.items()]).encode("utf-8")
+        return b"D" + len(head).to_bytes(4, "big") + head + b"".join(bytes(v) for v in value.values())
     return None
 
 
+def _unpack(raw: bytes) -> Any:
+    if not raw:
+        return None
+    tag, body = raw[:1], raw[1:]
+    if tag == b"B":
+        return body
+    if tag == b"S":
+        return body.decode("utf-8")
+    if tag == b"D":
+        n = int.from_bytes(body[:4], "big")
+        head = json.loads(body[4:4 + n].decode("utf-8"))
+        out, pos = {}, 4 + n
+        for k, ln in head:
+            out[k] = body[pos:pos + ln]
+            pos += ln
+        return out
+    return None
+
+
+def _shared_get(kind: str, key: str) -> Any:
+    if kind not in _BLOB_KINDS:
+        return None
+    try:
+        from services import media as M
+        raw = M.cache_get(key)
+        return _unpack(raw[len(_PACK):]) if raw and raw.startswith(_PACK) else None
+    except Exception:
+        return None
+
+
 def _shared_put(kind: str, key: str, value: Any) -> None:
-    if kind not in _SHARED_KINDS or _db is None:
+    if kind not in _BLOB_KINDS:
         return
     try:
-        if isinstance(value, (bytes, bytearray)):
-            body: Dict[str, Any] = {"b": bytes(value)}
-        elif isinstance(value, str):
-            body = {"s": value}
-        elif isinstance(value, dict) and value and all(isinstance(v, (bytes, bytearray)) for v in value.values()):
-            if any("." in str(k) or "$" in str(k) for k in value):
-                return
-            body = {"d": {f"k{k}": bytes(v) for k, v in value.items()}}   # "" / "@2x" / "@3x" → "k" + key
-        else:
-            return
-        if _size(value) > _SHARED_MAX:
-            return
-        _db.img_cache.update_one({"_id": key}, {"$set": {**body, "kind": kind, "at": datetime.now(timezone.utc)}},
-                                 upsert=True)
+        packed = _pack(value)
+        if packed is not None:
+            from services import media as M
+            M.cache_put(key, _PACK + packed)
     except Exception as exc:                               # a cache that fails is just a slower preview
         print(f"wallet: image not shared ({exc})")
 

@@ -134,7 +134,7 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3, bar
       load()
         .then((r) => { if (my === seq.current) { setPass(r.data); setError(false); } })
         .catch(() => { if (my === seq.current) setError(true); });
-    }, barcodeId ? 0 : 350);
+    }, barcodeId ? 0 : 800);         // after typing stops: one preview, not one per keystroke
     return () => clearTimeout(timer);
   }, [key, visits, barcodeId]); // eslint-disable-line react-hooks/exhaustive-deps
 

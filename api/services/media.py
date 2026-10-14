@@ -164,6 +164,54 @@ def blob_put(mid: str, mime: str, raw: bytes) -> Optional[str]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Blob as a shared cache of BUILT images (2026-10-14, after the Hobby plan was
+# paused for « Fluid Active CPU »): a poster, a strip, the logos with the name
+# are built once and kept at a fixed address, so a new server instance reads
+# them from the edge instead of spending CPU building them again.
+# ---------------------------------------------------------------------------
+def _blob_host() -> Optional[str]:
+    """The store's public host, from its token (vercel_blob_rw_<storeId>_<secret>),
+    as the official SDK derives it."""
+    token = _blob_token() or ""
+    parts = token.split("_")
+    if len(parts) >= 5 and parts[0] == "vercel" and parts[1] == "blob":
+        return f"https://{parts[3].lower()}.public.blob.vercel-storage.com"
+    return None
+
+
+def cache_get(key: str) -> Optional[bytes]:
+    """A built image kept under `key` (None: not there, or no Blob)."""
+    host = _blob_host()
+    if not host or not re.match(r"^[0-9a-f]{20,64}$", key or ""):
+        return None
+    try:
+        import httpx
+        r = httpx.get(f"{host}/imgcache/{key}.bin", timeout=6.0, follow_redirects=True)
+        _note("imgcache_hit" if r.status_code == 200 else "imgcache_miss")
+        return r.content if r.status_code == 200 and r.content else None
+    except Exception:
+        return None
+
+
+def cache_put(key: str, raw: bytes) -> bool:
+    token = _blob_token()
+    if not token or not raw or not re.match(r"^[0-9a-f]{20,64}$", key or "") or len(raw) > 8 * 1024 * 1024:
+        return False
+    try:
+        import httpx
+        from urllib.parse import urlencode
+        r = httpx.put(f"{BLOB_API}/?{urlencode({'pathname': f'imgcache/{key}.bin'})}", content=raw, timeout=10.0,
+                      headers={"authorization": f"Bearer {token}", "x-api-version": BLOB_API_VERSION,
+                               "x-vercel-blob-access": "public", "x-content-type": "application/octet-stream",
+                               "x-add-random-suffix": "0", "x-allow-overwrite": "1",
+                               "x-cache-control-max-age": "31536000"})
+        return r.status_code < 300
+    except Exception as exc:
+        print(f"imgcache: not kept ({exc})")
+        return False
+
+
 def _blob_get(url: str) -> Optional[bytes]:
     try:
         import httpx
