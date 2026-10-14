@@ -4917,6 +4917,19 @@ def scan_visit(
     # any of them, an administrateur one of its own, a manager / employé its
     # only one (forced) — never untagged, never another shop's. A one-shop
     # account is unchanged (its visits stay on the shop).
+    # A till with a code set scans only once the code has been typed on it
+    # (user, 2026-10-14). The session is untouched — this is a lock on the
+    # counter, not a login — so refusing here is what makes it real rather
+    # than a screen anyone can walk past.
+    try:
+        from features import security_page as _SEC
+        if _SEC.till_locked(token_data.tenant_id, getattr(token_data, "sid", None)):
+            raise HTTPException(status_code=423, detail={"code": "CAISSE_LOCKED",
+                                                         "message": "Saisissez le code de la caisse."})
+    except HTTPException:
+        raise
+    except Exception as _e:
+        print(f"till lock check skipped (non-fatal): {_e}")
     from features import store_scope as _S
     from features import team_access as _T
     _open = [st["id"] for st in _T.stores(token_data.tenant_id)]

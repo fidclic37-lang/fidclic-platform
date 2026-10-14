@@ -588,6 +588,9 @@ export const ownerAPI = {
   // « Cet appareil est la caisse » — marks THIS session, nothing else
   markCaisse: (store_id) => api.post('/security/caisse', { store_id }),
   unmarkCaisse: () => api.delete('/security/caisse'),
+  // « Code de la caisse » — off by default; a lock on the counter, not a login
+  setCaisseCode: (body) => api.put('/security/caisse/code', body),
+  unlockCaisse: (code) => api.post('/security/caisse/unlock', { code }),
   // Sécurité › changer l'adresse e-mail du compte (features/account_email)
   emailState: () => api.get('/security/email'),
   emailStart: (new_email, password, method) => api.post('/security/email/start', { new_email, password, method }),

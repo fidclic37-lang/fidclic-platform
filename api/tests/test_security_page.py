@@ -228,5 +228,47 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     SEC.unmark_caisse(Req(), token_data=caisse_tok)
     check("…and it can go back to being an ordinary device", SEC.is_caisse(claims["sid"]) is False)
 
+    # « Code de la caisse » (user, 2026-10-14): off by default; a shop that
+    # wants a lock turns it on and picks one code for the shop or one per
+    # device. It is a lock on the counter, not a login.
+    print("\nLe code de la caisse")
+    db.user_sessions.update_one({"sid": claims["sid"]}, {"$set": {"revoked_at": None,
+                                                                 "till_store": "tours", "till_since": SEC._now()}})
+    check("off until someone turns it on", SEC.pin_config("t1") == {"on": False, "mode": "shop", "set": False})
+    check("…so a till scans straight away", SEC.till_locked("t1", claims["sid"]) is False)
+
+    try:
+        SEC.set_pin(SEC.PinIn(on=True), Req(), token_data=caisse_tok)
+        check("turning it on without a code is refused", False)
+    except HTTPException as e:
+        check("turning it on without a code is refused", e.status_code == 400)
+    try:
+        SEC.set_pin(SEC.PinIn(on=True, code="12"), Req(), token_data=caisse_tok)
+        check("a two-digit code is refused", False)
+    except HTTPException as e:
+        check("a two-digit code is refused", e.status_code == 400)
+
+    SEC.set_pin(SEC.PinIn(on=True, mode="shop", code="4812"), Req(), token_data=caisse_tok)
+    check("one code for the shop", SEC.pin_config("t1") == {"on": True, "mode": "shop", "set": True})
+    check("the till is locked until it is typed", SEC.till_locked("t1", claims["sid"]) is True)
+
+    try:
+        SEC.unlock_till(SEC.UnlockIn(code="0000"), Req(), token_data=caisse_tok)
+        check("a wrong code opens nothing", False)
+    except HTTPException as e:
+        check("a wrong code opens nothing", e.status_code == 403)
+
+    SEC.unlock_till(SEC.UnlockIn(code="4812"), Req(), token_data=caisse_tok)
+    check("the right code opens it for the day", SEC.till_locked("t1", claims["sid"]) is False)
+
+    # a device that is not a till is never locked, code or no code
+    other = db.user_sessions.find_one({"sid": {"$ne": claims["sid"]}, "email": "caisse@c.fr"}) or {}
+    check("an ordinary device is never asked for it",
+          SEC.till_locked("t1", other.get("sid")) is False)
+
+    SEC.set_pin(SEC.PinIn(on=False), Req(), token_data=caisse_tok)
+    check("turned off, the till scans again", SEC.till_locked("t1", claims["sid"]) is False
+          and SEC.pin_config("t1")["on"] is False)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

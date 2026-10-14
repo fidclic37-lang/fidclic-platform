@@ -273,6 +273,10 @@ const ScanPage = () => {
   const [caisse, setCaisse] = useState(Boolean(user?.caisse));
   const [pairing, setPairing] = useState(false);
   const [pairErr, setPairErr] = useState('');
+  // « Code de la caisse »: the server refuses to scan until it is typed here.
+  const [locked, setLocked] = useState(false);
+  const [code, setCode] = useState('');
+  const [codeErr, setCodeErr] = useState('');
   useEffect(() => { setCaisse(Boolean(user?.caisse)); }, [user?.caisse]);
 
   const branchId = fixedStore ? (branches[0]?.id || '') : (branches.some((b) => b.id === _branchIdRaw) ? _branchIdRaw : '');
@@ -729,6 +733,9 @@ const ScanPage = () => {
       console.error('Scan failed:', error);
       const status = error.response?.status;
       const detail = error.response?.data?.detail;
+      // The till has a code and it has not been typed on this device today.
+      // Ask for it here rather than showing the scan as failed (user, 2026-10-14).
+      if (status === 423 || detail?.code === 'CAISSE_LOCKED') { setLocked(true); setLoading(false); return; }
       const rawBody = (() => {
         try {
           if (typeof error.response?.data === 'string') return error.response.data.slice(0, 200);
@@ -1263,6 +1270,31 @@ const ScanPage = () => {
         </div>
         <InstallPwaPrompt context="till" />
       </div>
+
+      {locked && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#0B1C3F]/60 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-[320px] rounded-2xl bg-white p-5 text-center">
+            <p className="text-[15px] font-bold text-[#0B1C3F]">Code de la caisse</p>
+            <p className="mt-1 text-[12.5px] text-[#64748B]">Une fois saisi, cet appareil scanne pour la journée.</p>
+            <input value={code} autoFocus inputMode="numeric"
+                   onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 8)); setCodeErr(''); }}
+                   className="mt-4 w-full rounded-xl border border-[#E1E8F5] px-3 py-3 text-center text-[20px] tracking-[0.4em]" />
+            {codeErr && <p className="mt-2 text-[12.5px] text-[#E11D48]">{codeErr}</p>}
+            <button type="button" disabled={code.length < 4}
+                    onClick={async () => {
+                      try {
+                        await ownerAPI.unlockCaisse(code);
+                        setLocked(false); setCode(''); setCodeErr('');
+                      } catch (e) {
+                        setCodeErr(e?.response?.data?.detail || 'Code incorrect.');
+                      }
+                    }}
+                    className="mt-4 w-full rounded-xl bg-[#1463FF] py-3 text-[15px] font-semibold text-white disabled:opacity-50">
+              Déverrouiller
+            </button>
+          </div>
+        </div>
+      )}
 
       {panel && (
         <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setPanel(false)}>

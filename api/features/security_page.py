@@ -344,6 +344,8 @@ def overview(request: Request = None, token_data: TokenData = Depends(require_ro
                       # left scanning is never mistaken for someone's phone
                       "caisse": _caisse_of(token_data.tenant_id, s),
                       "current": s["sid"] == (current or {}).get("sid"), "seen": _ago(s.get("last_seen"))} for s in sessions],
+        # « Code de la caisse » — off by default
+        "caisse_pin": pin_config(token_data.tenant_id),
         "team": team,
         "activity": _activity(token_data, [m["email"] for m in team])[:12],
         "protection": {"backup": True, "encryption": True, "retention_years": retention.get("inactive_years", 3),
@@ -493,6 +495,100 @@ def unmark_caisse(request: Request = None,
         _db.user_sessions.update_one({"sid": sid}, {"$unset": {"till_store": "", "till_since": ""}})
         _audit("security.caisse_off", token_data, request)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Le code de la caisse
+# ---------------------------------------------------------------------------
+# Off by default: a till should open on the scanner (user, 2026-10-14). A shop
+# that wants a lock turns it on and picks who shares it — one code for the shop,
+# or one per device. It is a lock, not a login: the session stays whole, the
+# code only decides whether this device may scan right now.
+UNLOCK_HOURS = 12
+
+
+def pin_config(tid: str) -> Dict[str, Any]:
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "caisse_pin": 1}) or {}
+    c = t.get("caisse_pin") or {}
+    return {"on": bool(c.get("on")), "mode": c.get("mode") or "shop", "set": bool(c.get("hash"))}
+
+
+def _pin_hash(tid: str, sid: Optional[str], mode: str) -> Optional[str]:
+    if mode == "device":
+        s = _db.user_sessions.find_one({"sid": sid}, {"_id": 0, "till_pin": 1}) or {}
+        return s.get("till_pin")
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "caisse_pin": 1}) or {}
+    return (t.get("caisse_pin") or {}).get("hash")
+
+
+def till_locked(tid: str, sid: Optional[str]) -> bool:
+    """May this till scan right now? Only ever true for a till with the code on."""
+    if not sid or not is_caisse(sid):
+        return False
+    cfg = pin_config(tid)
+    if not cfg["on"]:
+        return False
+    s = _db.user_sessions.find_one({"sid": sid}, {"_id": 0, "till_unlocked_until": 1}) or {}
+    until = _aware(s.get("till_unlocked_until"))
+    return not (until and until > _now())
+
+
+class PinIn(BaseModel):
+    on: Optional[bool] = None
+    mode: Optional[str] = None                 # "shop" | "device"
+    code: Optional[str] = Field(None, max_length=12)
+
+
+@router.put("/api/security/caisse/code")
+def set_pin(body: PinIn, request: Request = None,
+            token_data: TokenData = Depends(require_role(["business_owner", "administrateur"]))):
+    """Turn the code on or off, choose who shares it, set it.
+
+    With « device » the code is set on the till you are standing at — there is
+    no other sensible place to type one device's code.
+    """
+    tid = token_data.tenant_id
+    cur = (_db.tenants.find_one({"id": tid}, {"_id": 0, "caisse_pin": 1}) or {}).get("caisse_pin") or {}
+    mode = (body.mode or cur.get("mode") or "shop").strip()
+    if mode not in ("shop", "device"):
+        raise HTTPException(status_code=400, detail="Mode inconnu.")
+    code = (body.code or "").strip()
+    if code and (not code.isdigit() or not 4 <= len(code) <= 8):
+        raise HTTPException(status_code=400, detail="Le code est composé de 4 à 8 chiffres.")
+    on = cur.get("on") if body.on is None else bool(body.on)
+    if on and not code and not _pin_hash(tid, getattr(token_data, "sid", None), mode):
+        raise HTTPException(status_code=400, detail="Choisissez d'abord un code.")
+    sets = {"caisse_pin.on": bool(on), "caisse_pin.mode": mode, "caisse_pin.updated_at": _now()}
+    if code and mode == "shop":
+        sets["caisse_pin.hash"] = hash_password(code)
+    _db.tenants.update_one({"id": tid}, {"$set": sets})
+    if code and mode == "device":
+        sid = getattr(token_data, "sid", None)
+        if not sid:
+            raise HTTPException(status_code=400, detail="Reconnectez-vous sur cet appareil.")
+        _db.user_sessions.update_one({"sid": sid}, {"$set": {"till_pin": hash_password(code)}})
+    _audit("security.caisse_code", token_data, request, meta={"on": bool(on), "mode": mode})
+    return pin_config(tid)
+
+
+class UnlockIn(BaseModel):
+    code: str = Field(..., max_length=12)
+
+
+@router.post("/api/security/caisse/unlock")
+def unlock_till(body: UnlockIn, request: Request = None,
+                token_data: TokenData = Depends(require_role(READERS + ["staff", "membre"], partial_ok=True))):
+    """The code typed on the till. Right, it scans for the rest of the day."""
+    tid, sid = token_data.tenant_id, getattr(token_data, "sid", None)
+    cfg = pin_config(tid)
+    h = _pin_hash(tid, sid, cfg["mode"])
+    if not h or not verify_password((body.code or "").strip(), h):
+        _audit("security.caisse_unlock_refused", token_data, request)
+        raise HTTPException(status_code=403, detail="Code incorrect.")
+    _db.user_sessions.update_one({"sid": sid}, {"$set": {
+        "till_unlocked_until": _now() + timedelta(hours=UNLOCK_HOURS)}})
+    _audit("security.caisse_unlock", token_data, request)
+    return {"ok": True, "hours": UNLOCK_HOURS}
 
 
 @router.post("/api/security/sessions/revoke-others")
