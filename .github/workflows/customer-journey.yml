@@ -4,6 +4,8 @@
 # means a customer would hit an error page: do not merge.
 # (2026-10-09: #176 shipped a « Carte introuvable » behind every Wallet tile
 # while all API tests were green.)
+# (The workflow keeps its name: a branch rule may require « Customer journey ».
+# It now carries two checks — « api » and « e2e ».)
 name: Customer journey
 
 on:
@@ -12,6 +14,27 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The API's own tests — ~135 standalone scripts under api/tests. They had no
+  # check here, so a red one reached main unseen twice in two days: the caisse
+  # endpoints outside the permissions model (#286), and the geofence check left
+  # behind when the Wallet pass started asking about the plan (#310). Both were
+  # found by hand, days later.
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            api/requirements.txt
+            api/requirements-dev.txt
+      - run: pip install -r api/requirements.txt -r api/requirements-dev.txt uvicorn
+      - name: Run the API tests
+        run: python3 scripts/run_api_tests.py
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
