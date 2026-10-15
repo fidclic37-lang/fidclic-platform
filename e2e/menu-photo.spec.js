@@ -27,7 +27,7 @@ test('a big phone photo leaves the page small, as JPEG, and its products come ba
 
   await page.goto('/dashboard/catalogue');
   await page.getByRole('button', { name: /Ajouter un produit/ }).first().click();
-  await page.getByRole('button', { name: /Importer depuis une photo du menu/ }).click();
+  await page.getByRole('button', { name: /Vous avez une carte ou une liste de prix/ }).click();
 
   // a 4032 × 3024 photo, as a phone takes it
   const b64 = await page.evaluate(async () => {
