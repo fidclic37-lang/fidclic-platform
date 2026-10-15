@@ -15,6 +15,15 @@ import pymongo
 pymongo.MongoClient = mongomock.MongoClient
 os.environ.setdefault("JWT_SECRET", "test-secret-customer-edit")
 os.environ.setdefault("DISABLE_SEED", "1")
+
+# The e-mail check asks DNS whether the domain receives mail (services/
+# email_check). A test must not depend on the network: with no entry here the
+# stub answers « unreachable », which the module treats as « accept » — so a
+# well-shaped address passes on a laptop and on the CI alike.
+import services.email_check as EC  # noqa: E402
+
+DNS = {}                                   # domain → True / False; anything else: unreachable
+EC.domain_receives_mail = lambda d: DNS.get(d)
 passed = failed = 0
 
 

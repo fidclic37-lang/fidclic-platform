@@ -25,11 +25,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         m.init(db)
     # The stub a test of establishments needs. « geo_proximity » joined it when
     # the Wallet pass started asking whether Géolocalisation is really on —
-    # switch AND plan (wallet_passes, c853832). Without the key the stub
-    # answered None, the pass dropped its pins, and the geofence check below
-    # went red for a reason that had nothing to do with establishments.
+    # switch AND plan (wallet_passes, c853832). « automations » joined it for
+    # the same reason: the pins now come from a Géolocalisation automation,
+    # which a plan has to carry. Without a key the stub answered None, the
+    # pass dropped its pins, and the geofence check below went red for a
+    # reason that had nothing to do with establishments.
     server.get_plan_features = lambda plan: {"multi_branch": plan != "silver",
-                                             "geo_proximity": plan != "silver"}
+                                             "geo_proximity": plan != "silver",
+                                             "automations": True}
     passed = failed = 0
 
     def check(label, cond):
@@ -143,6 +146,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.tenants.update_one({"id": "t1"}, {"$set": {"geo_radius_meters": 300, "branches.1.status": "open",
                                                   "geo_enabled": True, "plan": "gold"}})
     db.customers.insert_one({"id": "c1", "tenant_id": "t1", "name": "Ana", "barcode_id": "FT-C1", "visits": 1})
+    # …and an active Géolocalisation automation, because since « geo-only
+    # proximity » (#309) the pins come from that automation and from nothing
+    # else. The radius is still the shop's one radius, which is what this
+    # check is about; the automation only decides whether pins exist at all.
+    db.automations.insert_one({
+        "id": "geo-1", "tenant_id": "t1", "scenario": "geo", "status": "active", "order": 0,
+        "trigger": {"cooldown_days": 7, "weather": [], "stores": [], "radius_m": 100},
+        "message": {"title": "À deux pas", "body": "Un café vous attend."},
+        "targeting": {"mode": "filtered", "passants": "all", "filters": {}},
+        "schedule": {"days": "all", "window": False, "holidays": True}})
     WP.init(db)
     pj = WP.build_pass_json(WP._card_payload("FT-C1"))
     check("two pins, 300 m each", [l["maxDistance"] for l in pj.get("locations", [])] == [300, 300])
