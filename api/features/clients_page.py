@@ -313,7 +313,7 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
           "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
-          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1,
+          "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1, "paused_at": 1,
           "google_removed_at": 1, "google_added_at": 1,
           # the card's meter, apart from visits (QA R5 F22): stamps on the
           # current card, those added by hand and those of a paper card
@@ -326,7 +326,10 @@ READERS = ["business_owner", "administrateur", "manager"]
 
 
 def _load(tid: str, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
-    return list(_db.customers.find(S.customer_filter(scope) if scope else {"tenant_id": tid}, FIELDS))
+    # a deleted client (Clients › Supprimer, or the inactive purge) is in no
+    # list or count here — « Supprimés » shows them (features/customer_edit)
+    q = S.customer_filter(scope) if scope else {"tenant_id": tid}
+    return list(_db.customers.find({**q, "deleted_at": None}, FIELDS))
 
 
 def _scope(token_data: TokenData, request: Optional[Request]) -> "S.Scope":
@@ -368,6 +371,8 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         "source": _source_key(cust), "source_label": _source_label(cust),
         # « Active », « Supprimée », « Retirée d'Apple Wallet » (user, 2026-10-09)
         "card": _card_state(cust),
+        # paused by the business (Clients › Mettre en pause): no message of any kind
+        "paused": bool(cust.get("paused_at")),
     }
 
 

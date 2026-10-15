@@ -15,7 +15,7 @@ import { usePlanAccess, openUpgrade } from '../components/PlanAccess';
 import { useResendCheck } from '../components/ResendCheck';
 import InfoTip from '../components/InfoTip';
 import { ImportModal, InvitationsPanel } from '../components/ClientImport';
-import { FicheModal, AdjustModal } from '../components/ClientEdit';
+import { FicheModal, AdjustModal, DeleteClientModal, DeletedClientsModal } from '../components/ClientEdit';
 import CardReaddModal, { CardStateBadge } from '../components/CardReaddModal';
 
 /**
@@ -519,6 +519,11 @@ export default function ClientsPage() {
               <Upload size={15} /> Importer
             </button>
           )}
+          {/* deleted clients, restorable any time (user, 2026-10-15) */}
+          <button type="button" onClick={() => setEditing({ kind: 'deleted' })}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0B1C3F] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
+            Supprimés
+          </button>
         </div>
       </header>
 
@@ -809,7 +814,13 @@ export default function ClientsPage() {
                       <span className="flex items-center gap-3">
                         <Avatar initials={r.initials} tier={r.tier} />
                         <span className="min-w-0">
-                          <span translate="no" className="notranslate block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
+                          <span className="flex items-center gap-1.5">
+                            <span translate="no" className="notranslate block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
+                            {r.paused && (
+                              <span title="Aucun message ne lui est envoyé ; sa carte fonctionne en caisse."
+                                    className="shrink-0 rounded-md bg-[#FEF3C7] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#92400E]">En pause</span>
+                            )}
+                          </span>
                           <span className="block truncate text-[11.5px] text-[#94A3B8]">
                             {r.email || r.phone || '—'}{r.source && r.source !== 'none' ? ` · via ${r.source_label}` : ''}
                           </span>
@@ -881,6 +892,22 @@ export default function ClientsPage() {
                               <button type="button" onClick={() => navigate('/dashboard/scan')}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Enregistrer une visite
+                              </button>
+                              {/* Pause: no message of any kind, the card still works at the till */}
+                              <button type="button" onClick={async () => {
+                                        setMenuFor(null);
+                                        try {
+                                          await (r.paused ? ownerAPI.resumeClient(r.id) : ownerAPI.pauseClient(r.id));
+                                          setFlash(r.paused ? `${r.name} reçoit de nouveau vos messages.` : `${r.name} est en pause : plus aucun message.`);
+                                          load();
+                                        } catch (e) { setFlash(e?.response?.data?.detail || 'Action impossible.'); }
+                                      }}
+                                      className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
+                                {r.paused ? 'Reprendre les messages' : 'Mettre en pause'}
+                              </button>
+                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'delete', id: r.id, client: r }); }}
+                                      className="px-3 py-2 text-left text-[12.5px] font-semibold text-[#B91C1C] hover:bg-[#FEF2F2]">
+                                Supprimer le client
                               </button>
                               <button type="button" onClick={needCrm(() => { setMenuFor(null); setSegment(r.segment); setPage(1); })}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
@@ -956,6 +983,13 @@ export default function ClientsPage() {
       )}
       {editing?.kind === 'readd' && (
         <CardReaddModal customerId={editing.id} onClose={() => { setEditing(null); load(); }} />
+      )}
+      {editing?.kind === 'delete' && (
+        <DeleteClientModal client={editing.client} onClose={() => setEditing(null)}
+                           onDone={(m) => { setEditing(null); setFlash(m); load(); loadMeta(); }} />
+      )}
+      {editing?.kind === 'deleted' && (
+        <DeletedClientsModal onClose={() => setEditing(null)} onRestored={() => { load(); loadMeta(); }} />
       )}
       {editing?.kind === 'adjust' && (
         <AdjustModal clientId={editing.id} onClose={() => setEditing(null)}

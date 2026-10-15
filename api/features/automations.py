@@ -595,6 +595,12 @@ def matches(tid: str, row: Dict[str, Any], cust: Dict[str, Any], at: Optional[da
     tg = row.get("targeting") or {}
     if cust.get("deleted_at"):
         return False
+    # paused by the business: no automation, no géolocalisation (services/client_status)
+    if "paused" not in cache:
+        from services import client_status as _CS
+        cache["paused"] = _CS.paused_ids(_db, tid)
+    if cust.get("paused_at") or cust.get("id") in cache["paused"]:
+        return False
     mode = tg.get("mode") or "all"
     if mode == "wallet" and not _has_wallet(cust):
         return False

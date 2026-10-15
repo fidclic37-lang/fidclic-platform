@@ -265,3 +265,76 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
     </Shell>
   );
 }
+
+/* ── « Supprimer le client » (user, 2026-10-15) ─────────────────────────────
+   Gone from the lists, kept in the database: the Wallet card says « plus
+   active », the till refuses it, the same phone or e-mail can sign up again.
+   Restorable any time from « Supprimés ». */
+export function DeleteClientModal({ client, onClose, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const go = async () => {
+    setBusy(true); setMsg('');
+    try { await ownerAPI.deleteClient(client.id); onDone(`${client.name || 'Le client'} a été supprimé.`); }
+    catch (e) { setMsg(err(e, 'Suppression impossible.')); setBusy(false); }
+  };
+  return (
+    <Shell title="Supprimer ce client ?" sub={`${client.name || ''}${client.barcode_id ? ` · ${client.barcode_id}` : ''}`} onClose={onClose}
+           footer={<>
+             <button type="button" onClick={onClose} className={`${btn} border border-[#E6EEFB] text-[#475569]`}>Annuler</button>
+             <button type="button" onClick={go} disabled={busy} className={`${btn} bg-[#DC2626] text-white hover:bg-[#B91C1C] disabled:opacity-60`}>
+               {busy && <Loader2 size={14} className="animate-spin" />}Supprimer
+             </button>
+           </>}>
+      <ul className="list-disc space-y-1.5 pl-5 text-[13px] text-[#334155]">
+        <li>Il disparaît de vos listes de clients.</li>
+        <li>Sa carte ne fonctionne plus : en caisse et dans son Wallet (« carte plus active »).</li>
+        <li>Il peut s'inscrire à nouveau avec le même téléphone ou e-mail.</li>
+        <li>Ses visites passées restent dans vos chiffres.</li>
+        <li>Vous pouvez le rétablir à tout moment dans « Supprimés ».</li>
+      </ul>
+      {msg && <p className="mt-3 text-[13px] text-[#B91C1C]">{msg}</p>}
+    </Shell>
+  );
+}
+
+/* ── « Supprimés »: every deleted client, « Rétablir » any time ──────────── */
+export function DeletedClientsModal({ onClose, onRestored }) {
+  const [rows, setRows] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(null);
+  const load = () => ownerAPI.deletedClients().then(({ data }) => setRows(data?.clients || []))
+    .catch((e) => { setRows([]); setMsg(err(e, 'Liste indisponible.')); });
+  useEffect(() => { load(); }, []);
+  const restore = async (c) => {
+    setBusy(c.id); setMsg('');
+    try { await ownerAPI.restoreClient(c.id); setMsg(`${c.name || 'Le client'} est rétabli.`); onRestored?.(); load(); }
+    catch (e) { setMsg(err(e, 'Rétablissement impossible.')); }
+    finally { setBusy(null); }
+  };
+  return (
+    <Shell title="Clients supprimés" sub="Rétablissez un client : sa carte fonctionne de nouveau." onClose={onClose}
+           footer={<button type="button" onClick={onClose} className={`${btn} border border-[#E6EEFB] text-[#475569]`}>Fermer</button>}>
+      {msg && <p className="mb-3 text-[13px] font-semibold text-[#0B1C3F]">{msg}</p>}
+      {rows == null ? <p className="flex items-center gap-2 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</p>
+        : !rows.length ? <p className="text-[13px] text-[#64748B]">Aucun client supprimé.</p> : (
+          <ul className="max-h-[50vh] divide-y divide-[#EEF3FB] overflow-y-auto">
+            {rows.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
+                <span className="min-w-0">
+                  <span className="block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{c.name || 'Client'}</span>
+                  <span className="block truncate text-[12px] text-[#64748B]">
+                    {[c.phone, c.barcode_id, c.deleted_at && `supprimé le ${new Date(c.deleted_at).toLocaleDateString('fr-FR')}`].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+                <button type="button" onClick={() => restore(c)} disabled={busy === c.id}
+                        className={`${btn} shrink-0 border border-[#E6EEFB] text-[#2F6BFF] hover:border-[#2F6BFF] disabled:opacity-60`}>
+                  {busy === c.id && <Loader2 size={14} className="animate-spin" />}Rétablir
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+    </Shell>
+  );
+}

@@ -109,6 +109,9 @@ def _dispatch_message(tenant_id: str, customer: dict, kind: str, title: str, bod
       on a day the door is locked.
     """
     now = datetime.now(timezone.utc)
+    from services import client_status as _CS                  # noqa: WPS433
+    if _CS.is_paused(_db, customer.get("id")):                 # paused by the business: nothing at all
+        return
     # Respect tenant closures — never push 'come visit' on a closed day
     try:
         from features.business_hours import is_open_on        # noqa: WPS433
