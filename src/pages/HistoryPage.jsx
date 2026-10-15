@@ -20,6 +20,9 @@ import { perPage as prefPerPage } from '../lib/prefs';
  */
 const BLUE = '#2F6BFF';
 
+// +3, -10, 0 — or a dash when the row has no such figure
+const signed = (v, none) => (v === null || v === undefined ? none : `${v > 0 ? '+' : ''}${v}`);
+
 const ICONS = { qr: QrCode, gift: Gift, message: MessageSquare, user: UserPlus, send: Send, card: CreditCard };
 const TAB_ICONS = {
   all: List, clients: Users, points: Gift, scan: QrCode, messages: MessageSquare, card: CreditCard,
@@ -168,7 +171,8 @@ const RowDrawer = ({ row, onClose, onGoCustomer }) => {
     ['Numéro de carte', row.customer_barcode || '—'],
     ["Type d'activité", row.label],
     ['Détails', row.detail || '—'],
-    ['Points', row.points === null || row.points === undefined ? '—' : `${row.points > 0 ? '+' : ''}${row.points}`],
+    ['Points', signed(row.points, '—')],
+    ['Tampons', signed(row.stamps, '—')],
     ['Montant', row.amount ? `${row.amount.toFixed(2).replace('.', ',')} €` : '—'],
   ];
   return (
@@ -214,6 +218,10 @@ const monthAgoISO = (() => { const d = new Date(); d.setDate(d.getDate() - 20); 
 export default function HistoryPage() {
   const navigate = useNavigate();
   const [meta, setMeta] = useState({ tabs: [], actions: [], per_page_options: [10, 25, 50, 100] });
+  // Points or Tampons in the last column (user, 2026-10-15): the shop's own
+  // programme first, the other one a click away
+  const [unitPick, setUnitPick] = useState(null);
+  const unit = unitPick || meta.unit || 'points';
   const [tab, setTab] = useState('all');
   const [from, setFrom] = useState(monthAgoISO);
   const [to, setTo] = useState(todayISO);
@@ -408,7 +416,16 @@ export default function HistoryPage() {
                   <th key={h}
                       className={`px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.04em] text-[#64748B] ${
                         h === 'Points' ? 'text-right' : ''}`}>
-                    {h}
+                    {h === 'Points' ? (
+                      <span className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5 normal-case tracking-normal" role="group" aria-label="Afficher les points ou les tampons">
+                        {[['points', 'Points'], ['stamps', 'Tampons']].map(([k, l]) => (
+                          <button key={k} type="button" aria-pressed={unit === k} onClick={() => setUnitPick(k)}
+                                  className={`rounded-md px-2 py-0.5 text-[11.5px] font-semibold ${unit === k ? 'bg-white text-[#0B1C3F] shadow-sm' : 'text-[#64748B]'}`}>
+                            {l}
+                          </button>
+                        ))}
+                      </span>
+                    ) : h}
                     {/* How many on this page, out of all (user, 2026-10-03): 20/31, then 11/31. */}
                     {h === 'Client' && feed.total > 0 && (
                       <span className="ml-2 rounded-md bg-[#EAF1FF] px-1.5 py-0.5 text-[11px] font-bold normal-case tracking-normal text-[#2F6BFF] tabular-nums"
@@ -470,8 +487,8 @@ export default function HistoryPage() {
                       <span className="block truncate text-[12.5px] text-[#475569]" title={r.detail}>{r.detail || '—'}</span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right text-[12.5px] font-semibold tabular-nums"
-                        style={{ color: r.points > 0 ? '#0F8B58' : r.points < 0 ? '#C0392B' : '#94A3B8' }}>
-                      {r.points === null || r.points === undefined ? '-' : `${r.points > 0 ? '+' : ''}${r.points}`}
+                        style={{ color: r[unit] > 0 ? '#0F8B58' : r[unit] < 0 ? '#C0392B' : '#94A3B8' }}>
+                      {signed(r[unit], '-')}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
                       <span className="flex items-center gap-1.5">

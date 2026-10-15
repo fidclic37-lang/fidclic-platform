@@ -5006,6 +5006,15 @@ def _paper_done_message(cust: dict) -> str:
             "Une seule fois par client : pour corriger, utilisez « Ajuster points / tampons » sur sa fiche.")
 
 
+def _stamps_gained(cust: dict, card_template: dict) -> int:
+    """Tampons one more visit adds to this card: 1, or 0 / 1 when the card
+    takes several visits per tampon. `cust` is the customer before the visit."""
+    per = max(int((card_template or {}).get("visits_per_stamp") or 1), 1)
+    before = int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0)
+    before = max(before, 0)
+    return (before + 1) // per - before // per
+
+
 def _paper_stamps_check(cust: dict, tenant_id: str, value: Any, current_visits: int) -> Optional[Dict[str, int]]:
     """Validate the paper-card stamps sent with a scan (user, 2026-10-10).
 
@@ -5355,6 +5364,10 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             "tenant_id": token_data.tenant_id,
             "customer_id": cid,
             "points_awarded": points_to_add,
+            # the tampons this visit put on the card (Historique shows tampons
+            # on a tampons card, user 2026-10-15): one visit is one tampon, or
+            # less when the card asks several visits per tampon
+            "stamps_awarded": _stamps_gained(cust, card_template),
             "amount_paid": float(req.amount_paid or 0),
             "visit_time": datetime.now(timezone.utc),
             "branch_id": req.branch_id or cust.get("branch_id"),
@@ -11125,13 +11138,20 @@ def redeem_reward(
         "redeemed_at": datetime.now(timezone.utc),
         "staff_email": getattr(token_data, "email", None),
     }
-    db.rewards_redeemed.insert_one(reward)
-
     # A banked reward is claimed first: the customer completed a card earlier
     # and the counter already rolled over, so the fresh card's stamps must
     # survive this redemption.
     banked = db.rewards_earned.find_one({"customer_id": cust["id"], "status": "pending"},
                                         sort=[("earned_at", 1)])
+    # What it cost, for Historique (user, 2026-10-15: the points / tampons
+    # column stayed empty on a reward): the balance on a points card, one
+    # full card of tampons otherwise.
+    if points_prog and price > 0 and not banked:
+        reward["points_spent"] = min(price, balance)
+    else:
+        reward["stamps_spent"] = max(int(card_tpl.get("reward_threshold_stamps", 10) or 10), 1)
+    db.rewards_redeemed.insert_one(reward)
+
     if banked:
         db.rewards_earned.update_one({"id": banked["id"]}, {"$set": {
             "status": "redeemed", "redeemed_at": reward["redeemed_at"],
