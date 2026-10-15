@@ -33,6 +33,8 @@ def expect(name, code, fn):
 
 
 async def body_of(resp):
+    if not hasattr(resp, "body_iterator"):          # sent in one piece since 2026-10-15
+        return resp.body
     out = b""
     async for chunk in resp.body_iterator:
         out += chunk if isinstance(chunk, bytes) else chunk.encode()

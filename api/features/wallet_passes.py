@@ -2536,10 +2536,13 @@ def _pkpass_response(barcode_id: str) -> Response:
         raise HTTPException(status_code=503, detail="Apple Wallet n'est pas encore configuré")
     data = signed_pass(barcode_id)
     fname = f"fidclic-{barcode_id}.pkpass"
-    return StreamingResponse(io.BytesIO(data), media_type="application/vnd.apple.pkpass",
-                            headers={"Content-Disposition": f'attachment; filename="{fname}"',
-                                     "Last-Modified": datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-                                     "Cache-Control": "no-store"})
+    # in one piece, with its length (2026-10-15): a BytesIO handed to
+    # StreamingResponse is iterated line by line — a 1,6 Mo pass went out as
+    # ~6 000 tiny writes, 3,6 s on production for a pass ready in 27 ms
+    return Response(content=data, media_type="application/vnd.apple.pkpass",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"',
+                             "Last-Modified": datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                             "Cache-Control": "no-store"})
 
 
 def notify_passes(serials: Iterable[str], google_notify: Any = None,
