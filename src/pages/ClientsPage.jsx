@@ -17,6 +17,7 @@ import InfoTip from '../components/InfoTip';
 import { ImportModal, InvitationsPanel } from '../components/ClientImport';
 import { FicheModal, AdjustModal } from '../components/ClientEdit';
 import CardReaddModal, { CardStateBadge } from '../components/CardReaddModal';
+import ClientPurchases from '../components/ClientPurchases';
 
 /**
  * Clients — built to the approved mockup.
@@ -809,7 +810,10 @@ export default function ClientsPage() {
                       <span className="flex items-center gap-3">
                         <Avatar initials={r.initials} tier={r.tier} />
                         <span className="min-w-0">
-                          <span translate="no" className="notranslate block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{r.name}</span>
+                          {/* the name opens what they bought (user, 2026-10-15) */}
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({ kind: 'purchases', id: r.id }); }}
+                                  title="Voir l'historique d'achats"
+                                  translate="no" className="notranslate block max-w-full truncate text-left text-[13.5px] font-semibold text-[#0B1C3F] hover:text-[#2F6BFF] hover:underline">{r.name}</button>
                           <span className="block truncate text-[11.5px] text-[#94A3B8]">
                             {r.email || r.phone || '—'}{r.source && r.source !== 'none' ? ` · via ${r.source_label}` : ''}
                           </span>
@@ -860,6 +864,10 @@ export default function ClientsPage() {
                           {menuFor === r.id && (
                             <span onClick={(e) => e.stopPropagation()}
                                   className="absolute right-0 top-full z-20 mt-1 flex w-[200px] flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'purchases', id: r.id }); }}
+                                      className="px-3 py-2 text-left text-[12.5px] font-semibold text-[#334155] hover:bg-[#F4F7FC]">
+                                Historique d&apos;achats
+                              </button>
                               {r.barcode_id && (
                                 <a href={`/card/${r.barcode_id}?vue=commerce`} target="_blank" rel="noreferrer"
                                    className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
@@ -953,6 +961,9 @@ export default function ClientsPage() {
       {editing?.kind === 'fiche' && (
         <FicheModal clientId={editing.id} onClose={() => setEditing(null)}
                     onSaved={(m) => { setEditing(null); setFlash(m); load(); loadMeta(); }} />
+      )}
+      {editing?.kind === 'purchases' && (
+        <ClientPurchases clientId={editing.id} onClose={() => setEditing(null)} />
       )}
       {editing?.kind === 'readd' && (
         <CardReaddModal customerId={editing.id} onClose={() => { setEditing(null); load(); }} />

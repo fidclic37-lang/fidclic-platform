@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
@@ -279,3 +279,56 @@ def adjust(customer_id: str, body: AdjustIn, request: Request = None,
     after = _db.customers.find_one({"id": customer_id}, {"_id": 0})
     _refresh_card(after)
     return {"client": _view(after), "text": text}
+
+
+# ---------------------------------------------------------------------------
+# « Historique d'achats » (user, 2026-10-15: « kis client ne kis date ko kya
+# aur kitne amount ki aur kis time purchase ki »): every visit of the client,
+# newest first — when, where, what was taken from the catalogue, how much,
+# and what the card got for it. All their establishments: a visit counts
+# where it was scanned (multi-store), so the store is named on each line.
+# ---------------------------------------------------------------------------
+@router.get("/api/owner/clients/{customer_id}/purchases")
+def get_purchases(customer_id: str, page: int = Query(1), per_page: int = Query(20), request: Request = None,
+                  token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    from features import activity_history as AH
+    c = _customer(token_data, request, customer_id)
+    tid = token_data.tenant_id
+    per_page = max(1, min(100, int(per_page or 20)))
+    page = max(1, int(page or 1))
+    q = {"tenant_id": tid, "customer_id": customer_id}
+    total = _db.visits.count_documents(q)
+    spent = 0.0
+    first = last = None
+    for v in _db.visits.find(q, {"_id": 0, "amount_paid": 1, "visit_time": 1}):
+        spent += float(v.get("amount_paid") or 0)
+        at = v.get("visit_time")
+        if at is not None:
+            first = at if first is None or at < first else first
+            last = at if last is None or at > last else last
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    stores = {b.get("id"): b.get("name") for b in t.get("branches") or [] if b.get("id")}
+    rule = AH._card_rule(tid)
+    rows = []
+    for v in (_db.visits.find(q, {"_id": 0}).sort("visit_time", -1)
+              .skip((page - 1) * per_page).limit(per_page)):
+        at = v.get("visit_time")
+        rows.append({
+            "id": v.get("id"),
+            "at": at.isoformat() if isinstance(at, datetime) else at,
+            "store": stores.get(v.get("branch_id")) if len(stores) > 1 else None,
+            "items": [{"name": it.get("name") or "Produit", "qty": int(it.get("qty") or 1),
+                       "total": round(float(it.get("line_total") or 0), 2)} for it in v.get("items") or []],
+            "amount": None if v.get("amount_paid") is None else round(float(v.get("amount_paid") or 0), 2),
+            "points": int(v.get("points_awarded") or 0),
+            "stamps": AH._visit_stamps(v, rule),
+        })
+    as_iso = lambda d: d.isoformat() if isinstance(d, datetime) else d  # noqa: E731
+    return {
+        "client": {"id": c["id"], "name": c.get("name") or "", "barcode_id": c.get("barcode_id")},
+        "unit": AH.unit_of(tid),
+        "totals": {"visits": total, "spent": round(spent, 2),
+                   "average": round(spent / total, 2) if total else 0.0,
+                   "first": as_iso(first), "last": as_iso(last)},
+        "rows": rows, "page": page, "per_page": per_page, "pages": max(1, -(-total // per_page)),
+    }
