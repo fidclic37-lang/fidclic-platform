@@ -1,4 +1,5 @@
 import React from 'react';
+import { flat, highlightWhenReady } from '../lib/searchHighlight';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import NotificationBell from '../components/NotificationBell';
@@ -326,21 +327,44 @@ const DashboardLayout = () => {
   // word-boundary aware (so "carte cadeau" still routes to Card Designer
   // via "carte"). Order doesn't matter — we pick the first key whose
   // keyword list matches.
-  const ROUTE_SYNONYMS = React.useMemo(() => ([
-    { route: '/dashboard',                              words: ['dashboard', 'tableau de bord', 'tableau', 'accueil', 'home', 'overview', 'vue d’ensemble', 'welcome'] },
-    { route: '/dashboard/analytics',                    words: ['analytics', 'analyses', 'analyse', 'kpi', 'kpis', 'stats', 'statistiques', 'rapport', 'reports', 'metrics', 'metric', 'métriques'] },
-    { route: '/dashboard/parametres/regles-clients',     words: ['customer status', 'statut client', 'segment', 'segments', 'statuts'] },
-    { route: '/dashboard/catalogue',                    words: ['catalogue', 'catalog', 'produits', 'produit', 'products', 'menu', 'carte des produits', 'prix'] },
-    { route: '/dashboard/insights',                     words: ['insights', 'insight', 'reco', 'recommendations', 'recommandations', 'suggestion', 'suggestions', 'ai', 'ia'] },
-    { route: '/dashboard/map',                          words: ['map', 'carte (geo)', 'geographie', 'geography', 'géographie', 'localisation', 'lieux'] },
-    { route: '/dashboard/card-designer',                words: ['card designer', 'card', 'carte', 'carte de fidélité', 'loyalty card', 'design', 'pass', 'wallet', 'walletpass'] },
-    { route: '/dashboard/campaigns',                    words: ['campaigns', 'campaign', 'campagnes', 'campagne', 'sms', 'push', 'message', 'messages', 'notif', 'notifications'] },
-    { route: '/dashboard/ai-assistant',                 words: ['fidclic ia', 'fidclic ai', 'copilote', 'copilot', 'ai assistant', 'assistant', 'chatbot', 'chat', 'assistant ia'] },
-    { route: '/dashboard/history',                      words: ['history', 'historique', 'logs', 'journal', 'activity log', 'audit'] },
-    { route: '/dashboard/scan',                         words: ['scan', 'scanner', 'qr', 'qr code', 'visit', 'visite', 'check-in', 'checkin'] },
-    { route: '/dashboard/customers',                    words: ['customers', 'clients', 'customer', 'client', 'liste clients'] },
-    { route: '/dashboard/parametres',                   words: ['settings', 'parametres', 'paramètres', 'reglages', 'réglages', 'config', 'configuration', 'preferences', 'préférences', 'compte', 'account', 'profile', 'profil', 'billing', 'facturation', 'plan', 'equipe', 'équipe', 'team', 'staff', 'utilisateurs', 'users'] },
-  ]), []);
+  // Extra words per page, on top of its own label in the sidebar. The sidebar
+  // is the list of pages; keeping a second copy of the routes here is what
+  // broke the search — « /dashboard/card-designer » stopped existing, and with
+  // nothing matching, everything fell through to the client list (user,
+  // 2026-10-15: « kuch bhi search kro toh clients page pr le jaata hai »).
+  const EXTRA_WORDS = React.useMemo(() => ({
+    '/dashboard': ['dashboard', 'accueil', 'home', 'overview', 'vue d\u2019ensemble'],
+    '/dashboard/scan': ['scan', 'scanner', 'qr', 'caisse', 'visite', 'visites', 'check-in', 'checkin', 'passage'],
+    '/dashboard/analytics': ['analytics', 'kpi', 'kpis', 'stats', 'statistiques', 'rapport', 'reports', 'metrics', 'chiffre d\u2019affaires', 'ca'],
+    '/dashboard/customers': ['customers', 'customer', 'client', 'fiche client', 'liste clients'],
+    '/dashboard/campaigns': ['campaigns', 'campaign', 'campagne', 'sms', 'push', 'message', 'messages', 'notification', 'notifications', 'offre', 'offres'],
+    '/dashboard/card': ['card', 'carte', 'loyalty card', 'design', 'pass', 'wallet', 'tampons', 'points', 'paliers', 'recompenses'],
+    '/dashboard/automations': ['automations', 'automation', 'automatisation', 'anniversaire', 'relance', 'inactif', 'scenario', 'scenarios'],
+    '/dashboard/segmentation': ['segments', 'segment'],
+    '/dashboard/referral': ['referral', 'parrain', 'filleul', 'parrainages'],
+    '/dashboard/map': ['map', 'geolocalisation', 'geo', 'localisation', 'lieux', 'rayon', 'geographie'],
+    '/dashboard/catalogue': ['catalog', 'produits', 'produit', 'products', 'menu', 'prix', 'services'],
+    '/dashboard/insights': ['insight', 'reco', 'recommandations', 'recommendations', 'suggestion', 'suggestions'],
+    '/dashboard/ai-assistant': ['fidclic ia', 'fidclic ai', 'copilote', 'copilot', 'assistant', 'chat', 'ia', 'ai'],
+    '/dashboard/history': ['history', 'logs', 'journal', 'audit', 'activite'],
+    '/dashboard/parametres': ['settings', 'parametres', 'reglages', 'config', 'configuration', 'preferences', 'compte', 'account', 'profil', 'billing', 'facturation', 'abonnement', 'plan', 'securite', 'lien d\u2019inscription', 'qr'],
+    '/dashboard/parametres/equipe': ['equipe', 'team', 'staff', 'utilisateurs', 'users', 'acces', 'roles', 'role'],
+    '/dashboard/parametres/regles-clients': ['statut client', 'statuts', 'regles clients'],
+  }), []);
+
+  // Every page the sidebar knows, with its own label — so a page added there
+  // is searchable the same day, by its name, without touching this.
+  const ROUTE_SYNONYMS = React.useMemo(() => {
+    const rows = PERM_NAV.map((n) => ({
+      route: n.to,
+      words: [n.label, ...(EXTRA_WORDS[n.to] || [])],
+    }));
+    for (const [route, words] of Object.entries(EXTRA_WORDS)) {
+      if (!rows.some((r) => r.route === route)) rows.push({ route, words });
+    }
+    // longest word first: « lien d\u2019inscription » must win over « lien »
+    return rows.sort((a, b) => Math.max(...b.words.map((w) => w.length)) - Math.max(...a.words.map((w) => w.length)));
+  }, [EXTRA_WORDS]);
 
   const submitSearch = (e) => {
     e?.preventDefault?.();
@@ -357,23 +381,36 @@ const DashboardLayout = () => {
       return;
     }
 
-    // 2) Page/section synonyms — route to the matching page.
-    const q = raw.toLowerCase();
+    // 2) Page/section synonyms — route to the matching page, and say what was
+    //    matched so the page can show it (?hl=). « geolocalisation » finds
+    //    « Géolocalisation »: accents are stripped on both sides.
+    const q = flat(raw);
     for (const entry of ROUTE_SYNONYMS) {
       for (const w of entry.words) {
-        const wl = w.toLowerCase();
-        // Exact match OR query starts/ends/contains the keyword as a token.
-        const re = new RegExp(`(^|[^a-zà-ÿ])${wl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-zà-ÿ]|$)`, 'i');
-        if (q === wl || re.test(q)) {
-          navigate(entry.route);
+        const wl = flat(w);
+        // Both ways round: « carte de fidélité » typed in full contains the
+        // word, and « catalogue » is one word of « Catalogue produits ».
+        const token = (needle, hay) => new RegExp(
+          `(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(hay);
+        if (q === wl || token(wl, q) || token(q, wl)) {
+          navigate(`${entry.route}?hl=${encodeURIComponent(w)}`);
           return;
         }
       }
     }
 
-    // 3) Fallback — free-text customer search.
-    navigate(`/dashboard/customers?q=${encodeURIComponent(raw)}`);
+    // 3) Fallback — free-text customer search, with the term shown there too.
+    navigate(`/dashboard/customers?q=${encodeURIComponent(raw)}&hl=${encodeURIComponent(raw)}`);
   };
+  // What the search found, outlined on the page it opened (user, 2026-10-15:
+  // « highlight bhi krde taaki pta chale ki sahi hai ki nhi »). The page may
+  // still be loading, so it is tried again a few times.
+  React.useEffect(() => {
+    const hl = new URLSearchParams(location.search).get('hl');
+    if (!hl) return undefined;
+    return highlightWhenReady(hl);
+  }, [location.pathname, location.search]);
+
   const currentPath = location.pathname;
   // Charts on the page that is opening may play their entrance animation;
   // after that a resize (or a full-page screenshot) draws them finished.

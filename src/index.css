@@ -2300,3 +2300,16 @@ html.fit-wide body {
   margin-left: auto;
   margin-right: auto;
 }
+
+/* What the global search found, outlined where it landed (user, 2026-10-15).
+   It fades on its own after a few seconds — the search is a way in, not a
+   state the page has to stay in. */
+.fid-hl {
+  background: #FFF3C4;
+  box-shadow: 0 0 0 3px #FFF3C4, 0 0 0 4px #F0B429;
+  border-radius: 3px;
+  animation: fid-hl-in .18s ease-out, fid-hl-out .6s ease-in 3.4s forwards;
+}
+@keyframes fid-hl-in  { from { background: #FFE07A; } }
+@keyframes fid-hl-out { to { background: transparent; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .fid-hl { animation: none; } }
