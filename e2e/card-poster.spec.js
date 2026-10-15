@@ -171,8 +171,12 @@ test.describe.serial('the owner designs the iOS 27 card', () => {
     await page.getByRole('button', { name: 'Étape suivante : Paramètres' }).click();
     await expect(page.getByText('Sur la carte : les tampons, sous le QR code (pas de points)')).toBeVisible();
     await expect(page.getByText('Afficher le solde de points')).toHaveCount(0);
-    await expect(page.getByText('Paliers (optionnel)')).toBeVisible();
-    await expect(page.getByText('Comment le palier d\'un client est décidé')).toHaveCount(0);   // folded
+    // the rungs moved to Paramètres › Objectifs et récompenses (2026-10-15):
+    // the card page says where, and no longer sets them
+    await expect(page.getByText('Paliers (Bronze → VIP)')).toBeVisible();
+    await expect(page.getByRole('link', { name: /Objectifs et récompenses/ }))
+      .toHaveAttribute('href', '/dashboard/parametres/objectifs');
+    await expect(page.getByText('Comment le palier d\'un client est décidé')).toHaveCount(0);
 
     const phone = page.locator('[translate="no"]').filter({ hasText: 'TAMPONS' }).first();
     await expect(phone).not.toContainText('POINTS');
