@@ -138,8 +138,11 @@
         function showHud() {
           // Show in two cases: opt-in via ?debug=1, OR running as a
           // standalone PWA (the case we cannot manually trigger).
+          // Opt-in only (user, 2026-10-15): auto-shown in every standalone
+          // launch, it covered the top of the installed app — the shop's
+          // dashboard and the scanner included — with this box.
           var optIn = location.search.indexOf('debug=1') !== -1;
-          if (!optIn && !trace.standalone) return;
+          if (!optIn) return;
           var div = document.createElement('div');
           div.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1F1B1A;color:#FFFFFF;font:12px/1.4 ui-monospace,Consolas,monospace;padding:14px 14px 12px;box-shadow:0 4px 16px rgba(0,0,0,0.5);max-height:70vh;overflow:auto;';
           var html = '<b style="color:#E8917C">PWA debug HUD</b>';
