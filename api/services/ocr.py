@@ -150,6 +150,9 @@ def _parse_json(text: str) -> dict:
 
 
 def _call_vision(image_b64: str, mime: str) -> dict:
+    from services.llm import anthropic_extras
+    from services.vision_image import for_vision
+    image_b64, mime = for_vision(image_b64, mime)   # HEIC, huge photos → a JPEG every provider reads
     url, key_env, default_model = _provider()
     key = os.environ.get(key_env, "").strip()
     model = os.environ.get("OCR_MODEL", "").strip() or default_model
@@ -161,7 +164,7 @@ def _call_vision(image_b64: str, mime: str) -> dict:
         if media not in _ANTHROPIC_MEDIA:
             media = "image/jpeg"
         body = {
-            "model": model, "max_tokens": 700, "temperature": 0,
+            "model": model, "max_tokens": 700, **anthropic_extras(model),   # no temperature: Claude 4.7+ refuses it
             "messages": [{
                 "role": "user",
                 "content": [

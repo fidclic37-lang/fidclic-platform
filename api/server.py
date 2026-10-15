@@ -227,6 +227,7 @@ SENDGRID_FROM_EMAIL = "noreply@fidelitour.com"
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 ANTHROPIC_VISION_MODEL = os.environ.get("ANTHROPIC_VISION_MODEL", "") or ANTHROPIC_MODEL
+from services.llm import anthropic_extras as _llm_extras   # effort « low » where the model has it
 ANTHROPIC_VERSION = "2023-06-01"
 
 NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "")
@@ -4578,8 +4579,8 @@ def _call_vision_anthropic(image_b64: str, mime: str, prompt: str) -> tuple:
             },
             json={
                 "model": ANTHROPIC_VISION_MODEL,
-                "max_tokens": 1500,
-                "temperature": 0.1,
+                "max_tokens": 4000,                 # a long menu; no temperature: Claude 4.7+ refuses it
+                **_llm_extras(ANTHROPIC_VISION_MODEL),
                 "messages": [{
                     "role": "user",
                     "content": [
@@ -4733,15 +4734,23 @@ def parse_menu_from_photo(
     image_b64 = _strip_data_url(req.image_base64 or "")
     if not image_b64 or len(image_b64) < 100:
         raise HTTPException(status_code=400, detail="Image vide ou invalide.")
+    # an iPhone's HEIC, a 6 MB photo: a JPEG every vision provider reads (services/vision_image)
+    from services.vision_image import for_vision
+    image_b64, _mime = for_vision(image_b64, req.mime or "image/jpeg")
 
     lang_word = {'fr': 'french', 'en': 'english', 'ar': 'arabic'}.get((req.language or 'fr').lower(), 'french')
+    # any shop's list, not only a café's: a barber's « Coupe + barbe 29€ » too (2026-10-15)
     prompt = (
-        f"You are extracting menu items from a photo of a {lang_word} restaurant/cafe menu. "
+        f"You are extracting the products and services, with their prices, from a photo of a {lang_word} "
+        "shop's menu or price list (restaurant, café, bakery, hairdresser, barber, beauty salon, shop…), "
+        "which may be a printed sheet, a board or a screen. "
         "Return ONLY a JSON array — no prose, no markdown fences. Each item in the array MUST "
-        "have these fields: name (string), price (number in euros, no symbol), category (string, "
-        "one of: Boisson, Pâtisserie, Repas, Snack, Dessert, Café, Autre). If the price is missing "
-        "or unreadable, use 0. Translate item names into the original menu language. "
-        "Skip section headers (e.g. 'Boissons', 'Desserts'). Skip allergen/ingredient notes. "
+        "have these fields: name (string, exactly as written), price (number in euros, no symbol), "
+        "category (string: the section of the list the item sits in, as written, e.g. 'Coupe / Coiffage / Barbe'; "
+        "for a café menu with no visible section, one of Boisson, Pâtisserie, Repas, Snack, Dessert, Café; "
+        "otherwise 'Autre'). If the price is missing or unreadable, use 0. Leave durations "
+        "(e.g. '30min') out of the name. Keep item names in the original language. "
+        "Skip section headers as items, buttons and allergen/ingredient notes. "
         "Example output: "
         "[{\"name\":\"Café crème\",\"price\":2.50,\"category\":\"Boisson\"},"
         "{\"name\":\"Pain au chocolat\",\"price\":1.50,\"category\":\"Pâtisserie\"}]"
@@ -4762,7 +4771,7 @@ def parse_menu_from_photo(
         (_call_vision_groq,       'groq-vision'),
         (_call_vision_openrouter, 'openrouter-vision'),
     ]:
-        out, err = fn(image_b64, req.mime or 'image/jpeg', prompt)
+        out, err = fn(image_b64, _mime, prompt)
         if out:
             raw = out
             provider = label
@@ -8087,8 +8096,8 @@ def _call_anthropic(prompt: str) -> Optional[list]:
             },
             json={
                 "model": ANTHROPIC_MODEL,
-                "max_tokens": 400,
-                "temperature": 0.3,
+                "max_tokens": 400,                  # no temperature: Claude 4.7+ refuses it
+                **_llm_extras(ANTHROPIC_MODEL),
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=30,
