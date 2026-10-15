@@ -1,7 +1,7 @@
 /**
  * « Ajouter un produit » in the order an owner thinks (user, 2026-10-15):
  * 1. category (buttons, or a new one on the spot), 2. name, 3. price —
- * then « Ajouter et continuer » for a whole price list. Local server only.
+ * then one « Ajouter » that stays open for the next one. Local server only.
  */
 import { test, expect } from '@playwright/test';
 
@@ -40,7 +40,8 @@ test('category → name → price, several in a row, then done', async ({ page, 
   await page.keyboard.type('Coupe enfant');
   await page.keyboard.press('Enter');                                           // → the price
   await page.keyboard.type('18');
-  await dlg.getByRole('button', { name: /Ajouter et continuer/ }).click();
+  await dlg.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await expect(dlg.getByRole('button', { name: /Ajouter et continuer/ })).toHaveCount(0);   // one button only
   await expect(dlg.getByTestId('added-in-a-row')).toContainText('Coupe enfant');
   // the category stays chosen, the rest is empty, the name has the focus
   await expect(dlg.getByRole('radio', { name: cat })).toHaveAttribute('aria-checked', 'true');
@@ -48,7 +49,9 @@ test('category → name → price, several in a row, then done', async ({ page, 
   await expect(dlg.getByLabel('Prix en euros')).toHaveValue('');
   await page.keyboard.type('Coupe + barbe');
   await dlg.getByLabel('Prix en euros').fill('29,50');
-  await dlg.getByRole('button', { name: 'Ajouter', exact: true }).click();
+  await dlg.getByLabel('Prix en euros').press('Enter');                         // Enter adds too
+  await expect(dlg.getByTestId('added-in-a-row')).toContainText('Coupe + barbe');
+  await dlg.getByRole('button', { name: 'Terminer' }).click();
   await expect(dlg).toHaveCount(0);
 
   const after = await (await request.get('/api/owner/catalogue/page', { headers: H })).json();

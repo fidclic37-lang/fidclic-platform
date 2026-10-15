@@ -147,8 +147,9 @@ const field = 'h-11 w-full rounded-lg border border-[#E2E8F0] px-3 text-[14px] t
 /* In the order a shop owner thinks (user, 2026-10-15): 1. the category,
    picked from buttons or made on the spot; 2. the product or service; 3. its
    price. Photo, description and on/off wait under « Plus d'options ».
-   « Ajouter et continuer » keeps the category and empties the rest, to type
-   a whole price list in a row. */
+   One button (user, 2026-10-15: « dono se same kaam, ek hi rakho »):
+   « Ajouter » adds, keeps the category and empties the rest, to type a whole
+   price list in a row; « Terminer » closes. */
 function Step({ n, title, hint, children }) {
   return (
     <section className="mb-5">
@@ -174,7 +175,7 @@ function ProductModal({ product, categories, limits, defaultCategory = '', onClo
   const [photo, setPhoto] = useState(null);        // a new data URL, or null
   const [dropPhoto, setDropPhoto] = useState(false);
   const [error, setError] = useState('');
-  const [added, setAdded] = useState([]);          // names added in a row with « Ajouter et continuer »
+  const [added, setAdded] = useState([]);          // names added so far in this window
   const [saving, setSaving] = useState(false);
   const file = useRef(null);
   const nameRef = useRef(null);
@@ -188,7 +189,7 @@ function ProductModal({ product, categories, limits, defaultCategory = '', onClo
     if (!f) return;
     try { setPhoto(await shrink(f)); setDropPhoto(false); } catch (e) { setError(e.message); }
   };
-  const save = async (keepGoing) => {
+  const save = async () => {
     if (!d.name.trim()) { setError('Indiquez le nom du produit ou du service.'); nameRef.current?.focus(); return; }
     // an empty price is not « 0 »: erased by mistake it made a paid product free
     // without a word (QA F31); a « 0 » typed on purpose still makes it free
@@ -203,7 +204,7 @@ function ProductModal({ product, categories, limits, defaultCategory = '', onClo
       const id = product?.id || res.data.id;
       if (photo) res = await ownerAPI.setProductImage(id, photo);
       else if (dropPhoto && product?.image_url) res = await ownerAPI.deleteProductImage(id);
-      if (keepGoing && !product) {
+      if (!product) {
         onAdded(res.data, `« ${d.name.trim()} » ajouté`);
         setAdded((a) => [...a, d.name.trim()]);
         setD(blank(category)); setNewCat(null); setPhoto(null);
@@ -222,7 +223,7 @@ function ProductModal({ product, categories, limits, defaultCategory = '', onClo
   return (
     <Modal title={product ? 'Modifier le produit' : 'Ajouter un produit ou un service'} onClose={onClose} width="max-w-[560px]"
            subtitle={product ? null : 'Il sera proposé à la caisse dès son ajout.'}>
-      <form onSubmit={(e) => { e.preventDefault(); save(false); }}>
+      <form onSubmit={(e) => { e.preventDefault(); save(); }}>
         {!product && onImport && (
           <button type="button" onClick={onImport}
                   className="mb-5 flex w-full items-center gap-3 rounded-xl border border-[#DCE7FB] bg-[#F6F9FF] px-4 py-3 text-left hover:border-[#C9DBFB]">
@@ -326,11 +327,6 @@ function ProductModal({ product, categories, limits, defaultCategory = '', onClo
         {error && <p role="alert" className="mb-4 rounded-lg bg-[#FEF2F2] px-3 py-2.5 text-[13px] text-[#B91C1C]">{error}</p>}
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button type="button" onClick={onClose} className={btnGhost}>{added.length ? 'Terminer' : 'Annuler'}</button>
-          {!product && (
-            <button type="button" disabled={saving} onClick={() => save(true)} className={btnGhost}>
-              <Plus size={16} /> Ajouter et continuer
-            </button>
-          )}
           <button type="submit" disabled={saving} className={btnPrimary}>
             {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {product ? 'Enregistrer' : 'Ajouter'}
           </button>
