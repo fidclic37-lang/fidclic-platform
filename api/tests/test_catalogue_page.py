@@ -165,6 +165,34 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     out = K.delete_category("Snacks", move_to="", token_data=TD())
     check("an emptied category can be removed", "Snacks" not in [c["name"] for c in out["categories"]])
 
+    # 2026-10-15 (ROYAL TRIM): deleting a category meant its products piled up
+    # « Sans catégorie », and « Coupe/Coiffage/Barbe » could not be deleted at all
+    import asyncio
+    import auth
+    import httpx
+    db.users.insert_one({"email": "o@x.fr", "role": "business_owner", "tenant_id": "t1", "active": True})
+    H = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})}
+
+    def http(method, url, **kw):
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as ac:
+                return await ac.request(method, url, headers=H, **kw)
+        return asyncio.get_event_loop().run_until_complete(run())
+    add("Coupe + barbe", 29, "Coupe/Coiffage/Barbe")
+    add("Contours", 12, "Coupe/Coiffage/Barbe")
+    r = http("DELETE", "/api/owner/catalogue/categories", params={"name": "Coupe/Coiffage/Barbe", "products": "delete"})
+    names = [x["name"] for x in r.json().get("products", [])]
+    check(f"a name with « / » is deleted, its products with it ({r.status_code})", r.status_code == 200
+          and "Coupe/Coiffage/Barbe" not in [c["name"] for c in r.json()["categories"]]
+          and "Contours" not in names and "Coupe + barbe" not in names)
+    check("…gone from the stored catalogue too, not « sans catégorie »",
+          not any(i["name"] in ("Contours", "Coupe + barbe") for i in db.tenant_catalog.find_one({"tenant_id": "t1"})["items"]))
+    add("Barbe express", 15, "Barbe/Rasage")
+    r = http("DELETE", "/api/owner/catalogue/categories/Barbe%2FRasage", params={"move_to": ""})
+    check(f"the older address with « / » works too, products kept ({r.status_code})", r.status_code == 200
+          and {x["name"]: x for x in r.json()["products"]}["Barbe express"]["category"] == "")
+    check("unknown category: 404", http("DELETE", "/api/owner/catalogue/categories", params={"name": "Rien"}).status_code == 404)
+
     print("\nImporter depuis le menu")
     out = K.import_products(K.ImportIn(items=[K.ProductIn(name="Thé vert", price=3, category="Boissons chaudes"),
                                              K.ProductIn(name="café latte", price=9, category="X")]), token_data=TD())

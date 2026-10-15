@@ -574,16 +574,36 @@ def update_category(body: CategoryIn, request: Request = None,
     return _view(tid, token_data, request)
 
 
-@router.delete("/api/owner/catalogue/categories/{name}")
-def delete_category(name: str, move_to: str = Query(""),
+# The name travels as ?name= (2026-10-15): « Coupe/Coiffage/Barbe » in the
+# path was cut at its « / » and the category could never be deleted. The
+# path form stays for an older page still open.
+@router.delete("/api/owner/catalogue/categories")
+def delete_category_q(name: str = Query(...), move_to: str = Query(""), products: str = Query("move"),
+                      request: Request = None,
+        token_data: TokenData = Depends(require_role(["business_owner"]))):
+    return delete_category(name, move_to, products, request, token_data)
+
+
+@router.delete("/api/owner/catalogue/categories/{name:path}")
+def delete_category(name: str, move_to: str = Query(""), products: str = Query("move"),
                     request: Request = None,
         token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """`products=delete`: its products go with it — what the owner means by
+    deleting a category (user, 2026-10-15: « jo main delete kr diya hun woh
+    sab nhi dikhna chahiye »). Otherwise they move to `move_to` (or none)."""
     tid = token_data.tenant_id
     doc = _doc(tid)
     items = _items(doc)
     cats = _category_list(doc, items)
     if name not in [c["name"] for c in cats]:
         raise HTTPException(status_code=404, detail="Catégorie introuvable.")
+    if products == "delete":
+        gone = [i for i in items if (i.get("category") or "") == name]
+        _drop_images(tid, [i.get("image_id") for i in gone])
+        items = [i for i in items if (i.get("category") or "") != name]
+        keep = [{"name": c["name"], "color": c["color"]} for c in cats if c["name"] != name]
+        _save(tid, items, keep)
+        return _view(tid, token_data, request)
     dest = move_to.strip() or None
     if dest == name:
         raise HTTPException(status_code=400, detail="Choisissez une autre catégorie.")
