@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import NotificationBell from '../components/NotificationBell';
 import EstablishmentSwitcher from '../components/EstablishmentSwitcher';
 import StoreGate from '../components/StoreGate';
+import BottomNav from '../components/BottomNav';
 import { markPageOpened } from '../lib/chartAnimation';
 import { useBranch } from '../contexts/BranchContext';
 import BillingBanner from '../components/BillingBanner';
@@ -858,7 +859,8 @@ const DashboardLayout = () => {
                 sidebar's establishment switcher; help has its own row at the
                 foot of the sidebar. */}
             <div className="flex shrink-0 items-center gap-2 lg:absolute lg:right-8 lg:gap-3">
-              {(!user?.view_as || user.view_as.can_edit) && (
+              {/* on a phone the bottom bar carries it, large */}
+              {(!user?.view_as || user.view_as.can_edit) && !small && (
                 <Link to="/dashboard/scan" title={t('nav.scan_visit')} aria-label={t('nav.scan_visit')}
                       className={`inline-flex h-9 items-center gap-2 rounded-full px-2.5 text-[13.5px] font-semibold text-white transition hover:-translate-y-px xl:px-4 ${
                         currentPath === '/dashboard/scan' ? 'bg-[#1E4FD8]' : 'bg-[#2F6BFF] hover:bg-[#2559DB]'}`}
@@ -875,7 +877,7 @@ const DashboardLayout = () => {
           </div>
         )}
 
-        <div className="px-3 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto">
+        <div className={`px-3 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto ${small && role === 'business_owner' ? 'pb-28' : ''}`}>
           {(partialScope || role === 'administrateur') && (
             <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
               <span className="mt-0.5 font-bold">i</span>
@@ -891,6 +893,11 @@ const DashboardLayout = () => {
           {!planAccess.ready ? null : pageLock ? <LockedSection detail={pageLock} /> : <React.Suspense fallback={<div role="status" aria-label="Chargement" className="flex min-h-[50vh] items-center justify-center"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-[#DCE6FA] border-t-[#2F6BFF]" /></div>}><StoreGate><Outlet key={branchId || 'shop'} /></StoreGate></React.Suspense>}
         </div>
       </main>
+      {/* the owner's phone: the everyday places under the thumb, the scanner in the middle */}
+      {small && role === 'business_owner' && (
+        <BottomNav path={currentPath} onMenu={() => setMenuOpen(true)}
+                   canScan={!user?.view_as || user.view_as.can_edit} />
+      )}
       <UpgradeModal />
     </div>
     </PlanAccessContext.Provider>

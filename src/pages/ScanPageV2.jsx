@@ -899,7 +899,12 @@ const ScanPage = () => {
     let alive = true;
     const t = setTimeout(() => {
       ownerAPI.scanCard(bc)
-        .then(({ data }) => { if (!alive) return; setCard(data); setCardErr(''); })
+        .then(({ data }) => {
+          if (!alive) return;
+          setCard(data); setCardErr('');
+          // the client is found: the camera's complaint from before is old news
+          setStatus((st) => (st && st.type === 'error' && /cam[ée]ra/i.test(st.message || '') ? null : st));
+        })
         .catch((e) => { if (!alive) return; setCard(null); setCardErr(e?.response?.data?.detail || ''); });
     }, 250);
     return () => { alive = false; clearTimeout(t); };
@@ -1041,17 +1046,30 @@ const ScanPage = () => {
   };
 
   const money = (n) => `${Number(n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+  // The owner's phone (user, 2026-10-15: « mobile mein ekdm easy, especially
+  // for scanning »): the camera fits the screen, the client is one line, the
+  // products are tiles under the thumb, and the next step stays at the bottom.
+  const [phone, setPhone] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(max-width: 639px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.('(max-width: 639px)');
+    if (!mq) return undefined;
+    const on = () => setPhone(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  const payNow = step === 'review' ? (manual ? parseFloat(amountPaid || '0') || 0 : autoAmount)
+    : (manual ? parseFloat(amountPaid || '0') || 0 : (linesTotal > 0 ? autoAmount : 0));
   const dayFR = (iso) => { try { return new Date(iso).toLocaleDateString('fr-FR'); } catch { return ''; } };
 
   return (
-    <div className="sc mx-auto max-w-[1100px] space-y-5 pb-10">
+    <div className={`sc mx-auto max-w-[1100px] space-y-5 ${card ? 'pb-40 sm:pb-10' : 'pb-10'}`}>
       <style>{`@keyframes scanline{0%{top:18%}50%{top:78%}100%{top:18%}}`}</style>
 
       {!card ? (
         <>
           <div className="pt-2 text-center">
-            <h1 className="text-[32px] font-extrabold leading-tight tracking-tight text-[#0B1C3F]">Enregistrer une visite</h1>
-            <p className="mx-auto mt-2 max-w-[560px] text-[15px] text-[#64748B]">
+            <h1 className="text-[24px] font-extrabold leading-tight tracking-tight text-[#0B1C3F] sm:text-[32px]">Enregistrer une visite</h1>
+            <p className="mx-auto mt-2 hidden max-w-[560px] text-[15px] text-[#64748B] sm:block">
               Scannez le code de la carte client pour identifier le client.
             </p>
           </div>
@@ -1067,9 +1085,9 @@ const ScanPage = () => {
           </div>
 
           {mode === 'camera' && (
-            <div className="relative mx-auto max-w-[760px] overflow-hidden rounded-[28px] bg-[#0B1220] shadow-[0_24px_60px_-30px_rgba(15,23,42,.7)]" style={{ aspectRatio: '16 / 9', minHeight: 300 }}>
+            <div className="relative mx-auto aspect-[3/4] w-full max-w-[760px] overflow-hidden rounded-[28px] bg-[#0B1220] shadow-[0_24px_60px_-30px_rgba(15,23,42,.7)] sm:aspect-video sm:min-h-[300px]">
               <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
-              <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-[62%] w-[min(46%,340px)] -translate-x-1/2 -translate-y-1/2">
+              <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-[52%] w-[72%] -translate-x-1/2 -translate-y-1/2 sm:h-[62%] sm:w-[min(46%,340px)]">
                 {['left-0 top-0 border-l-4 border-t-4 rounded-tl-2xl', 'right-0 top-0 border-r-4 border-t-4 rounded-tr-2xl',
                   'left-0 bottom-0 border-l-4 border-b-4 rounded-bl-2xl', 'right-0 bottom-0 border-r-4 border-b-4 rounded-br-2xl'].map((c) => (
                   <span key={c} className={`absolute h-10 w-10 border-[#4F8BFF] [filter:drop-shadow(0_0_6px_rgba(79,139,255,.95))] ${c}`} />
@@ -1120,7 +1138,21 @@ const ScanPage = () => {
         </>
       ) : (
         <>
-          <div className="flex items-start justify-between gap-3">
+          {/* phone: the client in one line, « Autre carte » at hand */}
+          <div className="flex items-center gap-3 rounded-2xl border border-[#E6EEFB] bg-white p-3 sm:hidden" data-testid="client-line">
+            <CheckCircle2 size={22} className="shrink-0 text-[#10B981]" />
+            <div className="min-w-0 flex-1">
+              <p translate="no" className="notranslate truncate text-[16px] font-bold text-[#0B1C3F]">{card.customer.name || `Client ${card.customer.barcode_id}`}</p>
+              <p className="truncate text-[12.5px] text-[#475569]">
+                <b className="text-[#2F6BFF]">{card.balance.value}</b> {card.balance.unit}{card.balance.tier_label ? ` · ${card.balance.tier_label}` : ''}
+              </p>
+            </div>
+            <button type="button" onClick={scanAnother} aria-label="Scanner une autre carte"
+                    className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-[#E2E8F0] px-3 text-[13px] font-semibold text-[#334155]">
+              <ScanLine size={16} /> Autre
+            </button>
+          </div>
+          <div className="hidden items-start justify-between gap-3 sm:flex">
             <div className="flex-1 text-center">
               <p className="inline-flex items-center gap-2 text-[28px] font-extrabold text-[#0B1C3F]">
                 <CheckCircle2 size={28} className="text-[#10B981]" /> Client scanné
@@ -1140,7 +1172,7 @@ const ScanPage = () => {
           )}
 
           {/* the client, and the one figure the card shows */}
-          <div className="grid gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-5 sm:grid-cols-2">
+          <div className="hidden gap-4 rounded-2xl border border-[#E6EEFB] bg-white p-5 sm:grid sm:grid-cols-2">
             <div className="flex items-center gap-4">
               <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-[#EAF1FF] text-[#2F6BFF]"><Building2 size={26} /></span>
               <div className="min-w-0">
@@ -1204,7 +1236,7 @@ const ScanPage = () => {
                 )}
               </dl>
               <button type="button" onClick={scanAnother}
-                      className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white">
+                      className="mt-5 hidden w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white sm:inline-flex">
                 <ScanLine size={17} /> Scanner une autre carte
               </button>
             </div>
@@ -1215,7 +1247,46 @@ const ScanPage = () => {
           <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="visit-items">
             <p className="mb-3 text-[16px] font-bold text-[#0B1C3F]">Enregistrer une visite</p>
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {phone && (catalog || []).length > 0 && (
+              <div data-testid="product-tiles">
+                <p className="mb-2 text-[13px] font-semibold text-[#334155]">Touchez pour ajouter</p>
+                {(catalog || []).length > 8 && (
+                  <input value={panelQ} onChange={(e) => setPanelQ(e.target.value)} placeholder={words.search}
+                         className="mb-2 w-full rounded-xl border border-[#E2E8F0] px-3 py-2.5 text-[15px] outline-none focus:border-[#2F6BFF]" />
+                )}
+                {cats.length > 2 && (
+                  <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto px-1 pb-1">
+                    {cats.map((c) => (
+                      <button key={c} type="button" onClick={() => setPanelCat(c)} aria-pressed={panelCat === c}
+                              className={`shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-semibold ${panelCat === c ? 'bg-[#1463FF] text-white' : 'bg-[#F1F5F9] text-[#475569]'}`}>{c}</button>
+                    ))}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  {panelItems.map((it) => {
+                    const q = Number(picked[it.id]) || 0;
+                    return (
+                      <div key={it.id} className={`relative rounded-xl border ${q > 0 ? 'border-[#2F6BFF] bg-[#F5F9FF]' : 'border-[#E6EEFB] bg-white'}`}>
+                        <button type="button" onClick={() => bump(it.id, 1)} aria-label={`Ajouter ${it.name}`}
+                                className="flex min-h-[72px] w-full flex-col items-start justify-between gap-1 p-3 text-left">
+                          <span className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-[#0B1C3F]">{it.name}</span>
+                          <span className="text-[13px] text-[#475569]">{money(it.price)}</span>
+                        </button>
+                        {q > 0 && (
+                          <span className="absolute bottom-2 right-2 flex items-center gap-1">
+                            <button type="button" onClick={() => bump(it.id, -1)} aria-label={`Moins ${it.name}`}
+                                    className="flex h-7 w-7 items-center justify-center rounded-full border border-[#C9DBFB] bg-white text-[15px] font-bold text-[#1463FF]">−</button>
+                            <span className="flex h-7 min-w-[28px] items-center justify-center rounded-full bg-[#1463FF] px-1.5 text-[13px] font-bold text-white">{q}</span>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className={`flex-wrap items-center justify-between gap-2 ${phone && (catalog || []).length > 0 ? 'hidden' : 'flex'}`}>
               <p className="text-[13.5px] font-semibold text-[#334155]">{words.field}</p>
               <button type="button" onClick={() => setPanel(true)}
                       className="inline-flex items-center gap-2 rounded-xl border border-[#2F6BFF] px-4 py-2 text-[13px] font-medium text-[#2F6BFF]">
@@ -1223,7 +1294,7 @@ const ScanPage = () => {
               </button>
             </div>
 
-            {lines.length === 0 ? (
+            {phone && (catalog || []).length > 0 ? null : lines.length === 0 ? (
               <p className="mt-2 rounded-xl bg-[#F8FAFF] px-4 py-3 text-[13px] text-[#64748B]">
                 Aucun {words.one} sélectionné — le montant reste à 0,00 €.
               </p>
@@ -1291,7 +1362,7 @@ const ScanPage = () => {
 
             <button type="button" disabled={paperTooMany}
                     onClick={() => { setStatus(null); setStep('review'); }}
-                    className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50">
+                    className="mt-5 hidden w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50 sm:inline-flex">
               Suivant <ArrowRight size={17} />
             </button>
           </div>
@@ -1347,7 +1418,7 @@ const ScanPage = () => {
               </span>
             </div>
 
-            <div className="mt-5 flex gap-3">
+            <div className="mt-5 hidden gap-3 sm:flex">
               <button type="button" onClick={() => { setStatus(null); setStep('items'); }} disabled={loading}
                       className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#E2E8F0] bg-white px-5 py-3.5 text-[15px] font-semibold text-[#334155] disabled:opacity-50">
                 <ChevronLeft size={17} /> Retour
@@ -1362,7 +1433,49 @@ const ScanPage = () => {
         </>
       )}
 
+      {/* phone: the next step always at the thumb, with what is owed */}
+      {phone && card && (
+        <div className="fixed inset-x-0 z-30 border-t border-[#E6EEFB] bg-white/95 px-3 py-2.5 backdrop-blur"
+             style={{ bottom: 'var(--fc-bottom-nav, 0px)' }} data-testid="phone-action-bar">
+          {recorded ? (
+            <button type="button" onClick={scanAnother}
+                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] text-[15px] font-semibold text-white">
+              <ScanLine size={18} /> Scanner une autre carte
+            </button>
+          ) : (
+            <div className="flex items-center gap-3">
+              {step === 'review' && (
+                <button type="button" onClick={() => { setStatus(null); setStep('items'); }} disabled={loading} aria-label="Retour"
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#E2E8F0] text-[#334155] disabled:opacity-50">
+                  <ChevronLeft size={20} />
+                </button>
+              )}
+              <div className="min-w-0">
+                <p className="text-[11.5px] text-[#64748B]">Total</p>
+                <p className="text-[18px] font-extrabold leading-tight tabular-nums text-[#0B1C3F]">{money(payNow)}</p>
+              </div>
+              {step === 'items' ? (
+                <button type="button" disabled={paperTooMany} onClick={() => { setStatus(null); setStep('review'); }}
+                        className="ml-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-50">
+                  Suivant <ArrowRight size={18} />
+                </button>
+              ) : (
+                <button type="button" disabled={loading} onClick={registerVisit}
+                        className="ml-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-50">
+                  <Gift size={18} /> {loading ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* the catalogue, as a drawer */}
+      {!(phone && card) && (
+      <details open={!phone || undefined} className="group mx-auto max-w-[640px]">
+      <summary className="mx-auto mt-4 w-fit cursor-pointer list-none rounded-full bg-[#F1F5F9] px-4 py-2 text-[12.5px] font-semibold text-[#475569] sm:hidden">
+        Options de cet appareil
+      </summary>
       {canPair && (
         <div className="mx-auto mt-6 flex max-w-[640px] flex-wrap items-center gap-3 rounded-2xl border border-[#E6EEFB] bg-white px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -1409,6 +1522,8 @@ const ScanPage = () => {
         </div>
         <InstallPwaPrompt context="till" />
       </div>
+      </details>
+      )}
 
       {locked && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#0B1C3F]/60 p-4" role="dialog" aria-modal="true">
