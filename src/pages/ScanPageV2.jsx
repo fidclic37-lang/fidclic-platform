@@ -1044,6 +1044,9 @@ const ScanPage = () => {
             </div>
           )}
 
+          {/* the typed code is « Saisir le code »'s; the camera tab is the camera
+              only (user, 2026-10-15) — a douchette still works on either */}
+          {mode === 'manual' && (
           <div className="mx-auto max-w-[520px]">
             <label className="block text-[13px] font-medium text-[#334155]">Code de la carte
               <input id="scan-card-id" value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="FT-A1B2C3D4"
@@ -1056,6 +1059,7 @@ const ScanPage = () => {
               <input type="file" accept="image/*" className="hidden" onChange={(e) => decodeImageFile(e.target.files?.[0])} />
             </label>
           </div>
+          )}
         </>
       ) : (
         <>
