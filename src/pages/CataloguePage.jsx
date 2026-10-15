@@ -144,120 +144,196 @@ const btnGhost = 'inline-flex h-11 items-center justify-center gap-2 rounded-xl 
 const field = 'h-11 w-full rounded-lg border border-[#E2E8F0] px-3 text-[14px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]';
 
 /* ------------------------------------------------------ product editor -- */
-function ProductModal({ product, categories, limits, onClose, onSaved, onImport }) {
-  const [d, setD] = useState(() => ({
-    name: product?.name || '', subtitle: product?.subtitle || '', category: product?.category || '',
-    price: product ? String(product.price).replace('.', ',') : '', active: product ? product.active : true,
-  }));
+/* In the order a shop owner thinks (user, 2026-10-15): 1. the category,
+   picked from buttons or made on the spot; 2. the product or service; 3. its
+   price. Photo, description and on/off wait under « Plus d'options ».
+   « Ajouter et continuer » keeps the category and empties the rest, to type
+   a whole price list in a row. */
+function Step({ n, title, hint, children }) {
+  return (
+    <section className="mb-5">
+      <p className="mb-2 flex items-center gap-2 text-[14px] font-bold text-[#0B1C3F]">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#2F6BFF] text-[12px] text-white">{n}</span>
+        {title}
+        {hint && <span className="text-[12.5px] font-normal text-[#94A3B8]">{hint}</span>}
+      </p>
+      {children}
+    </section>
+  );
+}
+
+function ProductModal({ product, categories, limits, defaultCategory = '', onClose, onSaved, onAdded, onImport }) {
+  const blank = (category) => ({ name: '', subtitle: '', category, price: '', active: true });
+  const [d, setD] = useState(() => (product
+    ? { name: product.name || '', subtitle: product.subtitle || '', category: product.category || '',
+        price: String(product.price).replace('.', ','), active: product.active }
+    : blank(defaultCategory)));
+  const known = categories.map((c) => c.name);
+  const [newCat, setNewCat] = useState(() => (d.category && !known.includes(d.category) ? d.category : null));
+  const [more, setMore] = useState(() => Boolean(product && (product.subtitle || product.image_url || !product.active)));
   const [photo, setPhoto] = useState(null);        // a new data URL, or null
   const [dropPhoto, setDropPhoto] = useState(false);
   const [error, setError] = useState('');
+  const [added, setAdded] = useState([]);          // names added in a row with « Ajouter et continuer »
   const [saving, setSaving] = useState(false);
   const file = useRef(null);
+  const nameRef = useRef(null);
+  const priceRef = useRef(null);
   const preview = photo || (!dropPhoto && product?.image_url) || null;
+  const category = newCat !== null ? newCat.trim() : d.category;
+
+  useEffect(() => { if (!product) nameRef.current?.focus(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = async (f) => {
     if (!f) return;
     try { setPhoto(await shrink(f)); setDropPhoto(false); } catch (e) { setError(e.message); }
   };
-  const save = async (e) => {
-    e.preventDefault();
-    if (!d.name.trim()) { setError('Donnez un nom au produit.'); return; }
+  const save = async (keepGoing) => {
+    if (!d.name.trim()) { setError('Indiquez le nom du produit ou du service.'); nameRef.current?.focus(); return; }
     // an empty price is not « 0 »: erased by mistake it made a paid product free
     // without a word (QA F31); a « 0 » typed on purpose still makes it free
     const raw = String(d.price ?? '').trim();
-    if (!raw) { setError(PRICE_REQUIRED); return; }
+    if (!raw) { setError(PRICE_REQUIRED); priceRef.current?.focus(); return; }
     const price = Number(raw.replace(',', '.'));
-    if (!Number.isFinite(price) || price < 0) { setError('Indiquez un prix valide.'); return; }
+    if (!Number.isFinite(price) || price < 0) { setError('Indiquez un prix valide, par exemple 12 ou 12,50.'); priceRef.current?.focus(); return; }
     setSaving(true); setError('');
     try {
-      const body = { ...d, price };
+      const body = { ...d, category, price };
       let res = product ? await ownerAPI.updateProduct(product.id, body) : await ownerAPI.createProduct(body);
       const id = product?.id || res.data.id;
       if (photo) res = await ownerAPI.setProductImage(id, photo);
       else if (dropPhoto && product?.image_url) res = await ownerAPI.deleteProductImage(id);
-      onSaved(res.data, product ? 'Produit mis à jour' : 'Produit ajouté');
+      if (keepGoing && !product) {
+        onAdded(res.data, `« ${d.name.trim()} » ajouté`);
+        setAdded((a) => [...a, d.name.trim()]);
+        setD(blank(category)); setNewCat(null); setPhoto(null);
+        nameRef.current?.focus();
+      } else {
+        onSaved(res.data, product ? 'Produit mis à jour' : 'Produit ajouté');
+      }
     } catch (err) {
       setError(err?.response?.data?.detail || 'Enregistrement impossible.');
     } finally { setSaving(false); }
   };
 
-  return (
-    <Modal title={product ? 'Modifier le produit' : 'Ajouter un produit'} onClose={onClose}
-           subtitle={product ? null : 'Il sera proposé à la caisse (page Scan) dès son ajout.'}>
-      <form onSubmit={save}>
-        <div className="mb-4 flex items-center gap-4">
-          <button type="button" onClick={() => file.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); }}
-                  className="flex h-24 w-32 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-[#C9DBFB] bg-[#F6F9FF] text-[#2F6BFF]">
-            {preview ? <img src={preview} alt="" className="h-full w-full object-cover" />
-              : <span className="flex flex-col items-center gap-1 text-[12px] font-semibold"><ImagePlus size={22} /> Ajouter une photo</span>}
-          </button>
-          <div className="text-[12.5px] text-[#64748B]">
-            <p>JPEG, PNG ou WebP. Elle est réduite automatiquement.</p>
-            <div className="mt-2 flex gap-3">
-              <button type="button" onClick={() => file.current?.click()} className="font-semibold text-[#2F6BFF] hover:underline">
-                {preview ? 'Changer' : 'Choisir une photo'}
-              </button>
-              {preview && (
-                <button type="button" onClick={() => { setPhoto(null); setDropPhoto(true); }} className="font-semibold text-[#E11D48] hover:underline">
-                  Retirer
-                </button>
-              )}
-            </div>
-          </div>
-          <input ref={file} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
-                 onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
-        </div>
+  const chip = (on) => `inline-flex h-9 max-w-full items-center gap-2 truncate rounded-full border px-3.5 text-[13px] font-semibold transition ${
+    on ? 'border-[#2F6BFF] bg-[#EAF1FF] text-[#1E4FD8]' : 'border-[#E2E8F0] bg-white text-[#334155] hover:border-[#C9DBFB]'}`;
 
-        <label className="mb-1.5 flex justify-between text-[13px] font-semibold text-[#334155]">
-          Nom du produit * <span className="font-normal text-[#94A3B8]">{d.name.length}/{limits.name}</span>
-        </label>
-        <input value={d.name} maxLength={limits.name} onChange={(e) => setD({ ...d, name: e.target.value })}
-               placeholder="Ex. Café Latte" className={`${field} mb-4`} />
-        <label className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Description courte</label>
-        <input value={d.subtitle} maxLength={limits.subtitle} onChange={(e) => setD({ ...d, subtitle: e.target.value })}
-               placeholder="Ex. Boisson chaude" className={`${field} mb-4`} />
-        <div className="mb-4 grid gap-4 sm:grid-cols-[1fr_140px]">
-          <div>
-            <label className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Catégorie</label>
-            <input list="catalogue-categories" value={d.category} maxLength={limits.category}
-                   onChange={(e) => setD({ ...d, category: e.target.value })}
-                   placeholder="Choisir ou créer" className={field} />
-            <datalist id="catalogue-categories">
-              {categories.map((c) => <option key={c.name} value={c.name} />)}
-            </datalist>
+  return (
+    <Modal title={product ? 'Modifier le produit' : 'Ajouter un produit ou un service'} onClose={onClose} width="max-w-[560px]"
+           subtitle={product ? null : 'Il sera proposé à la caisse dès son ajout.'}>
+      <form onSubmit={(e) => { e.preventDefault(); save(false); }}>
+        {!product && onImport && (
+          <button type="button" onClick={onImport}
+                  className="mb-5 flex w-full items-center gap-3 rounded-xl border border-[#DCE7FB] bg-[#F6F9FF] px-4 py-3 text-left hover:border-[#C9DBFB]">
+            <Camera size={20} className="shrink-0 text-[#2F6BFF]" />
+            <span className="text-[13px] text-[#334155]"><b className="text-[#0B1C3F]">Vous avez une carte ou une liste de prix ?</b>{' '}
+              Prenez-la en photo : tout est ajouté d&apos;un coup.</span>
+          </button>
+        )}
+
+        <Step n={1} title="Catégorie" hint="(facultatif)">
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Catégorie">
+            {categories.map((c) => {
+              const on = newCat === null && d.category === c.name;
+              const t = TONES[c.color] || TONES.slate;
+              return (
+                <button key={c.name} type="button" role="radio" aria-checked={on} className={chip(on)}
+                        onClick={() => { setNewCat(null); setD({ ...d, category: c.name }); }}>
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: t.fg }} />
+                  <span className="truncate">{c.name}</span>
+                </button>
+              );
+            })}
+            <button type="button" role="radio" aria-checked={newCat === null && !d.category} className={chip(newCat === null && !d.category)}
+                    onClick={() => { setNewCat(null); setD({ ...d, category: '' }); }}>{NONE}</button>
+            <button type="button" role="radio" aria-checked={newCat !== null} className={chip(newCat !== null)}
+                    onClick={() => setNewCat(newCat ?? '')}><Plus size={14} /> Nouvelle catégorie</button>
           </div>
-          <div>
-            <label className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Prix *</label>
-            <div className="flex h-11 overflow-hidden rounded-lg border border-[#E2E8F0] focus-within:border-[#2F6BFF]">
-              <input inputMode="decimal" value={d.price} onChange={(e) => setD({ ...d, price: e.target.value })}
-                     placeholder="0,00" className="min-w-0 flex-1 border-0 px-3 text-[14px] text-[#0B1C3F] outline-none" />
-              <span className="flex items-center bg-[#F1F5F9] px-3 text-[13px] text-[#64748B]">€</span>
+          {newCat !== null && (
+            <input value={newCat} maxLength={limits.category} autoFocus onChange={(e) => setNewCat(e.target.value)}
+                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); nameRef.current?.focus(); } }}
+                   aria-label="Nom de la nouvelle catégorie" placeholder="Nom de la catégorie, ex. Coupes, Boissons…"
+                   className={`${field} mt-3`} />
+          )}
+        </Step>
+
+        <Step n={2} title="Nom du produit ou du service">
+          <input ref={nameRef} value={d.name} maxLength={limits.name} onChange={(e) => setD({ ...d, name: e.target.value })}
+                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); priceRef.current?.focus(); } }}
+                 aria-label="Nom du produit ou du service" placeholder="Ex. Coupe + barbe, Café crème…" className={field} />
+        </Step>
+
+        <Step n={3} title="Prix">
+          <div className="flex h-12 w-full max-w-[220px] overflow-hidden rounded-lg border border-[#E2E8F0] focus-within:border-[#2F6BFF]">
+            <input ref={priceRef} inputMode="decimal" value={d.price} onChange={(e) => setD({ ...d, price: e.target.value })}
+                   aria-label="Prix en euros" placeholder="0,00" className="min-w-0 flex-1 border-0 px-3 text-[17px] font-semibold text-[#0B1C3F] outline-none" />
+            <span className="flex items-center bg-[#F1F5F9] px-4 text-[15px] font-semibold text-[#64748B]">€</span>
+          </div>
+          <p className="mt-1.5 text-[12px] text-[#94A3B8]">Mettez 0 pour un produit offert.</p>
+        </Step>
+
+        <button type="button" onClick={() => setMore(!more)} aria-expanded={more}
+                className="mb-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#2F6BFF] hover:underline">
+          <ChevronDown size={15} className={`transition ${more ? 'rotate-180' : ''}`} /> Plus d&apos;options (photo, description, actif)
+        </button>
+        {more && (
+          <div className="mb-5 space-y-4 rounded-xl border border-[#EEF3FB] p-4">
+            <div className="flex items-center gap-4">
+              <button type="button" onClick={() => file.current?.click()}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); }}
+                      className="flex h-20 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-[#C9DBFB] bg-[#F6F9FF] text-[#2F6BFF]">
+                {preview ? <img src={preview} alt="" className="h-full w-full object-cover" />
+                  : <span className="flex flex-col items-center gap-1 text-[11.5px] font-semibold"><ImagePlus size={20} /> Photo</span>}
+              </button>
+              <div className="text-[12.5px] text-[#64748B]">
+                <p>Une photo du produit (facultatif).</p>
+                <div className="mt-1.5 flex gap-3">
+                  <button type="button" onClick={() => file.current?.click()} className="font-semibold text-[#2F6BFF] hover:underline">
+                    {preview ? 'Changer' : 'Choisir une photo'}
+                  </button>
+                  {preview && (
+                    <button type="button" onClick={() => { setPhoto(null); setDropPhoto(true); }} className="font-semibold text-[#E11D48] hover:underline">
+                      Retirer
+                    </button>
+                  )}
+                </div>
+              </div>
+              <input ref={file} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                     onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+            </div>
+            <label className="block">
+              <span className="mb-1.5 block text-[13px] font-semibold text-[#334155]">Description courte (facultatif)</span>
+              <input value={d.subtitle} maxLength={limits.subtitle} onChange={(e) => setD({ ...d, subtitle: e.target.value })}
+                     placeholder="Ex. 30 min, Boisson chaude…" className={field} />
+            </label>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Proposé à la caisse</p>
+                <p className="text-[12px] text-[#64748B]">Éteint, il reste dans le catalogue mais n&apos;est plus proposé.</p>
+              </div>
+              <Toggle on={d.active} onChange={(v) => setD({ ...d, active: v })} label="Proposé à la caisse" />
             </div>
           </div>
-        </div>
-        <div className="mb-5 flex items-center justify-between rounded-xl border border-[#EEF3FB] px-4 py-3">
-          <div>
-            <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Produit actif</p>
-            <p className="text-[12px] text-[#64748B]">Inactif, il n&apos;est plus proposé à la caisse.</p>
-          </div>
-          <Toggle on={d.active} onChange={(v) => setD({ ...d, active: v })} label="Produit actif" />
-        </div>
-        {error && <p className="mb-4 rounded-lg bg-[#FEF2F2] px-3 py-2.5 text-[13px] text-[#B91C1C]">{error}</p>}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {!product && onImport ? (
-            <button type="button" onClick={onImport} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#2F6BFF] hover:underline">
-              <Camera size={15} /> Importer depuis une photo du menu
+        )}
+
+        {added.length > 0 && (
+          <p className="mb-3 rounded-lg bg-[#E7F7EE] px-3 py-2 text-[12.5px] text-[#0F7A4F]" data-testid="added-in-a-row">
+            <Check size={14} className="mr-1 inline" /> Déjà ajouté{added.length > 1 ? 's' : ''} : {added.join(', ')}
+          </p>
+        )}
+        {error && <p role="alert" className="mb-4 rounded-lg bg-[#FEF2F2] px-3 py-2.5 text-[13px] text-[#B91C1C]">{error}</p>}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className={btnGhost}>{added.length ? 'Terminer' : 'Annuler'}</button>
+          {!product && (
+            <button type="button" disabled={saving} onClick={() => save(true)} className={btnGhost}>
+              <Plus size={16} /> Ajouter et continuer
             </button>
-          ) : <span />}
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className={btnGhost}>Annuler</button>
-            <button type="submit" disabled={saving} className={btnPrimary}>
-              {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {product ? 'Enregistrer' : 'Ajouter'}
-            </button>
-          </div>
+          )}
+          <button type="submit" disabled={saving} className={btnPrimary}>
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {product ? 'Enregistrer' : 'Ajouter'}
+          </button>
         </div>
       </form>
     </Modal>
@@ -934,7 +1010,9 @@ export default function CataloguePage() {
 
       {editing && (
         <ProductModal product={editing.id ? editing : null} categories={d.categories} limits={d.limits}
+                      defaultCategory={cat && cat !== NONE && d.categories.some((c) => c.name === cat) ? cat : ''}
                       onClose={() => setEditing(null)}
+                      onAdded={(data, msg) => apply(data, msg)}
                       onImport={() => { setEditing(null); setImporting(true); }}
                       onSaved={(data, msg) => { apply(data, msg); setEditing(null); }} />
       )}
