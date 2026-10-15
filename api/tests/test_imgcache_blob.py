@@ -61,6 +61,7 @@ def main():
         return Resp(200)
 
     httpx.get, httpx.put = fake_get, fake_put
+    WP._SYNC_PUT = True                         # uploads run in the background in production
     os.environ["BLOB_READ_WRITE_TOKEN"] = "vercel_blob_rw_AbCdStore123_secretpart"
     try:
         print("1. The store's address comes from its token")
