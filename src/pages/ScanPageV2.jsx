@@ -359,16 +359,25 @@ const ScanPage = () => {
   // because Chrome on macOS / Windows ships BarcodeDetector without QR
   // support — the wallet card's QR would never decode. We use jsQR (loaded
   // from CDN) for QR codes instead, and BarcodeDetector for 1D as a bonus.
+  const nativeQrRef = useRef(false);
   useEffect(() => {
     if ('BarcodeDetector' in window) {
-      try {
-        detectorRef.current = new window.BarcodeDetector({
-          // every 1D format a FidClic card can carry (iOS 27 adds Codabar and ITF)
-          formats: ['code_128', 'ean_13', 'ean_8', 'code_39', 'upca', 'codabar', 'itf', 'pdf417', 'aztec'],
-        });
-      } catch (error) {
-        console.warn('BarcodeDetector not fully supported:', error);
-      }
+      // every 1D format a FidClic card can carry (iOS 27 adds Codabar and ITF)
+      const oneD = ['code_128', 'ean_13', 'ean_8', 'code_39', 'upca', 'codabar', 'itf', 'pdf417', 'aztec'];
+      const make = (formats) => {
+        try { detectorRef.current = new window.BarcodeDetector({ formats }); } catch (error) {
+          console.warn('BarcodeDetector not fully supported:', error);
+        }
+      };
+      // Where the browser reads QR itself (Chrome on Android…), it reads it
+      // first: much faster and from further away than jsQR (user, 2026-10-15:
+      // « bahut paas le jaana padta hai »). macOS / Windows Chrome lack it.
+      Promise.resolve(window.BarcodeDetector.getSupportedFormats?.() || [])
+        .then((have) => {
+          nativeQrRef.current = have.includes('qr_code');
+          make(nativeQrRef.current ? ['qr_code', ...oneD.filter((f) => have.includes(f))] : oneD);
+        })
+        .catch(() => make(oneD));
     }
   }, []);
 
@@ -405,9 +414,16 @@ const ScanPage = () => {
   const startCamera = async (face = facing) => {
     try {
       if (streamRef.current) stopCamera();
+      // HD: at the default 640 × 480 a card a little away has too few pixels
+      // for its QR to be read (user, 2026-10-15)
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: face },
+        video: { facingMode: face, width: { ideal: 1920 }, height: { ideal: 1080 } },
       });
+      try {                                   // keep refocusing as the card moves
+        const track = stream.getVideoTracks()[0];
+        const modes = track?.getCapabilities?.().focusMode || [];
+        if (modes.includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+      } catch (_e) { /* the browser keeps its own focus */ }
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -540,9 +556,16 @@ const ScanPage = () => {
     setFacing(next);
     startCamera(next);
   };
-  // the camera opens by itself when the page does on a phone or tablet
+  // the camera opens by itself when the page does on a phone or tablet — and
+  // anywhere the browser already allowed it: no « Activer la caméra » each
+  // time (user, 2026-10-15)
   useEffect(() => {
-    if (mode === 'camera') startCamera();
+    if (mode === 'camera') { startCamera(); return; }
+    try {
+      navigator.permissions?.query({ name: 'camera' })
+        .then((p) => { if (p.state === 'granted' && navigator.mediaDevices?.getUserMedia) { setMode('camera'); startCamera(); } })
+        .catch(() => {});
+    } catch (_e) { /* no Permissions API: the tab opens it */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -562,6 +585,31 @@ const ScanPage = () => {
       return true;
     };
 
+    // jsQR on the frame's centre (where the corners are drawn), at full
+    // detail, with the fast setting; the whole frame, shrunk, every few
+    // frames; the slow « both colours » pass now and then (user, 2026-10-15:
+    // the QR had to be held very close)
+    let frame = 0;
+    let native = 0;
+    const jsqrPass = (video) => {
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      frame += 1;
+      const whole = frame % 3 === 0;
+      const side = whole ? null : Math.round(Math.min(vw, vh) * 0.8);
+      const sx = whole ? 0 : Math.round((vw - side) / 2);
+      const sy = whole ? 0 : Math.round((vh - side) / 2);
+      const sw = whole ? vw : side;
+      const sh = whole ? vh : side;
+      const k = Math.min(1, (whole ? 960 : 800) / Math.max(sw, sh));
+      canvas.width = Math.round(sw * k);
+      canvas.height = Math.round(sh * k);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return window.jsQR(img.data, img.width, img.height,
+                         { inversionAttempts: frame % 8 === 0 ? 'attemptBoth' : 'dontInvert' });
+    };
+
     const detect = async () => {
       const video = videoRef.current;
       // Don't check cameraActive — that's a state value captured by closure
@@ -570,23 +618,32 @@ const ScanPage = () => {
       const ready = video.readyState >= 2 && video.videoWidth > 0;
 
       if (ready) {
-        // Try jsQR first — handles QR codes on every browser.
-        if (window.jsQR) {
+        // The browser's own reader first where it reads QR (fast, far)
+        if (nativeQrRef.current && detectorRef.current) {
           try {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const result = window.jsQR(img.data, img.width, img.height, {
-              inversionAttempts: 'attemptBoth',
-            });
+            const codes = await detectorRef.current.detect(video);
+            if (codes.length > 0 && onHit(codes[0].rawValue)) return;
+          } catch (e) {
+            console.debug('BarcodeDetector error:', e);
+          }
+          // …and jsQR now and then, should the browser's reader miss it
+          native += 1;
+          if (window.jsQR && native % 6 === 0) {
+            try {
+              const result = jsqrPass(video);
+              if (result?.data && onHit(result.data)) return;
+            } catch (_e) { /* next frame */ }
+          }
+        } else if (window.jsQR) {
+          try {
+            const result = jsqrPass(video);
             if (result?.data && onHit(result.data)) return;
           } catch (e) {
             console.debug('jsQR detect error:', e);
           }
         }
         // Try native BarcodeDetector for 1D formats (Code 128, EAN, etc.).
-        if (detectorRef.current) {
+        if (detectorRef.current && !nativeQrRef.current) {
           try {
             const barcodes = await detectorRef.current.detect(video);
             if (barcodes.length > 0 && onHit(barcodes[0].rawValue)) return;
@@ -1001,7 +1058,7 @@ const ScanPage = () => {
 
           <div className="mx-auto flex w-fit gap-1 rounded-xl bg-[#F1F5F9] p-1">
             {[['camera', 'Caméra', Camera], ['manual', 'Saisir le code', Keyboard]].map(([k, l, I]) => (
-              <button key={k} type="button" onClick={() => { setMode(k); if (k !== 'camera') stopCamera(); }}
+              <button key={k} type="button" onClick={() => switchMode(k)}
                       aria-pressed={mode === k}
                       className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-semibold ${mode === k ? 'bg-white text-[#0B1C3F] shadow-sm' : 'text-[#64748B]'}`}>
                 <I size={15} /> {l}
