@@ -1470,14 +1470,9 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Géolocalisation (features/geo_automation): while this client's automation
     # allows it, the pass carries the shop's locations (below) and its message
     # here, so the card the lock screen opens says it — quietly, no banner.
-    geo, geo_rules, geo_on = None, False, False
+    geo, geo_rules = None, False
     try:
         from features import geo_automation as GA
-        # Géolocalisation OFF (its switch, the plan, the privacy settings):
-        # no location on the pass at all — not the automation's, not the
-        # card's own « rappel » (user, 2026-10-15: switched off, a client
-        # still got « Vous êtes près de ROYAL TRIM LIBERTÉ » on his lock screen)
-        geo_on = bool(GA.live(tenant.get("id"))["ok"])
         geo_rules = GA.governs(tenant.get("id"))
         if geo_rules:
             full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0}) or {}
@@ -1564,29 +1559,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         back.insert(0, {"key": "voided", "label": "Carte inactive",
                         "value": "Cette carte n'est plus active. Contactez l'établissement pour en obtenir une nouvelle."})
 
-    # One radius for the shop (Paramètres › Établissement), and every open
-    # establishment with a pin — Apple takes up to ten. With an active
-    # Géolocalisation automation, IT decides: its message, its establishments,
-    # only while its rules hold for this client (none → no locations).
+    # The shop's locations come from the Géolocalisation automation only: its
+    # message, its establishments, while its rules hold for this client. The
+    # card's own « Rappel quand le client passe devant » is gone (user,
+    # 2026-10-15: « hata hi do ») — no active automation, no location.
     if geo_rules:
         if geo:
             pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": geo["radius"],
                                        "relevantText": geo["text"]} for la, lo in geo["spots"][:10]]
-    elif geo_on and card.get("location_reminder") is not False:
-        radius = int(tenant_doc.get("geo_radius_meters") or card.get("location_radius_m") or 200)
-        text = card.get("location_text") or f"Vous êtes près de {org} — pensez à scanner votre carte."
-        spots = []
-        lat, lng = tenant.get("lat") or tenant.get("latitude"), tenant.get("lng") or tenant.get("longitude")
-        if lat and lng:
-            spots.append((float(lat), float(lng)))
-        for b in tenant_doc.get("branches") or []:
-            if b.get("status") != "closed" and b.get("latitude") is not None and b.get("longitude") is not None:
-                p = (float(b["latitude"]), float(b["longitude"]))
-                if p not in spots:
-                    spots.append(p)
-        if spots:
-            pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": radius,
-                                       "relevantText": text} for la, lo in spots[:10]]
 
     # ---- iOS 27: Poster Generic + featured actions ---------------------------
     # The storeCard stays as the card for iOS 26 and earlier — banner strip,

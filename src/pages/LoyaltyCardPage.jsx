@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
-  MapPin, Share2, CalendarClock, Type, ChevronDown, RefreshCw, ArrowLeft, ArrowRight, ChevronRight,
+  Share2, CalendarClock, Type, ChevronDown, RefreshCw, ArrowLeft, ArrowRight, ChevronRight,
   Upload, Move, Store,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -972,23 +972,13 @@ export default function LoyaltyCardPage() {
                 <p className="text-[11.5px] text-[#94A3B8]">Ex. « Tampons » → « Cafés », « Points » → « Étoiles ».</p>
               </div>
 
-              {/* lifecycle + proximity */}
+              {/* lifecycle (the shop's proximity: the Géolocalisation page only) */}
               <div className="space-y-3.5">
                 <div>
                   <Label hint="carte saisonnière — laissez vide pour une carte permanente">Date d'expiration</Label>
                   <Input type="date" value={(advanced.pass_expiration_date || '').slice(0, 10)}
                          onChange={(e) => setAdvanced({ ...advanced, pass_expiration_date: e.target.value ? `${e.target.value}T23:59:00Z` : '' })} />
                 </div>
-                <div className="-mx-2">
-                  <Toggle icon={MapPin} label="Rappel quand le client passe devant" checked={advanced.location_reminder}
-                          onChange={(v) => setAdvanced({ ...advanced, location_reminder: v })} />
-                  <p className="mt-1 text-[11.5px] text-[#94A3B8]">Seulement quand la Géolocalisation est activée (page Géolocalisation).</p>
-                </div>
-                {!advanced.has_coordinates && (
-                  <p className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-[11.5px] text-[#92400E]">
-                    Renseignez l'adresse de l'établissement dans Paramètres pour activer le rappel de proximité.
-                  </p>
-                )}
                 <div>
                   <Label hint="visibles au dos de la carte">Informations complémentaires</Label>
                   <div className="space-y-2">
@@ -1072,22 +1062,6 @@ export default function LoyaltyCardPage() {
                   <Input value={advanced.stamps_change_message} placeholder="Tampons : %@"
                          onChange={(e) => setAdvanced({ ...advanced, stamps_change_message: e.target.value })} />
                   <p className="mt-1 text-[11.5px] text-[#94A3B8]">%@ est remplacé par la nouvelle valeur.</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label>Rayon du rappel</Label>
-                    {/* One radius for the shop: the web card and the Wallet pass
-                        both use Paramètres › Établissement's. */}
-                    <a href="/dashboard/parametres/etablissement"
-                       className="flex h-[42px] items-center rounded-xl border border-[#E1E8F5] bg-[#F8FAFF] px-3 text-[12.5px] font-semibold text-[#2F6BFF] hover:underline">
-                      Réglé dans Établissement →
-                    </a>
-                  </div>
-                  <div>
-                    <Label>Texte du rappel</Label>
-                    <Input value={advanced.location_text} placeholder="Un café vous attend !"
-                           onChange={(e) => setAdvanced({ ...advanced, location_text: e.target.value })} />
-                  </div>
                 </div>
               </div>
             </div>

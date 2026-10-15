@@ -68,18 +68,17 @@ def main():
     r = http("PUT", "/api/owner/settings/geo", headers=H, json={"geo_enabled": True})
     check(f"switched ON ({r.status_code})", r.status_code == 200)
     check(f"…every card of the account is sent again ({queued})", queued and queued[-1] == ["FT-GEO00001", "FT-GEO00002"])
+    # the card's own « rappel » is gone (user, 2026-10-15): only an active
+    # Géolocalisation automation puts the shop's locations on the pass
     pj = pass_of("c1")
-    check(f"switch ON, no active automation: the card's « rappel » ({len(pj.get('locations') or [])} spots)",
-          pj.get("locations") and "pensez à scanner" in pj["locations"][0]["relevantText"])
-
-    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"location_reminder": False}})
-    check("switch ON, « rappel » off: no location", not pass_of("c1").get("locations"))
+    check(f"switch ON, automation paused: still no location ({pj.get('locations')})", not pj.get("locations"))
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"location_reminder": True, "location_text": "Un café !"}})
+    check("an old card saved with « rappel » on: no location either", not pass_of("c1").get("locations"))
 
     queued.clear()
     r = http("PUT", "/api/owner/settings/geo", headers=H, json={"geo_enabled": False})
     check("switched OFF: every card sent again", r.status_code == 200 and queued == [["FT-GEO00001", "FT-GEO00002"]])
-    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"location_reminder": True}})
-    check("switch OFF, « rappel » on: still no location", not pass_of("c1").get("locations"))
+    check("switch OFF: no location", not pass_of("c1").get("locations"))
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

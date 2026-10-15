@@ -355,8 +355,8 @@ def main():
     # every establishment's copy (one per store since multi-store PR5)
     db.automations.update_many({"tenant_id": "t1", "scenario": "geo"}, {"$set": {"status": "paused"}})
     pj = WP.build_pass_json(WP._card_payload("FT-C3"))
-    check("no active géolocalisation: the card designer's own reminder, as before",
-          pj.get("locations") and "pensez à scanner" in pj["locations"][0]["relevantText"])
+    # the card's own « rappel » is gone (user, 2026-10-15): no active automation, no location
+    check("no active géolocalisation: no location (the card's old reminder is gone)", not pj.get("locations"))
     db.automations.update_one({"id": g["id"]}, {"$set": {"status": "active", "targeting.passants": "all"}})
 
     print("\n8. Waking the passes only when their locations change")
