@@ -40,8 +40,12 @@ export default function PhonePreview({ at, shop, logo, title, message, sample, i
   const [logoOk, setLogoOk] = useState(true);
   useEffect(() => setLogoOk(true), [logo]);
   return (
-    <div className="mx-auto w-full max-w-[270px]">
-      {/* a real phone's proportions (≈ 9 : 19.5), thin bezel, side buttons */}
+    <div className="mx-auto w-full max-w-[200px]">
+      {/* A real phone's proportions (≈ 9 : 19.5), thin bezel, side buttons.
+          Drawn at 270 px wide it stood 585 px tall and ran the length of the
+          form beside it (user, 2026-10-15) — the preview is here to be glanced
+          at, not to be the page. 200 px wide keeps the shape and gives back
+          the height. */}
       <div className="relative">
         <span className="absolute -left-[3px] top-[18%] h-8 w-[3px] rounded-l bg-[#1E293B]" />
         <span className="absolute -left-[3px] top-[28%] h-12 w-[3px] rounded-l bg-[#1E293B]" />

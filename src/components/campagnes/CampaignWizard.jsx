@@ -48,7 +48,10 @@ const Toggle = ({ on, onChange, label }) => (
 
 export const emptyState = (kind) => ({
   kind, title: '', message: '', details: '', image: '', link: '',
-  offer: { discount_type: 'percent', discount_value: '', start_date: '', end_date: '', all_day: true, time_from: '17:00', time_to: '19:00' },
+  // Nothing is chosen for them: « % » used to sit in the field before the
+  // merchant had said anything, and a fixed amount still read « % »
+  // until they noticed (user, 2026-10-15).
+  offer: { discount_type: null, discount_value: '', start_date: '', end_date: '', all_day: true, time_from: '17:00', time_to: '19:00' },
   event: { date: '', time: '', place: '' },
   defi: { target: '3', end_date: '', count_mode: 'per_day', reward: '', reward_valid_days: '30' },
   audience: { mode: 'all', segment: '', customer_ids: [], km: 5, filters: { active: false, inactive: false, new: false, min_points: null } },
@@ -357,7 +360,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
               <Label>Type de réduction</Label>
               <div className="grid grid-cols-2 gap-2">
                 {[['percent', 'Pourcentage', Percent], ['amount', 'Montant fixe', Euro]].map(([k, l, I]) => (
-                  <button key={k} type="button" onClick={() => setIn('offer', { discount_type: k })}
+                  <button key={k} type="button" onClick={() => setIn('offer', k === o.discount_type ? { discount_type: null, discount_value: '' } : { discount_type: k })}
                           className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-[14px] font-medium ${
                             o.discount_type === k ? 'border-[#2F6BFF] bg-[#F1F6FF] text-[#1463FF]' : 'border-[#E2E8F0] bg-[#F8FAFC] text-[#475569]'}`}>
                     <I size={18} /> {l}
@@ -365,6 +368,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
                 ))}
               </div>
             </div>
+            {o.discount_type && (
             <label className="block">
               <Label>Valeur de la réduction <span className="font-normal text-[#64748B]">(optionnelle)</span></Label>
               <span className="flex items-stretch overflow-hidden rounded-xl border border-[#D9E2F2] focus-within:border-[#2F6BFF]">
@@ -374,6 +378,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
                 <span className="m-1.5 flex items-center rounded-lg bg-[#EEF3FB] px-3 font-semibold text-[#0B1C3F]">{o.discount_type === 'percent' ? '%' : '€'}</span>
               </span>
             </label>
+            )}
           </div>
         </>
       )}
