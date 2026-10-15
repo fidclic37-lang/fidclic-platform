@@ -23,7 +23,13 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db = server.db
     for m in (E, T, S):
         m.init(db)
-    server.get_plan_features = lambda plan: {"multi_branch": plan != "silver"}
+    # The stub a test of establishments needs. « geo_proximity » joined it when
+    # the Wallet pass started asking whether Géolocalisation is really on —
+    # switch AND plan (wallet_passes, c853832). Without the key the stub
+    # answered None, the pass dropped its pins, and the geofence check below
+    # went red for a reason that had nothing to do with establishments.
+    server.get_plan_features = lambda plan: {"multi_branch": plan != "silver",
+                                             "geo_proximity": plan != "silver"}
     passed = failed = 0
 
     def check(label, cond):
@@ -132,11 +138,20 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     print("\nThe wallet pass uses the one radius, at every open establishment")
     from features import wallet_passes as WP
-    db.tenants.update_one({"id": "t1"}, {"$set": {"geo_radius_meters": 300, "branches.1.status": "open"}})
+    # A pin reaches the pass only when Géolocalisation is really on: the switch
+    # and a plan that carries it. The shop was put on silver a few lines above.
+    db.tenants.update_one({"id": "t1"}, {"$set": {"geo_radius_meters": 300, "branches.1.status": "open",
+                                                  "geo_enabled": True, "plan": "gold"}})
     db.customers.insert_one({"id": "c1", "tenant_id": "t1", "name": "Ana", "barcode_id": "FT-C1", "visits": 1})
     WP.init(db)
     pj = WP.build_pass_json(WP._card_payload("FT-C1"))
     check("two pins, 300 m each", [l["maxDistance"] for l in pj.get("locations", [])] == [300, 300])
+    # …and each half of « really on » is the switch it claims to be
+    for off in ({"geo_enabled": False}, {"plan": "silver"}):
+        db.tenants.update_one({"id": "t1"}, {"$set": off})
+        check(f"Géolocalisation off ({list(off)[0]}): no pin on the pass at all",
+              not WP.build_pass_json(WP._card_payload("FT-C1")).get("locations"))
+        db.tenants.update_one({"id": "t1"}, {"$set": {"geo_enabled": True, "plan": "gold"}})
 
     print("\nThe owner's name (Informations générales)")
     v = E.get_etablissement(token_data=OWNER)
