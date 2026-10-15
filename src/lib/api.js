@@ -696,7 +696,9 @@ export const ownerAPI = {
   deleteProductImage: (id) => api.delete(`/owner/catalogue/products/${id}/image`),
   createCategory: (body) => api.post('/owner/catalogue/categories', body),
   updateCategory: (body) => api.put('/owner/catalogue/categories', body),
-  deleteCategory: (name, moveTo) => api.delete(`/owner/catalogue/categories/${encodeURIComponent(name)}`, { params: { move_to: moveTo || '' } }),
+  // the name as ?name=: a « / » in it broke the path (2026-10-15)
+  deleteCategory: (name, moveTo, deleteProducts = false) => api.delete('/owner/catalogue/categories', {
+    params: { name, move_to: moveTo || '', products: deleteProducts ? 'delete' : 'move' } }),
   customerRules: () => api.get('/owner/customer-rules'),
   saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
   restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),

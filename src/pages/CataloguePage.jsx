@@ -30,6 +30,7 @@ const TONES = {
   slate:  { bg: '#F1F5F9', fg: '#64748B' },
 };
 const NONE = 'Sans catégorie';
+const DELETE_TOO = '__delete__';   // deleting a category deletes its products, unless moved (2026-10-15)
 
 const SORTS = [
   { key: 'sales', label: 'Plus vendus' },
@@ -913,7 +914,7 @@ export default function CataloguePage() {
 
       {tab === 'categories' && (
         <CategoriesTab d={d} onAdd={() => setCatEdit({})} onEdit={(c) => setCatEdit(c)}
-                       onDelete={(c) => { setMoveTo(''); setCatDelete(c); }}
+                       onDelete={(c) => { setMoveTo(DELETE_TOO); setCatDelete(c); }}
                        onOpen={(name) => { setCat(name); setTab('all'); }} />
       )}
       {tab === 'top' && <TopTab d={d} onDays={setDays} />}
@@ -948,13 +949,23 @@ export default function CataloguePage() {
       )}
       {catDelete && (
         <Confirm title={`Supprimer « ${catDelete.name} » ?`}
-                 body={catDelete.count ? `Ses ${catDelete.count} produit${catDelete.count > 1 ? 's' : ''} ne sont pas supprimés : choisissez où les ranger.` : 'Cette catégorie ne contient aucun produit.'}
+                 body={catDelete.count
+                   ? (moveTo === DELETE_TOO
+                     ? `La catégorie et ses ${catDelete.count} produit${catDelete.count > 1 ? 's' : ''} seront supprimés. Les ventes déjà enregistrées restent dans vos statistiques.`
+                     : `Ses ${catDelete.count} produit${catDelete.count > 1 ? 's' : ''} sont gardés et rangés ailleurs.`)
+                   : 'Cette catégorie ne contient aucun produit.'}
                  onCancel={() => setCatDelete(null)}
-                 onConfirm={() => { const c = catDelete; setCatDelete(null); run(() => ownerAPI.deleteCategory(c.name, moveTo), 'Catégorie supprimée'); }}>
+                 onConfirm={() => {
+                   const c = catDelete; setCatDelete(null);
+                   const all = moveTo === DELETE_TOO;
+                   run(() => ownerAPI.deleteCategory(c.name, all ? '' : moveTo, all),
+                     all && c.count ? `Catégorie et ${c.count} produit${c.count > 1 ? 's' : ''} supprimés` : 'Catégorie supprimée');
+                 }}>
           {catDelete.count > 0 && (
-            <Select label="Déplacer les produits vers" value={moveTo} onChange={setMoveTo} className="mt-4">
-              <option value="">{NONE}</option>
-              {d.categories.filter((c) => c.name !== catDelete.name).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            <Select label="Ses produits" value={moveTo} onChange={setMoveTo} className="mt-4">
+              <option value={DELETE_TOO}>Les supprimer aussi</option>
+              <option value="">Les garder, {NONE.toLowerCase()}</option>
+              {d.categories.filter((c) => c.name !== catDelete.name).map((c) => <option key={c.name} value={c.name}>Les déplacer vers « {c.name} »</option>)}
             </Select>
           )}
         </Confirm>
