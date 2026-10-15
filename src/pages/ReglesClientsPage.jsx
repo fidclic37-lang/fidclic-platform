@@ -393,7 +393,7 @@ export default function ReglesClientsPage() {
           critères avancés, listes) se fait dans la section{' '}
           <Link to="/dashboard/segmentation" className="font-bold hover:underline">Segmentation</Link>.
           {' '}Les paliers de la carte (Bronze, Argent, Or, VIP) sont autre chose : ils se règlent dans{' '}
-          <Link to="/dashboard/card" className="font-bold hover:underline">Carte de fidélité › Récompenses et paliers</Link>.
+          <Link to="/dashboard/parametres/objectifs" className="font-bold hover:underline">Objectifs et récompenses</Link>.
         </p>
       </div>
 

@@ -324,9 +324,10 @@ const SettingsPage = () => {
             {/* Additive: weekly schedule + French public holidays + annual closures. */}
             <div id="settings-hours" className="scroll-mt-24"><BusinessHoursCard /></div>
 
-            {/* Paliers live in one place now: Carte de fidélité › Récompenses et
-                paliers (QA F21, user 2026-10-09). TierDefinitionCard is kept,
-                unmounted. */}
+            {/* Paliers live in one place now: Paramètres › Objectifs et
+                récompenses, beside the shop's own objectifs (user 2026-10-15;
+                they were on Carte de fidélité since QA F21). TierDefinitionCard
+                is kept, unmounted. */}
 
             {/* Additive: welcome message + bonus points on signup. */}
             <div id="settings-welcome" className="scroll-mt-24"><WelcomeBonusCard /></div>

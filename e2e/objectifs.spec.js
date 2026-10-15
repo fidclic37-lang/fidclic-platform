@@ -74,6 +74,37 @@ test.describe.serial('objectifs the shop sets for itself', () => {
     expect(r4.objectifs_won, 'not handed out twice').toEqual([]);
   });
 
+  test('the paliers moved here, and saving one really saves it', async ({ page, request }) => {
+    const { H: base, store } = await asOwner(page, request);
+    // The ladder is per establishment (multi-store): the browser sends the
+    // chosen one on every call, so a check that does not would read another's.
+    const H = { ...base, 'X-FidClic-Store': store || 'all' };
+    const before = await (await request.get('/api/owner/card/settings', { headers: H })).json();
+    const rung = (before.tiers || [])[2];                 // « Or », the third
+    expect(rung, 'the shop has a ladder').toBeTruthy();
+
+    await page.goto('/dashboard/parametres/objectifs');
+    await expect(page.getByRole('heading', { name: 'Paliers' })).toBeVisible();
+    await expect(page.getByText("Comment le palier d'un client est décidé")).toBeVisible();
+
+    await page.getByRole('button', { name: 'Gérer les paliers' }).click();
+    const ceiling = page.getByLabel(`Plafond du palier ${before.tiers[1].label}`);
+    const target = String(Number(rung.min) + 7);
+    await ceiling.fill(target);
+    await page.getByRole('button', { name: 'Enregistrer' }).first().click();
+    await page.waitForTimeout(1500);
+    // the server kept it, not just the screen
+    await expect.poll(async () => {
+      const now = await (await request.get('/api/owner/card/settings', { headers: H })).json();
+      return String((now.tiers || [])[2]?.min);
+    }, { timeout: 15_000 }).toBe(target);
+
+    // put it back the way it was
+    await request.put('/api/owner/card/rewards', { headers: H, data: {
+      tiers: before.tiers.map((t) => ({ key: t.key, min: t.min, reward: t.reward })),
+      vip_shortcut: before.vip_shortcut } });
+  });
+
   test('cleanup: the objectif is removed again', async ({ page, request }) => {
     const { H } = await asOwner(page, request);
     const now = await (await request.get('/api/owner/milestones', { headers: H })).json();

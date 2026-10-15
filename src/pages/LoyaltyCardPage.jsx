@@ -251,6 +251,8 @@ export default function LoyaltyCardPage() {
   const [design, setDesign] = useState(null);
   const [programme, setProgramme] = useState(null);
   const [toggles, setToggles] = useState(null);
+  // Read-only here now: the rungs are edited in Paramètres › Objectifs et
+  // récompenses, but the preview still reads them to show a palier.
   const [tiers, setTiers] = useState([]);
   const [advanced, setAdvanced] = useState(null);
   // « Image poster »: the photo is framed by the owner, then fills the card
@@ -315,14 +317,8 @@ export default function LoyaltyCardPage() {
     return () => window.clearTimeout(t);
   }, [savedAt]);
   const [error, setError] = useState('');
-  const [editTiers, setEditTiers] = useState(false);
-  // « Paliers (optionnel) » stays folded until asked (user, 2026-10-12)
-  const [showTiers, setShowTiers] = useState(false);
-  const [tierError, setTierError] = useState('');
   // VIP also from N visits with a high average basket — the one shortcut,
   // shown and set here with the ladder (QA F21, user 2026-10-09)
-  const [vipRule, setVipRule] = useState({ enabled: true, min_visits: 10, min_avg: 60 });
-  const [moved, setMoved] = useState(null);       // who changed palier after a save
   const [snapshot, setSnapshot] = useState('');   // what the server holds, to know what is unsaved
   const advancedRef = useRef(null);
 
@@ -334,7 +330,6 @@ export default function LoyaltyCardPage() {
       setProgramme(r.data.programme);
       setToggles(r.data.toggles);
       setTiers(r.data.tiers);
-      if (r.data.vip_shortcut) setVipRule(r.data.vip_shortcut);
       // A photo on file with the banner style still reading "brand" can only be
       // a card saved before the upload started setting the style — the owner
       // added a banner and never saw it. Show the photo.
@@ -729,26 +724,6 @@ export default function LoyaltyCardPage() {
       if (curStore?.card_off) ownerAPI.getBranches().then(({ data }) => setBranches(data?.branches || data || [])).catch(() => {});
     } catch (e) {
       setError(e?.response?.data?.detail || 'Enregistrement impossible.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveTiers = async () => {
-    setSaving(true); setError(''); setTierError('');
-    try {
-      const r = await ownerAPI.saveCardRewards({
-        tiers: tiers.map((t) => ({ key: t.key, min: Number(t.min), reward: t.reward })),
-        vip_shortcut: { enabled: !!vipRule.enabled, min_visits: Number(vipRule.min_visits) || 1,
-                        min_avg: Number(vipRule.min_avg) || 0 },
-      });
-      setTiers(r.data.tiers);
-      if (r.data.vip_shortcut) setVipRule(r.data.vip_shortcut);
-      setMoved(r.data.moved || null);
-      setEditTiers(false);
-    } catch (e) {
-      // Said beside the rungs, where the owner is looking.
-      setTierError(e?.response?.data?.detail || 'Paliers invalides.');
     } finally {
       setSaving(false);
     }
@@ -1170,125 +1145,22 @@ export default function LoyaltyCardPage() {
                 )} />
         )}
 
+          {/* « Paliers » moved to Paramètres › Objectifs et récompenses (user,
+              2026-10-15): the rungs and the shop's own objectifs are the same
+              subject — what a client gets for coming back — and were two pages
+              apart. Nothing is out of reach: this says where they went. */}
           <Card
             icon={Star}
-            title="Paliers (optionnel)"
-            help="tiers"
-            subtitle="Bronze, Argent, Or, VIP : un statut selon la fidélité, avec sa récompense si vous voulez."
-            action={!showTiers ? (
-              <button type="button" onClick={() => setShowTiers(true)}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#E1E8F5] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
-                <ChevronDown size={14} /> Afficher
-              </button>
-            ) : edit && (
-              <button type="button" onClick={() => (editTiers ? saveTiers() : setEditTiers(true))} disabled={saving}
-                      className="inline-flex items-center gap-2 rounded-xl border border-[#E1E8F5] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] hover:text-[#2F6BFF] disabled:opacity-60">
-                {editTiers ? <><Check size={14} /> Enregistrer</> : <><Settings2 size={14} /> Gérer les récompenses</>}
-              </button>
-            )}
+            title="Paliers (Bronze → VIP)"
+            subtitle="Le niveau d'un client selon sa fidélité, avec sa récompense."
           >
-            {showTiers && (<>
-            {/* Each rung shows its upper number — « 200 points », not « 0 · 200 » —
-                and the last one « 600+ points » (user, 2026-10-02). Editing works
-                on the same numbers: a rung's ceiling is the next rung's floor. */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {tiers.map((t, i) => (
-                <div key={t.key} className="text-center">
-                  <span className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full" style={{ background: `${TIER_TONE[i]}1F`, color: TIER_TONE[i] }}>
-                    <Star size={17} fill="currentColor" />
-                  </span>
-                  {editTiers ? (
-                    <div className="space-y-1.5">
-                      {i < tiers.length - 1 ? (
-                        <Input type="number" min="1" value={tiers[i + 1].min} className="py-1.5 text-center text-[12px]"
-                               aria-label={`Plafond du palier ${t.label}`}
-                               onChange={(e) => setTiers(tiers.map((x, j) => (j === i + 1 ? { ...x, min: e.target.value } : x)))} />
-                      ) : (
-                        <div className="rounded-xl border border-dashed border-[#E1E8F5] py-1.5 text-[12px] font-semibold text-[#64748B]">
-                          {tiers[i].min}+ {unit}
-                        </div>
-                      )}
-                      <Input value={t.reward} className="py-1.5 text-center text-[12px]" placeholder="Récompense"
-                             onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, reward: e.target.value } : x)))} />
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-[12px] font-semibold text-[#0B1C3F]">
-                        {i < tiers.length - 1 ? `${tiers[i + 1].min} ${unit}` : `${t.min}+ ${unit}`}
-                      </div>
-                      <div className="mt-1 text-[12px] text-[#64748B]">{t.reward || '—'}</div>
-                      <div className="mt-0.5 text-[11px] font-semibold" style={{ color: TIER_TONE[i] }}>{t.label}</div>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-            {tierError && <p className="mt-3 rounded-xl bg-[#FEECEC] px-3 py-2 text-center text-[12px] text-[#C0392B]">{tierError}</p>}
-
-            {/* The whole rule, said where it is set (QA F21): no palier comes
-                from anywhere else. */}
-            <div className="mt-4 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] p-3 text-[12.5px] text-[#334155]">
-              <p className="font-semibold text-[#0B1C3F]">Comment le palier d'un client est décidé</p>
-              <ul className="mt-1.5 list-disc space-y-1 pl-4">
-                <li>Selon ces seuils, en {unit}, recalculé à chaque passage en caisse.</li>
-                <li>
-                  {editTiers ? (
-                    <span className="inline-flex flex-wrap items-center gap-1.5">
-                      <label className="inline-flex items-center gap-1.5">
-                        <input type="checkbox" checked={!!vipRule.enabled}
-                               onChange={(e) => setVipRule({ ...vipRule, enabled: e.target.checked })} />
-                        VIP aussi dès
-                      </label>
-                      <span className="inline-block w-16">
-                        <Input type="number" min="1" value={vipRule.min_visits} aria-label="Visites minimum pour le raccourci VIP"
-                               disabled={!vipRule.enabled} className="py-1 text-center text-[12px]"
-                               onChange={(e) => setVipRule({ ...vipRule, min_visits: e.target.value })} />
-                      </span>
-                      visites avec un panier moyen d'au moins
-                      <span className="inline-block w-20">
-                        <Input type="number" min="0" value={vipRule.min_avg} aria-label="Panier moyen minimum en euros"
-                               disabled={!vipRule.enabled} className="py-1 text-center text-[12px]"
-                               onChange={(e) => setVipRule({ ...vipRule, min_avg: e.target.value })} />
-                      </span>
-                      €
-                    </span>
-                  ) : vipRule.enabled ? (
-                    <>VIP aussi dès <strong>{vipRule.min_visits} visites</strong> avec un panier moyen d'au moins <strong>{vipRule.min_avg} €</strong>, même avant le seuil VIP.</>
-                  ) : (
-                    <>Pas de raccourci VIP : seul le seuil VIP compte.</>
-                  )}
-                </li>
-                <li>Quand vous changez ces réglages, tous vos clients sont reclassés : ceux qui montent sont prévenus sur leur carte.</li>
-                <li>
-                  Différent de « Client très actif » des{' '}
-                  <a href="/dashboard/parametres/regles-clients" className="font-semibold text-[#2F6BFF] underline">Règles clients</a>,
-                  {' '}qui compte les visites par mois.
-                </li>
-              </ul>
-            </div>
-            {moved && (
-              <p className="mt-3 rounded-xl bg-[#ECFDF3] px-3 py-2 text-center text-[12px] text-[#065F46]" role="status">
-                {moved.up + moved.down === 0
-                  ? 'Enregistré. Aucun client ne change de palier.'
-                  : `Enregistré. ${moved.up + moved.down} client${moved.up + moved.down > 1 ? 's changent' : ' change'} de palier : ${moved.up} en hausse (prévenu${moved.up > 1 ? 's' : ''}), ${moved.down} en baisse.`}
-              </p>
-            )}
-            {editTiers && (
-              <p className="mt-3 text-center text-[11.5px] text-[#94A3B8]">
-                Le nombre de {unit} jusqu'où va chaque palier, croissant. Le dernier commence là où s'arrête le précédent.
-                <button type="button" onClick={() => { setEditTiers(false); setTierError(''); load(); }} className="ml-2 inline-flex items-center gap-1 text-[#64748B] underline">
-                  <X size={11} /> annuler
-                </button>
-              </p>
-            )}
-            <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] p-3">
-              <Lightbulb size={16} className="mt-0.5 shrink-0 text-[#B45309]" />
-              <div>
-                <p className="text-[12.5px] font-bold text-[#92400E]">Astuce</p>
-                <p className="text-[12px] text-[#92400E]/90">Proposez des récompenses attractives pour encourager vos clients à revenir plus souvent !</p>
-              </div>
-            </div>
-            </>)}
+            <p className="text-[13px] text-[#334155]">
+              Les paliers se règlent désormais avec vos objectifs, au même endroit.
+            </p>
+            <a href="/dashboard/parametres/objectifs"
+               className="mt-3 inline-flex items-center gap-2 rounded-xl border border-[#2F6BFF] px-4 py-2.5 text-[13px] font-medium text-[#2F6BFF]">
+              Objectifs et récompenses <ArrowRight size={14} />
+            </a>
           </Card>
           <Card
             icon={CreditCard}
