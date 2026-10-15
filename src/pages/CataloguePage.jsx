@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { perPage } from '../lib/prefs';
+import { photoForUpload } from '../lib/photoForUpload';
 
 /* Catalogue produits — the shop's products, their categories, and what sells.
 
@@ -272,10 +273,8 @@ function MenuImportModal({ onClose, onDone }) {
     if (!f) return;
     setBusy(true); setError('');
     try {
-      const dataUrl = await new Promise((resolve, reject) => {
-        const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(f);
-      });
-      const res = await ownerAPI.parseMenuFromPhoto(dataUrl, f.type, 'fr');
+      const { dataUrl, mime } = await photoForUpload(f);   // light enough to send; HEIC converted server-side
+      const res = await ownerAPI.parseMenuFromPhoto(dataUrl, mime, 'fr');
       const items = Array.isArray(res?.data?.items) ? res.data.items : [];
       if (!items.length) setError('Aucun produit détecté. Essayez une photo plus nette.');
       setRows(items.map((it) => ({ keep: true, name: String(it.name || '').trim(),

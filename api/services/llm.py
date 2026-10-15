@@ -22,6 +22,7 @@ SEAM
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import urllib.request
@@ -103,6 +104,18 @@ def _model_for(name: str) -> str:
     return m if (name == "anthropic") == is_claude else _ENDPOINTS[name][2]
 
 
+# Claude since 4.7 refuses `temperature` (HTTP 400 « temperature is deprecated
+# for this model », 2026-10-15), so none is sent to Anthropic. The 4.6+ / 5.x
+# models think before they answer, and the thinking counts in max_tokens: on
+# these short calls (a campaign line, a menu, a receipt) effort « low » keeps
+# the answer whole. Older models (Haiku 4.5…) reject `effort`: nothing sent.
+_EFFORT_MODELS = re.compile(r"^claude-(?:(?:opus|sonnet)-(?:4-[6-9]|5)|(?:fable|mythos)-|haiku-5)")
+
+
+def anthropic_extras(model: str) -> dict:
+    return {"output_config": {"effort": "low"}} if _EFFORT_MODELS.match((model or "").lower()) else {}
+
+
 def _call(name: str, model: str, system: str, user: str, max_tokens: int,
           temperature: float) -> Optional[str]:
     url, key_env, _default = _ENDPOINTS[name]
@@ -114,8 +127,9 @@ def _call(name: str, model: str, system: str, user: str, max_tokens: int,
     # every caller is unaffected.
     if name == "anthropic":
         body = {
-            "model": model, "max_tokens": max_tokens, "temperature": temperature,
+            "model": model, "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": user}],
+            **anthropic_extras(model),
         }
         # Only send `system` when there is one — the API rejects an empty
         # string, and several callers pass "" when the prompt needs no framing.

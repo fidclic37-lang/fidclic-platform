@@ -13,6 +13,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Plus, Trash2, Save, Camera } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import { photoForUpload } from '../lib/photoForUpload';
 
 const blankRow = () => ({ id: null, name: '', price: '', category: '' });
 
@@ -62,13 +63,8 @@ export default function CatalogManager() {
     setError('');
     setScanInfo('');
     try {
-      const reader = new FileReader();
-      const dataUrl = await new Promise((resolve, reject) => {
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error("Lecture de l'image impossible"));
-        reader.readAsDataURL(file);
-      });
-      const r = await ownerAPI.parseMenuFromPhoto?.(dataUrl, file.type, 'fr');
+      const { dataUrl, mime } = await photoForUpload(file);   // light enough to send; HEIC converted server-side
+      const r = await ownerAPI.parseMenuFromPhoto?.(dataUrl, mime, 'fr');
       const parsed = Array.isArray(r?.data?.items) ? r.data.items : [];
       if (parsed.length === 0) {
         setScanInfo("Aucun article détecté sur la photo. Essayez une photo plus nette ou ajoutez les lignes manuellement.");
