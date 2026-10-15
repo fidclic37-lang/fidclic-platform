@@ -1470,9 +1470,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Géolocalisation (features/geo_automation): while this client's automation
     # allows it, the pass carries the shop's locations (below) and its message
     # here, so the card the lock screen opens says it — quietly, no banner.
-    geo, geo_rules = None, False
+    geo, geo_rules, geo_on = None, False, False
     try:
         from features import geo_automation as GA
+        # Géolocalisation OFF (its switch, the plan, the privacy settings):
+        # no location on the pass at all — not the automation's, not the
+        # card's own « rappel » (user, 2026-10-15: switched off, a client
+        # still got « Vous êtes près de ROYAL TRIM LIBERTÉ » on his lock screen)
+        geo_on = bool(GA.live(tenant.get("id"))["ok"])
         geo_rules = GA.governs(tenant.get("id"))
         if geo_rules:
             full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0}) or {}
@@ -1567,7 +1572,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         if geo:
             pass_json["locations"] = [{"latitude": la, "longitude": lo, "maxDistance": geo["radius"],
                                        "relevantText": geo["text"]} for la, lo in geo["spots"][:10]]
-    elif card.get("location_reminder") is not False:
+    elif geo_on and card.get("location_reminder") is not False:
         radius = int(tenant_doc.get("geo_radius_meters") or card.get("location_radius_m") or 200)
         text = card.get("location_text") or f"Vous êtes près de {org} — pensez à scanner votre carte."
         spots = []

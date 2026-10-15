@@ -982,6 +982,7 @@ export default function LoyaltyCardPage() {
                 <div className="-mx-2">
                   <Toggle icon={MapPin} label="Rappel quand le client passe devant" checked={advanced.location_reminder}
                           onChange={(v) => setAdvanced({ ...advanced, location_reminder: v })} />
+                  <p className="mt-1 text-[11.5px] text-[#94A3B8]">Seulement quand la Géolocalisation est activée (page Géolocalisation).</p>
                 </div>
                 {!advanced.has_coordinates && (
                   <p className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-[11.5px] text-[#92400E]">
