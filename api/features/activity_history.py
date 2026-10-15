@@ -161,6 +161,7 @@ def _sources(tid: str, start: datetime, end: datetime,
     tills = S.visit_filter(scope) if scope else {}
     mine = S.customer_ids(scope) if scope else None
     clients = {} if mine is None else {"customer_id": {"$in": list(mine)}}
+    rule = _card_rule(tid)
     return {
         "scan": {
             "coll": "visits", "time": "visit_time",
@@ -169,6 +170,7 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "customer_id": d.get("customer_id"),
                 "detail": "Scan de la carte en magasin",
                 "points": int(d.get("points_awarded") or 0),
+                "stamps": _visit_stamps(d, rule),
                 # a 0 € visit is 0 €, not blank (QA F14); no amount at all stays blank
                 "amount": None if d.get("amount_paid") is None else float(d.get("amount_paid") or 0),
             },
@@ -182,7 +184,8 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "detail": d.get("reward_name") or "Récompense utilisée",
                 # A redemption spends the card, not a points balance, unless
                 # the programme counts points — then the cost is recorded.
-                "points": -abs(int(d.get("points_spent"))) if d.get("points_spent") else None,
+                "points": _reward_points(d, rule),
+                "stamps": _reward_stamps(d, rule),
             },
         },
         "message_view": {
@@ -203,6 +206,7 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "customer_name": d.get("name"),
                 "detail": f"Inscription au programme{_source_suffix(d)}",
                 "points": 0,
+                "stamps": 0,
             },
         },
         "campaign": {
@@ -232,6 +236,7 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "customer_name": d.get("customer_name"),
                 "detail": f"{d.get('text')} — {d.get('reason')} · par {d.get('by') or 'l’équipe'}",
                 "points": int(d.get("points_delta") or 0) or None,
+                "stamps": int(d.get("visits_delta") or 0) or None,
             },
         },
         "card_update": {
@@ -251,6 +256,50 @@ def _sources(tid: str, start: datetime, end: datetime,
             },
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# points AND tampons on every row (user, 2026-10-15: a tampons shop saw « 0 »
+# points on every scan). Since that day a visit records the tampons it gave
+# and a reward what it cost; older rows are worked out from the card's rule.
+# ---------------------------------------------------------------------------
+def _card_rule(tid: str) -> Dict[str, Any]:
+    """The card of the establishment in the menu (features/store_cards)."""
+    from features import loyalty_card as _LC
+    tpl = _db.card_templates.find_one({"tenant_id": tid}) or {}
+    return {"programme": _LC._programme(tpl),
+            "per": max(int(tpl.get("visits_per_stamp") or 1), 1),
+            "size": max(int(tpl.get("reward_threshold_stamps") or 10), 1),
+            "price": max(int(tpl.get("reward_points") or 0), 0)}
+
+
+def unit_of(tid: str) -> str:
+    """What the column shows first: the shop's own programme."""
+    return "stamps" if _card_rule(tid)["programme"] == "stamps" else "points"
+
+
+def _visit_stamps(d: Dict[str, Any], rule: Dict[str, Any]) -> Optional[int]:
+    paper = int(d.get("paper_stamps") or 0)
+    if "stamps_awarded" in d:
+        return int(d.get("stamps_awarded") or 0) + paper
+    # before 2026-10-15: one visit, one tampon — unknown when a tampon takes several visits
+    return 1 + paper if rule["per"] == 1 else (paper or None)
+
+
+def _reward_points(d: Dict[str, Any], rule: Dict[str, Any]) -> Optional[int]:
+    if d.get("points_spent"):
+        return -abs(int(d["points_spent"]))
+    if "stamps_spent" in d or rule["programme"] == "stamps":
+        return None
+    return -rule["price"] if rule["price"] else None
+
+
+def _reward_stamps(d: Dict[str, Any], rule: Dict[str, Any]) -> Optional[int]:
+    if d.get("stamps_spent"):
+        return -abs(int(d["stamps_spent"]))
+    if d.get("points_spent") or rule["programme"] != "stamps":
+        return None
+    return -rule["size"]
 
 
 def _source_suffix(customer: Dict[str, Any]) -> str:
@@ -395,6 +444,7 @@ def filters(token_data: TokenData = Depends(require_role(READERS, partial_ok=Tru
         "actions": [{"key": k, "label": v["label"], "icon": v["icon"], "tone": v["tone"]}
                     for k, v in ACTIONS.items()],
         "per_page_options": [10, 25, 50, 100],
+        "unit": unit_of(token_data.tenant_id),      # « points » or « stamps »: the column's first view
     }
 
 
@@ -444,6 +494,7 @@ def activity(
         "counts": totals,
         "from": start.isoformat(),
         "to": end.isoformat(),
+        "unit": unit_of(tid),
     }
 
 
@@ -453,7 +504,7 @@ def _public(r: Dict[str, Any]) -> Dict[str, Any]:
         "icon": r["icon"], "tone": r["tone"], "at": r["at"].isoformat(),
         "customer_id": r.get("customer_id"), "customer_name": r["customer_name"],
         "customer_barcode": r.get("customer_barcode"), "initials": r["initials"],
-        "detail": r.get("detail") or "", "points": r.get("points"),
+        "detail": r.get("detail") or "", "points": r.get("points"), "stamps": r.get("stamps"),
         "amount": r.get("amount"),
         "store_id": r.get("store_id"), "store": r.get("store_name") or "",
     }
@@ -530,7 +581,7 @@ def export_csv(
     w = csv.writer(buf, delimiter=";")
     # the establishment and its stable id (QA F29: a combined export could not be split by branch)
     w.writerow(["Date et heure", "Établissement", "ID établissement", "Client", "Numéro de carte", "Type d'activité",
-                "Détails", "Points", "Montant (€)"])
+                "Détails", "Points", "Tampons", "Montant (€)"])
     for r in rows:
         w.writerow([
             r["at"].astimezone(LOCAL_TZ).strftime("%d/%m/%Y %H:%M"),
@@ -538,6 +589,7 @@ def export_csv(
             r["customer_name"], r.get("customer_barcode") or "",
             r["label"], r.get("detail") or "",
             "" if r.get("points") is None else r["points"],
+            "" if r.get("stamps") is None else r["stamps"],
             "" if r.get("amount") is None else f"{r['amount']:.2f}".replace(".", ","),
         ])
     data = "﻿" + buf.getvalue()
