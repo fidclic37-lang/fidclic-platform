@@ -3524,6 +3524,21 @@ def save_card_template_admin(
 
     return payload
 
+def _geo_passes_follow(tid: str) -> None:
+    """Géolocalisation switched on / off or its radius changed: every card of
+    the account (all its establishments) is sent again, so a pass on a phone
+    gains or loses the shop's locations now, not at its next visit (user,
+    2026-10-15: switched off, the lock screen still said « Vous êtes près de… »)."""
+    try:
+        from features import wallet_passes as _WP
+        serials = [c["barcode_id"] for c in db.customers.find({"tenant_id": tid, "barcode_id": {"$exists": True}},
+                                                               {"_id": 0, "barcode_id": 1}) if c.get("barcode_id")]
+        _WP.queue_refresh(tid, serials, design_changed=True)
+        _WP.drain_refresh(tid)
+    except Exception as exc:                 # a refresh never fails the switch
+        print(f"geo: passes not refreshed ({exc})")
+
+
 @app.put("/api/owner/settings/geo")
 def update_owner_geo_settings(
     req: Dict[str, Any],
@@ -3551,6 +3566,8 @@ def update_owner_geo_settings(
     if not update_data:
         raise HTTPException(status_code=400, detail="No editable field provided")
     db.tenants.update_one({"id": token_data.tenant_id}, {"$set": update_data})
+    if "geo_enabled" in update_data or "geo_radius_meters" in update_data:
+        _geo_passes_follow(token_data.tenant_id)
     tenant = db.tenants.find_one({"id": token_data.tenant_id})
     if tenant:
         tenant.pop("_id", None)
@@ -3585,6 +3602,8 @@ def update_geo_settings(
     result = db.tenants.update_one({"id": tenant_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    if "geo_enabled" in update_data or "geo_radius_meters" in update_data:
+        _geo_passes_follow(tenant_id)
 
     tenant = db.tenants.find_one({"id": tenant_id})
     tenant.pop("_id", None)
