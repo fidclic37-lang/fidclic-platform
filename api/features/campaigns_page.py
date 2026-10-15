@@ -768,6 +768,8 @@ def compose(req: Compose, request: Request = None,
     if mine is not None and not people and not req.draft:
         raise HTTPException(status_code=400, detail="Aucun client à contacter dans vos établissements.")
 
+    from services import client_status as _CS
+    people = _CS.drop_paused(_db, tid, people)       # paused by the business: not in the audience
     when = _aware(req.schedule_at)
     status = "draft" if req.draft else ("scheduled" if when and when > at else "sent")
 
@@ -843,6 +845,8 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
     and the wallet wake-up are best-effort on top of that — one customer's
     dead subscription must not stop the rest of the send.
     """
+    from services import client_status as _CS
+    people = _CS.drop_paused(_db, tid, people)       # paused since it was planned: skipped
     delivered = 0
     sent_at = doc["sent_at"]
     try:

@@ -182,7 +182,14 @@ def test_reminder(u):
     r = OB.run_trial_reminders()
     check("day 10 → no email", r["reminders_sent"] == 0 and len(SENT) == 0)
     # Day 29: 1 day left → one email, then never again.
-    S.db.tenants.update_one({"id": tid}, {"$set": {"trial_ends_at": now + timedelta(hours=30)}})
+    # days_left is counted in *calendar days* in Paris (QA UX07), so pin the
+    # end to midday tomorrow in Paris — "+30 h" landed two calendar days away
+    # whenever the suite ran after 18 h Paris time.
+    from zoneinfo import ZoneInfo
+    _paris = ZoneInfo("Europe/Paris")
+    tomorrow_noon = (now.astimezone(_paris) + timedelta(days=1)).replace(
+        hour=12, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    S.db.tenants.update_one({"id": tid}, {"$set": {"trial_ends_at": tomorrow_noon}})
     r = OB.run_trial_reminders()
     check("day 29 → exactly one email to the owner", r["reminders_sent"] == 1 and SENT[-1]["to"][0]["email"] == "marie@cafe.fr")
     check("email is in French and links to billing", "se termine" in SENT[-1]["htmlContent"]

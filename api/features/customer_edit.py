@@ -332,3 +332,101 @@ def get_purchases(customer_id: str, page: int = Query(1), per_page: int = Query(
                    "first": as_iso(first), "last": as_iso(last)},
         "rows": rows, "page": page, "per_page": per_page, "pages": max(1, -(-total // per_page)),
     }
+
+
+# ---------------------------------------------------------------------------
+# Pause / Reprendre / Supprimer / Rétablir (user, 2026-10-15)
+#   • paused: no message of any kind (services/client_status); the card still
+#     works at the till.
+#   • deleted: gone from the business's lists and counts, kept in the
+#     database; the Wallet card says « plus active », the till refuses it, and
+#     the same phone or e-mail can sign up again. Past visits stay in figures.
+#   • « Supprimés »: every deleted client, restorable any time.
+# ---------------------------------------------------------------------------
+def _note(token_data: TokenData, c: Dict[str, Any], kind: str, text: str) -> None:
+    _db.customer_changes.insert_one({"id": str(uuid.uuid4()), "tenant_id": token_data.tenant_id,
+                                     "customer_id": c["id"], "customer_name": c.get("name"), "kind": kind,
+                                     "text": text, "by": token_data.email, "at": _now(),
+                                     "store_ids": [c["branch_id"]] if c.get("branch_id") else None})
+
+
+@router.post("/api/owner/clients/{customer_id}/pause")
+def pause_client(customer_id: str, request: Request = None,
+                 token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    c = _customer(token_data, request, customer_id)
+    if not c.get("paused_at"):
+        _db.customers.update_one({"id": customer_id}, {"$set": {"paused_at": _now(), "paused_by": token_data.email}})
+        _note(token_data, c, "paused", "Client mis en pause : plus aucun message")
+    _refresh_card(c)                     # its Wallet card drops the campaign offer and the news
+    return {"paused": True}
+
+
+@router.post("/api/owner/clients/{customer_id}/resume")
+def resume_client(customer_id: str, request: Request = None,
+                  token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    c = _customer(token_data, request, customer_id)
+    if c.get("paused_at"):
+        _db.customers.update_one({"id": customer_id}, {"$unset": {"paused_at": "", "paused_by": ""}})
+        _note(token_data, c, "resumed", "Client repris : il reçoit de nouveau les messages")
+    _refresh_card(c)
+    return {"paused": False}
+
+
+@router.post("/api/owner/clients/{customer_id}/delete")
+def delete_client(customer_id: str, request: Request = None,
+                  token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    c = _customer(token_data, request, customer_id)
+    _db.customers.update_one({"id": customer_id}, {"$set": {
+        "deleted_at": _now(), "deleted_by": token_data.email, "delete_reason": "Supprimé par le commerce"}})
+    _note(token_data, c, "deleted", "Client supprimé")
+    _refresh_card(c)                     # the Wallet card now says « Cette carte n'est plus active »
+    return {"deleted": True}
+
+
+def _deleted_query(token_data: TokenData, request: Optional[Request]) -> Dict[str, Any]:
+    q: Dict[str, Any] = {"tenant_id": token_data.tenant_id, "deleted_at": {"$ne": None}, "gdpr_erased_at": None}
+    scope = S.resolve(token_data, request)
+    if not scope.is_all:
+        q["branch_id"] = {"$in": S._branch_values(scope)}
+    return q
+
+
+@router.get("/api/owner/clients/deleted")
+def deleted_clients(request: Request = None,
+                    token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    rows = list(_db.customers.find(_deleted_query(token_data, request),
+                                   {"_id": 0, "id": 1, "name": 1, "phone": 1, "email": 1, "barcode_id": 1,
+                                    "visits": 1, "deleted_at": 1, "delete_reason": 1}).sort("deleted_at", -1).limit(500))
+    for r in rows:
+        if isinstance(r.get("deleted_at"), datetime):
+            r["deleted_at"] = r["deleted_at"].isoformat()
+    return {"clients": rows}
+
+
+@router.post("/api/owner/clients/{customer_id}/restore")
+def restore_client(customer_id: str, request: Request = None,
+                   token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
+    c = _db.customers.find_one({**_deleted_query(token_data, request), "id": customer_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Client introuvable dans les supprimés.")
+    # signed up again since: the new card is the client now, two would clash
+    tid = token_data.tenant_id
+    main = next((b["id"] for b in (_db.tenants.find_one({"id": tid}, {"branches": 1}) or {}).get("branches") or []
+                 if b.get("is_main") or b.get("id") == "main"), None)
+    home = c.get("branch_id") or main
+    live = {"tenant_id": tid, "id": {"$ne": customer_id}, "deleted_at": None}
+    if home:
+        live["branch_id"] = {"$in": [home, None, ""]} if home == main else home
+    key = CF.phone_digits(c.get("phone"))
+    clash = next((o for o in _db.customers.find(live, {"_id": 0, "name": 1, "phone": 1, "email": 1})
+                  if (key and CF.phone_digits(o.get("phone")) == key)
+                  or (c.get("email") and (o.get("email") or "").lower() == c["email"].lower())), None)
+    if clash:
+        raise HTTPException(status_code=409, detail=(
+            f"Ce client s'est réinscrit depuis (carte de {clash.get('name') or 'ce client'}) : "
+            "sa nouvelle carte est déjà active, l'ancienne ne peut pas être rétablie."))
+    _db.customers.update_one({"id": customer_id}, {"$unset": {"deleted_at": "", "deleted_by": "", "delete_reason": "",
+                                                              "delete_grace_until": ""}})
+    _note(token_data, c, "restored", "Client rétabli")
+    _refresh_card(c)
+    return {"restored": True}

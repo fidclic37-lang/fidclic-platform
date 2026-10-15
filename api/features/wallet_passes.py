@@ -1098,6 +1098,12 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
     payload = core._serialize_card_payload(cust)
+    if cust.get("paused_at"):
+        # paused by the business (services/client_status): the card works,
+        # but carries no campaign offer, « Dernier message » or news
+        if isinstance(payload.get("card"), dict):
+            payload["card"]["_paused"] = True
+        return payload
     _attach_campaign_offer(payload.get("card") or {}, cust)
     _attach_auto_news(payload.get("card") or {}, cust)
     if isinstance(payload.get("card"), dict) and isinstance(cust.get("points_news"), dict):
@@ -3596,6 +3602,8 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
                 reward = payload["card"].get("reward_description") or "Votre récompense"
                 message = {"id": f"reward-{int(time.time())}", "header": "Récompense débloquée !",
                            "body": f"{reward} — présentez votre carte en caisse."}
+            if payload["card"].get("_paused"):
+                message = None                         # paused by the business: no Google message
             st, body = _gw_call("PUT", f"/loyaltyObject/{obj['id']}", obj, token)
             if st != 200:
                 result = f"HTTP {st} {_gw_reason(body)}".strip()

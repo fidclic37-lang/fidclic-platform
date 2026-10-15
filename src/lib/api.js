@@ -672,6 +672,12 @@ export const ownerAPI = {
   setHomeStore: (id, branchId) => api.put(`/owner/customers/${encodeURIComponent(id)}/home-store`, { branch_id: branchId }),
   setStoreSlug: (branchId, slug) => api.put(`/owner/stores/${encodeURIComponent(branchId)}/slug`, { slug }),
   adjustClient: (id, body) => api.post(`/owner/clients/${id}/ajustement`, body),
+  // Pause / Reprendre / Supprimer / Rétablir (features/customer_edit.py, 2026-10-15)
+  pauseClient: (id) => api.post(`/owner/clients/${id}/pause`),
+  resumeClient: (id) => api.post(`/owner/clients/${id}/resume`),
+  deleteClient: (id) => api.post(`/owner/clients/${id}/delete`),
+  deletedClients: () => api.get('/owner/clients/deleted'),
+  restoreClient: (id) => api.post(`/owner/clients/${id}/restore`),
   // « Reprendre » / « Supprimer » a draft (QA F02)
   campaignDraft: (id) => api.get(`/owner/campaigns/drafts/${id}`),
   deleteCampaignDraft: (id) => api.delete(`/owner/campaigns/drafts/${id}`),

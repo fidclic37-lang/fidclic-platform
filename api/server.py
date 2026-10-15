@@ -612,12 +612,23 @@ def refresh_wallet_pass(customer_id: str, reward_earned: bool = False, google_no
         print(f"refresh_wallet_pass: {exc}")
 
 
+from services.client_status import NOT_PAUSED as _CS_NOT_PAUSED  # noqa: E402 — a paused client is in no audience
+DELETED_CARD_MSG = ("Cette carte n'est plus active : ce client a été supprimé. "
+                    "Il peut s'inscrire à nouveau, ou vous pouvez le rétablir dans Clients › Supprimés.")
+
+
 def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
                          kind: str = "campaign", url: Optional[str] = None) -> dict:
     """Deliver one message to one customer. Returns {sent, channel}.
     `url`: where tapping the notification leads (the SMS carries it too)."""
     now = datetime.now(timezone.utc)
     result = {"sent": False, "channel": None}
+
+    # A client the business paused hears nothing (services/client_status) —
+    # read from the database: callers often pass a projected customer
+    from services import client_status as _CS
+    if _CS.is_paused(db, customer.get("id")):
+        return {"sent": False, "channel": None, "reason": "paused"}
 
     # Monthly push quota — what the pricing page sells ("2 000 push / mois")
     # is what is counted here. Transactional messages the customer asked for
@@ -2331,7 +2342,7 @@ def send_re_enablement_sms(
     except Exception:
         pass
     candidates = list(db.customers.find(
-        {"tenant_id": t_id, "id": {"$nin": list(subscribed_ids)}},
+        {"tenant_id": t_id, "id": {"$nin": list(subscribed_ids)}, **_CS_NOT_PAUSED},
         {"id": 1, "name": 1, "phone": 1, "barcode_id": 1},
     ))
 
@@ -4349,7 +4360,7 @@ def send_campaign(
     tenant = db.tenants.find_one({"id": token_data.tenant_id}) or {}
     tenant_name = tenant.get("campaign_sender_name") or tenant.get("name") or "Your Business"
     campaign_content_raw = campaign.content or campaign.name
-    targeted_customers = list(db.customers.find(query))
+    targeted_customers = list(db.customers.find({"$and": [query, _CS_NOT_PAUSED]}))
     for cust in targeted_customers:
         try:
             rendered_body = render_template(campaign_content_raw, cust, tenant)
@@ -4381,7 +4392,7 @@ def send_campaign(
     campaign.delivered_count = delivered
 
     # Populate recipient_ids with customer IDs from targeted query
-    targeted_customers = list(db.customers.find(query))
+    targeted_customers = list(db.customers.find({"$and": [query, _CS_NOT_PAUSED]}))
     campaign.recipient_ids = [c["id"] for c in targeted_customers]
 
     db.campaigns.update_one(
@@ -5113,10 +5124,12 @@ def scan_preview(barcode: str,
     can still take (none when its paper card was already moved)."""
     bc = barcode_from(barcode)
     cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": bc},
-                                 {"_id": 0, "id": 1, "name": 1, "barcode_id": 1, "visits": 1,
+                                 {"_id": 0, "id": 1, "name": 1, "barcode_id": 1, "visits": 1, "deleted_at": 1,
                                   "visits_at_last_redemption": 1, "paper_stamps": 1, "paper_stamps_at": 1})
     if not cust:
         raise HTTPException(status_code=404, detail="Aucun client trouvé avec ce code.")
+    if cust.get("deleted_at"):
+        raise HTTPException(status_code=410, detail=DELETED_CARD_MSG)
     rule = _card_rule(token_data.tenant_id)
     on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
     done = cust.get("paper_stamps") is not None
@@ -5177,6 +5190,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     normalized_barcode = barcode_from(req.barcode_id)
 
     cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": normalized_barcode})
+    if cust and cust.get("deleted_at"):
+        # deleted by the business (Clients › Supprimer): the card no longer works here
+        raise HTTPException(status_code=410, detail=DELETED_CARD_MSG)
     if cust:                     # the rules of the client's home store, wherever they are scanned
         _SC.set_for_customer(cust)
     if not cust:
@@ -5731,7 +5747,8 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     # Fires when the customer's current state is at-or-over the threshold AND
     # hasn't received an unlock push for this card cycle yet.
     if (stamps_earned >= threshold_stamps
-        and not _has_recent_notification(cid, tenant_id, "reward_unlocked", cycle_start)):
+        and not _has_recent_notification(cid, tenant_id, "reward_unlocked", cycle_start)
+        and not customer_doc.get("paused_at")):                 # paused by the business: no message
         title = f"🎉 Récompense débloquée, {first_name} !" if first_name else "🎉 Récompense débloquée !"
         body = (
             f"Bravo, votre carte est complète ! Présentez ce message lors de votre prochaine "
@@ -5846,7 +5863,7 @@ def save_card_promotion(
         now = datetime.now(timezone.utc)
         title = (req.title or "Nouvelle offre disponible").strip()
         body = (req.subtitle or req.body or "Ouvrez votre carte pour en savoir plus.").strip()
-        cursor = db.customers.find({"tenant_id": t_id}, {"id": 1, "name": 1})
+        cursor = db.customers.find({"tenant_id": t_id, **_CS_NOT_PAUSED}, {"id": 1, "name": 1})
         rows = []
         for c in cursor:
             rows.append({
@@ -5917,7 +5934,7 @@ def send_card_notification(
     # ones with an email address, on a platform where email is switched off.
     # The projection carries what render_template() and the SMS fallback need.
     recipients = []
-    for c in db.customers.find(flt, {
+    for c in db.customers.find({"$and": [flt, _CS_NOT_PAUSED]}, {
         "id": 1, "tenant_id": 1, "name": 1, "email": 1, "phone": 1,
         "tier": 1, "points": 1, "visits": 1, "total_amount_paid": 1,
         "visits_at_last_redemption": 1,
@@ -7657,7 +7674,7 @@ def push_card_override(
     _home = _S.home_customer_ids(_S.sending_scope(token_data, request))
     if _home is not None:
         query["id"] = {"$in": list(_home)}
-    targets = list(db.customers.find(query, {
+    targets = list(db.customers.find({"$and": [query, _CS_NOT_PAUSED]}, {
         "id": 1, "name": 1, "first_name": 1, "tenant_id": 1,
         "phone": 1, "tier": 1, "points": 1, "visits": 1,
     }))
@@ -7967,7 +7984,7 @@ def send_campaign_to_group(
 
     # Dispatch per-customer with template rendering.
     delivered = 0
-    targeted_customers = list(db.customers.find({"id": {"$in": customer_ids}, "tenant_id": tid}))
+    targeted_customers = list(db.customers.find({"id": {"$in": customer_ids}, "tenant_id": tid, **_CS_NOT_PAUSED}))
     for cust in targeted_customers:
         rendered_body = render_template(content, cust, tenant)
         rendered_subject = render_template(name, cust, tenant)
@@ -11674,6 +11691,8 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
     sender_name = tenant.get("campaign_sender_name") or tenant.get("name") or "FidClic"
     now = datetime.now(timezone.utc)
     delivered = 0
+    from services import client_status as _CS
+    customer_list = _CS.drop_paused(db, tenant.get("id"), customer_list)   # paused by the business
     for cust in customer_list:
         rendered_body = render_template(content, cust, tenant)
         rendered_subject = render_template(name, cust, tenant)
@@ -12383,7 +12402,7 @@ def admin_broadcast(
         ts = list(db.tenants.find({"sector": filters["sector"]}, {"id": 1}))
         cust_q["tenant_id"] = {"$in": [t["id"] for t in ts]}
 
-    targets = list(db.customers.find(cust_q))
+    targets = list(db.customers.find({"$and": [cust_q, _CS_NOT_PAUSED]}))
     delivered = 0
     broadcast_id = str(uuid.uuid4())
     tenant_cache = {}

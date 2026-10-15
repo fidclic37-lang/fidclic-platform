@@ -351,7 +351,8 @@ def _send(tid: str, people: List[Dict[str, Any]], kind: str, by: Optional[str],
     lim = limits(tid, at)
     shop = ((_db.tenants.find_one({"id": tid}) or {}).get("campaign_sender_name")
             or (_db.tenants.find_one({"id": tid}) or {}).get("name") or "Votre commerce")
-    eligible = [c for c in people if c.get("email") and not c.get("email_opt_out")]
+    from services import client_status as _CS
+    eligible = [c for c in _CS.drop_paused(_db, tid, people) if c.get("email") and not c.get("email_opt_out")]
     over = 0
     if lim["invites_left"] is not None and len(eligible) > lim["invites_left"]:
         over = len(eligible) - lim["invites_left"]
@@ -522,11 +523,12 @@ def relance_candidates(tid: str, mine: Optional[set] = None, at: Optional[dateti
     opened = _opened(tid, due)
     people = {c["id"]: c for c in _db.customers.find(
         {"tenant_id": tid, "id": {"$in": [d for d in due if d not in opened]}},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "email_opt_out": 1, "deleted_at": 1})}
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "email_opt_out": 1, "deleted_at": 1, "paused_at": 1})}
     return sorted(({"id": cid, "name": c.get("name") or "Client", "email": c.get("email"),
                     "invited_at": inv[cid]["invited_at"].isoformat()}
                    for cid, c in people.items()
-                   if c.get("email") and not c.get("email_opt_out") and not c.get("deleted_at")),
+                   if c.get("email") and not c.get("email_opt_out") and not c.get("deleted_at")
+                   and not c.get("paused_at")),
                   key=lambda r: r["invited_at"])
 
 
