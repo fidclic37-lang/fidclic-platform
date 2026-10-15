@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from auth import TokenData
@@ -142,7 +142,8 @@ def backup(include_crm: bool = True, keep: List[str] = Query(default=[]),
     _db.platform_reset_tokens.insert_one({"token": token, "email": token_data.email, "include_crm": include_crm, "kept": kept,
                                           "expires_at": _now() + TOKEN_TTL, "backup_bytes": buf.tell()})
     name = f"fidclic-sauvegarde-{_now().strftime('%Y%m%d-%H%M')}.json.gz"
-    return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/gzip", headers={
+    # in one piece (a BytesIO given to StreamingResponse goes out line by line)
+    return Response(content=buf.getvalue(), media_type="application/gzip", headers={
         "Content-Disposition": f'attachment; filename="{name}"',
         "X-Reset-Token": token, "Access-Control-Expose-Headers": "X-Reset-Token",
         "Cache-Control": "no-store"})
