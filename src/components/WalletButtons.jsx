@@ -27,7 +27,7 @@ export function phoneWallet(ua = navigator.userAgent, touch = navigator.maxTouch
 /* phoneOnly: only the button of this phone's Wallet (the signup's
    « Félicitations », BUG-008). onShown(bool): told once the wallets are known
    whether a button is on screen — the page offers « Voir ma carte » if not. */
-export default function WalletButtons({ barcodeId, onError, phoneOnly = false, onShown }) {
+export default function WalletButtons({ barcodeId, onError, phoneOnly = false, onShown, ready = true }) {
   const [cfg, setCfg] = useState(null);
   const [busy, setBusy] = useState(false);
   const [googleUrl, setGoogleUrl] = useState(null);
@@ -43,14 +43,18 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   const mine = phoneWallet();
   const wanted = phoneOnly ? (mine ? [mine] : []) : ['apple', 'google'];
   const shownCount = cfg ? wanted.filter((k) => cfg[k]).length : null;
+  // `ready`: the page says when (the signup waits for its card to show first —
+  // the two on one fresh instance fought for its CPU, 2026-10-15); only the
+  // Wallet(s) of the buttons shown are prepared
   useEffect(() => {
-    if (!cfg || !shownCount) return undefined;          // no button here: nothing to get ready
+    if (!cfg || !shownCount || !ready) return undefined;   // no button here: nothing to get ready
     let alive = true;
-    api.post(`/card/${barcodeId}/wallet-prepare`).then((r) => {
+    const only = wanted.filter((k) => cfg[k]).join(',');
+    api.post(`/card/${barcodeId}/wallet-prepare`, null, { params: { only } }).then((r) => {
       if (alive && r.data?.google_url) setGoogleUrl(r.data.google_url);
     }).catch(() => {});
     return () => { alive = false; };
-  }, [cfg, barcodeId]);
+  }, [cfg, barcodeId, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (shownCount !== null) onShown?.(shownCount > 0);

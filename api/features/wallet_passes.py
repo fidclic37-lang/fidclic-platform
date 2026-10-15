@@ -579,7 +579,7 @@ _SHARED_MAX = 300 * 1024
 # edge, never through the cluster. A new instance no longer rebuilds what
 # another one already built. Without a Blob token: memory only, as before.
 _BLOB_KINDS = {"poster", "poster_variants", "strip", "strip_variants", "png_variants", "name_logo",
-               "round_logo", "template_scaled", "preview_jpeg", "slim_photo"}
+               "round_logo", "template_scaled", "preview_jpeg", "slim_photo", "pass_images", "live_images", "gw_image"}
 _PACK = b"FCI1"
 
 
@@ -630,10 +630,30 @@ def _shared_put(kind: str, key: str, value: Any) -> None:
     try:
         packed = _pack(value)
         if packed is not None:
-            from services import media as M
-            M.cache_put(key, _PACK + packed)
+            _in_background(_put_blob, key, _PACK + packed)
     except Exception as exc:                               # a cache that fails is just a slower preview
         print(f"wallet: image not shared ({exc})")
+
+
+def _put_blob(key: str, raw: bytes) -> None:
+    try:
+        from services import media as M
+        M.cache_put(key, raw)
+    except Exception as exc:
+        print(f"wallet: image not shared ({exc})")
+
+
+def _in_background(fn, *args) -> None:
+    """An upload never holds the answer back (2026-10-15: a 0,7 Mo poster sent
+    to Blob before the card could show). Tests run it at once (_SYNC_PUT)."""
+    if _SYNC_PUT:
+        fn(*args)
+        return
+    import threading
+    threading.Thread(target=fn, args=args, daemon=True).start()
+
+
+_SYNC_PUT = False
 
 
 def _cached(kind: str, parts: Tuple[Any, ...], make):
@@ -2386,14 +2406,62 @@ def _slim_photo(png: bytes) -> bytes:
     return _cached("slim_photo_256b", (png,), make)
 
 
+# ---------------------------------------------------------------------------
+# The pictures of a card, kept whole (2026-10-15, measured on production on a
+# fresh instance: the « Félicitations » card 6,9 s, the Apple pass 5,5 s —
+# 13 to 15 Blob reads in a row, one per picture, more than the drawing). Every
+# new client of a store gets the very same pictures (same design, no tampon
+# yet), so what a pass or the card's view needs is kept as ONE object under
+# everything the pictures are drawn from — the design, the tampons, the name
+# written into the logo, the Pass Designer template — and read once. The text
+# of the pass (name, number, tampons in words) is written fresh every time.
+# ---------------------------------------------------------------------------
+_DROPS_LOGO_TEXT = "__drops_logoText__"
+
+
+def _design_key(payload: Dict[str, Any], pj: Dict[str, Any]) -> Tuple[Any, ...]:
+    tid = (payload.get("tenant") or {}).get("id") or (payload.get("customer") or {}).get("tenant_id")
+    try:
+        from features import pass_designer as PD
+        tpl = PD.load(tid)
+    except Exception:
+        tpl = None
+    try:
+        stamps = _stamp_state(payload)
+    except Exception:
+        stamps = None
+    return ("v1", tid, stamps, str(pj.get("logoText") or ""), "posterGeneric" in pj, "storeCard" in pj,
+            json.dumps(payload.get("card") or {}, sort_keys=True, default=str),
+            json.dumps(tpl, sort_keys=True, default=str) if tpl else "")
+
+
+def pass_files_for_wallet(payload: Dict[str, Any]) -> Dict[str, bytes]:
+    """The files the signed pass ships, photos slimmed — pictures from the
+    design's kept set when there is one, pass.json written for this client."""
+    pj = build_pass_json(payload)
+
+    def draw() -> Dict[str, bytes]:
+        _prefetch_pictures((payload.get("tenant") or {}).get("id"), payload.get("card"))
+        files = slim_pass_files(pass_files(payload))
+        drops = "logoText" in pj and "logoText" not in json.loads(files["pass.json"])
+        out = {k: v for k, v in files.items() if k != "pass.json"}
+        if drops:
+            out[_DROPS_LOGO_TEXT] = b"1"
+        return out
+
+    pictures = dict(_cached("pass_images", _design_key(payload, pj), draw) or {})
+    if pictures.pop(_DROPS_LOGO_TEXT, None):
+        pj.pop("logoText", None)
+    return {"pass.json": json.dumps(pj, ensure_ascii=False).encode("utf-8"), **pictures}
+
+
 def slim_pass_files(files: Dict[str, bytes]) -> Dict[str, bytes]:
     return {n: (_slim_photo(b) if n.endswith(".png") and n.startswith(_PHOTO_LAYERS) else b) for n, b in files.items()}
 
 
 @_SC.payload_store
 def build_pkpass(payload: Dict[str, Any]) -> bytes:
-    _prefetch_pictures((payload.get("tenant") or {}).get("id"), payload.get("card"))
-    files = slim_pass_files(pass_files(payload))
+    files = pass_files_for_wallet(payload)
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
     files["signature"] = _sign_manifest(manifest)
@@ -2846,8 +2914,37 @@ def card_pass_view(barcode_id: str, request: Request = None):
 def _live_view(payload: Dict[str, Any], name: str, visits: int) -> Dict[str, Any]:
     """What WalletPassLive draws: the pass.json fields and images build_pkpass ships."""
     card = payload["card"]
-    # the very files the pass ships (user, 2026-10-12: « preview mein change,
-    # wallet mein nahi ») — the logo carries the shop's name since then
+    pj = build_pass_json(payload)
+    # the pictures, kept per design (see pass_files_for_wallet): the text is this client's
+    pics = json.loads(_cached("live_images", _design_key(payload, pj), lambda: json.dumps(_live_pictures(payload))))
+    if pics.get("drops_logo_text"):
+        pj.pop("logoText", None)
+    sc = (pj.get("storeCard") or pj.get("generic") or {})
+    bc = (pj.get("barcodes") or [{}])[0]
+    pg = pj.get("posterGeneric")
+    return {
+        "logoText": pj.get("logoText"),
+        "colors": {k: pj.get(k) for k in ("backgroundColor", "foregroundColor", "labelColor")},
+        "headerFields": sc.get("headerFields", []), "primaryFields": sc.get("primaryFields", []),
+        "secondaryFields": sc.get("secondaryFields", []), "auxiliaryFields": sc.get("auxiliaryFields", []),
+        "backFields": sc.get("backFields", []),
+        "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
+        "strip": pics.get("strip") if "storeCard" in pj else None,
+        "logo": pics.get("logo"), "logo_width": pics.get("logo_width") or 50,
+        "sample": {"name": name, "visits": visits},
+        # iOS 27 « poster » — the same fields and background the pass ships
+        "poster": ({"headerFields": pg.get("headerFields", []), "primaryFields": pg.get("primaryFields", []),
+                    "footerFields": pg.get("footerFields", []), "background": pics.get("poster_background"),
+                    "logo": pics.get("poster_logo"),
+                    "actions": [{"type": a.get("type"), "label": FEATURED_TYPES.get(a.get("type"), ("", ""))[0]}
+                                for a in clean_featured(card.get("featured_actions"), payload.get("tenant"))]}
+                   if pg else None),
+    }
+
+
+def _live_pictures(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The pictures of the card's view, as the page shows them (data URLs)."""
+    card = payload["card"]
     files = pass_files(payload)
     pj = json.loads(files["pass.json"])
     strip2x = files.get("strip@2x.png")
@@ -2860,21 +2957,11 @@ def _live_view(payload: Dict[str, Any], name: str, visits: int) -> Dict[str, Any
             logo_w = round(Image.open(io.BytesIO(logo2x)).width / 2)
     except Exception:
         pass
-    sc = (pj.get("storeCard") or pj.get("generic") or {})
-    bc = (pj.get("barcodes") or [{}])[0]
-    return {
-        "logoText": pj.get("logoText"),
-        "colors": {k: pj.get(k) for k in ("backgroundColor", "foregroundColor", "labelColor")},
-        "headerFields": sc.get("headerFields", []), "primaryFields": sc.get("primaryFields", []),
-        "secondaryFields": sc.get("secondaryFields", []), "auxiliaryFields": sc.get("auxiliaryFields", []),
-        "backFields": sc.get("backFields", []),
-        "barcode": {"format": bc.get("format"), "message": bc.get("message"), "altText": bc.get("altText")},
-        "strip": (_preview_image("strip", strip2x) if strip2x else None) if "storeCard" in pj else None,
-        "logo": _data_url(logo2x), "logo_width": logo_w,
-        "sample": {"name": name, "visits": visits},
-        # iOS 27 « poster » — the same fields and background the pass ships
-        "poster": _poster_preview(pj, payload, files.get("primaryLogo@2x.png") or logo2x, own=True),
-    }
+    poster = _poster_preview(pj, payload, files.get("primaryLogo@2x.png") or logo2x, own=True) or {}
+    return {"strip": _preview_image("strip", strip2x) if strip2x else None,
+            "logo": _data_url(logo2x), "logo_width": logo_w,
+            "poster_background": poster.get("background"), "poster_logo": poster.get("logo"),
+            "drops_logo_text": "logoText" not in pj}
 
 
 def _preview_image(name: str, png: bytes) -> Optional[str]:
@@ -3682,7 +3769,9 @@ def google_image(tenant_id: str, what: str, store: Optional[str] = None):
     if what == "name":
         t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
         card["_shop_name"] = card.get("card_name") or _SC.store_name(tenant_id, store) or t.get("name") or ""
-    png = _gw_image(card, what)
+    # one read for Google's fetch on a fresh instance, as for the Apple pass (2026-10-15)
+    png = _cached("gw_image", ("v1", tenant_id, what, json.dumps(card, sort_keys=True, default=str)),
+                  lambda: _gw_image(card, what))
     if not png:
         raise HTTPException(status_code=404, detail="Image absente")
     return Response(content=png, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
@@ -3720,22 +3809,25 @@ def owner_google_preview(body: PassPreviewIn,
 
 
 @router.post("/api/card/{barcode_id}/wallet-prepare")
-def wallet_prepare(barcode_id: str, request: Request = None):
+def wallet_prepare(barcode_id: str, request: Request = None, only: str = ""):
     """Asked by the card page as it opens: the signed Apple pass is built and
-    kept, the Google link is made — so « Ajouter à … » opens the Wallet at once."""
+    kept, the Google link is made — so « Ajouter à … » opens the Wallet at once.
+    `only` (« apple », « google »): just the Wallet of the phone's button — an
+    Android phone no longer waits for an Apple pass it will never open."""
     _owner_only(barcode_id, request)
     out: Dict[str, Any] = {"apple": False, "google_url": None}
     if not _wallet_in_plan(barcode_id):
         return out
+    want = {w.strip() for w in (only or "").split(",") if w.strip()} or {"apple", "google"}
     payload = None
-    if apple_configured():
+    if "apple" in want and apple_configured():
         try:
             payload = _card_payload(barcode_id)
             signed_pass(barcode_id, payload)
             out["apple"] = True
         except Exception as exc:
             print(f"wallet prepare: apple ({exc})")
-    if google_configured():
+    if "google" in want and google_configured():
         try:
             out["google_url"] = google_link_fast(barcode_id)
         except Exception as exc:

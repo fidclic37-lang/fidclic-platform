@@ -122,6 +122,9 @@ function Success({ result, tenant }) {
   // a Wallet button for this phone? (null: not known yet) — « Voir ma carte »
   // only without one (user, 2026-10-13, BUG-008: the card must go to the Wallet)
   const [walletShown, setWalletShown] = useState(null);
+  // the Wallet is got ready once the card is on screen (or after 4 s at most)
+  const [cardDone, setCardDone] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setCardDone(true), 4000); return () => clearTimeout(t); }, []);
   useEffect(() => {
     api.get(`/card/${bc}`).then(({ data: d }) => setData(d)).catch(() => setData(null));
   }, [bc]);
@@ -158,6 +161,7 @@ function Success({ result, tenant }) {
       <div className="mt-6 flex justify-center">
         <div className="w-fit">
           <WalletPassLive barcodeId={bc} width={Math.min(360, (typeof window !== 'undefined' ? window.innerWidth : 360) - 40)}
+                          onDone={() => setCardDone(true)}
                           fallback={data?.card ? (
                             data.card.layout_style === 'wallet'
                               ? <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
@@ -167,7 +171,7 @@ function Success({ result, tenant }) {
       </div>
 
       <div className="mx-auto mt-5 max-w-[360px] space-y-3 text-left">
-        <WalletButtons barcodeId={bc} onError={say} phoneOnly onShown={setWalletShown} />
+        <WalletButtons barcodeId={bc} onError={say} phoneOnly onShown={setWalletShown} ready={cardDone} />
         <div className="grid grid-cols-3 gap-2">
           {[[Share2, 'Partager / copier', share], [Smartphone, 'Sur l’écran d’accueil', home], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
             <button key={label} type="button" onClick={fn}
