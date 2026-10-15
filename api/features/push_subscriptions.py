@@ -242,6 +242,9 @@ def fan_out_to_customer(tenant_id: str, customer_id: str, title: str, body: str,
     Called by auto_campaigns._dispatch_message."""
     if _db is None:
         return {"sent": 0, "error": "db_not_initialised"}
+    from services import client_status as _CS                         # noqa: WPS433
+    if _CS.is_paused(_db, customer_id):                              # paused by the business: nothing
+        return {"sent": 0, "error": "paused"}
     from services.web_push import send_push, is_configured            # noqa: WPS433
     if not is_configured():
         return {"sent": 0, "error": "vapid_not_configured"}
