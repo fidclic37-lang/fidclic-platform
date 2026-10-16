@@ -15,6 +15,7 @@ import { test, expect } from '@playwright/test';
 const SLUG = 'cafe-lumiere';
 const UA = {
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+  iphone27: 'Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1',
   android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36',
 };
 
@@ -102,3 +103,23 @@ test.describe('a slow card', () => {
     expect(prepared[0] - t0, 'prepared well before the 6 s card').toBeLessThan(5000);
   });
 });
+
+
+// The « iOS 27 / iOS 26 et avant » switch is the owner's, to compare the two
+// designs (e2e/card-poster.spec.js still clicks it there). A customer sees the
+// view their own phone will open, and no switch at all (user, 2026-10-16).
+for (const [os, ua, backOfCard] of [['an iPhone on iOS 18', UA.iphone, true],
+  ['an iPhone on iOS 27', UA.iphone27, false]]) {
+  test.describe(os, () => {
+    test.use({ userAgent: ua, viewport: { width: 390, height: 844 } });
+    test('no iOS switch, and the card its own Wallet will show', async ({ page }) => {
+      await signUp(page);
+      await expect(page.locator('[translate="no"]').first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByRole('button', { name: 'iOS 26 et avant', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'iOS 27', exact: true })).toHaveCount(0);
+      // « Au dos de la carte » belongs to the iOS 26 card only
+      await expect(page.getByRole('button', { name: /Au dos de la carte/ }))
+        .toHaveCount(backOfCard ? 1 : 0);
+    });
+  });
+}
