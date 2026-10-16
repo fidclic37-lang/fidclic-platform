@@ -351,6 +351,8 @@ const ScanPage = () => {
   }, []);
 
   const videoRef = useRef(null);
+  const streamFaceRef = useRef(null);       // which camera the open stream is (front / back)
+  const readingRef = useRef(false);         // the detection loop runs (paused: the camera stays open)
   const streamRef = useRef(null);
   const detectorRef = useRef(null);
   const detectionLoopRef = useRef(null);
@@ -411,30 +413,52 @@ const ScanPage = () => {
     };
   }, []);
 
+  // the <video> appears a render after the camera tab is chosen
+  const waitVideo = () => new Promise((resolve) => {
+    let n = 0;
+    const tick = () => { if (videoRef.current || n++ > 40) resolve(videoRef.current); else requestAnimationFrame(tick); };
+    tick();
+  });
+
   const startCamera = async (face = facing) => {
     try {
-      if (streamRef.current) stopCamera();
-      // HD: at the default 640 × 480 a card a little away has too few pixels
-      // for its QR to be read (user, 2026-10-15)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: face, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      });
-      try {                                   // keep refocusing as the card moves
-        const track = stream.getVideoTracks()[0];
-        const modes = track?.getCapabilities?.().focusMode || [];
-        if (modes.includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-      } catch (_e) { /* the browser keeps its own focus */ }
+      // The camera stays open while the scanner page does (pauseCamera): the
+      // next client reuses it. An installed iPhone app asks for the camera
+      // again at every opening of it — once per launch now, not per client
+      // (user, 2026-10-16).
+      const live = streamRef.current?.getVideoTracks?.().some((tr) => tr.readyState === 'live');
+      let stream = live && streamFaceRef.current === face ? streamRef.current : null;
+      const fresh = !stream;
+      if (fresh) {
+        if (streamRef.current) stopCamera();
+        // HD: at the default 640 × 480 a card a little away has too few pixels
+        // for its QR to be read (user, 2026-10-15)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: face, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        });
+        streamRef.current = stream;              // kept even if the page is not drawn yet
+        streamFaceRef.current = face;
+        try {                                   // keep refocusing as the card moves
+          const track = stream.getVideoTracks()[0];
+          const modes = track?.getCapabilities?.().focusMode || [];
+          if (modes.includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+        } catch (_e) { /* the browser keeps its own focus */ }
+      }
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
+      const video = videoRef.current || await waitVideo();
+      if (video) {
+        if (video.srcObject !== stream) video.srcObject = stream;
+        video.play?.()?.catch?.(() => {});
         setCameraActive(true);
         setStatus(null);
         // « Flash »: only where the camera has a torch (most Android phones)
-        try {
-          const caps = stream.getVideoTracks()[0]?.getCapabilities?.() || {};
-          setTorch({ supported: !!caps.torch, on: false });
-        } catch (_e) { setTorch({ supported: false, on: false }); }
+        if (fresh) {
+          try {
+            const caps = stream.getVideoTracks()[0]?.getCapabilities?.() || {};
+            setTorch({ supported: !!caps.torch, on: false });
+          } catch (_e) { setTorch({ supported: false, on: false }); }
+        }
+        if (detectionLoopRef.current) { cancelAnimationFrame(detectionLoopRef.current); detectionLoopRef.current = null; }
 
         // Kick off detection. jsQR loads from CDN on first use; we don't
         // wait for it before showing the preview — the loop checks for
@@ -531,7 +555,18 @@ const ScanPage = () => {
     }
   };
 
+  // the scanner stops reading; the camera stays open for the next client
+  const pauseCamera = () => {
+    readingRef.current = false;
+    if (detectionLoopRef.current) {
+      cancelAnimationFrame(detectionLoopRef.current);
+      detectionLoopRef.current = null;
+    }
+    setCameraActive(false);
+  };
+
   const stopCamera = () => {
+    readingRef.current = false;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -570,6 +605,7 @@ const ScanPage = () => {
   }, []);
 
   const startDetectionLoop = () => {
+    readingRef.current = true;
     // Hidden canvas for jsQR — re-used across frames so we don't allocate per tick.
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -580,7 +616,7 @@ const ScanPage = () => {
       if (!cleaned) return false;
       setBarcode(cleaned);
       setStatus({ type: 'success', message: t('scan.code_detected') });
-      stopCamera();
+      pauseCamera();                 // open for the next client (no new permission prompt)
       setMode('manual');
       return true;
     };
@@ -614,7 +650,7 @@ const ScanPage = () => {
       const video = videoRef.current;
       // Don't check cameraActive — that's a state value captured by closure
       // and may be stale. Instead rely on stopCamera() cancelling the rAF.
-      if (!video || !streamRef.current) return;
+      if (!video || !streamRef.current || !readingRef.current) return;
       const ready = video.readyState >= 2 && video.videoWidth > 0;
 
       if (ready) {
@@ -856,7 +892,7 @@ const ScanPage = () => {
   const switchMode = (key) => {
     setMode(key);
     if (status?.type === 'error') setStatus(null);      // a camera error does not follow to the form
-    if (key === 'manual') stopCamera();
+    if (key === 'manual') pauseCamera();
     else if (!cameraActive) startCamera();
   };
 
@@ -995,7 +1031,7 @@ const ScanPage = () => {
         setStatus({ type: 'info', message: 'Une visite est en cours : enregistrez-la ou annulez-la avant de scanner un autre client.' });
         return true;
       }
-      if (st.mode === 'camera') { stopCamera(); setMode('manual'); }
+      if (st.mode === 'camera') { pauseCamera(); setMode('manual'); }
       if (st.card) {
         scanAnother();                         // a new client, or the same one again: a new visit
         setTimeout(() => setBarcode(bc), 0);
