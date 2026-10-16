@@ -88,13 +88,28 @@ def image_of(tid: str, store: Optional[str]) -> str:
     return (doc or {}).get("data") or ""
 
 
-def set_image(tid: str, store: Optional[str], img: str) -> None:
+def source_of(tid: str, store: Optional[str]) -> Dict[str, Any]:
+    """The picture as the owner handed it over, and where they had framed it.
+    « Ajuster » reopens on these, so a logo can be zoomed back out — what is
+    shown is a crop, and a crop cannot be undone from itself (user,
+    2026-10-16: « puri nhi aa rhi hai »)."""
+    doc = _db.signup_images.find_one({"tenant_id": tid, "store_id": store},
+                                     {"_id": 0, "src": 1, "frame": 1}) or {}
+    return {"src": doc.get("src") or "", "frame": doc.get("frame") or None}
+
+
+def set_image(tid: str, store: Optional[str], img: str,
+              src: Optional[str] = None, frame: Optional[Dict[str, Any]] = None) -> None:
     from services import media as _M
     img = _M.put(img) if img else img                # a link: the signup page answer stays small
     if img:
+        doc = {"tenant_id": tid, "store_id": store, "data": img, "at": _now()}
+        if src:                                      # the untouched picture, for « Ajuster »
+            doc["src"] = _M.put(src)
+        if frame is not None:                        # reframing sends only this
+            doc["frame"] = frame
         _db.signup_images.update_one({"tenant_id": tid, "store_id": store},
-                                     {"$set": {"tenant_id": tid, "store_id": store, "data": img, "at": _now()}},
-                                     upsert=True)
+                                     {"$set": doc}, upsert=True)
     else:
         _db.signup_images.delete_one({"tenant_id": tid, "store_id": store})
 
@@ -251,6 +266,10 @@ def page_of(tenant: Dict[str, Any]) -> Dict[str, Any]:
 
 
 MAX_SIGNUP_IMAGE = 2_800_000      # a 2 Mo image, as a data URI
+# The picture before framing rides along once, so « Ajuster » has something to
+# reopen. The browser sends it whole but at most 1600 px on its longest side —
+# four times the 800 px that is kept, and far from Vercel's 4,5 Mo body.
+MAX_SIGNUP_SOURCE = 2_800_000
 
 
 def _open_stores(t: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -281,6 +300,21 @@ def _brand(tid: str, store: Optional[str] = None) -> Dict[str, str]:
     own = _signup_image(t, store)
     return {"logo_url": own or tpl.get("logo_url") or "", "card_logo_url": tpl.get("logo_url") or "",
             "signup_image": own}
+
+
+def _source(t: Dict[str, Any], store: Optional[str]) -> Dict[str, Any]:
+    """What « Ajuster » reopens, for the establishment this page is showing."""
+    stores = _open_stores(t)
+    key = None
+    if len(stores) >= 2:
+        b = next((b for b in stores if b["id"] == store), None) if store else None
+        if b is None:
+            b = next((b for b in stores if b.get("is_main") or b["id"] == "main"), None)
+        if not b:
+            return {"signup_image_src": "", "signup_image_frame": None}
+        key = b["id"]
+    got = source_of(t.get("id") or "", key)
+    return {"signup_image_src": got["src"], "signup_image_frame": got["frame"]}
 
 
 def _nullctx():
@@ -328,7 +362,8 @@ def _payload(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
         "stores": SL.public_stores(t) if t else [],
         "channels": channels(tid),
         "shop": {"name": t.get("name") or "", "city": t.get("city") or "",
-                 "slug": t.get("slug") or "", **_brand(tid, store)},
+                 "slug": t.get("slug") or "", **_brand(tid, store),
+                 **_source(t, store)},
         "stats": stats(tid, store=store),
         "store_id": store,
         "page": page_of(t),
@@ -399,6 +434,8 @@ def put_page(body: PageIn, request: Request = None, token_data: TokenData = Depe
 
 class SignupImageIn(BaseModel):
     image: Optional[str] = None          # data:image/… or https://…; empty: back to the card's logo
+    source: Optional[str] = None         # the picture before framing, kept so « Ajuster » can reopen it
+    frame: Optional[Dict[str, Any]] = None   # where it was framed: {zoom, x, y}
 
 
 @router.put("/api/owner/join-link/image")
@@ -421,7 +458,12 @@ def put_signup_image(body: SignupImageIn, request: Request = None,
         store = SC.store_for(tid)
         if not any(b["id"] == store for b in stores):
             raise HTTPException(status_code=400, detail="Choisissez d'abord l'établissement dans le menu.")
-    set_image(tid, store, img)
+    src = (body.source or "").strip()
+    if src and not _M.is_image_value(src):
+        raise HTTPException(status_code=400, detail="Image invalide.")
+    if len(src) > MAX_SIGNUP_SOURCE:
+        raise HTTPException(status_code=400, detail="L'image dépasse 2 Mo.")
+    set_image(tid, store, img, src=src or None, frame=body.frame)
     return _payload(tid, store or _store_of(token_data, request))
 
 
