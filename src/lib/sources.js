@@ -21,6 +21,13 @@ export const UNKNOWN = 'none';
 export const UNKNOWN_LABEL = 'Non renseigné';
 
 // what a customer can answer to « Comment nous avez-vous connu ? »
+/* An employee's own link (Paramètres › Lien d'inscription › Liens par
+   employé): /inscription/<compte>[/<établissement>]/e-marie. The word travels
+   as it is — the server alone turns it into an employee, against this shop,
+   so a word can never be read as someone else's (2026-10-16). */
+export const AGENT_WORD = /^e-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const isAgentWord = (raw) => AGENT_WORD.test(String(raw || '').trim().toLowerCase());
+
 export const SIGNUP_SOURCES = ['qr_store', 'instagram', 'facebook', 'whatsapp', 'tiktok', 'google', 'website', 'email', 'sms', 'autre'];
 
 // each channel's link: /inscription/<slug>/<word>

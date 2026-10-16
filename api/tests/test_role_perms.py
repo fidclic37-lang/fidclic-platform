@@ -83,7 +83,17 @@ def main():
         if roles and set(roles) & {"administrateur", "manager", "staff"}:
             loose += [f"{m} {r.path}" for m in r.methods if RP.page_of(r.path) is None and not RP.is_common(r.path, m)]
     check(f"no team endpoint outside a page ({loose[:5]})", not loose)
-    check("one row per sidebar page (18 + e-mail change + account deletion)", len(RP.PAGES) == 20)
+    check("one row per sidebar page (19 + e-mail change + account deletion)", len(RP.PAGES) == 21)
+    # « Liens d'inscription par employé » (2026-10-16): its own row, so an
+    # employee can be given it without the rest of Paramètres
+    check("the employee links are a row of their own, and their endpoint is on it",
+          "employee_links" in RP.PAGE_KEYS
+          and RP.page_of("/api/owner/signup-agents") == "employee_links"
+          and RP.page_of("/api/owner/signup-agents/abc/send") == "employee_links")
+    check("an administrateur has it, a manager and an employee do not",
+          RP.DEFAULT_TEMPLATES["administrateur"]["employee_links"] == "edit"
+          and RP.DEFAULT_TEMPLATES["manager"]["employee_links"] == "none"
+          and RP.DEFAULT_TEMPLATES["staff"]["employee_links"] == "none")
     # « Cet appareil est la caisse » acts on the account's own session, like the
     # rest of /api/security — common to the pages, never to the roles.
     check("« caisse » is a device setting, not a page",

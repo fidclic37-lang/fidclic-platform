@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { User, Mail, Phone, CalendarDays, ArrowRight, Check, Share2, Smartphone, Printer, Store } from 'lucide-react';
 import api, { publicAPI } from '../lib/api';
-import { SIGNUP_SOURCES, normalizeSource } from '../lib/sources';
+import { SIGNUP_SOURCES, normalizeSource, isAgentWord } from '../lib/sources';
 import { addMine, ownerLink } from '../lib/myCards';
 import PhoneField, { phoneValueError } from '../components/PhoneField';
 import WalletButtons from '../components/WalletButtons';
@@ -62,6 +62,8 @@ export const emailError = (v) => {
 
 function resolveSourceFromUrl(searchParams, channel) {
   const raw = channel || searchParams.get('src') || searchParams.get('source') || searchParams.get('utm_source') || '';
+  // an employee's word goes to the server untouched — it alone knows whose it is
+  if (isAgentWord(raw)) return String(raw).trim().toLowerCase();
   const key = normalizeSource(raw);
   return key && SIGNUP_SOURCES.includes(key) ? key : null;
 }

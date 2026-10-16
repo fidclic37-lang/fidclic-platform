@@ -48,6 +48,12 @@ PAGES: List[Dict[str, Any]] = [
     {"key": "settings", "label": "Paramètres", "to": "/dashboard/parametres"},
     {"key": "milestones", "label": "Objectifs et récompenses", "to": "/dashboard/parametres/objectifs"},
     {"key": "team", "label": "Équipe & accès", "to": "/dashboard/parametres/equipe"},
+    # « Liens d'inscription par employé » (2026-10-16): `view` sees their own
+    # link, their QR and the whole leaderboard; `edit` writes the records and
+    # sends the e-mails. Its own page, so an employee can have it without
+    # Paramètres.
+    {"key": "employee_links", "label": "Liens d'inscription par employé",
+     "to": "/dashboard/parametres/lien-inscription"},
     {"key": "billing", "label": "Abonnement & facturation", "to": "/dashboard/parametres/abonnement"},
     {"key": "email_change", "label": "Changer l'adresse e-mail du compte", "to": None, "edit_only": True},
     {"key": "delete", "label": "Supprimer le compte", "to": None, "edit_only": True},
@@ -106,6 +112,7 @@ _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/notifications/rules", "settings"), ("/api/owner/tenant", "settings"),
     ("/api/owner/branches", "settings"),
     ("/api/owner/team-access", "team"), ("/api/owner/team", "team"),
+    ("/api/owner/signup-agents", "employee_links"),
     ("/api/owner/billing", "billing"), ("/api/billing", "billing"), ("/api/owner/invoices", "billing"),
     ("/api/owner/facturation", "billing"), ("/api/owner/upgrade-plan", "billing"),
     ("/api/owner/request-upgrade", "billing"),

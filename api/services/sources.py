@@ -19,6 +19,12 @@ HOW A SOURCE IS DECIDED
     • An imported file is « Import de fichier ».
     • The bare link with no channel asks the customer « Comment nous avez-vous
       connu ? »; no answer is « Non renseigné », never a guess.
+    • An employee's own link or QR (Paramètres › Lien d'inscription › Liens par
+      employé) is that employee, by name: the key is « agent:<id> » and the
+      label is what the owner typed (user, 2026-10-16: « sources mein employee
+      ka naam bhi rhe … taaki easy ho jaaye samajhna ki source hai koun in
+      reality »). One field, one owner: a client brought by Marie can never be
+      read as anyone else's.
 """
 from __future__ import annotations
 
@@ -42,6 +48,27 @@ SOURCES: Dict[str, str] = {
 }
 UNKNOWN = "none"
 UNKNOWN_LABEL = "Non renseigné"
+
+# An employee of the shop, one per link the owner created. The id is the key,
+# so renaming the employee renames the source everywhere at once and nothing
+# has to be migrated. features.signup_agents registers the name resolver.
+AGENT_PREFIX = "agent:"
+AGENT_RE = re.compile(r"^agent:[a-z0-9]{6,32}$")
+AGENT_FALLBACK = "Employé"
+_agent_names = None            # (agent_id) -> name | None
+
+
+def set_agent_names(fn) -> None:
+    global _agent_names
+    _agent_names = fn
+
+
+def is_agent(key: Optional[str]) -> bool:
+    return bool(key) and bool(AGENT_RE.match(str(key)))
+
+
+def agent_id(key: Optional[str]) -> Optional[str]:
+    return str(key)[len(AGENT_PREFIX):] if is_agent(key) else None
 
 # the sources a customer can arrive by on the signup page (a channel link or
 # the « Comment nous avez-vous connu ? » answer)
@@ -75,7 +102,10 @@ def normalize(raw: Optional[str]) -> Optional[str]:
     """Any spelling → its key, or None when it is not a source we know."""
     if not raw:
         return None
-    k = re.sub(r"[^a-z_]", "", str(raw).strip().lower().replace(" ", "_").replace("-", "_"))
+    low = str(raw).strip().lower()
+    if is_agent(low):                       # an employee's own link: the key IS the source
+        return low
+    k = re.sub(r"[^a-z_]", "", low.replace(" ", "_").replace("-", "_"))
     return ALIASES.get(k)
 
 
@@ -89,10 +119,18 @@ def key_of(customer: Dict) -> str:
 
 
 def label(key: Optional[str]) -> str:
+    if is_agent(key):
+        try:
+            return (_agent_names(agent_id(key)) if _agent_names else None) or AGENT_FALLBACK
+        except Exception:                   # a label is never worth an error
+            return AGENT_FALLBACK
     return SOURCES.get(key or "", UNKNOWN_LABEL)
 
 
 def ordered(counts: Dict[str, int]) -> List[Dict]:
-    """[{key, label, count}] in the platform's order, empty ones left out."""
-    keys = list(SOURCES) + [UNKNOWN]
+    """[{key, label, count}] in the platform's order, empty ones left out.
+    The employees come after the channels, the busiest first, « Non renseigné »
+    last — so a shop with twelve employees still reads top to bottom."""
+    agents = sorted((k for k in counts if is_agent(k)), key=lambda k: (-counts[k], label(k)))
+    keys = list(SOURCES) + agents + [UNKNOWN]
     return [{"key": k, "label": label(k), "count": counts[k]} for k in keys if counts.get(k)]

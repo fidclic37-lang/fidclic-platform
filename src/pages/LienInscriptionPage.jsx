@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import PosterCropper from '../components/PosterCropper';
 import { QRCodeCanvas } from 'qrcode.react';
+import EmployeeLinks from '../components/parametres/EmployeeLinks';
 import {
-  Users, Link2, QrCode, Share2, Copy, Info, Download, Printer, Store, Settings, CheckCircle2,
-  XCircle, Loader2, Mail, MessageSquare, MoreHorizontal, Eye, Pencil, ExternalLink, Gift,
-  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin, ImagePlus,
+  Users, Link2, QrCode, Share2, Copy, Download, Printer, Store, Loader2, Mail, MessageSquare,
+  MoreHorizontal, Pencil, ExternalLink, TrendingUp, X, Check, Coffee, ArrowUp, ArrowDown,
+  RotateCcw, Globe, Music2, MapPin, ImagePlus,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useBranch } from '../contexts/BranchContext';
@@ -272,11 +273,7 @@ export default function LienInscriptionPage() {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
-  const [draft, setDraft] = useState('');
-  const [check, setCheck] = useState({ state: 'idle' });   // idle | checking | ok | taken
-  const [savingSlug, setSavingSlug] = useState(false);
   const [editingPage, setEditingPage] = useState(false);
-  const slugInput = useRef(null);
   const bigQr = useRef(null);
   const toastTimer = useRef(null);
 
@@ -287,10 +284,17 @@ export default function LienInscriptionPage() {
   };
   useEffect(() => () => clearTimeout(toastTimer.current), []);
 
+  // An account given « Liens d'inscription par employé » WITHOUT Paramètres
+  // lands here too (src/lib/pagePerms): the shop's own link is not theirs to
+  // see, their own is. The page then shows the employee part alone.
+  const [onlyAgents, setOnlyAgents] = useState(false);
   const load = useCallback(() => {
     ownerAPI.joinLink()
-      .then(({ data }) => { setD(data); setDraft(data.shop.slug); setError(''); })
-      .catch((e) => setError(e?.response?.data?.detail || 'Impossible de charger votre lien.'));
+      .then(({ data }) => { setD(data); setError(''); setOnlyAgents(false); })
+      .catch((e) => {
+        if (e?.response?.status === 403) { setOnlyAgents(true); setError(''); return; }
+        setError(e?.response?.data?.detail || 'Impossible de charger votre lien.');
+      });
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -321,35 +325,9 @@ export default function LienInscriptionPage() {
   const shopName = store?.name || d?.shop.name || 'Votre commerce';
   const message = `Rejoignez le programme de fidélité de ${shopName} : `;
 
-  // Live availability check for the custom name — a moment after typing stops.
-  useEffect(() => {
-    if (!d) return undefined;
-    const typed = draft.trim();
-    if (!typed) { setCheck({ state: 'idle' }); return undefined; }
-    setCheck({ state: 'checking' });
-    const id = setTimeout(() => {
-      ownerAPI.joinSlugCheck(typed)
-        .then(({ data }) => setCheck(data.available ? { state: 'ok', slug: data.slug } : { state: 'taken', reason: data.reason }))
-        .catch(() => setCheck({ state: 'idle' }));
-    }, 350);
-    return () => clearTimeout(id);
-  }, [draft, d]);
-
   const copy = async (text, msg = 'Lien copié') => {
     try { await navigator.clipboard.writeText(text); say(msg); }
     catch { say('Copie impossible — sélectionnez le lien à la main.'); }
-  };
-
-  const saveSlug = async () => {
-    if (check.state !== 'ok') return;
-    setSavingSlug(true);
-    try {
-      const { data } = await ownerAPI.saveJoinSlug(check.slug);
-      setD(data); setDraft(data.shop.slug);
-      say("Lien mis à jour — l'ancien lien continue de fonctionner.");
-    } catch (e) {
-      setCheck({ state: 'taken', reason: e?.response?.data?.detail || 'Ce nom ne peut pas être utilisé.' });
-    } finally { setSavingSlug(false); }
   };
 
   // a channel's own QR (e.g. a flyer for Instagram followers): rendered off
@@ -410,6 +388,30 @@ export default function LienInscriptionPage() {
     }
   };
 
+  if (onlyAgents) {
+    return (
+      <div>
+        <header className="mb-5 flex items-start gap-3.5">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#E6EEFB] text-[#2F6BFF]">
+            <Link2 size={22} />
+          </span>
+          <div>
+            <h2 className="text-[21px] font-bold leading-tight text-[#0B1C3F]">Mon lien d&apos;inscription</h2>
+            <p className="mt-0.5 text-[14px] text-[#475569]">Votre lien, votre QR code, et le classement de l&apos;équipe.</p>
+          </div>
+        </header>
+        <EmployeeLinks cardCls="rounded-2xl border border-[#E6EEFB] bg-white p-5" CardHead={CardHead}
+                       say={say} icons={{ Link2, Users, TrendingUp }} />
+        <div aria-live="polite" className="pointer-events-none fixed bottom-5 left-1/2 z-40 -translate-x-1/2 transition-opacity"
+             style={{ opacity: toast ? 1 : 0 }}>
+          <span className="inline-flex items-center gap-2 rounded-full bg-[#0B1C3F] px-4 py-2 text-[13px] font-medium text-white shadow-lg">
+            <Check size={14} /> {toast}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   if (!d) {
     return error ? (
       <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{error}</p>
@@ -425,7 +427,6 @@ export default function LienInscriptionPage() {
     ? new Date(s.tracking_since).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : null;
   const measured = (note) => (since ? note : 'Mesure lancée à la première visite');
   const cardCls = 'rounded-2xl border border-[#E6EEFB] bg-white p-5';
-  const unchanged = draft.trim() && check.slug === slug;
 
   return (
     <div>
@@ -439,10 +440,16 @@ export default function LienInscriptionPage() {
             <p className="mt-0.5 text-[14px] text-[#475569]">Permettez à vos clients de rejoindre facilement votre programme de fidélité.</p>
           </div>
         </div>
-        <a href={`${url}?preview=1`} target="_blank" rel="noreferrer"
-           className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#2F6BFF] px-5 text-[14.5px] font-medium text-white shadow-[0_10px_24px_-14px_rgba(47,107,255,.9)] hover:bg-[#2559DB]">
-          Aperçu de la page client <ExternalLink size={16} />
-        </a>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button type="button" onClick={() => setEditingPage(true)}
+                  className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#2F6BFF] bg-white px-4 text-[14px] font-semibold text-[#2F6BFF] hover:bg-[#F6F9FF]">
+            <Pencil size={15} /> Personnaliser la page
+          </button>
+          <a href={`${url}?preview=1`} target="_blank" rel="noreferrer"
+             className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#2F6BFF] px-5 text-[14.5px] font-medium text-white shadow-[0_10px_24px_-14px_rgba(47,107,255,.9)] hover:bg-[#2559DB]">
+            Aperçu de la page client <ExternalLink size={16} />
+          </a>
+        </div>
       </header>
 
       {/* the four figures */}
@@ -471,11 +478,6 @@ export default function LienInscriptionPage() {
                 <Copy size={17} />
               </button>
             </div>
-            <button type="button"
-                    onClick={() => { slugInput.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); slugInput.current?.focus(); }}
-                    className="h-11 shrink-0 rounded-lg bg-[#2F6BFF] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#2559DB]">
-              Personnaliser le lien
-            </button>
           </div>
           {store && (
             <div className="mt-4 rounded-lg border border-[#E6EEFB] p-3">
@@ -492,10 +494,6 @@ export default function LienInscriptionPage() {
               )}
             </div>
           )}
-          <div className="mt-5 flex items-center gap-3 rounded-lg bg-[#F2F7FF] px-3.5 py-3">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#2F6BFF] text-white"><Info size={12} strokeWidth={3} /></span>
-            <p className="text-[12px] text-[#1E4FD8]">Vous pouvez personnaliser votre lien pour le rendre plus simple et mémorable.</p>
-          </div>
         </section>
 
         {/* QR Code */}
@@ -543,46 +541,6 @@ export default function LienInscriptionPage() {
               <Printer size={16} className="mr-2" /> Imprimer l&apos;affiche
             </span>
           </button>
-        </section>
-
-        {/* Personnalisation du lien */}
-        <section className={cardCls}>
-          <CardHead icon={Settings} title="Personnalisation du lien" subtitle="Personnalisez l'URL de votre page d'inscription." />
-          <label htmlFor="join-slug" className="mb-2 block text-[13px] font-medium text-[#0B1C3F]">Nom personnalisé</label>
-          <div className="flex h-11 overflow-hidden rounded-lg border border-[#E2E8F0] bg-white focus-within:border-[#2F6BFF]">
-            <span className="hidden items-center bg-[#F1F5F9] px-3 text-[12.5px] text-[#64748B] sm:flex">{host}/inscription/</span>
-            <input id="join-slug" ref={slugInput} value={draft} maxLength={d.limits.slug_max + 10}
-                   onChange={(e) => setDraft(e.target.value)}
-                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (!unchanged) saveSlug(); } }}
-                   className="min-w-0 flex-1 border-0 px-3 text-[14px] text-[#0B1C3F] outline-none" />
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {check.state === 'checking' && (
-              <p className="flex items-center gap-2 text-[12.5px] text-[#64748B]"><Loader2 size={14} className="animate-spin" /> Vérification…</p>
-            )}
-            {check.state === 'ok' && (
-              <p className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-[#EEFBF3] px-3 py-2.5 text-[12.5px] text-[#0F8B58]">
-                <CheckCircle2 size={16} className="shrink-0" />
-                <span className="min-w-0 truncate">
-                  {unchanged ? 'Votre lien est actif' : 'Votre lien est disponible'} : {origin}/inscription/{check.slug}
-                </span>
-              </p>
-            )}
-            {check.state === 'taken' && (
-              <p className="flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-[#FEF2F2] px-3 py-2.5 text-[12.5px] text-[#B91C1C]">
-                <XCircle size={16} className="shrink-0" /> {check.reason}
-              </p>
-            )}
-            {check.state === 'ok' && !unchanged && (
-              <button type="button" onClick={saveSlug} disabled={savingSlug}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#2F6BFF] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-60">
-                {savingSlug ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Enregistrer
-              </button>
-            )}
-          </div>
-          {check.state === 'ok' && !unchanged && (
-            <p className="mt-2 text-[12px] text-[#64748B]">L&apos;ancien lien et les QR codes déjà imprimés continueront de fonctionner.</p>
-          )}
         </section>
 
         {/* Partager le lien */}
@@ -646,66 +604,10 @@ export default function LienInscriptionPage() {
         {qrFor && <div className="hidden"><QRCodeCanvas ref={chanQr} value={tagged(qrFor)} size={1024} level="M" marginSize={2} /></div>}
       </section>
 
-      {/* Aperçu de la page d'inscription */}
-      <section className="relative mt-4 overflow-hidden rounded-2xl border border-[#E6EEFB] bg-white">
-        <div className="grid gap-6 p-5 lg:grid-cols-[1fr_1.1fr_0.9fr]">
-          <div>
-            <CardHead icon={Eye} title="Aperçu de la page d'inscription"
-                      subtitle="Voici un aperçu de la page que verront vos clients en cliquant sur le lien." />
-            <ul className="mt-6 space-y-3.5 pl-11">
-              {['Inscription rapide et simple', 'Présentation des avantages', 'Design à votre image', 'Responsive mobile & desktop'].map((x) => (
-                <li key={x} className="flex items-center gap-3 text-[14px] text-[#0B1C3F]">
-                  <CheckCircle2 size={19} className="shrink-0 fill-[#2F6BFF] text-white" /> {x}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* The phone on the left, the cup beside it on the right — side by
-              side as in the design, never on top of each other. The photo
-              melts into the card on its left and top edges. */}
-          <div className="relative -mb-5 flex min-h-[250px] justify-start pl-[6%]">
-            <div aria-hidden="true" className="pointer-events-none absolute bottom-0 right-0 top-2 w-[54%] overflow-hidden">
-              <img src="/parametres/join-preview.webp" alt=""
-                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                   className="h-full w-full object-cover object-[62%_55%]" />
-              <span className="absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-white via-white/70 to-transparent" />
-              <span className="absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-white to-transparent" />
-            </div>
-            <div className="relative z-10 mt-1 w-[200px] self-start rounded-t-[30px] border-[7px] border-b-0 border-[#111827] bg-white px-4 pb-4 pt-3 shadow-[0_24px_50px_-26px_rgba(11,28,63,.7)]">
-              <span className="absolute left-1/2 top-1.5 h-3.5 w-16 -translate-x-1/2 rounded-full bg-[#111827]" />
-              <p className="text-[8px] font-semibold text-[#0B1C3F]">9:41</p>
-              <p className="mt-2 text-center text-[8.5px] font-semibold text-[#0B1C3F]">{shopName}</p>
-              <div className="mt-1.5 flex justify-center">
-                <ShopLogo url={d.shop.logo_url} name={shopName} />
-              </div>
-              <p className="mt-3 text-center text-[11.5px] font-bold leading-tight text-[#0B1C3F]">{d.page.title}</p>
-              <p className="mt-1.5 text-center text-[7.5px] leading-snug text-[#64748B]">{d.page.subtitle}</p>
-              <span className="mt-3 block rounded-md bg-[#2F6BFF] py-1.5 text-center text-[8.5px] font-semibold text-white">{d.page.button}</span>
-            </div>
-          </div>
-
-          <div className="relative flex flex-col">
-            <button type="button" onClick={() => setEditingPage(true)}
-                    className="inline-flex h-10 items-center gap-2 self-end rounded-lg border border-[#2F6BFF] bg-white px-3.5 text-[12.5px] font-semibold text-[#2F6BFF] hover:bg-[#F6F9FF]">
-              <Pencil size={14} /> Personnaliser la page
-            </button>
-            <ul className="mt-5 space-y-3">
-              {d.page.benefits.map((b, i) => {
-                const Icon = [Star, Sparkles, Cake, Gift][i % 4];
-                return (
-                  <li key={b} className="flex items-center gap-2.5 text-[12.5px] text-[#0B1C3F]">
-                    <Icon size={16} className="shrink-0 text-[#0B1C3F]" /> {b}
-                  </li>
-                );
-              })}
-            </ul>
-            <p className="mt-auto pt-6 text-right text-[11px] text-[#64748B]">
-              {shopName}{d.shop.city ? <> &nbsp;•&nbsp; {d.shop.city}</> : null}
-            </p>
-          </div>
-        </div>
-      </section>
+      {/* Un lien par employé + le classement — à la place de l'aperçu de la
+          page, que l'on voit déjà en vrai avec « Aperçu de la page client »
+          (user, 2026-10-16). « Personnaliser la page » est passé en haut. */}
+      <EmployeeLinks cardCls={cardCls} CardHead={CardHead} say={say} icons={{ Link2, Users, TrendingUp }} />
 
       <div aria-live="polite" className="pointer-events-none fixed bottom-5 left-1/2 z-40 -translate-x-1/2 transition-opacity"
            style={{ opacity: toast ? 1 : 0 }}>
