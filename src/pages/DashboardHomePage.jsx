@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
+import TrendChart from '../components/TrendChart';
 import DecimalInput from '../components/DecimalInput';
 import { eur } from '../lib/money';
 
@@ -37,13 +38,9 @@ const TONES = {
   rose:   { bg: '#FDECEF', fg: '#E11D48', dot: '#F43F5E' },
 };
 
-const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
 // 93,10 € — cents keep two digits (lib/money)
 const money = eur;
-const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
-// A point of a series: a day, or an hour for « Aujourd'hui » (it carries its label).
-const pointLabel = (q) => q.label || dayLabel(q.date);
 
 /* ── pieces ───────────────────────────────────────────────────────────── */
 // Each panel's « ? » (lib/metricHelp), found from its title.
@@ -119,91 +116,6 @@ const KpiCard = ({ card, onOpen }) => {
         </div>
       )}
     </div>
-  );
-};
-
-/** Line + area, drawn as plain SVG so the shape matches the design exactly. */
-const LineChart = ({ series, money: isMoney }) => {
-  const W = 620, H = 200, PAD_L = 46, PAD_B = 24, PAD_T = 10, PAD_R = 8;
-  const pts = series || [];
-  const max = Math.max(1, ...pts.map((p) => p.value));
-  const step = Math.pow(10, Math.max(0, String(Math.round(max)).length - 1)) / 2 || 1;
-  const top = Math.max(step, Math.ceil(max / step) * step);
-  const iw = W - PAD_L - PAD_R, ih = H - PAD_T - PAD_B;
-  const x = (i) => PAD_L + (pts.length <= 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
-  const y = (v) => PAD_T + ih - (v / top) * ih;
-  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
-  const area = pts.length ? `${line} L${x(pts.length - 1).toFixed(1)},${PAD_T + ih} L${x(0).toFixed(1)},${PAD_T + ih} Z` : '';
-  const ticks = [0, top / 2, top];
-  const idx = pts.length <= 1 ? [0] : [0, Math.round((pts.length - 1) / 3), Math.round((pts.length - 1) * 2 / 3), pts.length - 1];
-  if (!pts.length) return <p className="py-12 text-center text-[13px] text-[#94A3B8]">Aucune donnée sur la période.</p>;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 200 }}>
-      <defs>
-        <linearGradient id="dhLine" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#2F6BFF" stopOpacity="0.26" />
-          <stop offset="100%" stopColor="#2F6BFF" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      {ticks.map((v) => (
-        <g key={v}>
-          <line x1={PAD_L} x2={W - PAD_R} y1={y(v)} y2={y(v)} stroke="#EEF3FB" />
-          <text x={PAD_L - 8} y={y(v) + 4} textAnchor="end" fontSize="10.5" fill="#94A3B8">
-            {isMoney ? `${nf(Math.round(v))} €` : nf(Math.round(v))}
-          </text>
-        </g>
-      ))}
-      <path d={area} fill="url(#dhLine)" />
-      <path d={line} fill="none" stroke="#2F6BFF" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />
-      {pts.map((p, i) => (
-        <circle key={p.date} cx={x(i)} cy={y(p.value)} r="2.6" fill="#fff" stroke="#2F6BFF" strokeWidth="1.8">
-          <title>{`${pointLabel(p)} — ${isMoney ? money(p.value) : nf(p.value)}`}</title>
-        </circle>
-      ))}
-      {idx.map((i) => (
-        <text key={i} x={x(i)} y={H - 5} fontSize="10.5" fill="#94A3B8"
-              textAnchor={i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}>
-          {pointLabel(pts[i])}
-        </text>
-      ))}
-    </svg>
-  );
-};
-
-const BarChart = ({ series }) => {
-  const W = 620, H = 200, PAD_L = 34, PAD_B = 24, PAD_T = 10, PAD_R = 8;
-  const pts = series || [];
-  const max = Math.max(1, ...pts.map((p) => p.value));
-  const top = Math.max(1, Math.ceil(max / 10) * 10 || max);
-  const iw = W - PAD_L - PAD_R, ih = H - PAD_T - PAD_B;
-  const bw = pts.length ? Math.max(2, (iw / pts.length) * 0.6) : 0;
-  const y = (v) => PAD_T + ih - (v / top) * ih;
-  const idx = pts.length <= 1 ? [0] : [0, Math.round((pts.length - 1) / 3), Math.round((pts.length - 1) * 2 / 3), pts.length - 1];
-  if (!pts.length) return <p className="py-12 text-center text-[13px] text-[#94A3B8]">Aucune donnée sur la période.</p>;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 200 }}>
-      {[0, top / 2, top].map((v) => (
-        <g key={v}>
-          <line x1={PAD_L} x2={W - PAD_R} y1={y(v)} y2={y(v)} stroke="#EEF3FB" />
-          <text x={PAD_L - 8} y={y(v) + 4} textAnchor="end" fontSize="10.5" fill="#94A3B8">{nf(Math.round(v))}</text>
-        </g>
-      ))}
-      {pts.map((p, i) => {
-        const cx = PAD_L + (i + 0.5) * (iw / pts.length);
-        return (
-          <rect key={p.date} x={cx - bw / 2} y={y(p.value)} width={bw}
-                height={Math.max(0, PAD_T + ih - y(p.value))} rx="2.5" fill="#2F6BFF">
-            <title>{`${pointLabel(p)} — ${nf(p.value)}`}</title>
-          </rect>
-        );
-      })}
-      {idx.map((i) => (
-        <text key={i} x={PAD_L + (i + 0.5) * (iw / pts.length)} y={H - 5} fontSize="10.5" fill="#94A3B8"
-              textAnchor={i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}>
-          {pointLabel(pts[i])}
-        </text>
-      ))}
-    </svg>
   );
 };
 
@@ -509,7 +421,8 @@ export default function DashboardHomePage() {
               </span>
             )}
           </p>
-          <LineChart series={d?.revenue_series} money />
+          <TrendChart series={d?.revenue_series} money unit="Chiffre d'affaires"
+                      openLabel="Voir les analyses" onOpen={() => navigate('/dashboard/analytics')} />
         </Panel>
         <Panel title="Nouveaux clients" action={<RangePicker value={period} onChange={setDays} busy={loading} />}>
           <p className="mb-2 flex items-center gap-2">
@@ -520,7 +433,8 @@ export default function DashboardHomePage() {
               </span>
             )}
           </p>
-          <BarChart series={d?.new_series} />
+          <TrendChart series={d?.new_series} kind="bar" unit="Nouveaux clients"
+                      openLabel="Voir ces nouveaux clients" onOpen={() => navigate('/dashboard/customers?segment=new')} />
         </Panel>
       </div>
 

@@ -140,6 +140,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("one point per day of the window", len(d["revenue_series"]) == 30)
     check("the revenue series adds up to the card",
           round(sum(p["value"] for p in d["revenue_series"]), 2) == cards["revenue"]["value"])
+    # each point also says the visits behind it, for the card a click opens
+    check("every revenue point carries its visits",
+          all(isinstance(p.get("visits"), int) for p in d["revenue_series"])
+          and all(p["visits"] >= 1 for p in d["revenue_series"] if p["value"] > 0))
     check("new clients has its own series", len(d["new_series"]) == 30)
     check("and counts the ones who joined in the window", d["new_total"] == 1)
     check("a shorter window really is shorter",

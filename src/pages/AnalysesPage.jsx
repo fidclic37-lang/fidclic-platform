@@ -10,6 +10,7 @@ import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
+import TrendChart from '../components/TrendChart';
 import { eur } from '../lib/money';
 
 /**
@@ -43,13 +44,11 @@ const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'aoû
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
 // 93,10 € — cents keep two digits (lib/money)
 const money = eur;
-const dayLabel = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
-// A point of a series: a day, or an hour for « Aujourd'hui » (it carries its label).
-const pointLabel = (q) => q.label || dayLabel(q.date);
 const fullDate = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
 
 // What a figure opens: a page (`to`), another tab (`tab`) or a panel of this one (`anchor`).
 const OpenCtx = createContext(() => {});
+
 
 // The design's tab names, and the anchors other pages link to (« Voir mes avis »).
 const HASH_TABS = { reviews: 'avis', avis: 'avis', campaigns: 'campagnes', campagnes: 'campagnes',
@@ -182,48 +181,13 @@ const Strip = ({ items }) => {
   ));
 };
 
-const Line = ({ series, money: isMoney }) => {
-  const W = 620, H = 190, L = 46, B = 22, T = 10, R = 8;
-  const p = series || [];
-  const max = Math.max(1, ...p.map((x) => x.value));
-  const top = Math.ceil(max / 5) * 5 || 1;
-  const iw = W - L - R, ih = H - T - B;
-  const x = (i) => L + (p.length <= 1 ? iw / 2 : (i / (p.length - 1)) * iw);
-  const y = (v) => T + ih - (v / top) * ih;
-  const line = p.map((q, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(q.value).toFixed(1)}`).join(' ');
-  const idx = p.length <= 1 ? [0] : [0, Math.round((p.length - 1) / 3), Math.round((p.length - 1) * 2 / 3), p.length - 1];
-  if (!p.length) return <p className="py-12 text-center text-[13px] text-[#94A3B8]">Aucune donnée.</p>;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 190 }}>
-      <defs>
-        <linearGradient id="anGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#2F6BFF" stopOpacity="0.25" />
-          <stop offset="100%" stopColor="#2F6BFF" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      {[0, top / 2, top].map((v) => (
-        <g key={v}>
-          <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} stroke="#EEF3FB" />
-          <text x={L - 8} y={y(v) + 4} textAnchor="end" fontSize="10" fill="#94A3B8">
-            {isMoney ? `${nf(Math.round(v))} €` : nf(Math.round(v))}
-          </text>
-        </g>
-      ))}
-      <path d={`${line} L${x(p.length - 1)},${T + ih} L${x(0)},${T + ih} Z`} fill="url(#anGrad)" />
-      <path d={line} fill="none" stroke="#2F6BFF" strokeWidth="2.2" strokeLinejoin="round" />
-      {p.map((q, i) => (
-        <circle key={q.date} cx={x(i)} cy={y(q.value)} r="2.4" fill="#fff" stroke="#2F6BFF" strokeWidth="1.7">
-          <title>{`${pointLabel(q)} — ${isMoney ? money(q.value) : nf(q.value)}`}</title>
-        </circle>
-      ))}
-      {idx.map((i) => (
-        <text key={i} x={x(i)} y={H - 4} fontSize="10" fill="#94A3B8"
-              textAnchor={i === 0 ? 'start' : i === p.length - 1 ? 'end' : 'middle'}>
-          {pointLabel(p[i])}
-        </text>
-      ))}
-    </svg>
-  );
+// Évolution du CA / des clients — the very chart of the Tableau de bord, so
+// survol and clic read the same here (user, 2026-10-16).
+const Line = ({ to, openLabel, ...rest }) => {
+  const open = useContext(OpenCtx);
+  return <TrendChart height={190} empty="Aucune donnée."
+                     openLabel={to ? openLabel : undefined}
+                     onOpen={to ? () => open({ to }) : undefined} {...rest} />;
 };
 
 const Bars = ({ items, money: isMoney }) => {
@@ -383,11 +347,12 @@ const TabVue = ({ d }) => (
     <div className="mb-4 grid gap-4 lg:grid-cols-2">
       <Panel title="Évolution du chiffre d'affaires">
         <Total value={money(d.revenue_total)} delta={d.revenue_delta} />
-        <Line series={d.revenue_series} money />
+        <Line series={d.revenue_series} money unit="Chiffre d'affaires" />
       </Panel>
       <Panel title="Évolution du nombre de clients">
         <Total value={nf(d.new_total)} delta={d.new_delta} />
-        <Line series={d.new_series} />
+        <Line series={d.new_series} unit="Nouveaux clients"
+              to="/dashboard/customers?segment=new" openLabel="Voir ces nouveaux clients" />
       </Panel>
     </div>
     {d.moments && <MomentsPanels d={d.moments} />}
@@ -595,7 +560,7 @@ const TabAcquisition = ({ d }) => {
         <Bars items={d.places.map((p) => ({ label: p.name, value: p.count }))} />
       </Panel>
     </div>
-    <Panel title="Acquisition de nouveaux clients"><Line series={d.new_series} /></Panel>
+    <Panel title="Acquisition de nouveaux clients"><Line series={d.new_series} unit="Nouveaux clients" /></Panel>
   </>
 );
 };
