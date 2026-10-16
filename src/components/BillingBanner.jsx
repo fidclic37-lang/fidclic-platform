@@ -11,8 +11,10 @@ import { ownerAPI } from '../lib/api';
  * in order of urgency:
  *
  *  1. TRIAL — quiet pill showing "X days left in trial". Default state for
- *     every new business for the first ~18 days. Click → opens Settings →
- *     Billing where they can pick a plan early.
+ *     every new business until the reminder window. Click → opens Settings →
+ *     Billing where they can pick a plan early. Its cross hides it for good,
+ *     on every device (POST /api/owner/trial-status/hide-banner); a trial that
+ *     starts later shows its own countdown again.
  *  2. REMINDER — when days_left <= reminder_days_before (default 3), the
  *     pill grows into an orange banner with "Choose a plan now" CTA.
  *  3. EXPIRED — once days_left <= 0, banner turns red and locks paid
@@ -27,6 +29,10 @@ import { ownerAPI } from '../lib/api';
  */
 export default function BillingBanner() {
   const [trial, setTrial] = useState(null);
+  // « Masquer » used to live here only: the next refresh brought the pill
+  // straight back (user, 2026-10-16). The choice is kept on the account now,
+  // so it holds for good and on every device — hidden locally at once so the
+  // bar goes away under the finger, without waiting for the answer.
   const [dismissed, setDismissed] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -50,11 +56,18 @@ export default function BillingBanner() {
   if (trial.subscription_status === 'active') return null;
   if (!trial.is_in_trial && !trial.is_expired) return null;
 
-  // The "quiet" pill (>3 days left) is dismissible per-session.
+  // The "quiet" pill (outside the reminder window) can be hidden for good.
   const isReminder = !!trial.reminder_window;
   const isExpired = !!trial.is_expired;
   const isQuiet = trial.is_in_trial && !isReminder;
-  if (isQuiet && dismissed) return null;
+  if (isQuiet && (dismissed || trial.banner_hidden)) return null;
+
+  const hideForGood = () => {
+    setDismissed(true);
+    ownerAPI.hideTrialBanner()
+      .then((res) => setTrial(res.data))
+      .catch(() => { /* kept hidden here; the account keeps it next time */ });
+  };
 
   const handleUpgrade = async (plan) => {
     setUpgrading(true);
@@ -137,10 +150,10 @@ export default function BillingBanner() {
           {isExpired ? 'Débloquer maintenant' : isReminder ? 'Choisir une offre' : 'Voir les offres'}
         </button>
 
-        {/* Quiet mode is dismissible — reminder & expired are not. */}
+        {/* Quiet mode can be hidden — reminder & expired cannot. */}
         {isQuiet && (
           <button
-            onClick={() => setDismissed(true)}
+            onClick={hideForGood}
             aria-label="Masquer"
             className="text-current opacity-60 hover:opacity-100 shrink-0"
             type="button"

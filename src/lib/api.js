@@ -458,6 +458,7 @@ export const ownerAPI = {
   // Trial countdown + plan catalogue. BillingBanner polls this on every
   // dashboard load to render the countdown / reminder / expired states.
   getTrialStatus: () => api.get('/owner/trial-status'),
+  hideTrialBanner: () => api.post('/owner/trial-status/hide-banner'),
   // Self-serve plan switcher (no-Stripe fallback path). Pass plan='silver'|'gold'|'vip'.
   upgradePlan: (plan) => api.post('/owner/upgrade-plan', { plan }),
   getCustomers: (params) => api.get('/owner/customers', { params }),
