@@ -21,6 +21,7 @@ IMG_A = "data:image/png;base64,QUFBQQ=="
 IMG_B = "data:image/jpeg;base64,QkJCQg=="
 LOGO = "data:image/png;base64,TE9HTw=="
 LOGO_PAL = "data:image/png;base64,UEFM"
+SRC = "data:image/png;base64,U1JD"      # the picture before framing
 
 
 def check(label, cond):
@@ -86,11 +87,41 @@ def main():
     r = http("PUT", "/api/owner/join-link/image", headers=as_("pal"), json={"image": ""})
     check("« Revenir au logo de la carte »", r.status_code == 200 and page("palissy")["logo_url"] == LOGO_PAL)
 
-    print("\n3. Refused")
+    print("\n3. « Ajuster » reopens the whole picture, not the crop")
+    # What is shown is a crop; a crop cannot be zoomed back out from itself, so
+    # the picture as it came is kept beside it (user, 2026-10-16).
+    r = http("PUT", "/api/owner/join-link/image", headers=as_("pal"),
+             json={"image": IMG_A, "source": SRC, "frame": {"zoom": 1.4, "x": -12, "y": -30}})
+    v = r.json()["shop"]
+    check(f"saved with its picture before framing ({r.status_code})",
+          r.status_code == 200 and v["signup_image"] == IMG_A and v["signup_image_src"] == SRC)
+    check("…and where it was framed", v["signup_image_frame"] == {"zoom": 1.4, "x": -12, "y": -30})
+    check("the signup page still shows the crop, not the whole picture",
+          page("palissy")["logo_url"] == IMG_A)
+    # Reframing sends no picture again: the server already has it.
+    r = http("PUT", "/api/owner/join-link/image", headers=as_("pal"),
+             json={"image": IMG_B, "frame": {"zoom": 1, "x": 0, "y": 0}})
+    v = r.json()["shop"]
+    check("reframing keeps the picture and moves the frame",
+          v["signup_image"] == IMG_B and v["signup_image_src"] == SRC
+          and v["signup_image_frame"] == {"zoom": 1, "x": 0, "y": 0})
+    check("another store has none of it", http("GET", "/api/owner/join-link",
+                                               headers=as_("main")).json()["shop"]["signup_image_src"] == "")
+    http("PUT", "/api/owner/join-link/image", headers=as_("pal"), json={"image": ""})
+    check("« Revenir au logo de la carte » takes the picture with it",
+          http("GET", "/api/owner/join-link", headers=as_("pal")).json()["shop"]["signup_image_src"] == "")
+
+    print("\n4. Refused")
     check("not an image", http("PUT", "/api/owner/join-link/image", headers=as_("pal"),
                                json={"image": "javascript:alert(1)"}).status_code == 400)
     check("over 2 Mo", http("PUT", "/api/owner/join-link/image", headers=as_("pal"),
                             json={"image": "data:image/png;base64," + "A" * 2_900_000}).status_code == 400)
+    check("a picture before framing over 2 Mo",
+          http("PUT", "/api/owner/join-link/image", headers=as_("pal"),
+               json={"image": IMG_A, "source": "data:image/png;base64," + "A" * 2_900_000}).status_code == 400)
+    check("a picture before framing that is not an image",
+          http("PUT", "/api/owner/join-link/image", headers=as_("pal"),
+               json={"image": IMG_A, "source": "javascript:alert(1)"}).status_code == 400)
     check("no establishment chosen (several stores)",
           http("PUT", "/api/owner/join-link/image", headers=as_(None), json={"image": IMG_A}).status_code == 400)
     check("a manager cannot", http("PUT", "/api/owner/join-link/image", headers=as_("pal", MANAGER),

@@ -9,10 +9,13 @@ import { fitZoom } from '../lib/fit';
  * owner drags it and zooms to pick what shows, and gets Apple's 345 × 505 pt
  * at 3× (1035 × 1515) as a JPEG.
  *
- * Props: file (a File), onDone(dataUrl), onCancel(); outW / outH and title
- * frame any other Wallet image the same way (the card editor's banner…).
+ * Props: file (a File) or src (a URL — « Ajuster » reopens the picture already
+ * kept), onDone(dataUrl, frame), onCancel(); outW / outH and title frame any
+ * other Wallet image the same way (the card editor's banner…). `frame`, as it
+ * comes back from onDone, puts the owner back where they left off.
  */
-export default function PosterCropper({ file, onDone, onCancel, outW = 1035, outH = 1515, title = "Cadrer l'image poster",
+export default function PosterCropper({ file, src, frame, onDone, onCancel, outW = 1035, outH = 1515,
+                                       title = "Cadrer l'image poster",
                                        guides = true, fit = false, round = false, fill = '#FFFFFF' }) {
   // `fit`: the slider may go below « couvre le cadre », down to the whole image
   // inside it. A poster must never show an empty edge, so it stays off there;
@@ -28,7 +31,8 @@ export default function PosterCropper({ file, onDone, onCancel, outW = 1035, out
   const url = useRef(null);
 
   useEffect(() => {
-    url.current = URL.createObjectURL(file);
+    const made = file ? URL.createObjectURL(file) : null;
+    url.current = made || src;
     const im = new Image();
     im.onload = () => {
       setImg(im);
@@ -36,13 +40,16 @@ export default function PosterCropper({ file, onDone, onCancel, outW = 1035, out
       // With `fit`, open on the whole image: the owner should not have to find
       // a slider to stop their logo being cut.
       const z = fit ? Math.min(Math.min(FRAME_W / im.width, FRAME_H / im.height) / cover, 1) : 1;
-      setZoom(z);
-      const s0 = cover * z;
-      setPos({ x: (FRAME_W - im.width * s0) / 2, y: (FRAME_H - im.height * s0) / 2 });
+      // …unless this picture was framed before: then open where they left it.
+      const z0 = frame && frame.zoom > 0 ? frame.zoom : z;
+      setZoom(z0);
+      const s0 = cover * z0;
+      setPos(frame && frame.zoom > 0 ? { x: frame.x, y: frame.y }
+        : { x: (FRAME_W - im.width * s0) / 2, y: (FRAME_H - im.height * s0) / 2 });
     };
     im.src = url.current;
-    return () => URL.revokeObjectURL(url.current);
-  }, [file, fit]);
+    return () => { if (made) URL.revokeObjectURL(made); };
+  }, [file, src, frame, fit]);
 
   if (!img) return null;
   const base = Math.max(FRAME_W / img.width, FRAME_H / img.height);
@@ -90,7 +97,8 @@ export default function PosterCropper({ file, onDone, onCancel, outW = 1035, out
     ctx.fillStyle = fill;
     ctx.fillRect(0, 0, OUT_W, OUT_H);
     ctx.drawImage(img, pos.x * k, pos.y * k, w * k, h * k);
-    onDone(c.toDataURL('image/jpeg', 0.88));
+    // the frame travels with the result, so « Ajuster » can reopen on it
+    onDone(c.toDataURL('image/jpeg', 0.88), { zoom, x: pos.x, y: pos.y });
   };
 
   return (

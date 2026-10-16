@@ -74,5 +74,31 @@ test.describe('the registration image keeps the whole picture', () => {
     }));
 
     await expect.poll(read, { timeout: 15_000 }).toEqual({ w: 800, h: 800, left: true, right: true });
+
+    // « Ajuster » (user, 2026-10-16): the picture kept beside the crop, so it
+    // can be zoomed in and back out later without choosing the file again.
+    const adjust = section.getByRole('button', { name: 'Ajuster' });
+    await expect(adjust).toBeVisible({ timeout: 15_000 });
+    await adjust.click();
+    await expect(page.getByText("Ajuster l'image")).toBeVisible();
+
+    // it reopens on the WHOLE picture, not on the square that was saved
+    const frameW = await page.evaluate(() => {
+      const im = document.querySelector('[role="dialog"] img');
+      return im ? { w: im.naturalWidth, h: im.naturalHeight } : null;
+    });
+    expect(frameW.w).toBeGreaterThan(frameW.h);        // 1200 × 300, never the 800 × 800 crop
+
+    await page.getByRole('button', { name: 'Remplir le cadre' }).click();
+    await page.getByRole('button', { name: 'Utiliser ce cadre' }).click();
+    await expect(page.getByText("Ajuster l'image")).toHaveCount(0);
+
+    // zoomed in, an edge is gone — and « Ajuster » is still there to undo it
+    await expect.poll(read, { timeout: 15_000 }).toMatchObject({ w: 800, h: 800, left: false });
+    await expect(section.getByRole('button', { name: 'Ajuster' })).toBeVisible();
+    await adjust.click();
+    await page.getByRole('button', { name: "Toute l'image" }).click();
+    await page.getByRole('button', { name: 'Utiliser ce cadre' }).click();
+    await expect.poll(read, { timeout: 15_000 }).toEqual({ w: 800, h: 800, left: true, right: true });
   });
 });

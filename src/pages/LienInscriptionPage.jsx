@@ -4,7 +4,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import {
   Users, Link2, QrCode, Share2, Copy, Info, Download, Printer, Store, Settings, CheckCircle2,
   XCircle, Loader2, Mail, MessageSquare, MoreHorizontal, Eye, Pencil, ExternalLink, Gift,
-  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin, ImagePlus,
+  Star, Cake, Sparkles, X, Check, Coffee, ArrowUp, ArrowDown, RotateCcw, Globe, Music2, MapPin, ImagePlus, Crop,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useBranch } from '../contexts/BranchContext';
@@ -201,16 +201,37 @@ function PageModal({ initial, defaults, limits, onClose, onSaved }) {
 // « Image de la page d'inscription » (user, 2026-10-12): the picture at the top
 // of the signup page, chosen by each establishment; none: the card's logo.
 const MAX_IMG = 2 * 1024 * 1024;
+const SRC_MAX = 1600;             // the kept picture's longest side: 2× what is framed
+// The picture as the owner handed it over, whole — nothing cropped, only
+// scaled down so it travels (Vercel refuses a body over 4,5 Mo).
+const whole = (file) => new Promise((done) => {
+  const url = URL.createObjectURL(file);
+  const im = new Image();
+  im.onload = () => {
+    const k = Math.min(1, SRC_MAX / Math.max(im.width, im.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(im, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url);
+    done(c.toDataURL('image/jpeg', 0.9));
+  };
+  im.onerror = () => { URL.revokeObjectURL(url); done(undefined); };
+  im.src = url;
+});
 function SignupImage({ d, setD, shopName, canEdit }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const input = useRef(null);
   const own = d.shop.signup_image || '';
-  const [crop, setCrop] = useState(null);      // the file being framed
+  const src = d.shop.signup_image_src || '';   // the picture before framing
+  const [crop, setCrop] = useState(null);      // { file } or { src, frame } being framed
   const shown = own || d.shop.card_logo_url || '';
-  const save = async (image) => {
+  const save = async (image, source, frame) => {
     setBusy(true); setErr('');
-    try { const { data } = await ownerAPI.saveSignupImage(image); setD(data); }
+    try { const { data } = await ownerAPI.saveSignupImage(image, source, frame); setD(data); }
     catch (e) { setErr(e?.response?.data?.detail || "L'image n'a pas pu être enregistrée."); }
     finally { setBusy(false); }
   };
@@ -223,15 +244,22 @@ function SignupImage({ d, setD, shopName, canEdit }) {
     if (!/^image\//.test(file.type)) { setErr('Choisissez une image (JPG, PNG, WebP).'); return; }
     if (file.size > MAX_IMG) { setErr("L'image dépasse 2 Mo."); return; }
     setErr('');
-    setCrop(file);
+    setCrop({ file });
+  };
+  // Framing gives an 800 × 800 crop; the whole picture is kept beside it so
+  // « Ajuster » can zoom back out — a crop cannot be undone from itself.
+  const done = async (image, frame) => {
+    setCrop(null);
+    if (crop?.file) save(image, await whole(crop.file), frame);
+    else save(image, undefined, frame);        // reframed: the server already has it
   };
   return (
     <section className="mt-4 rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="signup-image">
       {crop && (
-        <PosterCropper file={crop} outW={800} outH={800} round fit guides={false}
-                       title="Cadrer l'image"
-                       onCancel={() => setCrop(null)}
-                       onDone={(data) => { setCrop(null); save(data); }} />
+        <PosterCropper file={crop.file} src={crop.src} frame={crop.frame}
+                       outW={800} outH={800} round fit guides={false}
+                       title={crop.file ? "Cadrer l'image" : "Ajuster l'image"}
+                       onCancel={() => setCrop(null)} onDone={done} />
       )}
       <CardHead icon={ImagePlus} title="Image de la page d'inscription"
                 subtitle={`L'image en haut de la page d'inscription de ${shopName}. Sans image choisie, c'est le logo de la carte.`} />
@@ -253,6 +281,13 @@ function SignupImage({ d, setD, shopName, canEdit }) {
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#2F6BFF] px-3.5 text-[12.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-60">
                 {busy ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />} {own ? "Changer l'image" : 'Choisir une image'}
               </button>
+              {own && src && (
+                <button type="button" onClick={() => setCrop({ src, frame: d.shop.signup_image_frame })}
+                        disabled={busy}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3.5 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] disabled:opacity-60">
+                  <Crop size={14} /> Ajuster
+                </button>
+              )}
               {own && (
                 <button type="button" onClick={() => save('')} disabled={busy}
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3.5 text-[12.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] disabled:opacity-60">
