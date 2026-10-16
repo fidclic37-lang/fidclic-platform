@@ -26,8 +26,11 @@ export function phoneWallet(ua = navigator.userAgent, touch = navigator.maxTouch
 
 /* phoneOnly: only the button of this phone's Wallet (the signup's
    « Félicitations », BUG-008). onShown(bool): told once the wallets are known
-   whether a button is on screen — the page offers « Voir ma carte » if not. */
-export default function WalletButtons({ barcodeId, onError, phoneOnly = false, onShown, ready = true }) {
+   whether a button is on screen — the page offers « Voir ma carte » if not.
+   big: the button is the page's main action (the signup) — full height, and a
+   placeholder of that height while the wallets are being read, so the page
+   does not jump under a thumb already on its way. */
+export default function WalletButtons({ barcodeId, onError, phoneOnly = false, onShown, big = false }) {
   const [cfg, setCfg] = useState(null);
   const [busy, setBusy] = useState(false);
   const [googleUrl, setGoogleUrl] = useState(null);
@@ -43,24 +46,28 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   const mine = phoneWallet();
   const wanted = phoneOnly ? (mine ? [mine] : []) : ['apple', 'google'];
   const shownCount = cfg ? wanted.filter((k) => cfg[k]).length : null;
-  // `ready`: the page says when (the signup waits for its card to show first —
-  // the two on one fresh instance fought for its CPU, 2026-10-15); only the
-  // Wallet(s) of the buttons shown are prepared
+  // Only the Wallet(s) of the buttons shown are prepared, and at once: on the
+  // signup the button is above the card now (user, 2026-10-16), so the tap can
+  // come before the card has finished drawing. The two no longer fight for the
+  // instance's CPU — wallet_passes builds each image once and the other waits
+  // for it (_cached's build lock, 2026-10-16).
   useEffect(() => {
-    if (!cfg || !shownCount || !ready) return undefined;   // no button here: nothing to get ready
+    if (!cfg || !shownCount) return undefined;          // no button here: nothing to get ready
     let alive = true;
     const only = wanted.filter((k) => cfg[k]).join(',');
     api.post(`/card/${barcodeId}/wallet-prepare`, null, { params: { only } }).then((r) => {
       if (alive && r.data?.google_url) setGoogleUrl(r.data.google_url);
     }).catch(() => {});
     return () => { alive = false; };
-  }, [cfg, barcodeId, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cfg, barcodeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (shownCount !== null) onShown?.(shownCount > 0);
   }, [shownCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!cfg || (!cfg.apple && !cfg.google)) return null;
+  // the wallets are not known yet: hold the place of the button that is coming
+  if (!cfg) return big && wanted.length ? <div className="mt-4 h-14 animate-pulse rounded-2xl bg-[#E8EDF5]" /> : null;
+  if (!cfg.apple && !cfg.google) return null;
 
   const isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
   const isAndroid = /Android/.test(navigator.userAgent);
@@ -80,7 +87,10 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
     }
   };
 
-  const pill = 'inline-flex w-full items-center justify-center gap-2.5 rounded-xl py-3 text-[14px] font-semibold transition hover:opacity-90 disabled:opacity-60';
+  const pill = big
+    ? 'inline-flex h-14 w-full items-center justify-center gap-2.5 rounded-2xl text-[16px] font-semibold shadow-[0_14px_30px_-14px_rgba(11,28,63,.55)] transition hover:opacity-90 disabled:opacity-60'
+    : 'inline-flex w-full items-center justify-center gap-2.5 rounded-xl py-3 text-[14px] font-semibold transition hover:opacity-90 disabled:opacity-60';
+  const glyph = big ? { w: 24, h: 19 } : { w: 20, h: 16 };
   return (
     <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
       {order.map((k) => {
@@ -89,7 +99,7 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
           return (
             <a key="apple" href={`/api/card/${barcodeId}/apple-wallet.pkpass${keyOf(barcodeId) ? `?k=${encodeURIComponent(keyOf(barcodeId))}` : ''}`}
                className={`${pill} bg-black text-white`} style={{ order: isApple ? 0 : 1 }}>
-              <svg width="20" height="16" viewBox="0 0 24 20" aria-hidden="true">
+              <svg width={glyph.w} height={glyph.h} viewBox="0 0 24 20" aria-hidden="true">
                 <rect x="1" y="1" width="22" height="18" rx="3" fill="#fff" />
                 <rect x="1" y="4" width="22" height="4" fill="#F59E0B" /><rect x="1" y="8" width="22" height="4" fill="#22C55E" />
                 <rect x="1" y="12" width="22" height="7" rx="2" fill="#3B82F6" />
@@ -102,7 +112,7 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
           return (
             <button key="google" type="button" onClick={saveGoogle} disabled={busy}
                     className={`${pill} bg-[#1F1F1F] text-white`}>
-              <svg width="20" height="16" viewBox="0 0 24 20" aria-hidden="true">
+              <svg width={glyph.w} height={glyph.h} viewBox="0 0 24 20" aria-hidden="true">
                 <rect x="1" y="1" width="22" height="18" rx="4" fill="#fff" />
                 <path d="M3 8c0-2 1.5-3.5 3.5-3.5H21v4H3z" fill="#EA4335" /><path d="M3 8h18v4H3z" fill="#FBBC05" />
                 <path d="M3 12h18v2.5c0 2-1.5 3.5-3.5 3.5H3z" fill="#34A853" /><path d="M3 8v10h6V8z" fill="#4285F4" />

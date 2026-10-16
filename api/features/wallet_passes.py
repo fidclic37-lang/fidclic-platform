@@ -55,6 +55,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -656,6 +657,38 @@ def _in_background(fn, *args) -> None:
 _SYNC_PUT = False
 
 
+# One build per image, even when two requests want it at the same instant
+# (user, 2026-10-16: « Ajouter à Apple Wallet » now sits above the card, so the
+# signup asks for the pass while the card preview is still being drawn). Both
+# run in the thread pool of one serverless instance: without this, each drew
+# the same poster, strip and logos again — 26 image builds instead of 18, and
+# both answers came back later. The second caller waits for the first and takes
+# its result from the cache.
+_BUILDING: Dict[str, threading.Lock] = {}
+_BUILDING_GUARD = threading.Lock()
+
+
+def _mine(key: str) -> threading.Lock:
+    with _BUILDING_GUARD:
+        lock = _BUILDING.get(key)
+        if lock is None:
+            lock = _BUILDING[key] = threading.Lock()
+        return lock
+
+
+def _drop(key: str, lock: threading.Lock) -> None:
+    with _BUILDING_GUARD:
+        if _BUILDING.get(key) is lock and not lock.locked():
+            _BUILDING.pop(key, None)
+
+
+def _remember(key: str, out: Any) -> None:
+    _IMG_CACHE[key] = out
+    while len(_IMG_CACHE) > 1 and (len(_IMG_CACHE) > _IMG_CACHE_MAX
+                                   or sum(_size(v) for v in _IMG_CACHE.values()) > _IMG_CACHE_BYTES):
+        _IMG_CACHE.pop(next(iter(_IMG_CACHE)))
+
+
 def _cached(kind: str, parts: Tuple[Any, ...], make):
     h = hashlib.sha1(kind.encode())
     for p in parts:
@@ -665,17 +698,22 @@ def _cached(kind: str, parts: Tuple[Any, ...], make):
     if key in _IMG_CACHE:
         _IMG_CACHE[key] = _IMG_CACHE.pop(key)          # most recent last
         return _IMG_CACHE[key]
-    out = _shared_get(kind, key)
-    if out is None:
-        out = make()
-        if out is not None:
-            _shared_put(kind, key, out)
-    if out is not None:
-        _IMG_CACHE[key] = out
-        while len(_IMG_CACHE) > 1 and (len(_IMG_CACHE) > _IMG_CACHE_MAX
-                                       or sum(_size(v) for v in _IMG_CACHE.values()) > _IMG_CACHE_BYTES):
-            _IMG_CACHE.pop(next(iter(_IMG_CACHE)))
-    return out
+    lock = _mine(key)
+    try:
+        with lock:
+            if key in _IMG_CACHE:                      # built while we waited
+                _IMG_CACHE[key] = _IMG_CACHE.pop(key)
+                return _IMG_CACHE[key]
+            out = _shared_get(kind, key)
+            if out is None:
+                out = make()
+                if out is not None:
+                    _shared_put(kind, key, out)
+            if out is not None:
+                _remember(key, out)
+            return out
+    finally:
+        _drop(key, lock)
 
 
 # ---------------------------------------------------------------------------

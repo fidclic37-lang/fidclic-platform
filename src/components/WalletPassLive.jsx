@@ -119,7 +119,7 @@ function PosterPass({ p, s, width, bc, colors = {} }) {
   );
 }
 
-export default function WalletPassLive({ card = {}, width = 292, visits = 3, barcodeId = null, fallback = null, onDone }) {
+export default function WalletPassLive({ card = {}, width = 292, visits = 3, barcodeId = null, fallback = null, onFail }) {
   const [pass, setPass] = useState(null);
   const [error, setError] = useState(false);
   const [back, setBack] = useState(false);
@@ -133,8 +133,9 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3, bar
     const timer = setTimeout(() => {
       load()
         .then((r) => { if (my === seq.current) { setPass(r.data); setError(false); } })
-        .catch(() => { if (my === seq.current) setError(true); })
-        .finally(() => { if (my === seq.current) onDone?.(); });
+        // onFail: the page reads /card/<id> for its own drawing of the card
+        // only then — one request fewer on the signup's critical path
+        .catch(() => { if (my === seq.current) { setError(true); onFail?.(); } });
     }, barcodeId ? 0 : 800);         // after typing stops: one preview, not one per keystroke
     return () => clearTimeout(timer);
   }, [key, visits, barcodeId]); // eslint-disable-line react-hooks/exhaustive-deps

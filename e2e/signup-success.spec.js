@@ -4,7 +4,10 @@
 //     Google's, and neither offers « Voir ma carte » — the card goes to the
 //     Wallet; a computer gets « Voir ma carte »;
 //   • the card shown is the very pass the Wallet gets (GET …/pass-view), not
-//     a drawing of an older layout.
+//     a drawing of an older layout;
+//   • the button is on screen the moment the page is (user, 2026-10-16: it sat
+//     under a card 500 px tall and needed a scroll), and the pass is got ready
+//     without waiting for that card to be drawn.
 // The local server has no Apple / Google keys: /api/wallet/config is answered
 // here as on production. Runs against the local server only (scripts/dev_local.py).
 import { test, expect } from '@playwright/test';
@@ -54,5 +57,48 @@ test.describe('a computer', () => {
     await signUp(page);
     await expect(page.getByRole('link', { name: /Voir ma carte/ })).toBeVisible();
     await expect(page.getByText(/Ajouter à (Apple|Google) Wallet/)).toHaveCount(0);
+  });
+});
+
+
+// The button must need no scroll — it is the one thing the customer has to do.
+for (const [size, w, h] of [['iPhone 14', 390, 844], ['iPhone SE', 375, 667]]) {
+  test.describe(`${size}`, () => {
+    test.use({ userAgent: UA.iphone, viewport: { width: w, height: h } });
+    test('« Ajouter à Apple Wallet » is on screen without scrolling', async ({ page }) => {
+      await signUp(page);
+      // measured once the card is really drawn: the iOS 27 poster is ~500 px
+      // tall, and that is what used to push the button off screen
+      const card = page.locator('[translate="no"]').first();
+      await expect(card).toBeVisible({ timeout: 15000 });
+      await expect.poll(async () => (await card.boundingBox())?.height || 0,
+        { message: 'the card has its real height' }).toBeGreaterThan(300);
+      const btn = page.getByText(/Apple Wallet/).first();
+      await expect(btn).toBeVisible();
+      const box = await btn.boundingBox();
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+      expect(box.y).toBeGreaterThan(0);
+      expect(box.y + box.height, `the button ends at ${Math.round(box.y + box.height)} px of ${h}`).toBeLessThanOrEqual(h);
+      // and the card is below it, not above
+      expect((await card.boundingBox()).y).toBeGreaterThan(box.y);
+    });
+  });
+}
+
+test.describe('a slow card', () => {
+  test.use({ userAgent: UA.iphone, viewport: { width: 390, height: 844 } });
+  test('the pass is got ready without waiting for the card to be drawn', async ({ page }) => {
+    // the card's own view takes 6 s; the button must not wait for it
+    await page.route('**/pass-view**', async (r) => {
+      await new Promise((ok) => setTimeout(ok, 6000));
+      await r.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"slow"}' });
+    });
+    const prepared = [];
+    page.on('request', (q) => { if (q.url().includes('wallet-prepare')) prepared.push(Date.now()); });
+    const t0 = Date.now();
+    await signUp(page);
+    await expect(page.getByText(/Apple Wallet/).first()).toBeVisible();
+    await expect.poll(() => prepared.length, { timeout: 4000, message: 'wallet-prepare asked for while the card is still loading' }).toBeGreaterThan(0);
+    expect(prepared[0] - t0, 'prepared well before the 6 s card').toBeLessThan(5000);
   });
 });
