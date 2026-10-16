@@ -132,8 +132,12 @@ def customer_ids(scope: Scope) -> Optional[Set[str]]:
 
 
 def customer_filter(scope: Scope) -> Dict[str, Any]:
+    """The clients these establishments count. A deleted client (Clients ›
+    Supprimer, the inactive purge) is in no count or list (user, 2026-10-16:
+    deleted, the dashboard and Analyses still counted it); its past visits
+    and revenue stay — those are read from `visits`."""
     ids = customer_ids(scope)
-    base: Dict[str, Any] = {"tenant_id": scope.tenant_id}
+    base: Dict[str, Any] = {"tenant_id": scope.tenant_id, "deleted_at": None}
     if ids is not None:
         base["id"] = {"$in": list(ids)}
     return base

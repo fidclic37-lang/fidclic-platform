@@ -404,7 +404,7 @@ def evaluate(tid: str, rules: List[Dict[str, Any]],
     condition excludes nobody.
     """
     at = at or _now()
-    rows = rows if rows is not None else list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
+    rows = rows if rows is not None else list(_db.customers.find({"tenant_id": tid, "deleted_at": None}, {"_id": 0}))
     if not rules:
         return list(rows)
     need_distance = any(r["field"] == "distance" for r in rules)
