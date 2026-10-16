@@ -375,9 +375,6 @@ export default function SecuritePage() {
               <label className="block text-[13px]">Nouvelle adresse
                 <input type="email" autoComplete="email" translate="no" className={`${inputCls} notranslate`} value={form.mail || ''}
                        onChange={(e) => setForm({ ...form, mail: e.target.value })} /></label>
-              <label className="block text-[13px]">Votre mot de passe
-                <input type="password" autoComplete="current-password" className={inputCls} value={form.pw || ''}
-                       onChange={(e) => setForm({ ...form, pw: e.target.value })} /></label>
               <div>
                 <p className="mb-1.5 text-[13px] text-[#334155]">Comment confirmer ?</p>
                 <div className="inline-flex rounded-lg bg-[#F1F5F9] p-0.5" role="group" aria-label="Comment confirmer ?">
@@ -389,13 +386,14 @@ export default function SecuritePage() {
                 </div>
               </div>
               <p className="text-[12px] text-[#64748B]">
-                FidClic envoie la confirmation à la <strong>nouvelle</strong> adresse. Tant qu'elle
-                n'est pas confirmée, vous vous connectez avec l'adresse actuelle — une faute de frappe
-                ne bloque donc rien.
+                Pas besoin de mot de passe : FidClic envoie d'abord un code à votre adresse
+                <strong> actuelle</strong>, puis la confirmation à la <strong>nouvelle</strong>. Tant
+                qu'elle n'est pas confirmée, vous vous connectez avec l'adresse actuelle — une faute de
+                frappe ne bloque donc rien.
               </p>
               {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
-              <button type="button" disabled={busy === 'mail' || !form.mail || !form.pw}
-                      onClick={() => run('mail', () => ownerAPI.emailStart(form.mail.trim(), form.pw, form.method || 'link'),
+              <button type="button" disabled={busy === 'mail' || !form.mail}
+                      onClick={() => run('mail', () => ownerAPI.emailStart(form.mail.trim(), form.method || 'link'),
                                          null, (r) => { setForm({ ...form, sent: r }); load(); })}
                       className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
                 Envoyer la confirmation
@@ -403,7 +401,27 @@ export default function SecuritePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {(() => { const p = form.sent || mailPending; return (
+              {(() => { const p = form.sent || mailPending; return p.step === 'current' ? (
+                <>
+                  {/* 1. the current address proves it is the owner (no password) */}
+                  <p className="text-[13.5px] text-[#475569]">
+                    Un code a été envoyé à votre adresse actuelle{' '}
+                    <strong translate="no" className="notranslate">{p.current_to}</strong>. Saisissez-le pour continuer.
+                  </p>
+                  <label className="block text-[13px]">Code reçu sur l'adresse actuelle
+                    <input inputMode="numeric" maxLength={6} className={`${inputCls} text-center text-[22px] tracking-[8px]`}
+                           value={form.ocode || ''} onChange={(e) => setForm({ ...form, ocode: e.target.value.replace(/\D/g, '') })} /></label>
+                  {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
+                  <button type="button" disabled={busy === 'mailo' || (form.ocode || '').length < 6}
+                          onClick={() => run('mailo', () => ownerAPI.emailVerifyCurrent(form.ocode), null,
+                                             (r) => { setForm({ ...form, sent: r, ocode: '' }); load(); })}
+                          className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white disabled:opacity-50" style={{ background: BLUE }}>
+                    Continuer
+                  </button>
+                  <button type="button" onClick={() => run('mailx', () => ownerAPI.emailCancel(), 'Demande annulée.')}
+                          className="w-full rounded-xl border border-[#DCE3EE] py-2.5 text-[13.5px] text-[#334155]">Annuler la demande</button>
+                </>
+              ) : (
                 <>
                   <p className="text-[13.5px] text-[#475569]">
                     {p.method === 'code' ? 'Un code a été envoyé à ' : 'Un lien a été envoyé à '}
