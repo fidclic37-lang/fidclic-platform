@@ -593,7 +593,9 @@ export const ownerAPI = {
   unlockCaisse: (code) => api.post('/security/caisse/unlock', { code }),
   // Sécurité › changer l'adresse e-mail du compte (features/account_email)
   emailState: () => api.get('/security/email'),
-  emailStart: (new_email, password, method) => api.post('/security/email/start', { new_email, password, method }),
+  // no password since 2026-10-16: a code to the current address first (verify-current), then the new one's proof
+  emailStart: (new_email, method) => api.post('/security/email/start', { new_email, method }),
+  emailVerifyCurrent: (code) => api.post('/security/email/verify-current', { code }),
   emailConfirm: (proof) => api.post('/security/email/confirm', proof),
   emailCancel: () => api.post('/security/email/cancel'),
   deleteAccount: (password, confirm) => api.post('/security/account/delete', { password, confirm }),

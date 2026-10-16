@@ -61,9 +61,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     OWNER = TokenData(email="old@shop.fr", role="business_owner", tenant_id="t1")
 
     print("\n— la demande —")
-    fails("un mot de passe faux n'ouvre rien",
-          lambda: E.start(E.StartIn(new_email="new@shop.fr", password="nope", method="link"), None, OWNER),
-          400, "mot de passe")
     fails("une adresse invalide est refusée",
           lambda: E.start(E.StartIn(new_email="pas-une-adresse", password="Bon!Motdepasse1"), None, OWNER), 400)
     fails("sa propre adresse n'a rien à changer",
@@ -72,15 +69,34 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           lambda: E.start(E.StartIn(new_email="pris@autre.fr", password="Bon!Motdepasse1"), None, OWNER), 409)
     check("rien n'a été envoyé pour autant", sent == [])
 
+    import re as _re
+
+    def code_in(mail):
+        return _re.search(r"letter-spacing:7px;color:#0B1C3F\">(\d{6})<", mail["html"]).group(1)
+
+    # --- no password: the current address proves it first (2026-10-16) -------
+    print("\n— sans mot de passe : d'abord l'adresse actuelle —")
+    r = E.start(E.StartIn(new_email="new@shop.fr", method="code"), None, OWNER)
+    check("aucun mot de passe demandé", r["ok"] and r["step"] == "current")
+    check("un code part vers l'adresse ACTUELLE", sent[-1]["to"] == "old@shop.fr" and "new@shop.fr" not in sent[-1]["html"])
+    check("rien vers la nouvelle adresse à ce stade", all(m["to"] != "new@shop.fr" for m in sent))
+    owner_code = code_in(sent[-1])
+    row = db.email_changes.find_one({"user_email": "old@shop.fr", "used": False})
+    check("le code n'est pas stocké en clair", len(row["owner_code_hash"]) == 64 and owner_code not in str(row))
+    check("la page sait qu'on attend l'adresse actuelle", E.state(OWNER)["pending"]["step"] == "current")
+    fails("confirmer avant l'adresse actuelle est refusé",
+          lambda: E.confirm(E.ConfirmIn(code="123456"), None, OWNER), 400, "adresse actuelle")
+    fails("un mauvais code de l'adresse actuelle ne passe pas",
+          lambda: E.verify_current(E.OwnerCodeIn(code="000000" if owner_code != "000000" else "111111"), None, OWNER), 400)
+    v = E.verify_current(E.OwnerCodeIn(code=owner_code), None, OWNER)
+    check("le bon code ouvre l'étape suivante", v["step"] == "new" and v["sent_to"] == "new@shop.fr")
+
     # --- the code route -------------------------------------------------------
     print("\n— par code —")
-    r = E.start(E.StartIn(new_email="new@shop.fr", password="Bon!Motdepasse1", method="code"), None, OWNER)
-    check("la demande part vers la NOUVELLE adresse", r["sent_to"] == "new@shop.fr" and sent[-1]["to"] == "new@shop.fr")
-    check("l'ancienne adresse ne reçoit rien à ce stade", all(m["to"] != "old@shop.fr" for m in sent))
+    check("la demande part ensuite vers la NOUVELLE adresse", sent[-1]["to"] == "new@shop.fr")
     row = db.email_changes.find_one({"user_email": "old@shop.fr", "used": False})
     check("le code n'est pas stocké en clair", "token_hash" in row and len(row["token_hash"]) == 64)
-    import re as _re
-    code = _re.search(r"letter-spacing:7px;color:#0B1C3F\">(\d{6})<", sent[-1]["html"]).group(1)
+    code = code_in(sent[-1])
     check("le code fait six chiffres", len(code) == 6 and code.isdigit())
 
     fails("un mauvais code ne passe pas",
@@ -107,8 +123,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # --- the link route -------------------------------------------------------
     print("\n— par lien —")
     sent.clear()
-    r2 = E.start(E.StartIn(new_email="encore@shop.fr", password="Bon!Motdepasse1", method="link"), None, NEW)
-    check("le lien part vers la nouvelle adresse", r2["method"] == "link" and sent[-1]["to"] == "encore@shop.fr")
+    r2 = E.start(E.StartIn(new_email="encore@shop.fr", method="link"), None, NEW)
+    check("d'abord un code vers l'adresse actuelle", r2["method"] == "link" and sent[-1]["to"] == "new@shop.fr")
+    E.verify_current(E.OwnerCodeIn(code=code_in(sent[-1])), None, NEW)
+    check("le lien part vers la nouvelle adresse", sent[-1]["to"] == "encore@shop.fr")
     tok = _re.search(r"/changer-email\?token=([\w\-]+)", sent[-1]["html"]).group(1)
     check("le jeton est long", len(tok) > 30)
     E.confirm(E.ConfirmIn(token=tok), None, NEW)
@@ -133,6 +151,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     E.start(E.StartIn(new_email="c@shop.fr", password="Bon!Motdepasse1", method="code"), None, LAST)
     E.cancel(None, LAST)
     check("annuler ferme la demande", E._pending("encore@shop.fr") is None)
+
+    print("\n— un compte Google / Apple, sans mot de passe —")
+    db.users.insert_one({"email": "google@shop.fr", "role": "business_owner", "tenant_id": "t1"})
+    G = TokenData(email="google@shop.fr", role="business_owner", tenant_id="t1")
+    rg = E.start(E.StartIn(new_email="g2@shop.fr", method="code"), None, G)
+    check("il peut changer son adresse (code vers l'adresse actuelle)", rg["step"] == "current" and sent[-1]["to"] == "google@shop.fr")
 
     print("\n— la permission —")
     check("« Changer l'adresse e-mail » est une permission à part entière",

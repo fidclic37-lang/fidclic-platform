@@ -12,15 +12,18 @@ WHY IT EXISTS
     could change it — a typo at registration meant living with it, or a new
     business with no history.
 
-THE FLOW
-    1. start   — the new address, the account's password, and whether the
-                 proof arrives as a link or as a code. FidClic mails it to the
-                 NEW address: if it was mistyped, nothing arrives and nothing
-                 changes. The current address keeps working throughout.
-    2. confirm — the link's token, or the code. Single use, 30 minutes.
-    3. done    — the address moves, every other session is closed, and the OLD
-                 address is told (that notice is what makes a stolen session
-                 visible to the real owner).
+THE FLOW (no password since 2026-10-16: many businesses sign up with Google
+from Chrome and have none, or don't remember it)
+    1. start          — the new address and whether its proof will be a link
+                        or a code. A 6-digit code goes to the CURRENT address:
+                        whoever sits at an open session must also read the
+                        account's mailbox. Nothing goes to the new one yet.
+    2. verify-current — that code. Then the link or code goes to the NEW
+                        address: if it was mistyped, nothing arrives and
+                        nothing changes. The current address keeps working.
+    3. confirm        — the link's token, or the code. Single use, 30 minutes.
+    4. done           — the address moves, every other session is closed, and
+                        the OLD address is told.
 
 WHAT IS *NOT* REWRITTEN
     History keeps the address that did the thing. An audit line saying
@@ -45,7 +48,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from auth import require_role, TokenData, verify_password
+from auth import require_role, TokenData
 
 router = APIRouter(tags=["account-email"])
 _db = None
@@ -132,6 +135,9 @@ def state(token_data: TokenData = Depends(require_role(READERS, partial_ok=True)
     p = _pending(token_data.email)
     return {"email": token_data.email,
             "pending": ({"new_email": p["new_email"], "method": p["method"],
+                         # « current »: waiting for the current address's code; « new »: for the new one's
+                         "step": "new" if p.get("owner_verified") else "current",
+                         "current_to": _mask(token_data.email),
                          "expires_at": _aware(p["expires_at"]).isoformat()} if p else None),
             "ttl_minutes": TTL_MIN}
 
@@ -141,8 +147,8 @@ def state(token_data: TokenData = Depends(require_role(READERS, partial_ok=True)
 # ---------------------------------------------------------------------------
 class StartIn(BaseModel):
     new_email: str = Field(..., max_length=200)
-    password: str = Field(..., max_length=200)
-    method: str = Field("link")           # "link" | "code"
+    password: Optional[str] = Field(None, max_length=200)   # no longer asked (2026-10-16), ignored
+    method: str = Field("link")           # "link" | "code" — for the NEW address
 
 
 @router.post("/api/security/email/start")
@@ -156,12 +162,6 @@ def start(body: StartIn, request: Request = None,
         raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
     if new_email == (me.get("email") or "").lower():
         raise HTTPException(status_code=400, detail="C'est déjà l'adresse de ce compte.")
-    # A social account has no password to check against — it must set one first.
-    if not me.get("hashed_password"):
-        raise HTTPException(status_code=400,
-                            detail="Ce compte se connecte avec Google ou Apple. Créez d'abord un mot de passe.")
-    if not verify_password(body.password or "", me["hashed_password"]):
-        raise HTTPException(status_code=400, detail="Mot de passe incorrect.")
     if _taken(new_email, me["email"]):
         raise HTTPException(status_code=409, detail="Cette adresse est déjà utilisée par un autre compte.")
 
@@ -174,17 +174,73 @@ def start(body: StartIn, request: Request = None,
     _db.email_changes.update_many({"user_email": me["email"], "used": False},
                                   {"$set": {"used": True, "superseded_at": _now()}})
 
-    proof = secrets.token_urlsafe(32) if method == "link" else f"{secrets.randbelow(1000000):06d}"
+    # first, the CURRENT address proves it is the account's owner
+    owner_code = f"{secrets.randbelow(1000000):06d}"
     _db.email_changes.insert_one({
         "id": secrets.token_urlsafe(12), "user_email": me["email"], "new_email": new_email,
-        "method": method, "token_hash": _hash(proof), "attempts": 0, "used": False,
+        "method": method, "owner_code_hash": _hash(owner_code), "owner_verified": False,
+        "token_hash": None, "attempts": 0, "used": False,
         "tenant_id": getattr(token_data, "tenant_id", None),
         "created_at": _now(), "expires_at": _now() + timedelta(minutes=TTL_MIN),
     })
-    _send_proof(new_email, proof, method, _shop_name(token_data))
+    _send_owner_code(me["email"], new_email, owner_code, _shop_name(token_data))
     _audit("security.email_change_requested", token_data, request,
            meta={"to": new_email, "method": method})
-    return {"ok": True, "method": method, "sent_to": new_email, "ttl_minutes": TTL_MIN}
+    return {"ok": True, "step": "current", "method": method, "current_to": _mask(me["email"]),
+            "new_email": new_email, "ttl_minutes": TTL_MIN}
+
+
+def _mask(email: str) -> str:
+    name, _, dom = (email or "").partition("@")
+    return f"{name[:2]}…@{dom}" if dom else email
+
+
+def _send_owner_code(to: str, new_email: str, code: str, shop: str) -> None:
+    """To the CURRENT address: the code that proves the request is the owner's."""
+    from services import mailer
+    mailer.send(
+        to=to,
+        subject="Code pour changer l'adresse e-mail de votre compte FidClic",
+        html=f"""<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;color:#1C1917">
+          <p>Bonjour,</p>
+          <p>Une demande a été faite pour remplacer l'adresse de connexion du compte FidClic
+             ({shop}) par <strong>{_mask(new_email)}</strong>. Pour la valider, saisissez ce code,
+             valable <strong>{TTL_MIN} minutes</strong> :</p>
+          <p style="text-align:center;margin:24px 0;font-size:30px;font-weight:bold;
+                    letter-spacing:7px;color:#0B1C3F">{code}</p>
+          <p style="font-size:12px;color:#57534E">Vous n'êtes pas à l'origine de cette demande ?
+          Ne donnez ce code à personne : sans lui, rien ne change.</p>
+        </div>""")
+
+
+# ---------------------------------------------------------------------------
+# 1b — the current address's code, then the proof to the new one
+# ---------------------------------------------------------------------------
+class OwnerCodeIn(BaseModel):
+    code: str = Field(..., max_length=12)
+
+
+@router.post("/api/security/email/verify-current")
+def verify_current(body: OwnerCodeIn, request: Request = None,
+                   token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    req = _pending(token_data.email)
+    if not req:
+        raise HTTPException(status_code=400, detail="Aucune demande en cours. Recommencez.")
+    if req.get("owner_verified"):
+        return {"ok": True, "step": "new", "method": req["method"], "sent_to": req["new_email"]}
+    if int(req.get("attempts") or 0) >= MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Trop d'essais. Recommencez la demande.")
+    if _hash((body.code or "").strip()) != req.get("owner_code_hash"):
+        _db.email_changes.update_one({"id": req["id"]}, {"$inc": {"attempts": 1}})
+        raise HTTPException(status_code=400, detail="Code incorrect.")
+    method = req["method"]
+    proof = secrets.token_urlsafe(32) if method == "link" else f"{secrets.randbelow(1000000):06d}"
+    _db.email_changes.update_one({"id": req["id"]}, {"$set": {
+        "owner_verified": True, "owner_verified_at": _now(), "token_hash": _hash(proof), "attempts": 0,
+        "expires_at": _now() + timedelta(minutes=TTL_MIN)}})
+    _send_proof(req["new_email"], proof, method, _shop_name(token_data))
+    _audit("security.email_change_owner_verified", token_data, request, meta={"to": req["new_email"]})
+    return {"ok": True, "step": "new", "method": method, "sent_to": req["new_email"], "ttl_minutes": TTL_MIN}
 
 
 def _send_proof(to: str, proof: str, method: str, shop: str) -> None:
@@ -232,6 +288,9 @@ def confirm(body: ConfirmIn, request: Request = None,
     req = _pending(token_data.email)
     if not req:
         raise HTTPException(status_code=400, detail="Aucune demande en cours. Recommencez.")
+    if not req.get("owner_verified") or not req.get("token_hash"):
+        raise HTTPException(status_code=400,
+                            detail="Saisissez d'abord le code reçu sur votre adresse actuelle.")
     if int(req.get("attempts") or 0) >= MAX_ATTEMPTS:
         raise HTTPException(status_code=429, detail="Trop d'essais. Recommencez la demande.")
     if _hash(proof) != req["token_hash"]:
