@@ -123,9 +123,12 @@ _COMMON_READ = ("/api/owner/branches", "/api/owner/tenant", "/api/owner/plan-acc
 # a session id and swallowed « caisse » (features/security_page). Being common
 # exempts it from the PAGE permissions, not from its own role check: the
 # endpoint still answers only the owner and an administrateur.
+# « Masquer » on the trial banner is the account's own choice, like its
+# preferences — not a page permission (the endpoint still answers only an
+# owner or a manager).
 _COMMON_ANY = ("/api/owner/support", "/api/me/", "/api/security/2fa", "/api/security/activity",
                "/api/security/overview", "/api/security/password", "/api/security/sessions",
-               "/api/security/caisse")
+               "/api/security/caisse", "/api/owner/trial-status/")
 
 # A few reads that other pages need for their own work (never a page's list):
 # the scan reads the card's rules and the product picker, a campaign reads the

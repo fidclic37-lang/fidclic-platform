@@ -3320,19 +3320,49 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _trial_banner_hidden(email: str, tenant: Dict[str, Any]) -> bool:
+    """« Masquer » on the quiet trial pill, for good and on every device (user,
+    2026-10-16: the cross hid it until the next refresh). Kept per account, so
+    the owner's phone and laptop agree. A trial that STARTED after they hid it
+    is a new trial: its countdown is shown again."""
+    u = db.users.find_one({"email": email}, {"_id": 0, "trial_banner_hidden_at": 1}) or {}
+    at = _as_aware(u.get("trial_banner_hidden_at"))
+    if not at:
+        return False
+    started = _as_aware(tenant.get("trial_started_at"))
+    return not (started and started > at)
+
+
 @app.get("/api/owner/trial-status")
 def owner_trial_status(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
     """Returns the current trial countdown for the logged-in owner's tenant.
 
     The UI (BillingBanner + Settings) polls this on dashboard load and uses
-    the values to render: a discreet pill while there's >3 days left, a
-    full warning banner inside the reminder window (≤3 days), and a
-    blocking modal once `is_expired` flips to true.
+    the values to render: a discreet pill while there is more than
+    trial_reminder_days_before left, a full warning banner inside the reminder
+    window, and a blocking modal once `is_expired` flips to true.
+    `banner_hidden`: this account asked never to see the quiet pill again —
+    the reminder and the expired banner carry no cross and ignore it.
     """
     tenant = db.tenants.find_one({"id": token_data.tenant_id})
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    return _compute_trial_state(tenant)
+    state = _compute_trial_state(tenant)
+    state["banner_hidden"] = _trial_banner_hidden(token_data.email, tenant)
+    return state
+
+
+@app.post("/api/owner/trial-status/hide-banner")
+def owner_hide_trial_banner(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """The cross on the quiet trial pill: hide it on every device, for good."""
+    tenant = db.tenants.find_one({"id": token_data.tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    db.users.update_one({"email": token_data.email},
+                        {"$set": {"trial_banner_hidden_at": datetime.now(timezone.utc)}})
+    state = _compute_trial_state(tenant)
+    state["banner_hidden"] = True
+    return state
 
 
 @app.post("/api/owner/upgrade-plan")
