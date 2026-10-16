@@ -284,12 +284,17 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
 def _series(rows, r: Reader, money: bool = False) -> List[Dict[str, Any]]:
     slots = P.slots(r.start, r.end, r.days)
     per_day = {x["date"]: 0.0 for x in slots}
+    visits = {x["date"]: 0 for x in slots}
     for v in rows:
         t = _aware(v.get("visit_time"))
         key = P.key_of(t, r.days) if t else None
         if key in per_day:
             per_day[key] += float(v.get("amount_paid") or 0) if money else 1
-    return [{**x, "value": _money(per_day[x["date"]]) if money else int(per_day[x["date"]])}
+            visits[key] += 1
+    # On a revenue series, « visits » is what the point's card shows under the
+    # figure — the visits behind that day, and with them the basket.
+    return [{**x, "value": _money(per_day[x["date"]]) if money else int(per_day[x["date"]]),
+             **({"visits": visits[x["date"]]} if money else {})}
             for x in slots]
 
 

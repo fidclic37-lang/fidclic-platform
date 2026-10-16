@@ -236,12 +236,17 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     # ---- the two charts --------------------------------------------------------
     per_day_rev = {s["date"]: 0.0 for s in P.slots(start, end, days)}
     labels = {s["date"]: s.get("label") for s in P.slots(start, end, days)}
+    per_day_visits = {d: 0 for d in per_day_rev}
     for v in rows:
         t = _aware(v.get("visit_time"))
         k = P.key_of(t, days) if t else None
         if k in per_day_rev:
             per_day_rev[k] += float(v.get("amount_paid") or 0)
-    revenue_series = [{"date": d, "label": labels[d], "value": _money(per_day_rev[d])} for d in sorted(per_day_rev)]
+            per_day_visits[k] += 1
+    # « visits » is what the point's card shows under the figure — the visits
+    # behind that day's revenue, and with them the basket (user, 2026-10-16).
+    revenue_series = [{"date": d, "label": labels[d], "value": _money(per_day_rev[d]),
+                       "visits": per_day_visits[d]} for d in sorted(per_day_rev)]
 
     per_day_new = {d: 0 for d in per_day_rev}
     for c in customers:

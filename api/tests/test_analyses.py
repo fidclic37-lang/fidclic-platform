@@ -181,6 +181,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the revenue series adds up to the figure",
           round(sum(p["value"] for p in v["revenue_series"]), 2) == 120.0)
     check("one point per day of the window", len(v["revenue_series"]) == 30)
+    # each point also says the visits behind it, for the card a click opens
+    check("every revenue point carries its visits",
+          all(isinstance(p.get("visits"), int) for p in v["revenue_series"]))
     check("the comparison reaches the window before", strip["revenue"]["delta_pct"] == 100)
     check("the overview carries the products panel", v["products"][0]["name"] == "Café latte")
     check("and the hours grid", v["hours"]["peak"] >= 1)
