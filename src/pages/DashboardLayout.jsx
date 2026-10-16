@@ -18,7 +18,7 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Headphones, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown, ClipboardCheck,
-  Receipt, Eye, ShieldCheck, Lock, Menu, X as XIcon,
+  Receipt, Eye, ShieldCheck, Lock, Menu, Link2, X as XIcon,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
@@ -102,6 +102,10 @@ const PERM_NAV = [
   { keys: ['history'], to: '/dashboard/history', icon: History, label: 'Historique' },
   { keys: ['settings', 'billing'], to: '/dashboard/parametres', icon: Settings2, label: 'Paramètres', also: ['/dashboard/settings'] },
   { keys: ['team'], to: '/dashboard/parametres/equipe', icon: Users, label: 'Équipe & accès' },
+  // « Mon lien d'inscription » — only for an account that has the permission
+  // without Paramètres, which already leads there (2026-10-16).
+  { keys: ['employee_links'], to: '/dashboard/parametres/lien-inscription', icon: Link2,
+    label: "Mon lien d'inscription", unless: 'settings' },
 ];
 
 const CRM_ITEMS = [
@@ -629,7 +633,8 @@ const DashboardLayout = () => {
           )}
           {myLevels && (
             <>
-              {PERM_NAV.filter((n) => n.keys.some((k) => (myLevels[k] || 'none') !== 'none')).map((n) => (
+              {PERM_NAV.filter((n) => n.keys.some((k) => (myLevels[k] || 'none') !== 'none')
+                && !(n.unless && (myLevels[n.unless] || 'none') !== 'none')).map((n) => (
                 <NavLink key={n.to} to={n.to} icon={n.icon} label={n.label} currentPath={currentPath} role={role} collapsed={rail} alsoActive={n.also} />
               ))}
               <SignOutNavItem onClick={logout} collapsed={rail} />

@@ -369,6 +369,8 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         # gave day and month only
         "age": _age(cust),
         "source": _source_key(cust), "source_label": _source_label(cust),
+        # who brought them, and when (Clients › les 3 points, 2026-10-16)
+        "brought_by": _brought_by(cust),
         # « Active », « Supprimée », « Retirée d'Apple Wallet » (user, 2026-10-09)
         "card": _card_state(cust),
         # paused by the business (Clients › Mettre en pause): no message of any kind
@@ -384,6 +386,16 @@ def _age(cust: Dict[str, Any]) -> Optional[int]:
 def _card_state(cust: Dict[str, Any]) -> Dict[str, Any]:
     from features import card_status as CS
     return CS.state_of(cust)
+
+
+def _brought_by(cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The employee whose link or QR this client signed up through — read from
+    the one field that decides it (acquisition_source), never a second copy."""
+    try:
+        from features import signup_agents as SA
+        return SA.brought_by(cust)
+    except Exception:
+        return None
 
 
 def _source_key(cust: Dict[str, Any]) -> str:

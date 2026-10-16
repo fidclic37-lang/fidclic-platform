@@ -35,6 +35,7 @@ MODULES = [
     "features.preferences",
     "features.platform_access",
     "features.platform_reset",
+    "features.signup_agents",            # Lien d'inscription par employé (2026-10-16)
     "features.signup_verify",            # sign-up code by e-mail or SMS          # Super admin › remise à zéro (fresh start)
     "features.platform_security",
     "features.crm",

@@ -8,12 +8,17 @@ export const PAGE_ROUTES = [
   ['/dashboard/referral', 'referral'], ['/dashboard/map', 'geolocation'], ['/dashboard/catalogue', 'catalogue'],
   ['/dashboard/insights', 'insights'], ['/dashboard/ai-assistant', 'ai'], ['/dashboard/history', 'history'],
   ['/dashboard/parametres/equipe', 'team'], ['/dashboard/parametres/abonnement', 'billing'],
+  // « Liens d'inscription par employé » (2026-10-16): its own permission, so an
+  // employee can be given it without the rest of Paramètres. Listed BEFORE
+  // /dashboard/parametres, which would otherwise swallow it.
+  ['/dashboard/parametres/lien-inscription', 'employee_links'],
   ['/dashboard/parametres', 'settings'], ['/dashboard/settings', 'settings'],
 ];
 const ORDER = ['dashboard', 'scan', 'analytics', 'customers', 'campaigns', 'card', 'automations', 'segmentation',
-  'referral', 'geolocation', 'catalogue', 'insights', 'ai', 'history', 'settings', 'team', 'billing'];
+  'referral', 'geolocation', 'catalogue', 'insights', 'ai', 'history', 'settings', 'team', 'billing',
+  'employee_links'];
 const HOME = { dashboard: '/dashboard', team: '/dashboard/parametres/equipe', billing: '/dashboard/parametres/abonnement',
-  settings: '/dashboard/parametres' };
+  settings: '/dashboard/parametres', employee_links: '/dashboard/parametres/lien-inscription' };
 
 export const hasPagePerms = (user) => Boolean(user && user.role !== 'business_owner' && user.page_perms
   && typeof user.page_perms === 'object');

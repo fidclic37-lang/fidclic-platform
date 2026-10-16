@@ -457,6 +457,12 @@ export const ownerAPI = {
   updateTenant: (data) => api.put('/owner/tenant', data),
   // Trial countdown + plan catalogue. BillingBanner polls this on every
   // dashboard load to render the countdown / reminder / expired states.
+  // Liens d'inscription par employé (Paramètres › Lien d'inscription, 2026-10-16)
+  signupAgents: () => api.get('/owner/signup-agents'),
+  addSignupAgent: (body) => api.post('/owner/signup-agents', body),
+  editSignupAgent: (id, body) => api.put(`/owner/signup-agents/${id}`, body),
+  archiveSignupAgent: (id) => api.delete(`/owner/signup-agents/${id}`),
+  sendSignupAgentLinks: (agentIds) => api.post('/owner/signup-agents/send', { agent_ids: agentIds }),
   getTrialStatus: () => api.get('/owner/trial-status'),
   hideTrialBanner: () => api.post('/owner/trial-status/hide-banner'),
   // Self-serve plan switcher (no-Stripe fallback path). Pass plan='silver'|'gold'|'vip'.

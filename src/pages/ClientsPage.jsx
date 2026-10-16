@@ -895,7 +895,16 @@ export default function ClientsPage() {
                           </button>
                           {menuFor === r.id && (
                             <span onClick={(e) => e.stopPropagation()} style={{ ...(menuPos || {}), maxHeight: 'calc(var(--fit-vh, 1vh) * 100 - 16px)' }}
-                                  className="fixed z-50 flex w-[220px] flex-col overflow-y-auto rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+                                  className="fixed z-50 flex w-[232px] flex-col overflow-y-auto rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+                              {/* qui l'a amené — l'employé dont le lien ou le QR a servi, et quand (2026-10-16) */}
+                              {r.brought_by && (
+                                <span className="mb-1 block border-b border-[#F1F5F9] px-3 pb-2 pt-1.5 text-[11.5px] leading-snug text-[#64748B]">
+                                  Apporté par{' '}
+                                  <strong className="font-semibold text-[#0B1C3F]">{r.brought_by.name}</strong>
+                                  {r.brought_by.archived ? ' (archivé)' : ''}
+                                  {r.brought_by.at ? ` le ${new Date(r.brought_by.at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}
+                                </span>
+                              )}
                               <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'purchases', id: r.id }); }}
                                       className="px-3 py-2 text-left text-[12.5px] font-semibold text-[#334155] hover:bg-[#F4F7FC]">
                                 Historique d&apos;achats

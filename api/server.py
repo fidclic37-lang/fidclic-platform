@@ -6667,12 +6667,35 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
     # filed as « QR code en magasin », so a WhatsApp signup read as an in-store
     # one (user, 2026-10-08). Unknown now stays unknown.
     from services import sources as _src
-    src_key = _src.normalize(req.acquisition_source)
-    req.acquisition_source = src_key if src_key in _src.SIGNUP_SOURCES else None
+    raw_src = req.acquisition_source
+    src_key = _src.normalize(raw_src)
     t = _tenant_by_slug(slug)
     if not t:
         raise HTTPException(status_code=404, detail="Tenant not found")
     tid = t["id"]
+    # An employee's own link or QR (/inscription/<compte>/e-marie): the word is
+    # read HERE, against this account — a word is never an id, and an archived
+    # or unknown word brings no employee at all rather than someone else's
+    # (user, 2026-10-16: « ek employee k qr se signup kiya and woh dusre
+    # employee k hisse mein dikha » must be impossible).
+    agent = None
+    try:
+        from features import signup_agents as _SA
+        if _src.is_agent(src_key):
+            found = _SA.agent_by_id(tid, _src.agent_id(src_key))
+            agent = found if found and not found.get("archived_at") else None
+        elif not src_key and raw_src:
+            agent = _SA.resolve_word(tid, raw_src)
+        if agent:
+            src_key = _SA.source_key(agent)
+    except Exception as _e:                 # noqa: BLE001 — a signup never fails on this
+        print(f"join: employee link not read ({_e})")
+        agent = None
+    req.acquisition_source = src_key if (agent or src_key in _src.SIGNUP_SOURCES) else None
+    # the employee's own establishment decides, not the address the link was
+    # pasted into: a client brought by Marie of Palissy is a Palissy client
+    if agent and agent.get("store_id"):
+        req.store = agent["store_id"]
 
     # Who is already a customer here (user, 2026-10-09).
     #   • A phone number is one customer (« 06 12… », « +33 6 12… » alike —
