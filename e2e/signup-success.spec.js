@@ -4,7 +4,10 @@
 //     Google's, and neither offers « Voir ma carte » — the card goes to the
 //     Wallet; a computer gets « Voir ma carte »;
 //   • the card shown is the very pass the Wallet gets (GET …/pass-view), not
-//     a drawing of an older layout.
+//     a drawing of an older layout;
+//   • the button is on screen the moment the page is (user, 2026-10-16: it sat
+//     under a card 500 px tall and needed a scroll), and the pass is got ready
+//     without waiting for that card to be drawn.
 // The local server has no Apple / Google keys: /api/wallet/config is answered
 // here as on production. Runs against the local server only (scripts/dev_local.py).
 import { test, expect } from '@playwright/test';
@@ -12,6 +15,7 @@ import { test, expect } from '@playwright/test';
 const SLUG = 'cafe-lumiere';
 const UA = {
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+  iphone27: 'Mozilla/5.0 (iPhone; CPU iPhone OS 27_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1',
   android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36',
 };
 
@@ -56,3 +60,66 @@ test.describe('a computer', () => {
     await expect(page.getByText(/Ajouter à (Apple|Google) Wallet/)).toHaveCount(0);
   });
 });
+
+
+// The button must need no scroll — it is the one thing the customer has to do.
+for (const [size, w, h] of [['iPhone 14', 390, 844], ['iPhone SE', 375, 667]]) {
+  test.describe(`${size}`, () => {
+    test.use({ userAgent: UA.iphone, viewport: { width: w, height: h } });
+    test('« Ajouter à Apple Wallet » is on screen without scrolling', async ({ page }) => {
+      await signUp(page);
+      // measured once the card is really drawn: the iOS 27 poster is ~500 px
+      // tall, and that is what used to push the button off screen
+      const card = page.locator('[translate="no"]').first();
+      await expect(card).toBeVisible({ timeout: 15000 });
+      await expect.poll(async () => (await card.boundingBox())?.height || 0,
+        { message: 'the card has its real height' }).toBeGreaterThan(300);
+      const btn = page.getByText(/Apple Wallet/).first();
+      await expect(btn).toBeVisible();
+      const box = await btn.boundingBox();
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+      expect(box.y).toBeGreaterThan(0);
+      expect(box.y + box.height, `the button ends at ${Math.round(box.y + box.height)} px of ${h}`).toBeLessThanOrEqual(h);
+      // and the card is below it, not above
+      expect((await card.boundingBox()).y).toBeGreaterThan(box.y);
+    });
+  });
+}
+
+test.describe('a slow card', () => {
+  test.use({ userAgent: UA.iphone, viewport: { width: 390, height: 844 } });
+  test('the pass is got ready without waiting for the card to be drawn', async ({ page }) => {
+    // the card's own view takes 6 s; the button must not wait for it
+    await page.route('**/pass-view**', async (r) => {
+      await new Promise((ok) => setTimeout(ok, 6000));
+      await r.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"slow"}' });
+    });
+    const prepared = [];
+    page.on('request', (q) => { if (q.url().includes('wallet-prepare')) prepared.push(Date.now()); });
+    const t0 = Date.now();
+    await signUp(page);
+    await expect(page.getByText(/Apple Wallet/).first()).toBeVisible();
+    await expect.poll(() => prepared.length, { timeout: 4000, message: 'wallet-prepare asked for while the card is still loading' }).toBeGreaterThan(0);
+    expect(prepared[0] - t0, 'prepared well before the 6 s card').toBeLessThan(5000);
+  });
+});
+
+
+// The « iOS 27 / iOS 26 et avant » switch is the owner's, to compare the two
+// designs (e2e/card-poster.spec.js still clicks it there). A customer sees the
+// view their own phone will open, and no switch at all (user, 2026-10-16).
+for (const [os, ua, backOfCard] of [['an iPhone on iOS 18', UA.iphone, true],
+  ['an iPhone on iOS 27', UA.iphone27, false]]) {
+  test.describe(os, () => {
+    test.use({ userAgent: ua, viewport: { width: 390, height: 844 } });
+    test('no iOS switch, and the card its own Wallet will show', async ({ page }) => {
+      await signUp(page);
+      await expect(page.locator('[translate="no"]').first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByRole('button', { name: 'iOS 26 et avant', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'iOS 27', exact: true })).toHaveCount(0);
+      // « Au dos de la carte » belongs to the iOS 26 card only
+      await expect(page.getByRole('button', { name: /Au dos de la carte/ }))
+        .toHaveCount(backOfCard ? 1 : 0);
+    });
+  });
+}

@@ -24,6 +24,14 @@ import { ActionTile } from './wallet/walletLook';
  * name in bold, the progress, the footer, the tiles under the pass — with a
  * switch to see the card iOS 26 and earlier show instead.
  */
+/* What this phone's Wallet really opens on: iOS 27 shows the poster, iOS 26
+   and before the card. A customer sees that one and no switch (user,
+   2026-10-16) — the switch is the owner's, to compare the two designs. */
+export function showsPoster(ua = (typeof navigator === 'undefined' ? '' : navigator.userAgent)) {
+  const m = /\bOS (\d+)[_ ]/.exec(ua);          // « CPU iPhone OS 26_0 like Mac OS X »
+  return !m || Number(m[1]) >= 27;
+}
+
 function Field({ f, s, align = 'left', big = false, labelColor, color }) {
   const val = f.value === undefined || f.value === null ? '' : String(f.value);
   return (
@@ -119,11 +127,13 @@ function PosterPass({ p, s, width, bc, colors = {} }) {
   );
 }
 
-export default function WalletPassLive({ card = {}, width = 292, visits = 3, barcodeId = null, fallback = null, onDone }) {
+export default function WalletPassLive({ card = {}, width = 292, visits = 3, barcodeId = null, fallback = null, onFail }) {
   const [pass, setPass] = useState(null);
   const [error, setError] = useState(false);
   const [back, setBack] = useState(false);
-  const [classic, setClassic] = useState(false);     // iOS 26 view of a poster pass
+  // iOS 26 view of a poster pass. A customer (barcodeId) gets the view their
+  // own phone will show, with no switch to change it.
+  const [classic, setClassic] = useState(barcodeId ? !showsPoster() : false);
   const seq = useRef(0);
   const key = JSON.stringify(card);
 
@@ -133,8 +143,9 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3, bar
     const timer = setTimeout(() => {
       load()
         .then((r) => { if (my === seq.current) { setPass(r.data); setError(false); } })
-        .catch(() => { if (my === seq.current) setError(true); })
-        .finally(() => { if (my === seq.current) onDone?.(); });
+        // onFail: the page reads /card/<id> for its own drawing of the card
+        // only then — one request fewer on the signup's critical path
+        .catch(() => { if (my === seq.current) { setError(true); onFail?.(); } });
     }, barcodeId ? 0 : 800);         // after typing stops: one preview, not one per keystroke
     return () => clearTimeout(timer);
   }, [key, visits, barcodeId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -158,7 +169,7 @@ export default function WalletPassLive({ card = {}, width = 292, visits = 3, bar
   const bc = pass.barcode || {};
   const linear = !SQUARE_CODES.has(bc.format || 'PKBarcodeFormatQR');
   const poster = pass.poster && !classic;
-  const osSwitch = pass.poster && (
+  const osSwitch = pass.poster && !barcodeId && (
     <div className="mb-2 flex justify-center gap-1 text-[11px] font-semibold">
       {[['iOS 27', false], ['iOS 26 et avant', true]].map(([label, v]) => (
         <button key={label} type="button" onClick={() => setClassic(v)}

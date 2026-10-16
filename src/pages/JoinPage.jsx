@@ -122,12 +122,12 @@ function Success({ result, tenant }) {
   // a Wallet button for this phone? (null: not known yet) — « Voir ma carte »
   // only without one (user, 2026-10-13, BUG-008: the card must go to the Wallet)
   const [walletShown, setWalletShown] = useState(null);
-  // the Wallet is got ready once the card is on screen (or after 4 s at most)
-  const [cardDone, setCardDone] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setCardDone(true), 4000); return () => clearTimeout(t); }, []);
-  useEffect(() => {
-    api.get(`/card/${bc}`).then(({ data: d }) => setData(d)).catch(() => setData(null));
-  }, [bc]);
+  // /card/<id> is read only if the live pass cannot be drawn (onFail below):
+  // the page that works needs the card's own view and nothing else.
+  const ownDrawing = () => api.get(`/card/${bc}`).then(({ data: d }) => setData(d)).catch(() => setData(null));
+  // the form was scrolled down: the page opens on « Félicitations » and its
+  // Wallet button, never halfway down (user, 2026-10-16)
+  useEffect(() => { window.scrollTo(0, 0); }, []);
   const say = (m) => { setToast(m); setTimeout(() => setToast(''), 3500); };
   // the card's public address — what the card's QR holds: a friend who opens
   // it gets the signup, with parrainage; the owner key never travels
@@ -156,12 +156,26 @@ function Success({ result, tenant }) {
       {tenant?.name && <p className="mt-1 text-[18px] font-semibold text-[#0B1C3F]">Bienvenue chez {tenant.name} !</p>}
       <p className="mt-1 text-[16px] text-[#64748B]">Votre carte de fidélité est prête.</p>
 
+      {/* « Ajouter à Apple / Google Wallet » comes first, where the thumb
+          already is (user, 2026-10-16: the button sat under a card 500 px tall,
+          off screen — the one thing the customer must do needed a scroll). The
+          card follows, to be looked at; it never holds the button back. */}
+      <div className="mx-auto mt-5 max-w-[360px] text-left">
+        <WalletButtons barcodeId={bc} onError={say} phoneOnly big onShown={setWalletShown} />
+        {walletShown === false && (
+          <Link to={ownerLink(bc, result.card_key)}
+                className="mt-4 flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
+            Voir ma carte <ArrowRight size={18} />
+          </Link>
+        )}
+      </div>
+
       {/* the card as the owner designed it — the very pass the Wallet gets
           (iOS 27 poster included), not a drawing of an older layout (BUG-008) */}
       <div className="mt-6 flex justify-center">
         <div className="w-fit">
           <WalletPassLive barcodeId={bc} width={Math.min(360, (typeof window !== 'undefined' ? window.innerWidth : 360) - 40)}
-                          onDone={() => setCardDone(true)}
+                          onFail={ownDrawing}
                           fallback={data?.card ? (
                             data.card.layout_style === 'wallet'
                               ? <WalletPassPreview customer={data.customer} tenant={data.tenant} card={data.card} width={360} />
@@ -171,7 +185,6 @@ function Success({ result, tenant }) {
       </div>
 
       <div className="mx-auto mt-5 max-w-[360px] space-y-3 text-left">
-        <WalletButtons barcodeId={bc} onError={say} phoneOnly onShown={setWalletShown} ready={cardDone} />
         <div className="grid grid-cols-3 gap-2">
           {[[Share2, 'Partager / copier', share], [Smartphone, 'Sur l’écran d’accueil', home], [Printer, 'Imprimer', () => window.print()]].map(([Icon, label, fn]) => (
             <button key={label} type="button" onClick={fn}
@@ -180,12 +193,6 @@ function Success({ result, tenant }) {
             </button>
           ))}
         </div>
-        {walletShown === false && (
-          <Link to={ownerLink(bc, result.card_key)}
-                className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-[#1463FF] text-[17px] font-semibold text-white shadow-[0_14px_30px_-14px_rgba(20,99,255,.8)] hover:bg-[#0F54E0]">
-            Voir ma carte <ArrowRight size={18} />
-          </Link>
-        )}
       </div>
       {toast && <p role="status" className="mx-auto mt-4 max-w-[360px] rounded-xl bg-[#0B1C3F] px-4 py-2.5 text-[13px] text-white">{toast}</p>}
     </div>

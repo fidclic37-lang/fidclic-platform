@@ -7,7 +7,10 @@ What made it slow, and what stops it now:
     (POST /api/card/<id>/wallet-prepare) and the tap gets the kept bytes;
     a visit or a design change since builds a fresh one;
   • Google: five calls to Google on every tap — now once; the link of a card
-    Google already has is signed locally, no call at all.
+    Google already has is signed locally, no call at all;
+  • the signup's « Ajouter à Apple Wallet » sits above the card now
+    (2026-10-16), so the pass and the card's own view are asked for at the same
+    instant — each image is built once and the other caller waits for it.
 
 Run: cd api && /usr/local/bin/python3 tests/test_wallet_speed.py
 """
@@ -149,6 +152,72 @@ def main():
     calls.clear()
     http("GET", f"/api/card/{BC}/google-wallet", headers=KEY)
     check("…then none again", calls == [])
+
+    print("\n4. Two requests at the same instant build one image, not two")
+    import threading
+    import time as _time
+    WP._IMG_CACHE.clear()
+    builds, outs = [], []
+    def slow():
+        builds.append(1)
+        _time.sleep(0.25)                     # as long as drawing a poster
+        return b"poster-bytes"
+    def ask():
+        outs.append(WP._cached("png_variants", ("one-and-the-same",), slow))
+    ths = [threading.Thread(target=ask) for _ in range(4)]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join()
+    check(f"four callers at once → one build ({len(builds)})", len(builds) == 1)
+    check("and all four get the image", outs == [b"poster-bytes"] * 4)
+    check("the lock is let go of afterwards", not WP._BUILDING)
+
+    print("\n5. The card's view and the pass at the same instant")
+    WP._IMG_CACHE.clear()
+    WP._PKPASS_MEM.clear()
+    db.pkpass_cache.delete_many({})
+    heavy = []
+    real_cached = WP._cached
+    def counting(kind, parts, make):
+        def wrapped():
+            heavy.append(kind)
+            return make()
+        return real_cached(kind, parts, wrapped)
+    WP._cached = counting
+    try:
+        got = {}
+        def both(name, method, url):
+            async def run():                  # a thread of its own needs a loop of its own
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app),
+                                             base_url="http://test") as ac:
+                    return await ac.request(method, url, headers=KEY)
+            loop = asyncio.new_event_loop()
+            try:
+                got[name] = loop.run_until_complete(run()).status_code
+            except Exception as exc:          # noqa: BLE001 — the check reports it
+                got[name] = repr(exc)[:80]
+            finally:
+                loop.close()
+        pair = [threading.Thread(target=both, args=("view", "GET", f"/api/card/{BC}/pass-view")),
+                threading.Thread(target=both, args=("prep", "POST", f"/api/card/{BC}/wallet-prepare?only=apple"))]
+        for t in pair:
+            t.start()
+        for t in pair:
+            t.join()
+        together = len(heavy)
+        check(f"both answered ({got})", got == {"view": 200, "prep": 200})
+        WP._IMG_CACHE.clear()
+        WP._PKPASS_MEM.clear()
+        db.pkpass_cache.delete_many({})
+        heavy.clear()
+        http("GET", f"/api/card/{BC}/pass-view", headers=KEY)
+        http("POST", f"/api/card/{BC}/wallet-prepare?only=apple", headers=KEY)
+        one_then_the_other = len(heavy)
+        check(f"at once costs no more image work than one after the other "
+              f"({together} vs {one_then_the_other})", together <= one_then_the_other)
+    finally:
+        WP._cached = real_cached
 
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
