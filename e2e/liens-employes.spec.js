@@ -61,6 +61,11 @@ test.describe.serial('liens par employé', () => {
     await expect(page.getByRole('button', { name: 'Personnaliser la page' })).toBeVisible();
     await expect(page.getByText('Un lien par employé')).toBeVisible();
     await expect(page.getByText("Classement de l'équipe")).toBeVisible();
+    // le chiffre d'affaires a été retiré du classement (user, 2026-10-16)
+    const ranking = page.getByRole('group', { name: 'Classer par' });
+    await expect(ranking.getByRole('button', { name: 'Ce mois-ci' })).toBeVisible();
+    await expect(ranking.getByRole('button', { name: 'Depuis le début' })).toBeVisible();
+    await expect(ranking.getByRole('button', { name: "Chiffre d'affaires" })).toHaveCount(0);
   });
 
   test('chaque employé a SON lien, et chaque client va au bon', async ({ page, request }) => {

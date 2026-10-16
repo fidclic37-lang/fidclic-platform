@@ -19,11 +19,12 @@ import { ownerAPI } from '../../lib/api';
  * `can_edit` and `mine` come from the server — this component only draws them.
  */
 const nf = (n) => new Intl.NumberFormat('fr-FR').format(n || 0);
-const money = (n) => `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n || 0)} €`;
+// Le chiffre d'affaires a été retiré du classement (user, 2026-10-16) : ce qui
+// compte ici est qui amène les clients. L'API le calcule toujours
+// (leaderboard().revenue), si on veut le remettre un jour.
 const MEASURES = [
   ['month', 'Ce mois-ci', (r) => nf(r.month)],
   ['total', 'Depuis le début', (r) => nf(r.total)],
-  ['revenue', "Chiffre d'affaires", (r) => money(r.revenue)],
 ];
 
 function Field({ label, value, onChange, placeholder, type = 'text', required = false, autoFocus = false }) {
@@ -292,7 +293,7 @@ export default function EmployeeLinks({ cardCls, CardHead, say, icons }) {
       {/* Classement */}
       <section className={`${cardCls} mt-4`}>
         <CardHead icon={TrendingUp} title="Classement de l'équipe"
-                  subtitle="Qui amène les clients. Choisissez ce que vous voulez voir : les inscrits du mois, le total depuis le début, ou ce que ces clients ont dépensé."
+                  subtitle="Qui amène les clients : les inscrits de ce mois-ci, ou le total depuis le début."
                   right={(
                     <div role="group" aria-label="Classer par" className="flex shrink-0 gap-1 rounded-lg bg-[#F1F5F9] p-1">
                       {MEASURES.map(([k, lab]) => (
