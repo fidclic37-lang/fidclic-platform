@@ -11,7 +11,9 @@ const H = 64;
 
 export default function BottomNav({ path, onMenu, canScan = true }) {
   useEffect(() => {
-    document.documentElement.style.setProperty('--fc-bottom-nav', `${H}px`);
+    // with the iPhone's home-bar area, which the bar below also takes — the
+    // till's « Suivant » sat under it (user, 2026-10-16)
+    document.documentElement.style.setProperty('--fc-bottom-nav', `calc(${H}px + env(safe-area-inset-bottom, 0px))`);
     return () => document.documentElement.style.removeProperty('--fc-bottom-nav');
   }, []);
   const tab = (to, label, Icon, exact = false) => {
@@ -34,6 +36,8 @@ export default function BottomNav({ path, onMenu, canScan = true }) {
         <div className="flex flex-1 items-start justify-center">
           {canScan ? (
             <Link to="/dashboard/scan" aria-label="Scanner une carte"
+                  // already on the scanner (a visit just recorded): a new scan, camera on (user, 2026-10-16)
+                  onClick={() => { if (path.startsWith('/dashboard/scan')) window.dispatchEvent(new Event('fc:scan-again')); }}
                   className={`flex flex-col items-center justify-center rounded-full text-white ${
                     path === '/dashboard/scan'
                       // on the till itself it stays in the bar: the page's own bar sits right above

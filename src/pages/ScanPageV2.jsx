@@ -961,6 +961,18 @@ const ScanPage = () => {
   // right away starts at step 1, like any visit.
   const [step, setStep] = useState('items');
   const scanAnother = () => { resetVisit(); setBarcode(''); setCard(null); setScanResult(null); setStatus(null); setRecorded(null); setStep('items'); };
+  // « Autre » and the bottom bar's « Scanner » on this page: a clean page, the
+  // camera back on where there is one (user, 2026-10-16: « scanner button
+  // does not open the scanner » after a visit)
+  const scanAgain = () => {
+    scanAnother();
+    if (navigator.mediaDevices?.getUserMedia) switchMode('camera');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  useEffect(() => {
+    window.addEventListener('fc:scan-again', scanAgain);
+    return () => window.removeEventListener('fc:scan-again', scanAgain);
+  });
   // a new code read (camera, photo, typed): a new visit, not the last one's summary
   useEffect(() => { setRecorded(null); setStep('items'); }, [barcode]);
 
@@ -1147,7 +1159,7 @@ const ScanPage = () => {
                 <b className="text-[#2F6BFF]">{card.balance.value}</b> {card.balance.unit}{card.balance.tier_label ? ` · ${card.balance.tier_label}` : ''}
               </p>
             </div>
-            <button type="button" onClick={scanAnother} aria-label="Scanner une autre carte"
+            <button type="button" onClick={scanAgain} aria-label="Scanner une autre carte"
                     className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-[#E2E8F0] px-3 text-[13px] font-semibold text-[#334155]">
               <ScanLine size={16} /> Autre
             </button>
