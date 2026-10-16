@@ -294,7 +294,7 @@ def _clients_in_period(tid: str, start: datetime, end: datetime,
     their base rather than an empty map.
     """
     tills = S.visit_filter(store_scope) if store_scope else {}
-    base = S.customer_filter(store_scope) if store_scope else {"tenant_id": tid}
+    base = S.customer_filter(store_scope) if store_scope else {"tenant_id": tid, "deleted_at": None}
     fields = {"_id": 0, "id": 1, "name": 1, "city": 1, "postal_code": 1,
               "latitude": 1, "longitude": 1, "tier": 1, "visits": 1}
     if population == "tous":

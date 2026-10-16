@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fitRect, viewW, viewH } from '../lib/fit';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Users, Crown, Send, UserPlus, Target, ShoppingBag, MapPin, Gift, Star,
@@ -322,6 +323,26 @@ export default function ClientsPage() {
   const extraCount = Object.keys(extraParams).length;
   const [picked, setPicked] = useState([]);
   const [menuFor, setMenuFor] = useState(null);
+  // « ⋮ » opens on the screen, above the button when there is no room below:
+  // inside the table it was cut off and had to be scrolled (user, 2026-10-16)
+  const [menuPos, setMenuPos] = useState(null);
+  const openMenu = (e, id) => {
+    e.stopPropagation();
+    if (menuFor === id) { setMenuFor(null); return; }
+    const r = fitRect(e.currentTarget);
+    const H = 390;                                   // the menu's height, all its lines
+    const up = viewH() - r.bottom < H + 12 && r.top > viewH() - r.bottom;
+    setMenuPos({ right: Math.max(8, viewW() - r.right),
+                 ...(up ? { bottom: viewH() - r.top + 4 } : { top: r.bottom + 4 }) });
+    setMenuFor(id);
+  };
+  useEffect(() => {
+    if (!menuFor) return undefined;
+    const close = () => setMenuFor(null);           // it stays by its button: scrolling closes it
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+  }, [menuFor]);
   const [exporting, setExporting] = useState(false);
   // Saved segments — a filter combination the merchant named and wants back.
   const [saved, setSaved] = useState([]);
@@ -868,13 +889,13 @@ export default function ClientsPage() {
                         </button>
                         <span className="relative">
                           <button type="button" aria-label="Plus d'actions"
-                                  onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === r.id ? null : r.id); }}
+                                  onClick={(e) => openMenu(e, r.id)}
                                   className="flex h-8 w-8 items-center justify-center rounded-lg text-[#94A3B8] transition hover:bg-[#F4F7FC] hover:text-[#0B1C3F]">
                             <MoreVertical size={15} />
                           </button>
                           {menuFor === r.id && (
-                            <span onClick={(e) => e.stopPropagation()}
-                                  className="absolute right-0 top-full z-20 mt-1 flex w-[200px] flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+                            <span onClick={(e) => e.stopPropagation()} style={{ ...(menuPos || {}), maxHeight: 'calc(var(--fit-vh, 1vh) * 100 - 16px)' }}
+                                  className="fixed z-50 flex w-[220px] flex-col overflow-y-auto rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
                               <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'purchases', id: r.id }); }}
                                       className="px-3 py-2 text-left text-[12.5px] font-semibold text-[#334155] hover:bg-[#F4F7FC]">
                                 Historique d&apos;achats

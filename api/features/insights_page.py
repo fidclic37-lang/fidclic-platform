@@ -305,7 +305,8 @@ class Shop:
         # No sector on file reads as the platform's core audience rather than
         # as "other": FidClic is built for cafés and restaurants first.
         self.food = (sector in FOOD_SECTORS) or not sector
-        self.people = list(_db.customers.find(S.customer_filter(scope) if scope else {"tenant_id": tid}, {"_id": 0}))
+        self.people = list(_db.customers.find(S.customer_filter(scope) if scope else {"tenant_id": tid, "deleted_at": None},
+                                              {"_id": 0}))
         since = at - timedelta(days=90)
         self.visits = list(_db.visits.find(
             {"tenant_id": tid, "visit_time": {"$gte": since - timedelta(days=62)},

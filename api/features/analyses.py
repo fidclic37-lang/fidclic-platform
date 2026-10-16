@@ -142,7 +142,7 @@ class Reader:
         from features import clients_page as CP
         # The Clients page's columns too: the shop's Règles clients may read any of them.
         return list(_db.customers.find(
-            S.customer_filter(self.scope) if self.scope else {"tenant_id": self.tid},
+            S.customer_filter(self.scope) if self.scope else {"tenant_id": self.tid, "deleted_at": None},
             {**CP.FIELDS, "acquisition_source": 1, "visits_at_last_redemption": 1}))
 
     def rules(self):
