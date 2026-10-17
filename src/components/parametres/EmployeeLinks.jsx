@@ -40,7 +40,7 @@ function Field({ label, value, onChange, placeholder, type = 'text', required = 
   );
 }
 
-function AgentModal({ agent, onClose, onSave, busy, error }) {
+function AgentModal({ agent, onClose, onSave, busy, error, store }) {
   const [f, setF] = useState({ name: agent?.name || '', email: agent?.email || '', phone: agent?.phone || '' });
   return (
     <div role="dialog" aria-modal="true" aria-label={agent ? 'Modifier un employé' : 'Ajouter un employé'}
@@ -56,6 +56,14 @@ function AgentModal({ agent, onClose, onSave, busy, error }) {
             <X size={18} />
           </button>
         </div>
+        {/* the establishment chosen in the menu: the employee's link, QR and
+            the cards of the clients they bring are this one's (user, 2026-10-17) */}
+        {store?.name && (
+          <p className="mb-3 rounded-lg bg-[#F1F6FF] px-3 py-2 text-[12.5px] text-[#1E3A8A]">
+            Établissement : <strong translate="no" className="notranslate">{store.name}</strong> — son lien, son QR code
+            et les cartes des clients qu'il inscrit sont de cet établissement.
+          </p>
+        )}
         <div className="space-y-3">
           <Field label="Nom" required autoFocus value={f.name} onChange={(v) => setF({ ...f, name: v })}
                  placeholder="Marie Dupont" />
@@ -182,8 +190,8 @@ export default function EmployeeLinks({ cardCls, CardHead, say, icons }) {
   return (
     <>
       <section className={`${cardCls} mt-4`}>
-        <CardHead icon={Link2} title="Un lien par employé"
-                  subtitle="Chaque employé a son propre lien et son propre QR code. Le client qui s'inscrit avec est compté pour lui — dans la fiche du client, dans les sources et dans le classement ci-dessous."
+        <CardHead icon={Link2} title={d?.store?.name ? `Un lien par employé — ${d.store.name}` : 'Un lien par employé'}
+                  subtitle={`Chaque employé a son propre lien et son propre QR code. Le client qui s'inscrit avec est compté pour lui — dans la fiche du client, dans les sources et dans le classement ci-dessous.${d?.store?.name ? ` Seuls les employés de ${d.store.name} sont ici : changez d'établissement dans le menu pour voir les autres.` : ''}`}
                   right={canEdit && (
                     <button type="button" onClick={() => { setModalErr(''); setModal('new'); }}
                             className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-[#2F6BFF] px-3.5 text-[13px] font-semibold text-white hover:bg-[#2559DB]">
@@ -348,7 +356,7 @@ export default function EmployeeLinks({ cardCls, CardHead, say, icons }) {
       </section>
 
       {modal && (
-        <AgentModal agent={modal === 'new' ? null : modal.agent} busy={busy} error={modalErr}
+        <AgentModal agent={modal === 'new' ? null : modal.agent} busy={busy} error={modalErr} store={d?.store}
                     onClose={() => setModal(null)} onSave={save} />
       )}
     </>

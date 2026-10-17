@@ -181,14 +181,17 @@ def _month_start(at: datetime) -> datetime:
     return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
-def leaderboard(tid: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
+def leaderboard(tid: str, at: Optional[datetime] = None, store: Optional[str] = None) -> List[Dict[str, Any]]:
     """One row per employee: the clients they brought this calendar month, in
-    all, and what those clients have spent. Erased clients do not count."""
+    all, and what those clients have spent. Erased clients do not count.
+    `store`: that establishment's employees only (multi-store)."""
     from services import sources as SRC
     at = at or _now()
     start = _month_start(at)
     rows: Dict[str, Dict[str, Any]] = {}
     for a in _db.signup_agents.find({"tenant_id": tid}, {"_id": 0}):
+        if not _in_store(tid, a, store):
+            continue
         rows[a["id"]] = {"agent_id": a["id"], "name": a.get("name") or SRC.AGENT_FALLBACK,
                          "word": a.get("word"), "store_id": a.get("store_id"),
                          "archived": bool(a.get("archived_at")), "month": 0, "total": 0, "revenue": 0.0}
@@ -247,6 +250,33 @@ def _main_store(tid: str) -> Optional[str]:
         return None
     main = next((b for b in open_stores if b.get("is_main")), open_stores[0])
     return main.get("id")
+
+
+def _here(tid: str, token: TokenData, request: Optional[Request]) -> Optional[str]:
+    """The establishment chosen in the menu — its employees only (user,
+    2026-10-17: added in Liberté, they showed in Palissy and PL-Monstre too).
+    None for a one-shop account: everyone."""
+    return _store_of(token, request) or _main_store(tid)
+
+
+def _in_store(tid: str, agent: Dict[str, Any], store: Optional[str]) -> bool:
+    if not store:
+        return True
+    return (agent.get("store_id") or _main_store(tid)) == store
+
+
+def _store_name(tid: str, store: Optional[str]) -> Optional[str]:
+    if not store:
+        return None
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    return next((b.get("name") for b in t.get("branches") or [] if b.get("id") == store), None)
+
+
+def _agent_here(tid: str, token: TokenData, request: Optional[Request], aid: str) -> Optional[Dict[str, Any]]:
+    """An employee of the establishment in the menu — another store's is not
+    this page's to change."""
+    a = agent_by_id(tid, aid)
+    return a if a and _in_store(tid, a, _here(tid, token, request)) else None
 
 
 def _mine(tid: str, email: str) -> Optional[str]:
@@ -311,9 +341,12 @@ def _origin(request: Optional[Request]) -> str:
 def _payload(tid: str, token: TokenData, request: Optional[Request]) -> Dict[str, Any]:
     t = _db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
     origin = _origin(request)
-    board = leaderboard(tid)
+    here = _here(tid, token, request)
+    board = leaderboard(tid, store=here)
     agents = []
     for a in _db.signup_agents.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", 1):
+        if not _in_store(tid, a, here):
+            continue
         agents.append({"id": a["id"], "name": a.get("name"), "email": a.get("email"), "phone": a.get("phone"),
                        "word": a.get("word"), "store_id": a.get("store_id"),
                        "archived": bool(a.get("archived_at")),
@@ -321,7 +354,9 @@ def _payload(tid: str, token: TokenData, request: Optional[Request]) -> Dict[str
                        "sent_at": (_aware(a.get("sent_at")) or "") and _aware(a.get("sent_at")).isoformat()})
     return {"agents": agents, "leaderboard": board, "can_edit": _can_edit(token),
             "mine": _mine(tid, token.email), "mail_ready": _mail_ready(),
-            "shop": {"name": t.get("name") or "", "slug": t.get("slug") or ""}}
+            "shop": {"name": t.get("name") or "", "slug": t.get("slug") or ""},
+            # where an employee added here works, its link and its clients' cards
+            "store": {"id": here, "name": _store_name(tid, here)} if here else None}
 
 
 def _mail_ready() -> bool:
@@ -350,7 +385,9 @@ def create_agent(body: AgentIn, request: Request = None, token_data: TokenData =
     # several: their link carries its word, and the signup files the client
     # there. Without one, the link would land on « Choisissez votre
     # établissement » — a dead end for a QR shown at the till.
-    store = body.store_id or _store_of(token_data, request) or _main_store(tid)
+    # the establishment chosen in the menu (the page sends no other); an
+    # explicit store_id from the API wins
+    store = body.store_id or _here(tid, token_data, request)
     doc = {"id": uuid.uuid4().hex[:12], "tenant_id": tid, "store_id": store, "name": name,
            "email": email, "phone": (str(body.phone or "").strip() or None),
            "word": word_for(tid, name), "archived_at": None, "sent_at": None,
@@ -366,7 +403,7 @@ def edit_agent(agent_id: str, body: AgentPatch, request: Request = None,
     if not _can_edit(token_data):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier de lien employé.")
     tid = token_data.tenant_id
-    a = agent_by_id(tid, agent_id)
+    a = _agent_here(tid, token_data, request, agent_id)
     if not a:
         raise HTTPException(status_code=404, detail="Employé introuvable.")
     sets: Dict[str, Any] = {}
@@ -397,7 +434,7 @@ def archive_agent(agent_id: str, request: Request = None,
     if not _can_edit(token_data):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas supprimer de lien employé.")
     tid = token_data.tenant_id
-    a = agent_by_id(tid, agent_id)
+    a = _agent_here(tid, token_data, request, agent_id)
     if not a:
         raise HTTPException(status_code=404, detail="Employé introuvable.")
     _db.signup_agents.update_one({"id": a["id"]}, {"$set": {"archived_at": _now()}})
@@ -419,7 +456,7 @@ def send_links(body: SendIn, request: Request = None, token_data: TokenData = De
     if not wanted:
         raise HTTPException(status_code=400, detail="Choisissez au moins un employé.")
     for aid in wanted:
-        a = agent_by_id(tid, aid)
+        a = _agent_here(tid, token_data, request, aid)
         if not a or a.get("archived_at"):
             out["failed"].append({"id": aid, "error": "Employé introuvable."})
             continue
