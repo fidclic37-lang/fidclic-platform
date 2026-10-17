@@ -69,14 +69,21 @@ def main():
     def add(name, **kw):
         return http("POST", "/api/owner/signup-agents", headers=OWNER, json={"name": name, **kw})
 
+    # each establishment's page shows its own employees (2026-10-17): the
+    # whole account is both pages together
+    LIB = {**OWNER, "X-FidClic-Store": "lib"}
+    PAL = {**OWNER, "X-FidClic-Store": "pal"}
+
     def agent_list():
-        return http("GET", "/api/owner/signup-agents", headers=OWNER).json()["agents"]
+        return (http("GET", "/api/owner/signup-agents", headers=LIB).json()["agents"]
+                + http("GET", "/api/owner/signup-agents", headers=PAL).json()["agents"])
 
     def agents():                               # by name — distinct names only
         return {a["name"]: a for a in agent_list()}
 
     def board():                                # by word: two employees may share a name
-        return {r["word"]: r for r in http("GET", "/api/owner/signup-agents", headers=OWNER).json()["leaderboard"]}
+        return {r["word"]: r for h in (LIB, PAL)
+                for r in http("GET", "/api/owner/signup-agents", headers=h).json()["leaderboard"]}
 
     def by_word(w):
         return next(a for a in agent_list() if a["word"] == w)
@@ -195,7 +202,7 @@ def main():
     db.customers.update_one({"name": "Client Quatre"}, {"$set": {"deleted_at": None}})
 
     # renaming must follow everywhere, at once
-    http("PUT", f"/api/owner/signup-agents/{marie['id']}", headers=OWNER, json={"name": "Marie D."})
+    http("PUT", f"/api/owner/signup-agents/{marie['id']}", headers=PAL, json={"name": "Marie D."})
     check("renommer l'employée renomme la source partout", SRC.label(SRC.key_of(c1)) == "Marie D.")
     check("…sans changer son lien (les QR déjà imprimés)",
           agents()["Marie D."]["word"] == "e-marie-dupont")
@@ -213,7 +220,7 @@ def main():
 
     # ---------------------------------------------------------------- 5
     print("\n5. Archiver — le lien s'arrête, l'histoire reste")
-    r = http("DELETE", f"/api/owner/signup-agents/{marie['id']}", headers=OWNER)
+    r = http("DELETE", f"/api/owner/signup-agents/{marie['id']}", headers=PAL)
     check(f"l'employée est archivée, pas effacée ({r.status_code})",
           r.status_code == 200 and db.signup_agents.find_one({"id": marie["id"]})["archived_at"])
     signup("e-marie-dupont", "Client Neuf")
@@ -225,7 +232,7 @@ def main():
     add("Nouvelle Marie Dupont")
     check("son mot n'est jamais réattribué",
           agents()["Nouvelle Marie Dupont"]["word"] == "e-nouvelle-marie-dupont")
-    http("PUT", f"/api/owner/signup-agents/{marie['id']}", headers=OWNER, json={"archived": False})
+    http("PUT", f"/api/owner/signup-agents/{marie['id']}", headers=PAL, json={"archived": False})
     signup("e-marie-dupont", "Client Dix")
     check("désarchivée, son lien remarche",
           db.customers.find_one({"name": "Client Dix"})["acquisition_source"] == f"agent:{marie['id']}")
@@ -241,7 +248,7 @@ def main():
                json={"name": "X"}).status_code in (403,))
     check("…ni n'en archive (403)",
           http("DELETE", f"/api/owner/signup-agents/{marie['id']}", headers=STAFF).status_code == 403)
-    http("PUT", f"/api/owner/signup-agents/{agents()['Marie D.']['id']}", headers=OWNER,
+    http("PUT", f"/api/owner/signup-agents/{agents()['Marie D.']['id']}", headers=PAL,
          json={"email": "staff@royal.fr"})
     mine = http("GET", "/api/owner/signup-agents", headers=STAFF).json()
     check("il voit SON lien (reconnu à son adresse) et tout le classement",
@@ -269,10 +276,12 @@ def main():
     mailer.send = lambda **kw: SENT.append(kw) or {"messageId": "m1"}
     sans = agents()["Joël Lefèvre"]["id"]
     avec = agents()["Marie D."]["id"]
-    r = http("POST", "/api/owner/signup-agents/send", headers=OWNER, json={"agent_ids": [avec, sans]})
-    d = r.json()
-    check(f"un envoi pour celui qui a une adresse, l'autre est signalé ({d['sent']}, {d['no_email']})",
-          d["sent"] == 1 and len(d["no_email"]) == 1 and d["no_email"][0]["name"] == "Joël Lefèvre")
+    # each establishment sends to its own employees (Marie: Palissy, Joël: Liberté)
+    d_lib = http("POST", "/api/owner/signup-agents/send", headers=LIB, json={"agent_ids": [avec, sans]}).json()
+    check(f"depuis Liberté : Joël signalé sans adresse, rien pour Marie de Palissy ({d_lib['sent']}, {d_lib['no_email']})",
+          d_lib["sent"] == 0 and [x["name"] for x in d_lib["no_email"]] == ["Joël Lefèvre"] and not SENT)
+    d = http("POST", "/api/owner/signup-agents/send", headers=PAL, json={"agent_ids": [avec]}).json()
+    check(f"depuis Palissy : un envoi pour Marie ({d['sent']})", d["sent"] == 1)
     check("l'e-mail porte SON lien et dit à quoi il sert",
           "e-marie-dupont" in SENT[-1]["html"] and "classement" in SENT[-1]["html"])
     check("…et prévient de ne pas le partager", "ne le partagez pas" in SENT[-1]["html"])
@@ -285,6 +294,25 @@ def main():
     SENT.clear()
     http("POST", "/api/owner/signup-agents/send", headers=OWNER, json={"agent_ids": ["inconnu"]})
     check("un identifiant inconnu n'envoie rien", SENT == [])
+
+    # ---------------------------------------------------------------- 8
+    print("\n8. Chaque établissement ses employés (2026-10-17)")
+    r = http("POST", "/api/owner/signup-agents", headers=LIB, json={"name": "Audric"})
+    au = next(a for a in r.json()["agents"] if a["name"] == "Audric")
+    check(f"ajouté depuis Liberté (menu) : employé de Liberté ({au['store_id']})", au["store_id"] == "lib")
+    check(f"son lien est celui de Liberté ({au['link']})", "/royal-trim/liberte/e-audric" in au["link"])
+    check("la page dit l'établissement", r.json()["store"]["name"] == "ROYAL TRIM LIBERTÉ")
+    lib_names = {a["name"] for a in http("GET", "/api/owner/signup-agents", headers=LIB).json()["agents"]}
+    pal_names = {a["name"] for a in http("GET", "/api/owner/signup-agents", headers=PAL).json()["agents"]}
+    check(f"Palissy ne voit pas Audric de Liberté ({sorted(pal_names)})", "Audric" not in pal_names and "Audric" in lib_names)
+    check("Liberté ne voit pas Marie de Palissy", "Marie D." not in lib_names and "Marie D." in pal_names)
+    pal_board = {r["word"] for r in http("GET", "/api/owner/signup-agents", headers=PAL).json()["leaderboard"]}
+    check("le classement de Palissy n'a que les siens", "e-audric" not in pal_board)
+    signup("e-audric", "Client Audric", store="palissy")
+    check("le client d'Audric est un client de Liberté, même si l'adresse dit Palissy",
+          db.customers.find_one({"name": "Client Audric"}).get("branch_id") == "lib")
+    check("Palissy ne peut pas modifier Audric (404)",
+          http("PUT", f"/api/owner/signup-agents/{au['id']}", headers=PAL, json={"name": "X"}).status_code == 404)
 
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
