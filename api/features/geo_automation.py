@@ -357,6 +357,7 @@ def sync_passes(at: Optional[datetime] = None, tids: Optional[Iterable[str]] = N
     if tids is None:
         tids = set(_db.automations.distinct("tenant_id", {"scenario": "geo"}))
         tids |= set(_db.automations.distinct("tenant_id", {"scenario": "custom", "trigger.type": "geo"}))
+        _recheck_once(tids)
         tids |= set(_db.customers.distinct("tenant_id", {"geo_pass_key": {"$nin": [None, "off"]}}))
     out = {"tenants": 0, "checked": 0, "changed": 0}
     for tid in tids:
@@ -379,6 +380,26 @@ def sync_passes(at: Optional[datetime] = None, tids: Optional[Iterable[str]] = N
             except Exception as exc:
                 print(f"geo: passes not woken ({exc})")
     return out
+
+
+RECHECK_MARKER = "geo_pass_recheck"
+RECHECK_VERSION = "2026-10-17"
+
+
+def _recheck_once(tids: Iterable[str]) -> None:
+    """Passes downloaded while a Géolocalisation was on kept the shop's
+    locations after it was turned off: their state was never remembered
+    (wallet_passes._note_geo now does). Once — approved by the owner,
+    2026-10-17 — every client of a shop that has or had one is marked
+    unknown, so the sync below wakes the passes that must lose them: a
+    silent update, no message on the phone."""
+    if _db.platform_settings.find_one({"key": RECHECK_MARKER, "value": RECHECK_VERSION}, {"_id": 1}):
+        return
+    tids = [t for t in tids if t]
+    if tids:
+        _db.customers.update_many({"tenant_id": {"$in": tids}}, {"$set": {"geo_pass_key": "unknown"}})
+    _db.platform_settings.update_one({"key": RECHECK_MARKER}, {"$set": {
+        "key": RECHECK_MARKER, "value": RECHECK_VERSION, "at": _now()}}, upsert=True)
 
 
 def refresh_one(cust: Dict[str, Any], at: Optional[datetime] = None) -> bool:

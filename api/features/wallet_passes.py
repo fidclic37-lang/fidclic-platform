@@ -1543,6 +1543,11 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             geo = GA.for_pass({**full, "tenant_id": full.get("tenant_id") or tenant.get("id")})
     except Exception as exc:
         print(f"wallet: geolocation lookup failed (non-fatal): {exc}")
+    # what this pass carries, kept by the paths that hand it to a phone (_note_geo)
+    try:
+        payload["_geo_key"] = GA._key(geo)
+    except Exception:
+        pass
     if geo:
         back.insert(1, {"key": "geo_msg", "label": "Près de chez vous", "value": geo["text"]})
         if geo.get("button_url") and geo.get("button_label"):
@@ -2555,9 +2560,27 @@ def _pkpass_cache_put(serial: str, key: str, data: bytes) -> None:
         print(f"wallet: pass not cached ({exc})")
 
 
+def _note_geo(payload: Dict[str, Any]) -> None:
+    """Remember whether the pass a phone gets carries the shop's locations.
+    Turning the Géolocalisation off wakes the passes whose remembered state
+    differs (geo_automation.sync_passes); a pass that got its locations when
+    it was downloaded used to keep « off » here, was never woken, and the
+    iPhone kept showing the lock-screen message (user, 2026-10-17: « off hai
+    lekin fir bhi aa rha hai »). Previews never come through here."""
+    k = payload.get("_geo_key")
+    cust = payload.get("customer") or {}
+    if not k or not cust.get("id") or _db is None or (cust.get("geo_pass_key") or "off") == k:
+        return
+    try:
+        _db.customers.update_one({"id": cust["id"]}, {"$set": {"geo_pass_key": k}})
+    except Exception as exc:
+        print(f"wallet: geolocation state not kept ({exc})")
+
+
 def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> bytes:
     payload = payload or _card_payload(barcode_id)
     key = _pkpass_key(payload)
+    _note_geo(payload)
     data = _pkpass_cache_get(barcode_id, key)
     if data is None:
         data = build_pkpass(payload)
@@ -3608,6 +3631,7 @@ def google_save_url(payload: Dict[str, Any]) -> str:
     sa = _gw_sa()
     token = _gw_access_token()
     cls, obj = _gw_class(payload), _gw_object(payload)
+    _note_geo(payload)
     status, _ = _gw_call("GET", f"/loyaltyClass/{cls['id']}", None, token)
     _gw_call("PUT" if status == 200 else "POST", f"/loyaltyClass/{cls['id']}" if status == 200 else "/loyaltyClass", cls, token)
     status, _ = _gw_call("GET", f"/loyaltyObject/{obj['id']}", None, token)
@@ -3711,6 +3735,7 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
                 _gw_call("PUT", f"/loyaltyClass/{cls['id']}", cls, token)
                 classes_done.add(cls["id"])
             obj = _gw_object(payload)
+            _note_geo(payload)
             message = None
             if kind == "campaign" and obj.get("messages"):
                 message = dict(obj["messages"][0])
