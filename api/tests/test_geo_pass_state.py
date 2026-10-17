@@ -76,6 +76,19 @@ def main():
     GA.sync_passes(tids=["t1"])
     check("nothing changed: no pass woken again", woken == [])
 
+    # passes already on phones before this fix: one silent recheck (cron sync)
+    db.customers.update_one({"id": "c1"}, {"$set": {"geo_pass_key": "off"}})    # stale: really carries them
+    db.tenants.insert_one({"id": "t2", "name": "SANS GEO", "is_active": True})
+    db.customers.insert_one({"id": "c9", "tenant_id": "t2", "barcode_id": "FT-NOGEO001"})
+    db.pass_registrations.insert_one({"tenant_id": "t2", "serial": "FT-NOGEO001", "device": "d9"})
+    woken.clear()
+    GA.sync_passes()
+    check(f"once: every pass of a shop that had a Géolocalisation is woken ({woken})", woken == [["FT-GEO10001"]])
+    check("…a shop that never had one is left alone", db.customers.find_one({"id": "c9"}).get("geo_pass_key") is None)
+    woken.clear()
+    GA.sync_passes()
+    check("…and never again", woken == [])
+
     GA.for_pass = real_for_pass
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
