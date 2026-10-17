@@ -269,8 +269,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"day": d, "open_from": "09:00", "open_to": "19:00", "closed": False}
         for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")]}})
     pj4 = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
-    check("relevantDate = next opening (lock screen at the right moment)",
-          "relevantDate" in pj4 and pj4["relevantDate"].endswith("Z"))
+    # no relevantDate (2026-10-17): a past one sent iOS 27 cards to « Expirées » by themselves
+    check("no relevantDate: a loyalty card is never time-bound",
+          "relevantDate" not in pj4 and "relevantDates" not in pj4 and "expirationDate" not in pj4 and "voided" not in pj4)
     check("points field carries a changeMessage",
           any(f.get("changeMessage") for grp in pj4["storeCard"].values() for f in grp))
 
