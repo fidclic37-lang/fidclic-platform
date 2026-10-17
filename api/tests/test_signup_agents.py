@@ -314,6 +314,40 @@ def main():
     check("Palissy ne peut pas modifier Audric (404)",
           http("PUT", f"/api/owner/signup-agents/{au['id']}", headers=PAL, json={"name": "X"}).status_code == 404)
 
+    # ---------------------------------------------------------------- 9
+    print("\n9. Supprimer un employé — ses clients gardent tout (2026-10-17)")
+    signup("e-audric", "Client Audric Deux")
+    c_au = db.customers.find_one({"name": "Client Audric"}, {"_id": 0})
+    r = http("POST", f"/api/owner/signup-agents/{au['id']}/delete", headers=LIB)
+    check(f"supprimé ({r.status_code})", r.status_code == 200)
+    lib = http("GET", "/api/owner/signup-agents", headers=LIB).json()
+    check("il disparaît de la page, même des archivés", all(a["name"] != "Audric" for a in lib["agents"]))
+    check("…et du classement", all(x["word"] != "e-audric" for x in lib["leaderboard"]))
+    still = db.customers.find_one({"id": c_au["id"]}, {"_id": 0})
+    check("ses clients sont intacts, leur source aussi", still and still.get("acquisition_source") == c_au.get("acquisition_source")
+          and not still.get("deleted_at"))
+    from services import sources as SRC
+    check(f"la source dit toujours son nom ({SRC.label(still['acquisition_source'])})",
+          SRC.label(still["acquisition_source"]) == "Audric")
+    signup("e-audric", "Client Après Suppression")
+    late = db.customers.find_one({"name": "Client Après Suppression"}, {"_id": 0}) or {}
+    check("son lien ne compte plus pour lui", late.get("acquisition_source") != still["acquisition_source"])
+    check("on ne peut plus le modifier (404)",
+          http("PUT", f"/api/owner/signup-agents/{au['id']}", headers=LIB, json={"name": "X"}).status_code == 404)
+    check("le mot reste réservé : un nouvel Audric a un autre lien",
+          next(a for a in add("Audric", store_id="lib").json()["agents"] if a["name"] == "Audric")["word"] != "e-audric")
+    fiche = http("GET", f"/api/owner/clients/{still['id']}/fiche", headers=LIB).json()
+    srcs = {x["key"]: x["label"] for x in fiche["sources"]}
+    check(f"la fiche propose l'employé supprimé comme source actuelle ({srcs.get(still['acquisition_source'])})",
+          srcs.get(still["acquisition_source"]) == "Audric (supprimé)")
+    other = next(k for k, v in srcs.items() if v == "Audric")          # the new, active Audric
+    r = http("PUT", f"/api/owner/clients/{still['id']}/fiche", headers=LIB, json={"acquisition_source": other})
+    check(f"la source peut être changée pour un autre employé ({r.status_code})", r.status_code == 200
+          and db.customers.find_one({"id": still["id"]})["acquisition_source"] == other)
+    r = http("PUT", f"/api/owner/clients/{still['id']}/fiche", headers=LIB, json={"acquisition_source": "instagram"})
+    check("…ou pour une autre source", r.status_code == 200
+          and db.customers.find_one({"id": still["id"]})["acquisition_source"] == "instagram")
+
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
 
