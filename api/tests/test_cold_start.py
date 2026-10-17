@@ -1,7 +1,7 @@
 """
 Faster cold starts (2026-10-01) and the reset endpoint:
-- indexes are asked for by the first start of a deployment only — the next
-  starts of the same commit skip them, a new commit asks again;
+- indexes are asked for only when their set changes (2026-10-17: was once
+  per commit), built in the background on Vercel;
 - /api/reset-seed needs a super admin and never runs on Vercel;
 - the Stripe SDK is not imported until billing uses it.
 
@@ -31,19 +31,30 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         passed += bool(cond); failed += (not cond)
         print(("  ✓ " if cond else "  ✗ ") + label)
 
-    print("\nIndexes once per deployment")
+    print("\nIndexes only when they change, in the background")
+    import threading
+    def wait_build():
+        for th in threading.enumerate():
+            if th.name == "fidclic-indexes":
+                th.join(60)
     original = Collection.create_index
     os.environ.pop("VERCEL_GIT_COMMIT_SHA", None)
     check("outside Vercel: always asked for", L._indexes_done(db, L._build_id()) is False)
     os.environ["VERCEL_GIT_COMMIT_SHA"] = "commit-a"
-    check("first start of a deployment asks for them", L._indexes_done(db, "commit-a") is False)
     L.register_all(FastAPI(), db)
+    wait_build()
     mark = db.platform_settings.find_one({"key": L.INDEX_MARKER})
-    check("…then remembers the commit", mark and mark["value"] == "commit-a")
-    check("the next cold start of that commit skips them", L._indexes_done(db, "commit-a") is True)
+    check("…then remembers the index set", mark and str(mark["value"]).startswith("idx-"))
+    check("the next cold start skips them", L._indexes_done(db, mark["value"]) is True)
+    asked = []
+    Collection.create_index = lambda self, *a, **k: asked.append(self.name)
+    os.environ["VERCEL_GIT_COMMIT_SHA"] = "commit-b"
+    L.register_all(FastAPI(), db)
+    wait_build()
+    check("a new deployment with the same indexes asks nothing", asked == [])
+    Collection.create_index = original
     L.register_all(FastAPI(), db)
     check("create_index is put back after start-up", Collection.create_index is original)
-    check("a new deployment asks again", L._indexes_done(db, "commit-b") is False)
     app = FastAPI()
     L.register_all(app, db)
     check("every feature router is still mounted when skipping", len(app.routes) > 300)

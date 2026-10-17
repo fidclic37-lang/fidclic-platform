@@ -13,7 +13,6 @@ import types
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import mongomock
-from pymongo.collection import Collection
 
 passed = failed = 0
 
@@ -26,26 +25,26 @@ def check(label, cond):
     print(("  ✓ " if cond else "  ✗ ") + label)
 
 
-class FakeColl:
-    def __init__(self, name):
-        self.name = name
-
-
 def main():
     import features._loader as L
 
+    db = mongomock.MongoClient().db
+    Collection = type(db.platform_settings)
     built = []
+    OURS = ("visits", "customers")          # other modules' indexes (commune cache…) are left aside
+
+    def ours():
+        return [b for b in built if (b[0] if isinstance(b, tuple) else b) in OURS]
     Collection.create_index = lambda self, keys, *a, **k: built.append((self.name, repr(keys), k.get("unique")))
     spec = {"unique": True}
     mod = types.ModuleType("features._fake_idx")
 
     def init(db):
-        Collection.create_index(FakeColl("visits"), [("tenant_id", 1)], **spec)
-        Collection.create_index(FakeColl("customers"), "barcode_id")
+        db.visits.create_index([("tenant_id", 1)], **spec)
+        db.customers.create_index("barcode_id")
     mod.init = init
     sys.modules["features._fake_idx"] = mod
     L.MODULES = ["features._fake_idx"]
-    db = mongomock.MongoClient().db
 
     class App:
         def include_router(self, r):
@@ -62,18 +61,18 @@ def main():
         return took
 
     boot("aaa")
-    check(f"first deployment: the 2 indexes are created ({len(built)})", len(built) == 2)
+    check(f"first deployment: the 2 indexes are created ({len(ours())})", len(ours()) == 2)
     marker = db.platform_settings.find_one({"key": L.INDEX_MARKER})
     check("…and their fingerprint is kept", marker and str(marker["value"]).startswith("idx-"))
 
     built.clear()
     boot("bbb")
-    check("next deployment, same indexes: none asked again", built == [])
+    check("next deployment, same indexes: none asked again", ours() == [])
 
     built.clear()
     spec["unique"] = False
     boot("ccc")
-    check("an index changed: the set is created again", len(built) == 2)
+    check("an index changed: the set is created again", len(ours()) == 2)
 
     # the build runs beside the start, never in it
     built.clear()
@@ -93,13 +92,13 @@ def main():
     for th in threading.enumerate():
         if th.name == "fidclic-indexes":
             th.join(5)
-    check("…they are built just after", len(built) == 2)
+    check("…they are built just after", len(ours()) == 2)
 
     del os.environ["VERCEL_GIT_COMMIT_SHA"]
     built.clear()
     Collection.create_index = lambda self, keys, *a, **k: built.append(self.name)
     L.register_all(App(), db)
-    check("outside Vercel (local, tests): created at once, as asked", built == ["visits", "customers"])
+    check("outside Vercel (local, tests): created at once, as asked", ours() == ["visits", "customers"])
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

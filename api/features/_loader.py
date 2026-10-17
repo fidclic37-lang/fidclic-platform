@@ -241,11 +241,11 @@ def register_all(app, db) -> None:
     take down the whole server.
 
     Speed (2026-10-01): the modules' init() ask MongoDB for ~120 indexes.
-    Indexes only change with the code, so this is done by the first start
-    of each deployment; the next cold starts of the same deployment skip
-    those round trips (the marker in platform_settings holds the commit).
+    On Vercel the indexes asked for by the modules are only created when
+    their set changed (the marker in platform_settings holds its
+    fingerprint), in the background, so a start never waits for them.
     """
-    from pymongo.collection import Collection
+    Collection = type(db.platform_settings)      # pymongo's, or mongomock's in tests
     # Speed (2026-10-17): a cold start took 17 s — 13.5 s of it the first one
     # of each deployment asking Atlas for ~150 indexes, one round trip each,
     # and there were ~20 deployments that day. The indexes the modules ask
