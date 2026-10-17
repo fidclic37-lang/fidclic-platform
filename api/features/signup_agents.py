@@ -190,7 +190,7 @@ def leaderboard(tid: str, at: Optional[datetime] = None, store: Optional[str] = 
     start = _month_start(at)
     rows: Dict[str, Dict[str, Any]] = {}
     for a in _db.signup_agents.find({"tenant_id": tid}, {"_id": 0}):
-        if not _in_store(tid, a, store):
+        if a.get("deleted_at") or not _in_store(tid, a, store):
             continue
         rows[a["id"]] = {"agent_id": a["id"], "name": a.get("name") or SRC.AGENT_FALLBACK,
                          "word": a.get("word"), "store_id": a.get("store_id"),
@@ -276,7 +276,7 @@ def _agent_here(tid: str, token: TokenData, request: Optional[Request], aid: str
     """An employee of the establishment in the menu — another store's is not
     this page's to change."""
     a = agent_by_id(tid, aid)
-    return a if a and _in_store(tid, a, _here(tid, token, request)) else None
+    return a if a and not a.get("deleted_at") and _in_store(tid, a, _here(tid, token, request)) else None
 
 
 def _mine(tid: str, email: str) -> Optional[str]:
@@ -345,7 +345,7 @@ def _payload(tid: str, token: TokenData, request: Optional[Request]) -> Dict[str
     board = leaderboard(tid, store=here)
     agents = []
     for a in _db.signup_agents.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", 1):
-        if not _in_store(tid, a, here):
+        if a.get("deleted_at") or not _in_store(tid, a, here):
             continue
         agents.append({"id": a["id"], "name": a.get("name"), "email": a.get("email"), "phone": a.get("phone"),
                        "word": a.get("word"), "store_id": a.get("store_id"),
@@ -440,6 +440,40 @@ def archive_agent(agent_id: str, request: Request = None,
     _db.signup_agents.update_one({"id": a["id"]}, {"$set": {"archived_at": _now()}})
     _log(tid, token_data.email, "signup_agent.archived", a["id"], {"name": a.get("name")})
     return _payload(tid, token_data, request)
+
+
+@router.post("/api/owner/signup-agents/{agent_id}/delete")
+def delete_agent(agent_id: str, request: Request = None,
+                 token_data: TokenData = Depends(require_role(ROLES))):
+    """« Supprimer » (user, 2026-10-17: archive only was not wanted): the
+    employee leaves the page and the ranking, their link stops. The record
+    stays, so every client they brought still reads « via <name> » — and the
+    client's source can be changed in its fiche."""
+    if not _can_edit(token_data):
+        raise HTTPException(status_code=403, detail="Vous ne pouvez pas supprimer de lien employé.")
+    tid = token_data.tenant_id
+    a = _agent_here(tid, token_data, request, agent_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Employé introuvable.")
+    _db.signup_agents.update_one({"id": a["id"]}, {"$set": {"deleted_at": _now(), "deleted_by": token_data.email,
+                                                            "archived_at": a.get("archived_at") or _now()}})
+    _log(tid, token_data.email, "signup_agent.deleted", a["id"], {"name": a.get("name")})
+    return _payload(tid, token_data, request)
+
+
+def choices_for(tid: str, store: Optional[str], current: Optional[str] = None) -> List[Dict[str, str]]:
+    """The employees a client's source may be set to in its fiche: the
+    establishment's active ones, and the one it already says (deleted or not)."""
+    from services import sources as SRC
+    out = []
+    for a in _db.signup_agents.find({"tenant_id": tid, "archived_at": None, "deleted_at": None}, {"_id": 0}).sort("name", 1):
+        if _in_store(tid, a, store):
+            out.append({"key": source_key(a), "label": a.get("name") or SRC.AGENT_FALLBACK})
+    if current and SRC.is_agent(current) and all(o["key"] != current for o in out):
+        a = agent_by_id(tid, SRC.agent_id(current)) or {}
+        tag = " (supprimé)" if a.get("deleted_at") else (" (archivé)" if a.get("archived_at") else "")
+        out.append({"key": current, "label": (a.get("name") or SRC.AGENT_FALLBACK) + tag})
+    return out
 
 
 @router.post("/api/owner/signup-agents/send")

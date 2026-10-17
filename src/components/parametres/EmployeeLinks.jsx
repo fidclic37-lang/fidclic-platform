@@ -142,12 +142,15 @@ export default function EmployeeLinks({ cardCls, CardHead, say, icons }) {
     } finally { setBusy(false); }
   };
 
-  const archive = async (a) => {
+  // « Supprimer »: the employee leaves this page and the ranking, the link
+  // stops; the clients they brought keep everything, their source included
+  const remove = async (a) => {
+    if (!window.confirm(`Supprimer ${a.name} ?\n\nSon lien et son QR code ne fonctionneront plus. Les clients qu'il a amenés gardent toutes leurs données, et leur source reste « ${a.name} » (modifiable dans la fiche du client).`)) return;
     try {
-      const { data } = await ownerAPI.archiveSignupAgent(a.id);
+      const { data } = await ownerAPI.deleteSignupAgent(a.id);
       setD(data); setPicked((p) => p.filter((x) => x !== a.id));
-      say(`${a.name} archivé — son lien ne fonctionne plus, ses clients gardent son nom.`);
-    } catch (e) { say(e?.response?.data?.detail || "L'archivage n'a pas abouti."); }
+      say(`${a.name} supprimé — ses clients gardent leurs données et leur source.`);
+    } catch (e) { say(e?.response?.data?.detail || "La suppression n'a pas abouti."); }
   };
 
   const restore = async (a) => {
@@ -249,7 +252,7 @@ export default function EmployeeLinks({ cardCls, CardHead, say, icons }) {
                       <button type="button" onClick={() => { setModalErr(''); setModal({ agent: a }); }}
                               aria-label={`Modifier ${a.name}`}
                               className="flex h-8 w-8 items-center justify-center rounded-lg text-[#475569] hover:bg-white"><Pencil size={14} /></button>
-                      <button type="button" onClick={() => archive(a)} aria-label={`Archiver ${a.name}`}
+                      <button type="button" onClick={() => remove(a)} aria-label={`Supprimer ${a.name}`} title="Supprimer"
                               className="flex h-8 w-8 items-center justify-center rounded-lg text-[#B91C1C] hover:bg-white"><Trash2 size={14} /></button>
                     </>
                   )}
@@ -287,8 +290,12 @@ export default function EmployeeLinks({ cardCls, CardHead, say, icons }) {
                     {a.name} — lien désactivé, ses clients gardent son nom
                   </span>
                   {canEdit && (
-                    <button type="button" onClick={() => restore(a)}
-                            className="h-8 rounded-lg border border-[#2F6BFF] px-2.5 text-[12px] font-semibold text-[#2F6BFF]">Réactiver</button>
+                    <>
+                      <button type="button" onClick={() => restore(a)}
+                              className="h-8 rounded-lg border border-[#2F6BFF] px-2.5 text-[12px] font-semibold text-[#2F6BFF]">Réactiver</button>
+                      <button type="button" onClick={() => remove(a)}
+                              className="h-8 rounded-lg border border-[#FCA5A5] px-2.5 text-[12px] font-semibold text-[#B91C1C]">Supprimer</button>
+                    </>
                   )}
                 </div>
               ))}

@@ -462,6 +462,8 @@ export const ownerAPI = {
   addSignupAgent: (body) => api.post('/owner/signup-agents', body),
   editSignupAgent: (id, body) => api.put(`/owner/signup-agents/${id}`, body),
   archiveSignupAgent: (id) => api.delete(`/owner/signup-agents/${id}`),
+  // « Supprimer » (2026-10-17): gone from the page, the clients keep « via <name> »
+  deleteSignupAgent: (id) => api.post(`/owner/signup-agents/${id}/delete`),
   sendSignupAgentLinks: (agentIds) => api.post('/owner/signup-agents/send', { agent_ids: agentIds }),
   getTrialStatus: () => api.get('/owner/trial-status'),
   hideTrialBanner: () => api.post('/owner/trial-status/hide-banner'),

@@ -62,6 +62,15 @@ def _customer(token_data: TokenData, request: Optional[Request], customer_id: st
     return c
 
 
+def _agent_choices(tid: str, c: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Employees as a source in the fiche (features/signup_agents.choices_for)."""
+    try:
+        from features import signup_agents as SA
+        return SA.choices_for(tid, c.get("branch_id") or SA._main_store(tid), c.get("acquisition_source"))
+    except Exception:
+        return []
+
+
 def _refresh_card(c: Dict[str, Any]) -> None:
     """The Wallet card follows (no alert on the phone: nothing for it to say)."""
     if not c.get("barcode_id"):
@@ -128,7 +137,9 @@ def get_fiche(customer_id: str, request: Request = None,
                            "name": next((b.get("name") for b in open_ if b["id"] == c.get("branch_id")), None),
                            "choices": [{"id": b["id"], "name": b.get("name") or "Établissement"} for b in movable]
                            if len(open_) > 1 else []},
-            "sources": [{"key": k, "label": SRC.label(k)} for k in SRC.SIGNUP_SOURCES],
+            "sources": [{"key": k, "label": SRC.label(k)} for k in SRC.SIGNUP_SOURCES]
+                       # the establishment's employees (« via Marie »), and the one it says now, even deleted
+                       + _agent_choices(token_data.tenant_id, c),
             "changes": [{"at": r["at"].isoformat() if isinstance(r.get("at"), datetime) else r.get("at"),
                          "kind": r["kind"], "text": r["text"], "by": r.get("by"), "reason": r.get("reason")}
                         for r in rows]}
@@ -176,7 +187,8 @@ def save_fiche(customer_id: str, body: FicheIn, request: Request = None,
     if body.acquisition_source is not None:
         from services import sources as SRC
         key = SRC.normalize(body.acquisition_source) if body.acquisition_source else None
-        if body.acquisition_source and key not in SRC.SOURCES:
+        agent_ok = key and SRC.is_agent(key) and any(o["key"] == key for o in _agent_choices(tid, c))
+        if body.acquisition_source and key not in SRC.SOURCES and not agent_ok:
             raise HTTPException(status_code=400, detail="Source inconnue.")
         new["acquisition_source"] = key
 
