@@ -1595,16 +1595,12 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "backFields": back,
         },
     }
-    # ---- lifecycle: relevance, expiry, void -------------------------------
-    # relevantDate — Wallet surfaces the pass on the lock screen around this
-    # moment. An offer that ends soon wins; otherwise the shop's next opening.
-    offer_until = _parse_dt(card.get("offer_expires_at") or card.get("active_offer_expires_at"))
-    if offer_until and offer_until > _now():
-        pass_json["relevantDate"] = _iso(_now())
-    else:
-        opening = _next_opening(tenant.get("id") or "")
-        if opening:
-            pass_json["relevantDate"] = _iso(opening)
+    # ---- lifecycle: expiry, void ------------------------------------------
+    # No relevantDate (user, 2026-10-17): it was the shop's next opening, and
+    # a card not updated since that moment went to Wallet's « Expirées » by
+    # itself on iOS 27 — whole shops' cards, with nothing voided on our side;
+    # those refreshed came back. A loyalty card is never time-bound: it ends
+    # only when the merchant sets an expiry, or the card is deleted / voided.
 
     # expirationDate — set by the merchant for a seasonal or campaign card.
     expires = _parse_dt(card.get("pass_expiration_date"))
