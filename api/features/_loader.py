@@ -212,6 +212,18 @@ def _build_id() -> str:
     return os.environ.get("VERCEL_GIT_COMMIT_SHA") or os.environ.get("VERCEL_DEPLOYMENT_ID") or ""
 
 
+def _index_spec(captured) -> str:
+    """A fingerprint of every index the modules ask for: it changes only when an
+    index is added or changed — not at every deployment, as the commit did."""
+    import hashlib
+    import json
+    rows = []
+    for coll, keys, a, k in captured:
+        rows.append([getattr(coll, "name", str(coll)), repr(keys), repr(a), repr(sorted(k.items()))])
+    rows.sort()
+    return "idx-" + hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:16]
+
+
 def _indexes_done(db, build: str) -> bool:
     if not build:
         return False
@@ -229,16 +241,22 @@ def register_all(app, db) -> None:
     take down the whole server.
 
     Speed (2026-10-01): the modules' init() ask MongoDB for ~120 indexes.
-    Indexes only change with the code, so this is done by the first start
-    of each deployment; the next cold starts of the same deployment skip
-    those round trips (the marker in platform_settings holds the commit).
+    On Vercel the indexes asked for by the modules are only created when
+    their set changed (the marker in platform_settings holds its
+    fingerprint), in the background, so a start never waits for them.
     """
-    from pymongo.collection import Collection
-    build = _build_id()
-    skip = _indexes_done(db, build)
+    Collection = type(db.platform_settings)      # pymongo's, or mongomock's in tests
+    # Speed (2026-10-17): a cold start took 17 s — 13.5 s of it the first one
+    # of each deployment asking Atlas for ~150 indexes, one round trip each,
+    # and there were ~20 deployments that day. The indexes the modules ask
+    # for are now only written down while they start; their fingerprint is
+    # compared with the one saved, and only a NEW set is created — in the
+    # background on Vercel, so no visitor waits for it.
+    on_vercel = bool(_build_id())
+    captured = []
     original = Collection.create_index
-    if skip:
-        Collection.create_index = lambda self, keys, *a, **k: None   # noqa: E731
+    if on_vercel:
+        Collection.create_index = lambda self, keys, *a, **k: captured.append((self, keys, a, k))   # noqa: E731
     failed = False
     try:
         # Shared services that need the database before any feature uses them.
@@ -262,10 +280,27 @@ def register_all(app, db) -> None:
                 logger.exception("feature %s failed to load: %s", dotted_path, exc)
     finally:
         Collection.create_index = original
-    if build and not skip and not failed:
-        try:
-            db.platform_settings.update_one({"key": INDEX_MARKER},
-                                            {"$set": {"key": INDEX_MARKER, "value": build, "at": datetime.now(timezone.utc)}},
-                                            upsert=True)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("index marker not saved: %s", exc)
+    if not on_vercel or not captured:
+        return                                   # local runs and tests: created as they were asked
+    spec = _index_spec(captured)
+    if failed or _indexes_done(db, spec):
+        return
+
+    def build_indexes():
+        ok = True
+        for coll, keys, a, k in captured:
+            try:
+                original(coll, keys, *a, **k)
+            except Exception as exc:  # noqa: BLE001 — one index never stops the others
+                ok = False
+                logger.warning("index on %s not created: %s", getattr(coll, "name", "?"), exc)
+        if ok:
+            try:
+                db.platform_settings.update_one(
+                    {"key": INDEX_MARKER},
+                    {"$set": {"key": INDEX_MARKER, "value": spec, "at": datetime.now(timezone.utc)}}, upsert=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("index marker not saved: %s", exc)
+
+    import threading
+    threading.Thread(target=build_indexes, name="fidclic-indexes", daemon=True).start()
