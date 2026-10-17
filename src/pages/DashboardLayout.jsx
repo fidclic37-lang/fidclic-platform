@@ -455,6 +455,23 @@ const DashboardLayout = () => {
     catch { /* localStorage may be blocked — fine */ }
   }, [collapsed]);
 
+  // « Accéder au compte » : le bandeau se réduit (user, 2026-10-16 — il
+  // couvrait le bas des pages et empêchait de se servir du compte). Le choix
+  // est retenu PAR COMMERCE : entrer dans un autre compte réaffiche l'avis en
+  // entier, puisqu'il dit dans quel compte on est et que tout est journalisé.
+  const viewKey = user?.view_as ? `fdt:view-as:collapsed:${user.tenant_id || user.tenant_name || ''}` : '';
+  const [viewBarOpen, setViewBarOpen] = React.useState(true);
+  React.useEffect(() => {
+    if (!viewKey) return;
+    try { setViewBarOpen(window.localStorage.getItem(viewKey) !== '1'); }
+    catch { setViewBarOpen(true); }
+  }, [viewKey]);
+  const setViewBar = (open) => {
+    setViewBarOpen(open);
+    try { window.localStorage.setItem(viewKey, open ? '0' : '1'); }
+    catch { /* localStorage may be blocked — the choice just lasts this page */ }
+  };
+
   // Phone and tablet (QA F09, 2026-10-08: at 390 px the open menu took
   // ~230 px and the header buttons overlapped): below 1024 px the menu is a
   // drawer over the page, opened from ☰ and closed by a tap outside, Escape
@@ -742,7 +759,7 @@ const DashboardLayout = () => {
           is audited under the admin's name), or read-only for a team member
           who may only look — said either way.
           Floating, outside <main>: the pages style main's first child. */}
-      {user?.view_as && (
+      {user?.view_as && (viewBarOpen ? (
         <div role="status" className="fixed bottom-4 left-1/2 z-[70] flex w-[min(760px,calc(100%-32px))] -translate-x-1/2 flex-wrap items-center gap-3 rounded-2xl px-4 py-3 text-[13px] shadow-[0_18px_50px_-18px_rgba(11,28,63,.7)]"
              style={{ background: '#0B1C3F', color: '#fff' }}>
           <Eye size={16} className="shrink-0" />
@@ -752,8 +769,30 @@ const DashboardLayout = () => {
             <span className="min-w-0 flex-1">Vue en <strong>lecture seule</strong> du compte de <strong>{user.tenant_name}</strong>, ouverte par {user.view_as.by}. Aucune modification n'est possible.</span>
           )}
           <button type="button" onClick={logout} className="rounded-lg px-3 py-1.5 font-medium" style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }}>Quitter la vue</button>
+          <button type="button" onClick={() => setViewBar(false)} aria-label="Réduire le bandeau"
+                  title="Réduire — le bandeau se range en bas à droite"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+                  style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }}>
+            <ChevronDown size={16} />
+          </button>
         </div>
-      )}
+      ) : (
+        /* Réduit : le bandeau couvrait le bas des pages et empêchait de se
+           servir du compte (user, 2026-10-16). « Quitter la vue » reste à un
+           clic, et le point bleu rappelle qu'on n'est pas chez soi. */
+        <div role="status" className="fixed bottom-4 right-4 z-[70] flex items-center gap-1.5 rounded-full py-1.5 pl-2.5 pr-1.5 text-[12.5px] shadow-[0_18px_50px_-18px_rgba(11,28,63,.7)]"
+             style={{ background: '#0B1C3F', color: '#fff' }}>
+          <button type="button" onClick={() => setViewBar(true)}
+                  aria-label={`Vue du compte de ${user.tenant_name} — afficher le bandeau`}
+                  title={`Vue du compte de ${user.tenant_name}`}
+                  className="flex items-center gap-1.5 rounded-full px-1 py-0.5 font-medium">
+            <Eye size={14} className="shrink-0" />
+            <span className="max-w-[140px] truncate">{user.tenant_name}</span>
+          </button>
+          <button type="button" onClick={logout} className="rounded-full px-2.5 py-1 font-semibold"
+                  style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }}>Quitter</button>
+        </div>
+      ))}
       <main className="relative z-10 flex-1 overflow-auto">
         {/* A team member whose role may look at this section but not change it. */}
         {isTeam(user) && role !== 'super_admin' && moduleOfPath(currentPath) && can(user, moduleOfPath(currentPath))

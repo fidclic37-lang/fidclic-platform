@@ -74,17 +74,28 @@ test.describe.serial('a point of the two charts answers the cursor', () => {
     expect(Array.isArray(d.revenue_series)).toBe(true);
     // every point carries its visits, so the card can show the basket
     expect(d.revenue_series.every((p) => typeof p.visits === 'number')).toBe(true);
-    const busy = d.revenue_series.find((p) => p.visits > 0);
-    if (!busy) test.skip(true, 'no visit in the seeded period');
 
     await page.goto('/dashboard');
     const chart = page.getByTestId('trend-chart').first();
     await expect(chart).toBeVisible({ timeout: 15_000 });
-    const i = d.revenue_series.indexOf(busy);
-    await chart.getByRole('button').nth(i).click();
+    // The busy day is found ON THE CHART. It used to be taken from the index
+    // of the call above — but that call carries no establishment while the
+    // chart does, so the two series are not the same days. It happened to
+    // line up until the window moved (CI, 2026-10-17: the click landed on an
+    // empty 17 September and « Panier moyen » is rightly absent there).
+    const points = chart.getByRole('button');
+    const total = await points.count();
     const detail = chart.getByTestId('trend-detail');
-    await expect(detail).toContainText('Visites');
-    await expect(detail).toContainText('Panier moyen');
+    let busy = null;
+    for (let i = 0; i < total && !busy; i += 1) {
+      await points.nth(i).click();
+      await expect(detail).toContainText('Visites');
+      const said = await detail.innerText();
+      if (Number((/Visites\s*([\d\u202f\u00a0 ]+)/.exec(said) || [])[1]?.replace(/\D/g, '') || 0) > 0) busy = said;
+      else await page.keyboard.press('Escape');
+    }
+    test.skip(!busy, 'no visit in the seeded period');
+    expect(busy, 'a day with visits says the basket behind them').toContain('Panier moyen');
   });
 
   test('Analyses draws the same chart, so it reads the same', async ({ page, request }) => {
