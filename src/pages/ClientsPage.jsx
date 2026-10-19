@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fitRect, viewW, viewH } from '../lib/fit';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -323,19 +323,29 @@ export default function ClientsPage() {
   const extraCount = Object.keys(extraParams).length;
   const [picked, setPicked] = useState([]);
   const [menuFor, setMenuFor] = useState(null);
-  // « ⋮ » opens on the screen, above the button when there is no room below:
-  // inside the table it was cut off and had to be scrolled (user, 2026-10-16)
+  // « ⋮ » opens on the screen, whole, wherever its row is — even the last
+  // one: below the button when it fits, else above, else pushed up just
+  // enough to show every line, never scrolled (user, 2026-10-16 and
+  // 2026-10-19: « saare options sidhe ek saath dikhe »). Its real height is
+  // measured once drawn, so a new line in it can never cut it again.
   const [menuPos, setMenuPos] = useState(null);
+  const menuRef = useRef(null);
   const openMenu = (e, id) => {
     e.stopPropagation();
     if (menuFor === id) { setMenuFor(null); return; }
     const r = fitRect(e.currentTarget);
-    const H = 390;                                   // the menu's height, all its lines
-    const up = viewH() - r.bottom < H + 12 && r.top > viewH() - r.bottom;
-    setMenuPos({ right: Math.max(8, viewW() - r.right),
-                 ...(up ? { bottom: viewH() - r.top + 4 } : { top: r.bottom + 4 }) });
+    setMenuPos({ right: Math.max(8, viewW() - r.right), anchorTop: r.top, anchorBottom: r.bottom, top: r.bottom + 4, ready: false });
     setMenuFor(id);
   };
+  useLayoutEffect(() => {
+    if (!menuFor || !menuRef.current || !menuPos || menuPos.ready) return;
+    const h = menuRef.current.offsetHeight;
+    const vh = viewH();
+    let top = menuPos.anchorBottom + 4;                       // below
+    if (top + h > vh - 8) top = menuPos.anchorTop - 4 - h;    // above
+    if (top < 8) top = Math.max(8, vh - h - 8);               // neither: as high as it needs
+    setMenuPos((p) => ({ ...p, top, ready: true }));
+  }, [menuFor, menuPos]);
   useEffect(() => {
     if (!menuFor) return undefined;
     const close = () => setMenuFor(null);           // it stays by its button: scrolling closes it
@@ -894,8 +904,9 @@ export default function ClientsPage() {
                             <MoreVertical size={15} />
                           </button>
                           {menuFor === r.id && (
-                            <span onClick={(e) => e.stopPropagation()} style={{ ...(menuPos || {}), maxHeight: 'calc(var(--fit-vh, 1vh) * 100 - 16px)' }}
-                                  className="fixed z-50 flex w-[232px] flex-col overflow-y-auto rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+                            <span ref={menuRef} onClick={(e) => e.stopPropagation()}
+                                  style={{ right: menuPos?.right, top: menuPos?.top, visibility: menuPos?.ready ? 'visible' : 'hidden' }}
+                                  className="fixed z-50 flex w-[232px] flex-col rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
                               {/* qui l'a amené — l'employé dont le lien ou le QR a servi, et quand (2026-10-16) */}
                               {r.brought_by && (
                                 <span className="mb-1 block border-b border-[#F1F5F9] px-3 pb-2 pt-1.5 text-[11.5px] leading-snug text-[#64748B]">
