@@ -323,6 +323,10 @@ def main():
 
     # ---- templates for the composer ---------------------------------------------------------
     print("\nModèles pour le composeur")
+    # the composer reads the shop « now »: the cast is dated from the fixed
+    # `now` above, so its clock is that one (n1 joined 8 days before it — on
+    # the real date, 2026-10-19, it was past the 30-day one-timer window)
+    I._now = lambda: now
     t = I.template("relance_inactifs", token_data=T("cafe"))
     check("'Relancer ces clients' pre-fills the inactive audience", t["segment"] == "inactive")
     check("and fits a push (title ≤ 50, message ≤ 160)",
