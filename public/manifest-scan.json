@@ -6,7 +6,7 @@
   "start_url": "/dashboard/scan",
   "scope": "/dashboard",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#FDFBF7",
   "theme_color": "#1463FF",
   "icons": [
