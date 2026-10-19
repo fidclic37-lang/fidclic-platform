@@ -182,6 +182,24 @@ def store_name(tid: str, sid: Optional[str]) -> Optional[str]:
     return (b or {}).get("name") or None
 
 
+def store_contact(tid: str, sid: Optional[str]) -> Dict[str, str]:
+    """The address and phone of an establishment other than the main one, as
+    saved in Paramètres › Établissement — what its clients' cards say (QA R7
+    F40, 2026-10-18: a Lyon card's « À propos » gave the main shop's address
+    in another city). Empty for the main store or a one-shop account."""
+    if not sid or _db is None or sid == main_store(tid):
+        return {}
+    b = _branch(tid, sid) or {}
+    street = (b.get("street") or (b.get("address") or "").split(",")[0]).strip()
+    town = " ".join(x for x in ((b.get("postal_code") or "").strip(), (b.get("city") or "").strip()) if x)
+    out = {}
+    if street or town:
+        out["address"] = ", ".join(x for x in (street, town) if x)
+    if (b.get("phone") or "").strip():
+        out["phone"] = b["phone"].strip()
+    return out
+
+
 def card_off(tid: str, sid: Optional[str]) -> bool:
     b = _branch(tid, sid) if sid else None
     return bool(b and b.get("card_off"))

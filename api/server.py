@@ -7084,6 +7084,13 @@ def _serialize_card_payload(cust: dict) -> dict:
         _sn = _SC.store_name(cust.get("tenant_id"), payload["store_id"])
         if _sn and isinstance(payload.get("tenant"), dict):     # the client's shop is their establishment
             payload["tenant"] = {**payload["tenant"], "account_name": payload["tenant"].get("name"), "name": _sn}
+        # …and its own address and phone, on the web card's « À propos » and the pass's back
+        _contact = _SC.store_contact(cust.get("tenant_id"), payload["store_id"])
+        if _contact:
+            if isinstance(payload.get("tenant"), dict):
+                payload["tenant"] = {**payload["tenant"], **_contact}
+            if isinstance(card, dict):
+                card["details"] = {**(card.get("details") or {}), **_contact}
     return payload
 
 
