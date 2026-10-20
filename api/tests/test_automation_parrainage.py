@@ -133,7 +133,7 @@ def main():
     check("the chips: récompense, lien, amis parrainés and both names",
           {"récompense", "lien", "amis_parraines", "filleul", "parrain"} <= set(meta["variables"]))
     check("the editor gets the programme's rules, editable by the owner",
-          page["referral"]["enabled"] is False and page["referral"]["referrer_reward_points"] == 50
+          page["referral"]["enabled"] is False and page["referral"]["referrer_reward_points"] == 0     # nothing until saved
           and page["referral"]["can_edit"] is True)
     check("a manager sees them read-only", http("GET", "/api/owner/automations", headers=HM).json()["referral"]["can_edit"] is False)
     aid = ref[0]["id"]
@@ -185,7 +185,7 @@ def main():
                                                          "reward_mode": "bizarre"})
     check("an unknown crediting mode is refused", r.status_code == 400)
     check("another shop's rules are untouched", http("GET", "/api/owner/automations", headers=H2).json()["referral"]
-          ["referrer_reward_points"] == 50)
+          ["referrer_reward_points"] == 0)
 
     print("\n5. Programme désactivé : rien ne part")
 

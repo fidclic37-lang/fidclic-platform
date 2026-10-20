@@ -278,7 +278,7 @@ const RewardEditor = ({ side, who, form, setForm, when, hint }) => {
       ) : (
         <NumberField label={kind === 'stamps' ? 'Nombre de tampons' : 'Nombre de points'}
                      max={kind === 'stamps' ? 50 : 10000}
-                     value={form[`${side}_reward_${kind === 'stamps' ? 'stamps' : 'points'}${next}`] ?? (kind === 'stamps' && !next ? 1 : 0)}
+                     value={form[`${side}_reward_${kind === 'stamps' ? 'stamps' : 'points'}${next}`] ?? 0}
                      hint={hint}
                      onChange={(v) => set(`${side}_reward_${kind === 'stamps' ? 'stamps' : 'points'}${next}`, v)} />
       )}
@@ -295,15 +295,15 @@ const SettingsModal = ({ config, enabled, onClose, onSaved }) => {
     try {
       await ownerAPI.saveReferralConfig({
         enabled: form.enabled,
-        referrer_reward_points: form.referrer_reward_points,
-        referee_reward_points: form.referee_reward_points,
+        referrer_reward_points: form.referrer_reward_points || 0,
+        referee_reward_points: form.referee_reward_points || 0,
         minimum_visits_to_earn: form.minimum_visits_to_earn,
         reward_mode: form.reward_mode || 'once',
         referrer_reward_points_next: form.referrer_reward_points_next || 0,
         referee_reward_points_next: form.referee_reward_points_next || 0,
         ...Object.fromEntries(['referrer', 'referee'].flatMap((s) => [
           [`${s}_reward_kind`, form[`${s}_reward_kind`] || 'points'],
-          [`${s}_reward_stamps`, form[`${s}_reward_stamps`] ?? 1],
+          [`${s}_reward_stamps`, form[`${s}_reward_stamps`] || 0],
           [`${s}_reward_stamps_next`, form[`${s}_reward_stamps_next`] || 0],
           [`${s}_reward_offer`, form[`${s}_reward_offer`] || ''],
           [`${s}_reward_offer_next`, form[`${s}_reward_offer_next`] || ''],

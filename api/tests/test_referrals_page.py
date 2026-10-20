@@ -120,7 +120,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("parrainages réalisés counts every redemption", by["referrals"]["value"] == 9)
     check("parrains actifs counts the distinct parrains", by["active"]["value"] == 5)
     # 8 validated × 50 + 9 × 25 = 400 + 225
-    check("points offerts adds both sides of every parrainage", by["points"]["value"] == 625)
+    # 8 settled × (50 + 25); Omar (1 visit, still pending) has been given
+    # nothing yet — signup gives no points (user, 2026-10-20, QA R7 F41)
+    check(f"points offerts adds both sides of every settled parrainage, none for a pending one ({by['points']['value']})",
+          by["points"]["value"] == 600)
     check("CA généré adds every filleul's whole spend", by["revenue"]["value"] == 280.0)
     check("and it is labelled as all-time, not per period",
           by["revenue"]["all_time"] is True and by["revenue"]["note"] == "depuis le début")

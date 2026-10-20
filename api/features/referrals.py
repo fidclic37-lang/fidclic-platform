@@ -81,8 +81,10 @@ OFFER_MAX = 80
 class ReferralConfig(BaseModel):
     tenant_id: Optional[str] = None
     enabled: bool = False
-    referrer_reward_points: int = 50
-    referee_reward_points: int = 25
+    # Nothing until the owner saves an amount (user, 2026-10-20, QA R7 F41:
+    # « default 0 hi rakho dono ka… jo business owner save krega woh hi »)
+    referrer_reward_points: int = 0
+    referee_reward_points: int = 0
     minimum_visits_to_earn: int = 1   # referee must reach this many visits before referrer is credited
     # When both are credited (user, 2026-10-08), from that visit on:
     #   once        — once, at that visit
@@ -94,8 +96,8 @@ class ReferralConfig(BaseModel):
     # each side's kind of reward, and its amount for tampons / words for an offer
     referrer_reward_kind: str = "points"
     referee_reward_kind: str = "points"
-    referrer_reward_stamps: int = 1
-    referee_reward_stamps: int = 1
+    referrer_reward_stamps: int = 0
+    referee_reward_stamps: int = 0
     referrer_reward_stamps_next: int = 0
     referee_reward_stamps_next: int = 0
     referrer_reward_offer: str = ""
@@ -198,12 +200,14 @@ def record(tenant_id: str, parrain_barcode: str, filleul: Dict[str, Any]) -> Opt
         "tenant_id": tenant_id,
         "referrer_customer_id": parrain["id"],
         "referee_customer_id": filleul["id"],
-        "referee_points": int(cfg.get("referee_reward_points", 25)),
+        # Nothing at signup, for either side: points are given at the
+        # filleul's visit only (settle) — user, 2026-10-20.
+        "referee_points": 0,
         "referrer_points": 0,
         # What each side is owed, frozen now: changing the setting tomorrow
         # must not rewrite what a referral recorded today promised.
-        "referrer_points_promised": int(cfg.get("referrer_reward_points", 50)),
-        "referee_points_promised": int(cfg.get("referee_reward_points", 25)),
+        "referrer_points_promised": int(cfg.get("referrer_reward_points") or 0),
+        "referee_points_promised": int(cfg.get("referee_reward_points") or 0),
         "referrer_reward_promised": reward_of(cfg, "referrer"),
         "referee_reward_promised": reward_of(cfg, "referee"),
         "referrer_pending": True,
@@ -248,7 +252,8 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
         parrain_r = row.get("referrer_reward_promised") or {
             "kind": "points", "n": int(row.get("referrer_points_promised") or 0)}
         filleul_r = row.get("referee_reward_promised") or {
-            "kind": "points", "n": int(row.get("referee_points_promised") or row.get("referee_points") or 0)}
+            "kind": "points", "n": int(row["referee_points_promised"] if "referee_points_promised" in row
+                                       else row.get("referee_points") or 0)}     # rows older than the promise fields
         parrain_pts, filleul_pts = _points(parrain_r), _points(filleul_r)
         claimed = _db.referral_redemptions.update_one(
             {"_id": row["_id"], "referrer_pending": True},
@@ -299,9 +304,8 @@ def reward_of(cfg: Dict[str, Any], side: str, which: str = "first") -> Dict[str,
     if kind == "offer":
         return {"kind": "offer", "text": str(cfg.get(f"{side}_reward_offer{nx}") or "").strip()}
     if kind == "stamps":
-        return {"kind": "stamps", "n": max(0, int(cfg.get(f"{side}_reward_stamps{nx}", 0 if nx else 1) or 0))}
-    default = 0 if nx else (50 if side == "referrer" else 25)
-    return {"kind": "points", "n": max(0, int(cfg.get(f"{side}_reward_points{nx}", default) or 0))}
+        return {"kind": "stamps", "n": max(0, int(cfg.get(f"{side}_reward_stamps{nx}") or 0))}
+    return {"kind": "points", "n": max(0, int(cfg.get(f"{side}_reward_points{nx}") or 0))}
 
 
 def _points(r: Dict[str, Any]) -> int:
@@ -420,8 +424,8 @@ def inviter(barcode_id: str):
         "slug": tenant.get("slug"),
         "business_name": tenant.get("name"),
         "store": {"slug": home.get("slug"), "name": home.get("name")} if home else None,
-        "referee_points": int(cfg.get("referee_reward_points", 25)),
-        "referrer_points": int(cfg.get("referrer_reward_points", 50)),
+        "referee_points": int(cfg.get("referee_reward_points") or 0),
+        "referrer_points": int(cfg.get("referrer_reward_points") or 0),
         # what each side receives, in words (« 25 points », « 1 tampon », « 1 café offert »)
         "referee_reward": label(reward_of(cfg, "referee")),
         "referrer_reward": label(reward_of(cfg, "referrer")),
@@ -609,8 +613,8 @@ def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]
         # as recorded when the parrainage was made, so a later change to the
         # setting cannot rewrite history.
         "reward_points": int(r.get("referrer_points") or 0) if not pending
-        else int(r.get("referrer_points_promised")
-                 or config.get("referrer_reward_points") or 0),
+        else int(r["referrer_points_promised"] if r.get("referrer_points_promised") is not None
+                 else config.get("referrer_reward_points") or 0),
         "source": source if source in SOURCES else "other",
         "source_label": SOURCES.get(source, SOURCES["other"]),
     }
@@ -676,8 +680,10 @@ def overview(
                      + [r.get("referee_customer_id") for r in rows])
 
     def points(batch):
+        # given only: a parrainage still waiting for the filleul's visit has
+        # given nothing (older rows wrote the filleul's 25 at signup)
         return sum(int(r.get("referrer_points") or 0) + int(r.get("referee_points") or 0)
-                   for r in batch)
+                   for r in batch if not r.get("referrer_pending", True))
 
     # Revenue is programme-wide and all-time by design: it answers "what has
     # parrainage brought me", not "what did it bring me in September".
@@ -753,12 +759,12 @@ def overview(
     return {
         "from": start.isoformat(), "to": end.isoformat(),
         "enabled": bool(config.get("enabled")),
-        "config": {"referrer_reward_points": int(config.get("referrer_reward_points") or 50),
-                   "referee_reward_points": int(config.get("referee_reward_points") or 25),
+        # the settings as saved, every field (kind, tampons, offer…): the
+        # modal re-opens on them and saves them back unchanged
+        "config": {**ReferralConfig().model_dump(exclude={"tenant_id", "enabled"}),
+                   **{k: v for k, v in config.items() if k not in ("_id", "tenant_id", "enabled")},
                    "minimum_visits_to_earn": int(config.get("minimum_visits_to_earn") or 1),
-                   "reward_mode": config.get("reward_mode") if config.get("reward_mode") in REWARD_MODES else "once",
-                   "referrer_reward_points_next": int(config.get("referrer_reward_points_next") or 0),
-                   "referee_reward_points_next": int(config.get("referee_reward_points_next") or 0)},
+                   "reward_mode": config.get("reward_mode") if config.get("reward_mode") in REWARD_MODES else "once"},
         "cards": cards,
         "series": series,
         "breakdown": {"total": total_seg, "segments": breakdown},
