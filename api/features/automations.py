@@ -2044,8 +2044,8 @@ def referral_page(tid: str) -> Dict[str, Any]:
     """The Parrainage programme's rules, for the editor's « Récompenses »."""
     cfg = _db.referral_config.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     return {"enabled": bool(cfg.get("enabled")),
-            "referrer_reward_points": int(cfg.get("referrer_reward_points", 50) or 0),
-            "referee_reward_points": int(cfg.get("referee_reward_points", 25) or 0),
+            "referrer_reward_points": int(cfg.get("referrer_reward_points") or 0),
+            "referee_reward_points": int(cfg.get("referee_reward_points") or 0),
             "reward_mode": cfg.get("reward_mode") or "once",
             "referrer_reward_points_next": int(cfg.get("referrer_reward_points_next") or 0),
             "referee_reward_points_next": int(cfg.get("referee_reward_points_next") or 0),
