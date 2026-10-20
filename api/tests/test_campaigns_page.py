@@ -313,6 +313,24 @@ def main():
     W._attach_campaign_offer(stale, db.customers.find_one({"id": "c1"}))
     check("an expired campaign stops being the card's offer", "campaign_offer" not in stale)
 
+    # An older campaign never comes back when the newer one ends (user, 2026-10-20:
+    # a 6-day-old « Une attention rien que pour vous » rang again, « maintenant »)
+    db.campaigns.insert_many([
+        {"id": "w-old", "tenant_id": "t1", "name": "Une attention rien que pour vous", "content": "Cela fait un moment !",
+         "status": "sent", "wallet_offer": True, "recipient_ids": ["c1"], "sent_at": now - dt.timedelta(days=6)},
+        {"id": "w-new", "tenant_id": "t1", "name": "C'est le moment de revenir", "content": "-10 %",
+         "status": "sent", "wallet_offer": True, "recipient_ids": ["c1"], "sent_at": now - dt.timedelta(days=5),
+         "kind": "offre", "offer": {"end_date": (now - dt.timedelta(days=1)).date().isoformat()}}])
+    after = {}
+    W._attach_campaign_offer(after, db.customers.find_one({"id": "c1"}))
+    check(f"the newest campaign ended: the card goes back to its own offer, the older one does not return ({after.get('campaign_offer')})",
+          "campaign_offer" not in after)
+    db.campaigns.update_one({"id": "w-new"}, {"$set": {"offer.end_date": (now + dt.timedelta(days=3)).date().isoformat()}})
+    on = {}
+    W._attach_campaign_offer(on, db.customers.find_one({"id": "c1"}))
+    check("while the newest is live, it is the card's offer", (on.get("campaign_offer") or {}).get("id") == "w-new")
+    db.campaigns.delete_many({"id": {"$in": ["w-old", "w-new"]}})
+
     # Google's own banner — its `messages` element, the closest thing to the
     # mockup. Apple has no banner element at all: it raises a lock-screen
     # notification from changeMessage instead.

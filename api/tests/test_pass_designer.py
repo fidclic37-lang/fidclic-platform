@@ -163,8 +163,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("points programme: POINTS → the balance, with a changeMessage (it notifies)",
           _bp["POINTS"]["value"] == 70 and "changeMessage" in _bp["POINTS"])
     db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"programme": ""}})
-    check("our back follows: « Offre du moment » with its changeMessage (campaigns notify)",
-          "offer" in back and back["offer"].get("changeMessage") == "%@" and "jhvkhv" not in back)
+    # no campaign here: the field is there (so the first campaign is a change)
+    # but silent — only a campaign rings (2026-10-20)
+    check("our back follows: « Offre du moment », silent until a campaign",
+          "offer" in back and "changeMessage" not in back["offer"] and "jhvkhv" not in back)
     check("the designer's text colours; the shop's background stays for the iOS 26 card",
           p["labelColor"] == "rgb(0,220,255)" and p["backgroundColor"] != "rgb(0,229,136)")
     check("FidClic's identity and web service", p["serialNumber"] == "FT-TEST0001" and p["passTypeIdentifier"] == "pass.com.fidclic.test"

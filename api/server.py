@@ -8074,6 +8074,7 @@ def send_campaign_to_group(
     # Which establishments this campaign was sent for (None = the whole shop).
     _doc["store_ids"] = _scope.ids
     _doc["sent_by"] = token_data.email
+    _doc["sent_by_admin"] = getattr(token_data, "view_by", None)   # « Accéder au compte »
     db.campaigns.insert_one(_doc)
 
     # Also log per-customer push notification so wallet cards show the offer.
