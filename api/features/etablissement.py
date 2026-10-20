@@ -399,8 +399,8 @@ def put_etablissement(body: EtablissementIn,
                       tenant_id=tid, target=sel["id"], meta={"fields": sorted(store_sets)})
         except Exception:
             pass
-        if "name" in store_sets and store_sets["name"] != sel.get("name"):
-            try:                       # its members' cards carry the new name
+        if any(k in store_sets and store_sets[k] != sel.get(k) for k in ("name", "street", "postal_code", "city", "phone")):
+            try:                       # its members' cards carry its name, address and phone (QA R7 F40)
                 from features import store_cards as SC
                 from features.wallet_passes import notify_tenant
                 with SC.store(tid, sel["id"]):
