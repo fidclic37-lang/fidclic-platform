@@ -1224,13 +1224,21 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
             newest = None
         if newest and (newest.get("name") or "").strip():
             title, sub = newest["name"].strip(), (newest.get("content") or "").strip()
-            # {first_name}, {points}… filled for this customer, as in the push.
-            try:
-                import server as core
-                tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}) or {}
-                title, sub = core.render_template(title, cust, tenant), core.render_template(sub, cust, tenant)
-            except Exception:
-                pass
+            # The words this client was sent, as they were sent: re-filling
+            # {points}, {visites}… at every pass made the next visit change the
+            # field — and Wallet announced the same campaign again (2026-10-20).
+            sent = _db.push_notifications.find_one(
+                {"tenant_id": cust.get("tenant_id"), "customer_id": cust.get("id"), "campaign_id": newest.get("id")},
+                {"_id": 0, "title": 1, "body": 1})
+            if sent and (sent.get("title") or "").strip():
+                title, sub = sent["title"].strip(), (sent.get("body") or "").strip()
+            else:                     # sent before this was kept: filled now, as in the push
+                try:
+                    import server as core
+                    tenant = _db.tenants.find_one({"id": cust.get("tenant_id")}) or {}
+                    title, sub = core.render_template(title, cust, tenant), core.render_template(sub, cust, tenant)
+                except Exception:
+                    pass
             card["campaign_offer"] = {"title": title, "subtitle": sub, "id": newest.get("id"),
                                       "image_url": newest.get("image_url") or None,
                                       "wallet_photo": bool(newest.get("wallet_photo"))}

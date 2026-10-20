@@ -74,6 +74,9 @@ def init(db):
         db.campaigns.create_index([("tenant_id", 1), ("sent_at", -1)])
         db.card_opens.create_index([("tenant_id", 1), ("at", -1)])
         db.card_opens.create_index([("customer_id", 1), ("day", 1)], unique=True)
+        # who already has a campaign (a retried send), and the words they got (the Wallet pass)
+        db.push_notifications.create_index([("campaign_id", 1), ("customer_id", 1)])
+        db.campaigns.create_index([("tenant_id", 1), ("send_key", 1)])
     except Exception:
         pass
 
@@ -647,6 +650,10 @@ class Compose(BaseModel):
     defi: Optional[K.DefiIn] = None
     details: Optional[str] = None
     audience: Optional[K.AudienceIn] = None
+    # One key per wizard (user, 2026-10-20: « aisa toh nhi n ki … waapis chala
+    # jaaye »): « Envoyer » pressed again after an error that came back late —
+    # the send had in fact left — returns that campaign instead of a second one.
+    send_key: Optional[str] = None
 
 
 def _clean(text: str, limit: int) -> str:
@@ -757,6 +764,14 @@ def compose(req: Compose, request: Request = None,
     if not req.push and not req.wallet and not req.draft:
         raise HTTPException(status_code=400, detail="Choisissez au moins un canal.")
     link = clean_link(req.link_url)
+    send_key = re.sub(r"[^A-Za-z0-9-]", "", req.send_key or "")[:64] or None
+    if send_key and not req.draft:
+        already = _db.campaigns.find_one({"tenant_id": tid, "send_key": send_key,
+                                          "status": {"$in": ["sent", "sending", "scheduled"]}}, {"_id": 0})
+        if already:
+            return {"id": already["id"], "status": "scheduled" if already["status"] == "scheduled" else "sent",
+                    "audience": len(already.get("recipient_ids") or []), "already": True,
+                    "scheduled_for": (d.isoformat() if (d := _aware(already.get("scheduled_for"))) else None)}
     previous = _own_draft(tid, req.draft_id) if req.draft_id else None
 
     at = _now()
@@ -835,6 +850,7 @@ def compose(req: Compose, request: Request = None,
         "sent_by": getattr(token_data, "email", None),
         # « Accéder au compte »: the token's email is the owner's — keep who really sent it
         "sent_by_admin": getattr(token_data, "view_by", None),
+        "send_key": send_key,
     }
 
     if previous:                                   # the draft becomes this campaign
@@ -885,6 +901,10 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
     except Exception:
         core = None
     tenant = _db.tenants.find_one({"id": tid}) or {}
+    # A send that stopped half-way is retried by the cron: whoever already
+    # has this campaign on their card is not messaged a second time.
+    reached = set(_db.push_notifications.distinct("customer_id", {"tenant_id": tid, "campaign_id": doc["id"]}))
+    people = [c for c in people if c.get("id") not in reached]
 
     for cust in people:
         title, message = doc["name"], doc["content"]

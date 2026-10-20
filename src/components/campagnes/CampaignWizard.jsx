@@ -64,6 +64,10 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
   const [s, setS] = useState(initial);
   const [step, setStep] = useState(startStep);
   const [busy, setBusy] = useState('');
+  // one key per wizard: pressed again after an error, the same send is never made twice
+  const sendKey = useRef(
+    (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const [error, setError] = useState(initial.notice || '');
   const [preview, setPreview] = useState(null);          // { count, label, zone, sample, ids }
   const [previewErr, setPreviewErr] = useState('');
@@ -225,7 +229,8 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
         exclude = await guardResend(preview?.ids ? { customer_ids: preview.ids } : { segment: 'all' });
         if (exclude === null) { setBusy(''); return; }
       }
-      const { data: res } = await ownerAPI.composeCampaign({ ...body(mode), ...(exclude.length ? { exclude_ids: exclude } : {}) });
+      const { data: res } = await ownerAPI.composeCampaign({ ...body(mode), ...(exclude.length ? { exclude_ids: exclude } : {}),
+        ...(mode !== 'draft' ? { send_key: sendKey.current } : {}) });
       onDone(res.status === 'draft' ? 'Brouillon enregistré.'
         : res.status === 'scheduled' ? `Notification programmée · ${nf(res.audience)} destinataire${res.audience > 1 ? 's' : ''}.`
           : `Notification envoyée à ${nf(res.audience)} client${res.audience > 1 ? 's' : ''}.`);
