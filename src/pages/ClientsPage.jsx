@@ -862,7 +862,7 @@ export default function ClientsPage() {
               <NumberBox label="Dépense totale — au plus" value={extra.spent_max} onChange={(v) => setExtra('spent_max', v)} placeholder="∞" suffix="€" />
               <NumberBox label="Panier moyen — au moins" value={extra.basket_min} onChange={(v) => setExtra('basket_min', v)} placeholder="0" suffix="€" />
               <NumberBox label="Code postal (ou son début)" value={extra.postal} onChange={(v) => setExtra('postal', v)} placeholder="37000 ou 37" digitsOnly maxLength={5} />
-              <Select label="Âge" value={extra.age_band} onChange={(v) => setExtra('age_band', v)} options={AGE_BANDS} />
+              <Select label="Tranche d'âge" value={extra.age_band} onChange={(v) => setExtra('age_band', v)} options={AGE_BANDS} />
               <NumberBox label="Âge — à partir de" value={extra.age_min} onChange={(v) => setExtra('age_min', v)} placeholder="18" digitsOnly maxLength={3} />
               <NumberBox label="Âge — jusqu'à" value={extra.age_max} onChange={(v) => setExtra('age_max', v)} placeholder="∞" digitsOnly maxLength={3} />
             </div>

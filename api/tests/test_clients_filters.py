@@ -200,6 +200,32 @@ def main():
           and "Chloé Petit" not in names(listed(sales_from=D1, sales_to=D1)))
     db.customers.update_one({"id": "c3"}, {"$set": {"deleted_at": None}})
 
+    print("\n9. Deux lectures en même temps")
+    # La page demande l'aperçu ET la liste d'un coup. Les deux lisaient la même
+    # projection (FIELDS) pendant que le pilote la modifiait : « dictionary
+    # changed size during iteration » (CI, 2026-10-20). Chaque appel a
+    # maintenant sa copie.
+    import threading
+    for i in range(300):
+        db.customers.insert_one({"id": f"x{i}", "tenant_id": "t1", "name": f"X{i}",
+                                 "deleted_at": None, "visits": 0, "total_amount_paid": 0.0})
+    boom = []
+
+    def hammer():
+        for _ in range(10):
+            try:
+                CP._load("t1")
+            except Exception as exc:                      # noqa: BLE001 — c'est ce qu'on mesure
+                boom.append(repr(exc)[:80])
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    check(f"80 lectures simultanées, aucune erreur ({boom[:1]})", not boom)
+    check("et la projection partagée n'a pas bougé",
+          set(CP.FIELDS) == set(CP.FIELDS) and CP.FIELDS.get("_id") == 0)
+
     print(f"\n{passed} passed, {failed} failed")
     return failed == 0
 

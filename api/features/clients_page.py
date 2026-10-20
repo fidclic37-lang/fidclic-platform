@@ -329,7 +329,12 @@ def _load(tid: str, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     # a deleted client (Clients › Supprimer, or the inactive purge) is in no
     # list or count here — « Supprimés » shows them (features/customer_edit)
     q = S.customer_filter(scope) if scope else {"tenant_id": tid}
-    return list(_db.customers.find({**q, "deleted_at": None}, FIELDS))
+    # dict(FIELDS): the driver is free to work on the projection it is handed,
+    # and mongomock does — two requests reading the page at the same time (the
+    # overview and the list) then iterated the SAME dict while it was being
+    # changed: « dictionary changed size during iteration » (CI, 2026-10-20).
+    # Each call gets its own copy; nothing shared, nothing to race on.
+    return list(_db.customers.find({**q, "deleted_at": None}, dict(FIELDS)))
 
 
 def _scope(token_data: TokenData, request: Optional[Request]) -> "S.Scope":

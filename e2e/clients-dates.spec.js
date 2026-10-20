@@ -126,14 +126,40 @@ test('Segment et Statut : plusieurs à la fois, et on les cherche', async ({ pag
 });
 
 test('Âge : une tranche, puis de … à …', async ({ page, request }) => {
-  const { H } = await asOwner(page, request);
+  const { H, store } = await asOwner(page, request);
+  const t = await (await request.get('/api/owner/tenant', { headers: H })).json();
+  const slug = t.slug || t.tenant?.slug || 'cafe-lumiere';
+  // le jeu de démonstration n'a personne de plus de 40 ans : on s'en fabrique
+  const born = (years) => { const d = new Date(); d.setFullYear(d.getFullYear() - years); d.setDate(d.getDate() - 1); return d.toLocaleDateString('sv-SE'); };
+  const tag = String(Date.now()).slice(-6);
+  const made = {};
+  for (const [who, years] of [['Jeune', 20], ['Ainé', 45]]) {
+    const r = await (await request.post(`/api/join/${slug}`, { data: {
+      name: `${who} ${tag}`, phone: `07${String(Date.now() + years).slice(-8)}`, postal_code: '37000',
+      birthday: born(years), accepted_terms: true, consent: true, store } })).json();
+    made[who] = r.barcode_id;
+    expect(r.barcode_id, JSON.stringify(r)).toBeTruthy();
+  }
+
   await page.goto('/dashboard/customers');
   await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible({ timeout: 20000 });
   await page.getByRole('button', { name: /Plus de filtres/ }).click();
   await expect(page.getByLabel('Âge — à partir de')).toBeVisible();
+
+  // On lit ce que LE TABLEAU montre : comparer avec un appel séparé ferait
+  // dépendre le test de l'accord entre deux lectures, que les autres specs
+  // de la suite font bouger (leçon de graph-detail, 2026-10-17).
+  const shown = async () => (await Promise.all(
+    (await page.locator('tbody tr').all()).map((r) => r.innerText()))).join(' | ');
+
   await page.getByLabel('Âge — à partir de').fill('40');
-  await page.waitForTimeout(600);
-  const api = await (await request.get('/api/owner/clients/list?per_page=200&age_min=40', { headers: H })).json();
-  expect(api.rows.every((r) => r.age === null || r.age >= 40), 'personne sous 40 ans').toBe(true);
-  await expect(page.getByRole('heading', { name: new RegExp(`^${api.total} client`) })).toBeVisible({ timeout: 15000 });
+  await expect.poll(shown, { timeout: 15000, message: 'à partir de 40 ans' })
+    .toContain(`Ainé ${tag}`);
+  expect(await shown(), 'et pas le jeune').not.toContain(`Jeune ${tag}`);
+
+  await page.getByLabel('Âge — à partir de').fill('');
+  await page.getByLabel("Tranche d'âge").selectOption('18_24');
+  await expect.poll(shown, { timeout: 15000, message: 'la tranche 18 – 24' })
+    .toContain(`Jeune ${tag}`);
+  expect(await shown(), 'et pas l\'aîné').not.toContain(`Ainé ${tag}`);
 });
