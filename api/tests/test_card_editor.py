@@ -189,8 +189,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and not any(f["key"] in ("prog", "jauge", "stamps") for f in pgp["primaryFields"]))
     db.card_templates.update_one({"tenant_id": "t1"}, {"$unset": {"programme": ""}})
     check("no campaign running → no empty « OFFRE » row", [f["key"] for f in pg["footerFields"]] == ["shop"])
-    check("the design's back, then FidClic's (offer that notifies, links…)",
-          pg["backFields"][0]["key"] == "hours" and any(f["key"] == "offer" and f.get("changeMessage") for f in pg["backFields"]))
+    check("the design's back, then FidClic's (the offer field, silent without a campaign, links…)",
+          pg["backFields"][0]["key"] == "hours" and any(f["key"] == "offer" and not f.get("changeMessage") for f in pg["backFields"]))
     check("iOS 26: a generic made from the poster — first primary big, the rest under it, footer last",
           "storeCard" not in p and p["generic"]["primaryFields"][0]["key"] == "who"
           and [f["key"] for f in p["generic"]["secondaryFields"]] == ["prog"]

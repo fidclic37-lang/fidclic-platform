@@ -1210,11 +1210,18 @@ def _attach_campaign_offer(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
              "wallet_offer": True, "recipient_ids": cust.get("id")},
             {"_id": 0, "id": 1, "name": 1, "content": 1, "sent_at": 1, "image_url": 1, "status": 1,
              "kind": 1, "offer": 1, "event": 1, "defi": 1, "wallet_photo": 1})
+        # Only the NEWEST campaign this client received counts. When it ends,
+        # the card goes back to the merchant's own offer: an older campaign
+        # still « live » never comes back, because Wallet would announce it again
+        # as news. User, 2026-10-20: « ye kyun aaya bhai jabki … maine nhi
+        # bheja » — a 6-day-old campaign was re-announced when the next one ended.
         newest, newest_at = None, None
         for c in rows:
             at = _parse_dt(c.get("sent_at"))
-            if at and _K.is_live(c, now) and (newest_at is None or at > newest_at):
+            if at and (newest_at is None or at > newest_at):
                 newest, newest_at = c, at
+        if newest and not _K.is_live(newest, now):
+            newest = None
         if newest and (newest.get("name") or "").strip():
             title, sub = newest["name"].strip(), (newest.get("content") or "").strip()
             # {first_name}, {points}… filled for this customer, as in the push.
@@ -1476,8 +1483,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     reward_points = int(card.get("reward_points") or 0)
     # What the balance still owes for the reward — a points card's own count.
     points_left = max(0, reward_points - points) if reward_points else 0
+    # Wallet announces a change only when the new pass carries a changeMessage:
+    # a campaign arriving is news; the card going back to the shop's own offer
+    # when it ends is not (it used to ring « Aucune offre en ce moment. »).
+    offer_field = {"key": "offer", "label": "Offre du moment", "value": offer_full}
+    if isinstance(card.get("campaign_offer"), dict) and card["campaign_offer"].get("title"):
+        offer_field["changeMessage"] = "%@"
     back = [
-        {"key": "offer", "label": "Offre du moment", "value": offer_full, "changeMessage": "%@"},
+        offer_field,
         # A points card counts in points, not in stamps: it used to say
         # « Encore 3 tampons » to someone who has never had a stamp.
         {"key": "next_reward", "label": "Prochaine récompense",

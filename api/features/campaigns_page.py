@@ -420,7 +420,15 @@ def campaign_detail(campaign_id: str, request: Request = None,
                  "window_days": ATTRIBUTION_DAYS, "open_window_h": OPEN_WINDOW_H}
     _, until = K.window(c) if sent_at else (None, None)
     st = row["status"]
-    return {**row, "title": c.get("name") or "", "message": c.get("content") or "", "details": c.get("details"),
+    # To whom, by name, and by whom (user, 2026-10-20: « campaign ki details mein
+    # ye kyun nhi dekh paa rhe ki kisko target kiya gaya tha »)
+    shown = ids[:RECIPIENTS_SHOWN]
+    names = {p["id"]: p for p in _db.customers.find({"tenant_id": tid, "id": {"$in": shown}},
+                                                    {"_id": 0, "id": 1, "name": 1, "barcode_id": 1})}
+    recipients_list = [{"id": i, "name": (names.get(i) or {}).get("name") or "Client supprimé",
+                        "barcode_id": (names.get(i) or {}).get("barcode_id")} for i in shown]
+    return {**row, "recipients_list": recipients_list, "recipients_more": max(0, len(ids) - len(shown)),
+            "sent_by_label": _sender_label(tid, c), "title": c.get("name") or "", "message": c.get("content") or "", "details": c.get("details"),
             "link_url": safe_link(c.get("link_url")), "audience_label": c.get("audience_label") or "Sélection",
             "discount": K.discount_label(c.get("offer")) if c.get("kind") in K.OFFER_KINDS else None,
             "live_until": until.isoformat() if until else None,
@@ -428,6 +436,27 @@ def campaign_detail(campaign_id: str, request: Request = None,
             "stats": stats,
             "can_edit": st in ("draft", "scheduled", "cancelled"), "can_cancel": st == "scheduled",
             "can_delete": st in ("draft", "cancelled")}
+
+
+RECIPIENTS_SHOWN = 50
+
+
+def _sender_label(tid: str, c: Dict[str, Any]) -> Optional[str]:
+    """« Envoyée par »: the team member's name and role, « Super admin FidClic »
+    when sent from « Accéder au compte », and FidClic IA when it proposed it."""
+    if c.get("sent_by_admin"):
+        who = "Super admin FidClic"
+    elif c.get("sent_by"):
+        u = _db.users.find_one({"email": c["sent_by"]}, {"_id": 0, "hashed_password": 0}) or {}
+        if u and u.get("tenant_id") in (tid, None):
+            from features import team_access as TA
+            role = TA.role_label(u)
+            who = TA._display_name(u) + (f" ({role})" if role else "")
+        else:
+            who = c["sent_by"]
+    else:
+        return None
+    return who + (" — proposée par FidClic IA" if c.get("autopilot_id") else "")
 
 
 # ---------------------------------------------------------------------------
@@ -804,6 +833,8 @@ def compose(req: Compose, request: Request = None,
         # For which establishments it was sent (None = the whole shop), and by whom.
         "store_ids": scope.ids,
         "sent_by": getattr(token_data, "email", None),
+        # « Accéder au compte »: the token's email is the owner's — keep who really sent it
+        "sent_by_admin": getattr(token_data, "view_by", None),
     }
 
     if previous:                                   # the draft becomes this campaign

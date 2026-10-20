@@ -394,6 +394,26 @@ def main():
     check("one recipient came back within 15 days (not the client who never got it)",
           st.get("recipients") == 1 and st.get("came_back") == 1 and st.get("came_back_rate") == 100)
     check("its CA counts that client's visits inside 15 days only (12,50 + 7,50 €)", st.get("revenue") == 20.0)
+    # to whom by name, and by whom (user, 2026-10-20: « kisko target kiya gaya tha »)
+    check(f"« Envoyée à » names the client ({det.get('recipients_list')})",
+          [p["name"] for p in det.get("recipients_list") or []] == ["Alice Martin"] and det.get("recipients_more") == 0)
+    db.users.update_one({"email": "o@x.fr"}, {"$set": {"first_name": "Olivia", "last_name": "Owner"}})
+    det = http("GET", f"/api/owner/campaigns/{cf['id']}/detail").json()
+    check(f"« Envoyée par » names the team member and the role ({det.get('sent_by_label')})",
+          (det.get("sent_by_label") or "").startswith("Olivia Owner ("))
+    # sent from « Accéder au compte »: the token says the owner, the campaign says FidClic
+    ADMIN_AS = {"Authorization": "Bearer " + auth.create_access_token(
+        {"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1", "view_by": "admin@fidelitour.com",
+         "act_by": "admin@fidelitour.com"})}
+    r_as = http("POST", "/api/owner/campaigns/compose", headers=ADMIN_AS,
+                json={"title": "Test admin", "message": "Bonjour", "customer_ids": ["c1"]})
+    if r_as.status_code == 200:
+        det_as = http("GET", f"/api/owner/campaigns/{r_as.json()['id']}/detail").json()
+        check(f"sent from « Accéder au compte »: « Super admin FidClic » ({det_as.get('sent_by_label')})",
+              det_as.get("sent_by_label") == "Super admin FidClic")
+        db.campaigns.delete_one({"id": r_as.json()["id"]})
+    else:
+        check(f"sent from « Accéder au compte » ({r_as.status_code} {r_as.text[:120]})", False)
     check("a sent campaign can't be edited, cancelled or deleted from it",
           not det["can_edit"] and not det["can_cancel"] and not det["can_delete"])
     check("its card window is given", det["live_until"] is not None and det["live_until"][:10] == K.end_of(end7).isoformat()[:10])

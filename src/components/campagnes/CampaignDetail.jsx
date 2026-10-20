@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  X, Loader2, Users, Mail, MousePointerClick, RotateCcw, Euro, CalendarDays, Link2, Pencil, Trash2, Ban, BarChart3, Info,
+  X, Loader2, Users, Mail, MousePointerClick, RotateCcw, Euro, CalendarDays, Link2, Pencil, Trash2, Ban, BarChart3, Info, UserRound,
 } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
 import { eur } from '../../lib/money';
@@ -125,7 +125,20 @@ export default function CampaignDetail({ id, onClose, onEdit, onCancel, onDelete
                 )}
                 <Line icon={Users} label="Destinataires">
                   {d.audience_label}{/^\d/.test(d.audience_label || '') ? '' : ` · ${nf(d.recipients)} client${d.recipients > 1 ? 's' : ''}`}
+                  {d.recipients_list?.length > 0 && (
+                    <span className="mt-1.5 flex flex-wrap gap-1.5" data-testid="campaign-recipients">
+                      {d.recipients_list.map((p) => (
+                        <span key={p.id} translate="no" className="notranslate rounded-full bg-[#F1F5FD] px-2.5 py-1 text-[12.5px] font-medium text-[#0B1C3F]">
+                          {p.name}{p.barcode_id ? <span className="ml-1 text-[#64748B]">{p.barcode_id}</span> : null}
+                        </span>
+                      ))}
+                      {d.recipients_more > 0 && <span className="px-1 py-1 text-[12.5px] text-[#64748B]">et {nf(d.recipients_more)} autre{d.recipients_more > 1 ? 's' : ''}</span>}
+                    </span>
+                  )}
                 </Line>
+                {d.sent_by_label && (
+                  <Line icon={UserRound} label="Envoyée par"><span translate="no" className="notranslate">{d.sent_by_label}</span></Line>
+                )}
                 <Line icon={CalendarDays} label="Envoi">
                   {d.sent_at ? <>Envoyée le {when(d.sent_at)}</>
                     : d.status === 'scheduled' ? <>Programmée pour le {when(d.scheduled_for)}</>

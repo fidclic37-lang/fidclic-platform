@@ -135,8 +135,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and sc["auxiliaryFields"] == [])
     # Wallet only notifies when an EXISTING field changes: the offer field is
     # there before any campaign, so the first campaign is a change, not a birth.
-    check("offer field always on the back, with a changeMessage",
-          back_by_key["offer"]["value"] == "Aucune offre en ce moment." and back_by_key["offer"]["changeMessage"] == "%@")
+    # Without a campaign it carries no changeMessage: going back to the shop's
+    # own offer is not news (2026-10-20).
+    check("offer field always on the back, silent without a campaign",
+          back_by_key["offer"]["value"] == "Aucune offre en ce moment." and "changeMessage" not in back_by_key["offer"])
     from PIL import Image as _LI
     lw, lh = _LI.open(io.BytesIO(z.read("logo.png"))).size
     # logo + name: within Apple's 160 × 50 pt, no blank padding past the name
@@ -238,6 +240,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                              "wallet_photo": True})
     pjc = WP.build_pass_json(WP._card_payload("FT-TEST0001"))
     backc = {f["key"]: f for f in pjc["storeCard"]["backFields"]}
+    check("a campaign on the offer field rings (changeMessage)", backc["offer"].get("changeMessage") == "%@")
     check("campaign photo: the back links to the campaign on the web card",
           backc.get("offer_link", {}).get("value", "").startswith(f"{WP._site_url()}/card/FT-TEST0001?offre=camp-photo&k=")
           and 'href="' in backc["offer_link"].get("attributedValue", ""))
