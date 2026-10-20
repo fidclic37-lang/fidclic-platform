@@ -433,6 +433,56 @@ def main():
           http("GET", f"/api/owner/campaigns/{cf['id']}/detail").json()["link_url"] is None)
 
     server.dispatch_to_customer = real_dispatch
+    print("\n12. Une campagne part une seule fois (user, 2026-10-20)")
+    import features.campaigns_page as C
+    server.dispatch_to_customer = lambda tid, cust, title, body, kind="campaign", url=None: (
+        sent_push.append((cust.get("id"), title, kind)) or {"sent": True, "channel": "push"})
+    db.campaigns.delete_many({})
+    db.push_notifications.delete_many({})
+    sent_push.clear()
+    end = (today + dt.timedelta(days=5)).isoformat()
+    once = dict(kind="nouveaute", title="Une fois", message="Bonjour {prénom} !", customer_ids=["c1", "c2"],
+                send_key="wizard-key-1")
+    r1 = compose(**once)
+    r2 = compose(**once)                            # « Envoyer » pressed again after a late error
+    check(f"pressed twice with the same wizard key: one campaign ({db.campaigns.count_documents({})})",
+          r1.status_code == 200 and r2.status_code == 200 and db.campaigns.count_documents({}) == 1
+          and r2.json()["id"] == r1.json()["id"] and r2.json().get("already") is True)
+    check(f"…and each client got it once ({sent_push})", sorted(c for c, _, _ in sent_push) == ["c1", "c2"])
+    r3 = compose(**{**once, "send_key": "wizard-key-2"})
+    check("a new wizard (another key) is a new campaign", r3.json()["id"] != r1.json()["id"])
+
+    # a planned send that stopped half-way: the cron retries it, without the clients already reached
+    db.campaigns.delete_many({})
+    db.push_notifications.delete_many({})
+    sent_push.clear()
+    later = (now + dt.timedelta(minutes=5)).isoformat()
+    sid = compose(kind="nouveaute", title="Programmée", message="Bonjour", customer_ids=["c1", "c2"],
+                  schedule_at=later).json()["id"]
+    db.push_notifications.insert_one({"customer_id": "c1", "tenant_id": "t1", "campaign_id": sid,
+                                      "title": "Programmée", "body": "Bonjour", "type": "campaign", "sent_at": now})
+    C.run_due(now + dt.timedelta(minutes=6))
+    check(f"retried by the cron: only the client not reached yet ({sent_push})", [c for c, _, _ in sent_push] == ["c2"])
+    check("…one card feed line each, never two",
+          db.push_notifications.count_documents({"campaign_id": sid, "customer_id": "c1"}) == 1
+          and db.push_notifications.count_documents({"campaign_id": sid, "customer_id": "c2"}) == 1)
+
+    # the Wallet card keeps the words the client was sent: a later visit must not ring it again
+    db.campaigns.delete_many({})
+    db.push_notifications.delete_many({})
+    db.customers.update_one({"id": "c1"}, {"$set": {"points": 120}})
+    compose(kind="nouveaute", title="Vos points", message="Vous avez {points} points !", customer_ids=["c1"],
+            wallet=True)
+    card = {}
+    WP._attach_campaign_offer(card, db.customers.find_one({"id": "c1"}))
+    first = (card.get("campaign_offer") or {}).get("subtitle")
+    db.customers.update_one({"id": "c1"}, {"$set": {"points": 130}})     # a visit
+    card2 = {}
+    WP._attach_campaign_offer(card2, db.customers.find_one({"id": "c1"}))
+    check(f"after a visit the card still says what was sent ({first!r} → {(card2.get('campaign_offer') or {}).get('subtitle')!r})",
+          first == "Vous avez 120 points !" and (card2.get("campaign_offer") or {}).get("subtitle") == first)
+    server.dispatch_to_customer = real_dispatch
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 
