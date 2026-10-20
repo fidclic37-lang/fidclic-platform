@@ -329,7 +329,12 @@ def _load(tid: str, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
     # a deleted client (Clients › Supprimer, or the inactive purge) is in no
     # list or count here — « Supprimés » shows them (features/customer_edit)
     q = S.customer_filter(scope) if scope else {"tenant_id": tid}
-    return list(_db.customers.find({**q, "deleted_at": None}, FIELDS))
+    # dict(FIELDS): the driver is free to work on the projection it is handed,
+    # and mongomock does — two requests reading the page at the same time (the
+    # overview and the list) then iterated the SAME dict while it was being
+    # changed: « dictionary changed size during iteration » (CI, 2026-10-20).
+    # Each call gets its own copy; nothing shared, nothing to race on.
+    return list(_db.customers.find({**q, "deleted_at": None}, dict(FIELDS)))
 
 
 def _scope(token_data: TokenData, request: Optional[Request]) -> "S.Scope":
@@ -344,7 +349,12 @@ def _initials(name: str) -> str:
 
 
 def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
-            rules: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+            rules: Optional[List[Dict[str, Any]]] = None,
+            period: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """`period`: what this client did over the chosen days. The columns then
+    say THAT, not the whole history (user, 2026-10-20) — « Total dépensé »
+    becomes what they spent on those days. `period_mode` tells the page to
+    label the columns so the two are never read for one another."""
     rules = rules if rules is not None else R.defaults()
     st = status_of(cust, at, rules)
     meta = _status_meta(rules).get(st) or {"label": st, "tone": "blue"}
@@ -360,9 +370,15 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         "status": st, "status_label": meta["label"], "status_tone": meta["tone"],
         "segment": seg,
         "segment_label": next((s["label"] for s in SEGMENTS if s["key"] == seg), "Actif"),
-        "visits": int(cust.get("visits") or 0),
-        "spent": round(float(cust.get("total_amount_paid") or 0), 2),
-        "last_visit": last.isoformat() if last else None,
+        "visits": int(period["visits"]) if period else int(cust.get("visits") or 0),
+        "spent": round(float(period["spent"]), 2) if period
+                 else round(float(cust.get("total_amount_paid") or 0), 2),
+        "last_visit": (period["last"].isoformat() if period and period.get("last")
+                       else (last.isoformat() if last else None)),
+        "period_mode": bool(period),
+        # kept beside it, so a row can still say what the client is worth in all
+        "spent_total": round(float(cust.get("total_amount_paid") or 0), 2),
+        "visits_total": int(cust.get("visits") or 0),
         "joined": joined.isoformat() if joined else None,
         "city": cust.get("city") or "",
         # from the full date of birth (user, 2026-10-09); None for clients who
@@ -430,6 +446,55 @@ SPEND_BANDS = {
     "150_500": (150.0, 500.0), "gt500": (500.0, None),
 }
 JOINED_BANDS = {"30d": 30, "90d": 90, "1y": 365}
+# « Âge » — the ready-made slices, and « de … à … » beside them (user,
+# 2026-10-20: « age range bhi rhe and custom age bhi »). Both ends included.
+AGE_BANDS = {"18_24": (18, 24), "25_34": (25, 34), "35_49": (35, 49), "50p": (50, None)}
+
+
+def _paris_day_bounds(day_from: str, day_to: str) -> Optional[Tuple[datetime, datetime]]:
+    """« du 20/10 au 20/10 » → the two instants that bound those days IN FRANCE.
+    One date alone means that single day. Returns None when neither is given,
+    so a period is never half-applied."""
+    a, b = (day_from or "").strip()[:10], (day_to or "").strip()[:10]
+    if not a and not b:
+        return None
+    a, b = a or b, b or a
+    if a > b:
+        a, b = b, a
+    try:
+        from zoneinfo import ZoneInfo
+        paris = ZoneInfo("Europe/Paris")
+        start = datetime.fromisoformat(a).replace(tzinfo=paris)
+        end = (datetime.fromisoformat(b) + timedelta(days=1)).replace(tzinfo=paris)
+    except ValueError:
+        return None
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def _period_sales(tid: str, scope: Optional["S.Scope"],
+                  bounds: Tuple[datetime, datetime]) -> Dict[str, Dict[str, Any]]:
+    """What each client spent over the period — read from the VISITS, where
+    the till wrote them (user, 2026-10-20: « us particular date ki spending
+    dikhe, not lifetime »). A visit counts in the establishment it was
+    scanned in, like everywhere else (features/store_scope.visit_filter)."""
+    start, end = bounds
+    q = {"tenant_id": tid, "visit_time": {"$gte": start, "$lt": end}}
+    if scope is not None:
+        q.update(S.visit_filter(scope))
+    out: Dict[str, Dict[str, Any]] = {}
+    for v in _db.visits.find(q, {"_id": 0, "customer_id": 1, "amount_paid": 1, "visit_time": 1}):
+        cid = v.get("customer_id")
+        if not cid:
+            continue
+        row = out.setdefault(cid, {"spent": 0.0, "visits": 0, "last": None})
+        row["spent"] += float(v.get("amount_paid") or 0)
+        row["visits"] += 1
+        t = _aware(v.get("visit_time"))
+        if t and (row["last"] is None or t > row["last"]):
+            row["last"] = t
+    for row in out.values():
+        row["spent"] = round(row["spent"], 2)
+    return out
 
 
 # « Plus de filtres » (user, 2026-10-08: the old Clients page's filters,
@@ -477,13 +542,31 @@ def _subscribed_ids(tid: str) -> set:
         return set()
 
 
+def _many(raw: str) -> List[str]:
+    """« nouveaux,fideles » → the two. One value still works, so every older
+    link and every bookmark keeps meaning what it meant."""
+    return [w for w in (str(raw or "").replace(" ", "").lower().split(",")) if w and w != "all"]
+
+
 def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_ids: set,
               segment: str, status: str, spend: str, joined: str, search: str,
               rules: Optional[List[Dict[str, Any]]] = None, source: str = "",
-              extra: Optional[Dict[str, Any]] = None, card: str = "") -> List[Dict[str, Any]]:
+              extra: Optional[Dict[str, Any]] = None, card: str = "",
+              joined_bounds: Optional[Tuple[datetime, datetime]] = None,
+              last_bounds: Optional[Tuple[datetime, datetime]] = None,
+              age_min: Optional[float] = None, age_max: Optional[float] = None,
+              age_band: str = "") -> List[Dict[str, Any]]:
     rules = rules if rules is not None else R.defaults()
     out = []
     x = extra or {}
+    # Segment and Statut take several values now (user, 2026-10-20): a client
+    # matching ANY of the chosen ones is kept.
+    segments, statuses = _many(segment), _many(status)
+    if age_band in AGE_BANDS:                      # the ready-made slice narrows de…à
+        lo, hi = AGE_BANDS[age_band]
+        age_min = lo if age_min is None else max(age_min, lo)
+        if hi is not None:
+            age_max = hi if age_max is None else min(age_max, hi)
     subscribed = x.get("_subscribed") if x.get("notif") in ("oui", "non") else None
     needle = (search or "").strip().lower()
     # « Source » (services/sources): the clients who came by one channel —
@@ -498,9 +581,9 @@ def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_i
         # every plan: knowing who lost their card is not segmentation
         if want_card and not CS.matches(c, want_card, at):
             continue
-        if segment and segment != "all" and not _matches_segment(segment, c, at, shop_avg, local_ids, rules):
+        if segments and not any(_matches_segment(k, c, at, shop_avg, local_ids, rules) for k in segments):
             continue
-        if status and status_of(c, at, rules) != status:
+        if statuses and status_of(c, at, rules) not in statuses:
             continue
         if spend in SPEND_BANDS:
             low, high = SPEND_BANDS[spend]
@@ -510,6 +593,24 @@ def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_i
         if joined in JOINED_BANDS:
             created = _aware(c.get("created_at"))
             if not created or (at - created).days > JOINED_BANDS[joined]:
+                continue
+        # « Inscrit du … au … » — the exact days, in France
+        if joined_bounds:
+            created = _aware(c.get("created_at"))
+            if not created or not (joined_bounds[0] <= created < joined_bounds[1]):
+                continue
+        # « Dernière visite entre … et … »: never a client who has not come yet
+        if last_bounds:
+            seen = _aware(c.get("last_visit_date"))
+            if not seen or not (last_bounds[0] <= seen < last_bounds[1]):
+                continue
+        if age_min is not None or age_max is not None:
+            age = _age(c)
+            if age is None:                       # no full date of birth: not « between 18 and 25 »
+                continue
+            if age_min is not None and age < age_min:
+                continue
+            if age_max is not None and age > age_max:
                 continue
         if needle:
             hay = f"{c.get('name') or ''} {c.get('email') or ''} {c.get('phone') or ''} {c.get('barcode_id') or ''}".lower()
@@ -625,6 +726,10 @@ def list_ids(
     source: str = "",
     tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
     basket_min: str = "", postal: str = "", notif: str = "", card: str = "",
+    joined_from: str = "", joined_to: str = "",
+    last_from: str = "", last_to: str = "",
+    sales_from: str = "", sales_to: str = "",
+    age_min: str = "", age_max: str = "", age_band: str = "",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
@@ -637,11 +742,22 @@ def list_ids(
     """
     tid = token_data.tenant_id
     at = _now()
-    rows = _load(tid, _scope(token_data, request))
+    scope = _scope(token_data, request)
+    rows = _load(tid, scope)
     rows = _filtered(rows, at, _shop_average_ticket(rows), _local_ids(tid, rows),
                      segment, status, spend, joined, search, R.load(tid), source=source,
                      extra=_extra_if_allowed(tid, tier, visits_min, visits_max, spent_min, spent_max, basket_min, postal, notif),
+                     joined_bounds=_paris_day_bounds(joined_from, joined_to),
+                     last_bounds=_paris_day_bounds(last_from, last_to),
+                     age_min=_num_or_none(age_min), age_max=_num_or_none(age_max), age_band=age_band,
                      card=card)
+    # « Ventes du … au … » narrows the table to the clients who came then, so
+    # it must narrow this count too — otherwise « Contacter (N) » promises
+    # more people than the merchant can see.
+    sales = _paris_day_bounds(sales_from, sales_to)
+    if sales:
+        came = _period_sales(tid, scope, sales)
+        rows = [c for c in rows if c["id"] in came]
     return {"ids": [c["id"] for c in rows], "total": len(rows)}
 
 
@@ -655,6 +771,10 @@ def list_page(
     source: str = "",
     tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
     basket_min: str = "", postal: str = "", notif: str = "", card: str = "",
+    joined_from: str = "", joined_to: str = "",
+    last_from: str = "", last_to: str = "",
+    sales_from: str = "", sales_to: str = "",
+    age_min: str = "", age_max: str = "", age_band: str = "",
     sort: str = "recent",
     page: int = 1,
     per_page: int = 10,
@@ -673,24 +793,59 @@ def list_page(
     per_page = max(1, min(MAX_PER_PAGE, int(per_page or 10)))
     page = max(1, int(page or 1))
 
-    rows = _load(tid, _scope(token_data, request))
+    scope = _scope(token_data, request)
+    rows = _load(tid, scope)
     shop_avg = _shop_average_ticket(rows)
     local = _local_ids(tid, rows)
     rules = R.load(tid)
     rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source,
                      extra=_extra_if_allowed(tid, tier, visits_min, visits_max, spent_min, spent_max, basket_min, postal, notif),
-                     card=card)
+                     card=card,
+                     joined_bounds=_paris_day_bounds(joined_from, joined_to),
+                     last_bounds=_paris_day_bounds(last_from, last_to),
+                     age_min=_num_or_none(age_min), age_max=_num_or_none(age_max), age_band=age_band)
+
+    # « Ventes du … au … »: only the clients who came on those days, and the
+    # columns say what they did THEN.
+    sales = _paris_day_bounds(sales_from, sales_to)
+    per_client = _period_sales(tid, scope, sales) if sales else {}
+    if sales:
+        rows = [c for c in rows if c["id"] in per_client]
 
     key, reverse = SORTS.get(sort, SORTS["recent"])
+    if sales and sort in ("spent", "visits", "last"):
+        # sorting on a period column must sort the period's figures
+        got = {"spent": lambda c: per_client[c["id"]]["spent"],
+               "visits": lambda c: per_client[c["id"]]["visits"],
+               "last": lambda c: per_client[c["id"]]["last"] or datetime.min.replace(tzinfo=timezone.utc)}
+        key, reverse = got[sort], True
     rows.sort(key=key, reverse=reverse)
 
     total = len(rows)
     window = rows[(page - 1) * per_page: page * per_page]
     return {
-        "rows": [_public(c, at, shop_avg, local, rules) for c in window],
+        "rows": [_public(c, at, shop_avg, local, rules, per_client.get(c["id"]) if sales else None)
+                 for c in window],
         "total": total, "page": page, "per_page": per_page,
         "pages": max(1, math.ceil(total / per_page)),
+        # the strip above the table: that period in one line
+        "period": _period_summary(sales, sales_from, sales_to, rows, per_client) if sales else None,
     }
+
+
+def _period_summary(bounds, day_from: str, day_to: str, rows: List[Dict[str, Any]],
+                    per_client: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """« 20 octobre : 3 visites · 3 clients · 69 € · panier moyen 23 € » — over
+    the clients the filters left, so the strip and the rows always agree."""
+    kept = [per_client[c["id"]] for c in rows if c["id"] in per_client]
+    spent = round(sum(k["spent"] for k in kept), 2)
+    visits = sum(k["visits"] for k in kept)
+    a, b = (day_from or day_to or "")[:10], (day_to or day_from or "")[:10]
+    if a > b:
+        a, b = b, a
+    return {"from": a, "to": b, "one_day": a == b, "clients": len(kept),
+            "visits": visits, "spent": spent,
+            "basket": round(spent / visits, 2) if visits else 0.0}
 
 
 def _paris_day(iso: Optional[str]) -> str:
@@ -713,6 +868,10 @@ def export_clients(
     search: str = "", sort: str = "recent", source: str = "",
     tier: str = "", visits_min: str = "", visits_max: str = "", spent_min: str = "", spent_max: str = "",
     basket_min: str = "", postal: str = "", notif: str = "", card: str = "",
+    joined_from: str = "", joined_to: str = "",
+    last_from: str = "", last_to: str = "",
+    sales_from: str = "", sales_to: str = "",
+    age_min: str = "", age_max: str = "", age_band: str = "",
     request: Request = None,
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
@@ -725,17 +884,32 @@ def export_clients(
     rules = R.load(tid)
     rows = _filtered(rows, at, shop_avg, local, segment, status, spend, joined, search, rules, source=source,
                      extra=_extra_if_allowed(tid, tier, visits_min, visits_max, spent_min, spent_max, basket_min, postal, notif),
+                     joined_bounds=_paris_day_bounds(joined_from, joined_to),
+                     last_bounds=_paris_day_bounds(last_from, last_to),
+                     age_min=_num_or_none(age_min), age_max=_num_or_none(age_max), age_band=age_band,
                      card=card)
+    # « Ventes du … au … »: the file holds the same clients and the same
+    # figures as the table (user, 2026-10-20) — never the lifetime totals
+    # under a heading that says a date.
+    sales = _paris_day_bounds(sales_from, sales_to)
+    per_client = _period_sales(tid, _scope(token_data, request), sales) if sales else {}
+    if sales:
+        rows = [c for c in rows if c["id"] in per_client]
     key, reverse = SORTS.get(sort, SORTS["recent"])
     rows.sort(key=key, reverse=reverse)
 
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Source", "Visites",
-                "Total dépensé (€)", "Dernière visite", "Inscription", "Ville", "Carte", "Âge",
+    span = ""
+    if sales:
+        a, b = (sales_from or sales_to)[:10], (sales_to or sales_from)[:10]
+        span = f" du {_paris_day(a)} au {_paris_day(b)}" if a != b else f" le {_paris_day(a)}"
+    w.writerow(["Client", "Email", "Téléphone", "Statut", "Segment", "Source", f"Visites{span}",
+                f"Dépensé{span} (€)" if span else "Total dépensé (€)",
+                "Dernière visite", "Inscription", "Ville", "Carte", "Âge",
                 "Tampons (carte en cours)", "Tampons ajoutés à la main", "Tampons carte papier"])
     for c in rows:
-        p = _public(c, at, shop_avg, local, rules)
+        p = _public(c, at, shop_avg, local, rules, per_client.get(c["id"]) if sales else None)
         w.writerow([p["name"], p["email"], p["phone"], p["status_label"], p["segment_label"],
                     p["source_label"], p["visits"], f"{p['spent']:.2f}".replace(".", ","),
                     _paris_day(p["last_visit"]), _paris_day(p["joined"]), p["city"],

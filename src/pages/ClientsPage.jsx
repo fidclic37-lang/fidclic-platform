@@ -5,7 +5,7 @@ import {
   Users, Crown, Send, UserPlus, Target, ShoppingBag, MapPin, Gift, Star,
   Upload, Search, Filter, SlidersHorizontal, ChevronDown, ChevronLeft,
   ChevronRight, Mail, MoreVertical, Loader2, Columns3, Download, X, ArrowRight,
-  Bookmark, BookmarkPlus, Check, Send as SendIcon,
+  Bookmark, BookmarkPlus, Check, CalendarRange, Send as SendIcon,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { sourceLabel } from '../lib/sources';
@@ -54,7 +54,14 @@ const TIER = {
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
 // Columns whose values are numbers — right-aligned so the digits line up.
-const NUM_COLS = new Set(['Visites', 'Total dépensé']);
+const NUM_COLS = new Set(['Visites', 'Total dépensé', 'Visites sur la période', 'Dépensé sur la période']);
+/* « 2026-10-20 » → « 20 octobre » */
+const frDay = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1))
+    .toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' });
+};
 const money = (n) => `${(n ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 const day = (iso) => {
   if (!iso) return '—';
@@ -139,6 +146,84 @@ const Select = ({ label, value, onChange, options }) => (
   </label>
 );
 
+/* Segment and Statut take several values (user, 2026-10-20): type to find one,
+   tick as many as you want. The value travels as « a,b » — one value alone is
+   what it always was, so every saved segment and every link still works. */
+const MultiPick = ({ label, value, onChange, options, allLabel = 'Tous' }) => {
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const box = React.useRef(null);
+  const picked = String(value || '').split(',').filter((k) => k && k !== 'all');
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', away);
+    return () => document.removeEventListener('mousedown', away);
+  }, [open]);
+  const real = options.filter((o) => o.key && o.key !== 'all');
+  const shown = real.filter((o) => o.label.toLowerCase().includes(q.trim().toLowerCase()));
+  const toggle = (k) => {
+    const next = picked.includes(k) ? picked.filter((x) => x !== k) : [...picked, k];
+    onChange(next.join(','));
+  };
+  const text = picked.length === 0 ? allLabel
+    : picked.length === 1 ? (real.find((o) => o.key === picked[0])?.label || picked[0])
+      : `${picked.length} sélectionnés`;
+  return (
+    <div className="relative block min-w-0" ref={box}>
+      <span className="mb-1 block text-[11px] text-[#94A3B8]">{label}</span>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={label}
+              className="flex w-full items-center justify-between gap-2 rounded-xl border border-[#E6EEFB] bg-white py-2.5 pl-3 pr-2.5 text-left text-[13px] font-medium text-[#0B1C3F] outline-none focus:border-[#2F6BFF]">
+        <span className="min-w-0 truncate">{text}</span>
+        <ChevronDown size={14} className="shrink-0 text-[#94A3B8]" />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 z-30 mt-1 rounded-xl border border-[#E6EEFB] bg-white p-2 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher…"
+                 aria-label={`Rechercher dans ${label}`}
+                 className="mb-1.5 w-full rounded-lg border border-[#E6EEFB] px-2.5 py-1.5 text-[12.5px] outline-none focus:border-[#2F6BFF]" />
+          <div role="group" aria-label={`Choix — ${label}`} className="max-h-[220px] overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); }}
+                    className={`block w-full rounded-lg px-2.5 py-1.5 text-left text-[12.5px] hover:bg-[#F4F7FC] ${picked.length ? 'text-[#475569]' : 'font-semibold text-[#2F6BFF]'}`}>
+              {allLabel}
+            </button>
+            {shown.map((o) => (
+              <label key={o.key} className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
+                <input type="checkbox" checked={picked.includes(o.key)} onChange={() => toggle(o.key)}
+                       className="h-3.5 w-3.5 accent-[#2F6BFF]" />
+                <span className="min-w-0 truncate">{o.label}</span>
+              </label>
+            ))}
+            {shown.length === 0 && <p className="px-2.5 py-2 text-[12px] text-[#94A3B8]">Rien de ce nom.</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* « du … au … ». One date alone means that single day — the server reads it
+   that way too, so « les ventes du 20 » needs one click, not two. */
+const DateRange = ({ label, from, to, onChange, hint }) => (
+  <div className="block min-w-0">
+    <span className="mb-1 block text-[11px] text-[#94A3B8]">{label}</span>
+    <div className="flex items-center gap-1.5">
+      <input type="date" value={from || ''} aria-label={`${label} — du`}
+             onChange={(e) => onChange(e.target.value, to)}
+             className="min-w-[116px] flex-1 rounded-xl border border-[#E6EEFB] bg-white px-2 py-2.5 text-[12.5px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
+      <span className="shrink-0 text-[11px] text-[#94A3B8]">au</span>
+      <input type="date" value={to || ''} aria-label={`${label} — au`}
+             onChange={(e) => onChange(from, e.target.value)}
+             className="min-w-[116px] flex-1 rounded-xl border border-[#E6EEFB] bg-white px-2 py-2.5 text-[12.5px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
+      {(from || to) && (
+        <button type="button" onClick={() => onChange('', '')} aria-label={`Effacer ${label}`}
+                className="shrink-0 rounded-lg p-1 text-[#94A3B8] hover:text-[#0B1C3F]"><X size={13} /></button>
+      )}
+    </div>
+    {hint && <span className="mt-1 block text-[10.5px] text-[#94A3B8]">{hint}</span>}
+  </div>
+);
+
 /* « Plus de filtres » (user, 2026-10-08): the old page's filters, in this
    page's design. A number or a postal code is typed; the rest is picked. */
 const NumberBox = ({ label, value, onChange, placeholder, suffix, digitsOnly, maxLength }) => (
@@ -152,7 +237,14 @@ const NumberBox = ({ label, value, onChange, placeholder, suffix, digitsOnly, ma
     </div>
   </label>
 );
-const EXTRA_EMPTY = { tier: '', visits_min: '', visits_max: '', spent_min: '', spent_max: '', basket_min: '', postal: '', notif: '' };
+const EXTRA_EMPTY = { tier: '', visits_min: '', visits_max: '', spent_min: '', spent_max: '', basket_min: '', postal: '', notif: '',
+  age_band: '', age_min: '', age_max: '' };
+// the ready-made slices, « de … à … » beside them (user, 2026-10-20)
+const AGE_BANDS = [{ key: '', label: 'Tous les âges' }, { key: '18_24', label: '18 – 24 ans' },
+  { key: '25_34', label: '25 – 34 ans' }, { key: '35_49', label: '35 – 49 ans' }, { key: '50p', label: '50 ans et plus' }];
+const DATES_EMPTY = { joined_from: '', joined_to: '', last_from: '', last_to: '', sales_from: '', sales_to: '' };
+const today = () => new Date().toLocaleDateString('sv-SE');          // YYYY-MM-DD, heure locale
+const dayBefore = (n) => new Date(Date.now() - n * 86400000).toLocaleDateString('sv-SE');
 const TIER_OPTIONS = [{ key: '', label: 'Tous' }, { key: 'bronze', label: 'Bronze' }, { key: 'silver', label: 'Argent' },
   { key: 'gold', label: 'Or' }, { key: 'vip', label: 'VIP' }];
 
@@ -317,6 +409,12 @@ export default function ClientsPage() {
   const [perPage, setPerPage] = useState(() => prefPerPage());
   const [more, setMore] = useState(false);
   const [extra, setExtraState] = useState(EXTRA_EMPTY);
+  // les dates : inscription, dernière visite, et « Ventes du … au … » qui fait
+  // parler le tableau de CES jours-là (user, 2026-10-20)
+  const [dates, setDatesState] = useState(DATES_EMPTY);
+  const setDates = (patch) => { setDatesState((d) => ({ ...d, ...patch })); setPage(1); };
+  const dateParams = useMemo(
+    () => Object.fromEntries(Object.entries(dates).filter(([, v]) => v)), [dates]);
   const setExtra = (k, v) => { setExtraState((x) => ({ ...x, [k]: v })); setPage(1); };
   // only what is filled travels (an empty box is no filter)
   const extraParams = useMemo(() => Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== '')), [extra]);
@@ -382,8 +480,8 @@ export default function ClientsPage() {
   // What the current filter is, in one place: saved as-is, and applied back
   // as-is, so a reloaded segment shows exactly the rows it showed when it was
   // saved.
-  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source, ...(card ? { card } : {}), ...extraParams }),
-                                 [segment, status, spend, joined, search, sort, source, card, extraParams]);
+  const currentFilters = useMemo(() => ({ segment, status, spend, joined, search, sort, source, ...(card ? { card } : {}), ...extraParams, ...dateParams }),
+                                 [segment, status, spend, joined, search, sort, source, card, extraParams, dateParams]);
 
   const saveCurrent = async () => {
     const name = segName.trim();
@@ -404,6 +502,7 @@ export default function ClientsPage() {
     setTyped(f.search || ''); setSearch(f.search || '');
     setSort(f.sort || 'recent');
     setExtraState(Object.fromEntries(Object.keys(EXTRA_EMPTY).map((k) => [k, f[k] != null ? String(f[k]) : ''])));
+    setDatesState(Object.fromEntries(Object.keys(DATES_EMPTY).map((k) => [k, f[k] != null ? String(f[k]) : ''])));
     setPage(1); setPicked([]);
   };
 
@@ -467,8 +566,8 @@ export default function ClientsPage() {
   }, [typed]);
 
   const params = useMemo(() => ({
-    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...(card ? { card } : {}), ...extraParams, ...(store ? { store } : {}),
-  }), [segment, status, spend, joined, search, source, card, sort, page, perPage, store, extraParams]);
+    segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...(card ? { card } : {}), ...extraParams, ...dateParams, ...(store ? { store } : {}),
+  }), [segment, status, spend, joined, search, source, card, sort, page, perPage, store, extraParams, dateParams]);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -497,7 +596,7 @@ export default function ClientsPage() {
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...(card ? { card } : {}), ...extraParams, ...(store ? { store } : {}) });
+      const { data: blob } = await ownerAPI.clientsExport({ segment, status, spend, joined, search, source, sort, ...(card ? { card } : {}), ...extraParams, ...dateParams, ...(store ? { store } : {}) });
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-clients-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -696,14 +795,36 @@ export default function ClientsPage() {
         <p className="mb-3 flex items-center gap-1.5 text-[12.5px] font-semibold text-[#475569]">
           <Filter size={14} /> Filtres
         </p>
+        {/* « Ventes du … au … » a sa propre ligne : c'est le filtre qui change
+            ce que disent les colonnes, et deux dates ne tiennent pas dans une
+            case de la grille (relu à l'écran, 2026-10-20). */}
+        <div className="mb-3 flex flex-wrap items-end gap-3 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] px-3.5 py-3">
+          <DateRange label="Ventes du … au …" from={dates.sales_from} to={dates.sales_to}
+                     onChange={needCrm((a, b) => setDates({ sales_from: a, sales_to: b }))} />
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[['Aujourd\'hui', today(), today()], ['Hier', dayBefore(1), dayBefore(1)],
+              ['7 derniers jours', dayBefore(6), today()], ['30 derniers jours', dayBefore(29), today()]].map(([lab, a, b]) => (
+                <button key={lab} type="button" onClick={needCrm(() => setDates({ sales_from: a, sales_to: b }))}
+                        className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold transition ${
+                          dates.sales_from === a && dates.sales_to === b
+                            ? 'border-[#2F6BFF] bg-[#2F6BFF] text-white'
+                            : 'border-[#E6EEFB] bg-white text-[#475569] hover:border-[#2F6BFF] hover:text-[#2F6BFF]'}`}>
+                  {lab}
+                </button>
+            ))}
+          </div>
+          <p className="min-w-0 flex-1 text-[11.5px] leading-snug text-[#64748B]">
+            Le tableau montre alors <strong>ces jours-là</strong> : ce que chaque client a dépensé
+            et ses visites sur la période, pas le total de toujours.
+          </p>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1fr_auto] lg:items-end">
-          <Select label="Segment" value={segment}
-                  onChange={needCrm((v) => { setSegment(v); setPage(1); })}
-                  options={segments.map((s) => ({ key: s.key, label: s.key === 'all' ? 'Tous' : s.label }))} />
-          <Select label="Statut" value={status}
-                  onChange={(v) => { setStatus(v); setPage(1); }}
-                  options={[{ key: '', label: 'Tous' },
-                            ...(meta?.statuses || []).map((s) => ({ key: s.key, label: s.label }))]} />
+          <MultiPick label="Segment" value={segment === 'all' ? '' : segment}
+                     onChange={needCrm((v) => { setSegment(v || 'all'); setPage(1); })}
+                     options={segments.map((s) => ({ key: s.key, label: s.key === 'all' ? 'Tous' : s.label }))} />
+          <MultiPick label="Statut" value={status}
+                     onChange={(v) => { setStatus(v); setPage(1); }}
+                     options={(meta?.statuses || []).map((s) => ({ key: s.key, label: s.label }))} />
           <Select label="Dépenses" value={spend}
                   onChange={needCrm((v) => { setSpend(v); setPage(1); })} options={SPEND_BANDS} />
           <Select label="Date d'inscription" value={joined}
@@ -741,6 +862,16 @@ export default function ClientsPage() {
               <NumberBox label="Dépense totale — au plus" value={extra.spent_max} onChange={(v) => setExtra('spent_max', v)} placeholder="∞" suffix="€" />
               <NumberBox label="Panier moyen — au moins" value={extra.basket_min} onChange={(v) => setExtra('basket_min', v)} placeholder="0" suffix="€" />
               <NumberBox label="Code postal (ou son début)" value={extra.postal} onChange={(v) => setExtra('postal', v)} placeholder="37000 ou 37" digitsOnly maxLength={5} />
+              <Select label="Tranche d'âge" value={extra.age_band} onChange={(v) => setExtra('age_band', v)} options={AGE_BANDS} />
+              <NumberBox label="Âge — à partir de" value={extra.age_min} onChange={(v) => setExtra('age_min', v)} placeholder="18" digitsOnly maxLength={3} />
+              <NumberBox label="Âge — jusqu'à" value={extra.age_max} onChange={(v) => setExtra('age_max', v)} placeholder="∞" digitsOnly maxLength={3} />
+            </div>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <DateRange label="Inscrit du … au …" from={dates.joined_from} to={dates.joined_to}
+                         onChange={(a, b) => setDates({ joined_from: a, joined_to: b })} />
+              <DateRange label="Dernière visite du … au …" from={dates.last_from} to={dates.last_to}
+                         hint="Les clients dont la DERNIÈRE visite tombe dans ces jours"
+                         onChange={(a, b) => setDates({ last_from: a, last_to: b })} />
             </div>
             <p className="text-[12px] leading-relaxed text-[#475569]">
               <strong>Comment ces segments sont calculés.</strong> Un client est
@@ -752,7 +883,7 @@ export default function ClientsPage() {
               <em> client local</em> habite à moins de {meta.definitions.local_km} km.
             </p>
             <button type="button"
-                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setCard(''); setTyped(''); setExtraState(EXTRA_EMPTY); setPage(1); }}
+                    onClick={() => { setSegment('all'); setStatus(''); setSpend(''); setJoined(''); setSource(''); setCard(''); setTyped(''); setExtraState(EXTRA_EMPTY); setDatesState(DATES_EMPTY); setPage(1); }}
                     className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#E6EEFB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
               <X size={12} /> Réinitialiser les filtres
             </button>
@@ -761,6 +892,32 @@ export default function ClientsPage() {
       </section>
 
       {/* table */}
+      {/* « Ventes du … au … » : ce que le commerce a fait ces jours-là, au-dessus
+          des lignes qui le composent (user, 2026-10-20) */}
+      {feed.period && (
+        <section data-testid="period-strip"
+                 className="mb-3 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-[#C9DBFB] bg-[#F6F9FF] px-5 py-3.5">
+          <span className="flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]">
+            <CalendarRange size={16} className="text-[#2F6BFF]" />
+            {feed.period.one_day ? `Ventes du ${frDay(feed.period.from)}`
+              : `Ventes du ${frDay(feed.period.from)} au ${frDay(feed.period.to)}`}
+          </span>
+          {[['Chiffre d\'affaires', money(feed.period.spent)],
+            ['Visites', nf(feed.period.visits)],
+            ['Clients venus', nf(feed.period.clients)],
+            ['Panier moyen', money(feed.period.basket)]].map(([k, v]) => (
+              <span key={k} className="min-w-0">
+                <span className="block text-[10.5px] uppercase tracking-wide text-[#64748B]">{k}</span>
+                <span className="block text-[15px] font-bold text-[#0B1C3F]">{v}</span>
+              </span>
+          ))}
+          <button type="button" onClick={() => setDates({ sales_from: '', sales_to: '' })}
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-[#C9DBFB] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#2F6BFF]">
+            <X size={12} /> Revenir à tout l&apos;historique
+          </button>
+        </section>
+      )}
+
       <section id="clients-list" className="scroll-mt-24 rounded-2xl border border-[#E6EEFB] bg-white shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
         <header className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <h2 className="text-[17px] font-bold text-[#0B1C3F]">
@@ -809,7 +966,11 @@ export default function ClientsPage() {
                          onChange={togglePage}
                          className="h-4 w-4 accent-[#2F6BFF]" />
                 </th>
-                {['Client', 'Âge', 'Carte', 'Statut', 'Segment', 'Visites', 'Dernière visite', 'Total dépensé', 'Actions'].map((h) => (
+                {['Client', 'Âge', 'Carte', 'Statut', 'Segment',
+                  feed.period ? 'Visites sur la période' : 'Visites',
+                  'Dernière visite',
+                  feed.period ? 'Dépensé sur la période' : 'Total dépensé',
+                  'Actions'].map((h) => (
                   <th key={h} className={`px-4 py-3 text-[12px] font-semibold text-[#64748B] ${NUM_COLS.has(h) ? 'text-right' : ''}`}>
                     {h}
                   </th>
