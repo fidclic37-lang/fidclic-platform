@@ -143,7 +143,7 @@ const CustomerStatusConfigCard = () => {
           <Save size={14} />
           {saving ? 'Saving…' : 'Save status definition'}
         </button>
-        {savedAt && <span className="text-xs" style={{ color: C_PS.inkMute }}>Saved {savedAt.toLocaleTimeString()}</span>}
+        {savedAt && <span className="text-xs" style={{ color: C_PS.inkMute }}>Saved {savedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>}
       </div>
     </div>
   );

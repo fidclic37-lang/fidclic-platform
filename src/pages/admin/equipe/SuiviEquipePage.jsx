@@ -16,6 +16,7 @@ import { ListPicker, ListManager } from './Lists';
 import { AddMember, FonctionModal, RemoveMember } from './Members';
 import HistoryView from './HistoryView';
 import NotificationBell from '../../../components/NotificationBell';
+import TimeInput24 from '../../../components/TimeInput24';
 
 /* Super admin › Suivi d'équipe — built to the approved mockup (user,
    2026-10-08). The week Monday → Sunday, the figures, the team, the filters;
@@ -333,7 +334,7 @@ export default function SuiviEquipePage() {
                   </label>
                   <PeoplePicker members={d.members} value={qPeople} onChange={setQPeople} className="min-w-[150px] flex-[1_1_160px]" onAddMember={() => setModal('member')} />
                   <input type="date" required value={qDay} onChange={(e) => setQDay(e.target.value)} className={`${fixed} w-[150px] flex-none`} aria-label="Date d'échéance" />
-                  <input type="time" required value={qHour} onChange={(e) => setQHour(e.target.value)} className={`${fixed} w-[112px] flex-none`} aria-label="Heure d'échéance" />
+                  <TimeInput24 required value={qHour} onChange={(e) => setQHour(e.target.value)} className={`${fixed} w-[112px] flex-none`} aria-label="Heure d'échéance" />
                   {/* the same lists as the filters and the task window: pick, add, manage */}
                   <ListPicker kind="priorities" items={d.priorities} value={qPrio} onChange={setQPrio} placeholder="Priorité" ariaLabel="Priorité"
                               canEdit onAdded={refresh} onManage={() => setManage('priorities')} className="w-[140px] flex-none" />

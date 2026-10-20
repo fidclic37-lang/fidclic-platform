@@ -8,6 +8,7 @@ import {
   DAYS_SHORT, STATUS, Shell,
 } from './shared';
 import { ListPicker } from './Lists';
+import TimeInput24 from '../../../components/TimeInput24';
 
 export { Shell };
 
@@ -83,7 +84,7 @@ export function TaskForm({ initial, board, onDone, onClose, editing, onRefresh, 
                       onAdded={onRefresh} onManage={onManage && (() => onManage('types'))} />
         </div>
         <label><Label>Échéance — date</Label><input type="date" required value={day} onChange={(e) => setDay(e.target.value)} className={field} /></label>
-        <label><Label>Échéance — heure</Label><input type="time" required value={hour} onChange={(e) => setHour(e.target.value)} className={field} /></label>
+        <label><Label>Échéance — heure</Label><TimeInput24 required value={hour} onChange={(e) => setHour(e.target.value)} className={field} /></label>
         <div className="sm:col-span-2"><Label>Priorité</Label>
           <ListPicker kind="priorities" items={board.priorities} value={priority} onChange={(v) => setPriority(v || priority)} canEdit
                       onAdded={onRefresh} onManage={onManage && (() => onManage('priorities'))} className="sm:max-w-[50%]" />

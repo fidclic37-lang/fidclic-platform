@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, Eye, Loader2, Mail, Plus, Search, Send, Trash2, CheckCircle2, Info } from 'lucide-react';
 import { crmAPI } from '../../lib/api';
 import { Modal, Select, BLUE, inputCls, nf } from './ui';
+import TimeInput24 from '../../components/TimeInput24';
 
 /* Shared by Séquences, Modèles d'emails and the one-off « Envoyer un email ». */
 
@@ -123,7 +124,7 @@ export function SequenceEditor({ seq, meta, templates, variables, focus, onClose
               <span className="text-[12.5px] text-[#475569]">Jour</span>
               <input type="number" min={1} max={365} value={s.day} onChange={(e) => put(i, { day: e.target.value })} className="h-8 w-16 rounded-lg border border-[#DCE3EE] px-2 text-[13px]" />
               <span className="text-[12.5px] text-[#475569]">à</span>
-              <input type="time" value={s.time} onChange={(e) => put(i, { time: e.target.value })} className="h-8 rounded-lg border border-[#DCE3EE] px-2 text-[13px]" />
+              <TimeInput24 value={s.time} onChange={(e) => put(i, { time: e.target.value })} className="h-8 rounded-lg border border-[#DCE3EE] px-2 text-[13px]" />
               <select value={s.template_id || ''} onChange={(e) => applyTpl(i, e.target.value)} className="h-8 min-w-0 flex-1 rounded-lg border border-[#DCE3EE] px-2 text-[12.5px]">
                 <option value="">Partir d'un modèle…</option>{templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
