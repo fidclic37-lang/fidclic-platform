@@ -16,6 +16,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { Calendar, Clock, Save, Plus, Trash2, Check } from 'lucide-react';
 import { C as C_PS } from './PageShell';
+import TimeInput24 from './TimeInput24';
 
 const DAY_LABELS = {
   monday: 'Lundi', tuesday: 'Mardi', wednesday: 'Mercredi', thursday: 'Jeudi',
@@ -147,16 +148,14 @@ const BusinessHoursCard = () => {
               <span className="col-span-3 text-sm font-bold" style={{ color: C_PS.inkDeep }}>
                 {DAY_LABELS[d.day] || d.day}
               </span>
-              <input
-                type="time"
+              <TimeInput24
                 value={d.open_from || '07:00'}
                 disabled={d.closed}
                 onChange={(e) => updateDay(i, { open_from: e.target.value })}
                 className="col-span-3 border rounded px-2 py-1 text-sm disabled:opacity-50"
                 style={{ borderColor: C_PS.hairline }}
               />
-              <input
-                type="time"
+              <TimeInput24
                 value={d.open_to || '19:00'}
                 disabled={d.closed}
                 onChange={(e) => updateDay(i, { open_to: e.target.value })}

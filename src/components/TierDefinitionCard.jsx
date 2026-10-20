@@ -132,7 +132,7 @@ const TierDefinitionCard = () => {
           style={{ background: 'var(--flc-card, #FFFFFF)', color: C_PS.terracotta, border: `1px solid ${C_PS.terracotta}55` }}>
           <RefreshCw size={14} className={recomputing ? 'animate-spin' : ''} /> {recomputing ? 'Recomputing…' : 'Recompute now'}
         </button>
-        {savedAt && <span className="text-xs" style={{ color: C_PS.inkMute }}>Saved {savedAt.toLocaleTimeString()}</span>}
+        {savedAt && <span className="text-xs" style={{ color: C_PS.inkMute }}>Saved {savedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>}
       </div>
 
       {recomputeResult && (

@@ -247,7 +247,7 @@ const AutoCampaignsCard = () => {
           style={{ background: C_PS.terracotta }}>
           <Save size={14} /> {saving ? 'Saving…' : 'Save configuration'}
         </button>
-        {savedAt && <span className="text-xs" style={{ color: C_PS.inkMute }}>Saved {savedAt.toLocaleTimeString()}</span>}
+        {savedAt && <span className="text-xs" style={{ color: C_PS.inkMute }}>Saved {savedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>}
       </div>
 
       {/* Twilio test bench — one-shot SMS to any number for end-to-end verification. */}

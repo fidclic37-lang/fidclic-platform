@@ -14,6 +14,7 @@ import InfoTip from '../components/InfoTip';
 import PushPreview from '../components/PushPreview';
 import { ResultChip, ResultModal, ComposerTips, LearningPanel } from '../components/CampaignLearning';
 import { eur } from '../lib/money';
+import TimeInput24 from '../components/TimeInput24';
 
 /**
  * Campagnes — the composer, built to the approved design.
@@ -571,7 +572,7 @@ export default function CampagnesPageLegacy() {
                   <input type="date" value={date} min={new Date().toISOString().slice(0, 10)}
                          onChange={(e) => setDate(e.target.value)}
                          className="rounded-xl border border-[#E6EEFB] bg-white px-3 py-2 text-[12.5px] outline-none focus:border-[#2F6BFF]" />
-                  <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
+                  <TimeInput24 value={time} onChange={(e) => setTime(e.target.value)}
                          className="rounded-xl border border-[#E6EEFB] bg-white px-3 py-2 text-[12.5px] outline-none focus:border-[#2F6BFF]" />
                 </div>
               )}

@@ -11,6 +11,7 @@ import PhonePreview from './PhonePreview';
 import {
   KIND_META, VARIABLES, examplesFor, EMOJIS, dayShort, dayLong, todayYmd, addDays, daysBetween, hh,
 } from './kinds';
+import TimeInput24 from '../TimeInput24';
 
 /**
  * « Nouvelle notification » — the five-step wizard of the Campagnes mockups
@@ -329,7 +330,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
           <Info size={15} className="mt-0.5 shrink-0 text-[#2F6BFF]" />
           <span>
             {step === 2 ? 'Les variables seront automatiquement remplacées par les informations de chaque client lors de l\'envoi. '
-              : s.sendMode === 'later' && s.date ? <>La notification sera envoyée le <b>{dayLong(`${s.date}T${s.time}:00`)}</b> à <b>{s.time}</b> à <b>{nf(preview?.count)} clients</b>. </>
+              : s.sendMode === 'later' && s.date ? <>La notification sera envoyée le <b>{dayLong(`${s.date}T${s.time}:00`)}</b> à <b translate="no" className="notranslate">{s.time}</b> à <b>{nf(preview?.count)} clients</b>. </>
                 : s.sendMode === 'now' ? <>La notification sera envoyée <b>immédiatement</b> à <b>{nf(preview?.count)} clients</b>. </>
                   : <>Le message sera envoyé à <b>{nf(preview?.count)} clients</b>. </>}
             Le rendu peut varier selon l'appareil (iOS / Android).
@@ -415,7 +416,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
                   <label key={k} className="flex items-center gap-3 rounded-xl border border-[#D9E2F2] px-3 py-2">
                     <Clock size={20} className="text-[#0B1C3F]" />
                     <span className="min-w-0 flex-1"><span className="block text-[12px] text-[#64748B]">{l}</span>
-                      <input type="time" value={o[k]} onChange={(e) => setIn('offer', { [k]: e.target.value })}
+                      <TimeInput24 value={o[k]} onChange={(e) => setIn('offer', { [k]: e.target.value })}
                              className="w-full !border-0 bg-transparent !p-0 !text-[16px] !shadow-none !outline-none !ring-0" /></span>
                   </label>
                 ))}
@@ -446,7 +447,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
           <label className="block"><Label>Date</Label>
             <input type="date" min={today} className={field} value={s.event.date} onChange={(e) => setIn('event', { date: e.target.value })} /></label>
           <label className="block"><Label hint="(optionnelle)">Heure</Label>
-            <input type="time" className={field} value={s.event.time} onChange={(e) => setIn('event', { time: e.target.value })} /></label>
+            <TimeInput24 allowEmpty aria-label="Heure de l’événement" className={field} value={s.event.time} onChange={(e) => setIn('event', { time: e.target.value })} /></label>
           <label className="block sm:col-span-2"><Label hint="(optionnel)">Lieu</Label>
             <input className={field} maxLength={120} value={s.event.place} placeholder="Dans votre boutique"
                    onChange={(e) => setIn('event', { place: e.target.value })} /></label>
@@ -724,7 +725,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
           <label className="block"><Label>Date d'envoi</Label>
             <input type="date" min={today} className={field} value={s.date} onChange={(e) => set({ date: e.target.value })} /></label>
           <label className="block"><Label>Heure d'envoi</Label>
-            <input type="time" className={field} value={s.time} onChange={(e) => set({ time: e.target.value })} /></label>
+            <TimeInput24 className={field} value={s.time} onChange={(e) => set({ time: e.target.value })} /></label>
         </div>
       </div>
       <AiTip best={best} title="Recommandation FIDCLIC AI" />

@@ -41,7 +41,7 @@ export default function LockScreenPreview({ shop, logo, title, body, image, butt
       <div className="mx-auto w-full max-w-[300px] rounded-[38px] bg-[#0B1220] p-[7px] shadow-[0_24px_50px_-28px_rgba(11,28,63,.7)]">
         <div className={`relative overflow-hidden rounded-[32px] bg-[radial-gradient(120%_80%_at_85%_10%,#F59E0B_0%,rgba(245,158,11,0)_45%),linear-gradient(160deg,#0F1D4A_0%,#1E3A8A_45%,#2F6BFF_70%,#F97316_100%)] px-3 pb-5 ${compact ? 'pt-7' : 'pt-9'}`}>
           <span className="absolute left-1/2 top-2 h-[18px] w-[86px] -translate-x-1/2 rounded-full bg-black" />
-          <p className={`text-center font-light leading-none text-white ${compact ? 'text-[40px]' : 'text-[52px]'}`} aria-label="Heure">{now.time}</p>
+          <p translate="no" className={`notranslate text-center font-light leading-none text-white ${compact ? 'text-[40px]' : 'text-[52px]'}`} aria-label="Heure">{now.time}</p>
           <p className="mt-1 text-center text-[13px] font-medium text-white/90">{now.day}</p>
           <div className={`${compact ? 'mt-4' : 'mt-7'} rounded-2xl bg-white/90 p-3 shadow-lg backdrop-blur`}>
             <div className="mb-1 flex items-center gap-2">

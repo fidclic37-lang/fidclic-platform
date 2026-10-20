@@ -7,6 +7,7 @@ import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useBranch } from '../contexts/BranchContext';
 import { protectNames } from '../lib/translator';
+import TimeInput24 from '../components/TimeInput24';
 
 /* Paramètres › Établissement — built to the approved mockup (blocks 1–8),
    plus what lived nowhere else and the user asked to add: the opening hours,
@@ -478,9 +479,9 @@ export default function EtablissementPage() {
                     </label>
                     {!h.closed && (
                       <span className="ml-auto flex items-center gap-2 text-[13px] text-[#64748B]">
-                        <input type="time" value={h.open_from || ''} onChange={(e) => setDay(i, { open_from: e.target.value })} className="h-9 rounded-lg border border-[#DCE3EE] px-2 text-[13.5px] text-[#0B1C3F]" />
+                        <TimeInput24 value={h.open_from || ''} onChange={(e) => setDay(i, { open_from: e.target.value })} className="h-9 rounded-lg border border-[#DCE3EE] px-2 text-[13.5px] text-[#0B1C3F]" />
                         à
-                        <input type="time" value={h.open_to || ''} onChange={(e) => setDay(i, { open_to: e.target.value })} className="h-9 rounded-lg border border-[#DCE3EE] px-2 text-[13.5px] text-[#0B1C3F]" />
+                        <TimeInput24 value={h.open_to || ''} onChange={(e) => setDay(i, { open_to: e.target.value })} className="h-9 rounded-lg border border-[#DCE3EE] px-2 text-[13.5px] text-[#0B1C3F]" />
                       </span>
                     )}
                   </div>

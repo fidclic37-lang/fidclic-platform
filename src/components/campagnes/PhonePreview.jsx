@@ -55,7 +55,8 @@ export default function PhonePreview({ at, shop, logo, title, message, sample, i
           <div className="mt-4 text-center text-white">
             <Lock size={13} className="mx-auto opacity-90" />
             <p className="mt-1 text-[12.5px] font-medium">{DAYS[d.getDay()]} {d.getDate()} {MONTHS[d.getMonth()]}</p>
-            <p className="text-[52px] font-semibold leading-none tracking-tight tabular-nums">{hh}:{mm}</p>
+            {/* « 13:53 », kept out of the browser's page translation (it printed « 1353 ») */}
+            <p translate="no" className="notranslate text-[52px] font-semibold leading-none tracking-tight tabular-nums">{hh}:{mm}</p>
           </div>
           <div className="mt-5 rounded-2xl bg-white/85 p-2.5 text-[12px] leading-snug text-[#0B1C3F] shadow-lg backdrop-blur">
             <div className="mb-1 flex items-center gap-2">

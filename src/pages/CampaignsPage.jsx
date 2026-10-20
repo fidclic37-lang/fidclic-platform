@@ -1087,7 +1087,7 @@ export default function CampaignsPage() {
                 .map((s) => {
                   const when = s.run_at ? new Date(s.run_at) : null;
                   const whenLabel = when && !isNaN(when)
-                    ? when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                    ? when.toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })
                     : '—';
                   return (
                     <div key={s.id} className="p-3 rounded-lg bg-[#F5F4F1] border border-[#E9E5E0] flex items-center justify-between gap-3">
