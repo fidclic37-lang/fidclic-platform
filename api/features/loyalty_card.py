@@ -40,6 +40,11 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData
 from features import store_scope as S
 
+# « Informations complémentaires » au dos de la carte : le nombre de lignes et
+# la longueur d'une ligne (user, 2026-10-20 — les conditions d'un programme
+# tiennent rarement en 400 caractères).
+BACK_FIELDS_MAX = 20
+
 router = APIRouter(tags=["loyalty-card"])
 _db = None
 
@@ -338,6 +343,7 @@ class CardSettings(BaseModel):
     # "" = the card's text colour, "#RRGGBB" = that colour (wallet_passes.name_logo)
     logo_text_color: Optional[str] = None
     name_logo_size: Optional[int] = None           # « Taille du logo » beside the name, 0–100 (0: the name alone)
+    name_text_size: Optional[int] = None           # « Taille du nom », 0–100 (moins = le logo prend la place)
     name_font: Optional[str] = None                # « Police du nom » (wallet_passes.NAME_FONTS), "" = default
     name_style: Optional[Dict[str, Any]] = None    # « Nom stylé »: letter by letter (wallet_passes.clean_name_style)
     # the Google Wallet card's own design (wallet_passes.clean_google_design)
@@ -348,7 +354,7 @@ class CardSettings(BaseModel):
     points_label: Optional[str] = None
     visits_label: Optional[str] = None
     stamps_label: Optional[str] = None
-    back_fields: Optional[List[Dict[str, str]]] = None   # [{label, value}]
+    back_fields: Optional[List[Dict[str, str]]] = None   # [{label, value}], BACK_FIELDS_MAX rows
     pass_expiration_date: Optional[str] = None
     location_reminder: Optional[bool] = None     # lock screen near the shop
     location_radius_m: Optional[int] = None      # Apple's maxDistance
@@ -449,6 +455,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "poster_footer_color": tpl.get("poster_footer_color") or "",
             "logo_text_color": tpl.get("logo_text_color") or "",
             "name_logo_size": 100 if tpl.get("name_logo_size") is None else int(tpl.get("name_logo_size")),
+            "name_text_size": 100 if tpl.get("name_text_size") is None else int(tpl.get("name_text_size")),
             "name_font": tpl.get("name_font") or "",
             "name_style": tpl.get("name_style") or None,
             "name_fonts": [{"key": k, "label": v[2]} for k, v in _name_fonts().items()],
@@ -540,6 +547,8 @@ def put_card_settings(body: CardSettings,
         raise HTTPException(status_code=400, detail="Emplacement de la récompense inconnu.")
     if payload.get("logo_text_color") and not re.match(r"^#[0-9A-Fa-f]{6}$", payload["logo_text_color"]):
         raise HTTPException(status_code=400, detail="Couleur du nom invalide.")
+    if payload.get("name_text_size") is not None and not 0 <= int(payload["name_text_size"]) <= 100:
+        raise HTTPException(status_code=400, detail="La taille du nom va de 0 à 100 %.")
     if payload.get("name_logo_size") is not None and not 0 <= int(payload["name_logo_size"]) <= 100:
         raise HTTPException(status_code=400, detail="Taille du logo : de 0 à 100 %.")
     if payload.get("name_font"):
@@ -589,10 +598,12 @@ def put_card_settings(body: CardSettings,
         from features.wallet_passes import clean_featured
         payload["featured_actions"] = clean_featured(payload["featured_actions"], keep_empty=True)
     if payload.get("back_fields") is not None:
-        # Keep it to rows the customer can actually read on the back.
+        # Room for what a shop really puts on the back — conditions d'utilisation,
+        # horaires, réseaux… (user, 2026-10-20: eight short rows were not enough
+        # for a programme's full terms).
         payload["back_fields"] = [
-            {"label": (r.get("label") or "").strip()[:40], "value": (r.get("value") or "").strip()[:400]}
-            for r in payload["back_fields"][:8]
+            {"label": (r.get("label") or "").strip()[:60], "value": (r.get("value") or "").strip()[:2000]}
+            for r in payload["back_fields"][:BACK_FIELDS_MAX]
             if (r.get("label") or "").strip() and (r.get("value") or "").strip()
         ]
     if payload.get("reward_threshold_stamps") is not None:
