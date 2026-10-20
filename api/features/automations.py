@@ -236,7 +236,7 @@ REMOVED_BUILTINS = {"special_offer", "cart_recovery", "off_peak", "new_products"
 
 VARIABLES = {
     "common": ["prénom", "nom", "nom_commerce", "points", "visites", "prochaine_récompense", "points_manquants"],
-    "birthday": [], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["points_restants", "tampons_restants", "tampons", "récompense", "visites_restantes", "visite_s"],
+    "birthday": ["fin_offre"], "tier_up": ["palier", "récompense"], "welcome": ["offre", "lien"], "near_reward": ["points_restants", "tampons_restants", "tampons", "récompense", "visites_restantes", "visite_s"],
     "referral": ["filleul", "parrain", "points_gagnés", "visite_ami", "récompense", "lien", "amis_parraines"], "geo": ["établissement"],
     "google_review": ["établissement", "lien_avis"], "inactive": ["jours_absence", "offre", "lien"], "custom": ["prénom", "nom", "points", "récompense", "nom_commerce", "date", "montant", "nombre_visites"],
 }
@@ -295,7 +295,7 @@ IMPACT_MIN_SHOPS = 3            # the sector's pool, anonymous, from 3 shops (ca
 # ---------------------------------------------------------------------------
 def _default_trigger(scenario: str) -> Dict[str, Any]:
     return {
-        "birthday": {"offset_days": 0},
+        "birthday": {"offset_days": 0, "offer_days": BIRTHDAY_OFFER_DAYS},
         # Atteinte d'un palier (mockups 2026-10-11): an owner threshold on
         # points (earned since the start) / visits / € spent, or the card's
         # statut; every multiple, the first time only, or with a minimum
@@ -892,6 +892,8 @@ def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[s
     reward = tpl.get("reward_description") or "votre récompense"
     out: Dict[str, Any] = {"prochaine_récompense": reward, "prochaine_recompense": reward}
     out["nom"] = cust.get("name") or ""
+    if scenario == "birthday" and ctx.get("offer_until"):
+        out["fin_offre"] = fr_day(ctx["offer_until"])
     if scenario == "tier_up":
         if ctx.get("palier"):
             out["palier"] = ctx["palier"]
@@ -1021,6 +1023,9 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     meta = SCENARIOS[scenario]
     tenant = _db.tenants.find_one({"id": tid}) or {}
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    until = birthday_until(row, cust, at) if scenario == "birthday" else None
+    if until:
+        ctx = {**ctx, "offer_until": until}
     extra = _extra(scenario, cust, ctx, tpl)
     msg = row.get("message") or {}
     if scenario == "referral" and ctx.get("side") == "filleul" and row.get("message_filleul"):
@@ -1049,6 +1054,8 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
         log["reminder"] = True
     if ctx.get("level") is not None:
         log["level"] = ctx["level"]
+    if until:
+        log["offer_until"] = until.isoformat()
     _db.automation_log.insert_one(dict(log))
     _db.push_notifications.insert_one({"tenant_id": tid, "customer_id": cust["id"], "type": meta["push_kind"],
                                        "title": title, "body": body, "sent_at": at, "automatic": True,
@@ -1073,6 +1080,8 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
         # the Wallet card: « Dernier message » + the button's link on the pass
         news = {"log_id": log_id, "title": title, "body": body, "label": label, "url": click, "at": at,
                 "image_url": msg.get("image_url")}
+        if until:
+            news["until"] = until.isoformat()
         if scenario == "referral" and (ctx or {}).get("reward_kind", "points") == "points":
             # rides on the points field's own banner (« … Vous avez maintenant %@ points. »):
             # one notification, not two; the card page still shows it with its button
@@ -1547,14 +1556,50 @@ def tick_seen(at: datetime) -> bool:
     return bool(last and at - last < timedelta(hours=2))
 
 
+# Anniversaire, the same day (user, 2026-10-20): after the day's round at its
+# hour, a client whose birthday is today — a card added or a birthday saved
+# later — is greeted on a later 15-minute tick, until 20:00 (Paris); later
+# than that, the next day's round. A card added less than an hour ago waits
+# that hour, so the birthday does not land on top of « Bienvenue ». The
+# offer is valid BIRTHDAY_OFFER_DAYS days from the birthday unless the owner
+# says otherwise (trigger.offer_days, 1–60): that is also how late a missed
+# greeting may still go.
+BIRTHDAY_OFFER_DAYS = 7
+BIRTHDAY_LAST = (20, 0)
+BIRTHDAY_AFTER_CARD = timedelta(minutes=60)
+
+
+def offer_days(row: Dict[str, Any]) -> int:
+    try:
+        n = int((row.get("trigger") or {}).get("offer_days") or BIRTHDAY_OFFER_DAYS)
+    except (TypeError, ValueError):
+        n = BIRTHDAY_OFFER_DAYS
+    return max(1, min(60, n))
+
+
+def birthday_until(row: Dict[str, Any], cust: Dict[str, Any], at: datetime) -> Optional[date]:
+    """The last day of this client's birthday offer: their birthday this time
+    round (the one this greeting is for) + the offer's days − 1."""
+    off = int((row.get("trigger") or {}).get("offset_days") or 0)
+    n = offer_days(row)
+    key = str(cust.get("birthday") or "")[-5:]
+    today = _paris(at).date()
+    for back in range(0, max(1, n - off) + 31):
+        bday = today - timedelta(days=back) - timedelta(days=off)
+        if bday.strftime("%m-%d") == key:
+            return bday + timedelta(days=n - 1)
+    return None
+
+
 def _birthday_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
-    """Clients whose birthday (± offset) fell in the last 7 days up to today,
-    not greeted by this automation this year — a skipped day (« jours
-    ouvrés ») or a missed run is caught up, never doubled."""
+    """Clients whose birthday (± offset) is today, or earlier while its offer
+    is still valid, not greeted by this automation this year — a skipped day
+    (« jours ouvrés »), a missed run or a card added late is caught up, never
+    doubled. A card added within the hour waits (« Bienvenue » first)."""
     off = int((row.get("trigger") or {}).get("offset_days") or 0)
     today = _paris(at).date()
     keys = {}
-    for back in range(0, 7):
+    for back in range(0, max(1, offer_days(row) - off)):
         d = today - timedelta(days=back)
         bday = d - timedelta(days=off)            # offset −3 = three days BEFORE the birthday
         keys[bday.strftime("%m-%d")] = d
@@ -1563,7 +1608,9 @@ def _birthday_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
     done = set(_db.automation_log.distinct("customer_id", {"tenant_id": tid, "automation_id": row["id"],
                                                            "sent_at": {"$gte": at - timedelta(days=300)}}))
     done |= set(_db.automation_queue.distinct("customer_id", {"automation_id": row["id"]}))
-    return [c for c in people if c["id"] not in done]
+    fresh = at - BIRTHDAY_AFTER_CARD
+    return [c for c in people if c["id"] not in done
+            and not ((_aware(c.get("created_at")) or fresh) > fresh)]
 
 
 def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
@@ -1660,6 +1707,8 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
                 continue
             last = _aware(row.get("last_run_at"))
             if last and _paris(last).date() == loc_today:
+                if row["scenario"] == "birthday" and strict:
+                    summary["time_sent"] += _birthday_catch_up(tid, row, at, loc_today)
                 continue
             hh, mm = _send_hour(tid, sched)
             if strict and at < _from_paris(loc_today, hh, mm):
@@ -1701,6 +1750,27 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             print(f"automations: {row.get('id')} failed ({exc})")
     run_custom(at, strict, summary)
     return summary
+
+
+def _birthday_catch_up(tid: str, row: Dict[str, Any], at: datetime, today: date) -> int:
+    """The day's round is done: a birthday that turned up since (card added,
+    birthday saved) is greeted now, until 20:00 — never twice, within the
+    daily limit."""
+    if at >= _from_paris(today, *BIRTHDAY_LAST):
+        return 0                                   # too late today: tomorrow's round
+    limit = (row.get("schedule") or {}).get("daily_limit")
+    room = (int(limit) - _sent_on(row, today)) if limit else None
+    if room is not None and room <= 0:
+        return 0
+    sent, cache = 0, {}
+    for c in _birthday_due(tid, row, at):
+        if room is not None and sent >= room:
+            break
+        if not matches(tid, row, c, at, cache):
+            continue
+        if _deliver(tid, row, c, {"event": "date"}, at):
+            sent += 1
+    return sent
 
 
 def run_custom(at: datetime, strict: bool, summary: Dict[str, Any]) -> None:
@@ -1749,9 +1819,18 @@ def latest_for(cust: Dict[str, Any], at: Optional[datetime] = None) -> Optional[
     sent = _aware(n.get("at"))
     if not sent or (at or _now()) - sent > timedelta(days=NEWS_DAYS):
         return None
+    until = None
+    if n.get("until"):
+        try:
+            until = date.fromisoformat(str(n["until"])[:10])
+        except ValueError:
+            until = None
+        if until and _paris(at or _now()).date() > until:
+            return None                            # the birthday offer is over: off the card
     return {"log_id": n.get("log_id"), "title": n.get("title"), "body": n.get("body"), "pass": n.get("pass", True),
             "button_label": n.get("label"), "button_url": n.get("url"), "image_url": n.get("image_url"),
-            "sent_at": sent.isoformat()}
+            "sent_at": sent.isoformat(), "until": until.isoformat() if until else None,
+            "until_label": f"Offre valable jusqu'au {fr_day(until)}" if until else None}
 
 
 @router.get("/api/auto/c/{log_id}")
@@ -1932,8 +2011,10 @@ def trigger_text(r: Dict[str, Any]) -> str:
         return custom_text(tr)
     if sc == "birthday":
         off = int(tr.get("offset_days") or 0)
-        return "Le jour même" if off == 0 else (f"{-off} jour{'s' if off < -1 else ''} avant" if off < 0
+        when = "Le jour même" if off == 0 else (f"{-off} jour{'s' if off < -1 else ''} avant" if off < 0
                                                  else f"{off} jour{'s' if off > 1 else ''} après")
+        n = offer_days(r)
+        return f"{when} · offre valable {n} jour{'s' if n > 1 else ''}"
     if sc == "near_reward":
         if tr.get("threshold") is not None:
             n = int(tr["threshold"])
@@ -1965,6 +2046,15 @@ def trigger_text(r: Dict[str, Any]) -> str:
 
 DAY_NAMES = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
 GEO_WEATHER = {"sun": "Ensoleillé", "clouds": "Nuageux", "rain": "Pluie", "cold": "Froid", "hot": "Chaud"}
+
+
+MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre",
+             "octobre", "novembre", "décembre"]
+
+
+def fr_day(d: date) -> str:
+    """« 27 octobre »."""
+    return f"{d.day} {MONTHS_FR[d.month - 1]}"
 
 
 def _fr_date(raw: Any) -> str:
@@ -2340,6 +2430,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["delay_unit"] = tr_in["delay_unit"]
     if sc == "birthday":
         tr["offset_days"] = _int(tr_in.get("offset_days", 0), -30, 30, "Jours avant / après")
+        tr["offer_days"] = _int(tr_in.get("offer_days", BIRTHDAY_OFFER_DAYS), 1, 60, "Durée de validité de l'offre")
     elif sc == "near_reward":
         if tr_in.get("threshold") is not None:                # the mockups' seuil
             tr.pop("visits_left", None)

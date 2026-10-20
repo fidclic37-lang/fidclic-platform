@@ -40,7 +40,7 @@ const fullLink = (raw) => {
 };
 
 const TRIGGERS = {
-  birthday: { offset_days: 0 },
+  birthday: { offset_days: 0, offer_days: 7 },
   tier_up: { condition: 'points', threshold: 200, repeat: 'each', min_days: 7, custom_tiers: false, tiers: [] },
   welcome: {}, near_reward: { visits_left: 1 }, referral: { sides: ['parrain', 'filleul'] },
   geo: { cooldown_days: 7, weather: [], stores: [] },
@@ -682,6 +682,7 @@ export default function AutomationEditorPage() {
     scenario: s.scenario, name: s.name, status, description: s.scenario === 'google_review' ? '' : (s.description || ''),
     ...(s.scenario === 'google_review' ? { google_links: Object.fromEntries(Object.entries(links).map(([k, v]) => [k, fullLink(v)])) } : {}),
     trigger: s.scenario === 'near_reward' ? { threshold: Number(tr.threshold) } : { ...tr, offset_days: Number(tr.offset_days || 0),
+      ...(s.scenario === 'birthday' ? { offer_days: Number(tr.offer_days ?? 7) || 7 } : {}),
       ...(s.scenario === 'tier_up' ? { threshold: Number(tr.threshold) || 0, min_days: Number(tr.min_days) || 7,
         custom_tiers: tiered, tiers: tiered ? tr.tiers.map((t) => ({ value: Number(t.value), title: String(t.title || '').trim(),
           body: String(t.body || '').trim(), reward: String(t.reward || '').trim() })) : [] } : {}) },
@@ -849,6 +850,14 @@ export default function AutomationEditorPage() {
           <Option on={Number(tr.offset_days) > 0} onClick={() => setIn('trigger', { offset_days: 3 })} icon={CalendarDays} title="X jours après l'anniversaire" sub="Envoyez le message quelques jours après la date d'anniversaire.">
             <span className="flex items-center gap-2 text-[13px]"><Num value={String(Math.abs(Number(tr.offset_days)))} min={1} max={30} label="Jours après" onChange={(v) => setIn('trigger', { offset_days: Math.max(1, Number(v) || 1) })} /> jour(s) après</span>
           </Option>
+          {/* how long the birthday offer lasts (user, 2026-10-20: the business sets it, 7 days by default) */}
+          <div className="rounded-2xl border border-[#E2E8F0] p-4">
+            <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Durée de validité de l'offre</p>
+            <p className="mt-0.5 text-[12px] text-[#64748B]">À partir du jour de l'anniversaire. Un client ajouté plus tard reçoit encore le message tant que l'offre est valable.</p>
+            <span className="mt-2 flex items-center gap-2 text-[13px]">Valable <Num value={String(tr.offer_days ?? 7)} min={1} max={60} label="Jours de validité"
+              onChange={(v) => setIn('trigger', { offer_days: Math.max(1, Math.min(60, Number(v) || 1)) })} /> jour(s)</span>
+            <p className="mt-2 text-[12px] text-[#64748B]">Le jour même, un anniversaire arrivé après l'envoi de {String(s.schedule?.hour || '10:00').slice(0, 5)} est souhaité jusqu'à 20:00 (1 h après un nouvel ajout de carte) ; après 20:00, le lendemain. Variable : {'{fin_offre}'}.</p>
+          </div>
         </div>
       )}
       {s.scenario === 'near_reward' && (

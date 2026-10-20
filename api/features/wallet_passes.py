@@ -1531,6 +1531,9 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     if news and news.get("button_url") and news.get("button_label"):
         back.insert(1, {"key": "news_link", "label": news["button_label"], "value": news["button_url"],
                         "attributedValue": f'<a href="{news["button_url"]}">{news["button_label"]}</a>'})
+    if news and news.get("until_label"):       # Anniversaire: how long its offer lasts
+        back.insert(2 if news.get("button_url") and news.get("button_label") else 1,
+                    {"key": "news_until", "label": "Validité", "value": news["until_label"]})
     # Géolocalisation (features/geo_automation): while this client's automation
     # allows it, the pass carries the shop's locations (below) and its message
     # here, so the card the lock screen opens says it — quietly, no banner.
