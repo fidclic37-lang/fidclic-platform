@@ -2056,24 +2056,28 @@ def _styled_name_image(letters, color: Tuple[int, int, int], room: int, H: int, 
 
 def name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
               box: Tuple[int, int] = (160, 50), letters=None, logo_pct: Any = None,
-              font_key: Optional[str] = None) -> Dict[str, bytes]:
+              font_key: Optional[str] = None, name_pct: Any = None) -> Dict[str, bytes]:
     """The shop's logo with its FULL name beside it, in one image (user,
     2026-10-12: « BLOO J… » on iOS 27 — Wallet cuts its own logoText — and the
     name's colour chosen by the owner, in every Wallet). Apple draws a logo up
     to 160 × 50 pt: the name is written as large as it fits (20 pt down to
     11 pt), on two lines if it must, never cut. {'':1x, '@2x', '@3x'}."""
     pct = _logo_pct(logo_pct)
+    npct = _logo_pct(name_pct)
     fk = font_key if font_key in NAME_FONTS else "dejavu"
     if letters:
-        return _cached("name_logo", (raw or b"", "styled", letters, color, box, pct),
-                       lambda: _make_name_logo(raw, name, color, box, letters, pct, fk))
-    return _cached("name_logo", (raw or b"", name, color, box, pct, fk),
-                   lambda: _make_name_logo(raw, name, color, box, None, pct, fk))
+        return _cached("name_logo", (raw or b"", "styled", letters, color, box, pct, npct),
+                       lambda: _make_name_logo(raw, name, color, box, letters, pct, fk, npct))
+    return _cached("name_logo", (raw or b"", name, color, box, pct, fk, npct),
+                   lambda: _make_name_logo(raw, name, color, box, None, pct, fk, npct))
 
 
 def _logo_pct(v: Any) -> int:
-    """« Taille du logo » beside the name (user, 2026-10-14): 0 = the name
-    alone, 100 = the logo as large as it was (default)."""
+    """A percentage the owner set, 0–100, 100 when they set nothing.
+    « Taille du logo » (2026-10-14): 0 = the name alone.
+    « Taille du nom » (2026-10-20): below 100 the name is written smaller AND
+    the width it gives up goes to the logo — « text ka size kam krta hun toh
+    logo ka size nhi badhta » was the flaw."""
     try:
         return max(0, min(100, int(v)))
     except (TypeError, ValueError):
@@ -2082,7 +2086,7 @@ def _logo_pct(v: Any) -> int:
 
 def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
                     box: Tuple[int, int], letters=None, pct: int = 100,
-                    font_key: str = "dejavu") -> Dict[str, bytes]:
+                    font_key: str = "dejavu", npct: int = 100) -> Dict[str, bytes]:
     from PIL import Image, ImageDraw, ImageFont
     fonts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts")
 
@@ -2107,18 +2111,41 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
     for suffix, k0 in (("", 1), ("@2x", 2), ("@3x", 3)):
         W, H = box[0] * k0, box[1] * k0
         k = k0 * box[1] / 50                  # the sizes below are for Apple's 50-pt-high logo
-        logo = None
-        if base is not None:
-            # the logo takes up to 40 % of the width at 100 %, less as the owner shrinks it
-            sc = min(H * max(pct, 30) / 100 / base.height, (W * 0.4 * pct / 100) / base.width)
-            logo = base.resize((max(1, round(base.width * sc)), max(1, round(base.height * sc))), Image.LANCZOS)
+        def fit(width_cap: float):
+            """The logo as large as `width_cap` and the height allow, never
+            beyond « Taille du logo »."""
+            if base is None or width_cap <= 0:
+                return None
+            sc = min(H * max(pct, 30) / 100 / base.height, width_cap / base.width)
+            return base.resize((max(1, round(base.width * sc)), max(1, round(base.height * sc))), Image.LANCZOS)
+
+        # Its usual share — the rule that has always drawn these headers.
+        logo = fit(W * 0.4 * pct / 100)
         lw = logo.width if logo is not None else 0
         gap = round(8 * k) if logo is not None and name else 0
         room = max(10, W - lw - gap)
+
+        def grow(text_width: int):
+            """« Taille du nom » below 100 leaves width over: the logo takes it,
+            instead of the header simply emptying (user, 2026-10-20)."""
+            nonlocal logo, lw, gap, room
+            if base is None or not name:
+                return
+            spare = room - text_width
+            if spare <= 0:
+                return
+            bigger = fit(lw + spare)
+            if bigger is not None and bigger.width > lw:
+                logo = bigger
+                lw = logo.width
+                gap = round(8 * k)
+                room = max(10, W - lw - gap)
         if letters:                                    # « Nom stylé »: letter by letter
             gap = round(8 * k) if logo is not None else 0
             room = max(10, W - lw - gap)
-            text = _styled_name_image(letters, color, room, H, k)
+            text = _styled_name_image(letters, color, max(10, round(room * npct / 100)), H, k)
+            if text is not None:
+                grow(text.width)
             cw = min(W, lw + gap + (text.width if text else 0)) if text else max(lw, 1)
             img = Image.new("RGBA", (max(1, cw), H), (0, 0, 0, 0))
             if logo is not None:
@@ -2157,6 +2184,9 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
                 if px < 2:
                     break
                 f = font(px)
+            if npct < 100:                 # written smaller, on purpose
+                f = font(max(2, round(f.size * npct / 100)))
+            grow(width(name, f))
         asc, desc = f.getmetrics() if hasattr(f, "getmetrics") else (12 * k, 3 * k)
         lh = asc + desc
         tw = max((width(t, f) for t in lines), default=0) if name else 0
@@ -2198,6 +2228,8 @@ def _poster_ink(card: Dict[str, Any], files: Dict[str, bytes]) -> Tuple[int, int
 # the name was larger; a 189-pt-wide image was shrunk back to the same width).
 # iOS 26's logo keeps Apple's 160 × 50.
 POSTER_LOGO_BOX = (126, 30)
+# iOS 26's logo.png: Apple's own maximum. A wordmark may use all of it.
+LOGO_BOX = (160, 50)
 
 
 def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
@@ -2231,7 +2263,7 @@ def _name_into_logos(files: Dict[str, bytes], card: Dict[str, Any]) -> None:
             color = chosen or (on_poster if base == "primaryLogo" else on_card)
             # the image is made from the plain logo (a design's logo may already be a disc)
             for suffix, png in name_logo(src, name, color, letters=letters, logo_pct=card.get("name_logo_size"),
-                                         font_key=card.get("name_font"),
+                                         font_key=card.get("name_font"), name_pct=card.get("name_text_size"),
                                          box=POSTER_LOGO_BOX if base == "primaryLogo" else (160, 50)).items():
                 files[f"{base}{suffix}.png"] = png
             done = True
@@ -2347,7 +2379,7 @@ def _template_files(tpl: Dict[str, Any], card: Dict[str, Any]) -> Dict[str, byte
         for suffix, png in _png_variants(logo_raw, (29, 29), cover=True, fallback_rgb=brand).items():
             imgs[f"icon{suffix}.png"] = png
     if not any(n.startswith("logo") for n in imgs):
-        for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
+        for suffix, png in _png_variants(logo_raw, LOGO_BOX, fallback_rgb=brand, tight=True).items():
             imgs[f"logo{suffix}.png"] = png
     is_round, ring = _logo_look(card)
     if is_round:                                      # « Logo rond »: both logos, every size
@@ -2384,9 +2416,12 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
         logo_raw = round_logo(icon_raw, ring) if is_round else icon_raw
         for suffix, png in _png_variants(icon_raw, (29, 29), cover=True, fallback_rgb=brand).items():
             files[f"icon{suffix}.png"] = png
-        # The logo sits left of the shop name: at most 50 pt square-ish, never
-        # wider than it needs, so the name is written out in full.
-        for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
+        # The logo sits left of the shop name, and _name_into_logos redraws the
+        # two together in Apple's 160 × 50. Without a name this image IS the
+        # header, so it gets that whole box: it was capped at 100 pt wide, which
+        # made a wordmark a third smaller than Wallet allows (user, 2026-10-20,
+        # comparing with a card whose logo fills the header).
+        for suffix, png in _png_variants(logo_raw, LOGO_BOX, fallback_rgb=brand, tight=True).items():
             files[f"logo{suffix}.png"] = png
         # ---- strip: banner photo and/or the progress meter ---------------------
         # A strip is produced when the merchant uploaded a banner OR when the meter
@@ -2409,7 +2444,9 @@ def pass_files(payload: Dict[str, Any]) -> Dict[str, bytes]:
             if poster3x:
                 for suffix, png in _poster_variants(poster3x).items():
                     files[f"background{suffix}.png"] = png
-            for suffix, png in _png_variants(logo_raw, (100, 50), fallback_rgb=brand, tight=True).items():
+            # iOS 27 draws its primaryLogo smaller (POSTER_LOGO_BOX, measured
+            # on a real iPhone) — asking for more only gets it shrunk back.
+            for suffix, png in _png_variants(logo_raw, POSTER_LOGO_BOX, fallback_rgb=brand, tight=True).items():
                 files[f"primaryLogo{suffix}.png"] = png
     _name_into_logos(files, card)
     return files
@@ -2901,7 +2938,8 @@ _PREVIEW_KEYS = {
     "header_field", "strip_shine", "back_fields", "allow_sharing",
     "poster_style", "featured_actions", "poster_image_url",
     "logo_round", "logo_ring", "logo_ring_color", "google_design", "google_links",
-    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size", "name_font",
+    "poster_footer_color", "stamp_shape", "logo_text_color", "name_style", "name_logo_size",
+    "name_text_size", "name_font",
     "programme", "points_mode", "reward_points", "reward_on_card", "reward_place",
 }
 
@@ -3807,7 +3845,8 @@ def _gw_image(card: Dict[str, Any], what: str) -> Optional[bytes]:
         color = _rgb(card.get("logo_text_color")) or (255, 255, 255)
         return name_logo(round_logo(_fetch_image(card.get("logo_url")), ring, size=400), card.get("_shop_name") or "",
                          color, box=(640, 200), letters=letters_for(card, card.get("_shop_name") or ""),
-                         logo_pct=card.get("name_logo_size"), font_key=card.get("name_font")).get("@2x")
+                         logo_pct=card.get("name_logo_size"), font_key=card.get("name_font"),
+                         name_pct=card.get("name_text_size")).get("@2x")
     return None
 
 

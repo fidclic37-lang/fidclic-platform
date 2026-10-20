@@ -438,6 +438,7 @@ export default function LoyaltyCardPage() {
     logo_text_color: advanced?.logo_text_color ?? undefined,
     name_style: advanced?.name_style ?? undefined,
     name_logo_size: advanced?.name_logo_size ?? undefined,
+    name_text_size: advanced?.name_text_size ?? undefined,
     name_font: advanced?.name_font ?? undefined,
   }), [design, programme, toggles, advanced, pdVersion]);
   // The server's preview starts from the saved card: a photo the owner has
@@ -522,6 +523,19 @@ export default function LoyaltyCardPage() {
                        aria-label="Taille du logo à côté du nom" className="w-full accent-[#2F6BFF]"
                        onChange={(e) => setAdvanced((a) => ({ ...a, name_logo_size: Number(e.target.value) }))} />
                 <span className="text-[11px] text-[#64748B]">Plus le logo est petit, plus le nom est grand. 0 % : le nom seul.</span>
+              </label>
+              <label className="block">
+                <span className="mb-1 flex items-center justify-between text-[12.5px] font-medium text-[#334155]">
+                  Taille du nom
+                  <span className="text-[#2F6BFF]">{advanced.name_text_size ?? 100} %</span>
+                </span>
+                <input type="range" min={10} max={100} step={10} value={advanced.name_text_size ?? 100}
+                       aria-label="Taille du nom" className="w-full accent-[#2F6BFF]"
+                       onChange={(e) => setAdvanced((a) => ({ ...a, name_text_size: Number(e.target.value) }))} />
+                <span className="text-[11px] text-[#64748B]">
+                  Le nom plus petit : le logo prend la place libérée. Un logo carré, lui, touche déjà
+                  la hauteur de l&apos;en-tête — c&apos;est un logo large qui grandit.
+                </span>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[12.5px] font-medium text-[#334155]">Police du nom</span>
@@ -955,20 +969,24 @@ export default function LoyaltyCardPage() {
                          onChange={(e) => setAdvanced({ ...advanced, pass_expiration_date: e.target.value ? `${e.target.value}T23:59:00Z` : '' })} />
                 </div>
                 <div>
-                  <Label hint="visibles au dos de la carte">Informations complémentaires</Label>
+                  <Label hint="visibles au dos de la carte — horaires, conditions d'utilisation, réseaux… jusqu'à 20 lignes">Informations complémentaires</Label>
                   <div className="space-y-2">
                     {(advanced.back_fields || []).map((row, i) => (
-                      <div key={i} className="flex gap-2">
-                        <Input value={row.label} placeholder="Horaires" className="w-1/3"
+                      <div key={i} className="flex items-start gap-2">
+                        <Input value={row.label} placeholder="Horaires" className="w-1/3" maxLength={60}
                                onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)) })} />
-                        <Input value={row.value} placeholder="Lun-Sam 8h-19h"
-                               onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })} />
+                        {/* une ligne peut porter de vraies conditions : elle grandit avec le texte */}
+                        <textarea value={row.value} placeholder="Lun-Sam 8h-19h" maxLength={2000}
+                                  rows={Math.min(10, Math.max(1, Math.ceil((row.value || '').length / 60)))}
+                                  aria-label={`Valeur — ${row.label || `ligne ${i + 1}`}`}
+                                  className="min-w-0 flex-1 resize-y rounded-lg border border-[#E2E8F0] px-3 py-2 text-[13.5px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF]"
+                                  onChange={(e) => setAdvanced({ ...advanced, back_fields: advanced.back_fields.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })} />
                         <button type="button" aria-label="Supprimer la ligne"
                                 onClick={() => setAdvanced({ ...advanced, back_fields: advanced.back_fields.filter((_, j) => j !== i) })}
                                 className="shrink-0 rounded-lg px-2 text-[#E5484D] hover:bg-[#FEF2F2]"><Trash2 size={15} /></button>
                       </div>
                     ))}
-                    {(advanced.back_fields || []).length < 8 && (
+                    {(advanced.back_fields || []).length < 20 && (
                       <button type="button"
                               onClick={() => setAdvanced({ ...advanced, back_fields: [...(advanced.back_fields || []), { label: '', value: '' }] })}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[#CBD5E1] px-3 py-1.5 text-[12.5px] font-semibold text-[#64748B] hover:border-[#2F6BFF] hover:text-[#2F6BFF]">
