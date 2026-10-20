@@ -891,8 +891,9 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
 
 
 def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Send the campaigns whose scheduled time has come. Called by the daily
-    cron; safe to call twice — a campaign leaves `scheduled` before it sends."""
+    """Send the campaigns whose scheduled time has come. Called every minute
+    (/api/cron/campaigns-due) and by the tick; safe to call twice — a
+    campaign leaves `scheduled` before it sends."""
     at = now or _now()
     out = {"sent": 0, "recipients": 0}
     from features import plan_limits

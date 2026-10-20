@@ -11972,6 +11972,19 @@ def run_tick(request: Request):
     return tick_pass()
 
 
+@app.get("/api/cron/campaigns-due")
+@app.post("/api/cron/campaigns-due")
+def run_campaigns_due(request: Request):
+    """Every minute (vercel.json): only the planned campaigns, so one set for
+    14:20 leaves at 14:20 — on the 15-minute tick it left at 14:30 (user,
+    2026-10-20). Light: a look at the few `scheduled` campaigns. Running it
+    next to the tick sends nothing twice (a campaign is claimed — `scheduled`
+    → `sending` — before it sends)."""
+    _cron_ok(request)
+    from features.campaigns_page import run_due as _run_due_campaigns
+    return {"at": datetime.now(timezone.utc).isoformat(), "campaigns": _run_due_campaigns()}
+
+
 def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
     """What must happen at its time, not once a day. Idempotent: running it
     twice sends nothing twice (a campaign leaves `scheduled` before it sends;
