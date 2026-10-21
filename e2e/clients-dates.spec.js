@@ -28,6 +28,15 @@ async function asOwner(page, request) {
 
 const DAY = () => new Date().toLocaleDateString('sv-SE');
 
+/* Attendre LA réponse que le filtre vient de demander, au lieu de sonder le
+   tableau à l'aveugle : sur une machine chargée la suite met deux fois plus de
+   temps, et quinze secondes d'attente aveugle ne suffisaient plus
+   (2026-10-21). On repère la requête à sa query, puis on laisse React rendre. */
+const listCalled = (page, query) => page.waitForResponse(
+  (r) => r.url().includes('/clients/list') && r.url().includes(query) && r.status() === 200,
+  { timeout: 30000 });
+const SETTLE = { timeout: 30000 };
+
 test.use({ viewport: { width: 1536, height: 1000 } });
 
 test.describe.serial('les ventes d\'un jour', () => {
@@ -52,14 +61,16 @@ test.describe.serial('les ventes d\'un jour', () => {
   test('le tableau parle de CE jour, et le bandeau le résume', async ({ page, request }) => {
     await asOwner(page, request);
     await page.goto('/dashboard/customers');
-    await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible(SETTLE);
 
     // sans période : « Total dépensé », pas de bandeau
     await expect(page.getByRole('columnheader', { name: 'Total dépensé' })).toBeVisible();
     await expect(page.getByTestId('period-strip')).toHaveCount(0);
 
+    const answered = listCalled(page, `sales_from=${day}`);
     await page.getByLabel('Ventes du … au … — du').fill(day);
-    await expect(page.getByTestId('period-strip')).toBeVisible({ timeout: 15000 });
+    await answered;
+    await expect(page.getByTestId('period-strip')).toBeVisible(SETTLE);
 
     // les colonnes le disent
     await expect(page.getByRole('columnheader', { name: 'Dépensé sur la période' })).toBeVisible();
@@ -93,9 +104,11 @@ test.describe.serial('les ventes d\'un jour', () => {
   test('un jour sans vente : le bandeau le dit, le tableau est vide', async ({ page, request }) => {
     await asOwner(page, request);
     await page.goto('/dashboard/customers');
-    await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible(SETTLE);
+    const answered = listCalled(page, 'sales_from=2019-01-01');
     await page.getByLabel('Ventes du … au … — du').fill('2019-01-01');
-    await expect(page.getByTestId('period-strip')).toBeVisible({ timeout: 15000 });
+    await answered;
+    await expect(page.getByTestId('period-strip')).toBeVisible(SETTLE);
     await expect(page.getByTestId('period-strip')).toContainText('1 janvier');
     await expect(page.getByRole('heading', { name: /^0 client/ })).toBeVisible();
   });
@@ -104,11 +117,11 @@ test.describe.serial('les ventes d\'un jour', () => {
 test('Segment et Statut : plusieurs à la fois, et on les cherche', async ({ page, request }) => {
   await asOwner(page, request);
   await page.goto('/dashboard/customers');
-  await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible(SETTLE);
 
   // les segments viennent de /clients/overview : on attend qu'ils soient là,
   // sinon la liste s'ouvre vide (vu dans la suite complète, 2026-10-20)
-  await expect(page.getByText('Clients fidèles').first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByText('Clients fidèles').first()).toBeVisible(SETTLE);
   const seg = page.getByRole('button', { name: 'Segment', exact: true });
   await seg.click();
   const search = page.getByLabel('Rechercher dans Segment');
@@ -117,7 +130,7 @@ test('Segment et Statut : plusieurs à la fois, et on les cherche', async ({ pag
   await expect(page.getByText('Rien de ce nom.')).toBeVisible();
   await search.fill('');
   const ticks = page.getByRole('group', { name: 'Choix — Segment' }).locator('input[type="checkbox"]');
-  await expect(ticks.nth(1), 'des segments à cocher').toBeVisible({ timeout: 15000 });
+  await expect(ticks.nth(1), 'des segments à cocher').toBeVisible(SETTLE);
   await ticks.nth(0).check();
   await ticks.nth(1).check();
   await expect(seg).toContainText('2 sélectionnés');
@@ -142,7 +155,7 @@ test('Âge : une tranche, puis de … à …', async ({ page, request }) => {
   }
 
   await page.goto('/dashboard/customers');
-  await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByRole('heading', { name: /client/ }).first()).toBeVisible(SETTLE);
   await page.getByRole('button', { name: /Plus de filtres/ }).click();
   await expect(page.getByLabel('Âge — à partir de')).toBeVisible();
 
@@ -152,14 +165,25 @@ test('Âge : une tranche, puis de … à …', async ({ page, request }) => {
   const shown = async () => (await Promise.all(
     (await page.locator('tbody tr').all()).map((r) => r.innerText()))).join(' | ');
 
+  // On attend que le tableau dise les DEUX choses : l'aîné est là ET le jeune
+  // n'y est plus. Attendre seulement l'aîné ne prouvait rien — il vient d'être
+  // créé, donc il est en tête de liste même sans filtre (vu en imitant une
+  // machine lente, 2026-10-21).
+  const only = async (keep, drop) => {
+    const t = await shown();
+    return t.includes(keep) && !t.includes(drop);
+  };
+
+  let answered = listCalled(page, 'age_min=40');
   await page.getByLabel('Âge — à partir de').fill('40');
-  await expect.poll(shown, { timeout: 15000, message: 'à partir de 40 ans' })
-    .toContain(`Ainé ${tag}`);
-  expect(await shown(), 'et pas le jeune').not.toContain(`Jeune ${tag}`);
+  await answered;
+  await expect.poll(() => only(`Ainé ${tag}`, `Jeune ${tag}`),
+    { ...SETTLE, message: "à partir de 40 ans : l'aîné seul" }).toBe(true);
 
   await page.getByLabel('Âge — à partir de').fill('');
+  answered = listCalled(page, 'age_band=18_24');
   await page.getByLabel("Tranche d'âge").selectOption('18_24');
-  await expect.poll(shown, { timeout: 15000, message: 'la tranche 18 – 24' })
-    .toContain(`Jeune ${tag}`);
-  expect(await shown(), 'et pas l\'aîné').not.toContain(`Ainé ${tag}`);
+  await answered;
+  await expect.poll(() => only(`Jeune ${tag}`, `Ainé ${tag}`),
+    { ...SETTLE, message: 'la tranche 18 – 24 : le jeune seul' }).toBe(true);
 });
