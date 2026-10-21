@@ -52,10 +52,13 @@ export const emptyState = (kind) => ({
   // Nothing is chosen for them: « % » used to sit in the field before the
   // merchant had said anything, and a fixed amount still read « % »
   // until they noticed (user, 2026-10-15).
-  offer: { discount_type: null, discount_value: '', start_date: '', end_date: '', all_day: true, time_from: '17:00', time_to: '19:00' },
+  // « Sur la carte jusqu'au » is always asked, a week ahead to start with (user,
+  // 2026-10-20) — no hidden 30 days. An offer's end date is that day.
+  offer: { discount_type: null, discount_value: '', start_date: '', end_date: addDays(todayYmd(), 7), all_day: true, time_from: '17:00', time_to: '19:00' },
   event: { date: '', time: '', place: '' },
   defi: { target: '3', end_date: '', count_mode: 'per_day', reward: '', reward_valid_days: '30' },
   audience: { mode: 'all', segment: '', customer_ids: [], km: 5, filters: { active: false, inactive: false, new: false, min_points: null } },
+  visibleUntil: addDays(todayYmd(), 7),     // a Nouveauté's « Sur la carte jusqu'au »
   sendMode: null, date: '', time: '14:00', draftId: null, template: null,
   walletPhoto: false,     // the photo on the Wallet card too? (BUG-006, off unless chosen)
 });
@@ -139,7 +142,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       if (!(v > 0)) return 'La valeur de la réduction doit être positive.';
       if (o.discount_type === 'percent' && v > 100) return 'Une réduction en pourcentage ne dépasse pas 100 %.';
     }
-    if (o.start_date && !o.end_date) return 'Indiquez aussi la date de fin.';
+    if (!o.end_date) return "Indiquez la date de fin : l'offre reste sur la carte jusqu'à ce jour-là.";
     if (o.end_date && o.end_date < (o.start_date || today)) return 'La date de fin est avant la date de début.';
     if (o.end_date && o.end_date < today) return 'La date de fin est déjà passée.';
     if (!o.all_day && (!o.time_from || !o.time_to)) return "Indiquez l'heure de début et de fin.";
@@ -183,9 +186,23 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     if (s.sendMode === 'later') {
       if (!s.date || !s.time) return "Indiquez la date et l'heure d'envoi.";
       if (new Date(`${s.date}T${s.time}:00`) <= new Date(Date.now() + 60000)) return "Choisissez un moment à venir.";
-      const end = OFFERISH.includes(s.kind) ? o.end_date : s.kind === 'defi' ? d.end_date : s.kind === 'evenement' ? s.event.date : '';
+      const end = untilOf();
       if (end && s.date > end) return "L'envoi serait après la fin : avancez la date d'envoi.";
     }
+    return '';
+  };
+  // « Sur la carte jusqu'au »: the offer's end, the event's day, the défi's end,
+  // or a Nouveauté's own date — always one, never after-the-fact 30 days
+  const untilOf = () => (OFFERISH.includes(s.kind) ? o.end_date : s.kind === 'defi' ? d.end_date
+    : s.kind === 'evenement' ? s.event.date : s.visibleUntil);
+  const setUntil = (v) => (OFFERISH.includes(s.kind) ? setIn('offer', { end_date: v })
+    : s.kind === 'defi' ? setIn('defi', { end_date: v }) : s.kind === 'evenement' ? setIn('event', { date: v }) : set({ visibleUntil: v }));
+  const untilProblem = () => {
+    const u = untilOf();
+    if (!u) return "Indiquez jusqu'à quand la campagne reste sur la carte.";
+    if (u < today) return "La date « Sur la carte jusqu'au » est déjà passée.";
+    if (s.sendMode === 'later' && s.date && s.date > u) return "L'envoi serait après la date « Sur la carte jusqu'au » : avancez l'envoi ou reculez la date.";
+    if (OFFERISH.includes(s.kind) && o.start_date && u < o.start_date) return 'La date de fin est avant la date de début.';
     return '';
   };
   const problemOf = (n) => [null, step1Problem, step2Problem, step3Problem, step4Problem, () => ''][n]();
@@ -216,11 +233,17 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     } else if (s.kind === 'defi') {
       b.defi = { target: Number(d.target), end_date: d.end_date, count_mode: d.count_mode, reward: d.reward.trim(),
         reward_valid_days: Number(d.reward_valid_days) };
+    } else {
+      b.visible_until = s.visibleUntil || null;
     }
     return b;
   };
 
   const submit = async (mode) => {
+    if (mode !== 'draft') {
+      const u = untilProblem() || step1Problem();
+      if (u) { setError(u); return; }
+    }
     setBusy(mode); setError('');
     try {
       let exclude = [];
@@ -264,7 +287,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       if (o.end_date) bits.push(`Du ${dayShort(o.start_date || today)} au ${dayShort(o.end_date)}`);
       if (!o.all_day) bits.push(`${hh(o.time_from)}–${hh(o.time_to)}`);
       if (v) bits.push(o.discount_type === 'percent' ? `Réduction en pourcentage : ${v}%` : `Réduction : ${v} €`);
-      return bits.join(' · ') || 'Sans dates : 30 jours sur la carte';
+      return bits.join(' · ');
     }
     if (s.kind === 'evenement') return [dayShort(s.event.date), s.event.time && hh(s.event.time), s.event.place].filter(Boolean).join(' · ');
     if (s.kind === 'defi') return `${d.target} visite${Number(d.target) > 1 ? 's' : ''} avant le ${dayShort(d.end_date)} · ${d.reward} · valable ${d.reward_valid_days} j`;
@@ -398,7 +421,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       {OFFERISH.includes(s.kind) && (
         <>
           <div className="mt-4">
-            <Label hint="(optionnelle)">Durée de l'offre</Label>
+            <Label hint="— la fin est le dernier jour sur la carte">Durée de l'offre</Label>
             <div className="grid gap-3 sm:grid-cols-2">
               {[['start_date', 'Date de début'], ['end_date', 'Date de fin']].map(([k, l]) => (
                 <label key={k} className="flex items-center gap-3 rounded-xl border border-[#D9E2F2] px-3 py-2">
@@ -768,6 +791,21 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
         <Row icon={Users} tone={['#E3F6EC', '#059669']} title="Destinataires" onEdit={() => go(3)}>
           <p className="text-[14px] text-[#334155]">{preview?.label || '—'}{preview && !/^\d/.test(preview.label || '') ? ` (${nf(preview.count)} client${preview.count > 1 ? 's' : ''})` : ''}</p>
         </Row>
+        {/* always asked, every flow passes here — « Contacter » included (2026-10-20) */}
+        <div className="flex items-center gap-3 rounded-2xl border border-[#E6EEFB] p-3 sm:gap-4 sm:p-4" data-testid="visible-until">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF4DB] text-[#B45309] sm:h-12 sm:w-12"><CalendarDays size={24} /></span>
+          <label className="min-w-0 flex-1">
+            <span className="block text-[14px] font-bold text-[#0B1C3F]">Sur la carte jusqu'au</span>
+            <span className="block text-[13px] text-[#475569]">
+              {s.kind === 'evenement' ? "Le jour de l'événement : la campagne quitte la carte le soir même."
+                : s.kind === 'defi' ? 'La fin du défi : la campagne quitte la carte ce soir-là.'
+                  : 'Après cette date, la campagne quitte la carte de vos clients, sans notification.'}
+            </span>
+            <input type="date" min={s.sendMode === 'later' && s.date ? s.date : today} value={untilOf() || ''}
+                   onChange={(e) => setUntil(e.target.value)} aria-label="Sur la carte jusqu'au"
+                   className={`${field} mt-2 max-w-[220px]`} />
+          </label>
+        </div>
         <Row icon={s.sendMode === 'later' ? CalendarDays : Send} tone={['#F1EAFF', '#7C3AED']} title="Planification" onEdit={() => go(4)}>
           {s.sendMode === 'later' ? (
             <>

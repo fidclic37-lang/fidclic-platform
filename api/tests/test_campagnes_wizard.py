@@ -433,6 +433,30 @@ def main():
           http("GET", f"/api/owner/campaigns/{cf['id']}/detail").json()["link_url"] is None)
 
     server.dispatch_to_customer = real_dispatch
+    print("\n13. « Sur la carte jusqu'au » — always a date, no hidden 30 days (user, 2026-10-20)")
+    db.campaigns.delete_many({})
+    in3 = (today + dt.timedelta(days=3)).isoformat()
+    r = compose(kind="nouveaute", title="Nouveau menu", message="Bonjour", customer_ids=["c1"], visible_until=in3)
+    det = http("GET", f"/api/owner/campaigns/{r.json()['id']}/detail").json()
+    check(f"a Nouveauté stays on the card until the day chosen ({det.get('live_until')})",
+          r.status_code == 200 and det["live_until"] and det["live_until"][:10] == K.end_of(today + dt.timedelta(days=3)).isoformat()[:10])
+    past = compose(kind="nouveaute", title="Trop tard", message="Bonjour", customer_ids=["c1"],
+                   visible_until=(today - dt.timedelta(days=1)).isoformat())
+    check(f"a date before the send is refused ({past.status_code})", past.status_code == 400 and "avant l'envoi" in past.text)
+    nodate = compose(kind="nouveaute", title="Sans date", message="Bonjour", customer_ids=["c1"])
+    doc = db.campaigns.find_one({"id": nodate.json()["id"]})
+    _, until = K.window(doc)
+    check(f"without a date (FidClic IA, an older send): a week, not 30 days ({until})",
+          until is not None and abs((until - doc["sent_at"].replace(tzinfo=dt.timezone.utc if doc["sent_at"].tzinfo is None else doc["sent_at"].tzinfo)
+                                     - dt.timedelta(days=7)).total_seconds()) < 5)
+    old_one = {"status": "sent", "kind": "offre", "sent_at": now - dt.timedelta(days=8), "offer": None}
+    check("a 6-day-old dateless campaign (« Une attention… », 14/10) has left the card by day 8",
+          not K.is_live(old_one, now))
+    did = compose(kind="nouveaute", title="Brouillon daté", message="Bonjour", customer_ids=["c1"],
+                  visible_until=in3, draft=True).json()["id"]
+    check("a draft gives its date back to « Modifier »",
+          http("GET", f"/api/owner/campaigns/drafts/{did}").json().get("visible_until") == in3)
+
     print("\n12. Une campagne part une seule fois (user, 2026-10-20)")
     import features.campaigns_page as C
     server.dispatch_to_customer = lambda tid, cust, title, body, kind="campaign", url=None: (

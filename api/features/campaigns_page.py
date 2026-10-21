@@ -654,6 +654,9 @@ class Compose(BaseModel):
     # jaaye »): « Envoyer » pressed again after an error that came back late —
     # the send had in fact left — returns that campaign instead of a second one.
     send_key: Optional[str] = None
+    # « Sur la carte jusqu'au » for a campaign with no date of its own (a
+    # Nouveauté). An offer's end, an event's day and a défi's end are theirs.
+    visible_until: Optional[str] = None
 
 
 def _clean(text: str, limit: int) -> str:
@@ -719,6 +722,7 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "wallet": bool((d.get("channels") or {}).get("wallet", True)),
         "wallet_photo": bool(d.get("wallet_photo")),
         "template": d.get("template"),
+        "visible_until": d.get("visible_until"),
         "status": d.get("status"),
         "scheduled_for": when.isoformat() if when else None,
         "kind": d.get("kind"), "offer": d.get("offer"), "event": d.get("event"), "defi": d.get("defi"),
@@ -794,6 +798,12 @@ def compose(req: Compose, request: Request = None,
     elif kind == "defi":
         terms["defi"] = K.clean_defi(req.defi, send_at)
     details = re.sub(r"[ \t]+", " ", (req.details or "").strip())[:500] or None
+    visible_until = None
+    if kind not in K.OFFER_KINDS and kind not in ("evenement", "defi"):
+        until_day = K._day(req.visible_until, "Date « Sur la carte jusqu'au »")
+        if until_day and until_day < send_at.astimezone(K.PARIS).date():
+            raise HTTPException(status_code=400, detail="La date « Sur la carte jusqu'au » est avant l'envoi.")
+        visible_until = until_day.isoformat() if until_day else None
     if req.audience is not None:
         people, label = resolve_audience(tid, req.audience, at, mine)
     elif req.customer_ids:
@@ -843,7 +853,7 @@ def compose(req: Compose, request: Request = None,
         "wallet_offer": bool(req.wallet),
         "wallet_photo": bool(req.wallet_photo and req.image_url),
         "template": (req.template or "").strip()[:40] or None,
-        "kind": kind, **terms, "details": details,
+        "kind": kind, **terms, "details": details, "visible_until": visible_until,
         "audience_spec": req.audience.dict() if req.audience is not None else None,
         # For which establishments it was sent (None = the whole shop), and by whom.
         "store_ids": scope.ids,
