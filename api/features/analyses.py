@@ -103,6 +103,12 @@ def _delta(now_value: float, was_value: float) -> Optional[int]:
     return round((now_value - was_value) / was_value * 100)
 
 
+def _fr_eur(n: float) -> str:
+    """« 303 € » — l'euro comme la France l'écrit, espace insécable compris."""
+    whole = round(float(n or 0))
+    return f"{whole:,}".replace(",", "\u202f") + "\u00a0€"
+
+
 def _money(n: Any) -> float:
     return round(float(n or 0), 2)
 
@@ -144,6 +150,17 @@ class Reader:
         return list(_db.customers.find(
             S.customer_filter(self.scope) if self.scope else {"tenant_id": self.tid, "deleted_at": None},
             {**CP.FIELDS, "acquisition_source": 1, "visits_at_last_redemption": 1}))
+
+    def deleted_spend(self) -> float:
+        """What clients SINCE DELETED had spent. Their visits stay in the
+        turnover — the shop really took that money — but they are in no count
+        any more (store_scope.customer_filter, user 2026-10-16). Without this
+        the two figures on the same screen could not be reconciled: the CA of
+        a period could be larger than the LTV of all time (user, 2026-10-21)."""
+        q = dict(S.customer_filter(self.scope)) if self.scope else {"tenant_id": self.tid}
+        q["deleted_at"] = {"$ne": None}
+        return _money(sum(float(c.get("total_amount_paid") or 0)
+                          for c in _db.customers.find(q, {"_id": 0, "total_amount_paid": 1})))
 
     def rules(self):
         from features import customer_rules as R
@@ -234,13 +251,18 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
     ]
     # The clients' whole history (« Comportement » before, user 2026-10-02).
     life = _lifetime(people)
+    gone = r.deleted_spend()
     period_visits = round(len(rows) / len(people), 1) if people else 0.0
     strip += [
         {"key": "ltv", "label": "LTV moyenne", "unit": "€", "value": life["ltv"], "icon": "chart",
          "delta_pct": None, "hint": "Dépense moyenne d'un client depuis son inscription",
          "to": "/dashboard/customers?sort=spend", "row": 3},
         {"key": "ltv_total", "label": "LTV totale", "unit": "€", "value": life["ltv_total"],
-         "icon": "bag", "delta_pct": None, "hint": "Dépense de tous vos clients depuis leur inscription",
+         "icon": "bag", "delta_pct": None,
+         # Said here, where the figure is: a deleted client's money stays in the
+         # CA and leaves the LTV, so the two can differ without either being wrong.
+         "hint": ("Dépense de tous vos clients depuis leur inscription"
+                  + (f" · {_fr_eur(gone)} de clients supprimés n'y sont plus" if gone else "")),
          "to": "/dashboard/customers?sort=spend", "row": 3},
         {"key": "life", "label": "Durée moyenne", "unit": " mois", "value": life["avg_life"],
          "icon": "activity", "delta_pct": None,

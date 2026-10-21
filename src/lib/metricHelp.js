@@ -16,7 +16,7 @@ const H = {
   revenue: {
     t: "Chiffre d'affaires",
     what: "L'argent encaissé auprès de vos clients fidélité sur la période choisie.",
-    how: "La somme des montants saisis à chaque scan de carte en caisse. L'évolution compare avec la période précédente de même durée.",
+    how: "La somme des montants saisis à chaque scan de carte en caisse, y compris ceux de clients depuis supprimés — l'argent a bien été encaissé. L'évolution compare avec la période précédente de même durée.",
     why: "C'est le pouls de votre commerce : il montre si votre activité fidélité monte ou baisse. Un achat sans carte, ou un montant non saisi, n'y figure pas.",
   },
   fidclic: {
@@ -46,8 +46,8 @@ const H = {
   ltv_total: {
     t: 'LTV totale',
     what: "Ce que l'ensemble de vos clients fidélité vous a rapporté depuis leur inscription.",
-    how: "La somme de la dépense de chaque client depuis son inscription. Ce chiffre ne fait que monter.",
-    why: "C'est la valeur de votre base clients. Sa vitesse de progression d'un mois à l'autre mesure la croissance de votre fidélité.",
+    how: "La somme de la dépense de chaque client depuis son inscription. Les clients supprimés n'y sont plus — mais leur chiffre d'affaires, lui, reste dans le « Chiffre d'affaires » : vous avez bien encaissé cet argent. C'est pourquoi le CA d'une période peut dépasser la LTV totale, sans que l'un ni l'autre soit faux.",
+    why: "C'est la valeur de votre base clients actuelle. Sa vitesse de progression d'un mois à l'autre mesure la croissance de votre fidélité.",
   },
   impact: {
     t: 'Impact FidClic',
