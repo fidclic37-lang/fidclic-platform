@@ -211,7 +211,8 @@ ALERT_SEGMENTS = {"at_risk": "Clients qui décrochent", "one_timers": "Venus une
 
 
 def drill_down(key: str) -> bool:
-    return key in DRILL_DOWN or str(key).startswith("client:")
+    # « place:<commune> »: a bar of Analyses › Acquisition › Données géographiques
+    return key in DRILL_DOWN or str(key).startswith(("client:", "place:"))
 
 
 def home_bucket(cust: Dict[str, Any], at: datetime, rules: Optional[List[Dict[str, Any]]] = None) -> str:
@@ -254,6 +255,9 @@ def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
         return is_one_timer(cust, at)
     if key.startswith("client:"):
         return cust.get("id") == key[7:]
+    if key.startswith("place:"):
+        from features import analyses as _AN
+        return _AN.place_matches(cust, key[6:])
     if key in HOME_SEGMENTS:
         return home_bucket(cust, at, rules) == {"loyal_active": "loyal", "new_active": "new", "occasional": "occasional"}[key]
     return True
@@ -545,7 +549,16 @@ def _subscribed_ids(tid: str) -> set:
 def _many(raw: str) -> List[str]:
     """« nouveaux,fideles » → the two. One value still works, so every older
     link and every bookmark keeps meaning what it meant."""
-    return [w for w in (str(raw or "").replace(" ", "").lower().split(",")) if w and w != "all"]
+    out = []
+    for w in str(raw or "").split(","):
+        w = w.strip()
+        if w.lower().startswith("place:"):
+            out.append("place:" + w[6:])           # a commune's name keeps its spaces and capitals
+        else:
+            w = w.replace(" ", "").lower()
+            if w and w != "all":
+                out.append(w)
+    return out
 
 
 def _filtered(rows: List[Dict[str, Any]], at: datetime, shop_avg: float, local_ids: set,

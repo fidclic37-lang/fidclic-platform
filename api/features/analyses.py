@@ -532,6 +532,15 @@ def _place_of(cust) -> Tuple[str, str]:
     return (postal or "Non renseigné"), postal
 
 
+def place_matches(cust: Dict[str, Any], name: str) -> bool:
+    """Is this client in « Données géographiques »' bar `name`? The bar is
+    « Commune » or, where a commune has several codes, « Commune (code) »
+    (_by_place) — both spellings are read the same way here, so a click on a
+    bar lists exactly its clients (user, 2026-10-21)."""
+    label, code = _place_of(cust)
+    return name in (label, f"{label} ({code})" if code else label)
+
+
 def _by_place(people) -> Dict[str, int]:
     """Clients per commune, with two codes of one commune kept apart.
 
@@ -576,7 +585,8 @@ def _tab_acquisition(r: Reader) -> Dict[str, Any]:
         "sources": [{"key": r["key"], "name": r["label"], "count": r["count"], "pct": _pct(r["count"], base)}
                     for r in sorted(_src.ordered(by_source), key=lambda r: -r["count"])],
         "sources_in_window": bool(in_window),
-        "places": [{"name": n, "count": c, "pct": _pct(c, len(people))}
+        # each bar opens its clients on the Clients page (segment « place:… »)
+        "places": [{"name": n, "count": c, "pct": _pct(c, len(people)), "segment": f"place:{n}"}
                    for n, c in sorted(by_place.items(), key=lambda kv: -kv[1])[:8]],
         "window_note": "Répartition des clients inscrits sur la période."
                        if in_window else "Aucune inscription sur la période : "

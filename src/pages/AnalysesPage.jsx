@@ -557,7 +557,11 @@ const TabAcquisition = ({ d }) => {
         <p className="mt-2 text-[11.5px] text-[#94A3B8]">Cliquez une source pour voir ses clients et les contacter.</p>
       </Panel>
       <Panel title="Données géographiques">
-        <Bars items={d.places.map((p) => ({ label: p.name, value: p.count }))} />
+        {/* a bar opens that area's clients (user, 2026-10-21) */}
+        <Bars items={d.places.map((p) => ({ label: p.name, value: p.count,
+                                            ...(p.segment ? { onClick: () => navigate(`/dashboard/customers?segment=${encodeURIComponent(p.segment)}`),
+                                                              title: `Voir les clients de ${p.name}` } : {}) }))} />
+        <p className="mt-2 text-[11.5px] text-[#94A3B8]">Cliquez une zone pour voir ses clients et les contacter.</p>
       </Panel>
     </div>
     <Panel title="Acquisition de nouveaux clients"><Line series={d.new_series} unit="Nouveaux clients" /></Panel>
