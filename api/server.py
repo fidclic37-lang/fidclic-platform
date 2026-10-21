@@ -6960,7 +6960,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
 # auto-update toggle, and delete-card action.
 # ========================
 
-CAMPAIGN_OFFER_DAYS = 30      # a campaign's offer is valid 30 days (as on the Wallet pass)
+CAMPAIGN_OFFER_DAYS = 7       # without a date of its own, as on the Wallet pass (campaign_kinds.DEFAULT_LIVE_DAYS)
 
 
 def _as_aware(v) -> Optional[datetime]:
