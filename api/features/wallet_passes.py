@@ -2105,6 +2105,40 @@ def _logo_pct(v: Any) -> int:
         return 100
 
 
+def _trim_logo(img):
+    """The logo's own drawing, without the empty border around it — a
+    transparent margin, or a plain background (the corners' colour) — so
+    « full size » is the mark itself, not its frame (user, 2026-10-21:
+    logo and name both at full stayed small)."""
+    from PIL import ImageChops
+    try:
+        alpha = img.getchannel("A")
+        box = alpha.point(lambda a: 255 if a > 8 else 0).getbbox()
+        if box and (box[2] - box[0], box[3] - box[1]) != img.size:
+            return img.crop(box)
+        if alpha.getextrema()[0] < 250:
+            return img                                 # transparent, nothing more to cut
+        rgb = img.convert("RGB")
+        corner = rgb.getpixel((0, 0))
+        if any(rgb.getpixel(p) != corner for p in ((img.width - 1, 0), (0, img.height - 1),
+                                                    (img.width - 1, img.height - 1))):
+            return img                                 # no plain background
+        diff = ImageChops.difference(rgb, Image_new_like(rgb, corner)).convert("L")
+        box = diff.point(lambda v: 255 if v > 24 else 0).getbbox()
+        if box and (box[2] - box[0]) * (box[3] - box[1]) >= 0.05 * img.width * img.height:
+            pad = max(1, round(0.04 * max(box[2] - box[0], box[3] - box[1])))
+            return img.crop((max(0, box[0] - pad), max(0, box[1] - pad),
+                             min(img.width, box[2] + pad), min(img.height, box[3] + pad)))
+    except Exception:
+        pass
+    return img
+
+
+def Image_new_like(img, colour):
+    from PIL import Image
+    return Image.new(img.mode, img.size, colour)
+
+
 def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int],
                     box: Tuple[int, int], letters=None, pct: int = 100,
                     font_key: str = "dejavu", npct: int = 100) -> Dict[str, bytes]:
@@ -2124,7 +2158,7 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
     base = None
     if raw and pct > 0:
         try:
-            base = Image.open(io.BytesIO(raw)).convert("RGBA")
+            base = _trim_logo(Image.open(io.BytesIO(raw)).convert("RGBA"))
         except Exception:
             base = None
     name = re.sub(r"\s+", " ", name or "").strip()
@@ -2184,8 +2218,15 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
         lines, f = [name], font(round(20 * k))
 
         def lh_of(fnt) -> int:
-            a, d = fnt.getmetrics() if hasattr(fnt, "getmetrics") else (12 * k, 3 * k)
-            return a + d
+            """The name's own height — its ink, not the font's line box: a
+            name in capitals has no descender, and the room it kept empty
+            now goes to the letters (user, 2026-10-21)."""
+            try:
+                x0, y0, x1, y1 = fnt.getbbox(name or "Ag")
+                return max(1, y1 - y0)
+            except Exception:
+                a, d = fnt.getmetrics() if hasattr(fnt, "getmetrics") else (12 * k, 3 * k)
+                return a + d
 
         if name:
             # ONE line, always (user, 2026-10-14) — the same rule as the styled
@@ -2194,8 +2235,8 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
             lines = [name]
             # no 20 pt ceiling any more (user, 2026-10-14): as large as the
             # 50 pt height and the room allow
-            f = font(max(2, round(50 * k)))
-            for _ in range(8):
+            f = font(max(2, round(80 * k)))
+            for _ in range(10):
                 w = width(name, f)
                 if w <= room and lh_of(f) <= H:
                     break
@@ -2217,7 +2258,12 @@ def _make_name_logo(raw: Optional[bytes], name: str, color: Tuple[int, int, int]
             img.paste(logo, (0, (H - logo.height) // 2), logo)
         if name:
             d = ImageDraw.Draw(img)
-            top = (H - lh * len(lines)) // 2
+            try:                                    # centred by its ink (see lh_of)
+                _, y0, _, y1 = f.getbbox(name)
+                top = (H - (y1 - y0)) // 2 - y0
+                lh = y1 - y0
+            except Exception:
+                top = (H - lh * len(lines)) // 2
             for i, t in enumerate(lines):
                 d.text((lw + gap, top + i * lh), t, font=f, fill=tuple(color) + (255,))
         b = io.BytesIO()
