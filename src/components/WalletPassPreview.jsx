@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from './Code128Barcode';
 import { deriveCardTheme } from '../lib/cardTheme';
 import { cycleVisits } from '../lib/cardCycle';
+import { programmeOf, rewardProgress } from '../lib/programme';
 
 /**
  * WalletPassPreview — a pkpass-FAITHFUL render of the merchant's card, shown
@@ -70,7 +71,10 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const showTier = card.show_tier_badge !== false && card.show_tier !== false;
   const showPoints = card.show_points !== false;
   const showVisits = card.show_visits !== false;
-  const showStamps = card.show_stamps !== false && threshold > 0;
+  // a points or cashback card has no tampons (QA R7 BUG-009 / F28)
+  const stampProg = programmeOf(card) === 'stamps';
+  const showStamps = stampProg && card.show_stamps !== false && threshold > 0;
+  const progress = rewardProgress(card, { points: earned, stamps, threshold });
   const showMeter = card.show_meter !== false;
   // compose_strip lightens the scrim only on a pale card with no photo; over a
   // banner it always darkens. Mirror that or the bar reads inverted.
@@ -287,10 +291,11 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
       <div style={{ padding: `${px(10)}px ${px(14)}px 0` }}>
         <div style={label}>{(card.meter_label || 'Prochaine récompense').toUpperCase()}</div>
         <div style={{ fontSize: px(13.5), fontWeight: 500, color: t.ink, lineHeight: 1.3 }}>
-          {remaining > 0
-            ? `Encore ${remaining} ${showStamps ? (remaining > 1 ? 'tampons' : 'tampon')
-                                                 : (remaining > 1 ? 'visites' : 'visite')} · ${card.reward_description || 'récompense'}`
-            : (card.reward_description || 'Récompense débloquée !')}
+          {!stampProg ? progress.line
+            : remaining > 0
+              ? `Encore ${remaining} ${showStamps ? (remaining > 1 ? 'tampons' : 'tampon')
+                                                   : (remaining > 1 ? 'visites' : 'visite')} · ${card.reward_description || 'récompense'}`
+              : (card.reward_description || 'Récompense débloquée !')}
         </div>
       </div>
 

@@ -206,8 +206,13 @@ HOME_SEGMENTS = {"loyal_active": "Clients fidélisés (actifs)", "new_active": "
 
 # Segments a figure of the Tableau de bord — or an alert of the bell — opens,
 # on every plan. « client:<id> » is one client (the bell's best client).
-DRILL_DOWN = {"loyal", "inactive", "new", "loyal_active", "new_active", "occasional", "at_risk", "one_timers"}
-ALERT_SEGMENTS = {"at_risk": "Clients qui décrochent", "one_timers": "Venus une seule fois"}
+DRILL_DOWN = {"loyal", "inactive", "new", "loyal_active", "new_active", "occasional", "at_risk", "one_timers",
+              "returning"}
+# « returning »: Analyses › Fidélisation's « Clients revenus » / « Taux de
+# retour » open their clients (user, 2026-10-21) — 2 visits or more, the
+# same rule as the figure.
+ALERT_SEGMENTS = {"at_risk": "Clients qui décrochent", "one_timers": "Venus une seule fois",
+                  "returning": "Clients revenus (2 visites ou plus)"}
 
 
 def drill_down(key: str) -> bool:
@@ -253,6 +258,8 @@ def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
         return is_at_risk(cust, at)
     if key == "one_timers":
         return is_one_timer(cust, at)
+    if key == "returning":
+        return int(cust.get("visits") or 0) >= 2
     if key.startswith("client:"):
         return cust.get("id") == key[7:]
     if key.startswith("place:"):
