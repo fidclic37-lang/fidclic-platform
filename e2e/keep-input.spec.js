@@ -53,7 +53,12 @@ test.describe.serial('typed input survives a tap beside the window', () => {
   test('BUG-007 — « Modifier la fiche »', async ({ page, request }) => {
     await asOwner(page, request);
     await page.goto('/dashboard/customers');
-    await page.getByRole('button', { name: "Plus d'actions" }).first().click();
+    // the list can refresh right after it shows (and close a menu opened too early):
+    // open the row's menu until « Modifier la fiche » is really there
+    await expect(async () => {
+      await page.getByRole('button', { name: "Plus d'actions" }).first().click();
+      await expect(page.getByRole('button', { name: 'Modifier la fiche' })).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
     await page.getByRole('button', { name: 'Modifier la fiche' }).click();
     const dialog = page.getByRole('dialog', { name: 'Modifier la fiche' });
     await expect(dialog).toBeVisible();
