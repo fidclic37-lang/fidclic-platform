@@ -491,6 +491,11 @@ def _compute_points_to_next_reward(customer: dict, tenant_id: str) -> int:
     """
     try:
         tpl = db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+        from features import loyalty_card as _LCR
+        if _LCR._programme(tpl) != "stamps":
+            # a points card: what its balance still owes for the reward (QA R7 F28)
+            goal = int(tpl.get("reward_points") or 0)
+            return max(0, goal - int(customer.get("points") or 0)) if goal else 0
         visits_per_stamp = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
         reward_threshold_stamps = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1)
         visits_needed = visits_per_stamp * reward_threshold_stamps
@@ -5356,10 +5361,17 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # stays in integers like every other points programme.
         rate = float(card_template.get("cashback_rate") or 5)
         points_to_add = int(round(amount * rate))            # % of euros → cents
-    elif mode == "per_euro" and amount > 0:
-        points_to_add = int(round(ppe * amount))
+    elif programme == "points_euro" or (mode == "per_euro" and programme != "points_visit"):
+        # points per euro spent: a visit at 0 € earns nothing (it used to fall
+        # back to « points par visite »)
+        points_to_add = int(round(ppe * amount)) if amount > 0 else 0
     else:
         points_to_add = ppv
+    # A points or cashback card has no tampons (QA R7 BUG-009): its visits must
+    # not fill a stamp card in the background — the stamp baseline moves with
+    # them, so nothing shows « 1/10 » if the shop goes back to Tampons, and no
+    # stamp reward is banked beside the points.
+    stamp_card = programme == "stamps"
 
     new_visits = current_visits + 1
     new_points = current_points + points_to_add
@@ -5406,7 +5418,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                            "paper_stamps_by": getattr(token_data, "email", None)})
         res = db.customers.update_one(
             {"id": cid, "paper_stamps": {"$exists": False}},
-            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"]}})
+            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"] + (0 if stamp_card else 1)}})
         if res.matched_count == 0:
             raise HTTPException(status_code=409, detail=_paper_done_message(db.customers.find_one({"id": cid}) or {}))
         try:
@@ -5420,7 +5432,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         except Exception as _e:
             print(f"scan_visit: paper stamps not logged (non-fatal): {_e}")
     else:
-        db.customers.update_one({"id": cid}, {"$set": update_set})
+        db.customers.update_one({"id": cid}, {"$set": update_set,
+                                              **({} if stamp_card else {"$inc": {"visits_at_last_redemption": 1}})})
 
     # Insert visit row — must succeed for analytics.
     try:
@@ -5432,7 +5445,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             # the tampons this visit put on the card (Historique shows tampons
             # on a tampons card, user 2026-10-15): one visit is one tampon, or
             # less when the card asks several visits per tampon
-            "stamps_awarded": _stamps_gained(cust, card_template),
+            "stamps_awarded": _stamps_gained(cust, card_template) if stamp_card else 0,
+            "programme": programme,
             "amount_paid": float(req.amount_paid or 0),
             "visit_time": datetime.now(timezone.utc),
             "branch_id": req.branch_id or cust.get("branch_id"),
@@ -5546,7 +5560,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # already complete, the finished card is banked as an earned reward and
     # this visit becomes stamp 1 of the new one.
     cycles_completed = 0
-    while (new_visits - last_red_visits) > reward_threshold:
+    while stamp_card and (new_visits - last_red_visits) > reward_threshold:
         try:
             db.rewards_earned.insert_one({
                 "id": str(uuid.uuid4()),
@@ -5568,9 +5582,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             "updated_at": datetime.now(timezone.utc),
         }})
 
-    stamps_in_cycle = max(0, new_visits - last_red_visits)
+    stamps_in_cycle = max(0, new_visits - last_red_visits) if stamp_card else 0
     stamps_capped = min(stamps_in_cycle, reward_threshold)
-    reward_unlocked = stamps_in_cycle >= reward_threshold
+    reward_unlocked = stamp_card and stamps_in_cycle >= reward_threshold
 
     # Notification subscription status — drives the staff scan-page prompt
     # ("This customer isn't receiving offers — show enable QR?"). We check
@@ -5646,8 +5660,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # in tampons — « +1 tampon » was written whatever « visites par
         # tampon » said, and 6/20 showed for 3 tampons out of 10.
         "programme": programme,
-        "stamps_earned": (1 if per_stamp_scan == 1 or stamps_in_cycle % per_stamp_scan == 0 else 0)
-                         + (paper["stamps"] if paper else 0),
+        "stamps_earned": ((1 if per_stamp_scan == 1 or stamps_in_cycle % per_stamp_scan == 0 else 0)
+                          + (paper["stamps"] if paper else 0)) if stamp_card else 0,
         "stamps_on_card": stamps_capped // per_stamp_scan,
         "stamps_target": reward_threshold // per_stamp_scan,
         # the filleul's parrainage reward, when this visit validated it
@@ -5734,6 +5748,11 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     card_template = db.card_templates.find_one({"tenant_id": tenant_id})
     if not card_template:
         return fired
+    # « Carte complète » belongs to a Tampons card only (QA R7 BUG-009): a
+    # points card's visits never fill a stamp card. Its « bientôt disponible »
+    # (X points to go) is the automation's below, on every programme.
+    from features import loyalty_card as _LCE
+    stamp_card = _LCE._programme(card_template) == "stamps"
 
     visits_per_stamp = max(int(card_template.get("visits_per_stamp", 1) or 1), 1)
     threshold_stamps = max(int(card_template.get("reward_threshold_stamps", 10) or 10), 1)
@@ -5776,7 +5795,7 @@ def _evaluate_reward_state_and_notify(customer_doc, tenant_id: str) -> Dict[str,
     # ---- "Reward unlocked" push ----
     # Fires when the customer's current state is at-or-over the threshold AND
     # hasn't received an unlock push for this card cycle yet.
-    if (stamps_earned >= threshold_stamps
+    if (stamp_card and stamps_earned >= threshold_stamps
         and not _has_recent_notification(cid, tenant_id, "reward_unlocked", cycle_start)
         and not customer_doc.get("paused_at")):                 # paused by the business: no message
         title = f"🎉 Récompense débloquée, {first_name} !" if first_name else "🎉 Récompense débloquée !"
@@ -6941,7 +6960,7 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
 # auto-update toggle, and delete-card action.
 # ========================
 
-CAMPAIGN_OFFER_DAYS = 30      # a campaign's offer is valid 30 days (as on the Wallet pass)
+CAMPAIGN_OFFER_DAYS = 7       # without a date of its own, as on the Wallet pass (campaign_kinds.DEFAULT_LIVE_DAYS)
 
 
 def _as_aware(v) -> Optional[datetime]:
@@ -7096,6 +7115,7 @@ def _serialize_card_payload(cust: dict) -> dict:
 
 @_SC.customer_store("cust")
 def _serialize_card_payload_raw(cust: dict) -> dict:
+    from features import loyalty_card as _LCK
     t = db.tenants.find_one({"id": cust["tenant_id"]}) or {}
     tpl = db.card_templates.find_one({"tenant_id": cust["tenant_id"]}) or {}
     prefs = _card_prefs_for(cust["id"])
@@ -7201,6 +7221,11 @@ def _serialize_card_payload_raw(cust: dict) -> dict:
             "reward_description": tpl.get("reward_description", "Une récompense fidélité"),
             # the programme (points OR tampons) and the reward's place on the card
             "programme": tpl.get("programme"),
+            # the programme as the scan applies it, and its rates — the web card
+            # describes what the shop really set (QA R7 F28)
+            "programme_kind": _LCK._programme(tpl),
+            "points_per_euro": tpl.get("points_per_euro"),
+            "cashback_rate": tpl.get("cashback_rate"),
             "points_mode": tpl.get("points_mode"),
             "reward_points": tpl.get("reward_points"),
             "reward_on_card": tpl.get("reward_on_card"),

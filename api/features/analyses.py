@@ -426,10 +426,15 @@ def _tab_fidelisation(r: Reader) -> Dict[str, Any]:
         pass
     return {
         "strip": [
-            {"key": "loyal", "label": "Clients fidélisés", "value": loyal, "icon": "crown"},
-            {"key": "returning", "label": "Clients revenus", "value": returning, "icon": "repeat"},
+            # a click opens those very clients on the Clients page — their
+            # details and every action there (user, 2026-10-21)
+            {"key": "loyal", "label": "Clients fidélisés", "value": loyal, "icon": "crown",
+             "to": "/dashboard/customers?segment=loyal"},
+            {"key": "returning", "label": "Clients revenus", "value": returning, "icon": "repeat",
+             "to": "/dashboard/customers?segment=returning"},
             {"key": "retention", "label": "Taux de retour", "unit": "%",
-             "value": _pct(returning, len(people)), "icon": "activity"},
+             "value": _pct(returning, len(people)), "icon": "activity",
+             "to": "/dashboard/customers?segment=returning"},
             {"key": "rewards", "label": "Récompenses utilisées", "value": redeemed, "icon": "gift"},
         ],
         "retention_note": "Le taux de retour est la part de vos clients venus au moins deux "
@@ -445,8 +450,10 @@ def _tab_avis(r: Reader) -> Dict[str, Any]:
     rows = r.reviews()
     if not rows:
         return {"empty": True,
-                "message": "Aucun avis pour l'instant. Activez la demande d'avis pour "
-                           "commencer à en recevoir."}
+                # there is no switch to turn on: a client rates a visit from
+                # their card (« Donner mon avis », 14 days after a visit)
+                "message": "Aucun avis pour l'instant. Vos clients notent leur visite depuis leur "
+                           "carte (« Donner mon avis », pendant 14 jours après une visite)."}
     ratings = [float(x.get("rating") or 0) for x in rows if x.get("rating")]
     avg = round(sum(ratings) / len(ratings), 1) if ratings else 0.0
     in_window = [x for x in rows

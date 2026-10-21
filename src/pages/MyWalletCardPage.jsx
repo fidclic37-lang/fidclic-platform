@@ -12,6 +12,7 @@ import InstallPwaPrompt from '../components/InstallPwaPrompt';
 import GeoConsentCard from '../components/GeoConsentCard';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import WalletPassPreview from '../components/WalletPassPreview';
+import { programmeOf, rewardProgress, earningRule } from '../lib/programme';
 import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
@@ -709,7 +710,11 @@ const CardView = () => {
   const shopView = new URLSearchParams(window.location.search).get('vue') === 'commerce';
   const menu = [
     { key: 'offers', icon: Sparkles, label: 'Mes offres', hint: mergedFeed.length ? `${mergedFeed.length} en cours` : 'Les offres de la boutique', to: `/card/${barcodeId}/offres${shopView ? '?vue=commerce' : ''}` },
-    { key: 'program', icon: Gift, label: 'Le programme', hint: card.reward_description ? `${card.reward_description} après ${stampsTarget} visites` : 'Récompenses et points' },
+    { key: 'program', icon: Gift, label: 'Le programme',
+      hint: card.reward_description
+        ? (programmeOf(card) === 'stamps' ? `${card.reward_description} après ${stampsTarget} visites`
+          : rewardProgress(card).rule)
+        : 'Récompenses et points' },
     recentVisit && { key: 'review', icon: Star, label: 'Donner mon avis', hint: 'Sur votre dernière visite — anonyme' },
     { key: 'about', icon: Store, label: `À propos de ${tenant.name || 'la boutique'}`, hint: 'Adresse, horaires, contact' },
     { key: 'settings', icon: Settings, label: 'Paramètres', hint: 'Notifications, mes données, supprimer ma carte' },
@@ -844,13 +849,20 @@ const CardView = () => {
             <div className="rounded-2xl bg-[#F8FAFC] p-4">
               <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Récompense</p>
               <p className="mt-1 font-semibold text-[#0B1C3F]">🎁 {card.reward_description || 'Une récompense fidélité'}</p>
-              <p className="mt-1 text-[13px] text-[#475569]">Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
+              {programmeOf(card) === 'stamps' ? (
+                <p className="mt-1 text-[13px] text-[#475569]">Débloquée après {stampsTarget} visites — {Math.min(cycleVisits(customer), stampsTarget)} / {stampsTarget} sur cette carte.</p>
+              ) : parseInt(card.reward_points, 10) > 0 && (
+                // a points card: its reward is reached in points, not in visits (QA R7 F28)
+                <p className="mt-1 text-[13px] text-[#475569]" data-testid="programme-progress">
+                  Débloquée dès {card.reward_points} points — {Math.min(parseInt(customer.points, 10) || 0, parseInt(card.reward_points, 10))} / {card.reward_points} sur cette carte.
+                </p>
+              )}
             </div>
-            {/* a Tampons card earns no points (QA BUG-009): no « points par visite » */}
-            {!!card.points_per_visit && card.show_points !== false && (
-              <div className="rounded-2xl bg-[#F8FAFC] p-4">
-                <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Points par visite</p>
-                <p className="mt-1 font-semibold text-[#0B1C3F]">+{card.points_per_visit} pts à chaque passage</p>
+            {/* how the card earns, as the shop set it — none on a Tampons card (QA BUG-009 / R7 F28) */}
+            {earningRule(card) && (
+              <div className="rounded-2xl bg-[#F8FAFC] p-4" data-testid="programme-earning">
+                <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Comment gagner</p>
+                <p className="mt-1 font-semibold text-[#0B1C3F]">{earningRule(card)}</p>
               </div>
             )}
             <div className="rounded-2xl bg-[#F8FAFC] p-4">

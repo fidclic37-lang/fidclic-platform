@@ -13,9 +13,19 @@ test('the campaign detail names its recipients and its sender', async ({ page, r
   const br = await (await request.get('/api/owner/branches', { headers: H })).json();
   const store = ((br && br.branches) || br || []).find((b) => b.status !== 'closed')?.id || '';
   const SH = { ...H, ...(store ? { 'X-FidClic-Store': store } : {}) };
-  const rows = (await (await request.get('/api/owner/clients/list?per_page=50', { headers: SH })).json()).rows || [];
-  const one = rows.find((c) => c.name);
-  expect(one, 'the demo has a client').toBeTruthy();
+  // a member of THIS establishment (a campaign writes to its own members only)
+  const pub = await (await request.get('/api/join/cafe-lumiere/page')).json();
+  const slug = (pub.stores || []).find((x) => x.id === store)?.slug;
+  const name = `Destinataire ${Date.now() % 100000}`;
+  const made = await (await request.post('/api/join/cafe-lumiere', { data: {
+    name, phone: `07${String(Date.now()).slice(-8)}`, postal_code: '37000', birthday: '03/04/1992',
+    consent: true, ...(slug ? { store: slug } : {}) } })).json();
+  const one = { id: made.customer_id || made.id, name };
+  if (!one.id) {
+    const rows = (await (await request.get(`/api/owner/clients/list?per_page=20&search=${encodeURIComponent(name)}`, { headers: SH })).json()).rows || [];
+    one.id = rows.find((c) => c.name === name)?.id;
+  }
+  expect(one.id, 'a new client of this establishment').toBeTruthy();
   const title = `Pour ${one.name} ${Date.now() % 100000}`;
   const sent = await request.post('/api/owner/campaigns/compose', { headers: SH,
     data: { title, message: 'Bonjour {prénom} !', customer_ids: [one.id] } });
