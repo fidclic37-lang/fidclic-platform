@@ -27,7 +27,12 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 PARIS = ZoneInfo("Europe/Paris")
-DEFAULT_LIVE_DAYS = 30
+# A campaign stays on the card until the date the owner chose (« Sur la carte
+# jusqu'au », asked for every campaign since 2026-10-20). Without one — sent
+# before that, or by FidClic IA — a week, never the hidden 30 days that kept a
+# one-client message live for a month and brought it back (user: « campaign
+# chala gya and expire ho gya toh hatao »).
+DEFAULT_LIVE_DAYS = 7
 
 KINDS = {"offre": "Offre spéciale", "nouveaute": "Nouveauté", "evenement": "Événement", "defi": "Défi",
          "configurer": "Configurer une offre"}
@@ -268,6 +273,8 @@ def window(c: Dict[str, Any]) -> Tuple[Optional[datetime], Optional[datetime]]:
         until = end_of(date.fromisoformat(c["event"]["date"]))
     elif kind == "defi" and (c.get("defi") or {}).get("end_date"):
         until = end_of(date.fromisoformat(c["defi"]["end_date"]))
+    elif c.get("visible_until"):                  # a Nouveauté: the day the owner chose
+        until = end_of(date.fromisoformat(str(c["visible_until"])[:10]))
     if until is None and sent:
         until = sent + timedelta(days=DEFAULT_LIVE_DAYS)
     return start, until

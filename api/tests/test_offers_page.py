@@ -65,7 +65,8 @@ def main():
     check("a campaign sent 31 days ago (past its 30 days) is not", "c-old" not in ids)
     mine = next(o for o in d["offers"] if o["id"] == "c-mine")
     until = dt.datetime.fromisoformat(mine["valid_until"])
-    check("« Valable jusqu'au » = sent + 30 days", abs((until - (now - dt.timedelta(days=3) + dt.timedelta(days=30))).total_seconds()) < 5)
+    # no date of its own (sent before « Sur la carte jusqu'au » was asked): a week, no longer 30 days (2026-10-20)
+    check("« Valable jusqu'au » = sent + 7 days", abs((until - (now - dt.timedelta(days=3) + dt.timedelta(days=7))).total_seconds()) < 5)
     primary = next(o for o in d["offers"] if o["kind"] == "primary")
     check("the shop's own offer has no invented end date", primary["valid_until"] is None)
     msgs = [n["id"] for n in d["notifications"]]

@@ -1169,7 +1169,7 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
     return payload
 
 
-CAMPAIGN_OFFER_DAYS = 30
+CAMPAIGN_OFFER_DAYS = 7         # without a date of its own (campaign_kinds.DEFAULT_LIVE_DAYS, 2026-10-20)
 
 
 def _attach_auto_news(card: Dict[str, Any], cust: Dict[str, Any]) -> None:
