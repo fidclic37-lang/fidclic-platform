@@ -318,7 +318,7 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
 };
 
 // What an alert of the bell opens (clients_page.ALERT_SEGMENTS).
-const ALERT_SEGMENTS = { at_risk: 'Clients qui décrochent', one_timers: 'Venus une seule fois' };
+const ALERT_SEGMENTS = { at_risk: 'Clients qui décrochent', one_timers: 'Venus une seule fois', returning: 'Clients revenus (2 visites ou plus)' };
 
 export default function ClientsPage() {
   const { user } = useAuth();
