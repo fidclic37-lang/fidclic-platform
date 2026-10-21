@@ -354,7 +354,7 @@ export default function ClientsPage() {
     if (k && k !== segment) { setSegmentState(k); setPage(1); }
     if (k) setStore(urlParams.get('store') || '');
     // Opened from an alert: straight to its clients.
-    if (k && (ALERT_SEGMENTS[k] || k.startsWith('client:'))) {
+    if (k && (ALERT_SEGMENTS[k] || k.startsWith('client:') || k.startsWith('place:'))) {
       setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
     }
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -589,7 +589,8 @@ export default function ClientsPage() {
   // The bell's own lists: its alerts' clients, or one client.
   const alertSegment = ALERT_SEGMENTS[segment] ? { key: segment, label: ALERT_SEGMENTS[segment] }
     : segment.startsWith('client:') ? { key: segment, label: feed.rows[0]?.name ? `Client : ${feed.rows[0].name}` : 'Un client' }
-      : null;
+      : segment.startsWith('place:') ? { key: segment, label: `Zone : ${segment.slice(6)}` }
+        : null;
   const activeSegment = segments.find((s) => s.key === segment) || homeSegment || alertSegment;
   const storeName = store ? ((branches || []).find((b) => b.id === store)?.name || 'un établissement') : '';
 
