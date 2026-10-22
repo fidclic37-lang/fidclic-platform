@@ -233,6 +233,9 @@ const JoinPage = () => {
   const [consent, setConsent] = useState(false);
   const [errors, setErrors] = useState({});
   const [joinError, setJoinError] = useState(null);
+  // « Vous avez déjà une carte chez X » — the question the server asks before
+  // a second card is made (user, 2026-10-22).
+  const [otherStore, setOtherStore] = useState(null);
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(null);
   const postalRef = useRef(null);
@@ -303,8 +306,8 @@ const JoinPage = () => {
     const el = document.querySelector('#join-form p[role="alert"]');
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async (e, confirmOther = false) => {
+    e?.preventDefault?.();
     const postal = postalDigits(postalRef.current?.value ?? form.postal_code);
     const errs = {};
     if (!form.name.trim()) errs.name = 'Indiquez votre nom.';
@@ -319,7 +322,7 @@ const JoinPage = () => {
     if (askStore && !chosenStore) errs.store = 'Choisissez votre établissement.';
     setErrors(errs);
     if (Object.keys(errs).length) { showFirstError(); return; }
-    setBusy(true); setJoinError(null);
+    setBusy(true); setJoinError(null); setOtherStore(null);
     const position = await askPosition();          // asked now, never required
     try {
       const chain = loadTouchpoints(slug);
@@ -332,6 +335,7 @@ const JoinPage = () => {
         ...(position || {}),
         ...(parrainBarcode ? { parrain_barcode: parrainBarcode } : {}),
         ...(urlStore ? { store: urlStore.slug } : chosenStore ? { store: chosenStore } : {}),
+        ...(confirmOther ? { confirm_other_store: true } : {}),
       };
       const res = await publicAPI.joinProgram(slug, payload);
       clearTouchpoints(slug);
@@ -350,6 +354,13 @@ const JoinPage = () => {
         setErrors((x) => ({ ...x, store: detail.message }));
         setJoinError(null);
         showFirstError();
+      } else if (detail && typeof detail === 'object' && detail.code === 'other_store_card') {
+        // not a refusal — a question. Their card is at another establishment
+        // of the same shop; this one has its own, and they decide.
+        setOtherStore(detail);
+        setJoinError(null);
+        requestAnimationFrame(() => document.querySelector('[data-testid="other-store-card"]')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
       } else if (err?.response?.status === 409 && detail && typeof detail === 'object') {
         setJoinError({ tone: 'amber', title: detail.code === 'email_taken' ? 'E-mail déjà utilisé' : 'Vous avez déjà une carte', message: detail.message });
       } else if (err?.response?.status === 403 && detail && typeof detail === 'object' && detail.code === 'plan_limit_reached') {
@@ -510,6 +521,27 @@ const JoinPage = () => {
                   ? 'border-[#FCD9B6] bg-[#FFF7ED] text-[#92400E]' : 'border-[#FCA5A5] bg-[#FEF2F2] text-[#7F1D1D]'}`}>
                   <p className="font-semibold">{joinError.title}</p>
                   <p className="mt-0.5 leading-relaxed">{joinError.message}</p>
+                </div>
+              )}
+
+              {otherStore && (
+                <div role="alert" data-testid="other-store-card"
+                     className="rounded-2xl border border-[#BFD7FF] bg-[#F2F7FF] p-3.5 text-[13.5px] text-[#0B1C3F]">
+                  <p className="font-semibold">Vous avez déjà une carte chez {otherStore.store_name}</p>
+                  <p className="mt-0.5 leading-relaxed text-[#334155]">
+                    Chaque établissement a sa propre carte : celle de {otherStore.here} serait une seconde carte,
+                    avec ses propres points. Votre carte {otherStore.store_name} ne change pas.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" disabled={busy} onClick={(ev) => submit(ev, true)}
+                            className="inline-flex h-10 items-center rounded-xl bg-[#2F6BFF] px-4 text-[13.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-60">
+                      Oui, je veux aussi celle de {otherStore.here}
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => setOtherStore(null)}
+                            className="inline-flex h-10 items-center rounded-xl border border-[#CBD5E1] bg-white px-4 text-[13.5px] font-semibold text-[#334155] hover:border-[#2F6BFF] disabled:opacity-60">
+                      Non merci
+                    </button>
+                  </div>
                 </div>
               )}
 

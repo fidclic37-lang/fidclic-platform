@@ -75,16 +75,41 @@ def main():
     base = {"name": "Moi", "phone": me_phone, "email": me_mail, "postal_code": "37000", "birthday": "25/12/1990",
             "consent": True}
     r = http("POST", "/api/join/royal-trim", json={**base, "store": stores["pal"], "parrain_barcode": "FT-FR000001"})
-    check(f"a new Palissy client ({r.status_code} {str(r.json())[:120]})", r.status_code == 200 and r.json().get("barcode_id"))
+    # A second card is never made behind the person's back (user, 2026-10-22):
+    # the page asks first, and names both establishments.
+    d = (r.json() or {}).get("detail") or {}
+    check(f"asked first, not signed up ({r.status_code} {str(d)[:90]})",
+          r.status_code == 409 and d.get("code") == "other_store_card")
+    check("…it names the card they already have, and the one on offer",
+          d.get("store_name") == "ROYAL TRIM LIBÉRTÉ" and d.get("here") == "ROYAL TRIM PALISSY")
+    check("…and nothing was written", db.customers.count_documents({"tenant_id": "t1"}) == 3)
+    r = http("POST", "/api/join/royal-trim", json={**base, "store": stores["pal"], "parrain_barcode": "FT-FR000001",
+                                                   "confirm_other_store": True})
+    check(f"they say yes: a new Palissy client ({r.status_code} {str(r.json())[:120]})",
+          r.status_code == 200 and r.json().get("barcode_id"))
     new = db.customers.find_one({"barcode_id": (r.json() or {}).get("barcode_id")}) or {}
     check("…his own card, at Palissy", new.get("branch_id") == "pal" and new.get("id") != "me")
+    check("…and the Liberté card is untouched",
+          (db.customers.find_one({"id": "me"}) or {}).get("barcode_id") == "FT-ME000001")
     r = http("POST", "/api/join/royal-trim", json={**base, "store": stores["pal"]})
     check(f"twice at Palissy: already a client there ({r.status_code})", r.status_code == 409
           and "PALISSY" in str(r.json()))
     r = http("POST", "/api/join/royal-trim", json={**base, "store": stores["main"]})
     check(f"at Liberté (my card has no store): already a client ({r.status_code})", r.status_code == 409)
 
-    print("\n3. A one-shop account: as before")
+    print("\n3. Nobody else is asked for nothing")
+    r = http("POST", "/api/join/royal-trim", json={"name": "Neuf", "phone": "06 10 10 10 10", "email": "neuf@gmail.com",
+                                                   "postal_code": "37000", "birthday": "01/02/1991", "consent": True,
+                                                   "store": stores["pal"]})
+    check(f"someone with no card here signs up straight away ({r.status_code})", r.status_code == 200)
+    r = http("POST", "/api/join/royal-trim", json={"name": "Ami", "phone": "06 99 88 77 66", "postal_code": "37000",
+                                                   "birthday": "01/02/1991", "consent": True, "store": stores["main"]})
+    d = (r.json() or {}).get("detail") or {}
+    check(f"the Palissy client is asked about Liberté too ({r.status_code})",
+          r.status_code == 409 and d.get("code") == "other_store_card"
+          and d.get("store_name") == "ROYAL TRIM PALISSY")
+
+    print("\n4. A one-shop account: as before")
     db.customers.insert_one({"id": "s1", "tenant_id": "t2", "name": "A", "barcode_id": "FT-SO000001",
                              "phone": "06 12 12 12 12", "visits": 0, "points": 0})
     r = http("POST", "/api/join/solo", json={**base, "phone": "06 12 12 12 12", "email": ""})
