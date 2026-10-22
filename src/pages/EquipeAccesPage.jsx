@@ -174,12 +174,16 @@ function Credentials({ creds, onClose }) {
   );
 }
 
-/* the roles one may hand out: the built-in ones below one's own, and the
-   owner's roles (an owner or an administrateur) */
+/* the roles one may hand out: those BELOW one's own in the role tree
+   (team_access.assignable, 2026-10-22) — built-in or created */
 function roleOptions(d) {
   const tpl = Object.fromEntries((d.templates || []).map((t) => [t.key, t]));
   const out = d.me.can_create.map((k) => ({ key: k, label: tpl[k]?.label || d.roles.find((r) => r.key === k)?.label || k }));
-  if (d.me.can_assign_custom) (d.templates || []).filter((t) => !t.builtin).forEach((t) => out.push({ key: t.key, label: t.label }));
+  const mine = d.me.assignable_roles;
+  if (d.me.can_assign_custom) {
+    (d.templates || []).filter((t) => !t.builtin && (!mine || mine.includes(t.key)))
+      .forEach((t) => out.push({ key: t.key, label: t.label }));
+  }
   return out;
 }
 const tplOf = (d, key) => (d.templates || []).find((t) => t.key === key);
@@ -616,7 +620,9 @@ export default function EquipeAccesPage() {
         const isOwnerRole = roleSel === 'business_owner';
         const t = tplOf(d, roleSel);
         const levels = isOwnerRole ? Object.fromEntries(d.pages.map((p) => [p.key, 'edit'])) : (draft?.key === roleSel ? draft.perms : t?.perms) || {};
-        const editable = d.me.can_define_roles && !isOwnerRole;
+        // a role below one's own, with « Créer et modifier les rôles » (role tree, 2026-10-22)
+        const editable = !isOwnerRole && d.me.can_define_roles
+          && (!d.me.manageable_roles || d.me.manageable_roles.includes(roleSel));
         const changed = draft?.key === roleSel && JSON.stringify(draft.perms) !== JSON.stringify(t?.perms);
         const count = d.roles.find((r) => r.key === roleSel)?.count || 0;
         return (
@@ -641,7 +647,8 @@ export default function EquipeAccesPage() {
                 {!isOwnerRole && t?.builtin && d.notes?.[roleSel] && <p><b className="text-[#0B1C3F]">{t.label} :</b> {d.notes[roleSel]}</p>}
                 {!isOwnerRole && !t?.builtin && t?.description && <p>{t.description}</p>}
                 {!isOwnerRole && <p>{count} compte{count > 1 ? 's' : ''} avec ce rôle.</p>}
-                {!d.me.can_define_roles && <p className="rounded-lg bg-[#F8FAFC] p-2.5">Seul le propriétaire modifie les rôles.</p>}
+                {!isOwnerRole && !d.me.can_define_roles && <p className="rounded-lg bg-[#F8FAFC] p-2.5">Vous n'avez pas la permission « Créer et modifier les rôles ».</p>}
+                {!isOwnerRole && d.me.can_define_roles && !editable && <p className="rounded-lg bg-[#F8FAFC] p-2.5">Ce rôle n'est pas sous le vôtre : seuls le propriétaire et les rôles au-dessus de lui le modifient.</p>}
                 {editable && (
                   <div className="flex flex-col gap-2">
                     <button type="button" disabled={!changed} onClick={() => setApplyAsk({ key: roleSel, perms: draft.perms, count })}

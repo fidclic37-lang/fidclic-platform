@@ -55,10 +55,14 @@ PAGES: List[Dict[str, Any]] = [
     {"key": "employee_links", "label": "Liens d'inscription par employé",
      "to": "/dashboard/parametres/lien-inscription"},
     {"key": "billing", "label": "Abonnement & facturation", "to": "/dashboard/parametres/abonnement"},
+    # Créer des rôles et changer leurs permissions (user, 2026-10-22) — only the
+    # roles BELOW one's own (role tree below): an owner gives it on purpose
+    {"key": "roles", "label": "Créer et modifier les rôles", "to": None, "edit_only": True},
     {"key": "email_change", "label": "Changer l'adresse e-mail du compte", "to": None, "edit_only": True},
     {"key": "delete", "label": "Supprimer le compte", "to": None, "edit_only": True},
 ]
 PAGE_KEYS = [p["key"] for p in PAGES]
+EDIT_ONLY = {p["key"] for p in PAGES if p.get("edit_only")}
 LABEL = {p["key"]: p["label"] for p in PAGES}
 
 
@@ -68,7 +72,7 @@ def _all(level: str, **over) -> Dict[str, str]:
 
 # The built-in roles' templates, as they worked before (what each one's sidebar showed)
 DEFAULT_TEMPLATES: Dict[str, Dict[str, str]] = {
-    "administrateur": _all("edit", billing="none", delete="none", email_change="none"),
+    "administrateur": _all("edit", billing="none", delete="none", email_change="none", roles="none"),
     "manager": _all("none", scan="edit", analytics="view", insights="view", ai="edit", customers="edit",
                     campaigns="edit", segmentation="edit", geolocation="view", history="view", team="edit"),
     "staff": _all("none", scan="edit"),
@@ -189,7 +193,7 @@ def clean_perms(raw: Any) -> Dict[str, str]:
             v = "edit" if v.get("edit") else ("view" if v.get("view") else "none")
         if v not in LEVELS:
             raise HTTPException(status_code=400, detail=f"Permission invalide : {LABEL[k]}.")
-        if k == "delete" and v == "view":
+        if k in EDIT_ONLY and v == "view":
             v = "none"
         out[k] = v
     unknown = [k for k in raw if k not in PAGE_KEYS]
@@ -216,6 +220,76 @@ def templates(tid: str) -> Dict[str, Dict[str, Any]]:
                   "description": d.get("description") or "",
                   "perms": {**_all("none"), **(d.get("perms") or {})}}
     return out
+
+
+# ---------------------------------------------------------------------------
+# the role tree (user, 2026-10-22): « proprietaire sabka kar sakta,
+# administrateur keval apne niche waale ka… and so on ». Each role has a
+# parent — the role of whoever created it; the built-in ones: Propriétaire >
+# Administrateur > Manager > Employé. An account manages the roles BELOW its
+# own (any depth) and the accounts in them — never its own role, a sibling's
+# or one above. The Propriétaire manages everything.
+# ---------------------------------------------------------------------------
+OWNER_KEY = "proprietaire"
+BUILTIN_PARENT = {"administrateur": OWNER_KEY, "manager": "administrateur", "staff": "manager"}
+
+
+def my_key(user: Dict[str, Any]) -> str:
+    if (user or {}).get("role") in ("business_owner", "super_admin"):
+        return OWNER_KEY
+    return role_key(user or {}) or ""
+
+
+def _defs(tid: str) -> Dict[str, Any]:
+    t = (_db.tenants.find_one({"id": tid}, {"_id": 0, "role_defs": 1}) or {}) if _db is not None else {}
+    return t.get("role_defs") or {}
+
+
+def parent_of(tid: str, key: str, defs: Optional[Dict[str, Any]] = None) -> str:
+    if key in BUILTIN_PARENT:
+        return BUILTIN_PARENT[key]
+    d = (defs if defs is not None else _defs(tid)).get(key) or {}
+    if d.get("parent"):
+        return d["parent"]
+    # a role made before the tree: its creator's role, the owner's by default
+    creator = _db.users.find_one({"email": d.get("created_by")}, {"_id": 0, "role": 1, "custom_role": 1})         if (_db is not None and d.get("created_by")) else None
+    return my_key(creator) if creator else OWNER_KEY
+
+
+def below(tid: str, key: str) -> List[str]:
+    """Every role under `key`, at any depth (the owner: every role)."""
+    keys = [k for k in templates(tid)]
+    if key == OWNER_KEY:
+        return keys
+    defs = _defs(tid)
+    out = []
+    for k in keys:
+        p, seen = parent_of(tid, k, defs), {k}
+        while p and p not in seen and p != OWNER_KEY:
+            if p == key:
+                out.append(k)
+                break
+            seen.add(p)
+            p = parent_of(tid, p, defs)
+    return out
+
+
+def can_define_roles(token_or_user) -> bool:
+    role = getattr(token_or_user, "role", None) or (token_or_user or {}).get("role")
+    if role in ("business_owner", "super_admin"):
+        return True
+    if hasattr(token_or_user, "email"):
+        return may(token_or_user, "roles", "edit")
+    perms = effective(token_or_user)
+    return perms is not None and all(p.get("roles") == "edit" for p in perms.values()) and bool(perms)
+
+
+def manageable_roles(user: Dict[str, Any]) -> List[str]:
+    """The role DEFINITIONS this account may change: below its own, if it has
+    « Créer et modifier les rôles »."""
+    if not can_define_roles(user):
+        return []
+    return below(user.get("tenant_id"), my_key(user))
 
 
 def role_key(user: Dict[str, Any]) -> Optional[str]:
@@ -297,6 +371,22 @@ def strict(user: Dict[str, Any]) -> bool:
         return True
     tpl = templates(user.get("tenant_id")).get(role_key(user) or "") or {}
     return bool(tpl.get("customized"))
+
+
+def may_everywhere(token, page: str, level: str = "edit") -> bool:
+    """« Modifier » on that page in EVERY establishment of the shop — what a
+    shop-wide change (e.g. a push-wallet scenario for all stores) asks."""
+    if getattr(token, "role", None) in ("business_owner", "super_admin"):
+        return True
+    if _db is None:
+        return False
+    user = _db.users.find_one({"email": token.email}, {"_id": 0, "hashed_password": 0}) or {}
+    perms = effective(user)
+    if not perms:
+        return False
+    from features import team_access as TA
+    all_ids = [s["id"] for s in TA.stores(user.get("tenant_id"))]
+    return all(RANKV[(perms.get(sid) or {}).get(page, "none")] >= RANKV.get(level, 2) for sid in all_ids)
 
 
 def may(token, page: str, level: str = "edit", request=None) -> bool:

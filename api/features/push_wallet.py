@@ -715,8 +715,8 @@ def list_scenarios(
     return {
         "scope": scope.describe(),
         "pending_count": len(pending_lots(token_data, scope)),
-        "can": {"create": role == "business_owner", "edit": role in EDITORS,
-                "message_only": role != "business_owner"},
+        "can": {"create": _shop_wide(token_data), "edit": role in EDITORS or _shop_wide(token_data),
+                "message_only": not _shop_wide(token_data)},
         "scenarios": [view(r) for r in rows],
         "triggers": [{"key": k, "label": v["label"], "config": v["config"]}
                      for k, v in TRIGGERS.items()],
@@ -767,6 +767,7 @@ def stats(
 @router.post("/api/owner/push-wallet/scenarios")
 def create_scenario(body: ScenarioIn,
                     token_data: TokenData = Depends(require_role(["business_owner"]))):
+    _shop_wide_or_403(token_data)
     if body.trigger not in TRIGGERS:
         raise HTTPException(status_code=400, detail="Déclencheur inconnu")
     tid = token_data.tenant_id
@@ -792,7 +793,7 @@ def update_scenario(scenario_id: str, body: ScenarioPatch,
     if not row:
         raise HTTPException(status_code=404, detail="Scénario introuvable")
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if getattr(token_data, "role", None) != "business_owner":
+    if not _shop_wide(token_data):
         return _store_version(tid, row, patch, token_data, request)
     if "trigger" in patch and patch["trigger"] not in TRIGGERS:
         raise HTTPException(status_code=400, detail="Déclencheur inconnu")
@@ -848,6 +849,7 @@ def _store_version(tid: str, row: Dict[str, Any], patch: Dict[str, Any],
 @router.delete("/api/owner/push-wallet/scenarios/{scenario_id}")
 def delete_scenario(scenario_id: str,
                     token_data: TokenData = Depends(require_role(["business_owner"]))):
+    _shop_wide_or_403(token_data)
     res = _db.push_scenarios.delete_one({"id": scenario_id, "tenant_id": token_data.tenant_id})
     if not res.deleted_count:
         raise HTTPException(status_code=404, detail="Scénario introuvable")
@@ -859,6 +861,7 @@ def run_now(scenario_id: str,
             token_data: TokenData = Depends(require_role(["business_owner"]))):
     """Fire it now — the merchant's way of checking a scenario does what they
     think. The cooldown still applies, so this cannot be used to spam."""
+    _shop_wide_or_403(token_data)
     tid = token_data.tenant_id
     row = _db.push_scenarios.find_one({"id": scenario_id, "tenant_id": tid})
     if not row:
@@ -887,6 +890,21 @@ def preview_audience(scenario_id: str,
 # ---------------------------------------------------------------------------
 # À valider
 # ---------------------------------------------------------------------------
+def _shop_wide(token_data: TokenData) -> bool:
+    """A change for the whole shop (create, delete, run, trigger/name/delay):
+    the owner, or an account with « Modifier » Automatisations in EVERY
+    establishment (user, 2026-10-22: « iska bhi access diya ho toh kr sake »).
+    Anyone else changes its establishments' own version only."""
+    from features import role_perms as RP
+    return RP.may_everywhere(token_data, "automations")
+
+
+def _shop_wide_or_403(token_data: TokenData) -> None:
+    if not _shop_wide(token_data):
+        raise HTTPException(status_code=403, detail="Accès non autorisé : il faut « Modifier » Automatisations "
+                                                    "dans tous vos établissements pour changer un scénario de toute la boutique.")
+
+
 def _can_act(token_data: TokenData, scope: "S.Scope", lot: Dict[str, Any]) -> bool:
     """The owner acts on every batch; an administrateur or a manager on the
     batches of the establishments it covers (a batch of clients with no
