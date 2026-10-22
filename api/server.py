@@ -7113,6 +7113,61 @@ def _serialize_card_payload(cust: dict) -> dict:
     return payload
 
 
+_DAYS_FR = [("monday", "Lundi"), ("tuesday", "Mardi"), ("wednesday", "Mercredi"), ("thursday", "Jeudi"),
+            ("friday", "Vendredi"), ("saturday", "Samedi"), ("sunday", "Dimanche")]
+
+
+def _hours_text(weekly) -> str:
+    """« Lundi – Vendredi : 09:00 – 19:00 / Samedi : 10:00 – 18:00 / Dimanche :
+    fermé », from Paramètres › Établissement's opening hours (days in a row
+    with the same hours on one line)."""
+    if not isinstance(weekly, list) or len(weekly) != 7:
+        return ""
+    by_day = {str(d.get("day") or "").lower(): d for d in weekly if isinstance(d, dict)}
+    rows = []
+    for key, label in _DAYS_FR:
+        d = by_day.get(key) or {}
+        rows.append((label, "fermé" if d.get("closed") else
+                     f"{str(d.get('open_from') or '')[:5]} – {str(d.get('open_to') or '')[:5]}"))
+    lines, i = [], 0
+    while i < 7:
+        j = i
+        while j + 1 < 7 and rows[j + 1][1] == rows[i][1]:
+            j += 1
+        days = rows[i][0] if i == j else f"{rows[i][0]} – {rows[j][0]}"
+        lines.append(f"{days} : {rows[i][1]}")
+        i = j + 1
+    return "\n".join(lines)
+
+
+def _card_details(t: dict, tpl: dict) -> dict:
+    """The card's « À propos » (user, 2026-10-22: « à propos établissement se
+    auto aur back lines bhi »): filled by Paramètres › Établissement — its
+    description, opening hours, phone, website — what was written there wins
+    over the card's old details; the card's « Informations complémentaires »
+    (the back of the Wallet pass) follow as sections. An establishment's own
+    address and phone are laid over by _serialize_card_payload."""
+    old = dict(tpl.get("details") or {})
+    out = dict(old)
+    if (t.get("description") or "").strip():
+        out["about"] = t["description"].strip()
+    if t.get("weekly_schedule"):                       # saved by the owner, not the defaults
+        out["hours"] = _hours_text(t.get("weekly_schedule"))
+    if (t.get("phone") or "").strip():
+        out["phone"] = t["phone"].strip()
+    if (t.get("website") or "").strip():
+        w = t["website"].strip()
+        out["website"] = w if w.startswith(("http://", "https://")) else f"https://{w}"
+    if not (old.get("address") or "").strip() and (t.get("address") or "").strip():
+        out["address"] = t["address"].strip()
+    back = [{"title": str(r.get("label") or "").strip(), "body": str(r.get("value") or "").strip()}
+            for r in (tpl.get("back_fields") or []) if isinstance(r, dict)
+            and str(r.get("label") or "").strip() and str(r.get("value") or "").strip()]
+    if back:
+        out["custom_sections"] = list(old.get("custom_sections") or []) + back
+    return out
+
+
 @_SC.customer_store("cust")
 def _serialize_card_payload_raw(cust: dict) -> dict:
     from features import loyalty_card as _LCK
@@ -7244,7 +7299,7 @@ def _serialize_card_payload_raw(cust: dict) -> dict:
             "stamp_style": tpl.get("stamp_style") or tpl.get("design_mode") or "hexagon",
             "show_meter": tpl.get("show_meter") if tpl.get("show_meter") is not None else tpl.get("show_progress_meter", True),
             "promotion": tpl.get("promotion") or {"enabled": False},
-            "details": tpl.get("details") or {},
+            "details": _card_details(t, tpl),
             # Auchan fixed-layout (primary design path going forward)
             "auchan_layout": tpl.get("auchan_layout"),
             # Surface flat brand colors too (modern designer writes these via `elements`
