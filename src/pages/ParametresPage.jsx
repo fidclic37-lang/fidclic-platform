@@ -16,6 +16,7 @@ import PreferencesPage from './PreferencesPage';
 import ApiIntegrationsPage from './ApiIntegrationsPage';
 import { usePlanAccess } from '../components/PlanAccess';
 import ResetSection from '../components/ResetSection';
+import NoPageAccess from '../components/NoPageAccess';
 
 /* Paramètres — one page with a tab per sub-page, built like Analyses. The tab
    lives in the URL (/dashboard/parametres/<tab>) so a sub-page can be linked
@@ -60,7 +61,7 @@ export default function ParametresPage() {
   const access = usePlanAccess();             // a tab the plan does not include shows a lock
   const [version, setVersion] = useState(0);  // a reset reloads the tab from the server
   const section = sections.find((s) => s.slug === slug);
-  if (!section) return <Navigate to={sectionPath(sections[0].slug)} replace />;
+  if (!section) return <Navigate to={sectionPath((sections.find((s) => !s.locked) || sections[0]).slug)} replace />;
   const Page = PAGES[section.slug];
 
   return (
@@ -79,7 +80,7 @@ export default function ParametresPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
         {/* « Réinitialiser » — this tab back to before its last save. */}
-        <ResetSection key={section.slug} section={section.slug} label={section.label} onReverted={() => setVersion((v) => v + 1)} />
+        {!section.locked && <ResetSection key={section.slug} section={section.slug} label={section.label} onReverted={() => setVersion((v) => v + 1)} />}
         {user?.role === 'business_owner' && (
           <Link to="/dashboard/settings"
                 className="inline-flex items-center gap-1.5 rounded-xl border border-[#E6EEFB] bg-white px-3.5 py-2.5 text-[12.5px] font-medium text-[#334155] hover:border-[#C9DBFB] hover:text-[#2F6BFF]">
@@ -98,13 +99,14 @@ export default function ParametresPage() {
                     className={`shrink-0 border-b-2 px-3.5 py-2.5 text-[13px] font-semibold transition ${
                       on ? 'border-[#2F6BFF] text-[#2F6BFF]'
                          : 'border-transparent text-[#64748B] hover:text-[#334155]'}`}>
-              {s.label}{s.slug === 'api' && access?.has && !access.has('api_access') && <Lock size={12} className="ml-1 inline opacity-60" />}
+              {s.label}{((s.slug === 'api' && access?.has && !access.has('api_access')) || s.locked) && <Lock size={12} className="ml-1 inline opacity-60" aria-label={s.locked ? 'Accès non autorisé' : 'Offre supérieure'} />}
             </button>
           );
         })}
       </nav>
 
-      {Page ? <Page key={`${section.slug}-${version}`} /> : <EmptySection section={section} />}
+      {section.locked ? <NoPageAccess label={section.label} />
+        : Page ? <Page key={`${section.slug}-${version}`} /> : <EmptySection section={section} />}
     </div>
   );
 }

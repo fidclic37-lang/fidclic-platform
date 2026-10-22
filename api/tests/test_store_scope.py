@@ -220,6 +220,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nFiltres enregistrés")
     seg = server.create_saved_segment(server.SavedSegmentRequest(name="Mes fidèles", filters={}), token_data=SARA)
     check("a manager may save its own filter", seg["created_by"] == "sara@c.fr")
+    # permissions decide (2026-10-22): the owner gives the administrateur role only « Voir » here
+    db.tenants.update_one({"id": "t1"}, {"$set": {"role_defs.administrateur.perms.segmentation": "view"}})
     try:
         server.delete_saved_segment(seg["id"], token_data=ALI)
         other_deleted = True

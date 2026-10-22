@@ -11662,7 +11662,8 @@ def delete_saved_segment(
     token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"], partial_ok=True)),
 ):
     q = {"id": segment_id, "tenant_id": token_data.tenant_id}
-    if token_data.role != "business_owner":
+    from features import role_perms as _RP      # « Modifier » Segmentation: any segment (2026-10-22)
+    if not _RP.may(token_data, "segmentation"):
         q["created_by"] = token_data.email
     res = db.saved_segments.delete_one(q)
     if res.deleted_count == 0:

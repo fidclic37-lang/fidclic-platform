@@ -64,6 +64,7 @@ from pydantic import BaseModel, Field
 
 from auth import require_role
 from models import TokenData
+from features import role_perms as _RP  # noqa: E402  (« Modifier » checks, 2026-10-22)
 
 router = APIRouter(tags=["autopilot"])
 _db = None
@@ -427,7 +428,7 @@ def get_autopilot(token_data: TokenData = Depends(require_role(READERS, partial_
         {"tenant_id": tid, "status": {"$ne": "pending"}}, {"_id": 0}).sort("for_date", -1).limit(10)]
     return {"plan_ok": plan_ok(tid), "settings": settings(tid), "pending": pending(tid, now),
             "history": history, "precise": precise(), "valid_hours": VALID_HOURS,
-            "can_edit": token_data.role == "business_owner", "days": DAYS_FR}
+            "can_edit": _RP.may(token_data, "campaigns"), "days": DAYS_FR}
 
 
 class Rhythm(BaseModel):

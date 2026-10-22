@@ -194,6 +194,8 @@ def main():
     check(f"…but moves one between its own stores ({r.status_code})", r.status_code == 200 and home(pal_client) == "mon")
     r = http("PUT", f"/api/owner/customers/{cid}/home-store", headers=ADMIN, json={"branch_id": "main"})
     check("…never to a store it does not have", r.status_code == 403)
+    # permissions decide (2026-10-22): the owner gives the manager role only « Voir » here
+    db.tenants.update_one({"id": "t1"}, {"$set": {"role_defs.manager.perms.customers": "view"}})
     check("a manager cannot", http("PUT", f"/api/owner/customers/{cid}/home-store", headers=MANAGER,
                                    json={"branch_id": "mon"}).status_code == 403)
     check("a closed store is refused", http("PUT", f"/api/owner/customers/{cid}/home-store", headers=OWNER,

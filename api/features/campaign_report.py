@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 
 from auth import require_role
 from models import TokenData
+from features import role_perms as _RP  # noqa: E402  (« Modifier » checks, 2026-10-22)
 
 router = APIRouter(tags=["campagnes"])
 _db = None
@@ -421,7 +422,7 @@ def list_reports(token_data: TokenData = Depends(require_role(READERS, partial_o
                 "totals": r["data"]["totals"], "seen": r.get("seen", False), "email": r.get("email")}
                for r in _db.campaign_reports.find({"tenant_id": tid}, {"_id": 0}).sort("month", -1)]
     return {"plan_ok": plan_ok(tid), "settings": s, "reports": reports, "next_on": nxt.isoformat(),
-            "can_edit": token_data.role == "business_owner", "last_month": previous_month(_now()),
+            "can_edit": _RP.may(token_data, "campaigns"), "last_month": previous_month(_now()),
             "last_month_label": label(previous_month(_now()))}
 
 

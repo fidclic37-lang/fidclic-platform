@@ -172,7 +172,7 @@ const CabinetCases = lazyPage(() => import('./pages/CabinetCases'));
 const CabinetReview = lazyPage(() => import('./pages/CabinetReview'));
 import CabinetPasswordGate from './components/CabinetPasswordGate';
 import { EINVOICING_VISIBLE, OWNER_HOME } from './lib/modules';
-import { hasPagePerms, pageOfPath, canSee, firstAllowed as firstPage } from './lib/pagePerms';
+import { hasPagePerms } from './lib/pagePerms';
 const CabinetSignup = lazyPage(() => import('./pages/CabinetSignup'));
 const ResetPasswordPage = lazyPage(() => import('./pages/ResetPasswordPage'));
 const ChangerEmailPage = lazyPage(() => import('./pages/ChangerEmailPage'));
@@ -229,12 +229,10 @@ const ProtectedRoute = ({ children, allowedRoles, skipOnboardingGate = false, pa
   if (!skipOnboardingGate && needsOnboarding(user)) return <Navigate to={onboardingPath(user)} replace />;
   // An account with its own permissions (Équipe & accès): a /dashboard page
   // opens if it may « Voir » it — the server checks every call too.
-  if (hasPagePerms(user) && location.pathname.startsWith('/dashboard')) {
-    const page = pageOfPath(location.pathname);
-    if (!page || canSee(user, page) || (page === 'settings' && (canSee(user, 'team') || canSee(user, 'billing')))) return children;
-    const first = firstPage(user);
-    return first && first !== location.pathname ? <Navigate to={first} replace /> : <Navigate to="/login" replace />;
-  }
+  // Its permissions decide, not its role (user, 2026-10-22): the page opens
+  // inside the platform, and DashboardLayout shows « Accès non autorisé » on
+  // one it may not « Voir » — never a redirect that hides the page.
+  if (hasPagePerms(user) && location.pathname.startsWith('/dashboard')) return children;
   // Administrateurs, and managers covering only some establishments, reach
   // the data pages once those pages filter by establishment; until then they
   // work from Paramètres › Équipe & accès (the server refuses the rest too).

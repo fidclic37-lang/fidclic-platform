@@ -43,6 +43,7 @@ from pydantic import BaseModel
 
 from auth import require_role, TokenData
 from features import store_scope as S
+from features import role_perms as _RP  # noqa: E402  (« Modifier » checks, 2026-10-22)
 
 router = APIRouter(tags=["catalogue"])
 _db = None
@@ -269,7 +270,7 @@ def _payload(tid: str, days: int = DEFAULT_DAYS, scope: Optional["S.Scope"] = No
 def page(days: int = Query(DEFAULT_DAYS), request: Request = None,
          token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     return _payload(token_data.tenant_id, days, S.resolve(token_data, request),
-                    can_edit=token_data.role == "business_owner")
+                    can_edit=_RP.may(token_data, "catalogue"))
 
 
 def _view(tid: str, token_data: TokenData, request: Optional[Request]) -> Dict[str, Any]:

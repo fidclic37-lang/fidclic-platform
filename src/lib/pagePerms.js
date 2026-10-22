@@ -37,3 +37,25 @@ export function firstAllowed(user) {
   if (!k) return null;
   return HOME[k] || PAGE_ROUTES.find(([, v]) => v === k)?.[0] || '/dashboard';
 }
+
+/* The one question every page asks (user, 2026-10-22: « based on permissions
+   given in the roles… sections accessible hona chahiye »), for every business:
+   the owner may everything; a team account what its « Voir » / « Modifier »
+   switches say in the establishment chosen in the menu (the lowest of its
+   establishments when none is chosen — never more than everywhere). */
+const RANK = { none: 0, view: 1, edit: 2 };
+const OWNER_ROLES = ['business_owner', 'super_admin'];
+export function levelOf(user, key) {
+  if (!user) return 'none';
+  if (OWNER_ROLES.includes(user.role)) return 'edit';
+  const perms = user.page_perms;
+  if (!perms || typeof perms !== 'object') return 'none';
+  let store = null;
+  try { store = window.localStorage.getItem('ft_selected_branch_v1'); } catch { store = null; }
+  if (store && perms[store]) return perms[store][key] || 'none';
+  const all = Object.values(perms);
+  if (!all.length) return 'none';
+  return all.map((p) => p?.[key] || 'none').reduce((a, b) => (RANK[a] <= RANK[b] ? a : b));
+}
+export const canView = (user, key) => RANK[levelOf(user, key)] >= 1;
+export const canEdit = (user, key) => levelOf(user, key) === 'edit';

@@ -247,10 +247,11 @@ def per_store(user: Dict[str, Any]) -> Optional[Dict[str, Dict[str, str]]]:
     stores = user_stores(user, all_ids)
     own = user.get("perms") if isinstance(user.get("perms"), dict) else None
     tpl = templates(tid).get(role_key(user) or "")
-    if own is None and (tpl is None or (tpl.get("builtin") and not tpl.get("customized"))):
-        if user.get("role") == CUSTOM_ROLE:
-            return {s: _all("none") for s in stores}       # a role deleted since: nothing
-        return None
+    if own is None and tpl is None and user.get("role") == CUSTOM_ROLE:
+        return {s: _all("none") for s in stores}           # a role deleted since: nothing
+    # Every team account follows its permissions — its own, else its role's
+    # template (user, 2026-10-22: « based on permissions… sections accessible
+    # hona chahiye ») — even a built-in role the owner never changed.
     base = (tpl or {}).get("perms") or _all("none")
     out = {}
     for s in stores:
@@ -286,6 +287,37 @@ def _store_of(request) -> Optional[str]:
     return v or None
 
 
+def strict(user: Dict[str, Any]) -> bool:
+    """Permissions alone decide (refusals included) for an account with its own
+    switches, or in a role the owner edited or created. An account in a
+    built-in role the owner never changed is GIVEN what its template allows
+    and otherwise keeps its role's old rules — a page it always used never
+    closes on it by surprise."""
+    if isinstance(user.get("perms"), dict) or user.get("role") == CUSTOM_ROLE:
+        return True
+    tpl = templates(user.get("tenant_id")).get(role_key(user) or "") or {}
+    return bool(tpl.get("customized"))
+
+
+def may(token, page: str, level: str = "edit", request=None) -> bool:
+    """May this account « Voir » (level="view") or « Modifier » (« edit ») this
+    page, in the establishment chosen in the menu? The owner always may. The
+    one question every « only the owner » test inside a page now asks."""
+    if token is None:
+        return False
+    if getattr(token, "role", None) in ("business_owner", "super_admin"):
+        return True
+    if _db is None:
+        return False
+    user = _db.users.find_one({"email": token.email}, {"_id": 0, "hashed_password": 0}) or {}
+    if user.get("tenant_id") != getattr(token, "tenant_id", None):
+        return False
+    perms = effective(user)
+    if perms is None:
+        return True
+    return RANKV[level_in(perms, page, _store_of(request))] >= RANKV.get(level, 2)
+
+
 def check(token, request, roles) -> Optional[bool]:
     """auth.require_role asks: True = allowed, False = refused (403 with the
     page's name), None = no say (the endpoint's role list decides, as before)."""
@@ -299,7 +331,9 @@ def check(token, request, roles) -> Optional[bool]:
     if perms is None:
         return None
     if is_common(path, method):              # the menu, the plan, one's own security
-        return True
+        # no page's right: an account on its role's template keeps the
+        # endpoint's own role list (a staff account opened no support ticket)
+        return True if strict(user) else None
     page = page_of(path)
     if page is None:
         return False if user.get("role") == CUSTOM_ROLE else None
@@ -309,6 +343,8 @@ def check(token, request, roles) -> Optional[bool]:
     else:
         ok = level_in(perms, page, store) == "edit"
     if not ok:
+        if not strict(user):
+            return None                      # never granted here: the role's old rule decides
         request.state.perm_denied = page
     return ok
 

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { canEdit } from '../lib/pagePerms';
 import PosterCropper from '../components/PosterCropper';
 import { QRCodeCanvas } from 'qrcode.react';
 import EmployeeLinks from '../components/parametres/EmployeeLinks';
@@ -518,7 +519,7 @@ export default function LienInscriptionPage() {
             <div className="mt-4 rounded-lg border border-[#E6EEFB] p-3">
               <p className="text-[12.5px] font-semibold text-[#0B1C3F]">Établissement : {store.name}</p>
               <p className="mb-2 text-[11.5px] text-[#64748B]">Ce lien et ce QR inscrivent les clients dans cet établissement. Changez d’établissement dans le menu pour obtenir les siens.</p>
-              {user?.role === 'business_owner' && (
+              {canEdit(user, 'settings') && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12px] text-[#64748B]">…/{slug}/</span>
                   <input value={storeSlug} onChange={(e) => setStoreSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40))}
@@ -601,7 +602,7 @@ export default function LienInscriptionPage() {
       </div>
 
       {/* Un lien par canal — each channel's signups counted apart */}
-      <SignupImage d={d} setD={setD} shopName={shopName} canEdit={user?.role === 'business_owner'} />
+      <SignupImage d={d} setD={setD} shopName={shopName} canEdit={canEdit(user, 'settings')} />
 
       <section className={`${cardCls} mt-4`}>
         <CardHead icon={Link2} title="Un lien par canal"

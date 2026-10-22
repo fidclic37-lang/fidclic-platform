@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { canEdit } from '../lib/pagePerms';
 import {
   CreditCard, Eye, Plus, Image as ImageIcon, Trash2, Save, Settings2, Gift, Star,
   QrCode, Users, TrendingUp, TrendingDown, Lightbulb, Loader2, Check, X, Sliders,
@@ -239,7 +240,7 @@ export default function LoyaltyCardPage() {
   const openStores = (branches || []).filter((b) => b && b.id && b.status !== 'closed');
   const curStore = openStores.length > 1 ? openStores.find((b) => b.id === branchId) : null;
   const navigate = useNavigate();
-  const edit = user?.role === 'business_owner';
+  const edit = canEdit(user, 'card');   // « Modifier » Carte de fidélité (permissions, 2026-10-22)
   // the four steps of the mockup; every one keeps the page's single save
   const [step, setStep] = useState(1);
   const topRef = useRef(null);

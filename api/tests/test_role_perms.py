@@ -165,7 +165,12 @@ def main():
           RP.level_in(RP.per_store(u), "customers", None) == "none")
 
     print("\n4. The four built-in roles: as before until the owner changes them")
-    check("a manager without permissions of its own: the old rules", RP.per_store(db.users.find_one({"email": "m@x.fr"})) is None)
+    # 2026-10-22: its role's template now drives its menu and grants; a page
+    # the template does not give keeps the role's old rule (never closed)
+    _m = db.users.find_one({"email": "m@x.fr"})
+    check("a manager without permissions of its own: its role's template, not strict",
+          RP.per_store(_m) is not None and not RP.strict(_m)
+          and RP.level_in(RP.per_store(_m), "customers", None) == "edit")
     check("…its clients page still works", http("GET", "/api/owner/clients/overview", headers=H(MANAGER, "pal")).status_code == 200)
     r = http("PUT", "/api/owner/team-access/roles/manager", headers=H(OWNER),
              json={"perms": {**RP.DEFAULT_TEMPLATES["manager"], "customers": "view", "card": "edit"}, "apply": "new"})

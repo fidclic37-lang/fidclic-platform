@@ -94,6 +94,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     t = db.tenants.find_one({"id": "t1"})
     check("an administrateur may change the legal information",
           t["legal_name"] == "Corner Tours SAS" and t["siret"] == "98765432100012" and t["siren"] == "987654321")
+    # permissions decide (2026-10-22): the owner gives the administrateur role only « Voir » here
+    db.tenants.update_one({"id": "t1"}, {"$set": {"role_defs.administrateur.perms.settings": "view"}})
     check("… not the shop's name, address or radius", refused(lambda: E.put_etablissement(E.EtablissementIn(
         business=E.BusinessIn(name="X")), token_data=ALI)))
     check("a manager changes nothing", refused(lambda: E.put_etablissement(
