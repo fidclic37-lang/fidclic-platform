@@ -83,7 +83,7 @@ def main():
         if roles and set(roles) & {"administrateur", "manager", "staff"}:
             loose += [f"{m} {r.path}" for m in r.methods if RP.page_of(r.path) is None and not RP.is_common(r.path, m)]
     check(f"no team endpoint outside a page ({loose[:5]})", not loose)
-    check("one row per sidebar page (19 + e-mail change + account deletion)", len(RP.PAGES) == 21)
+    check("one row per sidebar page (19 + roles + e-mail change + account deletion)", len(RP.PAGES) == 22)
     # « Liens d'inscription par employé » (2026-10-16): its own row, so an
     # employee can be given it without the rest of Paramètres
     check("the employee links are a row of their own, and their endpoint is on it",
@@ -203,6 +203,14 @@ def main():
           and {x["key"]: x for x in r.json()["templates"]}["manager"]["customized"] is False)
 
     print("\n5. Nobody gives more than they have")
+    # the role tree (2026-10-22): a role the OWNER made is not the
+    # administrateur's to give…
+    r = http("POST", "/api/owner/team-access/users", headers=H(ADMIN), json={
+        "email": "x0@x.fr", "role": caisse, "branch_ids": ["pal"], "password": "Caisse!Royal2026"})
+    check(f"an administrateur cannot give a role the owner made ({r.status_code})", r.status_code == 403)
+    # …one under the administrateur (as if it had made it) is
+    tid_of_caisse = db.users.find_one({"email": "a@x.fr"})["tenant_id"]
+    db.tenants.update_one({"id": tid_of_caisse}, {"$set": {f"role_defs.{caisse}.parent": "administrateur"}})
     r = http("POST", "/api/owner/team-access/users", headers=H(ADMIN), json={
         "email": "x1@x.fr", "role": caisse, "branch_ids": ["pal"], "password": "Caisse!Royal2026",
         "perms": {"pal": lv(billing="view")}})
@@ -212,7 +220,7 @@ def main():
     check("…nor a store it does not have", r.status_code == 403)
     r = http("POST", "/api/owner/team-access/users", headers=H(ADMIN), json={
         "email": "x3@x.fr", "role": caisse, "branch_ids": ["pal"], "password": "Caisse!Royal2026"})
-    check("…but may create an account in the owner's role, for its stores", r.status_code == 200)
+    check("…but may create an account in a role under its own, for its stores", r.status_code == 200)
     check("a manager cannot create custom-role accounts", http("POST", "/api/owner/team-access/users", headers=H(MANAGER), json={
         "email": "x4@x.fr", "role": caisse, "branch_ids": ["pal"], "password": "Caisse!Royal2026"}).status_code == 403)
     check("another account's role key is unknown here", http("POST", "/api/owner/team-access/users", headers=H(OTHER), json={

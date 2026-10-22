@@ -199,10 +199,22 @@ def creatable(role: str) -> List[str]:
     return [r for r in TEAM_ROLES if RANK[r] > RANK.get(role, 99)]
 
 
+def assignable(me: Dict[str, Any]) -> List[str]:
+    """The roles this account may give (a built-in key or a custom role's key):
+    the roles BELOW its own in the role tree (role_perms.below, 2026-10-22)."""
+    from features import role_perms as RP
+    return RP.below(me.get("tenant_id"), RP.my_key(me))
+
+
 def _can_manage(me: Dict[str, Any], other: Dict[str, Any], all_ids: List[str]) -> bool:
-    if other.get("email") == me.get("email"):
+    from features import role_perms as RP
+    if other.get("email") == me.get("email") or other.get("role") == "business_owner":
         return False
-    if RANK.get(other.get("role"), -1) <= RANK.get(me.get("role"), 99):
+    if me.get("role") == "business_owner":
+        return True
+    # an account in a role below one's own (any depth) — never one's own
+    # role, a sibling's or a role above (user, 2026-10-22)
+    if (RP.role_key(other) or other.get("role")) not in assignable(me):
         return False
     mine = set(_covered(me, all_ids))
     theirs = set(_covered(other, all_ids))
@@ -317,11 +329,14 @@ def _payload(token: TokenData) -> Dict[str, Any]:
             custom_counts[u.get("custom_role") or ""] = custom_counts.get(u.get("custom_role") or "", 0) + 1
     return {
         "me": {"email": me.get("email"), "role": me.get("role"), "branch_ids": mine,
-               "can_create": [r for r in creatable(me.get("role")) if r != "membre"],
-               "can_assign_custom": "membre" in creatable(me.get("role")), "scope": scope_of(me),
+               "can_create": [r for r in TEAM_ROLES if r != "membre" and r in assignable(me)],
+               "can_assign_custom": any(k not in RP.BUILTIN for k in assignable(me)),
+               # the roles it may give, and the role definitions it may change (role tree)
+               "assignable_roles": assignable(me), "manageable_roles": RP.manageable_roles(me),
+               "scope": scope_of(me),
                # what the creator may hand out (an account never gets more), None: everything
                "perms": RP.effective(me),
-               "can_define_roles": me.get("role") == "business_owner"},
+               "can_define_roles": RP.can_define_roles(me)},
         "stores": [s for s in st if s["id"] in mine],
         "all_stores_count": len(st),
         "roles": [{"key": r, **ROLE_META[r], "count": counts[r]} for r in ROLES if r != "membre"]
@@ -420,7 +435,7 @@ def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, p
     me = _me(token)
     all_ids = [s["id"] for s in stores(token.tenant_id)]
     sys_role, custom = _system_role(token.tenant_id, body.role)
-    if sys_role not in creatable(me.get("role")):
+    if (custom or sys_role) not in assignable(me):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas créer ce rôle.")
     from services import email_check   # a copied address's invisible characters (2026-10-14)
     email = email_check.clean(body.email)
@@ -474,7 +489,7 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
     from features import role_perms as RP
     chosen = body.role or RP.role_key(u) or u["role"]
     role, custom = _system_role(token.tenant_id, chosen)
-    if role not in creatable(me.get("role")):
+    if (custom or role) not in assignable(me):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas attribuer ce rôle.")
     ids = _check_assignment(role, body.branch_ids if body.branch_ids is not None
                             else _covered(u, all_ids), me, all_ids)
@@ -630,16 +645,40 @@ def _freeze(tid: str, key: str, old_perms: Dict[str, str]) -> None:
             "perms": {sid: dict(old_perms) for sid in _covered(u, all_ids)}}})
 
 
+def _role_guard(token: TokenData, key: Optional[str], perms: Optional[Dict[str, str]]) -> Dict[str, Any]:
+    """« Créer et modifier les rôles » (a permission, 2026-10-22): a new role
+    goes under one's own; an existing one must be below it; and a role never
+    gets more than its author has."""
+    from features import role_perms as RP
+    me = _me(token)
+    if not RP.can_define_roles(token):
+        raise HTTPException(status_code=403, detail="Accès non autorisé : vous ne pouvez pas modifier « Créer et modifier les rôles ».")
+    if key is not None and key not in RP.manageable_roles(me):
+        raise HTTPException(status_code=403, detail="Ce rôle n'est pas sous le vôtre : seul un rôle au-dessus peut le modifier.")
+    if perms is not None and me.get("role") != "business_owner":
+        # a role is for any establishment: never more than the author has in
+        # the least of its own
+        eff = RP.effective(me) or {}
+        least = {k: min((p.get(k, "none") for p in eff.values()), key=lambda v: RP.RANKV[v], default="none")
+                 for k in RP.PAGE_KEYS}
+        over = RP.within({"x": perms}, {"x": least})
+        if over:
+            raise HTTPException(status_code=403, detail=f"Vous ne pouvez pas donner plus que vos propres droits : « {RP.LABEL[over]} ».")
+    return me
+
+
 @router.post("/api/owner/team-access/roles")
 @SV.records("equipe", token_arg="token")
-def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business_owner"]))):
+def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True))):
     from features import role_perms as RP
     tid = token.tenant_id
     label = _role_label(body.label, tid)
     key = RP.new_role_key()
     perms = RP.clean_perms(body.perms or {})
+    me = _role_guard(token, None, perms)
     _db.tenants.update_one({"id": tid}, {"$set": {f"role_defs.{key}": {
         "label": label, "description": (body.description or "").strip()[:160], "perms": perms,
+        "parent": RP.my_key(me),                 # its place in the role tree
         "created_at": _now(), "created_by": token.email}}})
     _audit("team.role_created", token, label)
     return {"role": key, **_payload(token)}
@@ -647,7 +686,7 @@ def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business
 
 @router.put("/api/owner/team-access/roles/{key}")
 @SV.records("equipe", token_arg="token")
-def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(["business_owner"]))):
+def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True))):
     from features import role_perms as RP
     tid = token.tenant_id
     tpls = RP.templates(tid)
@@ -655,6 +694,7 @@ def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(
         raise HTTPException(status_code=404, detail="Rôle introuvable.")
     if body.apply not in ("new", "all"):
         raise HTTPException(status_code=400, detail="Choisissez à qui appliquer.")
+    _role_guard(token, key, RP.clean_perms(body.perms) if body.perms is not None else None)
     sets: Dict[str, Any] = {}
     if key in RP.BUILTIN:
         perms = RP.clean_perms(body.perms) if body.perms is not None else dict(RP.DEFAULT_TEMPLATES[key])
@@ -679,11 +719,12 @@ def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(
 
 @router.delete("/api/owner/team-access/roles/{key}")
 @SV.records("equipe", token_arg="token")
-def delete_role(key: str, token: TokenData = Depends(require_role(["business_owner"]))):
+def delete_role(key: str, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True))):
     from features import role_perms as RP
     tid = token.tenant_id
     if key in RP.BUILTIN or key not in RP.templates(tid):
         raise HTTPException(status_code=404, detail="Rôle introuvable.")
+    _role_guard(token, key, None)
     used = _db.users.count_documents({"tenant_id": tid, "role": RP.CUSTOM_ROLE, "custom_role": key})
     if used:
         raise HTTPException(status_code=400, detail=f"{used} compte{'s' if used > 1 else ''} ont ce rôle : "
