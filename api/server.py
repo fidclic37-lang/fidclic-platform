@@ -6639,6 +6639,10 @@ class JoinRequest(BaseModel):
     # Multi-store (2026-10-12): the establishment of the link (its slug) or the
     # one chosen on the form — the customer's home store (features/store_links)
     store: Optional[str] = None
+    # « Oui, je veux aussi la carte de cet établissement » — the answer to the
+    # 409 « other_store_card » below. Without it a person who already has a
+    # card somewhere in this account is never given a second one silently.
+    confirm_other_store: Optional[bool] = False
 
 def _check_join_fields(req: "JoinRequest", profile_optional: bool = False, by_field: bool = False) -> None:
     """What the signup form says, checked by the server too (QA UX10,
@@ -6674,6 +6678,26 @@ def _check_join_fields(req: "JoinRequest", profile_optional: bool = False, by_fi
         req.birthday = b["birthday"]
         req._birth_date = b["birth_date"]
     req.email = field("email", CF.email, req.email)
+
+
+def _card_in_another_store(tid: str, home: str, phone_key: str, email: str) -> Optional[dict]:
+    """This person's live card at another establishment of the same account,
+    or None. Matched the way the signup matches inside one store: the phone
+    first, then the e-mail. Clients from before the establishments (no store)
+    belong to the main one, so they count as « another » everywhere else."""
+    from services import customer_fields as _CF
+    main = _SC.main_store(tid)
+    mine = [home, None, ""] if home == main else [home]
+    flt = {"tenant_id": tid, "branch_id": {"$nin": mine},
+           "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    rows = list(db.customers.find(flt, {"_id": 0, "id": 1, "barcode_id": 1, "phone": 1, "email": 1, "branch_id": 1}))
+    if phone_key:
+        hit = next((c for c in rows if _CF.phone_digits(c.get("phone")) == phone_key), None)
+        if hit:
+            return hit
+    if email:
+        return next((c for c in rows if (c.get("email") or "").strip().lower() == email), None)
+    return None
 
 
 @app.post("/api/join/{slug}")
@@ -6766,6 +6790,22 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         if req.parrain_barcode and phone_match:
             message += " Le parrainage est réservé aux nouveaux clients."
         raise HTTPException(status_code=409, detail={"code": code, "message": message})
+
+    # A card at ANOTHER establishment of the same account. Each one keeps its
+    # own card — that is the rule (2026-10-14) — but a second card is never
+    # made behind the person's back: they came for ONE shop and would find a
+    # stranger's name in their Wallet (user, 2026-10-22: « khud se card add n
+    # ho jaaye jab tak customer ne n kiya ho khud se »). The page says where
+    # their card already is and asks; `confirm_other_store` is the yes.
+    if request is not None and home and not req.confirm_other_store:
+        other = _card_in_another_store(tid, home, phone_key, norm_email)
+        if other:
+            there = _SC.store_name(tid, other.get("branch_id")) or t.get("name") or "ce commerce"
+            here = _SC.store_name(tid, home) or t.get("name") or "cet établissement"
+            raise HTTPException(status_code=409, detail={
+                "code": "other_store_card", "store_name": there, "here": here,
+                "message": (f"Vous avez déjà une carte chez {there}. Chaque établissement a la sienne : "
+                            f"voulez-vous aussi celle de {here} ?")})
 
     # ─── Plan cap enforcement ───────────────────────────────────────────
     # Block new customer creation once the tenant reaches the cap defined
