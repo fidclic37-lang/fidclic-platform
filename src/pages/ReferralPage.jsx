@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { canEdit } from '../lib/pagePerms';
 import {
   Users, User, Gift, Euro, Settings2, Share2, Trophy, BarChart3, ChevronDown, Eye,
   ChevronRight, ArrowRight, Loader2, X, Check, Download, Info, ChevronLeft, Search,
@@ -483,7 +484,7 @@ const RANGES = [
 
 export default function ReferralPage() {
   const { user } = useAuth();
-  const owner = user?.role === 'business_owner';
+  const owner = canEdit(user, 'referral');   // « Modifier » Parrainage (permissions, 2026-10-22)
   const [days, setDays] = useState(30);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);

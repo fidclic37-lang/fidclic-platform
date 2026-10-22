@@ -179,6 +179,8 @@ def main():
     check("the editor's merged save keeps the other rules", r.status_code == 200 and r.json()["minimum_visits_to_earn"] == 1)
     rp = http("GET", "/api/owner/automations").json()["referral"]
     check("…and the editor reads them back", rp["referrer_reward_points"] == 60 and rp["referee_reward_points"] == 30)
+    # permissions decide (2026-10-22): the owner gives the administrateur role only « Voir » here
+    db.tenants.update_one({"id": "t1"}, {"$set": {"role_defs.administrateur.perms.referral": "view"}})
     check("an administrateur cannot change the rewards", http("PUT", "/api/owner/referrals/config", headers=HA,
                                                               json={**full, "referrer_reward_points": 1}).status_code == 403)
     r = http("PUT", "/api/owner/referrals/config", json={**full, "referrer_reward_points": 60, "referee_reward_points": 30,

@@ -2210,7 +2210,7 @@ def _list(tid: str, token: TokenData, request: Any = None) -> Dict[str, Any]:
         "can_edit": token.role in EDITORS,
         "tick": tick_seen(at),
         "near": near_page(tid),
-        "referral": {**referral_page(tid), "can_edit": token.role == "business_owner"},
+        "referral": {**referral_page(tid), "can_edit": _may(token, "referral")},
         "statuses": _statuses(tid),
     }
 
@@ -2829,8 +2829,14 @@ def _own(tid: str, aid: str) -> Dict[str, Any]:
     return row
 
 
+def _may(token: TokenData, page: str, level: str = "edit") -> bool:
+    """« Modifier » on that page (Équipe & accès) — the owner always."""
+    from features import role_perms as RP
+    return RP.may(token, page, level)
+
+
 def _guard(token: TokenData, row: Optional[Dict[str, Any]] = None) -> None:
-    if token.role not in EDITORS:
+    if token.role not in EDITORS and not _may(token, "automations"):
         raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
     if row and token.role != "business_owner":
         own = _own_stores(token)                   # None: every establishment

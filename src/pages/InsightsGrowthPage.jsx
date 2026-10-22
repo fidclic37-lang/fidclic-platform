@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { canEdit } from '../lib/pagePerms';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, Download, TrendingUp, TrendingDown, Rocket, Target, ArrowRight,
@@ -259,7 +260,7 @@ export default function InsightsGrowthPage() {
   const { user } = useAuth();
   // Switching an automation on or setting the Google review link changes the
   // whole shop: the owner's to do.
-  const owner = user?.role === 'business_owner';
+  const owner = canEdit(user, 'automations');   // its CTAs switch automations on (permissions, 2026-10-22)
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

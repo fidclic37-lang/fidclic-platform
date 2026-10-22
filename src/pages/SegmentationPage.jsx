@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { canEdit } from '../lib/pagePerms';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, Plus, ArrowRight, Star, Gift, ShoppingCart, MapPin, Target, Send,
@@ -626,7 +627,7 @@ export default function SegmentationPage() {
                                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F6F9FF]">
                                   <Plus size={13} /> Enregistrer dans mes segments
                                 </button>
-                              ) : (user?.role === 'business_owner' || s.created_by === user?.email) && (
+                              ) : (canEdit(user, 'segmentation') || s.created_by === user?.email) && (
                                 <button type="button" onClick={() => remove(s)}
                                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#C0392B] hover:bg-[#FEECEC]">
                                   <Trash2 size={13} /> Supprimer

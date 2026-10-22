@@ -818,7 +818,8 @@ def create(req: SegmentIn, request: Request = None,
 
 
 def _owned(doc: Dict[str, Any], token_data: TokenData) -> bool:
-    return token_data.role == "business_owner" or doc.get("created_by") == getattr(token_data, "email", None)
+    from features import role_perms as _RP
+    return _RP.may(token_data, "segmentation") or doc.get("created_by") == getattr(token_data, "email", None)
 
 
 @router.put("/api/owner/segmentation/segments/{segment_id}")

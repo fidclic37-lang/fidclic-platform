@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { canEdit } from '../lib/pagePerms';
 import { useNavigate } from 'react-router-dom';
 import {
   MapPin, Download, Car, Bike, Footprints, Map as MapIcon, List as ListIcon,
@@ -621,7 +622,7 @@ export default function GeolocationPage() {
             Renseignez l'adresse de votre établissement pour calculer vos zones de chalandise et vos temps de trajet.
           </p>
           {/* The shop's address is a shop-wide setting: the owner's. */}
-          {user?.role === 'business_owner' ? (
+          {canEdit(user, 'geolocation') ? (
             <button type="button" onClick={() => navigate('/dashboard/settings')}
                     className="mt-3 rounded-lg bg-[#2F6BFF] px-4 py-2 text-[12.5px] font-semibold text-white">
               Ouvrir les paramètres

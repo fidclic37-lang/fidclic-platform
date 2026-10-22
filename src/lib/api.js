@@ -107,6 +107,14 @@ if (typeof window !== 'undefined' && viewToken()) {
 }
 
 api.interceptors.response.use(settingsSaved, async (error) => {
+  // a page refused for its permissions: they may just have changed — the
+  // account reloads them at once (AuthContext, « fc:perms-stale »)
+  try {
+    const d = error?.response?.data?.detail;
+    if (error?.response?.status === 403 && typeof d === 'string' && d.startsWith('Accès non autorisé')) {
+      window.dispatchEvent(new Event('fc:perms-stale'));
+    }
+  } catch (_e) { /* never in the way */ }
   // the account's access ran out: renew it once and replay the call
   try {
     const res = error?.response;

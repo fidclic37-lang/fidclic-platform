@@ -150,16 +150,24 @@ def _store_view(t: Dict[str, Any], b: Dict[str, Any], editable: bool) -> Dict[st
             "status": b.get("status") or "open", "editable": editable}
 
 
+def _full(token: TokenData) -> bool:
+    """« Paramètres » with « Modifier » (Équipe & accès): the whole page, like
+    the owner (user, 2026-10-22: « saari permissions di hai toh sab
+    accessible hona chahiye »). The owner's own name stays his."""
+    from features import role_perms as RP
+    return RP.may(token, "settings", "edit")
+
+
 def _view(tid: str, token: TokenData) -> Dict[str, Any]:
     t = _tenant(tid)
     role = getattr(token, "role", None)
-    owner = role == "business_owner"
+    owner = _full(token)
     mine = set(_covers(token, tid))
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1}) or {}
     lat, lng = _pos(t)
     branches = [b for b in t.get("branches") or [] if b.get("id")]
     if branches:
-        stores = [_store_view(t, b, role in EDITORS and b["id"] in mine) for b in branches]
+        stores = [_store_view(t, b, (role in EDITORS or owner) and b["id"] in mine) for b in branches]
         stores.sort(key=lambda s: (not s["is_main"], s["status"] == "closed", s["name"].lower()))
     else:
         stores = [_store_view(t, {"id": MAIN, "name": t.get("name"), "street": _street(t),
@@ -185,7 +193,8 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
         # the owner's own name (« Bonjour … » on the dashboard), changed by the owner only
         "owner": {"first_name": o.get("first_name") or "", "last_name": o.get("last_name") or "",
                   "email": o.get("email") or ""},
-        "can": {"brand": owner, "owner_name": owner, "legal": role in EDITORS, "geo": owner, "hours": owner,
+        "can": {"brand": owner, "owner_name": role == "business_owner", "legal": role in EDITORS or owner,
+                "geo": owner, "hours": owner,
                 "add_store": owner and multi, "plan_allows_stores": multi},
         "business": {"name": (sel or {}).get("name") or t.get("name") or "", "logo_url": tpl.get("logo_url") or "",
                      "phone": (sel.get("phone") if sel else None) or t.get("phone") or "",
@@ -279,11 +288,13 @@ def put_etablissement(body: EtablissementIn,
                       token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id
     t = _tenant(tid)
-    owner = getattr(token_data, "role", None) == "business_owner"
-    if getattr(token_data, "role", None) not in EDITORS:
-        raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient l'établissement.")
-    if not owner and (body.business or body.address or body.geo or body.owner):
-        raise HTTPException(status_code=403, detail="Seul le propriétaire modifie ces informations.")
+    owner = _full(token_data)
+    if getattr(token_data, "role", None) not in EDITORS and not owner:
+        raise HTTPException(status_code=403, detail="Accès non autorisé : vous ne pouvez pas modifier « Paramètres ».")
+    if body.owner and getattr(token_data, "role", None) != "business_owner":
+        raise HTTPException(status_code=403, detail="Seul le propriétaire modifie son propre nom.")
+    if not owner and (body.business or body.address or body.geo):
+        raise HTTPException(status_code=403, detail="Accès non autorisé : vous ne pouvez pas modifier « Paramètres ».")
     sets: Dict[str, Any] = {}
     owner_names: Dict[str, str] = {}
     sel = _selected(t)
@@ -554,8 +565,8 @@ def edit_store(store_id: str, body: StoreIn,
                token_data: TokenData = Depends(require_role(EDITORS, partial_ok=True))):
     tid = token_data.tenant_id
     t = _tenant(tid)
-    owner = getattr(token_data, "role", None) == "business_owner"
-    if getattr(token_data, "role", None) not in EDITORS or store_id not in _covers(token_data, tid):
+    owner = _full(token_data)
+    if (getattr(token_data, "role", None) not in EDITORS and not owner) or store_id not in _covers(token_data, tid):
         raise HTTPException(status_code=403, detail="Ce point de vente ne fait pas partie des vôtres.")
     if body.status is not None and not owner:
         raise HTTPException(status_code=403, detail="Seul le propriétaire ferme ou rouvre un point de vente.")

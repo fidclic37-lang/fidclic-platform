@@ -111,6 +111,8 @@ def main():
     check("…PALISSY's stays", branch("pal")["street"] == "3 rue Palissy")
     check("an empty name is refused", http("PUT", "/api/owner/etablissement", headers=as_("pal"),
                                            json={"business": {"name": "  "}}).status_code == 400)
+    # permissions decide (2026-10-22): the owner gives the administrateur role only « Voir » here
+    db.tenants.update_one({"id": "t1"}, {"$set": {"role_defs.administrateur.perms.settings": "view"}})
     check("an administrateur cannot rename", http("PUT", "/api/owner/etablissement", headers=as_("pal", ADMIN),
                                                   json={"business": {"name": "X"}}).status_code == 403)
 

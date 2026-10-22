@@ -85,6 +85,35 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [checkAuth]);
 
+  // A team account's permissions change while it works (Équipe & accès): it
+  // reads them again every minute, when its window comes back to the front,
+  // and the moment a page is refused — the menu, the tabs and the pages
+  // follow at once (user, 2026-10-22: « turant reflect hona chahiye »). The
+  // server checks every call against the saved permissions anyway.
+  const teamAccount = Boolean(user && user.tenant_id && !['business_owner', 'super_admin', 'customer'].includes(user.role));
+  useEffect(() => {
+    if (!teamAccount) return undefined;
+    let busy = false;
+    const reload = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const { data } = await authAPI.me();
+        const sig = (u) => JSON.stringify([u?.page_perms, u?.role, u?.custom_role, u?.branch_ids, u?.scope]);
+        setUser((u) => (u && sig(u) === sig(data) ? u : { ...u, ...data }));
+      } catch { /* the next try will do */ } finally { busy = false; }
+    };
+    const id = window.setInterval(reload, 60000);
+    const onFocus = () => reload();
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('fc:perms-stale', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('fc:perms-stale', onFocus);
+    };
+  }, [teamAccount]);
+
   const login = async (data) => {
     const res = await authAPI.login(data);
     const session = await secondFactor(res.data);

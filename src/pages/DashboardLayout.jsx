@@ -1,4 +1,6 @@
 import React from 'react';
+import NoPageAccess from '../components/NoPageAccess';
+import { pageOfPath } from '../lib/pagePerms';
 import { flat, highlightWhenReady } from '../lib/searchHighlight';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -47,7 +49,7 @@ const isNavActive = (currentPath, target) => {
 };
 
 
-const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, alsoActive = [] }) => {
+const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, alsoActive = [], denied = false }) => {
   const active = isNavActive(currentPath, to) || alsoActive.some((p) => isNavActive(currentPath, p));
   const theme = themeForRole(role);
   // Super admin › Plan Limits: a section the plan does not include.
@@ -69,7 +71,7 @@ const NavLink = ({ to, icon: Icon, label, currentPath, role, collapsed, badge, a
       {!collapsed && (
         <>
           <span className="truncate flex-1">{label}</span>
-          {lock && <Lock className="h-3.5 w-3.5 shrink-0 opacity-60" aria-label="Offre supérieure" />}
+          {(lock || denied) && <Lock className="h-3.5 w-3.5 shrink-0 opacity-60" aria-label={denied && !lock ? 'Accès non autorisé' : 'Offre supérieure'} />}
           {badge && !lock && (
             <span
               className="text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 bg-[#2F6BFF] text-white"
@@ -100,12 +102,14 @@ const PERM_NAV = [
   { keys: ['insights'], to: '/dashboard/insights', icon: Sparkles, label: 'Insights' },
   { keys: ['ai'], to: '/dashboard/ai-assistant', icon: Sparkle, label: 'FidClic IA' },
   { keys: ['history'], to: '/dashboard/history', icon: History, label: 'Historique' },
-  { keys: ['settings', 'billing'], to: '/dashboard/parametres', icon: Settings2, label: 'Paramètres', also: ['/dashboard/settings'] },
-  { keys: ['team'], to: '/dashboard/parametres/equipe', icon: Users, label: 'Équipe & accès' },
+  // Paramètres: open as soon as one of its tabs is (each tab checks its own)
+  // never locked: its Préférences and Sécurité tabs are the account's own
+  { keys: ['settings', 'billing', 'team', 'milestones', 'employee_links'], to: '/dashboard/parametres', icon: Settings2, label: 'Paramètres', also: ['/dashboard/settings'], open: true },
+  { keys: ['team'], to: '/dashboard/parametres/equipe', icon: Users, label: 'Équipe & accès', shortcut: true, unless: 'settings' },
   // « Mon lien d'inscription » — only for an account that has the permission
   // without Paramètres, which already leads there (2026-10-16).
   { keys: ['employee_links'], to: '/dashboard/parametres/lien-inscription', icon: Link2,
-    label: "Mon lien d'inscription", unless: 'settings' },
+    label: "Mon lien d'inscription", shortcut: true, unless: 'settings' },
 ];
 
 const CRM_ITEMS = [
@@ -536,6 +540,14 @@ const DashboardLayout = () => {
   const isAnalyticsDark = false;
   const planAccess = usePlanAccessState(role);
   const pageLock = planAccess.lockOf(currentPath);
+  // A page this team account may not « Voir » here: the menu stays, the page
+  // says « Accès non autorisé » (Paramètres checks each of its tabs itself).
+  const deniedPage = (() => {
+    if (!myLevels || currentPath.startsWith('/dashboard/parametres')) return null;
+    const key = pageOfPath(currentPath);
+    if (!key || (myLevels[key] || 'none') !== 'none') return null;
+    return (PERM_NAV.find((n) => n.keys[0] === key) || {}).label || 'cette page';
+  })();
 
   return (
     <PlanAccessContext.Provider value={planAccess}>
@@ -650,9 +662,13 @@ const DashboardLayout = () => {
           )}
           {myLevels && (
             <>
-              {PERM_NAV.filter((n) => n.keys.some((k) => (myLevels[k] || 'none') !== 'none')
-                && !(n.unless && (myLevels[n.unless] || 'none') !== 'none')).map((n) => (
-                <NavLink key={n.to} to={n.to} icon={n.icon} label={n.label} currentPath={currentPath} role={role} collapsed={rail} alsoActive={n.also} />
+              {/* Every page, the owner's menu (user, 2026-10-22): one it may not
+                  « Voir » shows a lock and opens on « Accès non autorisé ». The two
+                  shortcuts (Équipe, Mon lien) only for an account without Paramètres. */}
+              {PERM_NAV.filter((n) => !n.shortcut
+                || (n.keys.some((k) => (myLevels[k] || 'none') !== 'none') && (myLevels[n.unless] || 'none') === 'none')).map((n) => (
+                <NavLink key={n.to} to={n.to} icon={n.icon} label={n.label} currentPath={currentPath} role={role} collapsed={rail} alsoActive={n.also}
+                         denied={!n.open && !n.keys.some((k) => (myLevels[k] || 'none') !== 'none')} />
               ))}
               <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
@@ -922,7 +938,7 @@ const DashboardLayout = () => {
         )}
 
         <div className={`px-3 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-5 max-w-[1600px] mx-auto ${small && role === 'business_owner' ? 'pb-28' : ''}`}>
-          {(partialScope || role === 'administrateur') && (
+          {!myLevels && (partialScope || role === 'administrateur') && (
             <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#C9DBFB] bg-[#EFF5FF] px-4 py-3 text-[13px] text-[#1E4FD8]">
               <span className="mt-0.5 font-bold">i</span>
               <span>
@@ -934,7 +950,7 @@ const DashboardLayout = () => {
           {/* A new establishment chosen under the logo: the page is rebuilt,
               so it reads its data again for that establishment. */}
           {/* The plan is known before a page loads, so a locked page never starts. */}
-          {!planAccess.ready ? null : pageLock ? <LockedSection detail={pageLock} /> : <React.Suspense fallback={<div role="status" aria-label="Chargement" className="flex min-h-[50vh] items-center justify-center"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-[#DCE6FA] border-t-[#2F6BFF]" /></div>}><StoreGate><Outlet key={branchId || 'shop'} /></StoreGate></React.Suspense>}
+          {!planAccess.ready ? null : pageLock ? <LockedSection detail={pageLock} /> : deniedPage ? <NoPageAccess label={deniedPage} /> : <React.Suspense fallback={<div role="status" aria-label="Chargement" className="flex min-h-[50vh] items-center justify-center"><span className="h-7 w-7 animate-spin rounded-full border-[3px] border-[#DCE6FA] border-t-[#2F6BFF]" /></div>}><StoreGate><Outlet key={branchId || 'shop'} /></StoreGate></React.Suspense>}
         </div>
       </main>
       {/* the owner's phone: the everyday places under the thumb, the scanner in the middle */}
