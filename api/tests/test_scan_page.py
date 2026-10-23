@@ -140,5 +140,17 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("et le prochain palier aussi", c3["balance"]["next_at"] == 200)
     check("la barre est remplie entre les deux paliers", c3["balance"]["pct"] == 20)
 
+    print("\nUne carte supprimée est refusée dès le scan (QA R7, 2026-10-18)")
+    from fastapi import HTTPException
+    db.customers.insert_one({"id": "c4", "tenant_id": "t2", "barcode_id": "FT-SUP001", "name": "Supprimé",
+                             "visits": 2, "points": 0, "created_at": NOW, "deleted_at": NOW})
+    try:
+        SP.card(barcode="FT-SUP001", token_data=TD2())
+        refused = None
+    except HTTPException as e:
+        refused = e
+    check(f"410 et le message de la caisse, avant de remplir la visite ({getattr(refused, 'status_code', None)})",
+          refused is not None and refused.status_code == 410 and "supprimé" in str(refused.detail))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

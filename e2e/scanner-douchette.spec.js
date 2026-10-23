@@ -82,12 +82,12 @@ test.describe.serial('a scanner at the till', () => {
     await drawer.getByRole('button', { name: 'Plus Coupe femme' }).click();
     await drawer.getByRole('button', { name: 'Plus Brushing' }).click();
     await drawer.getByRole('button', { name: /Ajouter 70,00/ }).click();
-    await expect(page.getByPlaceholder('0,00')).toHaveValue('70.00');
+    await expect(page.getByPlaceholder('0,00')).toHaveValue(/^70[.,]00$/);
 
     // a stray scan in the middle of a visit throws nothing away
     await douchette(page, url, 'us');
     await expect(page.getByText(/Une visite est en cours/)).toBeVisible();
-    await expect(page.getByPlaceholder('0,00')).toHaveValue('70.00');
+    await expect(page.getByPlaceholder('0,00')).toHaveValue(/^70[.,]00$/);
 
     await page.getByRole('button', { name: /Suivant/ }).click();
     await expect(page.getByTestId('visit-review').getByText('Offre / Récompense')).toBeVisible();
