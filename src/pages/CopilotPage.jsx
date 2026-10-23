@@ -317,7 +317,9 @@ export default function CopilotPage() {
           <span className={`h-1.5 w-1.5 rounded-full ${d.assistant.online ? 'bg-[#10B981]' : 'bg-[#94A3B8]'}`} />
           {d.assistant.online ? 'En ligne' : 'Mode données'}
         </span>
-        <button type="button" onClick={() => setBigChat((b) => !b)} aria-label="Agrandir"
+        {/* named after what it does now (QA R7 F38: « Agrandir » also on the button that reduces) */}
+        <button type="button" onClick={() => setBigChat((b) => !b)} aria-label={bigChat ? 'Réduire' : 'Agrandir'}
+                title={bigChat ? 'Réduire' : 'Agrandir'} aria-expanded={bigChat}
                 className="rounded-md p-1 text-[#64748B] hover:bg-[#F4F7FC]">
           {bigChat ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
         </button>
