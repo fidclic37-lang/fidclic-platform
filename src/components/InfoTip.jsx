@@ -86,7 +86,7 @@ export default function InfoTip({ k, page, className = '', size = 13 }) {
           <p className="mb-1.5 text-[13px] font-bold leading-snug text-[#0B1C3F]">{entry.t}</p>
           <p className="text-[12px] leading-snug text-[#334155]">{entry.what}</p>
           <p className="mt-2 text-[10.5px] font-bold uppercase tracking-wide text-[#94A3B8]">Comment c'est calculé</p>
-          <p className="text-[11.5px] leading-snug text-[#475569]">{entry.how}</p>
+          <p className="whitespace-pre-line text-[11.5px] leading-snug text-[#475569]">{entry.how}</p>
           <p className="mt-2 text-[10.5px] font-bold uppercase tracking-wide text-[#2F6BFF]">À quoi ça sert</p>
           <p className="text-[11.5px] leading-snug text-[#475569]">{entry.why}</p>
         </div>,

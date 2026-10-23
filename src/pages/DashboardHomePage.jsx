@@ -13,6 +13,8 @@ import ImpactFidClicCard from '../components/ImpactFidClicCard';
 import TrendChart from '../components/TrendChart';
 import DecimalInput from '../components/DecimalInput';
 import { eur } from '../lib/money';
+import CampaignLists from '../components/dashboard/CampaignLists';
+import CampaignDetail from '../components/campagnes/CampaignDetail';
 
 /**
  * Tableau de bord — the home page, built to the approved design.
@@ -225,6 +227,9 @@ export default function DashboardHomePage() {
     return '30';
   });
   const days = periodDays(period);
+  // « Performance des campagnes »: a card opens what it counts, a campaign its detail (2026-10-23)
+  const [campLists, setCampLists] = useState(null);
+  const [campaignOf, setCampaignOf] = useState(null);
 
   const setDays = useCallback((next) => {
     const value = validPeriod(next) ? String(next) : '30';
@@ -272,6 +277,17 @@ export default function DashboardHomePage() {
 
   return (
     <div className="dh">
+      {campLists && (
+        <CampaignLists days={days} start={campLists} onClose={() => setCampLists(null)}
+                       onOpenCampaign={(id) => setCampaignOf(id)}
+                       onOpenClient={(cid) => navigate(`/dashboard/customers?segment=${encodeURIComponent(`client:${cid}`)}`)} />
+      )}
+      {campaignOf && (
+        <CampaignDetail id={campaignOf} onClose={() => setCampaignOf(null)}
+                        onEdit={() => navigate('/dashboard/campaigns')} onCancel={() => navigate('/dashboard/campaigns')}
+                        onDelete={() => navigate('/dashboard/campaigns')}
+                        onAnalysis={(id) => navigate(`/dashboard/campaigns?analyse=${encodeURIComponent(id)}`)} />
+      )}
       {/* The greeting is the page's title, not a panel: no card, no gradient,
           nothing boxed around it. The name is the only word in brand blue. */}
       <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
@@ -444,15 +460,15 @@ export default function DashboardHomePage() {
                action={<SeeAll onClick={() => navigate('/dashboard/campaigns')} />}>
           <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
             {[
-              { icon: Send, tone: 'blue', value: d?.campaigns?.sent, label: 'Campagnes envoyées' },
-              { icon: Users, tone: 'green', value: d?.campaigns?.touched, label: 'Clients touchés' },
-              { icon: MousePointerClick, tone: 'violet', value: d?.campaigns?.clicks, label: 'Clics' },
-              { icon: ShoppingCart, tone: 'amber', value: d?.campaigns?.sales, label: 'Ventes attribuées' },
+              { key: 'campaigns', icon: Send, tone: 'blue', value: d?.campaigns?.sent, label: 'Campagnes envoyées' },
+              { key: 'touched', icon: Users, tone: 'green', value: d?.campaigns?.touched, label: 'Clients touchés' },
+              { key: 'clicks', icon: MousePointerClick, tone: 'violet', value: d?.campaigns?.clicks, label: 'Clics' },
+              { key: 'sales', icon: ShoppingCart, tone: 'amber', value: d?.campaigns?.sales, label: 'Ventes attribuées' },
             ].map((t) => {
               const Icon = t.icon;
               const tone = TONES[t.tone];
               return (
-                <button type="button" key={t.label} onClick={() => navigate('/dashboard/campaigns')} className="rounded-xl p-3 text-center transition hover:brightness-[.97]" style={{ background: tone.bg }}>
+                <button type="button" key={t.label} onClick={() => setCampLists(t.key)} aria-label={`${t.label} : voir le détail`} className="rounded-xl p-3 text-center transition hover:brightness-[.97]" style={{ background: tone.bg }}>
                   <Icon size={17} className="mx-auto mb-1.5" style={{ color: tone.fg }} />
                   <p className="text-[18px] font-bold leading-none text-[#0B1C3F] tabular-nums">{nf(t.value)}</p>
                   <p className="mt-1 text-[10.5px] leading-tight" style={{ color: tone.fg }}>{t.label}</p>
@@ -462,7 +478,7 @@ export default function DashboardHomePage() {
           </div>
           <h3 className="mb-2 mt-4 text-[12.5px] font-bold text-[#0B1C3F]">Campagne la plus performante</h3>
           {d?.campaigns?.best ? (
-            <div role="button" tabIndex={0} onClick={() => navigate('/dashboard/campaigns')} onKeyDown={(e) => { if (e.key === 'Enter') navigate('/dashboard/campaigns'); }}
+            <div role="button" tabIndex={0} onClick={() => setCampaignOf(d.campaigns.best.id)} onKeyDown={(e) => { if (e.key === 'Enter') setCampaignOf(d.campaigns.best.id); }}
                  className="flex cursor-pointer flex-wrap items-center gap-3 rounded-xl border border-[#E6EEFB] p-3 hover:border-[#BFD3FF]">
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-2">

@@ -72,6 +72,9 @@ function Stat({ s }) {
   );
 }
 
+// the kinds a link may open the composer on (?nouveau=… or a template's own kind)
+const KINDS_OK = ['offre', 'nouveaute', 'evenement', 'defi', 'configurer'];
+
 export default function CampagnesPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -109,19 +112,32 @@ export default function CampagnesPage() {
   // wizard opens on the message, its audience set.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    const clean = () => {
+      const rest = new URLSearchParams(location.search);
+      ['template', 'day', 'store', 'from', 'nouveau', 'analyse'].forEach((k) => rest.delete(k));
+      navigate({ pathname: location.pathname, search: rest.toString() ? `?${rest}` : '' }, { replace: true });
+    };
+    // ?nouveau=offre (a dashboard / recommendation « Créer… »): the composer
+    // itself, never a page to look for it on (user, 2026-10-23)
+    const fresh = params.get('nouveau');
+    if (fresh && KINDS_OK.includes(fresh)) { setWizard({ initial: emptyState(fresh), step: 1 }); clean(); return; }
+    // ?analyse=<id> (the dashboard's « Analyse détaillée »): that campaign's result
+    const shown = params.get('analyse');
+    if (shown) { setResultOf(shown); clean(); return; }
     const key = params.get('template');
     if (!key) return;
     ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))
       .then(({ data: t }) => {
-        const st = emptyState('offre');
+        const st = emptyState(KINDS_OK.includes(t.kind) ? t.kind : 'offre');
         st.title = (t.title || '').slice(0, 50); st.message = (t.message || '').slice(0, 160);
-        st.template = key.startsWith('client:') ? 'client' : key;
+        st.template = /^(client|produit):/.test(key) ? key.split(':')[0] : key;
         // a narrower audience is sent by id, never widened to everyone — even
         // when no client matches it today (then the wizard asks for a choice)
         if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };
         else if (t.segment && t.segment !== 'all') st.audience = { ...st.audience, mode: 'segment', segment: t.segment };
         if (t.audience && !t.audience.ids?.length) st.notice = `Modèle chargé — mais aucun client ne correspond à « ${t.audience.label} » pour l'instant.`;
-        setWizard({ initial: st, step: 2 });
+        // a template that leaves the offer to set (a product to put forward) opens on it
+        setWizard({ initial: st, step: t.start_step === 1 ? 1 : 2 });
       })
       .catch(() => setError("Ce modèle n'a pas pu être chargé."))
       .finally(() => {

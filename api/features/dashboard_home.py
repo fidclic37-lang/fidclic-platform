@@ -32,6 +32,7 @@ WHAT IS COUNTED, AND FROM WHERE
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -161,6 +162,63 @@ def _cards_lost(tid: str, scope, at: datetime) -> Dict[str, Any]:
         return {"count": 0, "hours": CS.ALERT_HOURS, "href": "/dashboard/customers?card=recent"}
 
 
+def _sent_in(tid: str, start: datetime, end: datetime, scope: "S.Scope", mine: Optional[set]) -> List[Dict[str, Any]]:
+    """The campaigns SENT in the period, for this establishment, counted as on
+    Campagnes and Analyses (services/campaign_figures, QA F32)."""
+    from features import campaigns_page as CPG
+    return CPG._limit(list(_db.campaigns.find(
+        {"tenant_id": tid, "status": "sent", "sent_at": {"$gte": start, "$lte": end}}, {"_id": 0})), mine, scope)
+
+
+@router.get("/api/owner/home/campaigns")
+def campaign_lists(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
+                   token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    """The four cards of « Performance des campagnes », opened (user,
+    2026-10-23: a click opened the Campagnes page instead of what the card
+    counts): the campaigns, the clients they reached, who clicked, and the
+    visits credited to them — same period, same establishment, same rules."""
+    from services import campaign_figures as CF
+    tid = token_data.tenant_id
+    scope = S.resolve(token_data, request)
+    start, end = _window(P.clamp_days(days))
+    mine = None if scope.is_all else S.customer_ids(scope)
+    sent = sorted(_sent_in(tid, start, end, scope, mine), key=lambda c: _aware(c.get("sent_at")) or start, reverse=True)
+    att = CF.attribution(_db, tid, sent, S.visit_filter(scope), detail=True)
+    ids = set()
+    for c in sent:
+        ids.update(c.get("recipient_ids") or [])
+    people = {p["id"]: p for p in _db.customers.find({"tenant_id": tid, "id": {"$in": list(ids)}},
+                                                    {"_id": 0, "id": 1, "name": 1, "barcode_id": 1})}
+
+    def who(cid):
+        p = people.get(cid) or {}
+        return {"customer_id": cid, "name": p.get("name") or "Client supprimé", "barcode_id": p.get("barcode_id")}
+
+    campaigns, touched, clicked, sales = [], {}, [], []
+    for c in sent:
+        a = att.get(c["id"]) or {}
+        name = c.get("name") or "Campagne"
+        at = _aware(c.get("sent_at"))
+        campaigns.append({"id": c["id"], "name": name, "sent_at": at.isoformat() if at else None,
+                          "recipients": len(c.get("recipient_ids") or []), "clicks": CF.clicks(c),
+                          "sales": a.get("sales", 0), "revenue": a.get("revenue", 0.0)})
+        for cid in c.get("recipient_ids") or []:
+            row = touched.setdefault(cid, {**who(cid), "campaigns": []})
+            row["campaigns"].append(name)
+        for cid in c.get("click_customer_ids") or []:
+            if mine is None or cid in mine:
+                clicked.append({**who(cid), "campaign": name, "campaign_id": c["id"]})
+        for v in a.get("visits") or []:
+            t = _aware(v["visit_time"])
+            sales.append({**who(v["customer_id"]), "campaign": name, "campaign_id": c["id"],
+                          "visit_time": t.isoformat() if t else None, "amount": v["amount"]})
+    sales.sort(key=lambda x: x["visit_time"] or "", reverse=True)
+    return {"window_days": ATTRIBUTION_DAYS, "campaigns": campaigns,
+            "touched": sorted(touched.values(), key=lambda x: x["name"].lower()),
+            "clicks": {"total": sum(CF.clicks(c) for c in sent), "people": clicked},
+            "sales": sales}
+
+
 @router.get("/api/owner/home/overview")
 def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
@@ -262,11 +320,8 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     # ---- campaigns -------------------------------------------------------------
     # the campaigns SENT in the period, for this establishment, counted as on
     # Campagnes and Analyses (services/campaign_figures, QA F32)
-    from features import campaigns_page as CPG
     from services import campaign_figures as CF
-    sent = CPG._limit(list(_db.campaigns.find(
-        {"tenant_id": tid, "status": "sent", "sent_at": {"$gte": start, "$lte": end}}, {"_id": 0})),
-        None if scope.is_all else {c["id"] for c in customers}, scope)
+    sent = _sent_in(tid, start, end, scope, None if scope.is_all else {c["id"] for c in customers})
     att = CF.attribution(_db, tid, sent, S.visit_filter(scope))
     touched = sum(len(c.get("recipient_ids") or []) for c in sent)
     clicks = sum(CF.clicks(c) for c in sent)
@@ -277,7 +332,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
         reach = len(c.get("recipient_ids") or []) or 1
         rate = a["buyers"] / reach
         if best is None or rate > best["_rate"]:
-            best = {"_rate": rate, "name": c.get("name") or "Campagne",
+            best = {"_rate": rate, "id": c.get("id"), "name": c.get("name") or "Campagne",
                     "image_url": c.get("image_url"), "status": c.get("status") or "sent",
                     "touched": len(c.get("recipient_ids") or []),
                     "clicks": CF.clicks(c),
@@ -375,14 +430,14 @@ def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
             "body": f"{buckets['inactive']} client{'s' if buckets['inactive'] > 1 else ''} "
                     "ne sont plus venus depuis un moment (règle « Client actif »). "
                     "Envoyez-leur une offre personnalisée.",
-            "cta": "Voir et relancer ces clients", "to": "/dashboard/customers?segment=inactive"})
+            "cta": "Relancer ces clients", "to": "/dashboard/campaigns?template=relance_inactifs"})
     if not campaigns["sent"]:
         out.append({
             "key": "first_campaign", "icon": "chart", "tone": "green",
             "title": "Lancez votre première campagne",
             "body": "Aucune campagne sur la période. Une offre bien ciblée est le moyen "
                     "le plus direct de faire revenir vos clients.",
-            "cta": "Créer la campagne", "to": "/dashboard/campaigns"})
+            "cta": "Créer la campagne", "to": "/dashboard/campaigns?nouveau=offre"})
     if not goal["is_set"]:
         out.append({
             "key": "set_goal", "icon": "target", "tone": "violet",
@@ -396,5 +451,6 @@ def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
             "title": f"Mettez « {products[0]['name']} » en avant",
             "body": f"C'est votre produit le plus vendu ({products[0]['sales']} ventes). "
                     "Une offre autour de lui convertit plus facilement.",
-            "cta": "Créer une offre", "to": "/dashboard/card"})
+            # the composer opens on that offer (user, 2026-10-23: it opened the card page)
+            "cta": "Créer une offre", "to": f"/dashboard/campaigns?template=produit:{quote(products[0]['name'], safe='')}"})
     return out[:3]

@@ -1010,7 +1010,7 @@ def page(request: Request = None, token_data: TokenData = Depends(require_role(R
     return _payload(token_data.tenant_id, scope=S.resolve(token_data, request))
 
 
-@router.get("/api/owner/insights/templates/{key}")
+@router.get("/api/owner/insights/templates/{key:path}")
 def template(key: str, day: Optional[int] = None, request: Request = None,
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """What a campaign CTA pre-fills the composer with.
@@ -1047,6 +1047,16 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
                 "segment": "all",
                 "audience": {"label": cust.get("name") or "Ce client", "hint": "Un seul client",
                              "ids": [cust["id"]]}}
+    # A product to put forward (the dashboard's « Créer une offre », 2026-10-23):
+    # the composer opens on step 1, the offer, for the owner to set the discount.
+    if key.startswith("produit:"):
+        name = re.sub(r"\s+", " ", key[8:]).strip()[:40]
+        if not name:
+            raise HTTPException(status_code=404, detail="Produit introuvable")
+        return {"key": "produit", "kind": "offre", "start_step": 1,
+                "title": f"⭐ « {name} » à l'honneur"[:50],
+                "message": f"Cette semaine, une offre sur « {name} » vous attend sur présentation de votre carte."[:160],
+                "segment": "all"}
     spec = _templates(shop.food).get(key)
     if not spec:
         raise HTTPException(status_code=404, detail="Modèle introuvable")
