@@ -75,17 +75,19 @@ ACTIONS: Dict[str, Dict[str, str]] = {
     # by the shop's team (features/customer_edit.py)
     "client_update": {"label": "Fiche client modifiée", "icon": "user",   "tone": "slate"},
     "adjustment":    {"label": "Ajustement manuel",     "icon": "gift",   "tone": "amber"},
+    # une carte perdue ou retrouvée, et par qui (user, 2026-10-23)
+    "card_state":    {"label": "Carte du client",       "icon": "card",   "tone": "red"},
 }
 
 # Tab → the actions it shows. "Activité des clients" is what a customer did;
 # the narrower tabs are subsets of it.
 TABS: List[Dict[str, Any]] = [
     {"key": "all",      "label": "Toutes les activités",     "actions": list(ACTIONS)},
-    {"key": "clients",  "label": "Activité des clients",     "actions": ["signup", "scan", "reward", "message_view", "client_update", "adjustment"]},
+    {"key": "clients",  "label": "Activité des clients",     "actions": ["signup", "scan", "reward", "message_view", "client_update", "adjustment", "card_state"]},
     {"key": "points",   "label": "Points et récompenses",    "actions": ["scan", "reward", "adjustment"]},
     {"key": "scan",     "label": "Scan du QR code",          "actions": ["scan"]},
     {"key": "messages", "label": "Messages envoyés",         "actions": ["campaign", "message_view"]},
-    {"key": "card",     "label": "Modifications de la carte", "actions": ["card_update"]},
+    {"key": "card",     "label": "Modifications de la carte", "actions": ["card_update", "card_state"]},
 ]
 TAB_ACTIONS = {t["key"]: set(t["actions"]) for t in TABS}
 
@@ -225,6 +227,20 @@ def _sources(tid: str, start: datetime, end: datetime,
                 "customer_id": d.get("customer_id"),
                 "customer_name": d.get("customer_name"),
                 "detail": f"{d.get('text') or 'Fiche modifiée'} · par {d.get('by') or 'l’équipe'}",
+                "points": None,
+            },
+        },
+        # Une carte perdue ou retrouvée (user, 2026-10-23 : « supprimée » ne
+        # disait pas qui l'avait fait — le client depuis sa carte, ou le
+        # commerce depuis « Voir sa carte » ; Apple et Google, eux, ne peuvent
+        # venir que du téléphone du client).
+        "card_state": {
+            "coll": "customer_changes", "time": "at",
+            "query": {"tenant_id": tid, "kind": "card_state", "at": span, **clients},
+            "row": lambda d: {
+                "customer_id": d.get("customer_id"),
+                "customer_name": d.get("customer_name"),
+                "detail": f"{d.get('text') or 'Carte modifiée'} · {d.get('by') or 'le client'}",
                 "points": None,
             },
         },

@@ -163,7 +163,17 @@ async def google_callback(request: Request):
     if not cust:
         return {"ok": True, "ignored": True}
     field = "google_removed_at" if event == "del" else "google_added_at"
-    _db.customers.update_one({"id": cust["id"]}, {"$set": {field: _now()}})
+    at = _now()
+    _db.customers.update_one({"id": cust["id"]}, {"$set": {field: at}})
+    # Historique (user, 2026-10-23) : Google nous le dit, donc c'est le
+    # téléphone du client — le commerce ne peut pas retirer une carte de là.
+    try:
+        import server as core
+        full = _db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust
+        core.log_card_event(full, "Carte retirée de Google Wallet" if event == "del"
+                            else "Carte ajoutée à Google Wallet", by="le client", at=at)
+    except Exception as exc:                 # noqa: BLE001 — a log never breaks a callback
+        print(f"google callback: card event not logged ({exc})")
     if event == "save":
         try:                                     # Bienvenue (once per client, features/automations)
             from features import automations as AU

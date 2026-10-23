@@ -33,6 +33,8 @@ const TONES = {
   violet: { bg: '#F0ECFF', fg: '#6D4AFF' },
   green:  { bg: '#E7F7EE', fg: '#0F8B58' },
   slate:  { bg: '#EEF2F8', fg: '#475569' },
+  // une carte perdue : la seule ligne du journal qu'on veut voir de loin
+  red:    { bg: '#FEECEC', fg: '#C0392B' },
 };
 /* Avatar colours are picked from the name, so the same client always keeps the
    same chip across pages and sessions. */

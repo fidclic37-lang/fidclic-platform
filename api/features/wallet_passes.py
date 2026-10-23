@@ -3320,8 +3320,22 @@ def unregister_device(device_id: str, pass_type_id: str, serial: str,
     # removed from the last Wallet that had it: the card no longer counts as
     # on the phone until its owner opens it again (services/card_owner.held)
     if not _db.pass_registrations.count_documents({"serial": serial}, limit=1):
-        _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_removed_at": datetime.now(timezone.utc)}})
+        now = datetime.now(timezone.utc)
+        _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_removed_at": now}})
+        # Historique (user, 2026-10-23) : c'est Apple qui nous le dit, donc
+        # c'est bien le téléphone du client — jamais le commerce.
+        _log_card(serial, "Carte retirée d'Apple Wallet", now)
     return Response(status_code=200)
+
+
+def _log_card(serial: str, text: str, at: datetime) -> None:
+    try:
+        import server as core
+        cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
+        if cust:
+            core.log_card_event(cust, text, by="le client", at=at)
+    except Exception as exc:                 # noqa: BLE001 — a log never breaks a callback
+        print(f"wallet: card event not logged ({exc})")
 
 
 # HEAD too: Wallet may ask before it downloads; a 405 there left some
