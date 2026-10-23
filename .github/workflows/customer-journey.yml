@@ -67,10 +67,23 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      # A stuck download or apt mirror once held the job until it was cancelled
+      # at 35 min, without a single test run (#361, 2026-10-23). Each attempt
+      # now has 7 min, and a stuck one is retried — up to 3 times.
       - if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: |
+          for i in 1 2 3; do
+            timeout 420 npx playwright install --with-deps chromium && exit 0
+            echo "::warning::browser install attempt $i failed or hung — retrying"; sleep 15
+          done
+          exit 1
       - if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: |
+          for i in 1 2 3; do
+            timeout 420 npx playwright install-deps chromium && exit 0
+            echo "::warning::system libraries attempt $i failed or hung — retrying"; sleep 15
+          done
+          exit 1
 
       - name: Walk the customer journey
         run: npx playwright test
