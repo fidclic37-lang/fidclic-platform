@@ -541,11 +541,23 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
         business_name = (tenant or {}).get("name") or "notre boutique"
         ptnr = _compute_points_to_next_reward(customer, customer.get("tenant_id") or (tenant or {}).get("id"))
 
+        # a cagnotte card's balance is euros (QA R7 F39): {points} reads « 1,00 € »
+        points_txt = str(points)
+        try:
+            _tpl_p = db.card_templates.find_one({"tenant_id": customer.get("tenant_id") or (tenant or {}).get("id")},
+                                                {"_id": 0, "programme": 1, "points_mode": 1}) or {}
+            from features import loyalty_card as _LCP_r
+            if _LCP_r._programme(_tpl_p) == "cashback":
+                from features.wallet_passes import euros as _euros
+                points_txt = _euros(points)
+        except Exception:
+            pass
+
         replacements = {
             "{name}": name,
             "{first_name}": first_name,
             "{tier}": tier,
-            "{points}": str(points),
+            "{points}": points_txt,
             "{points_remaining}": str(ptnr),
             "{points_to_next_reward}": str(ptnr),
             "{visits}": str(visits),

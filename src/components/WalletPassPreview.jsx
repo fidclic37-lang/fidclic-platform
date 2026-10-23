@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import Code128Barcode from './Code128Barcode';
 import { deriveCardTheme } from '../lib/cardTheme';
 import { cycleVisits } from '../lib/cardCycle';
-import { programmeOf, rewardProgress } from '../lib/programme';
+import { programmeOf, rewardProgress, isCashback, euros, balanceLabel } from '../lib/programme';
 
 /**
  * WalletPassPreview — a pkpass-FAITHFUL render of the merchant's card, shown
@@ -65,7 +65,9 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
   const barcodeId = customer?.barcode_id || '';
 
   const memberLabel = (card.greeting_label || 'Membre').toUpperCase();
-  const pointsLabel = (card.points_label || 'Points').toUpperCase();
+  const pointsLabel = balanceLabel(card).toUpperCase();
+  // a cagnotte reads in euros, like its Wallet pass (QA R7 F39)
+  const shown = (v) => (isCashback(card) ? euros(v) : v);
   const visitsLabel = (card.visits_label || 'Visites').toUpperCase();
 
   const showTier = card.show_tier_badge !== false && card.show_tier !== false;
@@ -146,7 +148,7 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
               <div style={label}>{pointsLabel}</div>
               <div style={{ fontSize: px(15), fontWeight: 700, color: t.ink, lineHeight: 1.15,
                             fontVariantNumeric: 'tabular-nums' }}>
-                {earned}
+                {shown(earned)}
               </div>
             </div>
           )
@@ -282,7 +284,7 @@ export default function WalletPassPreview({ customer, tenant, card = {}, width =
                                        : (card.stamps_label || 'Tampons').toUpperCase()}</div>
         <div style={{ fontSize: px(30), fontWeight: 700, color: t.ink, lineHeight: 1.05,
                       letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>
-          {showPoints ? earned : `${stamps} / ${threshold}`}
+          {showPoints ? shown(earned) : `${stamps} / ${threshold}`}
         </div>
       </div>
       )}

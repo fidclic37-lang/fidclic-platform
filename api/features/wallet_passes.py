@@ -1384,6 +1384,15 @@ def _void_reason(cust: Dict[str, Any], tenant_doc: Dict[str, Any]) -> Optional[s
 POINTS_NEWS_HOURS = 24
 
 
+def euros(cents: Any) -> str:
+    """« 1,00 € » — a cagnotte's balance, kept in cents."""
+    try:
+        v = int(cents or 0) / 100
+    except (TypeError, ValueError):
+        v = 0.0
+    return f"{v:,.2f}".replace(",", " ").replace(".", ",") + " €"
+
+
 def _points_news(card: Dict[str, Any], points: int) -> Optional[str]:
     """Why the points just moved, when they moved for a reason worth saying
     (a parrainage: « Votre ami Marie est venu… »). Wallet shows the field's
@@ -1452,6 +1461,14 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
     points_field = {"key": "points", "label": (card.get("points_label") or "Points").upper(), "value": points,
                     "changeMessage": _points_news(card, points)
                     or (card.get("points_change_message") or "Vous avez maintenant %@ points")}
+    if card.get("programme") == "cashback":
+        # a cagnotte is euros, not points (QA R7 F39, user 2026-10-20: « cashback
+        # ko euros mein hi dikhao »): the balance is kept in cents; Wallet writes
+        # « 1,00 € » itself from the number and its currency
+        own = (card.get("points_label") or "").strip()
+        points_field = {"key": "points", "label": (own if own and own.lower() != "points" else "Cagnotte").upper(),
+                        "value": round(points / 100, 2), "currencyCode": "EUR",
+                        "changeMessage": "Votre cagnotte : %@"}
     show_tier = show("show_tier") and show("show_tier_badge")
 
     # ---- the front row ------------------------------------------------------
@@ -1722,7 +1739,8 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
             "name": full_name if card.get("use_full_name") is not False else first_name,
             # points OR tampons, by the programme: a field showing the other
             # one is left out (an empty {placeholder} field disappears)
-            "first_name": full_name.split(" ")[0], "card": serial, "points": points if not stamp_prog else "",
+            "first_name": full_name.split(" ")[0], "card": serial,
+            "points": (euros(points) if card.get("programme") == "cashback" else points) if not stamp_prog else "",
             "stamps": f"{stamps} / {threshold}" if stamp_prog else "", "tier": tier_field["value"],
             # the reward: the owner's words, only where the owner put it
             "reward": reward if reward_front else "",
@@ -3722,7 +3740,12 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
         obj["merchantLocations"] = [{"latitude": l["latitude"], "longitude": l["longitude"]}
                                     for l in pj["locations"][:10]]
     if points:
-        obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": {"int": int(points["value"] or 0)}}
+        if points.get("currencyCode"):          # a cagnotte: euros, as Google writes money
+            bal = {"money": {"micros": int(round(float(points["value"] or 0) * 1_000_000)),
+                             "currencyCode": points["currencyCode"]}}
+        else:
+            bal = {"int": int(points["value"] or 0)}
+        obj["loyaltyPoints"] = {"label": str(points["label"]).title(), "balance": bal}
     # The jauge rides in the banner (hero « fidclic »). With a photo or no
     # banner it would be gone: then Google's own row carries it, in the
     # owner's shape (user, 2026-10-11: « agar meter nhi h toh add kr do »).

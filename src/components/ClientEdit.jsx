@@ -215,13 +215,16 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
     ownerAPI.clientFiche(clientId).then(({ data }) => setD(data)).catch((e) => setMsg(err(e, 'Fiche introuvable.')));
   }, [clientId]);
   const c = d?.client;
+  // a cagnotte card: its balance and its adjustment in euros (kept in cents) — QA R7 F39
+  const cash = d?.programme === 'cashback';
+  const eur = (cents) => `${(Number(cents || 0) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
   const save = async () => {
     setMsg('');
     if (!points && !visits) { setMsg('Indiquez des points ou des tampons à ajouter ou retirer.'); return; }
     if (!reason.trim()) { setMsg("Indiquez la raison de l'ajustement."); return; }
     setBusy(true);
     try {
-      const { data } = await ownerAPI.adjustClient(clientId, { points, visits, reason: reason.trim() });
+      const { data } = await ownerAPI.adjustClient(clientId, { points: cash ? Math.round(points * 100) : points, visits, reason: reason.trim() });
       onSaved(data.text);
     } catch (e) { setMsg(err(e, "L'ajustement n'a pas pu être enregistré.")); } finally { setBusy(false); }
   };
@@ -237,7 +240,7 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
         <>
           <div className="mb-4 grid grid-cols-3 gap-2 text-center">
             {/* stamps are the card's meter; visits stay the real scans (QA R5 F22) */}
-            {[['Points', c.points, null],
+            {[[cash ? 'Cagnotte' : 'Points', cash ? eur(c.points) : c.points, null],
               ['Tampons (carte en cours)', c.stamps_in_cycle,
                [c.stamps_adjusted ? `dont ${c.stamps_adjusted > 0 ? '+' : ''}${c.stamps_adjusted} à la main` : null,
                 c.paper_stamps ? `${c.paper_stamps} de la carte papier` : null].filter(Boolean).join(' · ') || null],
@@ -250,7 +253,9 @@ export function AdjustModal({ clientId, onClose, onSaved }) {
             ))}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Stepper label="Points" value={points} onChange={setPoints} hint={points ? `Nouveau solde : ${c.points + points} points` : null} />
+            {cash
+              ? <Stepper label="Cagnotte (€)" value={points} onChange={setPoints} hint={points ? `Nouveau solde : ${eur(c.points + Math.round(points * 100))}` : null} />
+              : <Stepper label="Points" value={points} onChange={setPoints} hint={points ? `Nouveau solde : ${c.points + points} points` : null} />}
             <Stepper label="Tampons" value={visits} onChange={setVisits}
                      hint={visits ? `Carte en cours : ${c.stamps_in_cycle + visits} tampon${c.stamps_in_cycle + visits > 1 ? 's' : ''}` : null} />
           </div>
