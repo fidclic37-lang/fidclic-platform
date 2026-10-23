@@ -1279,7 +1279,10 @@ const ScanPage = () => {
                 <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Cette visite</dt><dd className="font-semibold text-[#0F7A45]">{
                   recorded.data?.programme === 'stamps'
                     ? `+${recorded.data?.stamps_earned ?? 0} tampon${(recorded.data?.stamps_earned ?? 0) > 1 ? 's' : ''}${recorded.paper ? `, dont ${recorded.paper} de la carte papier` : ''}`
-                    : `+${recorded.data?.points_earned ?? 0} point${(recorded.data?.points_earned ?? 0) > 1 ? 's' : ''}`}</dd></div>
+                    : recorded.data?.programme === 'cashback'
+                      // a cagnotte credits euros (QA R7 F39: the receipt said « +100 points »)
+                      ? `+${money((recorded.data?.points_earned ?? 0) / 100)} de cagnotte`
+                      : `+${recorded.data?.points_earned ?? 0} point${(recorded.data?.points_earned ?? 0) > 1 ? 's' : ''}`}</dd></div>
                 {recorded.lines.length > 0 && (
                   <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2"><dt className="text-[#64748B]">{words.many.charAt(0).toUpperCase() + words.many.slice(1)}</dt>
                     <dd className="text-right text-[#0B1C3F]">{recorded.lines.map((l) => `${l.qty} × ${l.name}`).join(', ')}</dd></div>

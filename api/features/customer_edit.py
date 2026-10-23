@@ -94,6 +94,33 @@ def _aware(v: Any) -> Optional[datetime]:
     return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
 
+def _programme_of(c: Dict[str, Any]) -> str:
+    """The client's card programme (its establishment's card): a cagnotte's
+    balance is euros, kept in cents (QA R7 F39)."""
+    try:
+        from features import store_cards as SC
+        from features.loyalty_card import _programme
+        tid = c.get("tenant_id")
+        sid = c.get("branch_id") or SC.main_store(tid)
+        if sid:
+            with SC.store(tid, sid):
+                tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+        else:
+            tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+        return _programme(tpl)
+    except Exception:
+        return "points_euro"
+
+
+def _amount_txt(c: Dict[str, Any], pts: int, signed: bool = False) -> str:
+    """« +1,00 € de cagnotte » on a cagnotte card, « +100 points » elsewhere."""
+    sign = ("+" if pts > 0 else "") if signed else ""
+    if _programme_of(c) == "cashback":
+        from features.wallet_passes import euros
+        return f"{sign}{euros(pts)}" + (" de cagnotte" if signed else "")
+    return f"{sign}{pts} point{'s' if abs(pts) > 1 else ''}"
+
+
 def _view(c: Dict[str, Any]) -> Dict[str, Any]:
     visits = int(c.get("visits") or 0)
     return {
@@ -133,6 +160,7 @@ def get_fiche(customer_id: str, request: Request = None,
     else:
         movable = open_
     return {"client": {**_view(c), "branch_id": c.get("branch_id")},
+            "programme": _programme_of(c),
             "home_store": {"id": c.get("branch_id"),
                            "name": next((b.get("name") for b in open_ if b["id"] == c.get("branch_id")), None),
                            "choices": [{"id": b["id"], "name": b.get("name") or "Établissement"} for b in movable]
@@ -252,7 +280,7 @@ def adjust(customer_id: str, body: AdjustIn, request: Request = None,
         raise HTTPException(status_code=400, detail="Rien à ajuster : indiquez des points ou des tampons.")
     points = int(c.get("points") or 0) + body.points
     if points < 0:
-        raise HTTPException(status_code=400, detail=f"Le client n'a que {int(c.get('points') or 0)} points.")
+        raise HTTPException(status_code=400, detail=f"Le client n'a que {_amount_txt(c, int(c.get('points') or 0))}.")
     # Stamps move THIS card's meter only (QA R5 F22, user 2026-10-09: « sirf
     # card ka meter »). A +1 stamp used to add a visit: the card and the CSV
     # read 3 visits while the history held 2. Visits, palier and figures stay
@@ -278,7 +306,7 @@ def adjust(customer_id: str, body: AdjustIn, request: Request = None,
     _db.customers.update_one({"id": customer_id}, {"$set": upd, **({"$inc": inc} if inc else {})})
     parts = []
     if body.points:
-        parts.append(f"{'+' if body.points > 0 else ''}{body.points} point{'s' if abs(body.points) > 1 else ''}")
+        parts.append(_amount_txt(c, body.points, signed=True))
     if body.visits:
         parts.append(f"{'+' if body.visits > 0 else ''}{body.visits} tampon{'s' if abs(body.visits) > 1 else ''}")
     text = "Ajustement manuel : " + " et ".join(parts)

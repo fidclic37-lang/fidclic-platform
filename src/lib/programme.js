@@ -45,3 +45,15 @@ export function rewardProgress(card = {}, { points = 0, stamps = 0, threshold = 
     line: left > 0 ? `Encore ${pts(left)} · ${reward}` : 'Récompense débloquée : présentez votre carte !',
     rule: `${reward} dès ${pts(goal)}` };
 }
+
+/* A cagnotte (« Cagnotte (% du ticket) ») is euros, not points (QA R7 F39,
+   user 2026-10-20: « cashback ko euros mein hi dikhao »). Its balance is kept
+   in cents, like every other ledger. */
+export const isCashback = (card = {}) => programmeOf(card) === 'cashback';
+export const euros = (cents) => `${(Number(cents || 0) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+/** « 1,00 € » on a cagnotte card, « 100 pts » elsewhere. */
+export const balanceText = (card = {}, points = 0) => (isCashback(card) ? euros(points) : `${parseInt(points, 10) || 0} pts`);
+/** The balance's own name: « Cagnotte », or the card's « Points » label. */
+export const balanceLabel = (card = {}) => (isCashback(card)
+  ? ((card.points_label && card.points_label.toLowerCase() !== 'points') ? card.points_label : 'Cagnotte')
+  : (card.points_label || 'Points'));

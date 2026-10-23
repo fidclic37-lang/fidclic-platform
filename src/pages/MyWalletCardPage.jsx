@@ -12,7 +12,7 @@ import InstallPwaPrompt from '../components/InstallPwaPrompt';
 import GeoConsentCard from '../components/GeoConsentCard';
 import PremiumLoyaltyCard from '../components/PremiumLoyaltyCard';
 import WalletPassPreview from '../components/WalletPassPreview';
-import { programmeOf, rewardProgress, earningRule } from '../lib/programme';
+import { programmeOf, rewardProgress, earningRule, balanceText, balanceLabel } from '../lib/programme';
 import WalletButtons from '../components/WalletButtons';
 import TierBadge from '../components/TierBadge';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
@@ -869,7 +869,7 @@ const CardView = () => {
               <p className="text-[11.5px] font-semibold uppercase tracking-wide text-[#64748B]">Votre statut</p>
               <p className="mt-1 font-semibold text-[#0B1C3F]">
                 {({ bronze: 'Bronze', silver: 'Argent', gold: 'Or', vip: 'VIP' })[String(customer.tier || 'bronze').toLowerCase()] || customer.tier}
-                {' · '}{card.show_points !== false ? `${customer.points || 0} pts · ` : ''}{customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
+                {' · '}{card.show_points !== false ? `${balanceText(card, customer.points)} · ` : ''}{customer.visits || 0} visite{(customer.visits || 0) > 1 ? 's' : ''}
               </p>
             </div>
           </div>
@@ -1270,8 +1270,8 @@ const WalletPass = ({ customer, tenant, card, activeOffer, onOpenDetails }) => {
               <p className="font-bold text-lg">{customer.visits}</p>
             </div>
             <div className="bg-white/10 rounded-lg py-2">
-              <p className="text-xs opacity-80">Points</p>
-              <p className="font-bold text-lg">{customer.points}</p>
+              <p className="text-xs opacity-80">{balanceLabel(card)}</p>
+              <p className="font-bold text-lg">{balanceText(card, customer.points).replace(' pts', '')}</p>
             </div>
             <div className="bg-white/10 rounded-lg py-2">
               <p className="text-xs opacity-80">Statut</p>
