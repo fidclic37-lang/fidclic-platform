@@ -490,9 +490,12 @@ const ScanPage = () => {
   // same onHit handler. Used by the "Importer une photo" button which is
   // always visible — that's the safety net for old Android Chrome (< v83)
   // and Firefox installs that refuse getUserMedia.
+  const [photoMsg, setPhotoMsg] = useState(null);
   const decodeImageFile = async (file) => {
     if (!file) return;
-    setStatus({ type: 'info', message: t('scan.image_reading') });
+    // its answer sits next to its button (QA R7 F37: the page's message box
+    // only shows once a card is found — a photo without a code said nothing)
+    setPhotoMsg({ type: 'info', text: 'Lecture de la photo…' });
     try {
       const jsQR = await ensureJsQR();
       const dataUrl = await new Promise((resolve, reject) => {
@@ -523,7 +526,7 @@ const ScanPage = () => {
         const cleaned = barcodeFrom(result.data);
         if (cleaned) {
           setBarcode(cleaned);
-          setStatus({ type: 'success', message: t('scan.code_detected_image') });
+          setPhotoMsg({ type: 'success', text: `Code trouvé : ${cleaned}` });
           setMode('manual');
           return;
         }
@@ -536,22 +539,16 @@ const ScanPage = () => {
           if (found?.length && found[0].rawValue) {
             const cleaned = barcodeFrom(found[0].rawValue);
             setBarcode(cleaned);
-            setStatus({ type: 'success', message: t('scan.code_detected_image') });
+            setPhotoMsg({ type: 'success', text: `Code trouvé : ${cleaned}` });
             setMode('manual');
             return;
           }
         } catch (_e) { /* ignore */ }
       }
-      setStatus({
-        type: 'error',
-        message: t('scan.image_no_code'),
-      });
+      setPhotoMsg({ type: 'error', text: 'Aucun QR code détecté sur cette photo. Essayez une photo plus nette, ou saisissez le code.' });
     } catch (e) {
       console.debug('decodeImageFile error:', e);
-      setStatus({
-        type: 'error',
-        message: t('scan.image_unreadable'),
-      });
+      setPhotoMsg({ type: 'error', text: 'Cette image ne peut pas être lue. Essayez une autre photo (JPG ou PNG), ou saisissez le code.' });
     }
   };
 
@@ -1179,8 +1176,21 @@ const ScanPage = () => {
             {cardErr && <p className="mt-2 text-[13px] text-[#C0392B]">{cardErr}</p>}
             <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[13px] font-semibold text-[#2F6BFF]">
               <ImageUp size={15} /> Importer une photo du code
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => decodeImageFile(e.target.files?.[0])} />
+              {/* the same photo can be chosen again after a miss */}
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => { decodeImageFile(e.target.files?.[0]); e.target.value = ''; }} />
             </label>
+            {photoMsg && (
+              <div role={photoMsg.type === 'error' ? 'alert' : 'status'} data-testid="photo-msg"
+                   className={`mt-2 flex items-start justify-between gap-3 rounded-xl px-3.5 py-2.5 text-[13px] ${photoMsg.type === 'success' ? 'bg-[#E7F7EE] text-[#0F7A45]' : photoMsg.type === 'info' ? 'bg-[#FFF7E6] text-[#92400E]' : 'bg-[#FEF2F2] text-[#B91C1C]'}`}>
+                <span>{photoMsg.text}</span>
+                {photoMsg.type === 'error' && (
+                  <label className="shrink-0 cursor-pointer font-semibold underline">
+                    Réessayer
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => { decodeImageFile(e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                )}
+              </div>
+            )}
           </div>
           )}
         </>
