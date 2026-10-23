@@ -7539,7 +7539,7 @@ def _log_card_message_view(cust: dict, payload: dict) -> None:
 SHOP_CARD_ROLES = ("business_owner", "administrateur", "manager", "staff")
 
 
-def _card_customer(barcode_id: str, request: Optional[Request]) -> Dict[str, Any]:
+def _card_customer(barcode_id: str, request: Optional[Request], with_actor: bool = False):
     """The customer behind a card, for whoever may act on it (2026-10-09).
 
     A card's number is printed in its QR — shown at the counter, to friends,
@@ -7555,11 +7555,17 @@ def _card_customer(barcode_id: str, request: Optional[Request]) -> Dict[str, Any
     cust = db.customers.find_one({"barcode_id": bc})
     if not cust:
         raise HTTPException(status_code=404, detail="Carte introuvable.")
+    # `with_actor`: who is acting — « client » when the card's own phone holds
+    # the key, else the shop account's e-mail. Deleting a card can be either
+    # (user, 2026-10-23: « supprimée » did not say which), so the Historique
+    # and the Clients list need to know.
+    def _ret(who: Optional[str]):
+        return (cust, who) if with_actor else cust
     if request is None:                       # an in-process call (tests, other features)
-        return cust
+        return _ret(None)
     key = request.headers.get("x-card-key") or request.query_params.get("k")
     if _card_owner.valid(bc, key):
-        return cust
+        return _ret("client")
     token = auth._view_token(request) or request.cookies.get("access_token")
     if not token:
         header = request.headers.get("authorization") or ""
@@ -7572,7 +7578,7 @@ def _card_customer(barcode_id: str, request: Optional[Request]) -> Dict[str, Any
             if not p.get("purpose") and ok_session and (
                     p.get("role") == "super_admin"
                     or (p.get("role") in SHOP_CARD_ROLES and p.get("tenant_id") == cust.get("tenant_id"))):
-                return cust
+                return _ret(p.get("view_by") or p.get("sub") or "l'équipe")
         except Exception:
             pass
     raise HTTPException(status_code=403, detail="Cette carte n'est pas enregistrée sur cet appareil.")
@@ -7606,9 +7612,25 @@ def update_card_prefs(barcode_id: str, req: CardPrefsRequest, request: Request =
     return _card_prefs_for(cust["id"])
 
 
+def log_card_event(cust: Dict[str, Any], text: str, by: Optional[str] = None,
+                   at: Optional[datetime] = None) -> None:
+    """One line in Historique when a card is lost or found again (user,
+    2026-10-23). It lands in `customer_changes`, like the other per-client
+    events, so it shows both in the shop's feed and in that client's own."""
+    try:
+        db.customer_changes.insert_one({
+            "id": str(uuid.uuid4()), "tenant_id": cust.get("tenant_id"),
+            "customer_id": cust.get("id"), "customer_name": cust.get("name") or "Client",
+            "kind": "card_state", "at": at or datetime.now(timezone.utc),
+            "text": text, "by": by,
+        })
+    except Exception as exc:                 # noqa: BLE001 — a log never breaks the action
+        print(f"card event not logged (non-fatal): {exc}")
+
+
 @app.delete("/api/card/{barcode_id}")
 def delete_wallet_card(barcode_id: str, request: Request = None):
-    cust = _card_customer(barcode_id, request)
+    cust, who = _card_customer(barcode_id, request, with_actor=True)
     now = datetime.now(timezone.utc)
     # 1) Flip pass_issued back so dashboard 'Active wallet passes' is accurate
     # 2) Stamp card_deleted_at so we can surface 'Deleted cards' as its own KPI
@@ -7617,8 +7639,13 @@ def delete_wallet_card(barcode_id: str, request: Request = None):
         {"$set": {
             "pass_issued": False,
             "card_deleted_at": now,
+            # « par le client » ou le compte du commerce : les deux peuvent
+            # supprimer une carte, et jusqu'ici rien ne disait lequel
+            "card_deleted_by": who or "client",
         }},
     )
+    log_card_event(cust, "Carte supprimée depuis la page de la carte",
+                   by="le client" if (who or "client") == "client" else who, at=now)
     # Persist the prefs row too — keeps backwards compatibility with anything
     # that reads card_prefs.deleted
     db.card_prefs.update_one(

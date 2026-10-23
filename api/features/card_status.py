@@ -102,7 +102,12 @@ def state_of(c: Dict[str, Any]) -> Dict[str, Any]:
     added = _aware(c.get("wallet_added_at"))
     deleted = _aware(c.get("card_deleted_at"))
     if deleted and not (added and added > deleted):
-        return {"state": "deleted", "label": STATE_LABELS["deleted"], "at": deleted.isoformat()}
+        by = (c.get("card_deleted_by") or "client")
+        return {"state": "deleted", "label": STATE_LABELS["deleted"], "at": deleted.isoformat(),
+                # qui a supprimé : le client depuis sa carte, ou un compte du
+                # commerce (les deux peuvent — user, 2026-10-23)
+                "by": "client" if by == "client" else by,
+                "by_label": "par le client" if by == "client" else f"par {by}"}
     removed = _aware(c.get("wallet_removed_at"))
     claimed = _aware(c.get("card_claimed_at"))
     if removed and not (claimed and claimed > removed) and not (added and added > removed):
@@ -341,8 +346,13 @@ def use(token: str):
     c = _db.customers.find_one({"id": r["customer_id"]}, {"_id": 0})
     if not c or c.get("deleted_at"):
         raise HTTPException(status_code=404, detail="Cette carte n'existe plus.")
-    _db.customers.update_one({"id": c["id"]}, {"$unset": {"card_deleted_at": ""},
+    _db.customers.update_one({"id": c["id"]}, {"$unset": {"card_deleted_at": "", "card_deleted_by": ""},
                                                "$set": {"card_claimed_at": at, "pass_issued": True, "updated_at": at}})
+    try:                                     # Historique (user, 2026-10-23)
+        import server as core
+        core.log_card_event(c, "Carte récupérée sur un téléphone", by="le client", at=at)
+    except Exception as exc:                 # noqa: BLE001
+        print(f"card readd: event not logged ({exc})")
     _db.card_prefs.update_one({"customer_id": c["id"]}, {"$set": {"deleted": False}}, upsert=False)
     from services import card_owner as CO
     return {"barcode_id": c["barcode_id"], "card_key": CO.key_for(c["barcode_id"])}
