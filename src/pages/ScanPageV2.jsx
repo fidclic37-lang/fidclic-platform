@@ -962,6 +962,13 @@ const ScanPage = () => {
   const autoAmount = Math.max(0, linesTotal - discount);
   // Nothing picked → 0,00 €, as the counter expects.
   const shownAmount = manual ? amountPaid : (linesTotal > 0 ? autoAmount.toFixed(2) : '');
+  // a typed amount is a number of euros, 2 decimals at most, never negative —
+  // refused as it is typed, not after the summary (QA R7: « abc » and « -1 »
+  // reached the review step, « abc » shown as 0,00 €)
+  const typedAmountError = manual && amountPaid.trim() !== ''
+    ? (/^-/.test(amountPaid.trim()) ? 'Le montant ne peut pas être négatif.'
+      : !/^\d+(\.\d{1,2})?$/.test(amountPaid.trim()) ? 'Montant invalide : saisissez un nombre, par exemple 12,50.' : '')
+    : '';
 
   const bump = (id, d) => setPicked((prev) => {
     const next = { ...prev };
@@ -1062,6 +1069,7 @@ const ScanPage = () => {
 
   const registerVisit = async () => {
     if (!card) return;
+    if (typedAmountError) { setStatus({ type: 'error', message: typedAmountError }); setStep('items'); return; }
     const amount = manual ? parseFloat(amountPaid || '0') : autoAmount;
     if (Number.isNaN(amount) || amount < 0) { setStatus({ type: 'error', message: 'Montant invalide.' }); return; }
     const paper = paperOn ? parseInt(paperStamps || '0', 10) || 0 : 0;
@@ -1166,6 +1174,10 @@ const ScanPage = () => {
 
           {/* the typed code is « Saisir le code »'s; the camera tab is the camera
               only (user, 2026-10-15) — a douchette still works on either */}
+          {/* a douchette reads on the camera tab too: its answer is shown there as well */}
+          {mode !== 'manual' && cardErr && (
+            <p role="alert" className="mx-auto max-w-[520px] rounded-xl bg-[#FEF2F2] px-3.5 py-2.5 text-[13px] text-[#B91C1C]">{cardErr}</p>
+          )}
           {mode === 'manual' && (
           <div className="mx-auto max-w-[520px]">
             <label className="block text-[13px] font-medium text-[#334155]">Code de la carte
@@ -1173,7 +1185,7 @@ const ScanPage = () => {
                      translate="no" className="notranslate mt-1 w-full rounded-xl border border-[#E2E8F0] px-4 py-3 text-[16px] uppercase text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
             </label>
             <p className="mt-1.5 text-[12.5px] text-[#64748B]">Douchette USB ou Bluetooth : scannez directement, sans cliquer ici.</p>
-            {cardErr && <p className="mt-2 text-[13px] text-[#C0392B]">{cardErr}</p>}
+            {cardErr && <p role="alert" className="mt-2 text-[13px] text-[#C0392B]">{cardErr}</p>}
             <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[13px] font-semibold text-[#2F6BFF]">
               <ImageUp size={15} /> Importer une photo du code
               {/* the same photo can be chosen again after a miss */}
@@ -1382,10 +1394,12 @@ const ScanPage = () => {
                 <p className="text-[13.5px] font-semibold text-[#334155]">Montant payé</p>
                 <div className="mt-1 flex items-stretch overflow-hidden rounded-xl border border-[#E2E8F0]">
                   <span className="flex w-12 items-center justify-center border-r border-[#E2E8F0] text-[#64748B]"><Euro size={16} /></span>
-                  <input value={shownAmount} placeholder="0,00" inputMode="decimal"
+                  <input value={shownAmount} placeholder="0,00" inputMode="decimal" aria-invalid={Boolean(typedAmountError)}
+                         aria-describedby={typedAmountError ? 'amount-error' : undefined}
                          onChange={(e) => { setManual(true); setAmountPaid(e.target.value.replace(',', '.')); }}
                          className="w-full px-4 py-3 text-[16px] font-semibold text-[#0B1C3F] outline-none" />
                 </div>
+                {typedAmountError && <p id="amount-error" role="alert" className="mt-1 text-[12.5px] font-medium text-[#C0392B]">{typedAmountError}</p>}
                 {discount > 0 && !manual && (
                   <p className="mt-1 text-[12.5px] text-[#0F7A45]">{money(linesTotal)} − {money(discount)} d'offre appliquée.</p>
                 )}
@@ -1421,7 +1435,7 @@ const ScanPage = () => {
               </div>
             </div>
 
-            <button type="button" disabled={paperTooMany}
+            <button type="button" disabled={paperTooMany || Boolean(typedAmountError)}
                     onClick={() => { setStatus(null); setStep('review'); }}
                     className="mt-5 hidden w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50 sm:inline-flex">
               Suivant <ArrowRight size={17} />
@@ -1516,7 +1530,7 @@ const ScanPage = () => {
                 <p className="text-[18px] font-extrabold leading-tight tabular-nums text-[#0B1C3F]">{money(payNow)}</p>
               </div>
               {step === 'items' ? (
-                <button type="button" disabled={paperTooMany} onClick={() => { setStatus(null); setStep('review'); }}
+                <button type="button" disabled={paperTooMany || Boolean(typedAmountError)} onClick={() => { setStatus(null); setStep('review'); }}
                         className="ml-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-50">
                   Suivant <ArrowRight size={18} />
                 </button>
