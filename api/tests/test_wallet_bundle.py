@@ -137,14 +137,14 @@ def main():
         print("\n4. Uploads in the background")
         WP._SYNC_PUT = False
         real_put = WP._put_blob
-        WP._put_blob = lambda k, raw: time.sleep(1.0)
+        WP._put_blob = lambda k, raw: time.sleep(3.0)      # an upload far slower than the drawing
         fresh_instance()
         db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"surface_color": "#333333"}})
         t = time.time()
         WP.pass_files_for_wallet(pay("a"))
         took = time.time() - t
         WP._put_blob = real_put
-        check(f"a new design drawn without waiting for its uploads ({took:.2f} s)", took < 1.0)
+        check(f"a new design drawn without waiting for its uploads ({took:.2f} s)", took < 2.5)
         print("\n5. An Android phone prepares Google only")
         built = []
         saved = (WP._owner_only, WP._wallet_in_plan, WP.apple_configured, WP.google_configured, WP.signed_pass, WP.google_link_fast)

@@ -1108,6 +1108,28 @@ def barcode_message(fmt: str, serial: str) -> Optional[str]:
     return _ean13(digits) if fmt == "PKBarcodeFormatEAN13" else digits
 
 
+def share_url(serial: str) -> str:
+    """The page a customer shares their card from: its QR and the apps."""
+    return f"{_site_url()}/card/{serial}/partager"
+
+
+def _share_field(tenant: Dict[str, Any], serial: str) -> Dict[str, Any]:
+    """« Programme de parrainage — 🎁 Partagez la carte » on the back of the
+    card (user, 2026-10-23: the customer could not share their own card's QR
+    or link). It opens a page with the QR a friend scans — the card's public
+    address, which brings them to the signup as a filleul — and every app to
+    send the link. No owner key travels."""
+    on = False
+    try:
+        cfg = _db.referral_config.find_one({"tenant_id": (tenant or {}).get("id")}, {"_id": 0, "enabled": 1}) or {}
+        on = bool(cfg.get("enabled"))
+    except Exception:
+        pass
+    url = share_url(serial)
+    return {"key": "share_link", "label": "Programme de parrainage" if on else "Partager ma carte",
+            "value": url, "attributedValue": f'<a href="{url}">🎁 Partagez la carte</a>'}
+
+
 def build_barcodes(fmt: str, fallback: Optional[str], serial: str, alt: Optional[str]) -> List[Dict[str, str]]:
     """The pass's barcodes: the chosen format, then the fallback iOS 26 and
     earlier read (Wallet shows the first format it supports). A format the
@@ -1534,6 +1556,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
          "value": f"{reward} tous les {threshold} tampons." if stamp_prog
          else (f"{reward} dès {reward_points} points." if reward_points else f"{reward}.")},
         {"key": "card", "label": "Ma carte en ligne", "value": CO.owner_url(_site_url(), serial)},
+        _share_field(tenant, serial),
     ]
     if not stamp_prog:                    # « Encore N tampons » means nothing on a points card
         back = [f for f in back if f["key"] != "next_reward"]
@@ -3698,7 +3721,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
     code_type = gd["barcode"] if code_value else "QR_CODE"       # a code the card id cannot fill → QR
     # Apple's back of the pass = Google's details: offer, reward, statut…
     back = [{"id": f["key"][:20], "header": str(f["label"])[:40], "body": str(f["value"])[:500]}
-            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link", "geo_link")]
+            for f in sc.get("backFields", []) if f["key"] not in ("card", "offer_link", "geo_link", "share_link")]
     # the values a row of the card can show (classTemplateInfo), as modules
     tier_v = next((f["value"] for f in sc.get("backFields", []) if f["key"] == "tier_back"), None) \
         or by_key.get("tier", {}).get("value")
@@ -3731,6 +3754,7 @@ def _gw_object(payload: Dict[str, Any]) -> Dict[str, Any]:
                             + [{"uri": f["value"], "description": "Voir l'offre en entier"}
                                for f in sc.get("backFields", []) if f["key"] == "offer_link"]
                             + [{"uri": CO.owner_url(_site_url(), cust["barcode_id"]), "description": "Ma carte en ligne"}]
+                            + [{"uri": share_url(cust["barcode_id"]), "description": "🎁 Partagez la carte"}]
                             + [{"uri": l["uri"], "description": l.get("label") or l["uri"]}
                                for l in (card.get("google_links") or []) if l.get("uri")]},
     }
