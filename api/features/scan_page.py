@@ -190,8 +190,8 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
     if not cust:
         raise HTTPException(status_code=404, detail="Aucun client trouvé avec ce code.")
     if cust.get("deleted_at"):
-        # said at the scan, not after the cashier filled the visit in (QA R7,
-        # 2026-10-18: a deleted client was refused only at the final save)
+        # said as soon as the card is read, not after the whole visit is typed
+        # (QA R7: the till identified a deleted client, the final save refused)
         raise HTTPException(status_code=410, detail=core.DELETED_CARD_MSG)
     tpl = _db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "sector": 1}) or {}

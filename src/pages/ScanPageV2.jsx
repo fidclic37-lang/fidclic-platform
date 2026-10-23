@@ -965,6 +965,13 @@ const ScanPage = () => {
   const autoAmount = Math.max(0, linesTotal - discount);
   // Nothing picked → 0,00 €, as the counter expects.
   const shownAmount = manual ? amountPaid : (linesTotal > 0 ? autoAmount.toFixed(2) : '');
+  // a typed amount is a number of euros, 2 decimals at most, never negative —
+  // refused as it is typed, not after the summary (QA R7: « abc » and « -1 »
+  // reached the review step, « abc » shown as 0,00 €)
+  const typedAmountError = manual && amountPaid.trim() !== ''
+    ? (/^-/.test(amountPaid.trim()) ? 'Le montant ne peut pas être négatif.'
+      : !/^\d+(\.\d{1,2})?$/.test(amountPaid.trim()) ? 'Montant invalide : saisissez un nombre, par exemple 12,50.' : '')
+    : '';
 
   const bump = (id, d) => setPicked((prev) => {
     const next = { ...prev };
@@ -988,6 +995,8 @@ const ScanPage = () => {
   const resetVisit = () => { setPicked({}); setApply(''); setManual(false); setAmountPaid(''); setAmountErr(null); setPaperStamps(''); setPaperOn(false); };
   const amountProblem = amountErr
     || (manual && amountPaid !== '' && !/^\d+(\.\d{1,2})?$/.test(amountPaid) ? 'Montant invalide : un nombre positif, par exemple 12,50.' : null);
+  // what the field says: DecimalInput's own word first (a minus), else the format check
+  const amountIssue = amountProblem || typedAmountError || null;
   // The visit just recorded (user, 2026-10-13: « visit ek baar record ho gyi toh
   // waapis kyun de rhe ho option »): from then on the page is its summary —
   // no form, no second « Enregistrer la visite » for the same scan (it made a
@@ -1067,6 +1076,7 @@ const ScanPage = () => {
 
   const registerVisit = async () => {
     if (!card) return;
+    if (typedAmountError) { setStatus({ type: 'error', message: typedAmountError }); setStep('items'); return; }
     const amount = manual ? parseFloat(amountPaid || '0') : autoAmount;
     if (Number.isNaN(amount) || amount < 0) { setStatus({ type: 'error', message: 'Montant invalide.' }); return; }
     const paper = paperOn ? parseInt(paperStamps || '0', 10) || 0 : 0;
@@ -1171,6 +1181,10 @@ const ScanPage = () => {
 
           {/* the typed code is « Saisir le code »'s; the camera tab is the camera
               only (user, 2026-10-15) — a douchette still works on either */}
+          {/* a douchette reads on the camera tab too: its answer is shown there as well */}
+          {mode !== 'manual' && cardErr && (
+            <p role="alert" className="mx-auto max-w-[520px] rounded-xl bg-[#FEF2F2] px-3.5 py-2.5 text-[13px] text-[#B91C1C]">{cardErr}</p>
+          )}
           {mode === 'manual' && (
           <div className="mx-auto max-w-[520px]">
             <label className="block text-[13px] font-medium text-[#334155]">Code de la carte
@@ -1178,7 +1192,7 @@ const ScanPage = () => {
                      translate="no" className="notranslate mt-1 w-full rounded-xl border border-[#E2E8F0] px-4 py-3 text-[16px] uppercase text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
             </label>
             <p className="mt-1.5 text-[12.5px] text-[#64748B]">Douchette USB ou Bluetooth : scannez directement, sans cliquer ici.</p>
-            {cardErr && <p className="mt-2 text-[13px] text-[#C0392B]">{cardErr}</p>}
+            {cardErr && <p role="alert" className="mt-2 text-[13px] text-[#C0392B]">{cardErr}</p>}
             <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-[13px] font-semibold text-[#2F6BFF]">
               <ImageUp size={15} /> Importer une photo du code
               {/* the same photo can be chosen again after a miss */}
@@ -1389,11 +1403,12 @@ const ScanPage = () => {
                   <span className="flex w-12 items-center justify-center border-r border-[#E2E8F0] text-[#64748B]"><Euro size={16} /></span>
                   {/* letters never get in; a minus stays on screen and is explained (DecimalInput) */}
                   <DecimalInput value={shownAmount} placeholder="0,00" aria-label="Montant payé"
-                                aria-invalid={amountProblem ? 'true' : undefined}
+                                aria-invalid={amountIssue ? 'true' : undefined}
+                                aria-describedby={amountIssue ? 'amount-error' : undefined}
                                 onChange={(v) => { setManual(true); setAmountPaid(v); }} onInvalid={setAmountErr}
                                 className="w-full px-4 py-3 text-[16px] font-semibold text-[#0B1C3F] outline-none" />
                 </div>
-                {amountProblem && <p className="mt-1 text-[12.5px] text-[#C0392B]" role="alert">{amountProblem}</p>}
+                {amountIssue && <p id="amount-error" role="alert" className="mt-1 text-[12.5px] font-medium text-[#C0392B]">{amountIssue}</p>}
                 {discount > 0 && !manual && (
                   <p className="mt-1 text-[12.5px] text-[#0F7A45]">{money(linesTotal)} − {money(discount)} d'offre appliquée.</p>
                 )}
@@ -1429,7 +1444,7 @@ const ScanPage = () => {
               </div>
             </div>
 
-            <button type="button" disabled={paperTooMany || !!amountProblem}
+            <button type="button" disabled={paperTooMany || !!amountIssue}
                     onClick={() => { setStatus(null); setStep('review'); }}
                     className="mt-5 hidden w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50 sm:inline-flex">
               Suivant <ArrowRight size={17} />
@@ -1524,7 +1539,7 @@ const ScanPage = () => {
                 <p className="text-[18px] font-extrabold leading-tight tabular-nums text-[#0B1C3F]">{money(payNow)}</p>
               </div>
               {step === 'items' ? (
-                <button type="button" disabled={paperTooMany || !!amountProblem} onClick={() => { setStatus(null); setStep('review'); }}
+                <button type="button" disabled={paperTooMany || !!amountIssue} onClick={() => { setStatus(null); setStep('review'); }}
                         className="ml-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-50">
                   Suivant <ArrowRight size={18} />
                 </button>
