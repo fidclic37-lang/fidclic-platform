@@ -134,6 +134,29 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a Push Wallet send counts the same as a campaign",
           DH.overview(days=30, token_data=TD())["impact"]["value"] == 60.0)
 
+    # ---- « Performance des campagnes », opened (user, 2026-10-23) ---------------------
+    print("\nThe campaign cards open what they count")
+    db.campaigns.update_one({"id": "camp1"}, {"$set": {"click_customer_ids": ["c1"]}})
+    d = DH.overview(days=30, token_data=TD())
+    check(f"the top campaign carries its id, to open its detail ({(d['campaigns'].get('best') or {}).get('id')})",
+          (d["campaigns"].get("best") or {}).get("id") == "camp1")
+    L = DH.campaign_lists(days=30, token_data=TD())
+    check(f"« Campagnes envoyées »: the campaign, its reach, clicks and sales ({L['campaigns']})",
+          [c["id"] for c in L["campaigns"]] == ["camp1"] and L["campaigns"][0]["recipients"] == 1
+          and L["campaigns"][0]["clicks"] == 4 and L["campaigns"][0]["sales"] == d["campaigns"]["sales"])
+    check("« Clients touchés »: the client reached, with the campaign's name",
+          [(p["customer_id"], p["campaigns"]) for p in L["touched"]] == [("c1", ["Offre petit-déjeuner"])])
+    check("« Clics »: the total, and who clicked which campaign",
+          L["clicks"]["total"] == 4 and [(p["customer_id"], p["campaign_id"]) for p in L["clicks"]["people"]] == [("c1", "camp1")])
+    check(f"« Ventes attribuées »: each visit credited, with its amount ({[(s['customer_id'], s['amount']) for s in L['sales']]})",
+          len(L["sales"]) == d["campaigns"]["sales"] and all(s["campaign_id"] == "camp1" and s["customer_id"] == "c1" for s in L["sales"])
+          and round(sum(s["amount"] for s in L["sales"]), 2) == 40.0)
+    check("another shop sees none of it", DH.campaign_lists(days=30, token_data=Rival())["campaigns"] == [])
+    recos = d["recommendations"]
+    check(f"no recommendation opens the card page — an offer opens the composer ({[r['to'] for r in recos]})",
+          all("/dashboard/card" not in r["to"] for r in recos)
+          and all(r["to"].startswith("/dashboard/campaigns?") for r in recos if r["key"] in ("promote", "reactivate", "first_campaign")))
+
     # ---- the two charts ---------------------------------------------------------------
     print("\nThe two charts")
     d = DH.overview(days=30, token_data=TD())

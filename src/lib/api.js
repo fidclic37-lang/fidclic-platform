@@ -627,6 +627,7 @@ export const ownerAPI = {
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
   // Tableau de bord — the home page's eleven panels, and the monthly goal.
   homeOverview: (params) => api.get('/owner/home/overview', { params }),
+  homeCampaigns: (params) => api.get('/owner/home/campaigns', { params }),
   planAccess: () => api.get('/owner/plan-access'),
   integrations: () => api.get('/owner/integrations'),
   createApiKey: (body) => api.post('/owner/integrations/keys', body),

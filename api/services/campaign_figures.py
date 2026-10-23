@@ -52,24 +52,30 @@ def clicks(c: Dict[str, Any]) -> int:
 
 
 def attribution(db, tid: str, campaigns: Iterable[Dict[str, Any]],
-                visit_filter: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
+                visit_filter: Optional[Dict[str, Any]] = None, detail: bool = False) -> Dict[str, Dict[str, Any]]:
     """{campaign id: {revenue, sales, buyers}} for these campaigns.
 
     Every sent campaign of the shop that reached a client competes for that
     client's visits (a newer campaign outside the list still takes the visits
     after it); each visit goes to one campaign at most. `visit_filter`: the
-    establishment's visits only (store_scope.visit_filter)."""
+    establishment's visits only (store_scope.visit_filter). `detail`: each
+    campaign also lists its visits ({customer_id, visit_time, amount}) — the
+    dashboard's « Ventes attribuées » opened (2026-10-23)."""
     rows = [c for c in campaigns if c.get("id") and _aware(c.get("sent_at"))]
-    out: Dict[str, Dict[str, Any]] = {c["id"]: {"revenue": 0.0, "sales": 0, "buyers": set()} for c in rows}
+    out: Dict[str, Dict[str, Any]] = {c["id"]: {"revenue": 0.0, "sales": 0, "buyers": set(), "visits": []} for c in rows}
+    def done(o):
+        return {k: {"revenue": round(v["revenue"], 2), "sales": v["sales"], "buyers": len(v["buyers"]),
+                    **({"visits": v["visits"]} if detail else {})} for k, v in o.items()}
+
     if not rows:
-        return {k: {**v, "buyers": 0} for k, v in out.items()}
+        return done(out)
     window = timedelta(days=ATTRIBUTION_DAYS)
     lo = min(_aware(c["sent_at"]) for c in rows)
     hi = max(_aware(c["sent_at"]) for c in rows) + window
     wanted = {c["id"]: set(c.get("recipient_ids") or []) for c in rows}
     people = set().union(*wanted.values())
     if not people:
-        return {k: {**v, "buyers": 0} for k, v in out.items()}
+        return done(out)
 
     # every send that could claim a visit between lo and hi, per client
     sends: Dict[str, List[tuple]] = defaultdict(list)
@@ -104,5 +110,7 @@ def attribution(db, tid: str, campaigns: Iterable[Dict[str, Any]],
             out[camp]["revenue"] += float(v.get("amount_paid") or 0)
             out[camp]["sales"] += 1
             out[camp]["buyers"].add(cust)
-    return {k: {"revenue": round(v["revenue"], 2), "sales": v["sales"], "buyers": len(v["buyers"])}
-            for k, v in out.items()}
+            if detail:
+                out[camp]["visits"].append({"customer_id": cust, "visit_time": t,
+                                            "amount": round(float(v.get("amount_paid") or 0), 2)})
+    return done(out)

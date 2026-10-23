@@ -204,8 +204,11 @@ const H = {
   campaign_perf: {
     t: 'Performance des campagnes',
     what: "Ce que vos campagnes de la période ont donné.",
-    how: "Campagnes envoyées ; clients touchés (la somme des destinataires) ; clics sur le lien ou l'offre ; ventes attribuées = les clients passés en caisse dans les 15 jours après avoir reçu une campagne (une fois par campagne).",
-    why: "Pour voir d'un coup d'œil si vos messages font venir du monde — le détail et l'« effet » réel sont sur la page Campagnes.",
+    how: "• Campagnes envoyées : les campagnes parties sur la période.\n"
+      + "• Clients touchés : le nombre de destinataires de ces campagnes.\n"
+      + "• Clics : le client a appuyé sur le lien ou sur « Voir l'offre » de la campagne. Ouvrir sa carte ou lire la notification n'est PAS un clic — c'est une ouverture (taux d'ouverture, dans le détail d'une campagne).\n"
+      + "• Ventes attribuées : un passage en caisse dans les 15 jours après avoir reçu la campagne, même sans clic — c'est pourquoi on peut avoir 0 clic et des ventes : le client a lu le message puis est venu. Chaque passage compte pour une seule campagne, la plus récente.",
+    why: "Cliquez sur une case pour voir les campagnes, les clients, les clics ou les ventes qu'elle compte ; cliquez sur une campagne pour son détail.",
   },
   recommendations: {
     t: 'Recommandations',

@@ -327,6 +327,11 @@ def main():
     # `now` above, so its clock is that one (n1 joined 8 days before it — on
     # the real date, 2026-10-19, it was past the 30-day one-timer window)
     I._now = lambda: now
+    # a product to put forward (the dashboard's « Créer une offre », 2026-10-23)
+    pr = I.template("produit:Haircut + styling", token_data=T("cafe"))
+    check(f"a product offer opens on the offer step, its name in the copy ({pr.get('kind')}, {pr.get('start_step')}, {pr.get('title')})",
+          pr["kind"] == "offre" and pr["start_step"] == 1 and "Haircut + styling" in pr["title"]
+          and len(pr["title"]) <= 50 and len(pr["message"]) <= 160)
     t = I.template("relance_inactifs", token_data=T("cafe"))
     check("'Relancer ces clients' pre-fills the inactive audience", t["segment"] == "inactive")
     check("and fits a push (title ≤ 50, message ≤ 160)",
@@ -397,7 +402,7 @@ def main():
     # ---- wiring -----------------------------------------------------------------------------
     print("\nLe câblage")
     paths = {r.path for r in server.app.routes if hasattr(r, "methods")}
-    for want in ("/api/owner/insights/page", "/api/owner/insights/templates/{key}",
+    for want in ("/api/owner/insights/page", "/api/owner/insights/templates/{key:path}",
                  "/api/owner/insights/actions/{action}/activate",
                  "/api/owner/insights/google-review", "/api/owner/insights/export.pdf",
                  "/api/card/{barcode_id}/google-review-click"):
@@ -412,7 +417,7 @@ def main():
           "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))" in comp)
     wiz = open(os.path.join(here, "..", "..", "src", "components", "campagnes", "CampaignWizard.jsx")).read()
     check("… and sends the recommendation's key with the campaign, so it can step aside",
-          "st.template = key.startsWith('client:') ? 'client' : key;" in comp
+          "st.template = /^(client|produit):/.test(key) ? key.split(':')[0] : key;" in comp
           and "...(s.template ? { template: s.template } : {})" in wiz)
     check("a narrower audience is sent by id, not widened to a card",
           "if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };" in comp
