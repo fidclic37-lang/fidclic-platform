@@ -1,7 +1,8 @@
 /**
  * Super admin › FIDCLIC AI › Précision (user, 2026-10-25): what the client
  * brain predicted for each next visit and what really happened, against the
- * plain mean and the 30-day rule; the journal exports as an anonymous CSV.
+ * plain mean and the shop's own rule, brain-v1 beside brain-v2 (in observation)
+ * with the switch; the journal exports as an anonymous CSV.
  * Local server only.
  */
 import { test, expect } from '@playwright/test';
@@ -16,6 +17,8 @@ test('the accuracy page shows the journal, and exports it', async ({ page, reque
   const H = { Authorization: `Bearer ${login.access_token}` };
   const run = await request.post('/api/admin/ai/precision/backtest', { headers: H, data: {} });
   expect(run.ok(), await run.text()).toBeTruthy();
+  const learn = await request.post('/api/admin/ai/precision/learn', { headers: H, timeout: 120_000 });
+  expect(learn.ok(), await learn.text()).toBeTruthy();
   const d = await (await request.get('/api/admin/ai/precision', { headers: H })).json();
 
   await page.goto('/login');
@@ -23,6 +26,17 @@ test('the accuracy page shows the journal, and exports it', async ({ page, reque
   await page.goto('/admin/ai/precision');
   await expect(page.getByRole('heading', { name: 'Précision de FidClic IA' })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('link', { name: 'Précision' })).toBeVisible();
+  // brain-v1 in service, brain-v2 in observation, side by side with the baselines
+  const cmp = page.getByTestId('precision-compare');
+  await expect(cmp.getByTestId('compare-brain-v1')).toContainText('En service');
+  await expect(cmp.getByTestId('compare-brain-v2')).toContainText('En observation');
+  await expect(cmp).toContainText('Moyenne simple');
+  const sw = page.getByTestId('switch-v2');
+  if (d.compare.can_switch) await expect(sw).toBeEnabled();
+  else {
+    await expect(sw).toBeDisabled();
+    await expect(page.getByTestId('switch-why-not')).toBeVisible();
+  }
   if (d.summary.checked + d.summary.not_returned > 0) {
     await expect(page.getByTestId('precision-checked')).toContainText(d.summary.checked.toLocaleString('fr-FR'));
     await expect(page.getByTestId('precision-error')).toContainText('moyenne simple');

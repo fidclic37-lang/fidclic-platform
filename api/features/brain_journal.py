@@ -59,7 +59,8 @@ from auth import TokenData
 from features import client_brain as CB
 from features.platform_access import require_admin
 
-MODEL = f"brain-v{CB.VERSION}"
+MODEL = "brain-v1"            # the brain as #368 shipped it; brain-v2 lives in features/brain_v2
+SWITCH_MIN_ROWS = 200         # « Passer à brain-v2 » needs at least this many checked v2 guesses
 EXPIRE_FACTOR = 3             # no visit by 3 × the rhythm …
 EXPIRE_MIN_DAYS = 60          # … and at least 60 days after the window: « non revenu »
 NEAR_DAYS = 7                 # « à ±7 jours », the same yardstick for the brain and the baselines
@@ -138,8 +139,13 @@ def _gaps_of(b: Dict[str, Any], visits: Iterable[Dict[str, Any]]) -> List[float]
     return [CB._days(days[i - 1], days[i]) for i in range(1, len(days))]
 
 
+def model_name(b: Dict[str, Any]) -> str:
+    return f"brain-v{int(b.get('model') or 1)}"
+
+
 def make(tid: str, sector: str, b: Dict[str, Any], gaps: List[float], made_at: datetime,
-         source: str, customer_id: Optional[str], rule: int = 30) -> Optional[Dict[str, Any]]:
+         source: str, customer_id: Optional[str], rule: int = 30,
+         model: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """A journal row for the brain's next-visit window, or None when the brain
     has no rhythm to stand on."""
     if not CB.known(b) or not b.get("gap_days"):
@@ -151,7 +157,7 @@ def make(tid: str, sector: str, b: Dict[str, Any], gaps: List[float], made_at: d
     mean_gap = _baseline_mean(gaps)
     expires = (r["next_to"] + timedelta(days=max(EXPIRE_MIN_DAYS, (EXPIRE_FACTOR - 1) * gap)))
     return {
-        "id": str(uuid.uuid4()), "kind": "next_visit", "model": MODEL, "source": source,
+        "id": str(uuid.uuid4()), "kind": "next_visit", "model": model or model_name(b), "source": source,
         "tenant_id": tid, "sector": sector, "customer_id": customer_id,
         "made_at": made_at, "basis_last": last,
         "pred": {"centre": centre, "from": r["next_from"], "to": r["next_to"],
@@ -199,13 +205,28 @@ def record_visit(tid: str, cid: str, brain: Optional[Dict[str, Any]]) -> None:
                 _db.brain_predictions.delete_one({"id": row["id"]})
             else:
                 _db.brain_predictions.update_one({"id": row["id"]}, {"$set": _resolve(row, last)})
-        visits = _db.visits.find({"tenant_id": tid, "customer_id": cid}, {"_id": 0, "visit_time": 1})
-        row = make(tid, _sector(tid), b, _gaps_of(b, visits), datetime.now(timezone.utc), "live", cid,
-                   rule_days(tid))
-        if row:
-            _db.brain_predictions.insert_one(row)
+        visits = list(_db.visits.find({"tenant_id": tid, "customer_id": cid}, CB._VISIT_FIELDS))
+        sector, rule, now = _sector(tid), rule_days(tid), datetime.now(timezone.utc)
+        # the brain in service, and the other one in shadow (user, 2026-10-25):
+        # both guess every visit, the journal judges both
+        for guess in (b, challenger(tid, b, visits)):
+            row = make(tid, sector, guess, _gaps_of(guess, visits), now, "live", cid, rule) if guess else None
+            if row:
+                _db.brain_predictions.insert_one(row)
     except Exception as exc:
         print(f"brain_journal.record_visit failed (non-fatal): {exc}")
+
+
+def challenger(tid: str, served: Dict[str, Any], visits: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The other brain's guess for the same client — v2 only once it has
+    learned its tables."""
+    other = 1 if int(served.get("model") or 1) == 2 else 2
+    if other == 2:
+        from features import brain_v2 as V2
+        if not V2.calibration():
+            return None
+    args = CB.model_args(tid, other)
+    return CB.build(visits, **args)
 
 
 def expire_due(now: Optional[datetime] = None) -> int:
@@ -227,7 +248,7 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
     sector = _sector(tid)
     prior = CB.sector_gap(sector)
     rule = rule_days(tid)
-    _db.brain_predictions.delete_many({"tenant_id": tid, "source": "backtest"})
+    _db.brain_predictions.delete_many({"tenant_id": tid, "source": "backtest", "model": MODEL})
     by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$ne": None}}, CB._VISIT_FIELDS):
         if CB._aware(v.get("visit_time")):
@@ -248,7 +269,7 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
             past = visits[:end + 1]
             at = CB._aware(past[-1]["visit_time"])
             b = CB.build(past, prior, "secteur", at)
-            row = make(tid, sector, b, _gaps_of(b, past), at, "backtest", None, rule)
+            row = make(tid, sector, b, _gaps_of(b, past), at, "backtest", None, rule, model=MODEL)
             if not row:
                 continue
             if k + 1 < len(ends):
@@ -274,7 +295,8 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
 def seed_open(tid: str) -> int:
     """Clients who already have a rhythm get their open live row (the journal
     starts today for them, without waiting for their next scan)."""
-    have = set(_db.brain_predictions.distinct("customer_id", {"tenant_id": tid, "status": "open"}))
+    have = set(_db.brain_predictions.distinct("customer_id", {"tenant_id": tid, "status": "open",
+                                                              "model": f"brain-v{CB.champion()}"}))
     sector = _sector(tid)
     rule = rule_days(tid)
     n = 0
@@ -312,7 +334,13 @@ def backtest_due(budget: int = 1) -> Dict[str, Any]:
 
 
 def tick() -> Dict[str, Any]:
-    return {"expired": expire_due(), "backtest": backtest_due()}
+    from features import brain_v2 as V2
+    out: Dict[str, Any] = {"expired": expire_due(), "backtest": backtest_due()}
+    try:                              # brain-v2 learns its tables once a day
+        out["v2"] = V2.learn_due()
+    except Exception as exc:
+        out["v2_error"] = str(exc)[:120]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -362,9 +390,32 @@ _FIELDS = {"_id": 0, "status": 1, "pred.confidence": 1, "outcome": 1, "sector": 
            "source": 1, "model": 1, "made_at": 1}
 
 
+def compare(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """v1 and v2 side by side, with the two baselines (from v1's rows), and
+    whether v2 has earned the switch: more checked guesses than
+    SWITCH_MIN_ROWS and a smaller median error than BOTH v1 and the plain
+    mean (user, 2026-10-24: « v2 tabhi live jab dono ko harayega »)."""
+    by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        by[r.get("model") or MODEL].append(r)
+    v1, v2 = summarise(by.get("brain-v1", [])), summarise(by.get("brain-v2", []))
+    e1, e2, em = v1["brain"]["median_error"], v2["brain"]["median_error"], v1["mean"]["median_error"]
+    reasons = []
+    if v2["checked"] < SWITCH_MIN_ROWS:
+        reasons.append(f"brain-v2 n'a que {v2['checked']} prédictions vérifiées (il en faut {SWITCH_MIN_ROWS}).")
+    if e2 is None or e1 is None or e2 >= e1:
+        reasons.append("brain-v2 ne se trompe pas moins que brain-v1.")
+    if e2 is None or em is None or e2 >= em:
+        reasons.append("brain-v2 ne se trompe pas moins que la moyenne simple.")
+    return {"v1": v1, "v2": v2, "can_switch": not reasons, "why_not": reasons}
+
+
 @router.get("/api/admin/ai/precision")
 def precision(source: str = Query("all"), sector: str = Query(""), tenant: str = Query(""),
-              token_data: TokenData = Depends(require_admin("ai"))):
+              model: str = Query(""), token_data: TokenData = Depends(require_admin("ai"))):
+    from features import brain_v2 as V2
+    champ = f"brain-v{CB.champion(fresh=True)}"
+    model = model if model in ("brain-v1", "brain-v2") else champ
     q: Dict[str, Any] = {"kind": "next_visit"}
     if source in ("live", "backtest"):
         q["source"] = source
@@ -372,7 +423,8 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
         q["sector"] = sector
     if tenant:
         q["tenant_id"] = tenant
-    rows = list(_db.brain_predictions.find(q, _FIELDS))
+    every = list(_db.brain_predictions.find(q, _FIELDS))
+    rows = [r for r in every if (r.get("model") or MODEL) == model]
     by_sector: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     by_month: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for r in rows:
@@ -385,8 +437,13 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
              "at": CB._aware(m.get("at")).isoformat() if CB._aware(m.get("at")) else None,
              "clients": m.get("clients", 0), "resolved": m.get("resolved", 0), "expired": m.get("expired", 0)}
             for m in _db.platform_settings.find({"key": {"$regex": "^brain_backtest:"}}, {"_id": 0})]
+    learned = V2._doc(fresh=True) or {}
     return {
-        "model": MODEL,
+        "model": model, "champion": champ,
+        "compare": compare(every),
+        "learned": ({"at": CB._aware(learned.get("learned_at")).isoformat(), "shops": learned.get("shops"),
+                     "returns": learned.get("returns"), "groups": len((learned.get("calib") or {}).get("buckets") or {})}
+                    if learned.get("learned_at") else None),
         "summary": summarise(rows),
         "sectors": sorted(({"sector": k, **summarise(v)} for k, v in by_sector.items()),
                           key=lambda x: -x["checked"]),
@@ -401,6 +458,38 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
 
 class BacktestIn(BaseModel):
     tenant_id: Optional[str] = None
+
+
+class ChampionIn(BaseModel):
+    model: str
+
+
+@router.post("/api/admin/ai/precision/champion")
+def set_champion(body: ChampionIn, token_data: TokenData = Depends(require_admin("ai"))):
+    """« Passer à brain-v2 » / « Revenir à brain-v1 ». v2 only once it has
+    beaten v1 and the plain mean on the journal; back to v1 at any time.
+    Every client is then re-learned by the new brain (the tick, a few
+    thousand at a time; a profile opened before that is re-learned at once)."""
+    from fastapi import HTTPException
+    if body.model not in ("brain-v1", "brain-v2"):
+        raise HTTPException(status_code=400, detail="Modèle inconnu.")
+    if body.model == "brain-v2":
+        c = compare(list(_db.brain_predictions.find({"kind": "next_visit"}, _FIELDS)))
+        if not c["can_switch"]:
+            raise HTTPException(status_code=409, detail=" ".join(c["why_not"]))
+    value = 2 if body.model == "brain-v2" else 1
+    _db.platform_settings.update_one({"key": "brain_champion"}, {"$set": {
+        "key": "brain_champion", "value": value, "at": datetime.now(timezone.utc),
+        "by": getattr(token_data, "email", None)}}, upsert=True)
+    CB.champion(fresh=True)
+    return {"champion": body.model}
+
+
+@router.post("/api/admin/ai/precision/learn")
+def relearn(token_data: TokenData = Depends(require_admin("ai"))):
+    """« Réapprendre brain-v2 »: its tables, and its backtest, now."""
+    from features import brain_v2 as V2
+    return V2.learn()
 
 
 @router.post("/api/admin/ai/precision/backtest")
