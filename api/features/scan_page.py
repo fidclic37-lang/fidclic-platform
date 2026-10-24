@@ -181,6 +181,14 @@ def applicables(tenant_id: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> Li
     return out
 
 
+def _habit(tid: str, cust: Dict[str, Any]) -> Optional[str]:
+    from features import client_brain as CB
+    b = cust.get("brain")
+    if not b or b.get("v") != CB.VERSION:
+        b = CB.refresh(tid, cust.get("id")) or {}
+    return CB.caisse_line(b)
+
+
 @router.get("/api/owner/scan/card")
 def card(barcode: str = Query(..., min_length=2, max_length=64),
          token_data: TokenData = Depends(require_role(TILL))):
@@ -205,6 +213,8 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
             "name": cust.get("name") or "", "phone": cust.get("phone") or "",
             "email": cust.get("email") or "", "since": _iso(cust.get("created_at")),
             "visits": int(cust.get("visits") or 0),
+            # one line for the staff (FidClic IA, 2026-10-24): « D'habitude : Coupe + Barbe · ~25 € · … »
+            "habit": _habit(token_data.tenant_id, cust),
         },
         "balance": _balance(cust, tpl, token_data.tenant_id),
         "applicables": applicables(token_data.tenant_id, cust, tpl),

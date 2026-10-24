@@ -1011,7 +1011,7 @@ export default function ClientsPage() {
                           {/* the name opens what they bought (user, 2026-10-15); « En pause » beside it */}
                           <span className="flex items-center gap-1.5">
                             <button type="button" onClick={(e) => { e.stopPropagation(); setEditing({ kind: 'purchases', id: r.id }); }}
-                                    title="Voir l'historique d'achats"
+                                    title="Voir son profil et ses achats"
                                     translate="no" className="notranslate block max-w-full truncate text-left text-[13.5px] font-semibold text-[#0B1C3F] hover:text-[#2F6BFF] hover:underline">{r.name}</button>
                             {r.paused && (
                               <span title="Aucun message ne lui est envoyé ; sa carte fonctionne en caisse."
@@ -1078,7 +1078,7 @@ export default function ClientsPage() {
                                   {r.brought_by.at ? ` le ${new Date(r.brought_by.at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}
                                 </span>
                               )}
-                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'purchases', id: r.id }); }}
+                              <button type="button" onClick={() => { setMenuFor(null); setEditing({ kind: 'purchases', id: r.id, tab: 'achats' }); }}
                                       className="px-3 py-2 text-left text-[12.5px] font-semibold text-[#334155] hover:bg-[#F4F7FC]">
                                 Historique d&apos;achats
                               </button>
@@ -1193,7 +1193,7 @@ export default function ClientsPage() {
                     onSaved={(m) => { setEditing(null); setFlash(m); load(); loadMeta(); }} />
       )}
       {editing?.kind === 'purchases' && (
-        <ClientPurchases clientId={editing.id} onClose={() => setEditing(null)} />
+        <ClientPurchases clientId={editing.id} initialTab={editing.tab || 'profil'} onClose={() => setEditing(null)} />
       )}
       {editing?.kind === 'readd' && (
         <CardReaddModal customerId={editing.id} onClose={() => { setEditing(null); load(); }} />

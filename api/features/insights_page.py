@@ -1047,6 +1047,24 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
                 "segment": "all",
                 "audience": {"label": cust.get("name") or "Ce client", "hint": "Un seul client",
                              "ids": [cust["id"]]}}
+    # « Offre suggérée » of the Profil client panel (FidClic IA, 2026-10-24): the
+    # words the client brain picked for that one client; the owner edits, sends.
+    if key.startswith("brain:"):
+        from features import client_brain as CB
+        cust = next((c for c in shop.people if c.get("id") == key[6:]), None)
+        if not cust:
+            raise HTTPException(status_code=404, detail="Client introuvable")
+        b = cust.get("brain")
+        if not b or b.get("v") != CB.VERSION:
+            b = CB.refresh(tid, cust["id"]) or {}
+        r = CB.rythme(b, shop.at)
+        offer = CB.suggest(tid, cust, b, r, CB.profil(b, cust.get("created_at"), shop.at, r), shop.at)
+        if not offer.get("message"):
+            raise HTTPException(status_code=404, detail="Rien à envoyer à ce client pour l'instant.")
+        return {"key": key, "title": offer["title"][:50], "message": offer["message"][:160],
+                "segment": "all",
+                "audience": {"label": cust.get("name") or "Ce client", "hint": "Un seul client",
+                             "ids": [cust["id"]]}}
     # A product to put forward (the dashboard's « Créer une offre », 2026-10-23):
     # the composer opens on step 1, the offer, for the owner to set the discount.
     if key.startswith("produit:"):

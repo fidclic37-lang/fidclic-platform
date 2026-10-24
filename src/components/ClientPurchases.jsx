@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { X, Loader2, ShoppingBag, Store } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import ClientProfile from './ClientProfile';
 
 /* « Historique d'achats » of one client (user, 2026-10-15): every visit, newest
    first — the day and the hour (Paris), the establishment, what was taken
    from the catalogue with quantities, the amount, and the tampons / points
-   the card got. Totals on top: visits, spent, average basket. */
+   the card got. Totals on top: visits, spent, average basket.
+   It opens on « Profil » (FidClic IA, 2026-10-24): what the visits say about
+   the client; « Historique d'achats » is the tab beside it. */
 
 const TZ = 'Europe/Paris';
 const eur = (n) => `${new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n ?? 0)} €`;
@@ -17,11 +20,12 @@ const day = (iso) => {
 const hour = (iso) => (iso ? new Date(iso).toLocaleTimeString('fr-FR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) : '');
 const shortDay = (iso) => (iso ? new Date(iso).toLocaleDateString('fr-FR', { timeZone: TZ }) : '—');
 
-export default function ClientPurchases({ clientId, onClose }) {
+export default function ClientPurchases({ clientId, onClose, initialTab = 'profil' }) {
   const [d, setD] = useState(null);
   const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState(initialTab);
 
   useEffect(() => {
     let alive = true;
@@ -48,17 +52,31 @@ export default function ClientPurchases({ clientId, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-[#0B1C3F]/30" onClick={onClose}>
-      <aside role="dialog" aria-modal="true" aria-label="Historique d'achats" onClick={(e) => e.stopPropagation()}
+      <aside role="dialog" aria-modal="true" aria-label={tab === 'profil' ? 'Profil client' : "Historique d'achats"} onClick={(e) => e.stopPropagation()}
              className="flex h-full w-full max-w-[560px] flex-col bg-white shadow-[0_40px_90px_-30px_rgba(11,28,63,.6)]">
         <header className="flex items-start justify-between gap-3 border-b border-[#EEF3FB] px-6 py-5">
           <div className="min-w-0">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#64748B]">Historique d&apos;achats</p>
+            <p className="text-[12px] font-semibold uppercase tracking-[0.04em] text-[#64748B]">{tab === 'profil' ? 'Profil client' : <>Historique d&apos;achats</>}</p>
             <h2 translate="no" className="notranslate truncate text-[19px] font-bold text-[#0B1C3F]">{d?.client?.name || '…'}</h2>
             {d?.client?.barcode_id && <p className="text-[12px] text-[#94A3B8]">{d.client.barcode_id}</p>}
           </div>
           <button type="button" onClick={onClose} aria-label="Fermer"
                   className="flex h-9 w-9 items-center justify-center rounded-lg text-[#64748B] hover:bg-[#F4F7FC]"><X size={18} /></button>
         </header>
+
+        <div role="tablist" className="flex gap-1 border-b border-[#EEF3FB] px-6">
+          {[['profil', 'Profil'], ['achats', "Historique d'achats"]].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+                    className={`-mb-px border-b-2 px-3 py-2.5 text-[13px] font-semibold ${tab === k ? 'border-[#2F6BFF] text-[#2F6BFF]' : 'border-transparent text-[#64748B] hover:text-[#0B1C3F]'}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'profil' && (
+          <div className="flex-1 overflow-y-auto px-6 py-4"><ClientProfile clientId={clientId} /></div>
+        )}
+        {tab === 'achats' && (<>
 
         {d && (
           <div className="grid grid-cols-3 gap-3 border-b border-[#EEF3FB] px-6 py-4" data-testid="purchase-totals">
@@ -127,6 +145,7 @@ export default function ClientPurchases({ clientId, onClose }) {
                     className="rounded-lg border border-[#E2E8F0] px-3 py-1.5 font-semibold text-[#334155] disabled:opacity-40">Plus anciens</button>
           </footer>
         )}
+        </>)}
       </aside>
     </div>
   );

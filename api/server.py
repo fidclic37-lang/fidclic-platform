@@ -5476,6 +5476,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     except Exception as _e:
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
 
+    # FidClic IA learns from this visit at once: habits, rhythm, next visit
+    # (features/client_brain). Never stops a scan.
+    try:
+        from features import client_brain as _CB
+        _CB.refresh(token_data.tenant_id, cid)
+    except Exception as _e:
+        print(f"scan_visit: client brain not refreshed (non-fatal): {_e}")
+
     # The visit exists now, so the card counts it: what the till chose is
     # handed over against the figures of AFTER this visit.
     applied = _apply_to_visit(req.apply, token_data, cust, req.branch_id) if req.apply else None
@@ -12178,6 +12186,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
                                **_CE.run_due(max_send=40, budget_s=15)}
     except Exception as e:
         out["failures"].append({"step": "crm_mail", "error": str(e)[:120]})
+    try:                         # FidClic IA: older clients get their brain, a few thousand a tick
+        from features import client_brain as _CB
+        out["client_brain"] = _CB.ensure_all()
+    except Exception as e:
+        out["failures"].append({"step": "client_brain", "error": str(e)[:120]})
     return out
 
 

@@ -202,6 +202,7 @@ def _segment_people(tid: str, key: str, at: datetime, mine: Optional[set]) -> Li
         doc = _db.saved_segments.find_one({"id": key[4:], "tenant_id": tid}, {"_id": 0})
         if not doc:
             raise HTTPException(status_code=400, detail="Ce segment n'existe plus.")
+        SEG.learn(tid, SEG._rules_of(doc))
         return SEG.evaluate(tid, SEG._rules_of(doc), _people(tid, mine), at=at)
     raise HTTPException(status_code=400, detail=f"Segment inconnu : {key}")
 

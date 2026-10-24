@@ -58,6 +58,7 @@ from pydantic import BaseModel
 from auth import require_role
 from models import TokenData
 from features import store_scope as S
+from features import client_brain as CB
 
 # Segmentation is read and used by the owner, administrateurs and managers —
 # each counting the clients of the establishments it may see. Segments are
@@ -150,6 +151,59 @@ FIELDS: List[Dict[str, Any]] = [
         "type": "days", "unit": "jours",
         "ops": [{"key": "gt", "label": "il y a plus de", "short": "il y a plus de"},
                 {"key": "lt", "label": "il y a moins de", "short": "il y a moins de"}],
+    },
+    # What FidClic IA learned from each client's own visits (features/client_brain,
+    # user 2026-10-24: rythme, prochaine visite, produit préféré, jour et créneau
+    # habituels, « and whatever else is important »). A client with too few
+    # visits for a habit matches none of these — never a guessed one.
+    {
+        "key": "rythme", "label": "Rythme de visite", "icon": "calendar",
+        "type": "choice", "unit": "", "brain": True,
+        "choices": [{"key": k, "label": v} for k, v in CB.RYTHMES.items()],
+        "note": "Son retard se mesure à SON rythme habituel (3 visites au moins), pas à un nombre de jours fixe.",
+        "ops": [{"key": "eq", "label": "est", "short": ""}],
+    },
+    {
+        "key": "next_visit", "label": "Prochaine visite prévue", "icon": "calendar",
+        "type": "days", "unit": "jours", "brain": True,
+        "note": "D'après son rythme. Un client déjà en retard n'a plus de visite prévue : choisissez « Rythme de visite ».",
+        "ops": [{"key": "lt", "label": "dans moins de", "short": "dans moins de"},
+                {"key": "gt", "label": "dans plus de", "short": "dans plus de"}],
+    },
+    {
+        "key": "produit", "label": "Produit / service", "icon": "cart",
+        "type": "choice", "unit": "", "brain": True, "dynamic": True, "choices": [],
+        "note": "Seuls les passages enregistrés avec le catalogue sont comptés.",
+        "ops": [{"key": "eq", "label": "son préféré est", "short": "préféré :"},
+                {"key": "has", "label": "a déjà pris", "short": "déjà pris :"},
+                {"key": "never", "label": "n'a jamais pris", "short": "jamais pris :"}],
+    },
+    {
+        "key": "jour", "label": "Jour habituel", "icon": "calendar",
+        "type": "choice", "unit": "", "brain": True,
+        "choices": [{"key": str(i), "label": d.capitalize()} for i, d in enumerate(CB.WEEKDAYS)],
+        "note": "Le jour d'au moins la moitié de ses visites (3 jours de visite au moins).",
+        "ops": [{"key": "eq", "label": "vient d'habitude le", "short": ""}],
+    },
+    {
+        "key": "creneau", "label": "Créneau habituel", "icon": "calendar",
+        "type": "choice", "unit": "", "brain": True,
+        "choices": [{"key": k, "label": lab[0].upper() + lab[1:]} for k, lab, _, _ in CB.SLOTS],
+        "note": "Le créneau d'au moins la moitié de ses visites (heure de Paris, 3 jours de visite au moins).",
+        "ops": [{"key": "eq", "label": "vient d'habitude", "short": ""}],
+    },
+    {
+        "key": "tendance", "label": "Tendance", "icon": "star",
+        "type": "choice", "unit": "", "brain": True,
+        "choices": [{"key": k, "label": v} for k, v in CB.TENDANCES.items()],
+        "note": "Ses 3 derniers écarts entre deux visites comparés aux précédents (7 visites au moins).",
+        "ops": [{"key": "eq", "label": "est", "short": ""}],
+    },
+    {
+        "key": "profil", "label": "Profil client", "icon": "users",
+        "type": "choice", "unit": "", "brain": True,
+        "choices": [{"key": k, "label": v} for k, v in CB.PROFILS.items()],
+        "ops": [{"key": "eq", "label": "est", "short": ""}],
     },
 ]
 FIELD_BY_KEY = {f["key"]: f for f in FIELDS}
@@ -324,7 +378,12 @@ def _clean_rules(raw: Any) -> List[Dict[str, Any]]:
         if op not in {o["key"] for o in field["ops"]}:
             continue
         value = r.get("value")
-        if field["type"] == "choice":
+        if field.get("dynamic"):
+            # a product of the shop: its catalogue changes, so any name is kept
+            value = str(value or "").strip()[:80]
+            if not value:
+                continue
+        elif field["type"] == "choice":
             if str(value) not in {c["key"] for c in field["choices"]}:
                 continue
             value = str(value)
@@ -385,12 +444,79 @@ def _matches(cust: Dict[str, Any], rule: Dict[str, Any], at: datetime,
             return False               # unknown address is not "within 5 km"
         return distance < value if op == "lt" else distance > value
 
+    if FIELD_BY_KEY[field].get("brain"):
+        return _brain_matches(cust.get("brain"), field, op, value, at, cust)
+
     if field == "tier":
         if value == "non_membre":
             return int(_num(cust.get("visits"))) <= 0
         return str(cust.get("tier") or "bronze").lower() == value
 
     return False
+
+
+def _brain_matches(b: Optional[Dict[str, Any]], field: str, op: str, value: Any,
+                   at: datetime, cust: Dict[str, Any]) -> bool:
+    """A FidClic IA condition. No brain yet, or too few visits for that habit:
+    no match — a habit is never guessed."""
+    if not b or b.get("v") != CB.VERSION:
+        return False
+    enough = CB.known(b)
+    if field == "rythme":
+        return CB.rythme(b, at)["key"] == value
+    if field == "profil":
+        return CB.profil(b, cust.get("created_at"), at) == value
+    if field == "next_visit":
+        r = CB.rythme(b, at)
+        if r["key"] != "a_l_heure":
+            return False
+        days = max(0, int(r.get("next_in_days") or 0))
+        return days < value if op == "lt" else days > value
+    if field == "produit":
+        if op == "eq":
+            return (b.get("top_item") or "").lower() == str(value).lower()
+        taken = {str(i).lower() for i in b.get("items_all") or []}
+        return (str(value).lower() in taken) if op == "has" else (str(value).lower() not in taken)
+    if field == "jour":
+        wd = b.get("weekday") or {}
+        return enough and float(wd.get("share") or 0) >= CB.SLOT_SHARE and str(wd.get("key")) == str(value)
+    if field == "creneau":
+        sl = b.get("slot") or {}
+        return enough and float(sl.get("share") or 0) >= CB.SLOT_SHARE and sl.get("key") == value
+    if field == "tendance":
+        return b.get("trend") == value
+    return False
+
+
+def learn(tid: str, rules: Optional[List[Dict[str, Any]]] = None) -> None:
+    """Clients without a brain get one before a FidClic IA condition reads it."""
+    if rules is None or any(FIELD_BY_KEY.get(r.get("field"), {}).get("brain") for r in rules):
+        try:
+            CB.ensure(tid)
+        except Exception as exc:
+            print(f"segmentation: client brain not filled (non-fatal): {exc}")
+
+
+def fields(tid: str) -> List[Dict[str, Any]]:
+    """The builder's fields, the shop's products filled in (catalogue first,
+    then what was ever recorded on a visit). No product anywhere: no field."""
+    names: List[str] = []
+    try:
+        doc = _db.tenant_catalog.find_one({"tenant_id": tid}, {"_id": 0, "items.name": 1}) or {}
+        names = [str(i.get("name") or "").strip() for i in doc.get("items") or []]
+        seen = _db.customers.distinct("brain.items_all", {"tenant_id": tid, "deleted_at": None})
+        names += [str(n).strip() for n in seen]
+    except Exception:
+        pass
+    uniq = sorted({n for n in names if n}, key=str.lower)[:200]
+    out = []
+    for f in FIELDS:
+        if f.get("dynamic"):
+            if not uniq:
+                continue
+            f = {**f, "choices": [{"key": n, "label": n} for n in uniq]}
+        out.append(f)
+    return out
 
 
 def evaluate(tid: str, rules: List[Dict[str, Any]],
@@ -421,9 +547,11 @@ def describe(rules: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     for r in rules:
         field = FIELD_BY_KEY[r["field"]]
         op = next(o for o in field["ops"] if o["key"] == r["op"])
-        if field["type"] == "choice":
+        if field.get("dynamic"):
+            text = f"{field['label']} : {op['short']} {r['value']}"
+        elif field["type"] == "choice":
             label = next(c["label"] for c in field["choices"] if c["key"] == r["value"])
-            text = f"{field['label']} : {label}"
+            text = f"{field['label']} : {op['short']} {label}".replace(":  ", ": ")
         else:
             n = int(r["value"]) if float(r["value"]).is_integer() else r["value"]
             unit = f" {field['unit']}" if field["unit"] else ""
@@ -568,6 +696,7 @@ def page(request: Request = None, token_data: TokenData = Depends(require_role(R
     at = _now()
     scope = S.resolve(token_data, request)
     mine = S.customer_ids(scope)
+    learn(token_data.tenant_id)
     people = list(_db.customers.find(S.customer_filter(scope), {"_id": 0}))
     total = len(people)
     baskets = [b for b in (_avg_basket(c) for c in people) if b is not None]
@@ -644,7 +773,7 @@ def page(request: Request = None, token_data: TokenData = Depends(require_role(R
         "strip": strip,
         "models": _recommended_models(tid, people, at, distances),
         "segments": sized,
-        "fields": FIELDS,
+        "fields": fields(tid),
         "tips": _tips(sized, total, tid, at, scope),
         "goal": _goal(tid, at, scope),
         "scope": scope.describe(),
@@ -765,6 +894,7 @@ def preview(req: Preview, request: Request = None,
     tid = token_data.tenant_id
     at = _now()
     rules = _clean_rules(req.rules)
+    learn(token_data.tenant_id)
     people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
     matched = evaluate(tid, rules, people, at)
     return {"count": len(matched), "total": len(people),
@@ -812,6 +942,7 @@ def create(req: SegmentIn, request: Request = None,
            "created_by": getattr(token_data, "email", None)}
     _db.saved_segments.insert_one(dict(doc))
     at = _now()
+    learn(token_data.tenant_id)
     people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
     matched = evaluate(tid, rules, people, at=at)
     return {**doc, "count": len(matched), "summary": describe(rules)}
@@ -840,6 +971,7 @@ def update(segment_id: str, req: SegmentIn, request: Request = None,
         patch["description"] = req.description.strip()[:200]
     _db.saved_segments.update_one({"id": segment_id}, {"$set": patch})
     fresh = _db.saved_segments.find_one({"id": segment_id}, {"_id": 0})
+    learn(token_data.tenant_id)
     people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
     return {**fresh, "count": len(evaluate(tid, _rules_of(fresh), people))}
 
@@ -875,6 +1007,7 @@ def members(segment_id: str, request: Request = None,
         _db.saved_segments.update_one({"id": segment_id}, {"$set": {"last_used_at": at}})
 
     # Only the clients of the establishments the caller may see.
+    learn(token_data.tenant_id)
     people = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)), {"_id": 0}))
     matched = evaluate(tid, rules, people, at=at)
     return {

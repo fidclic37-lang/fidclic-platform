@@ -1223,6 +1223,9 @@ const ScanPage = () => {
               <p className="truncate text-[12.5px] text-[#475569]">
                 <b className="text-[#2F6BFF]">{card.balance.value}</b> {card.balance.unit}{card.balance.tier_label ? ` · ${card.balance.tier_label}` : ''}
               </p>
+              {card.customer.habit && (
+                <p className="truncate text-[12px] font-semibold text-[#5B3FD6]" data-testid="client-habit-phone">{card.customer.habit}</p>
+              )}
             </div>
             <button type="button" onClick={scanAgain} aria-label="Scanner une autre carte"
                     className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border border-[#E2E8F0] px-3 text-[13px] font-semibold text-[#334155]">
@@ -1257,6 +1260,12 @@ const ScanPage = () => {
                 {card.customer.phone && <p className="truncate text-[13.5px] text-[#475569]">{card.customer.phone}</p>}
                 {card.customer.email && <p translate="no" className="notranslate truncate text-[13.5px] text-[#475569]">{card.customer.email}</p>}
                 {card.customer.since && <p className="text-[13px] text-[#64748B]">Client depuis le {dayFR(card.customer.since)}</p>}
+                {/* FidClic IA (2026-10-24): what this client usually takes, for the staff */}
+                {card.customer.habit && (
+                  <p className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-lg bg-[#F1EEFF] px-2.5 py-1 text-[12.5px] font-semibold text-[#5B3FD6]" data-testid="client-habit">
+                    <Zap size={13} className="shrink-0" /> <span className="truncate">{card.customer.habit}</span>
+                  </p>
+                )}
               </div>
             </div>
             <div className="sm:border-l sm:border-[#EEF3FB] sm:pl-5">
