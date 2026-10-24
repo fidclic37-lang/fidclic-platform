@@ -61,13 +61,21 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     PRO = auth.create_access_token({"sub": "o@p.fr", "role": "business_owner", "tenant_id": "pro"})
     MAN = auth.create_access_token({"sub": "m@c.fr", "role": "manager", "tenant_id": "t1"})
 
+    def ago(d):
+        """d days ago on the Paris calendar, an hour earlier in the day — never
+        across midnight (the CI ran at 00:32 Paris: « an hour before » was the
+        day before, and « today is their usual day » found nobody)."""
+        t = (now.astimezone(PARIS) - dt.timedelta(days=d)).replace(tzinfo=None)
+        t = t - dt.timedelta(hours=1) if t.hour >= 1 else t.replace(minute=0, second=0, microsecond=0)
+        return t.replace(tzinfo=PARIS).astimezone(dt.timezone.utc)
+
     def client(cid, visit_days_ago, name=None):
         db.customers.insert_one({"id": cid, "tenant_id": "t1", "name": name or f"Client {cid}", "barcode_id": f"FT-{cid}",
                                  "visits": len(visit_days_ago), "created_at": now - dt.timedelta(days=400),
                                  "last_visit_date": now - dt.timedelta(days=min(visit_days_ago)) if visit_days_ago else None})
         for d in visit_days_ago:
             db.visits.insert_one({"tenant_id": "t1", "customer_id": cid, "amount_paid": 8.0,
-                                  "visit_time": now - dt.timedelta(days=d, hours=1)})
+                                  "visit_time": ago(d)})
 
     # en retard: every 7 days, last seen 11 days ago (1.5 × 7 = 10.5)
     for i in range(6):
@@ -170,7 +178,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     r = http("POST", f"/api/owner/autopilot/{wd['id']}/approve", OWN, json={}).json()
     sc = db.campaigns.find_one({"id": r["campaign_id"]})
     check("never a day early: it waits for its day's morning run", r["status"] == "scheduled"
-          and AP._aware(sc["scheduled_for"]).date() == (now + dt.timedelta(days=1)).astimezone(PARIS).date()
+          # tomorrow on the Paris calendar: « now + 24 h » is still today on the 25-hour day (last Sunday of October)
+          and AP._aware(sc["scheduled_for"]).date() == (today + dt.timedelta(days=1)).date()
           and AP._aware(sc["scheduled_for"]).hour == AP.MORNING_UTC, sc.get("scheduled_for"))
 
     print("\nThe exact time, with a cron every 15 min")
