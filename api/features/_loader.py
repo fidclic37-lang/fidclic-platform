@@ -80,6 +80,8 @@ MODULES = [
     # Clients — the page's four figures, its eight quick segments and its
     # paginated table. Sits beside /api/owner/customers, which is untouched.
     "features.clients_page",
+    # FidClic IA « Comprendre »: each client's habits, rhythm and next visit (2026-10-24)
+    "features.client_brain",
     # FidClic IA Copilote — recommendations, growth potential, forecast
     # (history + weather + local events), a 7-day plan with Autopilot, and a chat
     # grounded on the shop's own figures.

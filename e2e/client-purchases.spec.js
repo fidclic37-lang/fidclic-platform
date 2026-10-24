@@ -38,6 +38,9 @@ test('the client name opens what they bought, when, and for how much', async ({ 
   await page.getByPlaceholder('Rechercher un client (nom, email, téléphone…)').fill(`Achat ${stamp}`);
   await page.getByRole('button', { name: `Achat ${stamp}`, exact: true }).click();
 
+  // it opens on « Profil » (FidClic IA, 2026-10-24); the purchases are the tab beside it
+  await expect(page.getByRole('dialog', { name: 'Profil client' })).toBeVisible();
+  await page.getByRole('tab', { name: "Historique d'achats" }).click();
   const panel = page.getByRole('dialog', { name: "Historique d'achats" });
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId('purchase-totals')).toContainText('1');

@@ -151,7 +151,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                                     {"id": "s2", "status": "nouveau", "unread_team": 2, "created_at": ago(1), "last_from": "merchant"},
                                     {"id": "s3", "status": "resolu", "created_at": ago(5), "first_response_at": ago(5) + dt.timedelta(hours=1),
                                      "resolved_at": ago(4), "rating": {"stars": 4, "at": ago(4)}}])
-    db.crm_tasks.insert_many([{"id": "t1", "status": "a_faire", "due_at": ago(1)}, {"id": "t2", "type": "rdv", "status": "a_faire", "due_at": now + dt.timedelta(hours=2)}])
+    # a rendez-vous later TODAY in Paris: « now + 2 h » was tomorrow after 22:00 (CI ran at 23:10)
+    from zoneinfo import ZoneInfo
+    paris_end = now.astimezone(ZoneInfo("Europe/Paris")).replace(hour=23, minute=59, second=0, microsecond=0)
+    rdv_today = min(now + dt.timedelta(hours=2), paris_end.astimezone(dt.timezone.utc))
+    db.crm_tasks.insert_many([{"id": "t1", "status": "a_faire", "due_at": ago(1)}, {"id": "t2", "type": "rdv", "status": "a_faire", "due_at": rdv_today}])
     db.crm_prospects.insert_many([{"id": "p1", "stage": "proposition"}, {"id": "p2", "stage": "contacte"}])
     db.fidclic_invoices.insert_one({"id": "i1", "tenant_id": "A", "paid_at": now - dt.timedelta(minutes=30), "amount_paid": 79.0})
     U._cache.clear()

@@ -83,10 +83,10 @@ def main():
     # ---- the six criteria of the design ------------------------------------------------------
     print("\nLes critères")
     check("the builder offers the mockup's six, the money one split in two (QA R5 F24)",
-          [f["key"] for f in S.FIELDS] ==
+          [f["key"] for f in S.FIELDS if not f.get("brain")] ==
           ["last_visit", "visits", "total_spend", "spend", "distance", "tier", "joined"])
     check("and each names itself plainly",
-          [f["label"] for f in S.FIELDS] ==
+          [f["label"] for f in S.FIELDS if not f.get("brain")] ==
           ["Dernière visite", "Nombre d'achats", "Total dépensé", "Panier moyen",
            "Distance du magasin", "Statut fidélité", "Date d'inscription"])
     check("both money criteria say what they count",

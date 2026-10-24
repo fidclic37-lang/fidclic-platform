@@ -147,6 +147,13 @@ TOP_SILENT_DAYS = 30         # « Meilleur client silencieux »
 
 
 def is_at_risk(cust: Dict[str, Any], at: datetime) -> bool:
+    # The client brain decides as soon as the client has one (user, 2026-10-24:
+    # « brain = décrochent » on every page): their own rhythm, read from their
+    # visits, pulled to the shop's usual rhythm while they have few of them.
+    from features import client_brain as CB
+    told = CB.is_decroche(cust, at)
+    if told is not None:
+        return told
     visits = int(cust.get("visits") or 0)
     first, last = _aware(cust.get("created_at")), _aware(cust.get("last_visit_date"))
     if visits < AT_RISK_MIN_VISITS or not first or not last or last <= first:
@@ -328,7 +335,9 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           "google_removed_at": 1, "google_added_at": 1,
           # the card's meter, apart from visits (QA R5 F22): stamps on the
           # current card, those added by hand and those of a paper card
-          "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1}
+          "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1,
+          # what FidClic IA learned from the visits (features/client_brain)
+          "brain": 1}
 
 
 # Owner, administrateur and manager read the Clients page; each sees the
