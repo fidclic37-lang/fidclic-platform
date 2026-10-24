@@ -64,7 +64,10 @@ def _now() -> str:
 
 
 def _today() -> date:
-    return datetime.now(timezone.utc).date()
+    """Today in Paris — a due date is a French accounting day, not UTC's
+    (from midnight to 2 a.m. they differ)."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Paris")).date()
 
 
 def _audit(*args, **kwargs):

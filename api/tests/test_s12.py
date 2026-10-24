@@ -83,7 +83,7 @@ def build():
 
 def test_s12(db, cab_a):
     r = tok("rousseau@cab.fr")
-    today = date.today()
+    today = AC._today()                      # the agent's day: Paris, whatever the machine's clock zone
 
     print("\nS12 — recording what is missing")
     res = AC.create_request("t1", {"label": "Relevé bancaire juillet",
