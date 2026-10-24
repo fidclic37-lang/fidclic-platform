@@ -68,6 +68,13 @@ def main():
         return {"id": f"{cid}-{at.isoformat()}", "tenant_id": tid, "customer_id": cid, "amount_paid": amount,
                 "visit_time": at}
 
+    # Règles clients › « Client actif »: 45 days for this shop (the café keeps the default 30)
+    from features import customer_rules as RULES
+    rules = RULES.load("t1")
+    next(r for r in rules if r["key"] == "actif")["conditions"][0]["value"] = 45
+    db.customer_status_config.update_one({"tenant_id": "t1"}, {"$set": {"tenant_id": "t1", "rules": rules}}, upsert=True)
+    check("the shop's rule is read", BJ.rule_days("t1") == 45 and BJ.rule_days("t2") == 30)
+
     # ── live: a scan writes the window, the next day judges it ──────────────────
     print("En direct")
     start = now - dt.timedelta(days=30)
@@ -79,8 +86,8 @@ def main():
     rows = list(db.brain_predictions.find({"customer_id": "rahul", "status": "open"}))
     check("a known rhythm leaves one open row, with the client while it waits", len(rows) == 1 and rows[0]["source"] == "live")
     row = rows[0]
-    check("the window and both baselines are kept", row["pred"]["from"] < row["pred"]["centre"] < row["pred"]["to"]
-          and row["baselines"]["mean"] and row["baselines"]["fixed30"])
+    check("the window and both baselines are kept — the shop's own rule (45 days), not a fixed 30", row["pred"]["from"] < row["pred"]["centre"] < row["pred"]["to"]
+          and row["baselines"]["mean"] and row["baselines"]["rule_days"] == 45)
     check("features hold numbers only — no name, no product", "name" not in str(row["features"]).lower()
           and row["features"]["visits_n"] == 3 and row["features"]["n_gaps"] == 2)
     # a second scan the same day: remade, not judged
@@ -98,7 +105,7 @@ def main():
     check("… and the client's id leaves the row", done["customer_id"] is None)
     check("real gap 10 days, error measured for the brain and the baselines",
           abs(done["outcome"]["actual_gap"] - 10) < 0.1 and done["outcome"]["error_mean"] == 0.0
-          and abs(done["outcome"]["error_fixed30"] + 20) < 0.1 and done["outcome"]["error_days"] is not None)
+          and abs(done["outcome"]["error_rule"] + 35) < 0.1 and done["outcome"]["error_days"] is not None)
     check("a new open row waits for the visit after", db.brain_predictions.count_documents(
         {"customer_id": "rahul", "status": "open"}) == 1)
 
@@ -151,7 +158,7 @@ def main():
     check("200", r.status_code == 200)
     check("judged and not-returned counted", d["summary"]["checked"] >= 4 and d["summary"]["not_returned"] >= 2)
     check("brain against the plain mean and the 30-day rule",
-          all(k in d["summary"] for k in ("brain", "mean", "fixed30")) and d["summary"]["in_window"] is not None)
+          all(k in d["summary"] for k in ("brain", "mean", "rule")) and d["summary"]["in_window"] is not None)
     check("calibration buckets", d["summary"]["calibration"] and all("real" in c for c in d["summary"]["calibration"]))
     check("by sector", {x["sector"] for x in d["sectors"]} >= {"salon", "cafe"})
     lb = http("GET", "/api/admin/ai/precision", headers=BOSS, params={"source": "backtest", "sector": "cafe"}).json()

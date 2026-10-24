@@ -5,9 +5,10 @@ import { Breadcrumb, Loading, useToast, downloadBlob } from '../../crm/ui';
 import { AiTabs } from './shared';
 
 /* FIDCLIC AI › Précision (user, 2026-10-25): what the client brain predicted
-   for each client's next visit, and what really happened — against the two
-   rules a shop would otherwise use. Super admin only; the rows are anonymous
-   once their outcome is known (features/brain_journal.py). */
+   for each client's next visit, and what really happened — against the plain
+   mean of the client's gaps and the shop's own « Client actif » rule. Super
+   admin only; the rows are anonymous once their outcome is known
+   (features/brain_journal.py). */
 
 const SECTORS = { cafe: 'Café', bakery: 'Boulangerie', bar: 'Bar', pizzeria: 'Pizzeria', restaurant: 'Restaurant',
   retail: 'Commerce', salon: 'Salon / barbier', spa: 'Spa / institut', gym: 'Salle de sport', other: 'Autre' };
@@ -55,7 +56,7 @@ export default function AiPrecisionPage() {
       <h1 className="text-[28px] font-bold leading-tight text-[#0B1C3F]">Précision de FidClic IA</h1>
       <p className="mb-3 text-[15px] text-[#475569]">
         Ce que le cerveau client a prédit pour la prochaine visite de chaque client, et ce qui s&apos;est vraiment passé —
-        comparé à la moyenne simple de ses écarts et à la règle fixe des {d.rules.fixed_days} jours.
+        comparé à la moyenne simple de ses écarts et à la règle « Client actif » de chaque boutique (Règles clients ; 30 jours si elle n&apos;a rien réglé).
       </p>
       <AiTabs />
 
@@ -93,9 +94,9 @@ export default function AiPrecisionPage() {
             <Card testid="precision-window" label="Dans la fourchette annoncée" value={pct(s.in_window)} tone="#2F6BFF"
                   sub="le client est revenu entre les deux dates" />
             <Card testid="precision-error" label="Erreur médiane" value={days(s.brain.median_error)} tone={better ? '#0F7A45' : '#B42318'}
-                  sub={`moyenne simple ${days(s.mean.median_error)} · règle ${d.rules.fixed_days} j ${days(s.fixed30.median_error)}`} />
+                  sub={`moyenne simple ${days(s.mean.median_error)} · règle boutique ${days(s.rule.median_error)}`} />
             <Card testid="precision-near" label={`À ±${d.rules.near_days} jours`} value={pct(s.brain.near)}
-                  sub={`moyenne simple ${pct(s.mean.near)} · règle ${d.rules.fixed_days} j ${pct(s.fixed30.near)}`} />
+                  sub={`moyenne simple ${pct(s.mean.near)} · règle boutique ${pct(s.rule.near)}`} />
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-2">

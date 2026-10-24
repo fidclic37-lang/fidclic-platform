@@ -15,9 +15,10 @@ outcome. Three uses:
 WHAT IS LOGGED (kind « next_visit »)
     When a scan leaves a client with a known rhythm (client_brain.known), the
     brain's window for the next visit: centre, from, to, confidence. Beside it,
-    two baselines a shop or a simple tool would use — the plain mean of the
-    client's gaps, and the fixed « 30 jours » rule — so every figure on the
-    page says « better or worse than what exists ».
+    two baselines — the plain mean of the client's gaps, and the shop's OWN
+    rule (Règles clients › « Client actif », 30 days when never set; user,
+    2026-10-25: « dukaan ka apna rule use karo ») — so every figure on the
+    page says « better or worse than what the shop already uses ».
 
 THE OUTCOME
     · the client's next visit on another Paris day resolves it: real date,
@@ -59,7 +60,6 @@ from features import client_brain as CB
 from features.platform_access import require_admin
 
 MODEL = f"brain-v{CB.VERSION}"
-FIXED_RULE_DAYS = 30          # « inactif après 30 jours », the rule most tools ship with
 EXPIRE_FACTOR = 3             # no visit by 3 × the rhythm …
 EXPIRE_MIN_DAYS = 60          # … and at least 60 days after the window: « non revenu »
 NEAR_DAYS = 7                 # « à ±7 jours », the same yardstick for the brain and the baselines
@@ -83,6 +83,15 @@ def init(db):
 def _paris_day(d: Optional[datetime]):
     d = CB._aware(d)
     return d.astimezone(CB.PARIS).date() if d else None
+
+
+def rule_days(tid: str) -> int:
+    """The shop's own « Client actif » window (features/customer_rules)."""
+    try:
+        from features import customer_rules as R
+        return int(R.active_days(R.load(tid)))
+    except Exception:
+        return 30
 
 
 def _sector(tid: str) -> str:
@@ -130,7 +139,7 @@ def _gaps_of(b: Dict[str, Any], visits: Iterable[Dict[str, Any]]) -> List[float]
 
 
 def make(tid: str, sector: str, b: Dict[str, Any], gaps: List[float], made_at: datetime,
-         source: str, customer_id: Optional[str]) -> Optional[Dict[str, Any]]:
+         source: str, customer_id: Optional[str], rule: int = 30) -> Optional[Dict[str, Any]]:
     """A journal row for the brain's next-visit window, or None when the brain
     has no rhythm to stand on."""
     if not CB.known(b) or not b.get("gap_days"):
@@ -149,7 +158,7 @@ def make(tid: str, sector: str, b: Dict[str, Any], gaps: List[float], made_at: d
                  "gap_days": gap, "confidence": b.get("confidence")},
         "baselines": {
             "mean": (last + timedelta(days=mean_gap)) if mean_gap else None,
-            "fixed30": last + timedelta(days=FIXED_RULE_DAYS),
+            "rule": last + timedelta(days=rule), "rule_days": rule,
         },
         "features": features(b, made_at),
         "status": "open", "expires_at": expires,
@@ -166,7 +175,7 @@ def _resolve(row: Dict[str, Any], actual: datetime) -> Dict[str, Any]:
                         "actual_gap": round(CB._days(CB._aware(row["basis_last"]), actual), 1),
                         "in_window": CB._aware(p["from"]) <= actual <= CB._aware(p["to"]),
                         "error_days": err(p["centre"]),
-                        "error_mean": err(base.get("mean")), "error_fixed30": err(base.get("fixed30"))}}
+                        "error_mean": err(base.get("mean")), "error_rule": err(base.get("rule"))}}
 
 
 def _expire(row: Dict[str, Any], now: datetime) -> Dict[str, Any]:
@@ -191,7 +200,8 @@ def record_visit(tid: str, cid: str, brain: Optional[Dict[str, Any]]) -> None:
             else:
                 _db.brain_predictions.update_one({"id": row["id"]}, {"$set": _resolve(row, last)})
         visits = _db.visits.find({"tenant_id": tid, "customer_id": cid}, {"_id": 0, "visit_time": 1})
-        row = make(tid, _sector(tid), b, _gaps_of(b, visits), datetime.now(timezone.utc), "live", cid)
+        row = make(tid, _sector(tid), b, _gaps_of(b, visits), datetime.now(timezone.utc), "live", cid,
+                   rule_days(tid))
         if row:
             _db.brain_predictions.insert_one(row)
     except Exception as exc:
@@ -216,6 +226,7 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
     now = now or datetime.now(timezone.utc)
     sector = _sector(tid)
     prior = CB.sector_gap(sector)
+    rule = rule_days(tid)
     _db.brain_predictions.delete_many({"tenant_id": tid, "source": "backtest"})
     by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$ne": None}}, CB._VISIT_FIELDS):
@@ -237,7 +248,7 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
             past = visits[:end + 1]
             at = CB._aware(past[-1]["visit_time"])
             b = CB.build(past, prior, "secteur", at)
-            row = make(tid, sector, b, _gaps_of(b, past), at, "backtest", None)
+            row = make(tid, sector, b, _gaps_of(b, past), at, "backtest", None, rule)
             if not row:
                 continue
             if k + 1 < len(ends):
@@ -265,6 +276,7 @@ def seed_open(tid: str) -> int:
     starts today for them, without waiting for their next scan)."""
     have = set(_db.brain_predictions.distinct("customer_id", {"tenant_id": tid, "status": "open"}))
     sector = _sector(tid)
+    rule = rule_days(tid)
     n = 0
     for c in _db.customers.find({"tenant_id": tid, "deleted_at": None, "brain.v": CB.VERSION,
                                  "brain.n_gaps": {"$gte": CB.RHYTHM_MIN_VISITS - 1}},
@@ -272,7 +284,8 @@ def seed_open(tid: str) -> int:
         if c["id"] in have:
             continue
         visits = _db.visits.find({"tenant_id": tid, "customer_id": c["id"]}, {"_id": 0, "visit_time": 1})
-        row = make(tid, sector, c["brain"], _gaps_of(c["brain"], visits), datetime.now(timezone.utc), "live", c["id"])
+        row = make(tid, sector, c["brain"], _gaps_of(c["brain"], visits), datetime.now(timezone.utc), "live",
+                   c["id"], rule)
         if row:
             _db.brain_predictions.insert_one(row)
             n += 1
@@ -338,8 +351,8 @@ def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "brain": {"median_error": _mae(errs), "near": _near(errs)},
         "mean": {"median_error": _mae([(r.get("outcome") or {}).get("error_mean") for r in done]),
                  "near": _near([(r.get("outcome") or {}).get("error_mean") for r in done])},
-        "fixed30": {"median_error": _mae([(r.get("outcome") or {}).get("error_fixed30") for r in done]),
-                    "near": _near([(r.get("outcome") or {}).get("error_fixed30") for r in done])},
+        "rule": {"median_error": _mae([(r.get("outcome") or {}).get("error_rule") for r in done]),
+                 "near": _near([(r.get("outcome") or {}).get("error_rule") for r in done])},
         "came_late": _pct(len(late), len([e for e in errs if e is not None])),
         "calibration": calib,
     }
@@ -381,7 +394,7 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
         "tenants": sorted(({"id": t, "name": names.get(t, t)} for t in {r.get("tenant_id") for r in rows} if t),
                           key=lambda x: str(x["name"]).lower()),
         "runs": sorted(runs, key=lambda x: x["tenant"].lower()),
-        "rules": {"near_days": NEAR_DAYS, "fixed_days": FIXED_RULE_DAYS,
+        "rules": {"near_days": NEAR_DAYS,
                   "expire": f"{EXPIRE_FACTOR} × son rythme, au moins {EXPIRE_MIN_DAYS} jours après la fourchette"},
     }
 
@@ -405,7 +418,7 @@ def run_backtest(body: BacktestIn, token_data: TokenData = Depends(require_admin
 def export(token_data: TokenData = Depends(require_admin("ai"))):
     """Every checked row, anonymous: the training set, and the journal's proof."""
     cols = ["model", "source", "sector", "made_at", "status", "returned", "in_window", "actual_gap",
-            "pred_gap", "confidence", "error_days", "error_mean", "error_fixed30"]
+            "pred_gap", "confidence", "error_days", "error_mean", "error_rule", "rule_days"]
     fcols: List[str] = list(features({}, datetime.now(timezone.utc)).keys())
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
@@ -417,6 +430,6 @@ def export(token_data: TokenData = Depends(require_admin("ai"))):
         w.writerow([r.get("model"), r.get("source"), r.get("sector"), made.date().isoformat() if made else "",
                     r.get("status"), o.get("returned"), o.get("in_window"), o.get("actual_gap"),
                     p.get("gap_days"), p.get("confidence"), o.get("error_days"), o.get("error_mean"),
-                    o.get("error_fixed30")] + [f.get(c) for c in fcols])
+                    o.get("error_rule"), (r.get("baselines") or {}).get("rule_days")] + [f.get(c) for c in fcols])
     return Response(content="﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="fidclic-ia-journal.csv"'})
