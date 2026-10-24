@@ -78,6 +78,18 @@ def main():
     st = state()
     check("the last-day reminder is still reported (its banner has no cross)",
           st["reminder_window"] is True and st["is_expired"] is False)
+    # its very last day — « se termine aujourd'hui » — is the reminder too
+    # (2026-10-24: days_left 0 fell outside the window and the banner vanished)
+    from zoneinfo import ZoneInfo
+    paris = ZoneInfo("Europe/Paris")
+    p_now = datetime.now(timezone.utc).astimezone(paris)
+    end_today = min(p_now.replace(hour=23, minute=59, second=0, microsecond=0), p_now + timedelta(minutes=30)) \
+        if p_now.hour < 23 or p_now.minute < 30 else p_now + timedelta(minutes=10)
+    if end_today.date() == p_now.date():
+        db.tenants.update_one({"id": "t1"}, {"$set": {"trial_ends_at": end_today.astimezone(timezone.utc)}})
+        st = state()
+        check(f"the last day (days_left {st['days_left']}): the reminder, not nothing",
+              st["days_left"] == 0 and st["reminder_window"] is True and st["is_expired"] is False)
     db.tenants.update_one({"id": "t1"}, {"$set": {"trial_ends_at": now - timedelta(hours=2)}})
     check("an expired trial is still reported", state()["is_expired"] is True)
 
