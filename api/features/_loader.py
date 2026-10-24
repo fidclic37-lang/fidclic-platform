@@ -82,6 +82,8 @@ MODULES = [
     "features.clients_page",
     # FidClic IA « Comprendre »: each client's habits, rhythm and next visit (2026-10-24)
     "features.client_brain",
+    # what FidClic IA predicted, and what really happened (2026-10-25)
+    "features.brain_journal",
     # FidClic IA Copilote — recommendations, growth potential, forecast
     # (history + weather + local events), a 7-day plan with Autopilot, and a chat
     # grounded on the shop's own figures.

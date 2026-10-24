@@ -5479,8 +5479,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # FidClic IA learns from this visit at once: habits, rhythm, next visit
     # (features/client_brain). Never stops a scan.
     try:
-        from features import client_brain as _CB
-        _CB.refresh(token_data.tenant_id, cid)
+        from features import client_brain as _CB, brain_journal as _BJ
+        _BJ.record_visit(token_data.tenant_id, cid, _CB.refresh(token_data.tenant_id, cid))
     except Exception as _e:
         print(f"scan_visit: client brain not refreshed (non-fatal): {_e}")
 
@@ -12191,6 +12191,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["client_brain"] = _CB.ensure_all()
     except Exception as e:
         out["failures"].append({"step": "client_brain", "error": str(e)[:120]})
+    try:                         # the prediction journal: « non revenu » rows, one shop's backtest
+        from features import brain_journal as _BJ
+        out["brain_journal"] = _BJ.tick()
+    except Exception as e:
+        out["failures"].append({"step": "brain_journal", "error": str(e)[:120]})
     return out
 
 
