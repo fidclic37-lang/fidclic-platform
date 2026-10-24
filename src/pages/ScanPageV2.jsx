@@ -248,6 +248,9 @@ const ScanPage = () => {
   const [threshold, setThreshold] = useState(10);
   const [barcode, setBarcode] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
+  // an amount the till can't record — « -1 », … — is said under the field and
+  // stops « Suivant », not only the final save (QA R7, 2026-10-18)
+  const [amountErr, setAmountErr] = useState(null);
   // « -1 » is refused, said and kept on screen (QA F20) — nothing saves meanwhile
   const [amountError, setAmountError] = useState(null);
   // Live points rule from this tenant's card template.
@@ -989,7 +992,11 @@ const ScanPage = () => {
   });
   const panelTotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
 
-  const resetVisit = () => { setPicked({}); setApply(''); setManual(false); setAmountPaid(''); setPaperStamps(''); setPaperOn(false); };
+  const resetVisit = () => { setPicked({}); setApply(''); setManual(false); setAmountPaid(''); setAmountErr(null); setPaperStamps(''); setPaperOn(false); };
+  const amountProblem = amountErr
+    || (manual && amountPaid !== '' && !/^\d+(\.\d{1,2})?$/.test(amountPaid) ? 'Montant invalide : un nombre positif, par exemple 12,50.' : null);
+  // what the field says: DecimalInput's own word first (a minus), else the format check
+  const amountIssue = amountProblem || typedAmountError || null;
   // The visit just recorded (user, 2026-10-13: « visit ek baar record ho gyi toh
   // waapis kyun de rhe ho option »): from then on the page is its summary —
   // no form, no second « Enregistrer la visite » for the same scan (it made a
@@ -1394,17 +1401,19 @@ const ScanPage = () => {
                 <p className="text-[13.5px] font-semibold text-[#334155]">Montant payé</p>
                 <div className="mt-1 flex items-stretch overflow-hidden rounded-xl border border-[#E2E8F0]">
                   <span className="flex w-12 items-center justify-center border-r border-[#E2E8F0] text-[#64748B]"><Euro size={16} /></span>
-                  <input value={shownAmount} placeholder="0,00" inputMode="decimal" aria-invalid={Boolean(typedAmountError)}
-                         aria-describedby={typedAmountError ? 'amount-error' : undefined}
-                         onChange={(e) => { setManual(true); setAmountPaid(e.target.value.replace(',', '.')); }}
-                         className="w-full px-4 py-3 text-[16px] font-semibold text-[#0B1C3F] outline-none" />
+                  {/* letters never get in; a minus stays on screen and is explained (DecimalInput) */}
+                  <DecimalInput value={shownAmount} placeholder="0,00" aria-label="Montant payé"
+                                aria-invalid={amountIssue ? 'true' : undefined}
+                                aria-describedby={amountIssue ? 'amount-error' : undefined}
+                                onChange={(v) => { setManual(true); setAmountPaid(v); }} onInvalid={setAmountErr}
+                                className="w-full px-4 py-3 text-[16px] font-semibold text-[#0B1C3F] outline-none" />
                 </div>
-                {typedAmountError && <p id="amount-error" role="alert" className="mt-1 text-[12.5px] font-medium text-[#C0392B]">{typedAmountError}</p>}
+                {amountIssue && <p id="amount-error" role="alert" className="mt-1 text-[12.5px] font-medium text-[#C0392B]">{amountIssue}</p>}
                 {discount > 0 && !manual && (
                   <p className="mt-1 text-[12.5px] text-[#0F7A45]">{money(linesTotal)} − {money(discount)} d'offre appliquée.</p>
                 )}
                 {manual && (
-                  <button type="button" onClick={() => { setManual(false); setAmountPaid(''); }}
+                  <button type="button" onClick={() => { setManual(false); setAmountPaid(''); setAmountErr(null); }}
                           className="mt-1 text-[12.5px] font-semibold text-[#2F6BFF]">Revenir au montant du catalogue</button>
                 )}
               </div>
@@ -1435,7 +1444,7 @@ const ScanPage = () => {
               </div>
             </div>
 
-            <button type="button" disabled={paperTooMany || Boolean(typedAmountError)}
+            <button type="button" disabled={paperTooMany || !!amountIssue}
                     onClick={() => { setStatus(null); setStep('review'); }}
                     className="mt-5 hidden w-full items-center justify-center gap-2 rounded-xl bg-[#1463FF] py-3.5 text-[15px] font-semibold text-white disabled:opacity-50 sm:inline-flex">
               Suivant <ArrowRight size={17} />
@@ -1530,7 +1539,7 @@ const ScanPage = () => {
                 <p className="text-[18px] font-extrabold leading-tight tabular-nums text-[#0B1C3F]">{money(payNow)}</p>
               </div>
               {step === 'items' ? (
-                <button type="button" disabled={paperTooMany || Boolean(typedAmountError)} onClick={() => { setStatus(null); setStep('review'); }}
+                <button type="button" disabled={paperTooMany || !!amountIssue} onClick={() => { setStatus(null); setStep('review'); }}
                         className="ml-auto flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1463FF] text-[15px] font-semibold text-white disabled:opacity-50">
                   Suivant <ArrowRight size={18} />
                 </button>

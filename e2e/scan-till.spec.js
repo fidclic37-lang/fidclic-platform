@@ -74,11 +74,11 @@ test.describe.serial('the till records a visit', () => {
     // both lines are on the page at a glance, not hidden in a dropdown
     await expect(page.getByText('Coupe femme')).toBeVisible();
     await expect(page.getByText('Brushing')).toBeVisible();
-    await expect(page.getByPlaceholder('0,00')).toHaveValue('95.00');
+    await expect(page.getByPlaceholder('0,00')).toHaveValue(/^95[.,]00$/);
 
     // removing everything brings it back to nothing
     await page.getByRole('button', { name: 'Retirer Coupe femme' }).click();
-    await expect(page.getByPlaceholder('0,00')).toHaveValue('50.00');
+    await expect(page.getByPlaceholder('0,00')).toHaveValue(/^50[.,]00$/);
     expect(errors, `page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 
@@ -109,7 +109,7 @@ test.describe.serial('the till records a visit', () => {
     await expect(review.getByText('Offre / Récompense')).toBeVisible();
     // « Retour » keeps what was picked
     await review.getByRole('button', { name: /Retour/ }).click();
-    await expect(page.getByPlaceholder('0,00')).toHaveValue('70.00');
+    await expect(page.getByPlaceholder('0,00')).toHaveValue(/^70[.,]00$/);
     await page.getByRole('button', { name: /Suivant/ }).click();
     await page.getByRole('button', { name: 'Enregistrer la visite' }).click();
     await expect(page.getByTestId('visit-summary')).toBeVisible({ timeout: 15_000 });
