@@ -83,6 +83,26 @@ SECTOR_GAP: Dict[str, float] = {
     "restaurant": 21, "retail": 30, "salon": 35, "spa": 42, "other": 21,
 }
 DEFAULT_GAP = 21.0
+# The sector names shops really carry (the demo and older shops use French or
+# finer words — « boulangerie », « barbier », « opticien ») read as the keys
+# above. brain-v2 only: v1 is kept exactly as it shipped, so the journal
+# compares like with like.
+SECTOR_ALIASES: Dict[str, str] = {
+    "boulangerie": "bakery", "patisserie": "bakery", "pâtisserie": "bakery", "boulangerie-patisserie": "bakery",
+    "café": "cafe", "coffee": "cafe", "coffee shop": "cafe", "salon de thé": "cafe", "tea salon": "cafe",
+    "juice bar": "cafe", "glacier": "cafe",
+    "brasserie": "restaurant", "crêperie": "restaurant", "creperie": "restaurant", "sushi": "restaurant",
+    "kebab": "restaurant", "burger": "restaurant", "traiteur": "restaurant",
+    "wine bar": "bar", "pub": "bar", "bar à vin": "bar",
+    "coiffeur": "salon", "coiffure": "salon", "barbier": "salon", "barber": "salon", "hair salon": "salon",
+    "salon de coiffure": "salon",
+    "institut": "spa", "institut de beauté": "spa", "esthétique": "spa", "beauté": "spa", "massage": "spa",
+    "onglerie": "spa",
+    "salle de sport": "gym", "fitness": "gym", "yoga": "gym", "dance": "gym", "danse": "gym", "crossfit": "gym",
+    "fleuriste": "retail", "florist": "retail", "opticien": "retail", "optician": "retail", "librairie": "retail",
+    "book store": "retail", "chocolatier": "retail", "cbd": "retail", "tabac": "retail", "épicerie": "retail",
+    "boutique": "retail", "commerce": "retail",
+}
 
 WEEKDAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 SLOTS = [  # key, label, first hour, last hour (exclusive)
@@ -180,6 +200,52 @@ def sector_gap(sector: Optional[str]) -> float:
     return float(SECTOR_GAP.get(str(sector or "").strip().lower(), DEFAULT_GAP))
 
 
+def sector_key(sector: Optional[str]) -> str:
+    """The sector as one of SECTOR_GAP's keys (« boulangerie » → bakery)."""
+    s = str(sector or "").strip().lower()
+    return s if s in SECTOR_GAP else SECTOR_ALIASES.get(s, "other")
+
+
+# ---------------------------------------------------------------------------
+# which brain is in service (user, 2026-10-25: v2 in shadow until the super
+# admin switches, on Précision, once it beats v1 and the plain mean)
+# ---------------------------------------------------------------------------
+_champion_cache: List[Any] = [0.0, 1]
+CHAMPION_TTL_S = 60
+
+
+def champion(fresh: bool = False) -> int:
+    now = datetime.now(timezone.utc).timestamp()
+    if not fresh and now - _champion_cache[0] < CHAMPION_TTL_S:
+        return _champion_cache[1]
+    try:
+        doc = _db.platform_settings.find_one({"key": "brain_champion"}, {"_id": 0, "value": 1}) or {}
+        model = 2 if int(doc.get("value") or 1) == 2 else 1
+    except Exception:
+        model = 1
+    _champion_cache[:] = [now, model]
+    return model
+
+
+def current(b: Optional[Dict[str, Any]]) -> bool:
+    """A stored brain of this version, made by the brain in service."""
+    return bool(b) and b.get("v") == VERSION and int(b.get("model") or 1) == champion()
+
+
+def prior_for(tid: str, model: int) -> Tuple[float, str]:
+    """The usual rhythm a client is pulled to: the shop's own once it has
+    enough regulars; before that v1 the sector's fixed figure, v2 what the
+    whole network learned for that sector (features/brain_v2)."""
+    if model == 2:
+        own = usual_gap(tid)
+        if own[1] == "boutique":
+            return own
+        from features import brain_v2 as V2
+        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1}) or {}
+        return V2.sector_prior(tenant.get("sector"))
+    return usual_gap(tid)
+
+
 _usual_cache: Dict[str, Tuple[float, Tuple[float, str]]] = {}
 USUAL_TTL_S = 600            # a scan does not re-read every client's rhythm
 
@@ -211,11 +277,16 @@ def usual_gap(tid: str, fresh: bool = False) -> Tuple[float, str]:
 # the brain of one client, from their visits
 # ---------------------------------------------------------------------------
 def build(visits: Iterable[Dict[str, Any]], prior_gap: float, prior_source: str = "secteur",
-          at: Optional[datetime] = None) -> Dict[str, Any]:
-    """Everything the visits say about one client. Pure: no database."""
+          at: Optional[datetime] = None, model: int = 1,
+          calib: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Everything the visits say about one client. Pure: no database.
+
+    model 2 (brain-v2) adds the window learned from the journal: `calib` is
+    brain_v2's table of how far real returns fall from the rhythm, for
+    clients like this one; the window then holds 7 returns in 10."""
     at = at or datetime.now(timezone.utc)
     rows = sorted((v for v in visits if _aware(v.get("visit_time"))), key=lambda v: _aware(v["visit_time"]))
-    out: Dict[str, Any] = {"v": VERSION, "at": at, "visits_n": len(rows),
+    out: Dict[str, Any] = {"v": VERSION, "model": model, "at": at, "visits_n": len(rows),
                            "prior_gap": float(prior_gap), "prior_source": prior_source}
     if not rows:
         return out
@@ -244,6 +315,14 @@ def build(visits: Iterable[Dict[str, Any]], prior_gap: float, prior_source: str 
         # 0–95 %: more gaps → surer; more irregular → less sure
         conf = (1 - 0.6 * min(cv, 1.0)) * (1 - math.exp(-n / 3.0))
         out["confidence"] = max(5, min(95, _round5(100 * conf)))
+        if model == 2 and calib:
+            from features import brain_v2 as V2
+            w = V2.window_for(calib, n, out["cv"])
+            if w:
+                out["win"] = {"lo": w["lo"], "mid": w["mid"], "hi": w["hi"], "bucket": w["bucket"]}
+                if w.get("coverage") is not None:
+                    out["confidence"] = int(w["coverage"])      # measured on shops it never saw
+                out["conf_rows"] = w.get("rows")
     if len(gaps) >= TREND_MIN_GAPS:
         late, early = median(gaps[-3:]), median(gaps[:-3])
         out["recent_gap"], out["earlier_gap"] = round(late, 1), round(early, 1)
@@ -321,10 +400,21 @@ def rythme(brain: Optional[Dict[str, Any]], at: Optional[datetime] = None) -> Di
         return {"key": "trop_tot", "label": RYTHMES["trop_tot"]}
     spread = float(b.get("spread_days") or 1)
     silent = _days(last, at)
-    lo = last + timedelta(days=max(1.0, gap - spread))
-    hi = last + timedelta(days=gap + spread)
+    win = b.get("win")
+    if win:
+        # brain-v2: the window the journal taught — 7 real returns in 10 fall inside
+        centre = gap * float(win["mid"])
+        # no « at least a day » floor here: a bakery's regulars are often back
+        # the next morning, less than 24 h later — the floor cut them out
+        lo = last + timedelta(days=gap * float(win["lo"]))
+        hi = last + timedelta(days=max(gap * float(win["hi"]), 0.5))
+        spread = max(_days(last, hi) - centre, 1.0)
+    else:
+        centre = gap
+        lo = last + timedelta(days=max(1.0, gap - spread))
+        hi = last + timedelta(days=gap + spread)
     out = {"silent_days": int(silent), "next_from": lo, "next_to": hi,
-           "next_in_days": int(math.floor(_days(at, last + timedelta(days=gap))))}
+           "next_in_days": int(math.floor(_days(at, last + timedelta(days=centre))))}
     from features import clients_page as CP
     if (silent > max(2 * gap, gap + spread) and silent > CP.AT_RISK_SILENT_DAYS
             and n_visits >= CP.AT_RISK_MIN_VISITS):
@@ -386,12 +476,36 @@ def caisse_line(brain: Optional[Dict[str, Any]]) -> Optional[str]:
 _VISIT_FIELDS = {"_id": 0, "customer_id": 1, "visit_time": 1, "amount_paid": 1, "items": 1, "branch_id": 1}
 
 
+def _stale() -> List[Dict[str, Any]]:
+    """No brain, an older version, or made by the brain no longer in service
+    (a switch v1 ↔ v2 re-learns every client, a few thousand per tick)."""
+    out: List[Dict[str, Any]] = [{"brain": {"$exists": False}}, {"brain.v": {"$ne": VERSION}}]
+    if champion() == 2:
+        out.append({"brain.model": {"$ne": 2}})
+    else:
+        out.append({"brain.model": 2})
+    return out
+
+
+def model_args(tid: str, model: int) -> Dict[str, Any]:
+    """What build() needs for this model: its prior, and v2's learned window."""
+    prior = prior_for(tid, model)
+    out: Dict[str, Any] = {"prior_gap": prior[0], "prior_source": prior[1], "model": model}
+    if model == 2:
+        from features import brain_v2 as V2
+        out["calib"] = V2.calibration()
+    return out
+
+
 def refresh(tid: str, cid: str, prior: Optional[Tuple[float, str]] = None) -> Optional[Dict[str, Any]]:
-    """Re-learn one client from all their visits (after a scan). Never raises."""
+    """Re-learn one client from all their visits (after a scan), with the
+    brain in service. Never raises."""
     try:
-        prior = prior or usual_gap(tid)
+        args = model_args(tid, champion())
+        if prior:
+            args.update(prior_gap=prior[0], prior_source=prior[1])
         visits = list(_db.visits.find({"tenant_id": tid, "customer_id": cid}, _VISIT_FIELDS))
-        brain = build(visits, prior[0], prior[1])
+        brain = build(visits, **args)
         _db.customers.update_one({"tenant_id": tid, "id": cid}, {"$set": {"brain": brain}})
         return brain
     except Exception as exc:
@@ -402,21 +516,20 @@ def refresh(tid: str, cid: str, prior: Optional[Tuple[float, str]] = None) -> Op
 def ensure(tid: str, ids: Optional[List[str]] = None, limit: int = 2000) -> int:
     """Fill the brain of clients who have none (or an older version), in one
     pass over their visits. Returns how many were written."""
-    q: Dict[str, Any] = {"tenant_id": tid, "deleted_at": None,
-                         "$or": [{"brain": {"$exists": False}}, {"brain.v": {"$ne": VERSION}}]}
+    q: Dict[str, Any] = {"tenant_id": tid, "deleted_at": None, "$or": _stale()}
     if ids is not None:
         q["id"] = {"$in": list(ids)}
     todo = [c["id"] for c in _db.customers.find(q, {"_id": 0, "id": 1}).limit(limit)]
     if not todo:
         return 0
-    prior = usual_gap(tid)
+    args = model_args(tid, champion())
     by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$in": todo}}, _VISIT_FIELDS):
         by[v["customer_id"]].append(v)
     at = datetime.now(timezone.utc)
     for cid in todo:
         _db.customers.update_one({"tenant_id": tid, "id": cid},
-                                 {"$set": {"brain": build(by.get(cid, []), prior[0], prior[1], at)}})
+                                 {"$set": {"brain": build(by.get(cid, []), at=at, **args)}})
     return len(todo)
 
 
@@ -424,8 +537,7 @@ def ensure_all(budget: int = 3000) -> Dict[str, int]:
     """The tick: older clients get their brain a few thousand at a time."""
     done: Dict[str, int] = {}
     left = budget
-    tids = _db.customers.distinct("tenant_id", {"deleted_at": None, "$or": [
-        {"brain": {"$exists": False}}, {"brain.v": {"$ne": VERSION}}]})
+    tids = _db.customers.distinct("tenant_id", {"deleted_at": None, "$or": _stale()})
     for tid in tids:
         if left <= 0:
             break
@@ -501,7 +613,8 @@ def suggest(tid: str, cust: Dict[str, Any], brain: Dict[str, Any], r: Dict[str, 
     top = b.get("top_item")
     gap = float(b.get("gap_days") or 0)
     prior = float(b.get("prior_gap") or DEFAULT_GAP)
-    where = "vos clients" if b.get("prior_source") == "boutique" else "les clients de votre secteur"
+    where = {"boutique": "vos clients", "reseau": "les clients des commerces de votre secteur"}.get(
+        b.get("prior_source") or "", "les clients de votre secteur")
 
     if prof == "jamais":
         d = int(_days(_aware(cust.get("created_at")) or at, at))
@@ -636,14 +749,27 @@ def payload(tid: str, cust: Dict[str, Any], brain: Dict[str, Any],
         "store": stores.get(store) if len(stores) > 1 and store else None,
         "offer": {**offer, "template": f"brain:{cust.get('id')}" if offer.get("message") else None},
         "caisse": caisse_line(b),
-        "how": ("Calculé à partir de ses passages en caisse, sans IA générative. Son rythme est le "
-                "rythme médian de ses derniers passages, rapproché du rythme habituel "
-                f"{'de vos clients' if b.get('prior_source') == 'boutique' else 'de votre secteur'} "
-                f"({_when(float(b.get('prior_gap') or DEFAULT_GAP))}) tant qu'il a peu de visites. "
-                "La prochaine visite est une fourchette ; la confiance monte avec le nombre de visites "
-                "et baisse si ses passages sont irréguliers."),
+        "how": how(b),
         "updated_at": iso(b.get("at")),
     }
+
+
+_USUAL_FROM = {"boutique": "de vos clients", "reseau": "des commerces de votre secteur sur FidClic",
+               "secteur": "de votre secteur"}
+
+
+def how(b: Dict[str, Any]) -> str:
+    """« Comment c'est calculé ? » — said for the brain that made this profile."""
+    usual = _USUAL_FROM.get(b.get("prior_source") or "secteur", "de votre secteur")
+    text = ("Calculé à partir de ses passages en caisse, sans IA générative. Son rythme est le rythme "
+            f"médian de ses derniers passages, rapproché du rythme habituel {usual} "
+            f"({_when(float(b.get('prior_gap') or DEFAULT_GAP))}) tant qu'il a peu de visites. ")
+    if b.get("win"):
+        return text + ("La fourchette est apprise sur les vrais retours des clients qui lui ressemblent : "
+                       "7 sur 10 reviennent dedans. La confiance est mesurée sur des commerces que le modèle "
+                       "n'a pas vus en apprenant.")
+    return text + ("La prochaine visite est une fourchette ; la confiance monte avec le nombre de visites "
+                   "et baisse si ses passages sont irréguliers.")
 
 
 @router.get("/api/owner/clients/{customer_id}/profil")
@@ -652,6 +778,6 @@ def get_profil(customer_id: str, request: Request = None,
     from features import customer_edit as CE
     cust = CE._customer(token_data, request, customer_id)
     b = cust.get("brain")
-    if not b or b.get("v") != VERSION:
+    if not current(b):
         b = refresh(token_data.tenant_id, customer_id) or {}
     return payload(token_data.tenant_id, cust, b)

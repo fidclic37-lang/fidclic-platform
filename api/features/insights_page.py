@@ -1055,7 +1055,7 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
         if not cust:
             raise HTTPException(status_code=404, detail="Client introuvable")
         b = cust.get("brain")
-        if not b or b.get("v") != CB.VERSION:
+        if not CB.current(b):
             b = CB.refresh(tid, cust["id"]) or {}
         r = CB.rythme(b, shop.at)
         offer = CB.suggest(tid, cust, b, r, CB.profil(b, cust.get("created_at"), shop.at, r), shop.at)

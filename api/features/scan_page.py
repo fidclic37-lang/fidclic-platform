@@ -184,7 +184,7 @@ def applicables(tenant_id: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> Li
 def _habit(tid: str, cust: Dict[str, Any]) -> Optional[str]:
     from features import client_brain as CB
     b = cust.get("brain")
-    if not b or b.get("v") != CB.VERSION:
+    if not CB.current(b):
         b = CB.refresh(tid, cust.get("id")) or {}
     return CB.caisse_line(b)
 

@@ -155,7 +155,7 @@ def main():
     print("Précision (super admin)")
     r = http("GET", "/api/admin/ai/precision", headers=BOSS)
     d = r.json()
-    check("200", r.status_code == 200)
+    check("200", r.status_code == 200 or print(r.status_code, r.text[-600:]))
     check("judged and not-returned counted", d["summary"]["checked"] >= 4 and d["summary"]["not_returned"] >= 2)
     check("brain against the plain mean and the 30-day rule",
           all(k in d["summary"] for k in ("brain", "mean", "rule")) and d["summary"]["in_window"] is not None)
