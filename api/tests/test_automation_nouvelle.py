@@ -452,7 +452,9 @@ def main():
     pas = GA.for_pass(cust("g1"), now)
     check("the Wallet pass of a new client carries the address and its rayon",
           pas and pas["automation_id"] == gid and pas["spots"] == [VENUE] and pas["radius"] == 300)
-    db.automations.update_one({"id": gid}, {"$set": {"trigger.days": "weekend" if now.weekday() < 5 else "weekdays"}})
+    # the shop's weekday is Paris's, not UTC's (from midnight to 2 a.m. they differ)
+    paris_wd = dt.datetime.now(UTC).astimezone(__import__("zoneinfo").ZoneInfo("Europe/Paris")).weekday()
+    db.automations.update_one({"id": gid}, {"$set": {"trigger.days": "weekend" if paris_wd < 5 else "weekdays"}})
     pushed.clear()
     ping("g1", VENUE[0], VENUE[1])
     check("outside its days (semaine / week-end): nothing", not mine("g1"))

@@ -3309,7 +3309,9 @@ def _compute_trial_state(tenant: Dict[str, Any]) -> Dict[str, Any]:
             days_left = min(days_left, 0)
 
     reminder_days = int(features.get("trial_reminder_days_before", TRIAL_REMINDER_DAYS_BEFORE))
-    in_reminder = (days_left is not None and 0 < days_left <= reminder_days)
+    # the last day (days_left 0, « se termine aujourd'hui ») is the reminder's
+    # most urgent day, not outside it (2026-10-24: the banner vanished on it)
+    in_reminder = (days_left is not None and not is_expired and 0 <= days_left <= reminder_days)
 
     return {
         "is_in_trial": status == "trialing" and not is_expired,
