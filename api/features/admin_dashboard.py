@@ -14,7 +14,7 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
 
@@ -637,9 +637,11 @@ def _todo(now: datetime, tenants: List[Dict[str, Any]], token_data: TokenData) -
     if _can(token_data, "crm"):
         overdue = sum(1 for t in _db.crm_tasks.find({"status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
                       if _aware(t.get("due_at")) and _aware(t["due_at"]) < now)
-        day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # today in Paris, not in UTC (2026-10-24: from midnight to 2 a.m. the
+        # « rendez-vous du jour » were yesterday's)
+        day0, day1 = _paris_day(now)
         rdv = sum(1 for t in _db.crm_tasks.find({"type": "rdv", "status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
-                  if _aware(t.get("due_at")) and day0 <= _aware(t["due_at"]) < day0 + timedelta(days=1))
+                  if _aware(t.get("due_at")) and day0 <= _aware(t["due_at"]) < day1)
         items.append({"key": "crm_retard", "label": "Tâches CRM en retard", "count": overdue, "icon": "list", "tone": "amber", "action": {"href": "/admin/crm/taches"}})
         items.append({"key": "crm_rdv", "label": "Rendez-vous prospects aujourd'hui", "count": rdv, "icon": "calendar", "tone": "blue", "action": {"href": "/admin/crm/calendrier"}})
     return items
@@ -702,6 +704,16 @@ def _crm_summary(now: datetime) -> Dict[str, Any]:
     overdue = sum(1 for t in _db.crm_tasks.find({"status": {"$ne": "terminee"}}, {"_id": 0, "due_at": 1})
                   if _aware(t.get("due_at")) and _aware(t["due_at"]) < now)
     return {"active": active, "proposals": proposals, "signed_month": signed, "forecast": forecast, "rdv_7j": rdv, "overdue": overdue}
+
+
+def _paris_day(at: datetime) -> Tuple[datetime, datetime]:
+    """[start, end) of this day in Paris, as UTC instants (a DST day is 23 or 25 h)."""
+    from zoneinfo import ZoneInfo
+    paris = ZoneInfo("Europe/Paris")
+    d = at.astimezone(paris).date()
+    start = datetime(d.year, d.month, d.day, tzinfo=paris)
+    end = datetime.fromordinal(d.toordinal() + 1).replace(tzinfo=paris)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 @router.get("/api/admin/dashboard/today")

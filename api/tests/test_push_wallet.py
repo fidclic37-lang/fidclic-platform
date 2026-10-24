@@ -42,6 +42,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         email, role, tenant_id = "b@b.fr", "business_owner", "t2"
 
     now = dt.datetime.now(dt.timezone.utc)
+    # a birthday is a day in Paris (from midnight to 2 a.m. UTC's day is yesterday)
+    paris_now = now.astimezone(__import__("zoneinfo").ZoneInfo("Europe/Paris"))
+    today_md = paris_now.strftime("%m-%d")
     db.tenants.insert_one({"id": "t1", "slug": "petit-cafe", "name": "Le Petit Café"})
     db.tenants.insert_one({"id": "t2", "slug": "rival", "name": "Rival"})
 
@@ -83,7 +86,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # ---- the cast -----------------------------------------------------------
     PEOPLE = [
         # id,   name,        birthday, tier,     last visit (days ago)
-        ("c1", "Marie Dupont",  now.strftime("%m-%d"), "bronze", 1),
+        ("c1", "Marie Dupont",  today_md, "bronze", 1),
         ("c2", "Paul Martin",   "01-01",               "gold",   2),
         ("c3", "Sophie Nguyen", "01-02",               "silver", 20),
         ("c4", "Karim Chebbi",  "01-03",               "bronze", 45),
@@ -96,7 +99,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         for cid, name, bday, tier, ago in PEOPLE
     ])
     db.customers.insert_one({"id": "x1", "tenant_id": "t2", "name": "Rival Client",
-                             "barcode_id": "FT-X1", "birthday": now.strftime("%m-%d"),
+                             "barcode_id": "FT-X1", "birthday": today_md,
                              "tier": "bronze", "last_visit_date": now - dt.timedelta(days=90)})
 
     def fire(key, at=None):
@@ -163,15 +166,15 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # ---- date triggers ---------------------------------------------------------
     print("\nDate triggers fire on their date and stay quiet otherwise")
     row = db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "special_offer"})
-    db.push_scenarios.update_one({"id": row["id"]}, {"$set": {"config": {"day_of_month": now.day}}})
+    db.push_scenarios.update_one({"id": row["id"]}, {"$set": {"config": {"day_of_month": paris_now.day}}})
     check("the monthly offer fires on its day", fire("special_offer")["targeted"] == 5)
     db.push_scenarios.update_one({"id": row["id"]},
-                                 {"$set": {"config": {"day_of_month": (now.day % 28) + 1}}})
+                                 {"$set": {"config": {"day_of_month": (paris_now.day % 28) + 1}}})
     check("and not on any other day", fire("special_offer")["targeted"] == 0)
 
     ev = db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "special_event"})
     db.push_scenarios.update_one({"id": ev["id"]},
-                                 {"$set": {"config": {"date": now.date().isoformat()}}})
+                                 {"$set": {"config": {"date": paris_now.date().isoformat()}}})
     check("a specific date fires on itself", fire("special_event")["targeted"] == 5)
     db.push_scenarios.update_one({"id": ev["id"]}, {"$set": {"config": {"date": "2030-01-01"}}})
     check("a future date stays quiet", fire("special_event")["targeted"] == 0)
@@ -225,7 +228,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.customers.update_many({"tenant_id": "t1"}, {"$unset": {"last_card_open_at": ""}})
     fire("special_offer") if False else None
     db.push_scenarios.update_one({"tenant_id": "t1", "builtin": "special_offer"},
-                                 {"$set": {"config": {"day_of_month": now.day}}})
+                                 {"$set": {"config": {"day_of_month": paris_now.day}}})
     fire("special_offer")
     logs = list(db.push_wallet_log.find({"tenant_id": "t1"}))
     check("every send is logged once", len(logs) == 5)

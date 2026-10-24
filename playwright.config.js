@@ -6,6 +6,11 @@
 //   Local Chrome instead of the bundled Chromium: PW_CHANNEL=chrome npm run e2e
 import { defineConfig } from '@playwright/test';
 
+// Paris time for the specs and the browser (2026-10-24): CI runs in UTC, and
+// from midnight to 2 a.m. in Paris a spec's « today » was yesterday — the
+// shop's day, its sales, its birthdays are Paris days. Workers inherit TZ.
+process.env.TZ = 'Europe/Paris';
+
 const PORT = Number(process.env.E2E_PORT || 8790);
 const PY = process.env.PYTHON || 'python3';
 
@@ -18,6 +23,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
+    timezoneId: 'Europe/Paris',
     baseURL: `http://localhost:${PORT}`,
     viewport: { width: 390, height: 844 },          // a phone — customers are on phones
     locale: 'fr-FR',
