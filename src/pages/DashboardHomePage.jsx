@@ -14,6 +14,7 @@ import TrendChart from '../components/TrendChart';
 import DecimalInput from '../components/DecimalInput';
 import { eur } from '../lib/money';
 import CampaignLists from '../components/dashboard/CampaignLists';
+import IaSpotted from '../components/dashboard/IaSpotted';
 import CampaignDetail from '../components/campagnes/CampaignDetail';
 
 /**
@@ -590,6 +591,9 @@ export default function DashboardHomePage() {
           )}
         </Panel>
       </div>
+
+      {/* FidClic IA « a repéré » (2026-10-25) */}
+      <IaSpotted />
 
       {/* recommendations + quick actions */}
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">

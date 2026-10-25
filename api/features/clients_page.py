@@ -64,6 +64,10 @@ SEGMENTS: List[Dict[str, str]] = [
     {"key": "local",     "label": "Clients locaux",       "icon": "pin",    "tone": "blue"},
     {"key": "birthday",  "label": "Anniversaires du mois", "icon": "gift",  "tone": "violet"},
     {"key": "vip",       "label": "VIP",                  "icon": "star",   "tone": "amber"},
+    # FidClic IA « a repéré » (features/brain_detectors, user 2026-10-25)
+    {"key": "en_retard", "label": "Habitués en retard",   "icon": "clock",  "tone": "orange"},
+    {"key": "one_timers", "label": "Pas revenus après la 1ère visite", "icon": "repeat", "tone": "violet"},
+    {"key": "moins_souvent", "label": "Viennent moins souvent", "icon": "trending", "tone": "rose"},
 ]
 
 
@@ -164,6 +168,12 @@ def is_at_risk(cust: Dict[str, Any], at: datetime) -> bool:
 
 
 def is_one_timer(cust: Dict[str, Any], at: datetime) -> bool:
+    # « Pas revenus après la 1ère visite » (user, 2026-10-25: A): one visit, and
+    # since then longer than the shop's usual rhythm × 1.5 (or its « bientôt
+    # perdu », if sooner) but not past its « Client dormant » — brain_detectors.
+    if cust.get("tenant_id"):
+        from features import brain_detectors as BD
+        return BD.is_second_visit_due(cust, at)
     created = _aware(cust.get("created_at"))
     return int(cust.get("visits") or 0) == 1 and bool(created) and (at - created).days <= ONE_TIMER_DAYS
 
@@ -214,11 +224,12 @@ HOME_SEGMENTS = {"loyal_active": "Clients fidélisés (actifs)", "new_active": "
 # Segments a figure of the Tableau de bord — or an alert of the bell — opens,
 # on every plan. « client:<id> » is one client (the bell's best client).
 DRILL_DOWN = {"loyal", "inactive", "new", "loyal_active", "new_active", "occasional", "at_risk", "one_timers",
-              "returning"}
+              "returning", "en_retard", "moins_souvent"}
 # « returning »: Analyses › Fidélisation's « Clients revenus » / « Taux de
 # retour » open their clients (user, 2026-10-21) — 2 visits or more, the
 # same rule as the figure.
-ALERT_SEGMENTS = {"at_risk": "Clients qui décrochent", "one_timers": "Venus une seule fois",
+ALERT_SEGMENTS = {"at_risk": "Clients qui décrochent", "one_timers": "Pas revenus après la 1ère visite",
+                  "en_retard": "Habitués en retard", "moins_souvent": "Viennent moins souvent",
                   "returning": "Clients revenus (2 visites ou plus)"}
 
 
@@ -265,6 +276,9 @@ def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
         return is_at_risk(cust, at)
     if key == "one_timers":
         return is_one_timer(cust, at)
+    if key in ("en_retard", "moins_souvent"):
+        from features import brain_detectors as BD
+        return BD.matches(key, cust, at)
     if key == "returning":
         return int(cust.get("visits") or 0) >= 2
     if key.startswith("client:"):
@@ -336,8 +350,9 @@ FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visi
           # the card's meter, apart from visits (QA R5 F22): stamps on the
           # current card, those added by hand and those of a paper card
           "visits_at_last_redemption": 1, "stamps_adjusted": 1, "paper_stamps": 1,
-          # what FidClic IA learned from the visits (features/client_brain)
-          "brain": 1}
+          # what FidClic IA learned from the visits (features/client_brain);
+          # the shop, for its « 1ère visite » window (features/brain_detectors)
+          "brain": 1, "tenant_id": 1}
 
 
 # Owner, administrateur and manager read the Clients page; each sees the

@@ -703,15 +703,38 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
         out.append({
             "key": "seconde_visite", "category": _category("fidelisation"),
             "title": "Transformez vos nouveaux clients en habitués",
-            "body": f"{len(once)} nouveau{'x' if len(once) > 1 else ''} client"
-                    f"{'s' if len(once) > 1 else ''} ne sont venus qu'une fois. Une offre pour leur "
-                    "deuxième visite les fait revenir.",
+            "body": f"{len(once)} client{'s' if len(once) > 1 else ''} ne "
+                    f"{'sont' if len(once) > 1 else 'est'} pas revenu{'s' if len(once) > 1 else ''} après "
+                    "leur 1ère visite, alors qu'ils auraient dû. Une offre pour la deuxième les fait revenir.",
             "image": "fidelite", "icon": "repeat",
             "impact": _computed(lo, hi, m, f"calculé sur vos {len(once)} nouveaux clients")
                       or _benchmark("+3 à 8% de CA", shop),
             "difficulty": {"label": "Facile", "tone": "green", "filled": 3},
             "cta": {"label": "Leur proposer une offre", "kind": "template",
                     "template": "seconde_visite"},
+            "score": (lo + hi) / 2, "done": False,
+        })
+
+    # FidClic IA « a repéré » (features/brain_detectors, 2026-10-25): late
+    # regulars and slowing regulars, each with the composer written for them
+    from features import brain_detectors as BD
+    for d in BD.detect(shop.tid, shop.people, shop.at):
+        if d["key"] == "one_timers" or not d["count"]:
+            continue
+        who = [c for c in shop.people if c.get("id") in set(d["ids"])]
+        lo, hi = _worth(who, shop.shop_avg, shop.at)
+        late = d["key"] == "en_retard"
+        out.append({
+            "key": f"ia_{d['key']}", "category": _category("fidelisation"),
+            "title": "Relancez vos habitués en retard" if late else "Rattrapez les habitués qui ralentissent",
+            "body": f"{d['count']} habitué{'s' if d['count'] > 1 else ''} "
+                    + ("ont dépassé leur rythme habituel. " if late else "viennent moins souvent qu'avant. ")
+                    + d["why"],
+            "image": "fidelite", "icon": "repeat",
+            "impact": _computed(lo, hi, m, f"calculé sur ces {d['count']} habitués")
+                      or _benchmark("+2 à 6% de CA", shop),
+            "difficulty": {"label": "Facile", "tone": "green", "filled": 2},
+            "cta": {"label": "Préparer le message", "kind": "template", "template": d["template"]},
             "score": (lo + hi) / 2, "done": False,
         })
 
@@ -1065,6 +1088,16 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
                 "segment": "all",
                 "audience": {"label": cust.get("name") or "Ce client", "hint": "Un seul client",
                              "ids": [cust["id"]]}}
+    # FidClic IA « a repéré » (features/brain_detectors): the list's clients,
+    # and words that name each one's usual product ({produit_habituel}).
+    if key.startswith("ia:"):
+        from features import brain_detectors as BD
+        spec = BD.TEMPLATES.get(key[3:])
+        if not spec:
+            raise HTTPException(status_code=404, detail="Modèle introuvable")
+        d = next(x for x in BD.detect(tid, shop.people, shop.at) if x["key"] == key[3:])
+        return {"key": key, "title": spec["title"], "message": spec["message"], "segment": "all",
+                "audience": {"label": d["label"], "hint": "FidClic IA", "ids": d["ids"]}}
     # A product to put forward (the dashboard's « Créer une offre », 2026-10-23):
     # the composer opens on step 1, the offer, for the owner to set the discount.
     if key.startswith("produit:"):

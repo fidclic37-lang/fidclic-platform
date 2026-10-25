@@ -86,6 +86,8 @@ MODULES = [
     "features.brain_journal",
     # brain-v2: learns its window and its sector rhythms from the network (2026-10-25)
     "features.brain_v2",
+    # FidClic IA « a repéré »: late regulars, no 2nd visit, slowing down (2026-10-25)
+    "features.brain_detectors",
     # FidClic IA Copilote — recommendations, growth potential, forecast
     # (history + weather + local events), a 7-day plan with Autopilot, and a chat
     # grounded on the shop's own figures.

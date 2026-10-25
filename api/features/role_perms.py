@@ -82,6 +82,7 @@ BUILTIN_LABELS = {"administrateur": "Administrateur", "manager": "Manager", "sta
 # Which page a request belongs to — the longest matching prefix wins.
 _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/home", "dashboard"), ("/api/owner/monthly-report", "dashboard"),
+    ("/api/owner/brain/detectors", "dashboard"),     # FidClic IA « a repéré » (Tableau de bord)
     ("/api/owner/scan", "scan"), ("/api/owner/rewards", "scan"), ("/api/owner/receipts", "scan"),
     ("/api/owner/card-readd", "scan"), ("/api/owner/offers", "scan"), ("/api/owner/defis/rewards", "scan"),
     ("/api/owner/happy-hour/active-now", "scan"),

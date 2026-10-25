@@ -24,6 +24,8 @@ export const VARIABLES = [
   { key: 'points_manquants', label: 'Points manquants', icon: 'trophy', tone: 'amber' },
   { key: 'points', label: 'Nombre de points', icon: 'star', tone: 'green' },
   { key: 'visites', label: 'Nombre de visites', icon: 'chart', tone: 'violet' },
+  // FidClic IA (2026-10-25): « votre Coupe », or « votre prochaine visite »
+  { key: 'produit_habituel', label: 'Produit habituel', icon: 'gift', tone: 'green' },
 ];
 
 // « Exemples de messages » — by kind, with {variables}

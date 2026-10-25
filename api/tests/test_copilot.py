@@ -67,8 +67,10 @@ def main():
         ("k1", 8, 160.0, 60, 150, 100, False),    # regular gone quiet → at risk (gap 13 d, silent 60)
         ("k2", 6, 60.0, 50, 120, 150, False),     # regular gone quiet → at risk
         ("d1", 3, 45.0, 120, 300, 4, False),      # dormant, birthday this week
-        ("n1", 1, 12.0, 6, 6, 250, True),         # one-timer, student
-        ("n2", 1, 18.0, 10, 10, 280, False),      # one-timer
+        # one visit and not back: a café's clients are due back from day 10.5
+        # (brain_detectors, 2026-10-25 — « pas revenus après la 1ère visite »)
+        ("n1", 1, 12.0, 12, 12, 250, True),       # one-timer, student
+        ("n2", 1, 18.0, 16, 16, 280, False),      # one-timer
         ("z0", 0, 0.0, None, 40, 330, False),     # never bought
     ]
     for cid, visits, spend, last, joined, bday, student in CAST:

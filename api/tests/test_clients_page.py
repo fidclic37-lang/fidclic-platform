@@ -127,9 +127,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     # ---- segments -------------------------------------------------------------
     print("\nThe eight quick segments")
-    check("eight chips, in the design's order",
+    check("eight chips, in the design's order, then FidClic IA's three",
           [s["key"] for s in ov["segments"]]
-          == ["all", "loyal", "inactive", "new", "big", "local", "birthday", "vip"])
+          == ["all", "loyal", "inactive", "new", "big", "local", "birthday", "vip",
+              "en_retard", "one_timers", "moins_souvent"])
     check("they carry the design's labels",
           [s["label"] for s in ov["segments"]][:4]
           == ["Tous les clients", "Clients fidèles", "Clients inactifs", "Nouveaux clients"])

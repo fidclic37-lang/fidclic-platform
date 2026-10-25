@@ -14,6 +14,7 @@ export const TOKENS = {
   'prochaine_récompense': { label: '{prochaine_récompense}', tone: 'rose' },
   points_manquants: { label: '{points_manquants}', tone: 'amber' },
   visites: { label: '{visites}', tone: 'violet' },
+  produit_habituel: { label: '{produit_habituel}', tone: 'green' },
 };
 const TONE = {
   blue: 'background:#E6EEFF;color:#1D4ED8',

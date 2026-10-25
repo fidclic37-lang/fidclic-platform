@@ -16,6 +16,7 @@ export function fillMessage(text, sample, shop) {
     'prénom': s.first_name || 'Sarah', prenom: s.first_name || 'Sarah', nom_commerce: shop || 'votre commerce',
     points: String(s.points ?? 120), 'prochaine_récompense': s.next_reward || 'votre récompense',
     points_manquants: String(s.points_missing ?? 3), visites: String(s.visits ?? 5),
+    produit_habituel: s.usual_product || 'votre Coupe',
   };
   return String(text || '').replace(/\{([a-zéèàù_]+)\}/gi, (m, k) => (k in values ? `\u0001${values[k]}\u0002` : m));
 }
