@@ -10,10 +10,10 @@ nothing else, so the journal can tell which one helped:
 1. THE USUAL RHYTHM COMES FROM THE NETWORK
    A client with few visits is still pulled to a usual rhythm (v1's
    shrinkage), but before the shop has 10 regulars of its own, that rhythm is
-   what FidClic learned from every shop of the same sector — the median
-   rhythm of their regulars — instead of a fixed figure per sector. Sector
-   names are read through client_brain.SECTOR_ALIASES (« boulangerie » is a
-   bakery: v1 gave it 21 days, its clients come every 4).
+   what FidClic learned from every shop of the same ACTIVITY (Barbier, CBD,
+   Opticien… — services/activities) — the median rhythm of their regulars —
+   and, until 30 such regulars exist, the activity's researched figure
+   (a barber 21 days, a « coiffure femme » 56, a tabac 2, an opticien 180).
 
 2. THE WINDOW IS LEARNED, NOT ASSUMED (user: « 10 mein 7 baar sahi »)
    For every past prediction, how far the real return fell from the rhythm,
@@ -153,17 +153,34 @@ def calibration() -> Optional[Dict[str, Any]]:
     return doc.get("calib") if doc else None
 
 
-def sector_prior(sector: Optional[str], priors: Optional[Dict[str, Any]] = None) -> Tuple[float, str]:
-    """The sector's usual rhythm as the network learned it; the fixed figure
-    until PRIOR_MIN_CLIENTS regulars of that sector exist."""
-    key = CB.sector_key(sector)
+def _keys(tenant: Dict[str, Any]) -> Tuple[str, str, bool]:
+    """(activity key, sector key, whether the activity is precise — chosen
+    by the owner or named by the sector — or only the sector's default)."""
+    from services import activities as A
+    act = A.of(tenant)
+    sector = str(tenant.get("sector") or "").strip().lower()
+    precise = (str(tenant.get("activity_key") or "") in A.BY_KEY) or sector in A.ALIASES
+    return act["key"], CB.sector_key(sector), precise
+
+
+def sector_prior(tenant: Any, priors: Optional[Dict[str, Any]] = None) -> Tuple[float, str]:
+    """The usual rhythm a shop starts from (services/activities, user
+    2026-10-25: one per trade, researched):
+        a precise activity (Barbier, CBD, Opticien…): what the network learned
+        for that activity (PRIOR_MIN_CLIENTS regulars), else its researched figure;
+        only a sector: what the network learned for the sector, else the
+        researched figure of the sector's most common trade."""
+    from services import activities as A
+    tenant = tenant if isinstance(tenant, dict) else {"sector": tenant}
+    act, sec, precise = _keys(tenant)
     if priors is None:
         doc = _doc()
         priors = (doc or {}).get("priors") or {}
-    p = priors.get(key)
-    if p and int(p.get("clients") or 0) >= PRIOR_MIN_CLIENTS:
-        return float(p["gap"]), "reseau"
-    return CB.sector_gap(key), "secteur"
+    for key in ((f"a:{act}",) if precise else (f"s:{sec}",)):
+        p = priors.get(key)
+        if p and int(p.get("clients") or 0) >= PRIOR_MIN_CLIENTS:
+            return float(p["gap"]), "reseau"
+    return float(A.BY_KEY[act]["gap"]), "secteur"
 
 
 # ---------------------------------------------------------------------------
@@ -173,12 +190,14 @@ def _histories() -> Dict[str, Dict[str, Any]]:
     """Every shop's visits, grouped by client and sorted, with its sector and
     rule. One read of the visits."""
     out: Dict[str, Dict[str, Any]] = {}
-    sectors = {t["id"]: t.get("sector") for t in _db.tenants.find({}, {"_id": 0, "id": 1, "sector": 1})}
+    tenants = {t["id"]: t for t in _db.tenants.find({}, {"_id": 0, "id": 1, "sector": 1, "activity_key": 1})}
     for v in _db.visits.find({"customer_id": {"$ne": None}}, CB._VISIT_FIELDS | {"tenant_id": 1}):
         t = CB._aware(v.get("visit_time"))
         if not t or not v.get("tenant_id"):
             continue
-        shop = out.setdefault(v["tenant_id"], {"sector": sectors.get(v["tenant_id"]), "clients": defaultdict(list)})
+        t_doc = tenants.get(v["tenant_id"]) or {}
+        shop = out.setdefault(v["tenant_id"], {"sector": t_doc.get("sector"), "tenant": t_doc,
+                                               "clients": defaultdict(list)})
         shop["clients"][v["customer_id"]].append({**v, "visit_time": t})
     for shop in out.values():
         for vs in shop["clients"].values():
@@ -227,17 +246,18 @@ def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
     # 1. the network's usual rhythm, per sector and per shop
     rhythms: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
     for tid, shop in shops.items():
-        key = CB.sector_key(shop["sector"])
+        act, sec, _ = _keys(shop["tenant"] or {"sector": shop["sector"]})
         for vs in shop["clients"].values():
             g = _own_gap(vs)
             if g:
-                rhythms[key][tid].append(g)
+                rhythms[f"a:{act}"][tid].append(g)        # per trade …
+                rhythms[f"s:{sec}"][tid].append(g)        # … and per sector
 
     # 2. replay: every past guess (raw rhythm, the shop's sector rhythm learned
     #    from the other shops), and how far the real return fell from it
     points: List[Dict[str, Any]] = []
     for tid, shop in shops.items():
-        prior = sector_prior(shop["sector"], _priors(rhythms, skip=tid))
+        prior = sector_prior(shop["tenant"] or {"sector": shop["sector"]}, _priors(rhythms, skip=tid))
         rule = BJ.rule_days(tid)
         for vs in shop["clients"].values():
             ends = _day_ends(vs)

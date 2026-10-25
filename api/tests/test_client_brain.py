@@ -190,7 +190,7 @@ def main():
     r = http("GET", "/api/owner/clients/late/profil", headers=H)
     p = r.json()
     check("200", r.status_code == 200)
-    check("status En retard, with late days", p["status"]["key"] == "en_retard" and p["status"]["late_days"] >= 15)
+    check("status En retard, with late days", p["status"]["key"] == "en_retard" and p["status"]["late_days"] >= 13)   # 40 days at 15:10 UTC: 39.x at night
     check("habits: Coupe 6 fois sur 6", p["habits"]["items"][0]["name"] == "Coupe" and p["habits"]["items"][0]["visits"] == 6)
     check("rhythm text and confidence", "jours" in p["rhythm"]["text"] or "semaines" in p["rhythm"]["text"])
     check("next window present", p["next"] and p["next"]["from"] < p["next"]["to"])

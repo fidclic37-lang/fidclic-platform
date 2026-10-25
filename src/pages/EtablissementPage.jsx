@@ -275,6 +275,7 @@ export default function EtablissementPage() {
       if (can.brand) {
         protectNames([biz.name]);      // the new name shows before the store list is read again
         body.business = { name: biz.name, phone: biz.phone, email: biz.email, sector: biz.sector, description: biz.description,
+                          activity_key: biz.activity_key || '',
                           ...(biz.logo_url !== d.business.logo_url ? { logo_url: biz.logo_url } : {}) };
         body.address = { street: addr.street, postal_code: addr.postal_code, city: addr.city,
                          ...(addr.lat != null ? { lat: addr.lat, lng: addr.lng, pin: addr.pin || 'adresse' } : {}) };
@@ -346,13 +347,31 @@ export default function EtablissementPage() {
         <Block n={2} title="Secteur d'activité">
           <label className="block"><Label required>Secteur d'activité</Label>
             <div className="relative">
-              <select className={`${inputCls} appearance-none pr-9`} value={biz.sector} onChange={(e) => setBiz({ ...biz, sector: e.target.value })}>
+              <select className={`${inputCls} appearance-none pr-9`} value={biz.sector}
+                      onChange={(e) => setBiz({ ...biz, sector: e.target.value,
+                        // an activity belongs to one sector: a new sector clears it
+                        activity_key: (d.activities || []).find((a) => a.value === biz.activity_key)?.sector === e.target.value ? biz.activity_key : '' })}>
                 <option value="" disabled>Choisir…</option>
                 {d.sectors.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
               <svg className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0B1C3F" strokeWidth="2.5"><path d="m6 9 6 6 6-6" /></svg>
             </div>
           </label>
+          {/* « Activité précise » (FidClic IA, 2026-10-25): how often a regular of
+              this trade comes back — where the client brain starts for the shop */}
+          {(d.activities || []).some((a) => a.sector === biz.sector) && (
+            <label className="mt-3 block"><Label>Activité précise</Label>
+              <div className="relative">
+                <select aria-label="Activité précise" className={`${inputCls} appearance-none pr-9`} value={biz.activity_key || ''}
+                        onChange={(e) => setBiz({ ...biz, activity_key: e.target.value })}>
+                  <option value="">Non précisée</option>
+                  {(d.activities || []).filter((a) => a.sector === biz.sector).map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                </select>
+                <svg className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0B1C3F" strokeWidth="2.5"><path d="m6 9 6 6 6-6" /></svg>
+              </div>
+              <span className="mt-1 block text-[12px] text-[#64748B]">FidClic IA s&apos;en sert pour savoir à quel rythme vos clients reviennent d&apos;habitude (un barbier n&apos;est pas un coiffeur pour dames).</span>
+            </label>
+          )}
         </Block>
 
         {/* 3 */}
