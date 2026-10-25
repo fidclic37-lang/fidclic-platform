@@ -523,6 +523,23 @@ def _tier_up(old: Optional[str], new: Optional[str]) -> bool:
     return n in TIER_ORDER and TIER_ORDER.index(n) > (TIER_ORDER.index(o) if o in TIER_ORDER else 0)
 
 
+def _usual_product(customer: dict) -> str:
+    """« votre Coupe » — the client brain's usual item when it is a habit (in
+    4 visits in 10 or more, from 2 visits with products); else « votre
+    prochaine visite »."""
+    try:
+        b = customer.get("brain")
+        if b is None and customer.get("id"):
+            b = (db.customers.find_one({"id": customer["id"]}, {"_id": 0, "brain": 1}) or {}).get("brain")
+        from features import client_brain as _CBr
+        top = (b or {}).get("top_items") or []
+        if top and top[0].get("share", 0) >= _CBr.HABIT_SHARE and int((b or {}).get("visits_with_items") or 0) >= 2:
+            return f"votre {top[0]['name']}"
+    except Exception:
+        pass
+    return "votre prochaine visite"
+
+
 @_SC.customer_store("customer")
 def render_template(content: str, customer: dict, tenant: dict = None) -> str:
     """Replace curly-brace placeholders in a campaign body with per-customer values.
@@ -569,6 +586,9 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
             "{nom_commerce}": business_name,
             "{visites}": str(visits),
             "{points_manquants}": str(ptnr),
+            # what this client usually takes (FidClic IA, user 2026-10-25):
+            # « votre Coupe », or « votre prochaine visite » when nothing stands out
+            "{produit_habituel}": _usual_product(customer),
         }
         if "{prochaine_récompense}" in content or "{prochaine_recompense}" in content:
             tpl = db.card_templates.find_one({"tenant_id": customer.get("tenant_id") or (tenant or {}).get("id")},
@@ -10347,9 +10367,6 @@ def get_ltv_breakdown(
 ALERT_READERS = ["business_owner", "administrateur", "manager"]
 
 
-# « 1 seule visite » is said from this many new clients on (one or two is
-# ordinary at the start of any shop).
-ONE_TIMERS_ALERT_MIN = 3
 
 # The bell's links for alerts that carry a bare path or a {href, label}.
 _ALERT_LABELS = (("/dashboard/automations?tab=pending", "Valider les envois"),
@@ -10388,8 +10405,10 @@ def get_proactive_alerts(
         rhythm (clients_page.is_at_risk) — warning, critical from 10.
       - « Votre meilleur client n'est pas venu depuis N jours »: the biggest
         spender, silent 30 days or more — warning.
-      - « N nouveaux clients ne sont venus qu'une fois »: joined these 30
-        days, one visit (clients_page.is_one_timer), from 3 — info.
+      - FidClic IA « a repéré » (features/brain_detectors), each from 3
+        clients: « habitués en retard » (warning), « pas revenus après leur
+        1ère visite » (info, replaces « venus une seule fois »), « viennent
+        moins souvent » (info).
     Then what waits for the owner's OK: Autopilot, the Copilote's plan, the
     monthly report. (Repeat rate, VIP spend, « reactivated » and birthdays
     were dropped: wrong formulas, or nothing to do.)
@@ -10466,16 +10485,18 @@ def get_proactive_alerts(
                       {"kind": "campaign", "label": "Lui écrire",
                        "href": f"/dashboard/campaigns?template=client:{top.get('id')}{_store}&from=alerte"}])
 
-    # 1 seule visite — joined these 30 days, never came back.
-    once = [c for c in customers if _CP.is_one_timer(c, now)]
-    if len(once) >= ONE_TIMERS_ALERT_MIN:
-        n = len(once)
-        push("info", "one_timers",
-             f"{n} nouveaux clients ne sont venus qu'une fois",
-             f"Inscrits ces {_CP.ONE_TIMER_DAYS} derniers jours, ils ne sont pas revenus. Une offre pour "
-             "leur 2e visite les aide à prendre l'habitude.",
-             metric=str(n),
-             actions=_links("one_timers", "seconde_visite", "Voir les clients", "Envoyer l'offre 2e visite"))
+    # FidClic IA « a repéré » (features/brain_detectors, user 2026-10-25), from
+    # 3 clients: the second-visit list replaces « venus une seule fois ».
+    from features import brain_detectors as _BD
+    for _d in _BD.detect(tid, customers, now):
+        if not _d["bell"]:
+            continue
+        n = _d["count"]
+        title = {"en_retard": f"{n} habitués sont en retard sur leur rythme",
+                 "one_timers": f"{n} clients ne sont pas revenus après leur 1ère visite",
+                 "moins_souvent": f"{n} habitués viennent moins souvent"}[_d["key"]]
+        push("warning" if _d["key"] == "en_retard" else "info", _d["key"], title, _d["why"], metric=str(n),
+             actions=_links(_d["key"], _d["template"], "Voir les clients", "Préparer le message"))
 
     # --- FidClic IA Autopilot: steps it prepared that are waiting for the OK.
     # The plan sends to the whole shop: it is the owner's, on the whole shop.

@@ -67,10 +67,13 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     cust("bruno", "b1", 10, 110, 55, 90.0)
     cust("mensuel", "b1", 6, 400, 60, 80.0)      # gap 68 days: 60 silent is his rhythm
     cust("top", "b1", 30, 300, 40, 2400.0)
-    cust("un1", "b1", 1, 5, 5, 8.0)
+    # « pas revenus après la 1ère visite » (user, 2026-10-25): a café's clients
+    # come back every week, so from day 10.5 to its « Client dormant » (90)
+    cust("un0", "b1", 1, 5, 5, 8.0)               # 5 days: too soon to miss them
+    cust("un1", "b1", 1, 15, 15, 8.0)
     cust("un2", "b1", 1, 12, 12, 8.0)
     cust("un3", "b1", 1, 20, 20, 8.0)
-    cust("vieux1", "b1", 1, 200, 200, 8.0)        # one visit, long ago: not a « new » one-timer
+    cust("vieux1", "b1", 1, 200, 200, 8.0)        # one visit, past « dormant »: the dormant list's business
     cust("regulier", "b1", 12, 90, 2, 300.0)
     # Plumereau: one slipping regular only.
     cust("zoe", "b2", 8, 90, 50, 70.0)
@@ -87,8 +90,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("Centre: the best client, silent 40 days", top and top["title"] == "Votre meilleur client n'est pas venu depuis 40 jours", top and top["title"])
     check("… with what they spent", top and "Top a dépensé 2" in top["body"] and "400 €" in top["body"], top and top["body"])
     once = by.get(("b1", "one_timers"))
-    check("Centre: « 3 nouveaux clients ne sont venus qu'une fois » (not the old one)",
-          once and once["title"] == "3 nouveaux clients ne sont venus qu'une fois", once and once["title"])
+    check("Centre: « 3 clients ne sont pas revenus après leur 1ère visite » (not 5 days ago, not 200)",
+          once and once["title"] == "3 clients ne sont pas revenus après leur 1ère visite", once and once["title"])
     check("Plumereau: « 1 habitué décroche », and nothing about Centre's clients",
           by.get(("b2", "at_risk"), {}).get("title") == "1 habitué décroche"
           and ("b2", "one_timers") not in by)
@@ -133,8 +136,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("its recipients are the same 2", sorted(t["audience"]["ids"]) == ["alice", "bruno"], t.get("audience"))
     path, p = q(link(once, "campaign"))
     t = http("GET", f"/api/owner/insights/templates/{p['template']}", OWN, params={"store": p["store"]}).json()
-    check("« Envoyer l'offre 2e visite »: the 3 one-timers", p["template"] == "seconde_visite"
-          and sorted(t["audience"]["ids"]) == ["un1", "un2", "un3"])
+    check("« Préparer le message »: FidClic IA's list, the same 3", p["template"] == "ia:one_timers"
+          and sorted(t["audience"]["ids"]) == ["un1", "un2", "un3"], (p, t.get("audience")))
     path, p = q(link(top, "campaign"))
     t = http("GET", f"/api/owner/insights/templates/{p['template']}", OWN, params={"store": p["store"]}).json()
     check("« Lui écrire »: to that client alone", t["audience"]["ids"] == ["top"] and t["audience"]["label"] == "Top")

@@ -5,7 +5,7 @@ import {
   Users, Crown, Send, UserPlus, Target, ShoppingBag, MapPin, Gift, Star,
   Upload, Search, Filter, SlidersHorizontal, ChevronDown, ChevronLeft,
   ChevronRight, Mail, MoreVertical, Loader2, Columns3, Download, X, ArrowRight,
-  Bookmark, BookmarkPlus, Check, CalendarRange, Send as SendIcon,
+  Bookmark, BookmarkPlus, Check, CalendarRange, Send as SendIcon, Clock, Repeat, TrendingDown,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { sourceLabel } from '../lib/sources';
@@ -33,6 +33,8 @@ import ClientPurchases from '../components/ClientPurchases';
 const SEGMENT_ICONS = {
   users: Users, crown: Crown, send: Send, userplus: UserPlus,
   bag: ShoppingBag, pin: MapPin, gift: Gift, star: Star, target: Target,
+  // FidClic IA « a repéré » chips
+  clock: Clock, repeat: Repeat, trending: TrendingDown,
 };
 const TONES = {
   blue:   { bg: '#EAF1FF', fg: '#1D4ED8', dot: '#2F6BFF' },

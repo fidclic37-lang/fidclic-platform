@@ -61,8 +61,10 @@ def main():
         ("w1", 6, 90.0, 45, 200, 200, (47.5000, 0.8000)),     # warm, far
         ("d1", 4, 100.0, 120, 300, 5, None),                  # dormant, birthday soon
         ("d2", 2, 30.0, 200, 320, 300, None),                 # dormant
-        ("n1", 1, 18.0, 8, 8, 100, (47.3942, 0.6849)),        # one-timer, new, local
-        ("n2", 1, 22.0, 3, 3, 150, None),                     # one-timer, new
+        # one visit, not back: a café's clients are due back from day 10.5
+        # (brain_detectors, 2026-10-25 — « pas revenus après la 1ère visite »)
+        ("n1", 1, 18.0, 12, 12, 100, (47.3942, 0.6849)),      # one-timer, new, local
+        ("n2", 1, 22.0, 15, 15, 150, None),                   # one-timer, new
         ("z0", 0, 0.0, None, 100, 90, None),                  # never bought
     ]
     for cid, visits, spend, last, joined, bday, pos in CAST:
@@ -195,8 +197,8 @@ def main():
     check("a shop with no position is not told nobody lives nearby",
           "De nombreux clients potentiels" in blank_opp["proximite"]["body"])
 
-    check("one-time new clients are their own opportunity",
-          opp["seconde_visite"]["body"].startswith("2 nouveaux clients"))
+    check("clients not back after their 1st visit are their own opportunity",
+          opp["seconde_visite"]["body"].startswith("2 clients ne sont pas revenus après leur 1ère visite"))
     # Two-hour windows, sliding by the hour: the quietest open one is the first
     # that holds the afternoon coffees and nothing else.
     per_hour = {}
@@ -324,8 +326,8 @@ def main():
     # ---- templates for the composer ---------------------------------------------------------
     print("\nModèles pour le composeur")
     # the composer reads the shop « now »: the cast is dated from the fixed
-    # `now` above, so its clock is that one (n1 joined 8 days before it — on
-    # the real date, 2026-10-19, it was past the 30-day one-timer window)
+    # `now` above, so its clock is that one (n1 came 12 days before it — on
+    # the real date it would be past the café's « Client dormant »)
     I._now = lambda: now
     # a product to put forward (the dashboard's « Créer une offre », 2026-10-23)
     pr = I.template("produit:Haircut + styling", token_data=T("cafe"))
@@ -417,7 +419,7 @@ def main():
           "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))" in comp)
     wiz = open(os.path.join(here, "..", "..", "src", "components", "campagnes", "CampaignWizard.jsx")).read()
     check("… and sends the recommendation's key with the campaign, so it can step aside",
-          "st.template = /^(client|produit|brain):/.test(key) ? key.split(':')[0] : key;" in comp
+          "st.template = /^(client|produit|brain|ia):/.test(key) ? key.split(':')[0] : key;" in comp
           and "...(s.template ? { template: s.template } : {})" in wiz)
     check("a narrower audience is sent by id, not widened to a card",
           "if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };" in comp

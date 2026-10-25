@@ -130,7 +130,7 @@ export default function CampagnesPage() {
       .then(({ data: t }) => {
         const st = emptyState(KINDS_OK.includes(t.kind) ? t.kind : 'offre');
         st.title = (t.title || '').slice(0, 50); st.message = (t.message || '').slice(0, 160);
-        st.template = /^(client|produit|brain):/.test(key) ? key.split(':')[0] : key;
+        st.template = /^(client|produit|brain|ia):/.test(key) ? key.split(':')[0] : key;
         // a narrower audience is sent by id, never widened to everyone — even
         // when no client matches it today (then the wizard asks for a choice)
         if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };

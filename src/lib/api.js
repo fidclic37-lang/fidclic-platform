@@ -693,6 +693,7 @@ export const ownerAPI = {
   clientFiche: (id) => api.get(`/owner/clients/${id}/fiche`),
   clientPurchases: (id, params) => api.get(`/owner/clients/${id}/purchases`, { params }),
   clientProfil: (id) => api.get(`/owner/clients/${id}/profil`),
+  brainDetectors: () => api.get('/owner/brain/detectors'),
   saveClientFiche: (id, body) => api.put(`/owner/clients/${id}/fiche`, body),
   // multi-store (2026-10-12): the client's home store, a store's link
   setHomeStore: (id, branchId) => api.put(`/owner/customers/${encodeURIComponent(id)}/home-store`, { branch_id: branchId }),
