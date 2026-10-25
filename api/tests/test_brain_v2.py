@@ -113,10 +113,13 @@ def main():
     check("learned from every shop", out["shops"] == 4 and out["returns"] > 300)
     doc = db.brain_models.find_one({"model": "brain-v2"})
     check("network rhythm for bakeries (45 regulars), about 4 days",
-          doc["priors"]["bakery"]["clients"] == 45 and 3 <= doc["priors"]["bakery"]["gap"] <= 5)
+          doc["priors"]["a:boulangerie"]["clients"] == 45 and 3 <= doc["priors"]["a:boulangerie"]["gap"] <= 5)
     check("« boulangerie » gets it", V2.sector_prior("boulangerie")[1] == "reseau"
           and 3 <= V2.sector_prior("boulangerie")[0] <= 5)
-    check("salons: 12 regulars only, the fixed figure stays", V2.sector_prior("salon") == (35.0, "secteur"))
+    check("salons: 12 regulars only — the researched figure of « coiffure mixte » (42 days) stays",
+          V2.sector_prior("salon") == (42.0, "secteur"))
+    check("a barber chose its activity: 21 days (researched), not the salon's",
+          V2.sector_prior({"sector": "salon", "activity_key": "barbier"}) == (21.0, "secteur"))
     check("v1's rows untouched", db.brain_predictions.count_documents({"model": "brain-v1", "source": "backtest"}) == v1_rows)
     v2rows = list(db.brain_predictions.find({"model": "brain-v2", "source": "backtest"}))
     check("v2 backtest rows, anonymous", len(v2rows) > 300 and all(r["customer_id"] is None for r in v2rows))

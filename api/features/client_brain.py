@@ -241,8 +241,8 @@ def prior_for(tid: str, model: int) -> Tuple[float, str]:
         if own[1] == "boutique":
             return own
         from features import brain_v2 as V2
-        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1}) or {}
-        return V2.sector_prior(tenant.get("sector"))
+        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
+        return V2.sector_prior(tenant)
     return usual_gap(tid)
 
 

@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 
 from auth import require_role, TokenData
 from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
+from services import activities as _A          # « Activité précise » (FidClic IA rhythms)
 
 router = APIRouter(tags=["etablissement"])
 _db = None
@@ -200,6 +201,8 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
                      "phone": (sel.get("phone") if sel else None) or t.get("phone") or "",
                      "email": t.get("email") or t.get("contact_email") or "",
                      "sector": t.get("sector") or "", "activity": t.get("activity") or "",
+                     # « Activité précise » (services/activities, 2026-10-25): FidClic IA's starting rhythm
+                     "activity_key": t.get("activity_key") or "",
                      "description": t.get("description") or "", "website": t.get("website") or ""},
         # several establishments: the page is the chosen one's (its name, address, phone)
         "store": {"id": sel["id"], "name": sel.get("name") or "", "account_name": t.get("name") or ""} if sel else None,
@@ -210,6 +213,7 @@ def _view(tid: str, token: TokenData) -> Dict[str, Any]:
                 "cooldown_days": int(t.get("geo_cooldown_days") or 1), "vip_only": bool(t.get("vip_geo_only"))},
         "stores": stores,
         "sectors": [{"value": k, "label": v} for k, v in SECTORS],
+        "activities": [{"value": a["key"], "label": a["label"], "sector": a["sector"]} for a in _A.ACTIVITIES],
     }
 
 
@@ -227,6 +231,7 @@ class BusinessIn(BaseModel):
     phone: Optional[str] = Field(None, max_length=30)
     email: Optional[str] = Field(None, max_length=120)
     sector: Optional[str] = None
+    activity_key: Optional[str] = Field(None, max_length=40)   # "" clears it
     description: Optional[str] = Field(None, max_length=500)
 
 
@@ -320,6 +325,18 @@ def put_etablissement(body: EtablissementIn,
             if b.sector not in dict(SECTORS):
                 raise HTTPException(status_code=400, detail="Secteur inconnu.")
             sets["sector"] = b.sector
+        if b.activity_key is not None:
+            # an activity belongs to a sector: a barber is a salon, a CBD shop a commerce
+            key = b.activity_key.strip()
+            sector = sets.get("sector") or (_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1}) or {}).get("sector")
+            if key and (key not in _A.BY_KEY or _A.BY_KEY[key]["sector"] != sector):
+                raise HTTPException(status_code=400, detail="Cette activité ne correspond pas au secteur choisi.")
+            sets["activity_key"] = key or None
+        elif "sector" in sets:
+            # a new sector without an activity: the old one (another sector's) goes
+            cur = (_db.tenants.find_one({"id": tid}, {"_id": 0, "activity_key": 1}) or {}).get("activity_key")
+            if cur and _A.BY_KEY.get(cur, {}).get("sector") != sets["sector"]:
+                sets["activity_key"] = None
         if b.description is not None:
             sets["description"] = b.description.strip()
         if b.logo_url is not None:
