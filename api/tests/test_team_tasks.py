@@ -60,7 +60,9 @@ def main():
     today = now.date()
 
     def at(delta_h):
-        d = (now + dt.timedelta(hours=delta_h))
+        # real hours, then read in Paris: adding to a Paris wall clock jumped an
+        # hour on the night the clocks go back (25/10, 02:35 + 30 min = 03:05 CET)
+        d = (now.astimezone(dt.timezone.utc) + dt.timedelta(hours=delta_h)).astimezone(paris)
         return d.date().isoformat(), f"{d.hour:02d}:{d.minute:02d}"
 
     def new(title, delta_h, who=("mahdi@fidclic.com",), h=BOSS, **kw):
@@ -135,6 +137,10 @@ def main():
     check("the person a task goes to is told", any("Nouvelle tâche pour vous" in x for x in al))
     late = new("Bientôt en retard", -0.2).json()["id"]
     soon = new("Dans 30 min", 0.5).json()["id"]
+    # its due time set to the instant itself: the night the clocks go back,
+    # « 02:05 » names two moments and the form can only name the first
+    T._db.team_tasks.update_one({"id": soon}, {"$set": {
+        "due_at": dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=30), "reminder_sent": False}})
     http("GET", "/api/admin/equipe/alerts")
     mt = [x["title"] for x in http("GET", "/api/admin/equipe/alerts", MAHDI).json()["alerts"]]
     check("one hour before", any("moins d'une heure" in x and "Dans 30 min" in x for x in mt))
