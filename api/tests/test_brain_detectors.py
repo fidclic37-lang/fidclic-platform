@@ -156,6 +156,34 @@ def main():
           server.render_template("pour {produit_habituel}", db.customers.find_one({"id": "new120"}))
           == "pour votre prochaine visite")
 
+    print("Plusieurs boutiques")
+    db.tenants.insert_one({"id": "t3", "slug": "multi", "name": "Multi", "sector": "cafe", "plan": "vip",
+                           "subscription_status": "active", "is_active": True,
+                           "branches": [{"id": "centre", "name": "Centre", "is_main": True},
+                                        {"id": "nord", "name": "Nord"}]})
+    db.card_templates.insert_one({"tenant_id": "t3", "programme": "stamps"})
+    db.users.insert_one({"email": "m@x.fr", "role": "business_owner", "tenant_id": "t3", "active": True})
+    HM = tok("m@x.fr", "business_owner", "t3")
+    # three late regulars all came to Nord; two signed up at Centre, one at Nord
+    for cid, home in (("ana", "centre"), ("bob", "centre"), ("cyd", "nord")):
+        for d in (18, 21, 24, 27):
+            db.visits.insert_one({"tenant_id": "t3", "customer_id": cid, "branch_id": "nord", "amount_paid": 5.0,
+                                  "visit_time": now - dt.timedelta(days=d, hours=2), "items": [{"name": "Thé"}]})
+        db.customers.insert_one({"id": cid, "tenant_id": "t3", "name": cid.capitalize(), "visits": 4, "branch_id": home,
+                                 "created_at": now - dt.timedelta(days=28),
+                                 "last_visit_date": now - dt.timedelta(days=18, hours=2), "total_amount_paid": 20.0})
+    CB.ensure("t3")
+    card = {x["key"]: x for x in http("GET", "/api/owner/brain/detectors", headers=HM,
+                                      params={"store": "nord"}).json()["detectors"]}
+    check("Nord's card counts the three who came", card["en_retard"]["count"] == 3, card["en_retard"])
+    t = http("GET", "/api/owner/insights/templates/ia:en_retard", headers=HM, params={"store": "nord"}).json()
+    check("the composer writes to Nord's own member only", t["audience"]["ids"] == ["cyd"], t["audience"])
+    check("… and says why the number is smaller",
+          t["audience"].get("note", "").startswith("3 clients repérés, dont 1 inscrit dans cette boutique")
+          and "Les 2 autres" in t["audience"]["note"], t["audience"].get("note"))
+    t1 = http("GET", "/api/owner/insights/templates/ia:en_retard", headers=H).json()
+    check("one store: no such line", "note" not in t1["audience"])
+
     print("Insights")
     recos = http("GET", "/api/owner/insights/page", headers=H).json()
     flat = str(recos)

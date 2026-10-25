@@ -1033,6 +1033,20 @@ def page(request: Request = None, token_data: TokenData = Depends(require_role(R
     return _payload(token_data.tenant_id, scope=S.resolve(token_data, request))
 
 
+def _home_note(seen: int, home: int) -> str:
+    """Why the composer writes to fewer clients than the card counted."""
+    if not home:
+        who = "Le client repéré est inscrit" if seen == 1 else f"Les {seen} clients repérés sont inscrits"
+        return f"{who} dans une autre de vos boutiques : c'est elle qui {'lui' if seen == 1 else 'leur'} envoie les messages."
+    others = seen - home
+    sent = "ce client" if home == 1 else f"ces {home} clients"
+    rest = ("L'autre, venu ici mais inscrit dans une autre de vos boutiques, reçoit les messages de sa boutique."
+            if others == 1 else
+            f"Les {others} autres, venus ici mais inscrits dans une autre de vos boutiques, reçoivent les messages de leur boutique.")
+    return (f"{seen} clients repérés, dont {home} inscrit{'s' if home > 1 else ''} dans cette boutique : "
+            f"le message part à {sent}. {rest}")
+
+
 @router.get("/api/owner/insights/templates/{key:path}")
 def template(key: str, day: Optional[int] = None, request: Request = None,
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
@@ -1096,8 +1110,16 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
         if not spec:
             raise HTTPException(status_code=404, detail="Modèle introuvable")
         d = next(x for x in BD.detect(tid, shop.people, shop.at) if x["key"] == key[3:])
+        # The card counts who came to this store; only its own members are
+        # messaged from it (multi-store PR5) — the composer says so (user,
+        # 2026-10-25: « jaisa hai waisa rakho, message screen pe line daal do »).
+        mine = S.home_customer_ids(scope)
+        ids = d["ids"] if mine is None else [i for i in d["ids"] if i in mine]
+        audience = {"label": d["label"], "hint": "FidClic IA", "ids": ids}
+        if len(ids) < len(d["ids"]):
+            audience["note"] = _home_note(len(d["ids"]), len(ids))
         return {"key": key, "title": spec["title"], "message": spec["message"], "segment": "all",
-                "audience": {"label": d["label"], "hint": "FidClic IA", "ids": d["ids"]}}
+                "audience": audience}
     # A product to put forward (the dashboard's « Créer une offre », 2026-10-23):
     # the composer opens on step 1, the offer, for the owner to set the discount.
     if key.startswith("produit:"):
