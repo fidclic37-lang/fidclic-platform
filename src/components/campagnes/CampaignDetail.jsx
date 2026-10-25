@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   X, Loader2, Users, Mail, MousePointerClick, RotateCcw, Euro, CalendarDays, Link2, Pencil, Trash2, Ban, BarChart3, Info, UserRound,
 } from 'lucide-react';
+import TemoinResult from '../TemoinResult';
 import { ownerAPI } from '../../lib/api';
 import { eur } from '../../lib/money';
 import { KIND_META } from './kinds';
@@ -109,6 +110,7 @@ export default function CampaignDetail({ id, onClose, onEdit, onCancel, onDelete
                     <Stat icon={RotateCcw} tone={['#E3F6EC', '#059669']} value={nf(st.came_back)} label="Clients revenus" hint={`${st.came_back_rate} % en ${st.window_days} j`} />
                     <Stat icon={Euro} tone={['#FFF1DC', '#F59E0B']} value={eur(st.revenue)} label="CA généré" hint={`en ${st.window_days} jours`} wide />
                   </div>
+                  {st.temoin && <div className="mt-3"><TemoinResult t={st.temoin} what="cette campagne" /></div>}
                 </div>
               )}
 

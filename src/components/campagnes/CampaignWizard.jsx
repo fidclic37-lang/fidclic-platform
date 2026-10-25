@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Check, ArrowRight, ArrowLeft, Percent, Euro, CalendarDays, Clock, Info, Eye, Pencil, Smile,
   Users, Tags, User, MapPin, Search, Send, Loader2, Image as ImageIcon, Link2, Sparkles, MessageSquare,
-  Star, Gift, Store, Trophy, BarChart3, Lightbulb, Zap, ShieldCheck,
+  Star, Gift, Store, Trophy, BarChart3, Lightbulb, Zap, ShieldCheck, FlaskConical,
 } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
 import { useResendCheck } from '../ResendCheck';
@@ -107,12 +107,25 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     }
     let alive = true;
     const t0 = setTimeout(() => {
-      ownerAPI.campaignAudiencePreview({ audience: audienceBody })
+      ownerAPI.campaignAudiencePreview({ audience: audienceBody, ...(s.template ? { template: s.template } : {}) })
         .then(({ data }) => { if (alive) { setPreview(data); setPreviewErr(''); if (data.names) setPicked((p) => ({ ...data.names, ...p })); } })
         .catch((e) => { if (alive) { setPreview(null); setPreviewErr(e?.response?.data?.detail || 'Destinataires indisponibles.'); } });
     }, 250);
     return () => { alive = false; clearTimeout(t0); };
   }, [audienceBody]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // groupe témoin (user, 2026-10-25): 15 % of a group send, at random, are kept
+  // out to measure what it really brings in — the owner is told, never unaware
+  const temoin = preview?.temoin || 0;
+  const sendCount = preview ? preview.count - temoin : null;
+  const TemoinNote = temoin > 0 ? (
+    <p data-testid="temoin-note" className="mt-2 flex items-start gap-2 rounded-xl bg-[#F5F3FF] px-3 py-2.5 text-[13px] leading-snug text-[#4C1D95]">
+      <FlaskConical size={16} className="mt-0.5 shrink-0 text-[#7C3AED]" />
+      <span><b>Groupe témoin : {nf(temoin)} client{temoin > 1 ? 's' : ''}</b> ({preview?.temoin_share || 15} %, tirés au hasard) ne
+        recevr{temoin > 1 ? 'ont' : 'a'} pas ce message. En comparant leurs visites à celles des {nf(sendCount)} autres, FidClic mesure ce que
+        cet envoi vous rapporte vraiment. <span className="text-[#6D28D9]">(Paramètres › Notifications)</span></span>
+    </p>
+  ) : null;
 
   // ---- picking clients one by one --------------------------------------------
   useEffect(() => {
@@ -358,9 +371,10 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
           <Info size={15} className="mt-0.5 shrink-0 text-[#2F6BFF]" />
           <span>
             {step === 2 ? 'Les variables seront automatiquement remplacées par les informations de chaque client lors de l\'envoi. '
-              : s.sendMode === 'later' && s.date ? <>La notification sera envoyée le <b>{dayLong(`${s.date}T${s.time}:00`)}</b> à <b translate="no" className="notranslate">{s.time}</b> à <b>{nf(preview?.count)} clients</b>. </>
-                : s.sendMode === 'now' ? <>La notification sera envoyée <b>immédiatement</b> à <b>{nf(preview?.count)} clients</b>. </>
-                  : <>Le message sera envoyé à <b>{nf(preview?.count)} clients</b>. </>}
+              : s.sendMode === 'later' && s.date ? <>La notification sera envoyée le <b>{dayLong(`${s.date}T${s.time}:00`)}</b> à <b translate="no" className="notranslate">{s.time}</b> à <b>{nf(sendCount)} clients</b>. </>
+                : s.sendMode === 'now' ? <>La notification sera envoyée <b>immédiatement</b> à <b>{nf(sendCount)} clients</b>. </>
+                  : <>Le message sera envoyé à <b>{nf(sendCount)} clients</b>. </>}
+            {temoin > 0 && <>{nf(temoin)} autre{temoin > 1 ? 's' : ''} form{temoin > 1 ? 'ent' : 'e'} le groupe témoin. </>}
             Le rendu peut varier selon l'appareil (iOS / Android).
           </span>
         </p>
@@ -714,6 +728,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
         <span className="text-right"><span className="block text-[26px] font-extrabold leading-none tabular-nums text-[#1463FF]">{preview ? nf(preview.count) : '…'}</span>
           <span className="text-[12px] text-[#64748B]">clients sélectionnés</span></span>
       </div>
+      {TemoinNote}
 
       {a.mode !== 'all' && (
         <>
@@ -767,7 +782,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
   ) : (
     <Card title="4. Choisissez quand envoyer votre notification" sub="Vous pouvez l'envoyer immédiatement ou la planifier pour plus tard.">
       <div className="grid gap-4 sm:grid-cols-2">
-        {[['now', 'Envoi immédiat', `La notification sera envoyée tout de suite à ${nf(preview?.count)} clients.`, Send],
+        {[['now', 'Envoi immédiat', `La notification sera envoyée tout de suite à ${nf(sendCount)} clients${temoin ? ` (+ ${nf(temoin)} en groupe témoin)` : ''}.`, Send],
           ['later', "Planifier l'envoi", 'Choisissez une date et une heure pour envoyer la notification.', CalendarDays]].map(([k, l, h, I]) => (
           <button key={k} type="button"
                   onClick={() => { if (k === 'now') { setS((x) => ({ ...x, sendMode: 'now' })); go(5); } else set({ sendMode: 'later', date: s.date || today }); }}
@@ -795,6 +810,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
         </Row>
         <Row icon={Users} tone={['#E3F6EC', '#059669']} title="Destinataires" onEdit={() => go(3)}>
           <p className="text-[14px] text-[#334155]">{preview?.label || '—'}{preview && !/^\d/.test(preview.label || '') ? ` (${nf(preview.count)} client${preview.count > 1 ? 's' : ''})` : ''}</p>
+          {TemoinNote}
         </Row>
         {/* always asked, every flow passes here — « Contacter » included (2026-10-20) */}
         <div className="flex items-center gap-3 rounded-2xl border border-[#E6EEFB] p-3 sm:gap-4 sm:p-4" data-testid="visible-until">

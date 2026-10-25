@@ -422,7 +422,7 @@ def refresh_one(cust: Dict[str, Any], at: Optional[datetime] = None) -> bool:
 # ---------------------------------------------------------------------------
 def results(tid: str, aid: str) -> Dict[str, Any]:
     """Sent (card opened near a shop), clicks, and visits within 24 h of a message."""
-    logs = list(_db.automation_log.find({"tenant_id": tid, "automation_id": aid, "status": {"$ne": "deferred"}},
+    logs = list(_db.automation_log.find({"tenant_id": tid, "automation_id": aid, "status": {"$nin": ["deferred", "holdout"]}},
                                         {"_id": 0, "customer_id": 1, "sent_at": 1, "clicked_at": 1}))
     visits = 0
     for r in logs:

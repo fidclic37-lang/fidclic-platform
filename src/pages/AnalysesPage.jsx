@@ -4,12 +4,14 @@ import {
   BarChart3, Users, Activity, Send, Crown, AlertTriangle, ShoppingBag,
   MousePointerClick, ShoppingCart, Star, MessageSquare, Repeat, Gift, UserPlus,
   ChevronRight, Download, Loader2, Info, Sparkles,
+  FlaskConical,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
 import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
+import { Uplift, HowItWorks } from '../components/TemoinResult';
 import TrendChart from '../components/TrendChart';
 import { eur } from '../lib/money';
 
@@ -339,11 +341,58 @@ const ImpactPanel = ({ imp }) => (
   </div>
 );
 
+/* « Ce que FidClic vous rapporte vraiment » (user, 2026-10-25): the groupe
+   témoin's answer for the period — the messaged clients against the 15 %
+   kept out at random, 15 days after each send. */
+const pctFr = (n) => `${String(n ?? 0).replace('.', ',')} %`;
+const UpliftPanel = ({ u }) => {
+  const measured = u.sent?.n > 0 && u.temoin?.n > 0;
+  return (
+    <section id="temoin" data-testid="uplift-panel" className="mb-4 rounded-2xl border border-[#E9E3FF] bg-[#F8F6FF] p-5">
+      <h3 className="flex items-center gap-2 text-[15px] font-bold text-[#0B1C3F]"><FlaskConical size={18} className="text-[#7C3AED]" /> Ce que FidClic vous rapporte vraiment</h3>
+      {!u.enabled && !measured ? (
+        <p className="mt-2 text-[13px] text-[#9A3412]">Pas mesuré : le groupe témoin est désactivé (Paramètres › Notifications). Le CA FidClic ci-dessus compte
+          aussi les clients qui seraient venus de toute façon.</p>
+      ) : measured ? (
+        <>
+          <div className="mt-2"><Uplift t={u} big /></div>
+          <p className="mt-1 text-[12.5px] text-[#475569]">
+            Sur la période : {pctFr(u.sent.rate)} des {nf(u.sent.n)} clients messagés sont revenus, contre {pctFr(u.temoin.rate)} des {nf(u.temoin.n)} clients
+            du groupe témoin ({u.share} % tirés au hasard, sans message).
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {[['campagnes', 'Campagnes'], ['automatisations', 'Relances automatiques']].map(([k, l]) => {
+              const b = u.by?.[k];
+              const ok = b?.sent?.n > 0 && b?.temoin?.n > 0;
+              return (
+                <div key={k} className="rounded-xl bg-white p-3 text-[12.5px]">
+                  <p className="font-semibold text-[#334155]">{l}</p>
+                  {ok ? <><p className={`text-[16px] font-extrabold ${b.extra_revenue > 0 ? 'text-[#059669]' : 'text-[#475569]'}`}>
+                    {b.extra_revenue > 0 ? `+${money(b.extra_revenue)}` : 'Pas d\'effet mesuré'}</p>
+                    <p className="text-[#64748B]">{pctFr(b.sent.rate)} revenus avec le message · {pctFr(b.temoin.rate)} sans</p></>
+                    : <p className="text-[#64748B]">Pas encore mesuré sur la période.</p>}
+                </div>
+              );
+            })}
+          </div>
+          {!u.enough && <p className="mt-2 text-[12.5px] text-[#92400E]">Indicatif : {nf(u.temoin.n)} clients témoins seulement, il en faut {u.min_hold} pour conclure.</p>}
+        </>
+      ) : (
+        <p className="mt-2 text-[13px] text-[#475569]">Pas encore de mesure sur la période : le résultat arrive {u.window_days} jours après chaque envoi avec groupe témoin
+          {u.pending ? ` (${nf(u.pending)} message${u.pending > 1 ? 's' : ''} en cours de mesure)` : ''}.</p>
+      )}
+      {measured && u.pending > 0 && <p className="mt-1 text-[12px] text-[#64748B]">{nf(u.pending)} message{u.pending > 1 ? 's' : ''} de moins de {u.window_days} jours, encore en mesure.</p>}
+      <HowItWorks t={u} />
+    </section>
+  );
+};
+
 /* ── tabs ─────────────────────────────────────────────────────────────── */
 const TabVue = ({ d }) => (
   <>
     <Strip items={d.strip} />
     {d.impact && <ImpactPanel imp={d.impact} />}
+    {d.impact?.uplift && <UpliftPanel u={d.impact.uplift} />}
     <div className="mb-4 grid gap-4 lg:grid-cols-2">
       <Panel title="Évolution du chiffre d'affaires">
         <Total value={money(d.revenue_total)} delta={d.revenue_delta} />

@@ -26,6 +26,38 @@ function Card({ label, value, sub, tone = '#0B1C3F', testid }) {
   );
 }
 
+
+/* Groupe témoin (user, 2026-10-25): what the messages really bring in, every
+   shop, by sector — the R&D proof (Bpifrance), no shop or client named. */
+function UpliftJournal() {
+  const [u, setU] = useState(null);
+  useEffect(() => { adminAPI.aiUplift().then(({ data }) => setU(data)).catch(() => setU(null)); }, []);
+  if (!u) return null;
+  const eur = (n) => (n == null ? '—' : `${n > 0 ? '+' : ''}${Math.round(n).toLocaleString('fr-FR')} €`);
+  const rate = (x) => (x == null ? '—' : `${String(x).replace('.', ',')} %`);
+  const t = u.total;
+  return (
+    <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="precision-uplift">
+      <h2 className="text-[15px] font-bold text-[#0B1C3F]">Groupe témoin : ce que les messages rapportent vraiment</h2>
+      <p className="mt-0.5 text-[12.5px] text-[#64748B]">{u.share} % de chaque envoi groupé et de chaque relance, tirés au hasard, sans message ; comparés {u.window_days} jours après.
+        Toutes boutiques{t.sent.n ? ` : ${rate(t.sent.rate)} revenus avec le message contre ${rate(t.temoin.rate)} sans (${t.temoin.n} témoins), ${eur(t.extra_revenue)}` : ' : pas encore de mesure'}.</p>
+      {u.sectors.length > 0 && (
+        <table className="mt-2 w-full text-[13px]">
+          <thead><tr className="text-left text-[#94A3B8]"><th className="py-1.5">Secteur</th><th>Boutiques</th><th>Envois</th><th>Messagés / témoins</th><th>Revenus avec / sans</th><th>Gain</th><th>Pour 100 clients</th></tr></thead>
+          <tbody>
+            {u.sectors.map((x) => (
+              <tr key={x.sector} className="border-t border-[#F1F5FB]"><td className="py-1.5 font-semibold">{SECTORS[x.sector] || (x.sector.charAt(0).toUpperCase() + x.sector.slice(1))}</td>
+                <td className="tabular-nums">{x.shops}</td><td className="tabular-nums">{x.sends}</td>
+                <td className="tabular-nums">{x.sent.n} / {x.temoin.n}</td><td>{rate(x.sent.rate)} / {rate(x.temoin.rate)}</td>
+                <td className="tabular-nums">{eur(x.extra_revenue)}{!x.enough && x.temoin.n > 0 ? ' (indicatif)' : ''}</td><td className="tabular-nums">{eur(x.per_100)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 export default function AiPrecisionPage() {
   const [d, setD] = useState(null);
   const [source, setSource] = useState('all');
@@ -216,6 +248,8 @@ export default function AiPrecisionPage() {
           )}
         </>
       )}
+
+      <UpliftJournal />
 
       <section className="mt-4 rounded-2xl bg-[#F8FAFF] p-4 text-[12.5px] leading-relaxed text-[#475569]">
         <p className="mb-1 inline-flex items-center gap-1.5 font-semibold text-[#0B1C3F]"><Target size={14} /> Comment c&apos;est mesuré</p>
