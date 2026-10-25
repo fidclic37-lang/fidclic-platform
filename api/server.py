@@ -8234,6 +8234,11 @@ def send_campaign_to_group(
     # Dispatch per-customer with template rendering.
     delivered = 0
     targeted_customers = list(db.customers.find({"id": {"$in": customer_ids}, "tenant_id": tid, **_CS_NOT_PAUSED}))
+    # groupe témoin (user, 2026-10-25: Clients › « Contacter (N) » too): 15 %
+    # at random get nothing, to measure what the message really brought in
+    _camp_id = str(uuid.uuid4())
+    from features import temoin as _T
+    targeted_customers, _held = _T.split(tid, targeted_customers, _camp_id)
     for cust in targeted_customers:
         rendered_body = render_template(content, cust, tenant)
         rendered_subject = render_template(name, cust, tenant)
@@ -8246,7 +8251,7 @@ def send_campaign_to_group(
     src = raw_source if raw_source in ALLOWED else None
 
     campaign = Campaign(
-        id=str(uuid.uuid4()),
+        id=_camp_id,
         tenant_id=tid,
         name=name,
         content=content,
@@ -8264,6 +8269,7 @@ def send_campaign_to_group(
     _doc["store_ids"] = _scope.ids
     _doc["sent_by"] = token_data.email
     _doc["sent_by_admin"] = getattr(token_data, "view_by", None)   # « Accéder au compte »
+    _doc["holdout_ids"] = [c["id"] for c in _held]
     db.campaigns.insert_one(_doc)
 
     # Also log per-customer push notification so wallet cards show the offer.
@@ -8279,7 +8285,7 @@ def send_campaign_to_group(
             "sent_at": now,
         })
 
-    return campaign.model_dump()
+    return {**campaign.model_dump(), "temoin": len(_held)}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -11945,6 +11951,10 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
     delivered = 0
     from services import client_status as _CS
     customer_list = _CS.drop_paused(db, tenant.get("id"), customer_list)   # paused by the business
+    # groupe témoin (user, 2026-10-25): the old recurring campaigns too
+    camp_id = str(uuid.uuid4())
+    from features import temoin as _T
+    customer_list, held = _T.split(tid, customer_list, camp_id)
     for cust in customer_list:
         rendered_body = render_template(content, cust, tenant)
         rendered_subject = render_template(name, cust, tenant)
@@ -11963,7 +11973,7 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
                                 kind=trigger_type)["sent"]:
             delivered += 1
     campaign = Campaign(
-        id=str(uuid.uuid4()),
+        id=camp_id,
         tenant_id=tid,
         name=name,
         content=content,
@@ -11974,7 +11984,7 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
         delivered_count=delivered,
         recipient_ids=[c["id"] for c in customer_list],
     )
-    db.campaigns.insert_one(campaign.model_dump())
+    db.campaigns.insert_one({**campaign.model_dump(), "holdout_ids": [c["id"] for c in held]})
     return campaign.model_dump()
 
 

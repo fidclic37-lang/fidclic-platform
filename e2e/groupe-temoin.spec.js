@@ -39,6 +39,20 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   await page.screenshot({ path: 'test-results/temoin-composer.png' });
   await dialog.getByRole('button', { name: 'Fermer' }).first().click().catch(() => {});
 
+  // Clients › « Contacter (N) »: the same 15 %, said in its window
+  await page.goto('/dashboard/customers');
+  const contact = page.getByRole('button', { name: /^Contacter \(\d+\)/ });
+  await expect(contact).toBeEnabled({ timeout: 20_000 });
+  const n = Number((await contact.innerText()).replace(/\D/g, ''));
+  await contact.click();
+  const held = Math.floor(n * 0.15);
+  if (held > 0) {
+    await expect(page.getByTestId('temoin-note')).toContainText(`Groupe témoin : ${held.toLocaleString('fr-FR')} client`);
+    await expect(page.getByText(`${(n - held).toLocaleString('fr-FR')} clients recevront ce message.`)).toBeVisible();
+  }
+  await page.screenshot({ path: 'test-results/temoin-contacter.png' });
+  await page.getByRole('button', { name: 'Annuler' }).click();
+
   // Paramètres › Notifications: what it is, and the switch
   await page.goto('/dashboard/parametres/notifications');
   const card = page.getByTestId('temoin-settings');

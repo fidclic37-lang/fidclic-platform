@@ -241,7 +241,9 @@ def main():
     check("no priority chosen → the default", http("GET", f"/api/admin/equipe/tasks/{nd}").json()["task"]["priority"] == "moyenne")
     http("PUT", f"{L}/priorities/{urg}", json={"name": "Urgente", "default": True})
     check("the default can change", next(p for p in http("GET", "/api/admin/equipe/board").json()["priorities"] if p["default"])["id"] == urg)
-    check("the board counts the custom priority", http("GET", "/api/admin/equipe/board").json()["counts"]["priority"].get(urg) == 1)
+    # the board of that task's own week: 7 hours ahead on a Sunday evening is next week
+    check("the board counts the custom priority", http("GET", f"/api/admin/equipe/board?week={zt['due_date']}").json()
+          ["counts"]["priority"].get(urg) == 1)
     check("deleting it needs a destination", http("POST", f"{L}/priorities/{urg}/delete", json={}).status_code == 400)
     http("POST", f"{L}/priorities/{urg}/delete", json={"to": "haute"})
     check("…its task moved, and the default passed on", http("GET", f"/api/admin/equipe/tasks/{z}").json()["task"]["priority"] == "haute"

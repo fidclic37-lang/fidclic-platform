@@ -113,6 +113,26 @@ def main():
     check("a scheduled one leaves without its témoin", len(planned["holdout_ids"]) == 6
           and not {p[0] for p in pushed} & set(planned["holdout_ids"]) and len(pushed) == 34)
 
+    print("Clients › « Contacter (N) » et les anciennes campagnes récurrentes")
+    pushed.clear()
+    ids20 = [f"c{i:02d}" for i in range(20)]
+    r = http("POST", "/api/owner/campaigns/send-to-group", headers=H,
+             json={"customer_ids": ids20, "name": "Coucou", "content": "Bonjour"})
+    g = db.campaigns.find_one({"id": r.json()["id"]})
+    check("« Contacter (20) »: 17 messaged, 3 témoin", r.json()["temoin"] == 3 and len(g["recipient_ids"]) == 17
+          and len(g["holdout_ids"]) == 3 and not {p[0] for p in pushed} & set(g["holdout_ids"])
+          and not db.push_notifications.find_one({"campaign_id": g["id"], "customer_id": {"$in": g["holdout_ids"]}}), r.json())
+    r = http("POST", "/api/owner/campaigns/send-to-group", headers=H,
+             json={"customer_ids": ["c01", "c02"], "name": "Coucou", "content": "Bonjour"})
+    check("… two clients: both get it", r.json()["temoin"] == 0 and r.json()["targeted_count"] == 2)
+    pushed.clear()
+    old_style = server._dispatch_campaign_to_customers(db.tenants.find_one({"id": "t1"}), "Chaque lundi", "Bonjour",
+                                                       list(db.customers.find({"tenant_id": "t1"}, {"_id": 0})),
+                                                       trigger_type="scheduled")
+    oc = db.campaigns.find_one({"id": old_style["id"]})
+    check("an old recurring campaign keeps its 15 % out too", len(oc["holdout_ids"]) == 6 and len(oc["recipient_ids"]) == 34
+          and not {p[0] for p in pushed} & set(oc["holdout_ids"]))
+
     print("Ce qu'elle a rapporté")
     sent_ids = [f"s{i}" for i in range(85)]
     hold_ids = [f"h{i}" for i in range(15)]
