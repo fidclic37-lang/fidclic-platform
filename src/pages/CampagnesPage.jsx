@@ -135,7 +135,9 @@ export default function CampagnesPage() {
         // when no client matches it today (then the wizard asks for a choice)
         if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };
         else if (t.segment && t.segment !== 'all') st.audience = { ...st.audience, mode: 'segment', segment: t.segment };
-        if (t.audience && !t.audience.ids?.length) st.notice = `Modèle chargé — mais aucun client ne correspond à « ${t.audience.label} » pour l'instant.`;
+        // a store's card counts who came there; only its own members get the message
+        if (t.audience?.note) st.audienceNote = t.audience.note;
+        if (t.audience && !t.audience.ids?.length) st.notice = t.audience.note || `Modèle chargé — mais aucun client ne correspond à « ${t.audience.label} » pour l'instant.`;
         // a template that leaves the offer to set (a product to put forward) opens on it
         setWizard({ initial: st, step: t.start_step === 1 ? 1 : 2 });
       })

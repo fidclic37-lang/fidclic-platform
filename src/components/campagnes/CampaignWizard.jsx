@@ -649,6 +649,11 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
 
       {a.mode === 'custom' && (
         <div className="mt-3">
+          {s.audienceNote && (
+            <p data-testid="audience-note" className="mb-2 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[13px] leading-snug text-[#1E3A8A]">
+              <Info size={16} className="mt-0.5 shrink-0 text-[#1463FF]" />{s.audienceNote}
+            </p>
+          )}
           <span className="flex items-center gap-2 rounded-xl border border-[#D9E2F2] px-3 focus-within:border-[#2F6BFF]">
             <Search size={18} className="text-[#64748B]" />
             <input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} placeholder="Rechercher un client (nom, téléphone, e-mail, code)…"

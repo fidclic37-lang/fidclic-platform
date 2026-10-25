@@ -51,6 +51,11 @@ test('the three lists, why, their clients and the message', async ({ page, reque
     const n = Number((await chosen.innerText()).match(/\d+/)[0]);
     expect(n).toBeGreaterThan(0);
     expect(n).toBeLessThanOrEqual(any.count);
+    // … and when it is fewer, the screen says why (user, 2026-10-25)
+    const note = dialog.getByTestId('audience-note');
+    if (n < any.count) await expect(note).toContainText(`${any.count} clients repérés, dont ${n} inscrit`);
+    else await expect(note).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/ia-repere-note.png' });
     // the same list on the Clients page
     await page.goto(`/dashboard/customers?segment=${any.key}`);
     await expect(page.getByRole('heading', { name: new RegExp(`${any.count} clients?`) })).toBeVisible({ timeout: 20_000 });
