@@ -96,6 +96,18 @@ def over_limit(tid: str, cid: str, at: Optional[datetime] = None) -> Optional[st
     at = at or _now()
     r = rules(tid)
     day, week = _day_start(at), _week_start(at)
+    from services import send_batch as _SB
+    b = _SB.current(tid, cid)
+    if b is not None:                                      # a big send: read once, then counted in memory
+        for key, n in (("per_client_day", lambda: b.client_count(cid, "day", day, week)),
+                       ("per_client_week", lambda: b.client_count(cid, "week", day, week)),
+                       ("shop_day", lambda: b.shop_count("day", lambda: _db.send_counter.count_documents(
+                           {"tenant_id": tid, "at": {"$gte": day}}))),
+                       ("shop_week", lambda: b.shop_count("week", lambda: _db.send_counter.count_documents(
+                           {"tenant_id": tid, "at": {"$gte": week}})))):
+            if r[key] > 0 and n() >= r[key]:
+                return key
+        return None
     checks = (("per_client_day", {"customer_id": cid, "at": {"$gte": day}}),
               ("per_client_week", {"customer_id": cid, "at": {"$gte": week}}),
               ("shop_day", {"at": {"$gte": day}}),
@@ -108,7 +120,13 @@ def over_limit(tid: str, cid: str, at: Optional[datetime] = None) -> Optional[st
 
 
 def record(tid: str, cid: str, kind: str, at: Optional[datetime] = None) -> None:
-    _db.send_counter.insert_one({"tenant_id": tid, "customer_id": cid, "kind": kind, "at": at or _now()})
+    row = {"tenant_id": tid, "customer_id": cid, "kind": kind, "at": at or _now()}
+    from services import send_batch as _SB
+    b = _SB.current(tid, cid)
+    if b is not None:
+        b.counted(row)
+    else:
+        _db.send_counter.insert_one(row)
 
 
 def defer(tid: str, customer: Dict[str, Any], title: str, body: str, kind: str,
@@ -131,7 +149,9 @@ def gate(tid: str, customer: Dict[str, Any], title: str, body: str, kind: str,
     # no campaign, automation or IA message leaves at all.
     try:
         from features.privacy_page import marketing_allowed
-        if not marketing_allowed(tid):
+        from services import send_batch as _SB
+        b = _SB.current(tid)
+        if not (b.marketing(lambda: marketing_allowed(tid)) if b is not None else marketing_allowed(tid)):
             return {"sent": False, "channel": None, "reason": "marketing_off"}
     except Exception:
         pass

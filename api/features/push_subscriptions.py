@@ -249,7 +249,9 @@ def fan_out_to_customer(tenant_id: str, customer_id: str, title: str, body: str,
     if not is_configured():
         return {"sent": 0, "error": "vapid_not_configured"}
 
-    subs = list(_db.push_subscriptions.find({
+    from services import send_batch as _SB
+    b = _SB.current(tenant_id, customer_id)          # a big send read every client's devices at once
+    subs = b.subs(customer_id) if b is not None else list(_db.push_subscriptions.find({
         "tenant_id": tenant_id, "customer_id": customer_id
     }))
     if not subs:
@@ -265,4 +267,6 @@ def fan_out_to_customer(tenant_id: str, customer_id: str, title: str, body: str,
             expired.append(s["endpoint"])
     if expired:
         _db.push_subscriptions.delete_many({"endpoint": {"$in": expired}})
+        if b is not None:
+            b.forget_subs(expired)
     return {"sent": sent, "subs_total": len(subs), "expired_cleaned": len(expired)}

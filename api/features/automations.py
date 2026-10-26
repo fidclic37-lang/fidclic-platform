@@ -878,14 +878,18 @@ def _live_offer(tid: str) -> Optional[str]:
     """{offre}: the shop's latest offer still running (Campagnes)."""
     if not tid:
         return None
-    try:
-        from features import campaign_kinds as K
-        for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}).sort("sent_at", -1).limit(20):
-            if c.get("kind") in K.OFFER_KINDS and K.is_live(c, _now()):
-                return (c.get("name") or "").strip() or None
-    except Exception:
-        pass
-    return None
+    from services import send_batch as _SB
+
+    def find() -> Optional[str]:
+        try:
+            from features import campaign_kinds as K
+            for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}).sort("sent_at", -1).limit(20):
+                if c.get("kind") in K.OFFER_KINDS and K.is_live(c, _now()):
+                    return (c.get("name") or "").strip() or None
+        except Exception:
+            pass
+        return None
+    return _SB.memo(("live_offer", tid), find)       # once per send, not per message
 
 
 def _extra(scenario: str, cust: Dict[str, Any], ctx: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]:
@@ -1632,6 +1636,13 @@ def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
     days = max(1, int(tr.get("days") or 30))
     cutoff = at - timedelta(days=days)
     waiting = set(_db.automation_queue.distinct("customer_id", {"automation_id": row["id"]}))
+    # each client's last relance from this automation, in one read (was one per client)
+    told: Dict[str, Any] = {}
+    for g in _db.automation_log.find({"tenant_id": tid, "automation_id": row["id"]},
+                                     {"_id": 0, "customer_id": 1, "sent_at": 1}):
+        prev_at = _aware(g.get("sent_at"))
+        if prev_at and (g.get("customer_id") not in told or prev_at > told[g["customer_id"]]):
+            told[g["customer_id"]] = prev_at
     out = []
     for c in _db.customers.find({"tenant_id": tid}, {"_id": 0}):
         if c["id"] in waiting:
@@ -1639,10 +1650,8 @@ def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
         last = _aware(c.get("last_visit_date")) or _aware(c.get("created_at"))
         if not last or last > cutoff:
             continue
-        prev = _db.automation_log.find_one({"tenant_id": tid, "automation_id": row["id"], "customer_id": c["id"]},
-                                           sort=[("sent_at", -1)])
-        if prev:
-            sent = _aware(prev["sent_at"])
+        sent = told.get(c["id"])
+        if sent:
             if sent >= last and tr.get("repeat") != "every":
                 continue                          # once per absence: until they come back
             if tr.get("repeat") == "every" and at - sent < timedelta(days=max(1, int(tr.get("every_days") or 30))):
@@ -1693,7 +1702,17 @@ def _release(row: Dict[str, Any], at: datetime, done: bool) -> None:
 def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, Any]:
     """Release what is due. `source` « tick » (every 15 min, Vercel Pro) or
     « daily » (07:00 UTC): without a recent tick the daily run sends all of
-    today's — early rather than never."""
+    today's — early rather than never. One run reads each shop and card once
+    (services/doc_cache, audit 2026-10-26: five times per message before)."""
+    from services import doc_cache as _DC
+    token = _DC.begin()
+    try:
+        return _run_due(at, source)
+    finally:
+        _DC.end(token)
+
+
+def _run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, Any]:
     at = at or _now()
     if source == "tick":
         _db.automation_meta.update_one({"_id": "tick"}, {"$set": {"at": at}}, upsert=True)
@@ -1774,16 +1793,19 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             # with a limit and the 15-minute tick, the day's sends are spread
             # over the plage horaire; without the tick they all go now
             times = _spread(sched, at, len(chosen)) if limit and strict else [at] * len(chosen)
-            for (c, ctx), when in zip(chosen, times):
-                if when <= at + timedelta(seconds=30):
-                    if _deliver(tid, row, c, ctx, at):
-                        summary["time_sent"] += 1
-                else:
-                    _db.automation_queue.insert_one({"id": str(uuid.uuid4()), "tenant_id": tid,
-                                                     "automation_id": row["id"], "customer_id": c["id"],
-                                                     "due_at": when, "ctx": ctx, "created_at": at})
-                    summary.setdefault("spread", 0)
-                    summary["spread"] += 1
+            from services import send_batch as _SB
+            with _SB.batch(_db, tid, [c["id"] for (c, _), when in zip(chosen, times)
+                                      if when <= at + timedelta(seconds=30)]):
+                for (c, ctx), when in zip(chosen, times):
+                    if when <= at + timedelta(seconds=30):
+                        if _deliver(tid, row, c, ctx, at):
+                            summary["time_sent"] += 1
+                    else:
+                        _db.automation_queue.insert_one({"id": str(uuid.uuid4()), "tenant_id": tid,
+                                                         "automation_id": row["id"], "customer_id": c["id"],
+                                                         "due_at": when, "ctx": ctx, "created_at": at})
+                        summary.setdefault("spread", 0)
+                        summary["spread"] += 1
             _release(row, at, done=True)
         except Exception as exc:
             summary["errors"] += 1

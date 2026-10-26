@@ -916,9 +916,12 @@ def compose(req: Compose, request: Request = None,
     # after, the pass came back unchanged and Wallet raised no notification
     # (user, 2026-10-04 — the offer only appeared later, silently).
     doc["sent_at"] = at
+    # its delivery « pending » until the last client: a send cut half-way
+    # (the function's time limit) is finished by the tick — resume_due
+    doc["delivery"] = {"done": False, "at": at}
     save()
     result = _deliver(tid, doc, people)
-    _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": result["delivered"]}})
+    _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": result["delivered"], "delivery.done": True}})
     return {"id": doc["id"], "status": "sent", "audience": len(people), "temoin": len(held), **result}
 
 
@@ -946,29 +949,38 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
     held = set(doc.get("holdout_ids") or [])
     people = [c for c in people if c.get("id") not in reached and c.get("id") not in held]
 
-    for cust in people:
-        title, message = doc["name"], doc["content"]
-        if core and hasattr(core, "render_template"):
+    # One send, one read of what every client's send asks (services/send_batch,
+    # audit 2026-10-26: ~10 round trips a client before); a hundred clients at
+    # a time: their card rows, then their pushes
+    from services import send_batch as _SB
+    with _SB.batch(_db, tid, [c["id"] for c in people]):
+        for part in _SB.chunks(people):
+            said = []
+            for cust in part:
+                title, message = doc["name"], doc["content"]
+                if core and hasattr(core, "render_template"):
+                    try:
+                        title = core.render_template(doc["name"], cust, tenant)
+                        message = core.render_template(doc["content"], cust, tenant)
+                    except Exception:
+                        pass
+                said.append((cust, title, message))
             try:
-                title = core.render_template(doc["name"], cust, tenant)
-                message = core.render_template(doc["content"], cust, tenant)
-            except Exception:
-                pass
-        try:
-            _db.push_notifications.insert_one({
-                "customer_id": cust["id"], "tenant_id": tid, "campaign_id": doc["id"],
-                "title": title, "body": message, "image_url": doc.get("image_url"),
-                "link_url": doc.get("link_url"), "type": "campaign", "sent_at": sent_at,
-                "temoin": bool(held),        # measured by a groupe témoin (fidclic_impact: never « attendu »)
-            })
-        except Exception as exc:
-            print(f"campagnes: card feed write failed for {cust.get('id')}: {exc}")
-        if doc["channels"]["push"] and core and hasattr(core, "dispatch_to_customer"):
-            try:
-                if core.dispatch_to_customer(tid, cust, title, message, kind="campaign")["sent"]:
-                    delivered += 1
+                _db.push_notifications.insert_many([{
+                    "customer_id": cust["id"], "tenant_id": tid, "campaign_id": doc["id"],
+                    "title": title, "body": message, "image_url": doc.get("image_url"),
+                    "link_url": doc.get("link_url"), "type": "campaign", "sent_at": sent_at,
+                    "temoin": bool(held),        # measured by a groupe témoin (fidclic_impact: never « attendu »)
+                } for cust, title, message in said])
             except Exception as exc:
-                print(f"campagnes: push failed for {cust.get('id')}: {exc}")
+                print(f"campagnes: card feed write failed ({exc})")
+            if doc["channels"]["push"] and core and hasattr(core, "dispatch_to_customer"):
+                for cust, title, message in said:
+                    try:
+                        if core.dispatch_to_customer(tid, cust, title, message, kind="campaign")["sent"]:
+                            delivered += 1
+                    except Exception as exc:
+                        print(f"campagnes: push failed for {cust.get('id')}: {exc}")
 
     woken = 0
     if doc["channels"]["wallet"]:
@@ -1012,17 +1024,50 @@ def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
         doc["sent_at"] = at
         doc.setdefault("channels", {"push": True, "wallet": True})
         # Sent first, then delivered — the passes it wakes must find it (see compose).
-        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "sent", "sent_at": at}})
+        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "sent", "sent_at": at,
+                                                              "delivery": {"done": False, "at": at}}})
         try:
             res = _deliver(doc["tenant_id"], doc, people)
         except Exception as exc:                       # one tenant must not stop the cron
             print(f"campagnes: scheduled send failed for {doc['id']}: {exc}")
-            _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "scheduled", "sent_at": None}})
+            _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "scheduled", "sent_at": None},
+                                                         "$unset": {"delivery": ""}})
             continue
-        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": res["delivered"]}})
+        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": res["delivered"], "delivery.done": True}})
         out["sent"] += 1
         out["recipients"] += res["reach"]
+    out["resumed"] = resume_due(at)
     return out
+
+
+RESUME_AFTER = timedelta(minutes=10)    # longer than a function lives (vercel.json maxDuration 360 s)
+
+
+def resume_due(at: Optional[datetime] = None) -> int:
+    """A send cut half-way (audit 2026-10-26: saved as sent, then the function
+    was stopped): the clients it had not reached get it now. Whoever already
+    has it on their card is skipped (_deliver), so nobody gets it twice."""
+    at = at or _now()
+    n = 0
+    for doc in list(_db.campaigns.find({"status": "sent", "delivery.done": False,
+                                         "delivery.at": {"$lt": at - RESUME_AFTER}}, {"_id": 0}).limit(20)):
+        # claimed by moving its clock: another tick leaves it alone
+        claimed = _db.campaigns.update_one({"id": doc["id"], "delivery.done": False, "delivery.at": doc["delivery"]["at"]},
+                                           {"$set": {"delivery.at": at}})
+        if not claimed.modified_count:
+            continue
+        people = list(_db.customers.find({"tenant_id": doc["tenant_id"], "id": {"$in": list(doc.get("recipient_ids") or [])}},
+                                         {"_id": 0}))
+        doc.setdefault("channels", {"push": True, "wallet": True})
+        try:
+            res = _deliver(doc["tenant_id"], doc, people)
+        except Exception as exc:
+            print(f"campagnes: resuming {doc['id']} failed ({exc})")
+            continue
+        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivery.done": True},
+                                                     "$inc": {"delivered_count": int(res["delivered"])}})
+        n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------
