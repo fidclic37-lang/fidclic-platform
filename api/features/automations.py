@@ -1666,9 +1666,9 @@ def _spread(sched: Dict[str, Any], at: datetime, n: int) -> List[datetime]:
 
 
 # a run holds its automation while it sends: longer than a function lives
-# (vercel.json maxDuration 60 s), shorter than the 15-minute tick — a run
+# (vercel.json maxDuration 360 s), shorter than the 15-minute tick — a run
 # killed mid-way is taken up by the next tick, its clients already told skipped
-RUN_LEASE = timedelta(minutes=5)
+RUN_LEASE = timedelta(minutes=10)
 
 
 def _lease_free(field: str, at: datetime) -> Dict[str, Any]:

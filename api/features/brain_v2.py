@@ -65,6 +65,8 @@ _cache: List[Any] = [0.0, None]
 def init(db):
     global _db
     _db = db
+    from features import ai_jobs as JOBS
+    JOBS.register("learn", _learn_step)
     try:
         db.brain_models.create_index("model", unique=True)
     except Exception:
@@ -235,108 +237,218 @@ def _priors(rhythms: Dict[str, Dict[str, List[float]]], skip: Optional[str] = No
     return out
 
 
-def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Learn v2's tables from every shop, and backtest v2 shop by shop with
-    tables learned from the other shops. Writes brain_models and the journal
-    (brain-v2 backtest rows) only."""
-    from features import brain_journal as BJ
-    now = now or datetime.now(timezone.utc)
-    shops = _histories()
+# what the journal rows need of a replayed brain (the rest is in its features)
+_B_KEYS = ("last", "gap_days", "spread_days", "visits_n", "n_gaps", "confidence", "cv", "model")
 
-    # 1. the network's usual rhythm, per sector and per shop
+
+def _shop_clients(tid: str) -> Dict[str, List[Dict[str, Any]]]:
+    """One shop's visits, by client, sorted (aware times)."""
+    by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$ne": None}}, CB._VISIT_FIELDS | {"tenant_id": 1}):
+        t = CB._aware(v.get("visit_time"))
+        if t:
+            by[v["customer_id"]].append({**v, "visit_time": t})
+    for vs in by.values():
+        vs.sort(key=lambda x: x["visit_time"])
+    return by
+
+
+def _tenant(tid: str) -> Dict[str, Any]:
+    return _db.tenants.find_one({"id": tid}, {"_id": 0, "id": 1, "sector": 1, "activity_key": 1}) or {}
+
+
+def _rhythms(run: str) -> Dict[str, Dict[str, List[float]]]:
     rhythms: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
-    for tid, shop in shops.items():
-        act, sec, _ = _keys(shop["tenant"] or {"sector": shop["sector"]})
-        for vs in shop["clients"].values():
-            g = _own_gap(vs)
-            if g:
-                rhythms[f"a:{act}"][tid].append(g)        # per trade …
-                rhythms[f"s:{sec}"][tid].append(g)        # … and per sector
+    for d in _db.brain_v2_stage.find({"run": run, "kind": "rhythm"}, {"_id": 0}):
+        rhythms[f"a:{d['act']}"][d["tid"]].extend(d["gaps"])        # per trade …
+        rhythms[f"s:{d['sec']}"][d["tid"]].extend(d["gaps"])        # … and per sector
+    return rhythms
 
-    # 2. replay: every past guess (raw rhythm, the shop's sector rhythm learned
-    #    from the other shops), and how far the real return fell from it
-    points: List[Dict[str, Any]] = []
-    for tid, shop in shops.items():
-        prior = sector_prior(shop["tenant"] or {"sector": shop["sector"]}, _priors(rhythms, skip=tid))
-        rule = BJ.rule_days(tid)
-        for vs in shop["clients"].values():
-            ends = _day_ends(vs)
-            for k, end in enumerate(ends):
-                past = vs[:end + 1]
-                at = past[-1]["visit_time"]
-                b = CB.build(past, prior[0], prior[1], at, model=2)
-                if not CB.known(b) or not b.get("gap_days"):
-                    continue
-                nxt = vs[ends[k] + 1]["visit_time"] if k + 1 < len(ends) else None
-                points.append({"tid": tid, "sector": shop["sector"], "rule": rule, "b": b, "at": at,
-                               "past": past, "next": nxt, "key": bucket(int(b["n_gaps"]), b.get("cv")),
-                               "ratio": (CB._days(at, nxt) / float(b["gap_days"])) if nxt else None})
 
-    def ratios(skip: Optional[str] = None) -> Dict[str, List[float]]:
-        out: Dict[str, List[float]] = defaultdict(list)
-        for p in points:
-            if p["ratio"] is not None and p["tid"] != skip:
-                out[p["key"]].append(p["ratio"])
-        return out
-
-    # 3. each shop judged with windows learned without it
-    loso: Dict[str, Dict[str, Any]] = {tid: table(ratios(skip=tid)) for tid in shops}
-    hits: Dict[str, Dict[str, List[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))   # shop → group → [in, n]
-    for p in points:
-        w = window_for(loso[p["tid"]], int(p["b"]["n_gaps"]), p["b"].get("cv"))
-        p["w"] = w
-        if w and p["next"] is not None:
-            # counted under the group whose window was used — what the profile shows
-            inside = int(w["lo"] <= p["ratio"] <= w["hi"])
-            for where in {w["bucket"], "tous"}:
-                hits[p["tid"]][where][0] += inside
-                hits[p["tid"]][where][1] += 1
-
-    def coverage(skip: Optional[str] = None) -> Dict[str, int]:
-        """Share of returns inside their window, per group — other shops than
-        `skip`, so a shop's « confiance » is never measured on itself."""
-        tot: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
-        for tid, groups in hits.items():
-            if tid == skip:
+def _learn_step(job: Dict[str, Any], deadline: float) -> bool:
+    """brain-v2's learning in slices (features/ai_jobs), the same four steps
+    as in one go — working notes in brain_v2_stage, the new tables and rows
+    swapped in at the end (the old ones serve meanwhile):
+        rythmes  each shop's regulars' rhythm
+        rejeu    every past guess, with the sector rhythm learned without the shop
+        tables   the windows and the confidence, each shop judged without itself
+        lignes   the journal's brain-v2 backtest rows"""
+    import json
+    import time
+    from features import ai_jobs as JOBS
+    from features import brain_journal as BJ
+    run = job["run"]
+    now = CB._aware(job["now"])
+    st = dict(job.get("state") or {})
+    stage = _db.brain_v2_stage
+    if not st.get("step"):
+        shops = sorted(t for t in _db.visits.distinct("tenant_id", {"customer_id": {"$ne": None}}) if t)
+        st = {"step": "rythmes", "shops": shops, "i": 0, "cursor": None, "chunk": 0}
+        JOBS.save(job, state=st, phase="rythmes", done=0, total=len(shops))
+    while True:
+        shops = st["shops"]
+        if st["step"] == "rythmes":
+            if st["i"] >= len(shops):
+                total = sum(len(_clients) for _clients in (_db.visits.distinct("customer_id", {"tenant_id": t})
+                                                             for t in shops))
+                st = {**st, "step": "rejeu", "i": 0, "cursor": None}
+                JOBS.save(job, state=st, phase="rejeu", done=0, total=total)
                 continue
-            for k, (h, n) in groups.items():
-                tot[k][0] += h
-                tot[k][1] += n
-        return {k: round(100 * h / n) for k, (h, n) in tot.items() if n}
+            tid = shops[st["i"]]
+            t_doc = _tenant(tid)
+            act, sec, _ = _keys(t_doc or {"sector": t_doc.get("sector")})
+            gaps = [g for vs in _shop_clients(tid).values() if (g := _own_gap(vs))]
+            stage.replace_one({"run": run, "kind": "rhythm", "tid": tid},
+                              {"run": run, "kind": "rhythm", "tid": tid, "act": act, "sec": sec, "gaps": gaps},
+                              upsert=True)
+            st = {**st, "i": st["i"] + 1}
+            JOBS.save(job, state=st, done=st["i"])
+        elif st["step"] == "rejeu":
+            stage.delete_many({"run": run, "kind": "pt", "chunk": {"$gte": st["chunk"]}})   # a slice that died
+            if st["i"] >= len(shops):
+                st = {**st, "step": "tables"}
+                JOBS.save(job, state=st, phase="tables")
+                continue
+            tid = shops[st["i"]]
+            ids = sorted(c for c in _db.visits.distinct("customer_id", {"tenant_id": tid}) if c)
+            todo = [c for c in ids if st["cursor"] is None or c > st["cursor"]][:JOBS.CHUNK]
+            if not todo:
+                st = {**st, "i": st["i"] + 1, "cursor": None}
+                JOBS.save(job, state=st)
+                continue
+            t_doc = _tenant(tid)
+            prior = sector_prior(t_doc or {"sector": t_doc.get("sector")}, _priors(_rhythms(run), skip=tid))
+            rule = BJ.rule_days(tid)
+            clients = _shop_clients(tid)
+            pts: List[Dict[str, Any]] = []
+            for cid in todo:
+                vs = clients.get(cid) or []
+                ends = _day_ends(vs)
+                for k, end in enumerate(ends):
+                    past = vs[:end + 1]
+                    at = past[-1]["visit_time"]
+                    b = CB.build(past, prior[0], prior[1], at, model=2)
+                    if not CB.known(b) or not b.get("gap_days"):
+                        continue
+                    nxt = vs[ends[k] + 1]["visit_time"] if k + 1 < len(ends) else None
+                    pts.append({"run": run, "kind": "pt", "chunk": st["chunk"], "tid": tid,
+                                "sector": t_doc.get("sector"), "rule": rule, "at": at, "next": nxt,
+                                "key": bucket(int(b["n_gaps"]), b.get("cv")),
+                                "ratio": (CB._days(at, nxt) / float(b["gap_days"])) if nxt else None,
+                                "n_gaps": int(b["n_gaps"]), "cv": b.get("cv"),
+                                "mean": BJ._baseline_mean(BJ._gaps_of(b, past)),
+                                "b": {k2: b.get(k2) for k2 in _B_KEYS},
+                                "f": BJ.pack_features(BJ.features(b, at))})
+            for i in range(0, len(pts), 1000):
+                stage.insert_many(pts[i:i + 1000])
+            st = {**st, "cursor": todo[-1], "chunk": st["chunk"] + 1}
+            JOBS.save(job, state=st, done=int(job.get("done") or 0) + len(todo))
+        elif st["step"] == "tables":
+            pts = list(stage.find({"run": run, "kind": "pt"}, {"_id": 0, "tid": 1, "key": 1, "ratio": 1,
+                                                               "n_gaps": 1, "cv": 1}))
 
-    # 4. the journal's brain-v2 backtest rows
-    rows: List[Dict[str, Any]] = []
-    cov_loso = {tid: coverage(skip=tid) for tid in shops}
-    for p in points:
-        b = dict(p["b"])
-        if p["w"]:
-            b["win"] = {"lo": p["w"]["lo"], "mid": p["w"]["mid"], "hi": p["w"]["hi"], "bucket": p["w"]["bucket"]}
-            cov = cov_loso[p["tid"]].get(p["w"]["bucket"])
-            if cov is not None:
-                b["confidence"] = cov
-        row = BJ.make(p["tid"], p["sector"] or "other", b, BJ._gaps_of(b, p["past"]), p["at"], "backtest",
-                      None, p["rule"], model=MODEL)
-        if not row:
-            continue
-        if p["next"] is not None:
-            row.update(BJ._resolve(row, p["next"]))
-        elif row["expires_at"] < now:
-            row.update(BJ._expire(row, now))
-        else:
-            continue
-        row["customer_id"] = None
-        rows.append(row)
-    _db.brain_predictions.delete_many({"source": "backtest", "model": MODEL})
-    for i in range(0, len(rows), 1000):
-        _db.brain_predictions.insert_many([BJ.pack(r) for r in rows[i:i + 1000]])
+            def ratios(skip: Optional[str] = None) -> Dict[str, List[float]]:
+                out: Dict[str, List[float]] = defaultdict(list)
+                for p in pts:
+                    if p["ratio"] is not None and p["tid"] != skip:
+                        out[p["key"]].append(p["ratio"])
+                return out
 
-    calib = {**table(ratios()), "coverage": coverage()}
-    doc = {"model": MODEL, "learned_at": now, "calib": calib, "priors": _priors(rhythms),
-           "shops": len(shops), "points": len(points), "backtest_rows": len(rows),
-           "returns": sum(1 for p in points if p["ratio"] is not None)}
+            # each shop judged with windows learned without it
+            loso = {tid: table(ratios(skip=tid)) for tid in shops}
+            hits: Dict[str, Dict[str, List[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+            for p in pts:
+                w = window_for(loso[p["tid"]], int(p["n_gaps"]), p.get("cv"))
+                if w and p["ratio"] is not None:
+                    # counted under the group whose window was used — what the profile shows
+                    inside = int(w["lo"] <= p["ratio"] <= w["hi"])
+                    for where in {w["bucket"], "tous"}:
+                        hits[p["tid"]][where][0] += inside
+                        hits[p["tid"]][where][1] += 1
+
+            def coverage(skip: Optional[str] = None) -> Dict[str, int]:
+                """Share of returns inside their window, per group — other
+                shops than `skip`, so a shop's « confiance » is never measured
+                on itself."""
+                tot: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
+                for tid, groups in hits.items():
+                    if tid == skip:
+                        continue
+                    for k, (h, n) in groups.items():
+                        tot[k][0] += h
+                        tot[k][1] += n
+                return {k: round(100 * h / n) for k, (h, n) in tot.items() if n}
+
+            st = {**st, "step": "lignes", "cursor": None, "rchunk": 0, "rows": 0,
+                  "loso": json.dumps(loso), "cov": json.dumps({tid: coverage(skip=tid) for tid in shops}),
+                  "calib": json.dumps({**table(ratios()), "coverage": coverage()}),
+                  "points": len(pts), "returns": sum(1 for p in pts if p["ratio"] is not None)}
+            JOBS.save(job, state=st, phase="lignes", done=0, total=len(pts))
+        elif st["step"] == "lignes":
+            _db.brain_predictions.delete_many({"run": run, "chunk": {"$gte": st["rchunk"]}})   # a slice that died
+            q: Dict[str, Any] = {"run": run, "kind": "pt"}
+            if st["cursor"] is not None:
+                q["_id"] = {"$gt": st["cursor"]}
+            batch = list(stage.find(q).sort("_id", 1).limit(JOBS.CHUNK * 20))
+            if not batch:
+                _finish_learn(run, now, st)
+                return True
+            loso, cov_loso = json.loads(st["loso"]), json.loads(st["cov"])
+            rows: List[Dict[str, Any]] = []
+            for p in batch:
+                b = {k: p["b"].get(k) for k in _B_KEYS}
+                b["last"] = CB._aware(b.get("last"))
+                w = window_for(loso.get(p["tid"]), int(p["n_gaps"]), p.get("cv"))
+                if w:
+                    b["win"] = {"lo": w["lo"], "mid": w["mid"], "hi": w["hi"], "bucket": w["bucket"]}
+                    cov = (cov_loso.get(p["tid"]) or {}).get(w["bucket"])
+                    if cov is not None:
+                        b["confidence"] = cov
+                at = CB._aware(p["at"])
+                row = BJ.make(p["tid"], p.get("sector") or "other", b, [p["mean"]] if p.get("mean") is not None else [],
+                              at, "backtest", None, p["rule"], model=MODEL)
+                if not row:
+                    continue
+                row["features"] = {**BJ.unpack_features(p["f"]), "confidence": b.get("confidence")}
+                nxt = CB._aware(p.get("next"))
+                if nxt is not None:
+                    row.update(BJ._resolve(row, nxt))
+                elif row["expires_at"] < now:
+                    row.update(BJ._expire(row, now))
+                else:
+                    continue
+                row["customer_id"] = None
+                rows.append({**BJ.pack(row), "run": run, "chunk": st["rchunk"]})
+            for i in range(0, len(rows), 1000):
+                _db.brain_predictions.insert_many(rows[i:i + 1000])
+            st = {**st, "cursor": batch[-1]["_id"], "rchunk": st["rchunk"] + 1, "rows": st["rows"] + len(rows)}
+            JOBS.save(job, state=st, done=int(job.get("done") or 0) + len(batch))
+        if time.monotonic() >= deadline:
+            return False
+
+
+def _finish_learn(run: str, now: datetime, st: Dict[str, Any]) -> None:
+    """The new tables and rows take the old ones' place, at once."""
+    import json
+    _db.brain_predictions.delete_many({"source": "backtest", "model": MODEL, "run": {"$exists": False}})
+    _db.brain_predictions.update_many({"run": run}, {"$unset": {"run": "", "chunk": ""}})
+    doc = {"model": MODEL, "learned_at": now, "calib": json.loads(st["calib"]), "priors": _priors(_rhythms(run)),
+           "shops": len(st["shops"]), "points": st["points"], "backtest_rows": st["rows"],
+           "returns": st["returns"]}
     _db.brain_models.replace_one({"model": MODEL}, doc, upsert=True)
     _cache[:] = [0.0, None]
-    return {k: doc[k] for k in ("shops", "points", "backtest_rows", "returns")}
+    _db.brain_v2_stage.delete_many({"run": run})
+
+
+def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Learn v2's tables from every shop, and backtest v2 shop by shop with
+    tables learned from the other shops — in one go (scripts, tests; the
+    page and the tick use the job). Writes brain_models and the journal
+    (brain-v2 backtest rows) only."""
+    from features import ai_jobs as JOBS
+    JOBS.run_now("learn", None, now or datetime.now(timezone.utc))
+    doc = _doc(fresh=True) or {}
+    return {k: doc.get(k) for k in ("shops", "points", "backtest_rows", "returns")}
 
 
 def learn_due(now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -348,4 +460,6 @@ def learn_due(now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
         return None
     if not _db.visits.find_one({}, {"_id": 1}):
         return None
-    return learn(now)
+    from features import ai_jobs as JOBS
+    job, created = JOBS.start("learn", None, by="tick", now=now)
+    return {"started": created, "job": job["id"]}

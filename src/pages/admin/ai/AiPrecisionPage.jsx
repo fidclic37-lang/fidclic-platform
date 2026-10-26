@@ -16,6 +16,43 @@ const pct = (v) => (v == null ? '—' : `${v} %`);
 const days = (v) => (v == null ? '—' : `${String(v).replace('.', ',')} j`);
 const month = (m) => new Date(`${m}-01T12:00:00Z`).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' });
 
+const PHASES = { clients: 'clients rejoués', rythmes: 'boutiques lues', rejeu: 'clients rejoués', tables: 'calcul des fenêtres', lignes: 'lignes écrites' };
+
+/* What runs in the background (features/ai_jobs, user 2026-10-26): the
+   buttons answer at once, the tick does the work in slices; the figures
+   above stay those of the last complete run until the new one ends. */
+function Jobs({ jobs }) {
+  if (!jobs?.length) return null;
+  return (
+    <section className="mb-4 rounded-2xl border border-[#DCE7FF] bg-[#F5F8FF] p-4" data-testid="ai-jobs">
+      <p className="mb-2 text-[13px] text-[#475569]">
+        En arrière-plan, toutes les 15 minutes. Les chiffres affichés restent ceux du dernier calcul complet jusqu&apos;à la fin.
+      </p>
+      <ul className="space-y-2">
+        {jobs.map((j) => {
+          const share = j.total ? Math.min(100, Math.round((100 * j.done) / j.total)) : 0;
+          const state = j.status === 'failed' ? 'Échec' : j.status === 'done' ? 'Terminé' : j.status === 'queued' ? 'En attente du prochain passage' : 'En cours';
+          return (
+            <li key={j.id} data-testid={`ai-job-${j.kind}`} className="text-[13px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-[#0B1C3F]">{j.label}</span>
+                <span className={j.status === 'failed' ? 'text-[#B91C1C]' : 'text-[#475569]'}>{state}</span>
+                {j.total ? <span className="text-[#475569]">· {j.done.toLocaleString('fr-FR')} / {j.total.toLocaleString('fr-FR')} {PHASES[j.phase] || ''}</span> : null}
+              </div>
+              {j.status !== 'failed' && j.status !== 'done' && (
+                <div className="mt-1 h-1.5 w-full max-w-[420px] rounded-full bg-[#DCE7FF]">
+                  <div className="h-1.5 rounded-full bg-[#2F6BFF]" style={{ width: `${share}%` }} />
+                </div>
+              )}
+              {j.status === 'failed' && j.error && <p className="mt-0.5 text-[12px] text-[#B91C1C]">{j.error} — relancez pour réessayer.</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function Card({ label, value, sub, tone = '#0B1C3F', testid }) {
   return (
     <div className="rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid={testid}>
@@ -69,17 +106,33 @@ export default function AiPrecisionPage() {
     adminAPI.aiPrecision({ source, sector, model }).then(({ data }) => setD(data)).catch(() => setD({ error: true }));
   }, [source, sector, model]);
   useEffect(() => { load(); }, [load]);
+  // while something runs in the background, the page follows it
+  const running = (d?.jobs || []).some((j) => j.status === 'queued' || j.status === 'running');
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 30_000);
+    return () => clearInterval(t);
+  }, [running, load]);
 
   const rerun = async () => {
     if (!window.confirm('Relancer le backtest sur toutes les boutiques ? Seul le journal de FidClic IA est réécrit ; aucune donnée client ni message.')) return;
     setBusy(true);
-    try { await adminAPI.aiPrecisionBacktest({}); say('Backtest terminé.'); load(); } catch (e) { say("Le backtest n'a pas pu être lancé."); }
+    try {
+      const { data } = await adminAPI.aiPrecisionBacktest({});
+      say(data.started?.length ? 'Backtest lancé : il tourne en arrière-plan, les chiffres actuels restent affichés jusqu\'à la fin.'
+        : 'Le backtest est déjà en cours.');
+      load();
+    } catch (e) { say("Le backtest n'a pas pu être lancé."); }
     setBusy(false);
   };
 
   const relearn = async () => {
     setBusy(true);
-    try { await adminAPI.aiPrecisionLearn(); say('brain-v2 a réappris.'); load(); } catch (e) { say("L'apprentissage n'a pas pu être lancé."); }
+    try {
+      const { data } = await adminAPI.aiPrecisionLearn();
+      say(data.started ? 'Réapprentissage lancé : brain-v2 garde ses tables actuelles jusqu\'à la fin.' : 'Le réapprentissage est déjà en cours.');
+      load();
+    } catch (e) { say("L'apprentissage n'a pas pu être lancé."); }
     setBusy(false);
   };
   const switchTo = async (to) => {
@@ -130,6 +183,8 @@ export default function AiPrecisionPage() {
           </button>
         </span>
       </div>
+
+      <Jobs jobs={d.jobs} />
 
       <section className="mb-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="precision-compare">
         <div className="mb-2 flex flex-wrap items-center gap-2">
