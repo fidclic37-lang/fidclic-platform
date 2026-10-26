@@ -126,7 +126,9 @@ export default function CampaignDetail({ id, onClose, onEdit, onCancel, onDelete
                   </Line>
                 )}
                 <Line icon={Users} label="Destinataires">
-                  {d.audience_label}{/^\d/.test(d.audience_label || '') ? '' : ` · ${nf(d.recipients)} client${d.recipients > 1 ? 's' : ''}`}
+                  {d.recipients_targeted
+                    ? <>{d.audience_label} · {nf((d.recipients_list?.length || 0) + (d.recipients_more || 0))} clients ciblés</>
+                    : <>{d.audience_label}{/^\d/.test(d.audience_label || '') ? '' : ` · ${nf(d.recipients)} client${d.recipients > 1 ? 's' : ''}`}</>}
                   {d.recipients_list?.length > 0 && (
                     <span className="mt-1.5 flex flex-wrap gap-1.5" data-testid="campaign-recipients">
                       {d.recipients_list.map((p) => (
@@ -135,6 +137,12 @@ export default function CampaignDetail({ id, onClose, onEdit, onCancel, onDelete
                         </span>
                       ))}
                       {d.recipients_more > 0 && <span className="px-1 py-1 text-[12.5px] text-[#64748B]">et {nf(d.recipients_more)} autre{d.recipients_more > 1 ? 's' : ''}</span>}
+                    </span>
+                  )}
+                  {d.recipients_targeted && (
+                    <span className="mt-1 block text-[12.5px] text-[#64748B]" data-testid="recipients-targeted-note">
+                      Tous les clients ciblés, par ordre alphabétique : ceux qui ont reçu le message et ceux du groupe témoin,
+                      sans distinction — pour que la mesure reste juste.
                     </span>
                   )}
                 </Line>
