@@ -328,7 +328,7 @@ def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
         rows.append(row)
     _db.brain_predictions.delete_many({"source": "backtest", "model": MODEL})
     for i in range(0, len(rows), 1000):
-        _db.brain_predictions.insert_many(rows[i:i + 1000])
+        _db.brain_predictions.insert_many([BJ.pack(r) for r in rows[i:i + 1000]])
 
     calib = {**table(ratios()), "coverage": coverage()}
     doc = {"model": MODEL, "learned_at": now, "calib": calib, "priors": _priors(rhythms),

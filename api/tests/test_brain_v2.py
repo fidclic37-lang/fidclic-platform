@@ -121,7 +121,7 @@ def main():
     check("a barber chose its activity: 21 days (researched), not the salon's",
           V2.sector_prior({"sector": "salon", "activity_key": "barbier"}) == (21.0, "secteur"))
     check("v1's rows untouched", db.brain_predictions.count_documents({"model": "brain-v1", "source": "backtest"}) == v1_rows)
-    v2rows = list(db.brain_predictions.find({"model": "brain-v2", "source": "backtest"}))
+    v2rows = [BJ.unpack(d) for d in db.brain_predictions.find({"model": "brain-v2", "source": "backtest"})]
     check("v2 backtest rows, anonymous", len(v2rows) > 300 and all(r["customer_id"] is None for r in v2rows))
     check("leave-one-shop-out: each bakery's rhythm came from the 30 regulars of the two others",
           all(r["features"]["prior_source"] == "reseau" for r in v2rows if r["tenant_id"] in ("b1", "b2", "b3")))
