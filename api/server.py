@@ -8283,6 +8283,7 @@ def send_campaign_to_group(
             "body": render_template(content, c, tenant),
             "type": "campaign",
             "sent_at": now,
+            "temoin": bool(_held),          # measured by a groupe témoin
         })
 
     return {**campaign.model_dump(), "temoin": len(_held)}
@@ -11965,6 +11966,7 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
             "body": rendered_body,
             "type": trigger_type,
             "sent_at": now,
+            "temoin": bool(held),           # measured by a groupe témoin
         })
         # Scheduled sends and the daily cron triggers run through here — they
         # were on the dead email path too, so a scheduled campaign wrote a card

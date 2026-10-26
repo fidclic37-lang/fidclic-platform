@@ -281,10 +281,13 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
         "share_pct": round(imp["revenue"] / revenue * 100) if revenue else 0,
         "revenue_total": _money(revenue),
         "sources": sources, "window_days": FI.WINDOW_DAYS,
+        # « attendus de toute façon » (user, 2026-10-25): shown apart, not in CA FidClic
+        "attendus": imp["attendus"],
         "note": (f"Compté : les visites dans les {FI.WINDOW_DAYS} jours suivant une campagne, "
                  "une notification de géolocalisation, une offre ou une automatisation, et toutes "
                  "les visites des clients venus par parrainage. Un simple passage en caisse "
-                 "n'est pas compté."),
+                 "n'est pas compté, ni un client venu à son rythme habituel après un message "
+                 "sans groupe témoin (« attendus de toute façon »)."),
     }
     # « +X € grâce à FidClic »: the groupe témoin's answer (features/temoin.py)
     from features import temoin as T

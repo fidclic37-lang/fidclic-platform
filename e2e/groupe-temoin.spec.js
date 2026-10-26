@@ -77,5 +77,11 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   await expect(panel.getByTestId('temoin-how')).toContainText('groupe témoin');
   await panel.scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/temoin-analyses.png' });
+  // « attendus de toute façon » (2026-10-25): set apart from CA FidClic, said in the panel
+  const vue = (await (await request.get('/api/owner/analyses?tab=vue&days=30', { headers: SH })).json()).data.impact;
+  expect(vue.note).toContain('attendus de toute façon');
+  if (vue.attendus?.visits > 0) await expect(page.getByTestId('attendus')).toContainText('Attendus de toute façon');
+  await page.locator('#impact').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'test-results/attendus-analyses.png' });
   expect(errors).toEqual([]);
 });

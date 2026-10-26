@@ -945,6 +945,7 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
                 "customer_id": cust["id"], "tenant_id": tid, "campaign_id": doc["id"],
                 "title": title, "body": message, "image_url": doc.get("image_url"),
                 "link_url": doc.get("link_url"), "type": "campaign", "sent_at": sent_at,
+                "temoin": bool(held),        # measured by a groupe témoin (fidclic_impact: never « attendu »)
             })
         except Exception as exc:
             print(f"campagnes: card feed write failed for {cust.get('id')}: {exc}")

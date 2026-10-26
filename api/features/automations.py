@@ -1067,7 +1067,9 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     _db.automation_log.insert_one(dict(log))
     _db.push_notifications.insert_one({"tenant_id": tid, "customer_id": cust["id"], "type": meta["push_kind"],
                                        "title": title, "body": body, "sent_at": at, "automatic": True,
-                                       "automation_id": row["id"], "log_id": log_id})
+                                       "automation_id": row["id"], "log_id": log_id,
+                                       # a relance a groupe témoin measures (fidclic_impact: never « attendu »)
+                                       "temoin": scenario in T.AUTOMATION_SCENARIOS and T.enabled(tid)})
     if scenario == "geo":                 # the card asked: it shows the message itself
         return {**log, "click_url": click}
     held = False
