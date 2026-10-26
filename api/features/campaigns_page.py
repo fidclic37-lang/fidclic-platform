@@ -432,13 +432,21 @@ def campaign_detail(campaign_id: str, request: Request = None,
     _, until = K.window(c) if sent_at else (None, None)
     st = row["status"]
     # To whom, by name, and by whom (user, 2026-10-20: « campaign ki details mein
-    # ye kyun nhi dekh paa rhe ki kisko target kiya gaya tha »)
-    shown = ids[:RECIPIENTS_SHOWN]
-    names = {p["id"]: p for p in _db.customers.find({"tenant_id": tid, "id": {"$in": shown}},
+    # ye kyun nhi dekh paa rhe ki kisko target kiya gaya tha »). With a groupe
+    # témoin: everyone targeted, its témoin mixed in, sorted by name, never
+    # marked (user, 2026-10-26) — the names crossed with the client list must
+    # not reveal who was held back; the counts say how many
+    held = list(c.get("holdout_ids") or [])
+    targeted = ids + [i for i in held if i not in set(ids)]
+    names = {p["id"]: p for p in _db.customers.find({"tenant_id": tid, "id": {"$in": targeted}},
                                                     {"_id": 0, "id": 1, "name": 1, "barcode_id": 1})}
-    recipients_list = [{"id": i, "name": (names.get(i) or {}).get("name") or "Client supprimé",
-                        "barcode_id": (names.get(i) or {}).get("barcode_id")} for i in shown]
-    return {**row, "recipients_list": recipients_list, "recipients_more": max(0, len(ids) - len(shown)),
+    everyone = [{"id": i, "name": (names.get(i) or {}).get("name") or "Client supprimé",
+                 "barcode_id": (names.get(i) or {}).get("barcode_id")} for i in targeted]
+    if held:
+        everyone.sort(key=lambda p: (_fold(p["name"]), p["id"]))
+    recipients_list = everyone[:RECIPIENTS_SHOWN]
+    return {**row, "recipients_list": recipients_list, "recipients_more": max(0, len(everyone) - len(recipients_list)),
+            "recipients_targeted": bool(held),
             "sent_by_label": _sender_label(tid, c), "title": c.get("name") or "", "message": c.get("content") or "", "details": c.get("details"),
             "link_url": safe_link(c.get("link_url")), "audience_label": c.get("audience_label") or "Sélection",
             "discount": K.discount_label(c.get("offer")) if c.get("kind") in K.OFFER_KINDS else None,
@@ -450,6 +458,12 @@ def campaign_detail(campaign_id: str, request: Request = None,
 
 
 RECIPIENTS_SHOWN = 50
+
+
+def _fold(s: Any) -> str:
+    """Alphabetical order the French way: « Élodie » with the E's."""
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFD", str(s or "")) if unicodedata.category(ch) != "Mn").lower()
 
 
 def _sender_label(tid: str, c: Dict[str, Any]) -> Optional[str]:

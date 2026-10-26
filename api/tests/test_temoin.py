@@ -162,7 +162,10 @@ def main():
     tb = d["stats"]["temoin"]
     check("the campaign's detail: both groups and the figure", tb["counts"] == {"sent": 85, "temoin": 15}
           and tb["extra_revenue"] == 340.0, tb)
-    check("… never the témoin's names", not any(h in str(d) for h in ("'h0'", '"h0"', "h11")))
+    # user, 2026-10-26: the name list holds everyone targeted, the témoin mixed in, never marked
+    check("… the témoin never singled out: no list of it, its names only mixed with the others'",
+          "holdout_ids" not in str(d) and d.get("recipients_targeted") is True
+          and all(set(p) == {"id", "name", "barcode_id"} for p in d["recipients_list"]))
     fresh = T.campaign_block("t1", c, now)
     check("a send still inside its 15 days: in progress, no figure", fresh["pending"] == 40 and fresh["sent"]["n"] == 0
           and fresh["extra_revenue"] is None, fresh)

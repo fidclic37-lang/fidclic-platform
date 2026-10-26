@@ -4303,6 +4303,7 @@ def list_campaigns(token_data: TokenData = Depends(require_role(["business_owner
     for c in campaigns:
         c.pop("_id", None)
         c["performance"] = _campaign_performance_rollup(t_id, c)
+        c.pop("holdout_ids", None)       # the groupe témoin: counts only, never who (audit 2026-10-26)
     return campaigns
 
 @app.post("/api/owner/campaigns")
@@ -4373,11 +4374,13 @@ def update_campaign(
     if not update_doc:
         # Nothing to change — return the current state without touching storage.
         campaign_dict.pop("_id", None)
+        campaign_dict.pop("holdout_ids", None)
         return campaign_dict
 
     db.campaigns.update_one({"id": campaign_id}, {"$set": update_doc})
     refreshed = db.campaigns.find_one({"id": campaign_id})
     refreshed.pop("_id", None)
+    refreshed.pop("holdout_ids", None)
     return refreshed
 
 @app.post("/api/owner/campaigns/{campaign_id}/send")
@@ -8659,7 +8662,12 @@ def get_campaign_tracking(
     recipients = []
     opens_count = 0
     visits_count = 0
-    for cid in recipient_ids:
+    # the list names everyone the campaign targeted — its groupe témoin mixed
+    # in, sorted by name, never marked (user, 2026-10-26: crossing the names
+    # with the client list must not reveal who was held back); the rates
+    # count those who got it
+    sent_set = set(recipient_ids)
+    for cid in list(recipient_ids) + list(campaign.get("holdout_ids") or []):
         customer = db.customers.find_one({"id": cid})
         if not customer:
             continue
@@ -8669,9 +8677,9 @@ def get_campaign_tracking(
             lv = customer.get("last_visit_date")
             if isinstance(lv, datetime) and sent_at <= lv <= visit_cutoff:
                 visited = True
-        if opened:
+        if opened and cid in sent_set:
             opens_count += 1
-        if visited:
+        if visited and cid in sent_set:
             visits_count += 1
         recipients.append({
             "customer_id": cid,
@@ -8686,9 +8694,11 @@ def get_campaign_tracking(
             "visited_after": visited,  # legacy alias
         })
 
+    from features.campaigns_page import _fold
+    recipients.sort(key=lambda r: (_fold(r["customer_name"]), r["customer_id"]))
     # Use delivered_count when available; otherwise fall back to recipients we
     # actually resolved (handles seed data where delivered may be unset).
-    delivered = campaign.get("delivered_count", 0) or len(recipients)
+    delivered = campaign.get("delivered_count", 0) or len([r for r in recipients if r["customer_id"] in sent_set])
     targeted = campaign.get("targeted_count", 0) or len(recipient_ids)
     denom = delivered if delivered > 0 else (len(recipients) or 1)
 
