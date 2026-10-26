@@ -49,6 +49,14 @@ def push_used_this_month(tenant_id: str, now: Optional[datetime] = None) -> int:
     the 1st of the month. Counted from delivery_log, which dispatch_to_customer
     already writes for every single send — so the number the merchant sees is
     the number that really left the server."""
+    from services import send_batch as _SB
+    b = _SB.current(tenant_id)
+    if b is not None and now is None:                     # a big send: counted once, then in memory
+        return b.quota_used(lambda: _push_used(tenant_id))
+    return _push_used(tenant_id, now)
+
+
+def _push_used(tenant_id: str, now: Optional[datetime] = None) -> int:
     try:
         return _db.delivery_log.count_documents({
             "tenant_id": tenant_id,

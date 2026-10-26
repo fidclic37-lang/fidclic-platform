@@ -588,7 +588,8 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
             "{points_manquants}": str(ptnr),
             # what this client usually takes (FidClic IA, user 2026-10-25):
             # « votre Coupe », or « votre prochaine visite » when nothing stands out
-            "{produit_habituel}": _usual_product(customer),
+            # (only read when the message uses it: a round trip per client otherwise)
+            "{produit_habituel}": _usual_product(customer) if "{produit_habituel}" in content else "",
         }
         if "{prochaine_récompense}" in content or "{prochaine_recompense}" in content:
             tpl = db.card_templates.find_one({"tenant_id": customer.get("tenant_id") or (tenant or {}).get("id")},
@@ -654,6 +655,16 @@ DELETED_CARD_MSG = ("Cette carte n'est plus active : ce client a été supprimé
                     "Il peut s'inscrire à nouveau, ou vous pouvez le rétablir dans Clients › Supprimés.")
 
 
+def _log_delivery(tenant_id: str, customer_id: Optional[str], row: dict) -> None:
+    """delivery_log — a hundred at a time inside a big send (services/send_batch)."""
+    from services import send_batch as _SB
+    b = _SB.current(tenant_id, customer_id)
+    if b is not None:
+        b.logged(row)
+    else:
+        db.delivery_log.insert_one(row)
+
+
 def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
                          kind: str = "campaign", url: Optional[str] = None) -> dict:
     """Deliver one message to one customer. Returns {sent, channel}.
@@ -701,7 +712,7 @@ def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
         if push_result.get("sent", 0) > 0:
             result = {"sent": True, "channel": "web_push"}
         try:
-            db.delivery_log.insert_one({
+            _log_delivery(tenant_id, customer.get("id"), {
                 "tenant_id": tenant_id, "customer_id": customer.get("id"),
                 "channel": "web_push", "kind": kind,
                 "result": push_result, "timestamp": now,
@@ -722,7 +733,7 @@ def dispatch_to_customer(tenant_id: str, customer: dict, title: str, body: str,
                 if sms_result.get("sent"):
                     result = {"sent": True, "channel": "sms"}
                 try:
-                    db.delivery_log.insert_one({
+                    _log_delivery(tenant_id, customer.get("id"), {
                         "tenant_id": tenant_id, "customer_id": customer.get("id"),
                         "channel": "sms_fallback", "kind": kind, "phone": phone,
                         "result": sms_result, "timestamp": now,
@@ -8242,12 +8253,6 @@ def send_campaign_to_group(
     _camp_id = str(uuid.uuid4())
     from features import temoin as _T
     targeted_customers, _held = _T.split(tid, targeted_customers, _camp_id)
-    for cust in targeted_customers:
-        rendered_body = render_template(content, cust, tenant)
-        rendered_subject = render_template(name, cust, tenant)
-        if dispatch_to_customer(tid, cust, rendered_subject, rendered_body,
-                                kind="campaign")["sent"]:
-            delivered += 1
 
     raw_source = (req.get("source") or "").strip().lower() or None
     ALLOWED = {"push", "email", "other"}
@@ -8262,7 +8267,7 @@ def send_campaign_to_group(
         filters={"segment": segment or {"type": "custom"}},
         sent_at=now,
         targeted_count=len(targeted_customers),
-        delivered_count=delivered,
+        delivered_count=0,
         recipient_ids=[c["id"] for c in targeted_customers],
         image_url=image_url,
         source=src,
@@ -8273,21 +8278,17 @@ def send_campaign_to_group(
     _doc["sent_by"] = token_data.email
     _doc["sent_by_admin"] = getattr(token_data, "view_by", None)   # « Accéder au compte »
     _doc["holdout_ids"] = [c["id"] for c in _held]
-    db.campaigns.insert_one(_doc)
-
-    # Also log per-customer push notification so wallet cards show the offer.
-    for c in targeted_customers:
-        db.push_notifications.insert_one({
-            "customer_id": c["id"],
-            "tenant_id": tid,
-            "campaign_id": campaign.id,
-            "image_url": image_url,
-            "title": render_template(name, c, tenant),
-            "body": render_template(content, c, tenant),
-            "type": "campaign",
-            "sent_at": now,
-            "temoin": bool(_held),          # measured by a groupe témoin
-        })
+    # saved first, its delivery « pending »: a send cut half-way is finished by
+    # the tick (features/campaigns_page.resume_due); the card row and the push
+    # go together, a hundred clients at a time, in one batch (audit 2026-10-26)
+    _doc["channels"] = {"push": True, "wallet": False}
+    _doc["delivery"] = {"done": False, "at": now}
+    db.campaigns.insert_one(dict(_doc))
+    from features import campaigns_page as _CPG
+    _res = _CPG._deliver(tid, _doc, targeted_customers)
+    delivered = _res["delivered"]
+    db.campaigns.update_one({"id": _camp_id}, {"$set": {"delivered_count": delivered, "delivery.done": True}})
+    campaign.delivered_count = delivered
 
     return {**campaign.model_dump(), "temoin": len(_held)}
 
@@ -8667,8 +8668,12 @@ def get_campaign_tracking(
     # with the client list must not reveal who was held back); the rates
     # count those who got it
     sent_set = set(recipient_ids)
-    for cid in list(recipient_ids) + list(campaign.get("holdout_ids") or []):
-        customer = db.customers.find_one({"id": cid})
+    _everyone = list(recipient_ids) + list(campaign.get("holdout_ids") or [])
+    _people = {c["id"]: c for c in db.customers.find({"id": {"$in": _everyone}, "tenant_id": token_data.tenant_id},
+                                                     {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1,
+                                                      "tier": 1, "last_visit_date": 1})}
+    for cid in _everyone:
+        customer = _people.get(cid)
         if not customer:
             continue
         opened = cid in opened_ids
@@ -11966,24 +11971,26 @@ def _dispatch_campaign_to_customers(tenant: dict, name: str, content: str, custo
     camp_id = str(uuid.uuid4())
     from features import temoin as _T
     customer_list, held = _T.split(tid, customer_list, camp_id)
-    for cust in customer_list:
-        rendered_body = render_template(content, cust, tenant)
-        rendered_subject = render_template(name, cust, tenant)
-        db.push_notifications.insert_one({
-            "customer_id": cust["id"],
-            "tenant_id": tid,
-            "title": rendered_subject,
-            "body": rendered_body,
-            "type": trigger_type,
-            "sent_at": now,
-            "temoin": bool(held),           # measured by a groupe témoin
-        })
-        # Scheduled sends and the daily cron triggers run through here — they
-        # were on the dead email path too, so a scheduled campaign wrote a card
-        # row and reached nobody.
-        if dispatch_to_customer(tid, cust, rendered_subject, rendered_body,
-                                kind=trigger_type)["sent"]:
-            delivered += 1
+    from services import send_batch as _SB
+    with _SB.batch(db, tid, [c["id"] for c in customer_list]):
+        for part in _SB.chunks(customer_list):
+            said = [(cust, render_template(name, cust, tenant), render_template(content, cust, tenant)) for cust in part]
+            db.push_notifications.insert_many([{
+                "customer_id": cust["id"],
+                "tenant_id": tid,
+                "title": rendered_subject,
+                "body": rendered_body,
+                "type": trigger_type,
+                "sent_at": now,
+                "temoin": bool(held),           # measured by a groupe témoin
+            } for cust, rendered_subject, rendered_body in said])
+            # Scheduled sends and the daily cron triggers run through here — they
+            # were on the dead email path too, so a scheduled campaign wrote a card
+            # row and reached nobody.
+            for cust, rendered_subject, rendered_body in said:
+                if dispatch_to_customer(tid, cust, rendered_subject, rendered_body,
+                                        kind=trigger_type)["sent"]:
+                    delivered += 1
     campaign = Campaign(
         id=camp_id,
         tenant_id=tid,

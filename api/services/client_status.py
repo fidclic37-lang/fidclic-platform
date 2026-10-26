@@ -15,6 +15,10 @@ def is_paused(db, customer_id: Optional[str]) -> bool:
     """Read from the database: callers often hold a projected customer."""
     if db is None or not customer_id:
         return False
+    from services import send_batch as _SB
+    b = _SB.current()
+    if b is not None and customer_id in b.ids:            # a big send read them all at once
+        return b.paused(customer_id)
     try:
         return db.customers.find_one({"id": customer_id, "paused_at": {"$ne": None}}, {"_id": 1}) is not None
     except Exception:
