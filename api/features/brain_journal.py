@@ -351,14 +351,17 @@ def record_visit(tid: str, cid: str, brain: Optional[Dict[str, Any]]) -> None:
         last = CB._aware(b.get("last"))
         if not last:
             return
+        from features import journal_stats as JS
         for doc in _db.brain_predictions.find({"tenant_id": tid, "customer_id": cid, "status": "open"}):
             row = unpack(doc)
             if _paris_day(row.get("basis_last")) == _paris_day(last):
                 # a second scan the same day: the guess is remade, not judged
-                _db.brain_predictions.delete_one({"_id": doc["_id"]})
+                if _db.brain_predictions.delete_one({"_id": doc["_id"]}).deleted_count:
+                    JS.apply(row, None, doc["_id"])
             else:
-                _db.brain_predictions.replace_one({"_id": doc["_id"], "status": "open"},
-                                                  pack({**row, **_resolve(row, last)}))
+                done = {**row, **_resolve(row, last)}
+                if _db.brain_predictions.replace_one({"_id": doc["_id"], "status": "open"}, pack(done)).modified_count:
+                    JS.apply(row, done, doc["_id"])
         visits = list(_db.visits.find({"tenant_id": tid, "customer_id": cid}, CB._VISIT_FIELDS))
         sector, rule, now = _sector(tid), rule_days(tid), datetime.now(timezone.utc)
         # the brain in service, and the other one in shadow (user, 2026-10-25):
@@ -367,6 +370,7 @@ def record_visit(tid: str, cid: str, brain: Optional[Dict[str, Any]]) -> None:
             row = make(tid, sector, guess, _gaps_of(guess, visits), now, "live", cid, rule) if guess else None
             if row:
                 _db.brain_predictions.insert_one(pack(row))
+                JS.apply(None, row)
     except Exception as exc:
         print(f"brain_journal.record_visit failed (non-fatal): {exc}")
 
@@ -387,9 +391,12 @@ def expire_due(now: Optional[datetime] = None) -> int:
     """The tick: open rows whose client never came back become « non revenu »."""
     now = now or datetime.now(timezone.utc)
     n = 0
+    from features import journal_stats as JS
     for doc in _db.brain_predictions.find({"status": "open", "expires_at": {"$lt": now}}).limit(5000):
         row = unpack(doc)
-        _db.brain_predictions.replace_one({"_id": doc["_id"], "status": "open"}, pack({**row, **_expire(row, now)}))
+        gone = {**row, **_expire(row, now)}
+        if _db.brain_predictions.replace_one({"_id": doc["_id"], "status": "open"}, pack(gone)).modified_count:
+            JS.apply(row, gone, doc["_id"])
         n += 1
     return n
 
@@ -447,6 +454,7 @@ def _backtest_step(job: Dict[str, Any], deadline: float) -> bool:
     """One shop's backtest, CHUNK clients a slice (features/ai_jobs). The new
     rows wait aside (« run ») until the last slice swaps them in."""
     from features import ai_jobs as JOBS
+    from features import journal_stats as JS
     tid, run = job["tenant_id"], job["run"]
     now = CB._aware(job["now"])
     st = dict(job.get("state") or {})
@@ -458,8 +466,12 @@ def _backtest_step(job: Dict[str, Any], deadline: float) -> bool:
     while True:
         # what a slice killed half-way had written
         _db.brain_predictions.delete_many({"run": run, "chunk": {"$gte": st["chunk"]}})
+        JS.unstage(run, st["chunk"])
         todo = [c for c in _clients(tid) if st["cursor"] is None or c > st["cursor"]][:JOBS.CHUNK]
         if not todo:
+            if JS.wait_for_build():                  # the tallies are being rebuilt: swap after
+                JOBS.defer(job, 120)
+                return False
             _finish_backtest(tid, run, now, st["counts"])
             return True
         by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -468,6 +480,7 @@ def _backtest_step(job: Dict[str, Any], deadline: float) -> bool:
                 by[v["customer_id"]].append(v)
         rows, counts = _replay(tid, st["sector"], float(st["prior"]), int(st["rule"]), by, now)
         _insert_rows([{**pack(r), "run": run, "chunk": st["chunk"]} for r in rows])
+        JS.stage(rows, run, f"bt:{tid}:{MODEL}", st["chunk"])
         st = {**st, "cursor": todo[-1], "chunk": st["chunk"] + 1,
               "counts": {k: st["counts"][k] + counts[k] for k in counts}}
         JOBS.save(job, state=st, done=int(job.get("done") or 0) + len(todo))
@@ -480,6 +493,8 @@ def _finish_backtest(tid: str, run: str, now: datetime, counts: Dict[str, int]) 
     _db.brain_predictions.delete_many({"tenant_id": tid, "source": "backtest", "model": MODEL,
                                        "run": {"$exists": False}})
     _db.brain_predictions.update_many({"run": run}, {"$unset": {"run": "", "chunk": ""}})
+    from features import journal_stats as JS
+    JS.swap(f"bt:{tid}:{MODEL}", run)
     _db.platform_settings.update_one(
         {"key": f"brain_backtest:{tid}"},
         {"$set": {"key": f"brain_backtest:{tid}", "model": MODEL, "at": now, **counts}}, upsert=True)
@@ -497,6 +512,7 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
 def seed_open(tid: str) -> int:
     """Clients who already have a rhythm get their open live row (the journal
     starts today for them, without waiting for their next scan)."""
+    from features import journal_stats as JS
     have = set(_db.brain_predictions.distinct("customer_id", {"tenant_id": tid, "status": "open",
                                                               "model": f"brain-v{CB.champion()}"}))
     sector = _sector(tid)
@@ -512,6 +528,7 @@ def seed_open(tid: str) -> int:
                    c["id"], rule)
         if row:
             _db.brain_predictions.insert_one(pack(row))
+            JS.apply(None, row)
             n += 1
     return n
 
@@ -544,6 +561,11 @@ def tick() -> Dict[str, Any]:
         out["compact"] = compact_due()
     except Exception as exc:
         out["compact_error"] = str(exc)[:120]
+    try:                              # the Précision tallies: built once, then checked each week
+        from features import journal_stats as JS
+        out["stats"] = JS.due()
+    except Exception as exc:
+        out["stats_error"] = str(exc)[:120]
     try:                              # brain-v2 learns its tables once a day
         out["v2"] = V2.learn_due()
     except Exception as exc:
@@ -611,7 +633,10 @@ def compare(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for r in rows:
         by[r.get("model") or MODEL].append(r)
-    v1, v2 = summarise(by.get("brain-v1", [])), summarise(by.get("brain-v2", []))
+    return _compare(summarise(by.get("brain-v1", [])), summarise(by.get("brain-v2", [])))
+
+
+def _compare(v1: Dict[str, Any], v2: Dict[str, Any]) -> Dict[str, Any]:
     e1, e2, em = v1["brain"]["median_error"], v2["brain"]["median_error"], v1["mean"]["median_error"]
     reasons = []
     if v2["checked"] < SWITCH_MIN_ROWS:
@@ -626,8 +651,75 @@ def compare(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 @router.get("/api/admin/ai/precision")
 def precision(source: str = Query("all"), sector: str = Query(""), tenant: str = Query(""),
               model: str = Query(""), token_data: TokenData = Depends(require_admin("ai"))):
+    """The figures from the tallies (features/journal_stats, user 2026-10-26:
+    always live, never the whole journal) — from the rows while the tallies
+    are being built for the first time, or for one shop (API only)."""
     from features import ai_jobs as JOBS
+    from features import journal_stats as JS
+    if tenant or not JS.ready():
+        out, src = _rows_page(source, sector, tenant, model), "rows"
+    else:
+        out, src = _stats_page(source, sector, model), "tallies"
+    names = {t["id"]: t.get("name") or t["id"] for t in _db.tenants.find({}, {"_id": 0, "id": 1, "name": 1})}
+    return {**out, "jobs": JOBS.progress(names), "source_of_figures": src}
+
+
+def _common(model: str) -> Dict[str, Any]:
+    """What the page shows beside the figures."""
     from features import brain_v2 as V2
+    names = {t["id"]: t.get("name") or t["id"] for t in _db.tenants.find({}, {"_id": 0, "id": 1, "name": 1})}
+    runs = [{"tenant": names.get(m["key"].split(":", 1)[1], m["key"]), "model": m.get("model"),
+             "at": CB._aware(m.get("at")).isoformat() if CB._aware(m.get("at")) else None,
+             "clients": m.get("clients", 0), "resolved": m.get("resolved", 0), "expired": m.get("expired", 0)}
+            for m in _db.platform_settings.find({"key": {"$regex": "^brain_backtest:"}}, {"_id": 0})]
+    learned = V2._doc(fresh=True) or {}
+    return {
+        "names": names,
+        "learned": ({"at": CB._aware(learned.get("learned_at")).isoformat(), "shops": learned.get("shops"),
+                     "returns": learned.get("returns"), "groups": len((learned.get("calib") or {}).get("buckets") or {})}
+                    if learned.get("learned_at") else None),
+        "runs": sorted(runs, key=lambda x: (x["tenant"].lower(), x["tenant"])),
+        "rules": {"near_days": NEAR_DAYS,
+                  "expire": f"{EXPIRE_FACTOR} × son rythme, au moins {EXPIRE_MIN_DAYS} jours après la fourchette"},
+    }
+
+
+def _stats_page(source: str, sector: str, model: str) -> Dict[str, Any]:
+    from features import journal_stats as JS
+    champ = f"brain-v{CB.champion(fresh=True)}"
+    model = model if model in ("brain-v1", "brain-v2") else champ
+    cells = JS.cells(source, sector)
+    by_model: Dict[str, Dict[str, float]] = defaultdict(dict)
+    by_sector: Dict[str, Dict[str, float]] = defaultdict(dict)
+    by_month: Dict[str, Dict[str, float]] = defaultdict(dict)
+    for key, t in cells:
+        by_model[key["model"]] = JS.add(by_model[key["model"]], t)
+        if key["model"] != model:
+            continue
+        by_sector[key.get("sector") or "other"] = JS.add(by_sector[key.get("sector") or "other"], t)
+        if key.get("month"):
+            by_month[key["month"]] = JS.add(by_month[key["month"]], t)
+    mine = by_model.get(model, {})
+    c = _common(model)
+    names = c.pop("names")
+    sectors = [{"sector": k, **JS.summarise(v)} for k, v in by_sector.items()]
+    sectors = [x for x in sectors if x["checked"] or x["not_returned"] or x["open"]]
+    months = [{"month": k, **JS.summarise(v)} for k, v in sorted(by_month.items())]
+    months = [x for x in months if x["checked"] or x["not_returned"] or x["open"]][-12:]
+    return {
+        "model": model, "champion": champ,
+        "compare": _compare(JS.summarise(by_model.get("brain-v1", {})), JS.summarise(by_model.get("brain-v2", {}))),
+        "summary": JS.summarise(mine),
+        "sectors": sorted(sectors, key=lambda x: (-x["checked"], x["sector"])),
+        "months": months,
+        "tenants": sorted(({"id": t, "name": names.get(t, t)} for t in JS.tenants(mine)),
+                          key=lambda x: (str(x["name"]).lower(), x["id"])),
+        **c,
+    }
+
+
+def _rows_page(source: str, sector: str, tenant: str, model: str) -> Dict[str, Any]:
+    """The figures read from every row (before the tallies existed; one shop)."""
     champ = f"brain-v{CB.champion(fresh=True)}"
     model = model if model in ("brain-v1", "brain-v2") else champ
     q: Dict[str, Any] = {"kind": "next_visit", "run": {"$exists": False}}     # a run being written waits aside
@@ -646,28 +738,18 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
         made = CB._aware(r.get("made_at"))
         if made:
             by_month[made.astimezone(CB.PARIS).strftime("%Y-%m")].append(r)
-    names = {t["id"]: t.get("name") or t["id"] for t in _db.tenants.find({}, {"_id": 0, "id": 1, "name": 1})}
-    runs = [{"tenant": names.get(m["key"].split(":", 1)[1], m["key"]), "model": m.get("model"),
-             "at": CB._aware(m.get("at")).isoformat() if CB._aware(m.get("at")) else None,
-             "clients": m.get("clients", 0), "resolved": m.get("resolved", 0), "expired": m.get("expired", 0)}
-            for m in _db.platform_settings.find({"key": {"$regex": "^brain_backtest:"}}, {"_id": 0})]
-    learned = V2._doc(fresh=True) or {}
+    c = _common(model)
+    names = c.pop("names")
     return {
         "model": model, "champion": champ,
         "compare": compare(every),
-        "learned": ({"at": CB._aware(learned.get("learned_at")).isoformat(), "shops": learned.get("shops"),
-                     "returns": learned.get("returns"), "groups": len((learned.get("calib") or {}).get("buckets") or {})}
-                    if learned.get("learned_at") else None),
         "summary": summarise(rows),
         "sectors": sorted(({"sector": k, **summarise(v)} for k, v in by_sector.items()),
-                          key=lambda x: -x["checked"]),
+                          key=lambda x: (-x["checked"], x["sector"])),
         "months": [{"month": k, **summarise(v)} for k, v in sorted(by_month.items())][-12:],
         "tenants": sorted(({"id": t, "name": names.get(t, t)} for t in {r.get("tenant_id") for r in rows} if t),
-                          key=lambda x: str(x["name"]).lower()),
-        "runs": sorted(runs, key=lambda x: x["tenant"].lower()),
-        "jobs": JOBS.progress(names),
-        "rules": {"near_days": NEAR_DAYS,
-                  "expire": f"{EXPIRE_FACTOR} × son rythme, au moins {EXPIRE_MIN_DAYS} jours après la fourchette"},
+                          key=lambda x: (str(x["name"]).lower(), x["id"])),
+        **c,
     }
 
 
@@ -689,8 +771,15 @@ def set_champion(body: ChampionIn, token_data: TokenData = Depends(require_admin
     if body.model not in ("brain-v1", "brain-v2"):
         raise HTTPException(status_code=400, detail="Modèle inconnu.")
     if body.model == "brain-v2":
-        c = compare([unpack(d) for d in _db.brain_predictions.find({"kind": "next_visit", "run": {"$exists": False}},
-                                                                   _FIELDS)])
+        from features import journal_stats as JS
+        if JS.ready():
+            by: Dict[str, Dict[str, float]] = defaultdict(dict)
+            for key, t in JS.cells():
+                by[key["model"]] = JS.add(by[key["model"]], t)
+            c = _compare(JS.summarise(by.get("brain-v1", {})), JS.summarise(by.get("brain-v2", {})))
+        else:
+            c = compare([unpack(d) for d in _db.brain_predictions.find({"kind": "next_visit", "run": {"$exists": False}},
+                                                                       _FIELDS)])
         if not c["can_switch"]:
             raise HTTPException(status_code=409, detail=" ".join(c["why_not"]))
     value = 2 if body.model == "brain-v2" else 1
@@ -734,20 +823,33 @@ CSV_COLUMNS = ["model", "source", "sector", "made_at", "status", "returned", "in
 @router.get("/api/admin/ai/precision/export.csv")
 def export(token_data: TokenData = Depends(require_admin("ai"))):
     """Every checked row, anonymous: the training set, and the journal's proof."""
+    from fastapi.responses import StreamingResponse
     cols = CSV_COLUMNS
     fcols: List[str] = list(features({}, datetime.now(timezone.utc)).keys())
-    buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
-    w.writerow(cols + [f"f_{c}" for c in fcols])
-    for d in _db.brain_predictions.find({"kind": "next_visit", "status": {"$in": ["resolved", "expired"]},
-                                         "run": {"$exists": False}},
-                                        {"_id": 0, "customer_id": 0, "tenant_id": 0}):
-        r = unpack(d)
-        o, p, f = r.get("outcome") or {}, r.get("pred") or {}, r.get("features") or {}
-        made = CB._aware(r.get("made_at"))
-        w.writerow([r.get("model"), r.get("source"), r.get("sector"), made.date().isoformat() if made else "",
-                    r.get("status"), o.get("returned"), o.get("in_window"), o.get("actual_gap"),
-                    p.get("gap_days"), p.get("confidence"), o.get("error_days"), o.get("error_mean"),
-                    o.get("error_rule"), (r.get("baselines") or {}).get("rule_days")] + [f.get(c) for c in fcols])
-    return Response(content="﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": 'attachment; filename="fidclic-ia-journal.csv"'})
+
+    def lines() -> Iterable[str]:
+        # streamed, a thousand rows at a time (audit 2026-10-26: one response
+        # is capped at 4.5 MB on Vercel, and the whole journal sat in memory)
+        buf = io.StringIO()
+        w = csv.writer(buf, delimiter=";")
+        buf.write("\ufeff")
+        w.writerow(cols + [f"f_{c}" for c in fcols])
+        n = 0
+        for d in _db.brain_predictions.find({"kind": "next_visit", "status": {"$in": ["resolved", "expired"]},
+                                             "run": {"$exists": False}},
+                                            {"_id": 0, "customer_id": 0, "tenant_id": 0}).batch_size(1000):
+            r = unpack(d)
+            o, p, f = r.get("outcome") or {}, r.get("pred") or {}, r.get("features") or {}
+            made = CB._aware(r.get("made_at"))
+            w.writerow([r.get("model"), r.get("source"), r.get("sector"), made.date().isoformat() if made else "",
+                        r.get("status"), o.get("returned"), o.get("in_window"), o.get("actual_gap"),
+                        p.get("gap_days"), p.get("confidence"), o.get("error_days"), o.get("error_mean"),
+                        o.get("error_rule"), (r.get("baselines") or {}).get("rule_days")] + [f.get(c) for c in fcols])
+            n += 1
+            if n % 1000 == 0:
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate(0)
+        yield buf.getvalue()
+    return StreamingResponse(lines(), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": 'attachment; filename="fidclic-ia-journal.csv"'})

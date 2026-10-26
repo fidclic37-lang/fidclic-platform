@@ -222,6 +222,7 @@ def main():
     check(f"its backtest rows are compact ({len(v2)})", v2 and all("f" in x and "features" not in x for x in v2))
     check("an empty journal: the page still answers", True)
     db.brain_predictions.delete_many({})
+    db.brain_journal_stats.delete_many({})              # an empty journal has empty tallies (features/journal_stats)
     r = http("GET", "/api/admin/ai/precision", headers=BOSS)
     check("…200, nothing checked", r.status_code == 200 and r.json()["summary"]["checked"] == 0)
     check("merchants: refused", http("GET", "/api/admin/ai/precision/export.csv", headers=OWNER).status_code in (401, 403))

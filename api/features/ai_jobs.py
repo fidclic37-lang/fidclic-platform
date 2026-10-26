@@ -70,6 +70,11 @@ def start(kind: str, tenant_id: Optional[str] = None, by: Optional[str] = None,
     return job, True
 
 
+def defer(job: Dict[str, Any], seconds: float) -> None:
+    """Not before `seconds` from now (a job waiting for another one)."""
+    save(job, not_before=_now() + timedelta(seconds=seconds))
+
+
 def save(job: Dict[str, Any], **fields: Any) -> None:
     """A handler's progress (the job dict follows)."""
     job.update(fields)
@@ -78,7 +83,8 @@ def save(job: Dict[str, Any], **fields: Any) -> None:
 
 def _claim(at: datetime, job_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     q: Dict[str, Any] = {"status": {"$in": ACTIVE},
-                         "$or": [{"lease": None}, {"lease": {"$lt": at - JOB_LEASE}}]}
+                         "$and": [{"$or": [{"lease": None}, {"lease": {"$lt": at - JOB_LEASE}}]},
+                                  {"$or": [{"not_before": None}, {"not_before": {"$lte": at}}]}]}
     if job_id:
         q["id"] = job_id
     from pymongo import ReturnDocument
@@ -106,12 +112,12 @@ def _work(job: Dict[str, Any], deadline: float) -> bool:
     return bool(done)
 
 
-def run(budget_s: float = BUDGET_S, slices: Optional[int] = None,
+def run(budget_s: Optional[float] = None, slices: Optional[int] = None,
         at: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """The tick: work the queue for budget_s seconds (at least one slice).
-    Returns the jobs it finished."""
+    """The tick: work the queue for budget_s seconds (BUDGET_S; at least one
+    slice). Returns the jobs it finished."""
     at = at or _now()
-    end = time.monotonic() + budget_s
+    end = time.monotonic() + (BUDGET_S if budget_s is None else budget_s)
     finished: List[Dict[str, Any]] = []
     n = 0
     while slices is None or n < slices:
@@ -133,6 +139,7 @@ def run_now(kind: str, tenant_id: Optional[str], now: datetime, by: str = "direc
         _db.ai_jobs.update_one({"id": old["id"]}, {"$set": {"status": "cancelled", "lease": None}})
         _db.brain_predictions.delete_many({"run": old["run"]})
         _db.brain_v2_stage.delete_many({"run": old["run"]})
+        _db.brain_journal_stats_side.delete_many({"run": old["run"], "current": {"$ne": True}})
     job, _ = start(kind, tenant_id, by=by, now=now)
     while True:
         claimed = _claim(_now(), job["id"])
