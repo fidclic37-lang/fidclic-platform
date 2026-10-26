@@ -334,6 +334,18 @@ const ImpactPanel = ({ imp }) => (
           </li>
         ))}
       </ul>
+      {imp.attendus?.visits > 0 && (
+        <div data-testid="attendus" className="mt-4 rounded-xl bg-[#F6F8FB] px-3 py-2.5 text-[12.5px]">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#CBD5E1]" />
+            <span className="flex-1 font-medium text-[#334155]">Attendus de toute façon</span>
+            <span className="text-[#94A3B8] tabular-nums">{nf(imp.attendus.visits)} visite{imp.attendus.visits > 1 ? 's' : ''}</span>
+            <span className="w-24 text-right font-bold text-[#64748B] tabular-nums">{money(imp.attendus.revenue)}</span>
+          </div>
+          <p className="mt-1 text-[11.5px] leading-snug text-[#64748B]">Après un message sans groupe témoin (anniversaire, offre, un seul client…),
+            ces clients sont venus dans leur rythme habituel : ils seraient venus de toute façon. Pas comptés dans le CA FidClic.</p>
+        </div>
+      )}
       <p className="mt-4 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
         <Info size={12} className="mt-px shrink-0" /> {imp.note}
       </p>
