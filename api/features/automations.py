@@ -1665,6 +1665,31 @@ def _spread(sched: Dict[str, Any], at: datetime, n: int) -> List[datetime]:
     return [at + step * i for i in range(n)]
 
 
+# a run holds its automation while it sends: longer than a function lives
+# (vercel.json maxDuration 60 s), shorter than the 15-minute tick — a run
+# killed mid-way is taken up by the next tick, its clients already told skipped
+RUN_LEASE = timedelta(minutes=5)
+
+
+def _lease_free(field: str, at: datetime) -> Dict[str, Any]:
+    return {"$or": [{field: None}, {field: {"$lt": at - RUN_LEASE}}]}
+
+
+def _claim(row: Dict[str, Any], at: datetime) -> bool:
+    """Two runs at once (the 15-minute tick and the daily cron, a slow run):
+    the first to take the lease sends, the other skips (audit 2026-10-26:
+    780 of 1 560 inactive clients got the relance twice). « last_run_at »
+    unchanged since read: a run that already finished today is not redone."""
+    q = {"id": row["id"], "last_run_at": row.get("last_run_at"), **_lease_free("running_at", at)}
+    return _db.automations.update_one(q, {"$set": {"running_at": at}}).modified_count == 1
+
+
+def _release(row: Dict[str, Any], at: datetime, done: bool) -> None:
+    """Done: today is marked. Failed: the next tick tries again."""
+    _db.automations.update_one({"id": row["id"], "running_at": at},
+                               {"$set": {"running_at": None, **({"last_run_at": at} if done else {})}})
+
+
 def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, Any]:
     """Release what is due. `source` « tick » (every 15 min, Vercel Pro) or
     « daily » (07:00 UTC): without a recent tick the daily run sends all of
@@ -1678,7 +1703,8 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
     # 1. the event messages that waited for their window / delay
     horizon = at if strict else _from_paris(loc_today, 23, 59)
     for q in list(_db.automation_queue.find({"due_at": {"$lte": horizon}}, {"_id": 0}).limit(5000)):
-        _db.automation_queue.delete_one({"id": q["id"]})
+        if not _db.automation_queue.delete_one({"id": q["id"]}).deleted_count:
+            continue                              # another run took this one
         row = _db.automations.find_one({"id": q["automation_id"], "status": "active"}, {"_id": 0})
         cust = _db.customers.find_one({"id": q["customer_id"]}, {"_id": 0})
         if not row or not cust or not _plan_ok(row["tenant_id"]) or not running(row, at) \
@@ -1711,6 +1737,7 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
         if row["scenario"] in ("custom", "google_review") and (row.get("trigger") or {}).get("type") != "date":
             continue                               # (« Nouvelle automatisation »: run_custom below)
         tid = row["tenant_id"]
+        claimed = False
         try:
             sched = row.get("schedule") or {}
             if not _day_ok(sched, loc_today) or not _plan_ok(tid) or not running(row, at):
@@ -1723,9 +1750,12 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
             hh, mm = _send_hour(tid, sched)
             if strict and at < _from_paris(loc_today, hh, mm):
                 continue
+            if row["scenario"] in ("custom", "google_review") and not date_due(row.get("trigger") or {}, loc_today):
+                continue
+            if not _claim(row, at):
+                continue                           # another run is sending it
+            claimed = True
             if row["scenario"] in ("custom", "google_review"):
-                if not date_due(row.get("trigger") or {}, loc_today):
-                    continue
                 people = list(_db.customers.find({"tenant_id": tid}, {"_id": 0}))
             else:
                 people = _birthday_due(tid, row, at) if row["scenario"] == "birthday" else _inactive_due(tid, row, at)
@@ -1754,9 +1784,11 @@ def run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, A
                                                      "due_at": when, "ctx": ctx, "created_at": at})
                     summary.setdefault("spread", 0)
                     summary["spread"] += 1
-            _db.automations.update_one({"id": row["id"]}, {"$set": {"last_run_at": at}})
+            _release(row, at, done=True)
         except Exception as exc:
             summary["errors"] += 1
+            if claimed:
+                _release(row, at, done=False)
             print(f"automations: {row.get('id')} failed ({exc})")
     run_custom(at, strict, summary)
     return summary
@@ -1772,14 +1804,21 @@ def _birthday_catch_up(tid: str, row: Dict[str, Any], at: datetime, today: date)
     room = (int(limit) - _sent_on(row, today)) if limit else None
     if room is not None and room <= 0:
         return 0
+    # one catch-up at a time (a run that died frees it after RUN_LEASE)
+    if not _db.automations.update_one({"id": row["id"], **_lease_free("catch_up_at", at)},
+                                      {"$set": {"catch_up_at": at}}).modified_count:
+        return 0
     sent, cache = 0, {}
-    for c in _birthday_due(tid, row, at):
-        if room is not None and sent >= room:
-            break
-        if not matches(tid, row, c, at, cache):
-            continue
-        if _deliver(tid, row, c, {"event": "date"}, at):
-            sent += 1
+    try:
+        for c in _birthday_due(tid, row, at):
+            if room is not None and sent >= room:
+                break
+            if not matches(tid, row, c, at, cache):
+                continue
+            if _deliver(tid, row, c, {"event": "date"}, at):
+                sent += 1
+    finally:
+        _db.automations.update_one({"id": row["id"]}, {"$set": {"catch_up_at": None}})
     return sent
 
 
@@ -1793,6 +1832,7 @@ def run_custom(at: datetime, strict: bool, summary: Dict[str, Any]) -> None:
             if CR.is_timed(r.get("trigger") or {})]
     for row in rows:
         tid = row["tenant_id"]
+        claimed = False
         try:
             sched = row.get("schedule") or {}
             if not _plan_ok(tid) or not running(row, at):
@@ -1804,15 +1844,20 @@ def run_custom(at: datetime, strict: bool, summary: Dict[str, Any]) -> None:
             hh, mm = _hm(sched.get("hour"), (10, 0))
             if strict and at < CR.from_local(today, hh, mm, sched):
                 continue
+            if not _claim(row, at):
+                continue                           # another run is sending it
+            claimed = True
             cache: Dict[str, Any] = {}
             for c, ctx in CR.due_people(tid, row, at):
                 if not matches(tid, row, c, at, cache) or not CR.rules_ok(row, c, at, ctx):
                     continue
                 if _deliver(tid, row, c, ctx, at):
                     summary["time_sent"] += 1
-            _db.automations.update_one({"id": row["id"]}, {"$set": {"last_run_at": at}})
+            _release(row, at, done=True)
         except Exception as exc:
             summary["errors"] += 1
+            if claimed:
+                _release(row, at, done=False)
             print(f"automations: custom {row.get('id')} failed ({exc})")
 
 
