@@ -175,7 +175,15 @@ def main():
     said = [AU._deliver("t1", row, db.customers.find_one({"id": f"c{i:02d}"}, {"_id": 0}), {}, now) for i in range(40)]
     logs = list(db.automation_log.find({"automation_id": "a-inact"}))
     held_logs = [g for g in logs if g["status"] == "holdout"]
-    check("about 15 % kept out (a fresh draw per message)", 2 <= len(held_logs) <= 12, len(held_logs))
+    drawn = {f"c{i:02d}" for i in range(40) if T.holds_automation("t1", row, f"c{i:02d}", now)}
+    check("the témoin is exactly who the draw picked", {g["customer_id"] for g in held_logs} == drawn, len(held_logs))
+    # the share on a fixed moment (40 draws at « now » made it flaky, ~2 % of runs)
+    fixed = dt.datetime(2026, 1, 5, 10, 0, tzinfo=UTC)
+    share = sum(T.holds_automation("t1", row, f"x{i}", fixed) for i in range(2000)) / 2000
+    check(f"about 15 % kept out over 2 000 draws ({share:.1%})", 0.13 <= share <= 0.17)
+    check("a fresh draw per message: another moment, other clients",
+          {i for i in range(200) if T.holds_automation("t1", row, f"x{i}", fixed)}
+          != {i for i in range(200) if T.holds_automation("t1", row, f"x{i}", fixed + dt.timedelta(days=1))})
     hid = {g["customer_id"] for g in held_logs}
     check("the témoin: logged, but no message, no push, no card news",
           not {p[0] for p in pushed} & hid and not db.push_notifications.find_one({"automation_id": "a-inact",
