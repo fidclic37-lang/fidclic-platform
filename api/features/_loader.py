@@ -82,6 +82,8 @@ MODULES = [
     "features.clients_page",
     # FidClic IA « Comprendre »: each client's habits, rhythm and next visit (2026-10-24)
     "features.client_brain",
+    # long FidClic IA work (backtest, brain-v2's learning) in the tick's slices (2026-10-26)
+    "features.ai_jobs",
     # what FidClic IA predicted, and what really happened (2026-10-25)
     "features.brain_journal",
     # brain-v2: learns its window and its sector rhythms from the network (2026-10-25)

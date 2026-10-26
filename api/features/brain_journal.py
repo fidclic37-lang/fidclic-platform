@@ -54,11 +54,12 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
@@ -82,6 +83,8 @@ _db = None
 def init(db):
     global _db
     _db = db
+    from features import ai_jobs as JOBS
+    JOBS.register("backtest", _backtest_step)
     try:
         db.brain_predictions.create_index([("tenant_id", 1), ("customer_id", 1), ("status", 1)])
         db.brain_predictions.create_index([("status", 1), ("expires_at", 1)])
@@ -134,6 +137,15 @@ def _expiry(pred: Dict[str, Any]) -> datetime:
     return CB._aware(pred["to"]) + timedelta(days=max(EXPIRE_MIN_DAYS, (EXPIRE_FACTOR - 1) * gap))
 
 
+def pack_features(f: Dict[str, Any]) -> str:
+    return ";".join(_enc(f.get(k)) for k in FEATURE_KEYS)
+
+
+def unpack_features(s: Any) -> Dict[str, Any]:
+    vals = str(s or "").split(";")
+    return {k: _dec(vals[i]) if i < len(vals) else None for i, k in enumerate(FEATURE_KEYS)}
+
+
 def pack(row: Dict[str, Any]) -> Dict[str, Any]:
     """A full row → what is stored."""
     last = CB._aware(row["basis_last"])
@@ -146,7 +158,7 @@ def pack(row: Dict[str, Any]) -> Dict[str, Any]:
         doc["expires_at"] = row.get("expires_at")
     doc["p"] = [p.get("gap_days"), p.get("confidence"), _off(last, p.get("from")), _off(last, p.get("to"))]
     doc["b"] = [_off(last, base.get("mean")), base.get("rule_days")]
-    doc["f"] = ";".join(_enc((row.get("features") or {}).get(k)) for k in FEATURE_KEYS)
+    doc["f"] = pack_features(row.get("features") or {})
     if o:
         doc["o"] = ([True, o.get("in_window"), o.get("actual_gap"), o.get("error_days"), o.get("error_mean"),
                      o.get("error_rule"), _off(last, o.get("actual"))] if o.get("returned")
@@ -176,8 +188,7 @@ def unpack(doc: Dict[str, Any]) -> Dict[str, Any]:
         row["baselines"] = {"mean": _at(last, mean_us),
                             "rule": last + timedelta(days=rule) if rule is not None else None, "rule_days": rule}
     if "f" in doc:
-        vals = str(doc["f"]).split(";")
-        row["features"] = {k: _dec(vals[i]) if i < len(vals) else None for i, k in enumerate(FEATURE_KEYS)}
+        row["features"] = unpack_features(doc["f"])
     if "o" in doc:
         o = list(doc["o"])
         if o and o[0]:
@@ -386,17 +397,9 @@ def expire_due(now: Optional[datetime] = None) -> int:
 # ---------------------------------------------------------------------------
 # backtest: replay the past
 # ---------------------------------------------------------------------------
-def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
-    """Replay every client's history for one shop. Writes this journal only."""
-    now = now or datetime.now(timezone.utc)
-    sector = _sector(tid)
-    prior = CB.sector_gap(sector)
-    rule = rule_days(tid)
-    _db.brain_predictions.delete_many({"tenant_id": tid, "source": "backtest", "model": MODEL})
-    by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$ne": None}}, CB._VISIT_FIELDS):
-        if CB._aware(v.get("visit_time")):
-            by[v["customer_id"]].append(v)
+def _replay(tid: str, sector: str, prior: float, rule: int, by: Dict[str, List[Dict[str, Any]]],
+            now: datetime) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """The guesses the brain would have made for these clients, judged."""
     rows: List[Dict[str, Any]] = []
     counts = {"clients": 0, "resolved": 0, "expired": 0}
     for cid, visits in by.items():
@@ -428,12 +431,67 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
             rows.append(row)
             made += 1
         counts["clients"] += 1 if made else 0
-    for i in range(0, len(rows), 1000):
-        _db.brain_predictions.insert_many([pack(r) for r in rows[i:i + 1000]])
+    return rows, counts
+
+
+def _insert_rows(docs: List[Dict[str, Any]]) -> None:
+    for i in range(0, len(docs), 1000):
+        _db.brain_predictions.insert_many(docs[i:i + 1000])
+
+
+def _clients(tid: str) -> List[str]:
+    return sorted(c for c in _db.visits.distinct("customer_id", {"tenant_id": tid}) if c)
+
+
+def _backtest_step(job: Dict[str, Any], deadline: float) -> bool:
+    """One shop's backtest, CHUNK clients a slice (features/ai_jobs). The new
+    rows wait aside (« run ») until the last slice swaps them in."""
+    from features import ai_jobs as JOBS
+    tid, run = job["tenant_id"], job["run"]
+    now = CB._aware(job["now"])
+    st = dict(job.get("state") or {})
+    if "sector" not in st:
+        sector = _sector(tid)
+        st = {"sector": sector, "prior": CB.sector_gap(sector), "rule": rule_days(tid), "cursor": None, "chunk": 0,
+              "counts": {"clients": 0, "resolved": 0, "expired": 0}}
+        JOBS.save(job, state=st, total=len(_clients(tid)), done=0, phase="clients")
+    while True:
+        # what a slice killed half-way had written
+        _db.brain_predictions.delete_many({"run": run, "chunk": {"$gte": st["chunk"]}})
+        todo = [c for c in _clients(tid) if st["cursor"] is None or c > st["cursor"]][:JOBS.CHUNK]
+        if not todo:
+            _finish_backtest(tid, run, now, st["counts"])
+            return True
+        by: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for v in _db.visits.find({"tenant_id": tid, "customer_id": {"$in": todo}}, CB._VISIT_FIELDS):
+            if CB._aware(v.get("visit_time")):
+                by[v["customer_id"]].append(v)
+        rows, counts = _replay(tid, st["sector"], float(st["prior"]), int(st["rule"]), by, now)
+        _insert_rows([{**pack(r), "run": run, "chunk": st["chunk"]} for r in rows])
+        st = {**st, "cursor": todo[-1], "chunk": st["chunk"] + 1,
+              "counts": {k: st["counts"][k] + counts[k] for k in counts}}
+        JOBS.save(job, state=st, done=int(job.get("done") or 0) + len(todo))
+        if time.monotonic() >= deadline:
+            return False
+
+
+def _finish_backtest(tid: str, run: str, now: datetime, counts: Dict[str, int]) -> None:
+    """The new run takes the old one's place, at once."""
+    _db.brain_predictions.delete_many({"tenant_id": tid, "source": "backtest", "model": MODEL,
+                                       "run": {"$exists": False}})
+    _db.brain_predictions.update_many({"run": run}, {"$unset": {"run": "", "chunk": ""}})
     _db.platform_settings.update_one(
         {"key": f"brain_backtest:{tid}"},
         {"$set": {"key": f"brain_backtest:{tid}", "model": MODEL, "at": now, **counts}}, upsert=True)
-    return counts
+    seed_open(tid)
+
+
+def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
+    """Replay every client's history for one shop, in one go (scripts,
+    tests). Writes this journal only."""
+    from features import ai_jobs as JOBS
+    job = JOBS.run_now("backtest", tid, now or datetime.now(timezone.utc))
+    return dict((job.get("state") or {}).get("counts") or {"clients": 0, "resolved": 0, "expired": 0})
 
 
 def seed_open(tid: str) -> int:
@@ -458,12 +516,11 @@ def seed_open(tid: str) -> int:
     return n
 
 
-def backtest_due(budget: int = 1) -> Dict[str, Any]:
-    """The tick: each shop is replayed once per model version, one per tick."""
-    done: Dict[str, Any] = {}
+def backtest_due() -> List[str]:
+    """The tick: a shop never replayed by this model version gets its job."""
+    from features import ai_jobs as JOBS
+    queued: List[str] = []
     for tid in _db.tenants.distinct("id"):
-        if len(done) >= budget:
-            break
         mark = _db.platform_settings.find_one({"key": f"brain_backtest:{tid}"}, {"_id": 0, "model": 1})
         if mark and mark.get("model") == MODEL:
             continue
@@ -473,13 +530,16 @@ def backtest_due(budget: int = 1) -> Dict[str, Any]:
                                                        "at": datetime.now(timezone.utc), "clients": 0}},
                                              upsert=True)
             continue
-        done[tid] = {**backtest(tid), "open": seed_open(tid)}
-    return done
+        job, created = JOBS.start("backtest", tid, by="tick")
+        if created:
+            queued.append(tid)
+    return queued
 
 
 def tick() -> Dict[str, Any]:
+    from features import ai_jobs as JOBS
     from features import brain_v2 as V2
-    out: Dict[str, Any] = {"expired": expire_due(), "backtest": backtest_due()}
+    out: Dict[str, Any] = {"expired": expire_due(), "queued": backtest_due()}
     try:
         out["compact"] = compact_due()
     except Exception as exc:
@@ -488,6 +548,10 @@ def tick() -> Dict[str, Any]:
         out["v2"] = V2.learn_due()
     except Exception as exc:
         out["v2_error"] = str(exc)[:120]
+    # the long work: backtests and brain-v2's learning, a slice at a time
+    finished = JOBS.run()
+    out["backtest"] = {j["tenant_id"]: (j.get("state") or {}).get("counts") for j in finished if j["kind"] == "backtest"}
+    out["learned"] = [j["run"] for j in finished if j["kind"] == "learn"]
     return out
 
 
@@ -562,10 +626,11 @@ def compare(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 @router.get("/api/admin/ai/precision")
 def precision(source: str = Query("all"), sector: str = Query(""), tenant: str = Query(""),
               model: str = Query(""), token_data: TokenData = Depends(require_admin("ai"))):
+    from features import ai_jobs as JOBS
     from features import brain_v2 as V2
     champ = f"brain-v{CB.champion(fresh=True)}"
     model = model if model in ("brain-v1", "brain-v2") else champ
-    q: Dict[str, Any] = {"kind": "next_visit"}
+    q: Dict[str, Any] = {"kind": "next_visit", "run": {"$exists": False}}     # a run being written waits aside
     if source in ("live", "backtest"):
         q["source"] = source
     if sector:
@@ -600,6 +665,7 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
         "tenants": sorted(({"id": t, "name": names.get(t, t)} for t in {r.get("tenant_id") for r in rows} if t),
                           key=lambda x: str(x["name"]).lower()),
         "runs": sorted(runs, key=lambda x: x["tenant"].lower()),
+        "jobs": JOBS.progress(names),
         "rules": {"near_days": NEAR_DAYS,
                   "expire": f"{EXPIRE_FACTOR} × son rythme, au moins {EXPIRE_MIN_DAYS} jours après la fourchette"},
     }
@@ -623,7 +689,8 @@ def set_champion(body: ChampionIn, token_data: TokenData = Depends(require_admin
     if body.model not in ("brain-v1", "brain-v2"):
         raise HTTPException(status_code=400, detail="Modèle inconnu.")
     if body.model == "brain-v2":
-        c = compare([unpack(d) for d in _db.brain_predictions.find({"kind": "next_visit"}, _FIELDS)])
+        c = compare([unpack(d) for d in _db.brain_predictions.find({"kind": "next_visit", "run": {"$exists": False}},
+                                                                   _FIELDS)])
         if not c["can_switch"]:
             raise HTTPException(status_code=409, detail=" ".join(c["why_not"]))
     value = 2 if body.model == "brain-v2" else 1
@@ -636,20 +703,28 @@ def set_champion(body: ChampionIn, token_data: TokenData = Depends(require_admin
 
 @router.post("/api/admin/ai/precision/learn")
 def relearn(token_data: TokenData = Depends(require_admin("ai"))):
-    """« Réapprendre brain-v2 »: its tables, and its backtest, now."""
-    from features import brain_v2 as V2
-    return V2.learn()
+    """« Réapprendre brain-v2 »: queued at once, learned in the tick's slices
+    (user, 2026-10-26); its old tables serve until the new ones are done."""
+    from features import ai_jobs as JOBS
+    job, created = JOBS.start("learn", None, by=getattr(token_data, "email", None))
+    return {"started": created, "job": job["id"]}
 
 
 @router.post("/api/admin/ai/precision/backtest")
 def run_backtest(body: BacktestIn, token_data: TokenData = Depends(require_admin("ai"))):
-    """« Relancer le backtest »: one shop, or every shop that has visits."""
-    tids = [body.tenant_id] if body.tenant_id else _db.visits.distinct("tenant_id")
-    out = {}
+    """« Relancer le backtest »: one shop, or every shop that has visits —
+    queued at once, replayed in the tick's slices (user, 2026-10-26); the
+    figures shown stay those of the last complete run until it ends."""
+    from fastapi import HTTPException
+    from features import ai_jobs as JOBS
+    if body.tenant_id and not _db.tenants.find_one({"id": body.tenant_id}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Boutique inconnue.")
+    tids = [body.tenant_id] if body.tenant_id else sorted(t for t in _db.visits.distinct("tenant_id") if t)
+    started, running = [], []
     for tid in tids:
-        if tid:
-            out[tid] = {**backtest(tid), "open": seed_open(tid)}
-    return {"done": out}
+        job, created = JOBS.start("backtest", tid, by=getattr(token_data, "email", None))
+        (started if created else running).append(tid)
+    return {"started": started, "running": running}
 
 
 CSV_COLUMNS = ["model", "source", "sector", "made_at", "status", "returned", "in_window", "actual_gap",
@@ -664,7 +739,8 @@ def export(token_data: TokenData = Depends(require_admin("ai"))):
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(cols + [f"f_{c}" for c in fcols])
-    for d in _db.brain_predictions.find({"kind": "next_visit", "status": {"$in": ["resolved", "expired"]}},
+    for d in _db.brain_predictions.find({"kind": "next_visit", "status": {"$in": ["resolved", "expired"]},
+                                         "run": {"$exists": False}},
                                         {"_id": 0, "customer_id": 0, "tenant_id": 0}):
         r = unpack(d)
         o, p, f = r.get("outcome") or {}, r.get("pred") or {}, r.get("features") or {}

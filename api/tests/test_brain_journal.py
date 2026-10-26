@@ -172,7 +172,11 @@ def main():
     check("CSV names nobody (no client, no shop)", "rahul" not in body.lower() and "sami" not in body.lower()
           and "t1" not in [c for row in lines for c in row[:3]] and "customer_id" not in lines[0])
     rb = http("POST", "/api/admin/ai/precision/backtest", headers=BOSS, json={"tenant_id": "t2"})
-    check("« Relancer le backtest »", rb.status_code == 200 and rb.json()["done"]["t2"]["resolved"] == 3)
+    check("« Relancer le backtest »: queued at once", rb.status_code == 200 and rb.json()["started"] == ["t2"])
+    from features import ai_jobs as JOBS
+    done = JOBS.run()
+    check("…replayed by the tick's jobs", [((j.get("state") or {}).get("counts") or {}).get("resolved")
+                                           for j in done if j["tenant_id"] == "t2"] == [3])
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
