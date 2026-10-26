@@ -1056,6 +1056,14 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
         log["level"] = ctx["level"]
     if until:
         log["offer_until"] = until.isoformat()
+    # groupe témoin (user, 2026-10-25): a relance this client is drawn out of
+    # is logged — « once per absence » and cool-downs see it handled — but
+    # nothing is said, pushed or put on the card
+    from features import temoin as T
+    if T.holds_automation(tid, row, cust["id"], at):
+        _db.automation_log.insert_one({**log, "status": "holdout", "title": None, "body": None,
+                                       "target_url": None, "button_label": None})
+        return None
     _db.automation_log.insert_one(dict(log))
     _db.push_notifications.insert_one({"tenant_id": tid, "customer_id": cust["id"], "type": meta["push_kind"],
                                        "title": title, "body": body, "sent_at": at, "automatic": True,
@@ -1465,7 +1473,7 @@ def _delay(tr: Dict[str, Any]) -> timedelta:
 def _sent_on(row: Dict[str, Any], day: date) -> int:
     """Messages this automation sent on that Paris day (its daily limit)."""
     a = _from_paris(day, 0, 0)
-    return _db.automation_log.count_documents({"automation_id": row["id"], "status": {"$ne": "deferred"},
+    return _db.automation_log.count_documents({"automation_id": row["id"], "status": {"$nin": ["deferred", "holdout"]},
                                                "sent_at": {"$gte": a, "$lt": a + timedelta(days=1)}})
 
 
@@ -1885,7 +1893,7 @@ def _opened(tid: str, rows: List[Dict[str, Any]]) -> int:
 def _stats(tid: str, at: datetime) -> Dict[str, Any]:
     def window(a: datetime, b: datetime) -> List[Dict[str, Any]]:
         return list(_db.automation_log.find({"tenant_id": tid, "sent_at": {"$gte": a, "$lt": b},
-                                             "status": {"$ne": "deferred"}},
+                                             "status": {"$nin": ["deferred", "holdout"]}},
                                             {"_id": 0, "customer_id": 1, "sent_at": 1, "clicked_at": 1}))
     now_rows, was_rows = window(at - timedelta(days=30), at), window(at - timedelta(days=60), at - timedelta(days=30))
     reach_now, reach_was = len({r["customer_id"] for r in now_rows}), len({r["customer_id"] for r in was_rows})
@@ -1900,7 +1908,7 @@ def _stats(tid: str, at: datetime) -> Dict[str, Any]:
 
 def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     meta = SCENARIOS[r["scenario"]]
-    logs = list(_db.automation_log.find({"tenant_id": tid, "automation_id": r["id"], "status": {"$ne": "deferred"}},
+    logs = list(_db.automation_log.find({"tenant_id": tid, "automation_id": r["id"], "status": {"$nin": ["deferred", "holdout"]}},
                                         {"_id": 0, "customer_id": 1, "sent_at": 1, "clicked_at": 1}))
     reach = len({x["customer_id"] for x in logs})
     opened = _opened(tid, logs) if logs else 0
@@ -1911,6 +1919,11 @@ def _row_view(r: Dict[str, Any], tid: str) -> Dict[str, Any]:
     if r["scenario"] == "geo":
         from features import geo_automation as GA
         out["results"] = GA.results(tid, r["id"])
+    from features import temoin as T
+    if r["scenario"] in T.AUTOMATION_SCENARIOS:
+        # groupe témoin: its clients held back vs messaged, and « +X € » once measured
+        out["temoin"] = T.automation_block(tid, r["id"])
+        out["temoin_on"] = T.enabled(tid)
     if r["scenario"] == "custom" and (r.get("trigger") or {}).get("type") in CR_V2:
         from features import custom_rules as CR
         out["next_dates"] = CR.next_dates(r, CR.local(_now(), r.get("schedule")).date())
@@ -3035,7 +3048,7 @@ def _reactivation(tid: str, at: datetime) -> Optional[Dict[str, Any]]:
         shops = set()
         cutoff = at - timedelta(days=IMPACT_WINDOW_DAYS)
         for lg in _db.automation_log.find({"tenant_id": {"$in": tids}, "scenario": "inactive",
-                                           "status": {"$ne": "deferred"}, "sent_at": {"$lte": cutoff}},
+                                           "status": {"$nin": ["deferred", "holdout"]}, "sent_at": {"$lte": cutoff}},
                                           {"_id": 0, "tenant_id": 1, "customer_id": 1, "sent_at": 1}):
             sent = _aware(lg.get("sent_at"))
             if not sent:

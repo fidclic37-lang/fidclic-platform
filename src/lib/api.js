@@ -420,6 +420,7 @@ export const adminAPI = {
   aiPrecision: (params) => api.get('/admin/ai/precision', { params }),
   aiPrecisionBacktest: (body) => api.post('/admin/ai/precision/backtest', body),
   aiPrecisionExport: () => api.get('/admin/ai/precision/export.csv', { responseType: 'blob' }),
+  aiUplift: () => api.get('/admin/ai/uplift'),
   aiPrecisionLearn: () => api.post('/admin/ai/precision/learn', {}),
   aiPrecisionChampion: (body) => api.post('/admin/ai/precision/champion', body),
   aiSave: (body) => api.post('/admin/ai/saved', body),
@@ -584,6 +585,8 @@ export const ownerAPI = {
   // Paramètres › Notifications — usage, plan limits, the business's sending rules.
   notificationsOverview: (period) => api.get('/owner/notifications/overview', { params: { period } }),
   saveSendRules: (rules) => api.put('/owner/notifications/rules', rules),
+  temoinSettings: () => api.get('/owner/temoin'),
+  saveTemoin: (enabled) => api.put('/owner/temoin', { enabled }),
   // Paramètres › Abonnement & facturation
   billingOverview: () => api.get('/owner/billing/overview'),
   invoices: () => api.get('/owner/invoices'),

@@ -286,6 +286,7 @@ def _has_position(tid: str) -> bool:
 class PreviewIn(BaseModel):
     audience: K.AudienceIn
     exclude_ids: Optional[List[str]] = None
+    template: Optional[str] = None
 
 
 @router.post("/api/owner/campaigns/audience-preview")
@@ -324,8 +325,12 @@ def audience_preview(req: PreviewIn, request: Request = None,
         sample = {"first_name": (c.get("name") or "").split(" ")[0] or "Client", "points": int(c.get("points") or 0),
                   "visits": int(c.get("visits") or 0), "points_missing": ptnr,
                   "next_reward": tpl.get("reward_description") or "votre récompense"}
+    # how many of them the groupe témoin will keep out of this send (told on screen)
+    from features import temoin as T
+    held = T.hold_count(len(people)) if T.for_campaign(req.template) and T.enabled(tid) else 0
     return {"count": len(people), "label": label, "zone": zone, "sample": sample, "names": names,
-            "ids": [c["id"] for c in people] if len(people) <= 5000 else None}
+            "ids": [c["id"] for c in people] if len(people) <= 5000 else None,
+            "temoin": held, "temoin_share": int(T.SHARE * 100)}
 
 
 def _row(c: Dict[str, Any], tid: str, at: datetime) -> Dict[str, Any]:
@@ -422,6 +427,8 @@ def campaign_detail(campaign_id: str, request: Request = None,
                  "came_back_rate": _pct(len(back), len(ids)),
                  "revenue": CF.attribution(_db, tid, [c], S.visit_filter(scope))[c["id"]]["revenue"],
                  "window_days": ATTRIBUTION_DAYS, "open_window_h": OPEN_WINDOW_H}
+        from features import temoin as T
+        stats["temoin"] = T.campaign_block(tid, c, at)
     _, until = K.window(c) if sent_at else (None, None)
     st = row["status"]
     # To whom, by name, and by whom (user, 2026-10-20: « campaign ki details mein
@@ -827,9 +834,14 @@ def compose(req: Compose, request: Request = None,
     people = _CS.drop_paused(_db, tid, people)       # paused by the business: not in the audience
     when = _aware(req.schedule_at)
     status = "draft" if req.draft else ("scheduled" if when and when > at else "sent")
+    cid = previous["id"] if previous else str(uuid.uuid4())
+    # groupe témoin (user, 2026-10-25): 15 % drawn at random get nothing, to
+    # measure what the message really brought in — never for one client
+    from features import temoin as T
+    people, held = T.split(tid, people, cid, req.template)
 
     doc = {
-        "id": str(uuid.uuid4()),
+        "id": cid,
         "tenant_id": tid,
         "name": title,
         "content": message,
@@ -842,6 +854,7 @@ def compose(req: Compose, request: Request = None,
         "channels": {"push": bool(req.push), "wallet": bool(req.wallet)},
         "recipient_ids": [c["id"] for c in people],
         "targeted_count": len(people),
+        "holdout_ids": [c["id"] for c in held],
         "delivered_count": 0,
         "opens": 0, "opens_unique": 0, "offer_clicks": 0, "offer_clicks_unique": 0,
         "visits_from_campaign": 0,
@@ -880,7 +893,7 @@ def compose(req: Compose, request: Request = None,
 
     if status != "sent":
         save()
-        return {"id": doc["id"], "status": status, "audience": len(people),
+        return {"id": doc["id"], "status": status, "audience": len(people), "temoin": len(held),
                 "scheduled_for": when.isoformat() if when else None}
 
     # Saved as sent BEFORE delivering: _deliver() wakes the Wallet passes, and
@@ -892,7 +905,7 @@ def compose(req: Compose, request: Request = None,
     save()
     result = _deliver(tid, doc, people)
     _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": result["delivered"]}})
-    return {"id": doc["id"], "status": "sent", "audience": len(people), **result}
+    return {"id": doc["id"], "status": "sent", "audience": len(people), "temoin": len(held), **result}
 
 
 def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -915,7 +928,9 @@ def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dic
     # A send that stopped half-way is retried by the cron: whoever already
     # has this campaign on their card is not messaged a second time.
     reached = set(_db.push_notifications.distinct("customer_id", {"tenant_id": tid, "campaign_id": doc["id"]}))
-    people = [c for c in people if c.get("id") not in reached]
+    # the groupe témoin of this send never gets it, whoever rebuilt the list
+    held = set(doc.get("holdout_ids") or [])
+    people = [c for c in people if c.get("id") not in reached and c.get("id") not in held]
 
     for cust in people:
         title, message = doc["name"], doc["content"]

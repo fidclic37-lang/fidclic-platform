@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Bell, Smartphone, BarChart3, Send, CalendarDays, Crown, ArrowUp, ArrowUpRight, ArrowRight, CheckCircle2,
   CreditCard, Info, ShieldCheck, Zap, User, FileText, Eye, Gift, Cake, Moon, Star, Layers, ChevronRight,
-  Clock, Users, Tag, Sparkles, PartyPopper, Loader2, Check, X,
+  Clock, Users, Tag, Sparkles, PartyPopper, Loader2, Check, X, FlaskConical,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 
@@ -46,6 +46,49 @@ function Stepper({ value, onChange, disabled, unit = 'notifications' }) {
              className="h-10 w-[88px] rounded-lg border border-[#DCE3EE] bg-white px-3 text-[14px] text-[#0B1C3F] outline-none focus:border-[#2F6BFF] disabled:bg-[#F8FAFC]" />
       <span className="flex h-10 flex-1 items-center rounded-lg bg-[#F4F7FC] px-3 text-[13.5px] text-[#64748B]">{unit}</span>
     </div>
+  );
+}
+
+function TemoinCard() {
+  const [t, setT] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { ownerAPI.temoinSettings().then(({ data }) => setT(data)).catch(() => {}); }, []);
+  if (!t) return null;
+  const flip = async () => {
+    setBusy(true); setErr('');
+    try { const { data } = await ownerAPI.saveTemoin(!t.enabled); setT({ ...t, enabled: data.enabled }); }
+    catch (e) { setErr(e?.response?.data?.detail || "Le réglage n'a pas pu être enregistré."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section id="temoin" data-testid="temoin-settings" className="mt-4 rounded-2xl border border-[#E9E3FF] bg-white p-4 shadow-[0_1px_2px_rgba(11,28,63,.03)]">
+      <header className="mb-3 flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F3EEFF] text-[#7C3AED]"><FlaskConical size={20} /></span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[14.5px] font-bold text-[#0B1C3F]">Groupe témoin</h2>
+          <p className="text-[12px] leading-snug text-[#64748B]">Mesurer ce que FidClic vous rapporte vraiment, et pas seulement les clients qui seraient venus de toute façon.</p>
+        </div>
+        <button type="button" role="switch" aria-checked={t.enabled} aria-label="Groupe témoin" disabled={!t.can_edit || busy} onClick={flip}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-60 ${t.enabled ? 'bg-[#7C3AED]' : 'bg-[#CBD5E1]'}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${t.enabled ? 'left-[22px]' : 'left-0.5'}`} />
+        </button>
+      </header>
+      <div className="grid gap-3 text-[13px] leading-snug text-[#334155] md:grid-cols-3">
+        <p><b className="text-[#0B1C3F]">Comment ?</b> À chaque campagne groupée et à chaque relance automatique (clients inactifs, géolocalisation),
+          {' '}<b>{t.share} % des clients</b>, tirés au hasard, ne reçoivent pas le message. Un nouveau tirage à chaque envoi : personne n'est mis de côté pour de bon.</p>
+        <p><b className="text-[#0B1C3F]">Pourquoi ?</b> {t.window_days} jours après, FidClic compare leurs visites à celles des clients qui ont reçu le message.
+          La différence, c'est ce que le message a vraiment rapporté : « +X € grâce à FidClic » dans Analyses, le détail des campagnes et des automatisations.</p>
+        <p><b className="text-[#0B1C3F]">Jamais :</b> anniversaire, récompense, bienvenue, ni un message envoyé à un seul client. Moins de 7 destinataires : personne n'est retenu.
+          Les noms du groupe témoin ne sont pas affichés, pour ne pas fausser la mesure.</p>
+      </div>
+      <p className={`mt-3 rounded-lg px-3 py-2 text-[12.5px] ${t.enabled ? 'bg-[#F5F3FF] text-[#4C1D95]' : 'bg-[#FFF7ED] text-[#9A3412]'}`}>
+        {t.enabled ? `Activé : ${t.share} % de chaque envoi groupé forment le groupe témoin.`
+          : 'Désactivé : tous vos clients reçoivent chaque message, mais ce que FidClic vous rapporte vraiment n\'est plus mesuré (« pas mesuré »).'}
+        {!t.can_edit && ' Seul le propriétaire peut modifier ce réglage.'}
+      </p>
+      {err && <p role="alert" className="mt-2 text-[12.5px] text-[#B91C1C]">{err}</p>}
+    </section>
   );
 }
 
@@ -343,6 +386,9 @@ export default function NotificationsSettingsPage() {
           </div>
         </Card>
       </div>
+
+      {/* groupe témoin (user, 2026-10-25): what FidClic really brings in, the owner told */}
+      <TemoinCard />
 
       {guide && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#0B1C3F]/30 sm:items-center sm:p-6" onClick={() => setGuide(false)}>

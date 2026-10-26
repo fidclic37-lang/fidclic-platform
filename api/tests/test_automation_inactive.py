@@ -37,6 +37,8 @@ def check(label, cond):
 
 def main():
     import server
+    from features import temoin as _T
+    _T.enabled = lambda tid: False    # groupe témoin: its own test (test_temoin); here every relance counts
     import auth
     import httpx
     import features.wallet_passes as WP

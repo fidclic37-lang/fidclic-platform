@@ -6,6 +6,7 @@ import {
   Upload, Search, Filter, SlidersHorizontal, ChevronDown, ChevronLeft,
   ChevronRight, Mail, MoreVertical, Loader2, Columns3, Download, X, ArrowRight,
   Bookmark, BookmarkPlus, Check, CalendarRange, Send as SendIcon, Clock, Repeat, TrendingDown,
+  FlaskConical,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { sourceLabel } from '../lib/sources';
@@ -261,6 +262,10 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const ready = title.trim() && message.trim();
+  // groupe témoin (user, 2026-10-25): « Contacter (N) » keeps 15 % out too — said here
+  const [tem, setTem] = useState(null);
+  useEffect(() => { ownerAPI.temoinSettings().then(({ data }) => setTem(data)).catch(() => {}); }, []);
+  const held = tem?.enabled ? Math.floor(count * (tem.share || 15) / 100) : 0;
 
   const send = async () => {
     setBusy(true); setErr('');
@@ -279,13 +284,21 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
           <div>
             <h3 className="text-[16px] font-bold text-[#0B1C3F]">Contacter {label}</h3>
             <p className="text-[12.5px] text-[#64748B]">
-              {nf(count)} client{count > 1 ? 's' : ''} recevront ce message.
+              {nf(count - held)} client{count - held > 1 ? 's' : ''} recevront ce message.
             </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Fermer" title="Fermer" className="text-[#94A3B8] hover:text-[#334155]">
             <X size={18} />
           </button>
         </div>
+
+        {held > 0 && (
+          <p data-testid="temoin-note" className="mb-3 flex items-start gap-2 rounded-xl bg-[#F5F3FF] px-3 py-2.5 text-[12.5px] leading-snug text-[#4C1D95]">
+            <FlaskConical size={15} className="mt-0.5 shrink-0 text-[#7C3AED]" />
+            <span><b>Groupe témoin : {nf(held)} client{held > 1 ? 's' : ''}</b> ({tem.share} %, tirés au hasard) ne recevr{held > 1 ? 'ont' : 'a'} pas ce
+              message. En comparant leurs visites, FidClic mesure ce que cet envoi vous rapporte vraiment. (Paramètres › Notifications)</span>
+          </p>
+        )}
 
         <label className="mb-1 flex items-center justify-between text-[11.5px] font-medium text-[#475569]">
           Titre <span className="tabular-nums text-[#94A3B8]">{title.length}/50</span>
@@ -553,11 +566,11 @@ export default function ClientsPage() {
   const sendCompose = async (title, message) => {
     const exclude = await guardResend({ customer_ids: compose.ids });
     if (exclude === null) return 'cancelled';
-    await ownerAPI.sendCampaignToGroup({
+    const { data: sent } = await ownerAPI.sendCampaignToGroup({
       customer_ids: compose.ids, exclude_ids: exclude, name: title, content: message, message,
     });
-    const n = compose.ids.length - exclude.length;
-    setFlash(`Message envoyé à ${nf(n)} client${n > 1 ? 's' : ''}.`);
+    const n = sent?.targeted_count ?? compose.ids.length - exclude.length;
+    setFlash(`Message envoyé à ${nf(n)} client${n > 1 ? 's' : ''}.${sent?.temoin ? ` ${nf(sent.temoin)} en groupe témoin.` : ''}`);
     setCompose(null); setPicked([]);
     return 'sent';
   };

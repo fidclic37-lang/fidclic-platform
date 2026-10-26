@@ -5,12 +5,13 @@ import {
   X, Loader2, Sparkles, Lightbulb, Power, MessageSquare, RefreshCw, MousePointerClick, MapPin, Euro, Repeat,
   Trophy, Plus, Trash2, Settings2, Briefcase, Link2, BarChart3, Globe, RotateCcw, ChevronDown, PlusCircle, Award,
   Footprints, CloudSun, Flag, Store, Star, Navigation, CheckCircle2, AlertTriangle, Eye, Bell,
-  MoreHorizontal, Pause, Play, Copy, Filter, Hourglass, Smartphone, UserX, ArrowUp, Ban, Target, TrendingUp, Zap, List as ListIcon,
+  MoreHorizontal, Pause, Play, Copy, Filter, Hourglass, Smartphone, UserX, ArrowUp, Ban, Target, TrendingUp, Zap, List as ListIcon, FlaskConical,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import LockScreenPreview from '../components/automations/LockScreenPreview';
 import GeoZoneMap from '../components/automations/GeoZoneMap';
 import NouvelleEditor from '../components/automations/NouvelleEditor';
+import TemoinResult from '../components/TemoinResult';
 import {
   ICONS, TONES, VAR_LABELS, VAR_SHORT, DAY_NAMES, GENDERS, AGES, SPENT, LAST_VISIT, RADII, EMPTY_FILTERS, asList, EXAMPLES,
   CLIENT_TYPES, AGE_STEPS,
@@ -296,6 +297,8 @@ export default function AutomationEditorPage() {
   const [tierTab, setTierTab] = useState(0);          // the palier whose words are being written (step 3)
   const [varMenu, setVarMenu] = useState('');         // « Insérer une variable »: 'title' | 'body' | ''
   const [row, setRow] = useState(null);               // the saved automation (its results)
+  const [temoinOn, setTemoinOn] = useState(true);     // Paramètres › Groupe témoin
+  useEffect(() => { ownerAPI.temoinSettings().then(({ data }) => setTemoinOn(data.enabled !== false)).catch(() => {}); }, []);
   const [zone, setZone] = useState(null);             // géolocalisation: detections + weather now
   const [links, setLinks] = useState({});             // Avis Google: the shop's (or each établissement's) link
   const [menuOpen, setMenuOpen] = useState(false);    // the header's « ••• » (Client inactif mockups)
@@ -2313,6 +2316,17 @@ export default function AutomationEditorPage() {
 
   const reach = preview?.reachable;
   const res = row?.results;
+  // groupe témoin (user, 2026-10-25): the relances keep 15 % out at random — told here, then measured
+  const TemoinBox = (s?.scenario === 'inactive' || s?.scenario === 'geo') && (
+    row?.temoin ? <TemoinResult t={row.temoin} what="cette automatisation" /> : (
+      <p data-testid="temoin-note" className="flex items-start gap-2 rounded-2xl border border-[#E9E3FF] bg-[#F8F6FF] p-4 text-[12.5px] leading-snug text-[#4C1D95]">
+        <FlaskConical size={17} className="mt-0.5 shrink-0 text-[#7C3AED]" />
+        <span>{temoinOn
+          ? <><b>Groupe témoin :</b> à chaque relance, 15 % des clients concernés, tirés au hasard, ne reçoivent pas le message. En comparant leurs visites
+            à celles des autres, FidClic mesure ce que cette automatisation vous rapporte vraiment. (Paramètres › Notifications)</>
+          : <><b>Groupe témoin désactivé</b> (Paramètres › Notifications) : tous les clients reçoivent le message, son effet réel n'est pas mesuré.</>}</span>
+      </p>
+    ));
   const stepPanel = (() => {
     if (step === 2 && s.scenario === 'geo') {
       return (
@@ -2356,6 +2370,7 @@ export default function AutomationEditorPage() {
               <p className="mt-2 text-[11px] text-[#94A3B8]">Les apparitions sur l'écran verrouillé (Wallet) ne sont pas communiquées par Apple et Google : elles ne sont pas comptées.</p>
             </Panel>
           )}
+          {s.scenario === 'geo' && TemoinBox}
           <section className="rounded-2xl border border-[#BFD3FF] bg-[#F5F8FF] p-4">
             <p className="mb-1 flex items-center gap-2 text-[13.5px] font-bold text-[#0B1C3F]"><Info size={17} className="text-[#1463FF]" /> Prêt à enregistrer ?</p>
             <p className="text-[12.5px] text-[#475569]">{editing ? 'Votre automatisation sera mise à jour et remplacera l\'ancienne version. Les prochaines notifications seront envoyées selon ces nouveaux paramètres.'
@@ -3064,6 +3079,7 @@ export default function AutomationEditorPage() {
                   hint={impact?.basket ? `Panier moyen de ces clients : ${impact.basket.toLocaleString('fr-FR')} €` : (impact?.rate != null ? 'Montants des achats inconnus' : '')} />
             <p className="mt-1 text-[11px] text-[#94A3B8]">Réactivé = revenu en caisse dans les 15 jours qui suivent le message. Ce sont des estimations tirées de vrais envois, jamais des chiffres inventés.</p>
           </Panel>
+          {TemoinBox}
         </>
       );
     }

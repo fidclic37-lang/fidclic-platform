@@ -286,6 +286,9 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
                  "les visites des clients venus par parrainage. Un simple passage en caisse "
                  "n'est pas compté."),
     }
+    # « +X € grâce à FidClic »: the groupe témoin's answer (features/temoin.py)
+    from features import temoin as T
+    impact["uplift"] = T.period(r.tid, r.start, r.end, r.at, {c["id"] for c in people})
     return {
         "strip": strip,
         "impact": impact,
