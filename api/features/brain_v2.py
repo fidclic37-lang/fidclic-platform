@@ -277,6 +277,7 @@ def _learn_step(job: Dict[str, Any], deadline: float) -> bool:
     import time
     from features import ai_jobs as JOBS
     from features import brain_journal as BJ
+    from features import journal_stats as JS
     run = job["run"]
     now = CB._aware(job["now"])
     st = dict(job.get("state") or {})
@@ -386,15 +387,20 @@ def _learn_step(job: Dict[str, Any], deadline: float) -> bool:
             JOBS.save(job, state=st, phase="lignes", done=0, total=len(pts))
         elif st["step"] == "lignes":
             _db.brain_predictions.delete_many({"run": run, "chunk": {"$gte": st["rchunk"]}})   # a slice that died
+            JS.unstage(run, st["rchunk"])
             q: Dict[str, Any] = {"run": run, "kind": "pt"}
             if st["cursor"] is not None:
                 q["_id"] = {"$gt": st["cursor"]}
             batch = list(stage.find(q).sort("_id", 1).limit(JOBS.CHUNK * 20))
             if not batch:
+                if JS.wait_for_build():              # the Précision tallies are being rebuilt: swap after
+                    JOBS.defer(job, 120)
+                    return False
                 _finish_learn(run, now, st)
                 return True
             loso, cov_loso = json.loads(st["loso"]), json.loads(st["cov"])
             rows: List[Dict[str, Any]] = []
+            full: List[Dict[str, Any]] = []
             for p in batch:
                 b = {k: p["b"].get(k) for k in _B_KEYS}
                 b["last"] = CB._aware(b.get("last"))
@@ -418,9 +424,11 @@ def _learn_step(job: Dict[str, Any], deadline: float) -> bool:
                 else:
                     continue
                 row["customer_id"] = None
+                full.append(row)
                 rows.append({**BJ.pack(row), "run": run, "chunk": st["rchunk"]})
             for i in range(0, len(rows), 1000):
                 _db.brain_predictions.insert_many(rows[i:i + 1000])
+            JS.stage(full, run, "v2", st["rchunk"])
             st = {**st, "cursor": batch[-1]["_id"], "rchunk": st["rchunk"] + 1, "rows": st["rows"] + len(rows)}
             JOBS.save(job, state=st, done=int(job.get("done") or 0) + len(batch))
         if time.monotonic() >= deadline:
@@ -432,6 +440,8 @@ def _finish_learn(run: str, now: datetime, st: Dict[str, Any]) -> None:
     import json
     _db.brain_predictions.delete_many({"source": "backtest", "model": MODEL, "run": {"$exists": False}})
     _db.brain_predictions.update_many({"run": run}, {"$unset": {"run": "", "chunk": ""}})
+    from features import journal_stats as JS
+    JS.swap("v2", run)
     doc = {"model": MODEL, "learned_at": now, "calib": json.loads(st["calib"]), "priors": _priors(_rhythms(run)),
            "shops": len(st["shops"]), "points": st["points"], "backtest_rows": st["rows"],
            "returns": st["returns"]}
