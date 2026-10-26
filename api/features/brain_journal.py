@@ -40,6 +40,15 @@ BACKTEST (user, 2026-10-25: all shops, live ones included)
     backtest uses the SECTOR's usual rhythm, never today's shop median, so it
     cannot peek at the future. Rerun with « Relancer le backtest »; the tick
     runs it once per shop and model version, one shop per tick.
+
+STORAGE (audit 2026-10-26: ~1 000 bytes a row, about one row per visit;
+user: « chhota karo », keep everything, the whole history replayed)
+    A row is stored compact — pack() / unpack(): the features in one short
+    string, the window, the baselines and the outcome as numbers from the day
+    of the last visit (the dates are rebuilt from it), Mongo's _id as its id.
+    The fields queries use keep their names. Readers always get the full row
+    back, so the figures do not change. Rows written before are converted by
+    the tick (compact_due), a batch at a time, and read as they are until then.
 """
 from __future__ import annotations
 
@@ -79,6 +88,138 @@ def init(db):
         db.brain_predictions.create_index([("source", 1), ("model", 1), ("tenant_id", 1)])
     except Exception:
         pass
+
+
+# the storage order of the features: append new ones at the end, never reorder
+FEATURE_KEYS = ("visits_n", "n_gaps", "own_gap", "gap_days", "spread_days", "cv", "confidence", "trend",
+                "recent_gap", "earlier_gap", "per_month", "basket", "paid_visits", "prior_gap", "prior_source",
+                "weekday", "weekday_share", "slot", "slot_share", "top_item_share", "items_known", "store_share",
+                "tenure_days", "month", "last_weekday")
+_US = timedelta(microseconds=1)
+_TOP = ("kind", "model", "source", "tenant_id", "sector", "made_at", "basis_last", "status")
+
+
+def _enc(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return repr(v)                 # always reads back as the same float
+    return str(v).replace(";", ",")
+
+
+def _dec(v: str) -> Any:
+    if v == "":
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        return v
+
+
+def _off(last: datetime, d: Any) -> Optional[int]:
+    d = CB._aware(d)
+    return (d - last) // _US if d else None
+
+
+def _at(last: datetime, us: Optional[int]) -> Optional[datetime]:
+    return last + timedelta(microseconds=us) if us is not None else None
+
+
+def _expiry(pred: Dict[str, Any]) -> datetime:
+    gap = float(pred["gap_days"])
+    return CB._aware(pred["to"]) + timedelta(days=max(EXPIRE_MIN_DAYS, (EXPIRE_FACTOR - 1) * gap))
+
+
+def pack(row: Dict[str, Any]) -> Dict[str, Any]:
+    """A full row → what is stored."""
+    last = CB._aware(row["basis_last"])
+    p, base, o = row.get("pred") or {}, row.get("baselines") or {}, row.get("outcome")
+    doc: Dict[str, Any] = {k: row[k] for k in _TOP if k in row}
+    if "_id" in row:
+        doc["_id"] = row["_id"]
+    if row.get("status") == "open":            # the client and the expiry, only while it waits
+        doc["customer_id"] = row.get("customer_id")
+        doc["expires_at"] = row.get("expires_at")
+    doc["p"] = [p.get("gap_days"), p.get("confidence"), _off(last, p.get("from")), _off(last, p.get("to"))]
+    doc["b"] = [_off(last, base.get("mean")), base.get("rule_days")]
+    doc["f"] = ";".join(_enc((row.get("features") or {}).get(k)) for k in FEATURE_KEYS)
+    if o:
+        doc["o"] = ([True, o.get("in_window"), o.get("actual_gap"), o.get("error_days"), o.get("error_mean"),
+                     o.get("error_rule"), _off(last, o.get("actual"))] if o.get("returned")
+                    else [False, bool(o.get("in_window"))])
+    return doc
+
+
+def unpack(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """What is stored (compact, or written before) → the full row."""
+    if "p" not in doc and "o" not in doc and "f" not in doc:
+        row = dict(doc)                         # written before compaction: as it is
+        row.setdefault("customer_id", None)
+        return row
+    row = {k: v for k, v in doc.items() if k not in ("p", "b", "f", "o")}
+    row.setdefault("customer_id", None)
+    last = CB._aware(doc.get("basis_last"))
+    if "p" in doc and last:
+        gap, conf, frm, to = (list(doc["p"]) + [None] * 4)[:4]
+        row["pred"] = {"centre": last + timedelta(days=gap) if gap is not None else None,
+                       "from": _at(last, frm), "to": _at(last, to), "gap_days": gap, "confidence": conf}
+        if "expires_at" not in row and row["pred"]["to"] and gap is not None:
+            row["expires_at"] = _expiry(row["pred"])
+    elif "p" in doc:
+        row["pred"] = {"gap_days": doc["p"][0], "confidence": doc["p"][1]}
+    if "b" in doc and last:
+        mean_us, rule = (list(doc["b"]) + [None] * 2)[:2]
+        row["baselines"] = {"mean": _at(last, mean_us),
+                            "rule": last + timedelta(days=rule) if rule is not None else None, "rule_days": rule}
+    if "f" in doc:
+        vals = str(doc["f"]).split(";")
+        row["features"] = {k: _dec(vals[i]) if i < len(vals) else None for i, k in enumerate(FEATURE_KEYS)}
+    if "o" in doc:
+        o = list(doc["o"])
+        if o and o[0]:
+            o = (o + [None] * 7)[:7]
+            row["outcome"] = {"returned": True, "actual": _at(last, o[6]) if last else None, "actual_gap": o[2],
+                              "in_window": o[1], "error_days": o[3], "error_mean": o[4], "error_rule": o[5]}
+        else:
+            row["outcome"] = {"returned": False, "in_window": bool(o[1]) if len(o) > 1 else False}
+    return row
+
+
+def legacy(row: Dict[str, Any]) -> Dict[str, Any]:
+    """A full row in the shape written before compaction (tests, figures
+    compared before / after)."""
+    out = dict(row)
+    out.setdefault("id", str(uuid.uuid4()))
+    if out.get("status") != "open":
+        o = out.get("outcome") or {}
+        out["resolved_at"] = o.get("actual") or out.get("expires_at")
+        out["customer_id"] = None
+    return out
+
+
+def compact_due(batch: int = 3000, force: bool = False) -> Dict[str, Any]:
+    """The tick: rows written before compaction, a batch at a time. Once none
+    is left, a mark stops the search (no scan of the journal every tick)."""
+    from pymongo import ReplaceOne
+    key = "brain_journal_compact"
+    mark = _db.platform_settings.find_one({"key": key}, {"_id": 0, "done": 1}) or {}
+    if mark.get("done") and not force:
+        return {"converted": 0, "done": True}
+    docs = list(_db.brain_predictions.find({"features": {"$exists": True}}).limit(batch))
+    if docs:
+        # the row as read: a scan or the tick that closed it meanwhile wins
+        _db.brain_predictions.bulk_write([ReplaceOne({"_id": d["_id"], "status": d.get("status"),
+                                                      "features": {"$exists": True}}, pack(unpack(d)))
+                                          for d in docs], ordered=False)
+    done = len(docs) < batch
+    if done:
+        _db.platform_settings.update_one({"key": key}, {"$set": {"key": key, "done": True,
+                                                                 "at": datetime.now(timezone.utc)}}, upsert=True)
+    return {"converted": len(docs), "done": done}
 
 
 def _paris_day(d: Optional[datetime]):
@@ -157,7 +298,7 @@ def make(tid: str, sector: str, b: Dict[str, Any], gaps: List[float], made_at: d
     mean_gap = _baseline_mean(gaps)
     expires = (r["next_to"] + timedelta(days=max(EXPIRE_MIN_DAYS, (EXPIRE_FACTOR - 1) * gap)))
     return {
-        "id": str(uuid.uuid4()), "kind": "next_visit", "model": model or model_name(b), "source": source,
+        "kind": "next_visit", "model": model or model_name(b), "source": source,
         "tenant_id": tid, "sector": sector, "customer_id": customer_id,
         "made_at": made_at, "basis_last": last,
         "pred": {"centre": centre, "from": r["next_from"], "to": r["next_to"],
@@ -199,12 +340,14 @@ def record_visit(tid: str, cid: str, brain: Optional[Dict[str, Any]]) -> None:
         last = CB._aware(b.get("last"))
         if not last:
             return
-        for row in _db.brain_predictions.find({"tenant_id": tid, "customer_id": cid, "status": "open"}, {"_id": 0}):
+        for doc in _db.brain_predictions.find({"tenant_id": tid, "customer_id": cid, "status": "open"}):
+            row = unpack(doc)
             if _paris_day(row.get("basis_last")) == _paris_day(last):
                 # a second scan the same day: the guess is remade, not judged
-                _db.brain_predictions.delete_one({"id": row["id"]})
+                _db.brain_predictions.delete_one({"_id": doc["_id"]})
             else:
-                _db.brain_predictions.update_one({"id": row["id"]}, {"$set": _resolve(row, last)})
+                _db.brain_predictions.replace_one({"_id": doc["_id"], "status": "open"},
+                                                  pack({**row, **_resolve(row, last)}))
         visits = list(_db.visits.find({"tenant_id": tid, "customer_id": cid}, CB._VISIT_FIELDS))
         sector, rule, now = _sector(tid), rule_days(tid), datetime.now(timezone.utc)
         # the brain in service, and the other one in shadow (user, 2026-10-25):
@@ -212,7 +355,7 @@ def record_visit(tid: str, cid: str, brain: Optional[Dict[str, Any]]) -> None:
         for guess in (b, challenger(tid, b, visits)):
             row = make(tid, sector, guess, _gaps_of(guess, visits), now, "live", cid, rule) if guess else None
             if row:
-                _db.brain_predictions.insert_one(row)
+                _db.brain_predictions.insert_one(pack(row))
     except Exception as exc:
         print(f"brain_journal.record_visit failed (non-fatal): {exc}")
 
@@ -233,8 +376,9 @@ def expire_due(now: Optional[datetime] = None) -> int:
     """The tick: open rows whose client never came back become « non revenu »."""
     now = now or datetime.now(timezone.utc)
     n = 0
-    for row in _db.brain_predictions.find({"status": "open", "expires_at": {"$lt": now}}, {"_id": 0}).limit(5000):
-        _db.brain_predictions.update_one({"id": row["id"], "status": "open"}, {"$set": _expire(row, now)})
+    for doc in _db.brain_predictions.find({"status": "open", "expires_at": {"$lt": now}}).limit(5000):
+        row = unpack(doc)
+        _db.brain_predictions.replace_one({"_id": doc["_id"], "status": "open"}, pack({**row, **_expire(row, now)}))
         n += 1
     return n
 
@@ -285,7 +429,7 @@ def backtest(tid: str, now: Optional[datetime] = None) -> Dict[str, int]:
             made += 1
         counts["clients"] += 1 if made else 0
     for i in range(0, len(rows), 1000):
-        _db.brain_predictions.insert_many(rows[i:i + 1000])
+        _db.brain_predictions.insert_many([pack(r) for r in rows[i:i + 1000]])
     _db.platform_settings.update_one(
         {"key": f"brain_backtest:{tid}"},
         {"$set": {"key": f"brain_backtest:{tid}", "model": MODEL, "at": now, **counts}}, upsert=True)
@@ -309,7 +453,7 @@ def seed_open(tid: str) -> int:
         row = make(tid, sector, c["brain"], _gaps_of(c["brain"], visits), datetime.now(timezone.utc), "live",
                    c["id"], rule)
         if row:
-            _db.brain_predictions.insert_one(row)
+            _db.brain_predictions.insert_one(pack(row))
             n += 1
     return n
 
@@ -336,6 +480,10 @@ def backtest_due(budget: int = 1) -> Dict[str, Any]:
 def tick() -> Dict[str, Any]:
     from features import brain_v2 as V2
     out: Dict[str, Any] = {"expired": expire_due(), "backtest": backtest_due()}
+    try:
+        out["compact"] = compact_due()
+    except Exception as exc:
+        out["compact_error"] = str(exc)[:120]
     try:                              # brain-v2 learns its tables once a day
         out["v2"] = V2.learn_due()
     except Exception as exc:
@@ -386,8 +534,9 @@ def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-_FIELDS = {"_id": 0, "status": 1, "pred.confidence": 1, "outcome": 1, "sector": 1, "tenant_id": 1,
-           "source": 1, "model": 1, "made_at": 1}
+# what the figures read (compact rows: p, o, from basis_last; rows written before: pred, outcome)
+_FIELDS = {"_id": 0, "status": 1, "pred.confidence": 1, "outcome": 1, "p": 1, "o": 1, "basis_last": 1,
+           "sector": 1, "tenant_id": 1, "source": 1, "model": 1, "made_at": 1}
 
 
 def compare(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -423,7 +572,7 @@ def precision(source: str = Query("all"), sector: str = Query(""), tenant: str =
         q["sector"] = sector
     if tenant:
         q["tenant_id"] = tenant
-    every = list(_db.brain_predictions.find(q, _FIELDS))
+    every = [unpack(d) for d in _db.brain_predictions.find(q, _FIELDS)]
     rows = [r for r in every if (r.get("model") or MODEL) == model]
     by_sector: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     by_month: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -474,7 +623,7 @@ def set_champion(body: ChampionIn, token_data: TokenData = Depends(require_admin
     if body.model not in ("brain-v1", "brain-v2"):
         raise HTTPException(status_code=400, detail="Modèle inconnu.")
     if body.model == "brain-v2":
-        c = compare(list(_db.brain_predictions.find({"kind": "next_visit"}, _FIELDS)))
+        c = compare([unpack(d) for d in _db.brain_predictions.find({"kind": "next_visit"}, _FIELDS)])
         if not c["can_switch"]:
             raise HTTPException(status_code=409, detail=" ".join(c["why_not"]))
     value = 2 if body.model == "brain-v2" else 1
@@ -503,17 +652,21 @@ def run_backtest(body: BacktestIn, token_data: TokenData = Depends(require_admin
     return {"done": out}
 
 
+CSV_COLUMNS = ["model", "source", "sector", "made_at", "status", "returned", "in_window", "actual_gap",
+               "pred_gap", "confidence", "error_days", "error_mean", "error_rule", "rule_days"]
+
+
 @router.get("/api/admin/ai/precision/export.csv")
 def export(token_data: TokenData = Depends(require_admin("ai"))):
     """Every checked row, anonymous: the training set, and the journal's proof."""
-    cols = ["model", "source", "sector", "made_at", "status", "returned", "in_window", "actual_gap",
-            "pred_gap", "confidence", "error_days", "error_mean", "error_rule", "rule_days"]
+    cols = CSV_COLUMNS
     fcols: List[str] = list(features({}, datetime.now(timezone.utc)).keys())
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(cols + [f"f_{c}" for c in fcols])
-    for r in _db.brain_predictions.find({"kind": "next_visit", "status": {"$in": ["resolved", "expired"]}},
+    for d in _db.brain_predictions.find({"kind": "next_visit", "status": {"$in": ["resolved", "expired"]}},
                                         {"_id": 0, "customer_id": 0, "tenant_id": 0}):
+        r = unpack(d)
         o, p, f = r.get("outcome") or {}, r.get("pred") or {}, r.get("features") or {}
         made = CB._aware(r.get("made_at"))
         w.writerow([r.get("model"), r.get("source"), r.get("sector"), made.date().isoformat() if made else "",

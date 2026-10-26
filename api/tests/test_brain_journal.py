@@ -83,7 +83,7 @@ def main():
                              "visits": 3, "deleted_at": None, "created_at": start})
     b = CB.refresh("t1", "rahul")
     BJ.record_visit("t1", "rahul", b)
-    rows = list(db.brain_predictions.find({"customer_id": "rahul", "status": "open"}))
+    rows = [BJ.unpack(d) for d in db.brain_predictions.find({"customer_id": "rahul", "status": "open"})]
     check("a known rhythm leaves one open row, with the client while it waits", len(rows) == 1 and rows[0]["source"] == "live")
     row = rows[0]
     check("the window and both baselines are kept — the shop's own rule (45 days), not a fixed 30", row["pred"]["from"] < row["pred"]["centre"] < row["pred"]["to"]
@@ -95,12 +95,12 @@ def main():
     check("same day again: still one open row, nothing judged",
           db.brain_predictions.count_documents({"customer_id": "rahul"}) == 1
           and db.brain_predictions.count_documents({"status": "resolved"}) == 0)
-    row = db.brain_predictions.find_one({"customer_id": "rahul", "status": "open"})       # the remade one
+    row = BJ.unpack(db.brain_predictions.find_one({"customer_id": "rahul", "status": "open"}))       # the remade one
     # he comes back today (10 days after) — inside the window
     db.visits.insert_one(visit("rahul", now))
     b2 = CB.refresh("t1", "rahul")
     BJ.record_visit("t1", "rahul", b2)
-    done = db.brain_predictions.find_one({"id": row["id"]})
+    done = BJ.unpack(db.brain_predictions.find_one({"_id": row["_id"]}))
     check("the next day's visit judges it: resolved", done["status"] == "resolved")
     check("… and the client's id leaves the row", done["customer_id"] is None)
     check("real gap 10 days, error measured for the brain and the baselines",
@@ -113,7 +113,7 @@ def main():
     db.brain_predictions.update_one({"customer_id": "rahul", "status": "open"},
                                     {"$set": {"expires_at": now - dt.timedelta(days=1)}})
     check("the tick closes it", BJ.expire_due() == 1)
-    gone = db.brain_predictions.find_one({"status": "expired"})
+    gone = BJ.unpack(db.brain_predictions.find_one({"status": "expired"}))
     check("« non revenu », anonymous", gone["outcome"]["returned"] is False and gone["customer_id"] is None)
 
     print("Par le passage en caisse")
@@ -133,7 +133,7 @@ def main():
     db.customers.insert_one({"id": "bt", "tenant_id": "t2", "name": "Bt", "visits": 7, "deleted_at": None,
                              "created_at": base})
     out = BJ.backtest("t2", now)
-    rows = list(db.brain_predictions.find({"tenant_id": "t2", "source": "backtest"}))
+    rows = [BJ.unpack(d) for d in db.brain_predictions.find({"tenant_id": "t2", "source": "backtest"})]
     # 6 visit days: guesses after days 3, 4, 5 are judged by 4, 5, 6; after day 6 (150 days ago, rhythm ~8) he never came back
     check("judged guesses from the third visit day on", out["resolved"] == 3)
     check("the last guess, long past its window: « non revenu »", out["expired"] == 1)
