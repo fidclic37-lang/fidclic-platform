@@ -138,6 +138,12 @@ _db = None
 def init(db):
     global _db
     _db = db
+    from features import ai_jobs as JOBS
+    JOBS.register("shop_facts", _facts_step)
+    try:
+        db.brain_shop.create_index("tenant_id", unique=True)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -553,15 +559,18 @@ def ensure_all(budget: int = 3000) -> Dict[str, int]:
 # ---------------------------------------------------------------------------
 DISCOVER_MIN_CLIENTS = 3     # an item « others also take » needs this many clients behind it
 DISCOVER_MIN_SHARE = 0.2
-_discover_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_discover_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}   # (kept for older callers; unused)
 
 
-def _together(tid: str) -> Dict[str, Any]:
-    """Who takes what, over the last year: {client: set(items)} — cached."""
+# ---------------------------------------------------------------------------
+# the shop's facts a profile needs (audit 2026-10-26: one profile read a year
+# of the shop's visits and every client — 21 140 visits, 2 001 clients): who
+# takes what over the last year, the median basket. One document per shop,
+# refreshed in the background when older than USUAL_TTL_S — as fresh as the
+# in-memory cache it replaces; the first profile ever computes it.
+# ---------------------------------------------------------------------------
+def _compute_facts(tid: str) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
-    hit = _discover_cache.get(tid)
-    if hit and now.timestamp() - hit[0] < USUAL_TTL_S:
-        return hit[1]
     sets: Dict[str, set] = defaultdict(set)
     for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": now - timedelta(days=365)},
                               "items.0": {"$exists": True}},
@@ -569,9 +578,42 @@ def _together(tid: str) -> Dict[str, Any]:
         cid = v.get("customer_id")
         if cid:
             sets[cid].update(str(i.get("name") or "").strip() for i in v.get("items") or [] if i.get("name"))
-    out = {"sets": sets}
-    _discover_cache[tid] = (now.timestamp(), out)
-    return out
+    vals = [float((c.get("brain") or {}).get("basket") or 0) for c in _db.customers.find(
+        {"tenant_id": tid, "deleted_at": None, "brain.basket": {"$gt": 0}}, {"_id": 0, "brain.basket": 1}).limit(5000)]
+    vals = [v for v in vals if v > 0]
+    return {"sets": sets, "basket": median(vals) if len(vals) >= 5 else None}
+
+
+def _store_facts(tid: str, facts: Dict[str, Any]) -> None:
+    _db.brain_shop.update_one({"tenant_id": tid}, {"$set": {
+        "tenant_id": tid, "at": datetime.now(timezone.utc), "basket": facts["basket"],
+        "sets": {cid: sorted(items) for cid, items in facts["sets"].items()}}}, upsert=True)
+
+
+def _facts_step(job: Dict[str, Any], deadline: float) -> bool:
+    """features/ai_jobs « shop_facts »: one shop, in one go."""
+    _store_facts(job["tenant_id"], _compute_facts(job["tenant_id"]))
+    return True
+
+
+def shop_facts(tid: str) -> Dict[str, Any]:
+    """{"sets": {client: set(items)}, "basket": median or None}."""
+    doc = _db.brain_shop.find_one({"tenant_id": tid}, {"_id": 0})
+    if not doc:
+        facts = _compute_facts(tid)
+        _store_facts(tid, facts)
+        return facts
+    at = _aware(doc.get("at"))
+    if not at or (datetime.now(timezone.utc) - at).total_seconds() > USUAL_TTL_S:
+        from features import ai_jobs as JOBS
+        JOBS.start("shop_facts", tid, by="profil")          # served as it is; refreshed in the background
+    return {"sets": {cid: set(items) for cid, items in (doc.get("sets") or {}).items()},
+            "basket": doc.get("basket")}
+
+
+def _together(tid: str) -> Dict[str, Any]:
+    """Who takes what, over the last year: {client: set(items)}."""
+    return {"sets": shop_facts(tid)["sets"]}
 
 
 def discover(tid: str, cid: str, brain: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -677,10 +719,7 @@ def suggest(tid: str, cust: Dict[str, Any], brain: Dict[str, Any], r: Dict[str, 
 
 
 def _shop_basket(tid: str) -> Optional[float]:
-    vals = [float((c.get("brain") or {}).get("basket") or 0) for c in _db.customers.find(
-        {"tenant_id": tid, "deleted_at": None, "brain.basket": {"$gt": 0}}, {"_id": 0, "brain.basket": 1}).limit(5000)]
-    vals = [v for v in vals if v > 0]
-    return median(vals) if len(vals) >= 5 else None
+    return shop_facts(tid)["basket"]
 
 
 def tags(brain: Dict[str, Any], shop_basket: Optional[float]) -> List[str]:

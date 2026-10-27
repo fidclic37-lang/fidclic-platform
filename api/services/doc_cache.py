@@ -33,7 +33,8 @@ import contextvars
 from typing import Any, Dict, Optional
 
 # Read many times per request, written rarely, and never by the till.
-CACHED = ("tenants", "card_templates", "plan_settings")
+CACHED = ("tenants", "card_templates", "plan_settings",
+          "brain_shop")             # a shop's facts for the Profil client page (features/client_brain)
 WRITES = ("insert_one", "insert_many", "update_one", "update_many", "replace_one",
           "delete_one", "delete_many", "find_one_and_update", "find_one_and_replace",
           "find_one_and_delete", "bulk_write")
