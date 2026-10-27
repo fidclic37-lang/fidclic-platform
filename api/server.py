@@ -1486,14 +1486,8 @@ def mock_seed_data():
         if visits_data:
             db.visits.insert_many(visits_data)
 
-    # === Test user: akshanshshukla963@gmail.com (super admin) ===
-    if not db.users.find_one({"email": "akshanshshukla963@gmail.com"}):
-        test_admin = UserInDB(
-            email="akshanshshukla963@gmail.com",
-            role="super_admin",
-            hashed_password=hash_password("AkshFT!2026")
-        )
-        db.users.insert_one(test_admin.model_dump())
+    # (the owner's own super admin is no longer seeded — incident 2026-10-27:
+    # its password was in this public file; services/published_passwords)
 
     # === Three role demo accounts (explicitly requested) ======================
     # Quick-login demo trio so reviewers can see each permission level in action.
@@ -7628,7 +7622,7 @@ def _card_customer(barcode_id: str, request: Optional[Request], with_actor: bool
         token = header[7:] if header.startswith("Bearer ") else None
     if token:
         try:
-            p = jwt.decode(token[7:] if token.startswith("Bearer ") else token, auth.SECRET_KEY,
+            p = jwt.decode(token[7:] if token.startswith("Bearer ") else token, auth._secret(),
                            algorithms=[auth.ALGORITHM])
             ok_session = auth._session_check is None or auth._session_check(p.get("sub"), p.get("sid"))
             if not p.get("purpose") and ok_session and (
@@ -12212,6 +12206,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
     a time slot runs once a day)."""
     now = now or datetime.now(timezone.utc)
     out: Dict[str, Any] = {"at": now.isoformat(), "failures": []}
+    try:                         # seeded accounts still on a published password (incident 2026-10-27)
+        from services import published_passwords as _PP
+        out["published_lock"] = _PP.lock_due(db)
+    except Exception as e:
+        out["failures"].append({"step": "published_lock", "error": str(e)[:120]})
     try:                         # planned campaigns — the merchant's and the Autopilot's
         from features.campaigns_page import run_due as _run_due_campaigns
         out["campaigns"] = _run_due_campaigns(now)

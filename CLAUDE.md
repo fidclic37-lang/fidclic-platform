@@ -53,20 +53,14 @@ Set: `MONGODB_URI`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (ma
 Probably set: `JWT_SECRET`, `OPENROUTER_API_KEY`.
 NOT set (pending): `SUPPORT_SMTP_USER`, `SUPPORT_SMTP_PASS`, `TWILIO_*`, `RESEND_API_KEY`, `PUBLIC_APP_URL`, Stripe keys (billing not integrated).
 
-## 4. SEED CREDENTIALS (dev/demo — in source `api/server.py` mock_seed_data)
+## 4. SEED ACCOUNTS (local dev / e2e only — `api/server.py` mock_seed_data)
 
-| Role | Email | Password |
-|---|---|---|
-| super_admin (user's) | akshanshshukla963@gmail.com | AkshFT!2026 |
-| super_admin | admin@fidelitour.com | Fidelit0ur!Adm |
-| super_admin demo | demo.admin@fidelitour.com | Admin!Demo2026 |
-| business_owner demo (tenant-1 Café Lumière) | demo.owner@fidelitour.com | Owner!Demo2026 |
-| staff demo (tenant-1) | demo.staff@fidelitour.com | Staff!Demo2026 |
-| Café Lumière owner | owner@cafelumiere.fr | CafeLum!2026 |
-| Boulangerie Saint-Michel owner | (seeded) | Boulang!2026 |
+The seed runs locally only (never on Vercel). Its passwords live in the seed
+code and never work on Vercel (`api/services/published_passwords.py`,
+incident 2026-10-27: this table once listed them while the repo was public).
 
 Roles: super_admin (/admin/*), business_owner (/dashboard/*), manager (subset), staff (/dashboard/scan only).
-SECURITY TODO pre-production: rotate all, gate seed behind env flag, add email verification + 2FA.
+Seed gated off on Vercel since 2026-10-01; published passwords blocked there since 2026-10-27.
 
 ## 5. KEY FILE MAP
 

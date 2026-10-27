@@ -247,8 +247,8 @@ def main():
 
     print("\n7. A copied address with an invisible character (user, 2026-10-14)")
     from services import email_check as EC, customer_fields as CF
-    pasted = "Mza1989fr\u200b@gmail.com\u00a0"            # a zero-width space, a non-breaking space
-    check("email_check.clean drops them", EC.clean(pasted) == "mza1989fr@gmail.com")
+    pasted = "Lea.Martin1989\u200b@example.fr\u00a0"            # a zero-width space, a non-breaking space
+    check("email_check.clean drops them", EC.clean(pasted) == "lea.martin1989@example.fr")
     check("…every kind: soft hyphen, BOM, word joiner",
           EC.clean(" a\u00adb\ufeff\u2060c@x.fr ") == "abc@x.fr")
     check("a plain space inside stays, so « marie dupont@… » is still refused",
@@ -259,7 +259,7 @@ def main():
         "password": "Caisse!Royal2026"})
     check(f"the account is created ({r.status_code} {r.text[:120]})", r.status_code == 200)
     check("…under the clean address, so its owner can log in",
-          db.users.find_one({"email": "mza1989fr@gmail.com"}) is not None
+          db.users.find_one({"email": "lea.martin1989@example.fr"}) is not None
           and db.users.find_one({"email": {"$regex": "\u200b"}}) is None)
 
     print(f"\n{passed} passed, {failed} failed")

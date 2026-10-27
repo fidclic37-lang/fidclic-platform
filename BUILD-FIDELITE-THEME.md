@@ -69,7 +69,7 @@ hi screenshot bhejo.
 cd fidelitour-deploy && npx vite build --outDir /tmp/fb --emptyOutDir   # green?
 # /tmp/fdep2 clone already hai; warna: git clone --depth 1 <origin> /tmp/fdep2
 rsync -a src/ /tmp/fdep2/src/ && cd /tmp/fdep2 && git add -A && git commit && git push
-# ~90s Vercel; login business@test-fidclic.fr / Business2026!Xy → /dashboard
+# ~90s Vercel; then log in with a test account → /dashboard
 ```
 
 ## Parallel sessions ka rule

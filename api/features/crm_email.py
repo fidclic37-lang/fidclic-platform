@@ -55,7 +55,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from auth import require_role, TokenData, SECRET_KEY
+from auth import require_role, TokenData
+from auth import _secret as _signing_key
 from features.platform_access import require_admin, require_super
 from features import crm as C
 
@@ -191,7 +192,7 @@ def _today_start() -> datetime:
 
 
 def _sig(*parts: str) -> str:
-    return hmac.new(SECRET_KEY.encode(), "|".join(parts).encode(), hashlib.sha256).hexdigest()[:20]
+    return hmac.new(_signing_key().encode(), "|".join(parts).encode(), hashlib.sha256).hexdigest()[:20]
 
 
 def _issuer_line() -> str:
