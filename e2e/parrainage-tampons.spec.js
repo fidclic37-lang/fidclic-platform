@@ -64,6 +64,22 @@ async function scan(request, H, store, bc) {
 test.describe.serial('parrainage en tampons', () => {
   test.use({ viewport: { width: 1536, height: 960 } });
 
+  // the demo shop's settings are shared with the other specs (programme-rewards
+  // expects its own): put them back as they were
+  let saved = null;
+  test.beforeAll(async ({ request }) => {
+    const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+    const H = { Authorization: `Bearer ${login.access_token}` };
+    const v = await (await request.get('/api/owner/referrals/overview', { headers: H })).json();
+    saved = { ...v.config, enabled: v.enabled };
+  });
+  test.afterAll(async ({ request }) => {
+    if (!saved) return;
+    const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+    await request.put('/api/owner/referrals/config', {
+      headers: { Authorization: `Bearer ${login.access_token}` }, data: saved });
+  });
+
   test('les tampons donnés se lisent en tampons, jamais « 0 points »', async ({ page, request }) => {
     const { H, store } = await asOwner(page, request);
     await settings(request, H, {});
