@@ -172,8 +172,10 @@ def main():
                                                    "birthday": "02/01/1990", "consent": True, "parrain_barcode": parrain})
     check(f"the filleul signs up ({j.status_code})", j.status_code == 200)
     filleul = j.json()["barcode_id"]
-    # the owner changes the settings afterwards: what was promised stays
-    http("PUT", "/api/owner/referrals/config", headers=H, json={**base, "referee_reward_kind": "points", "referee_reward_points": 5})
+    # the owner then sets the filleul's reward to nothing: today gives less
+    # than the promise, so the promise stands (due(), user 2026-10-27 — a
+    # change of kind would pay today's reward instead)
+    http("PUT", "/api/owner/referrals/config", headers=H, json={**base, "referee_reward_kind": "points", "referee_reward_points": 0})
     before = cust(parrain).get("visits_at_last_redemption") or 0
     s = scan(filleul)
     check(f"the filleul's receipt: « 1 café offert » ({s.get('referral_reward')})", s.get("referral_reward") == "1 café offert")
@@ -208,13 +210,15 @@ def main():
     check(f"next visit: parrain +10, filleul +1 tampon ({cust(parrain2)['points']}, {s2['stamps_on_card']})",
           cust(parrain2)["points"] == 60 and s2["stamps_on_card"] == 4)
 
-    print("\nA referral recorded before today (points only) is still paid")
+    print("\nA referral recorded before today (points only) is paid the shop's reward today, never less")
     old_p, old_f = customer(), customer()
     db.referral_redemptions.insert_one({"tenant_id": "t1", "referrer_customer_id": cust(old_p)["id"],
                                         "referee_customer_id": cust(old_f)["id"], "referrer_points_promised": 30,
                                         "referee_points_promised": 15, "referrer_pending": True})
-    scan(old_f)
-    check("the promised points land", cust(old_p)["points"] == 30 and cust(old_f)["points"] == 15)
+    s3 = scan(old_f)
+    check(f"parrain: today's 50 points, more than the 30 promised ({cust(old_p)['points']})", cust(old_p)["points"] == 50)
+    check(f"filleul: the shop is in tampons now → 1 tampon, not 15 points ({s3.get('referral_reward')}, {cust(old_f)['points']})",
+          s3.get("referral_reward") == "1 tampon" and cust(old_f)["points"] == 0)
 
 
 if __name__ == "__main__":
