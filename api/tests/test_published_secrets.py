@@ -151,6 +151,29 @@ def main():
     os.environ["JWT_SECRET"] = saved
     os.environ.pop("VERCEL", None)
 
+    # ── 5b. a published password can't be chosen again ─────────────────────────
+    print("Choisir un nouveau mot de passe")
+    from services import password_policy
+    import hashlib
+    check("locally a published password still passes the policy (tests, e2e)", password_policy.check("Caisse!Royal2026")[0])
+    os.environ["VERCEL"] = "1"
+    ok, errs = password_policy.check("Caisse!Royal2026")
+    check(f"on Vercel the policy refuses a published password ({errs})", not ok and any("public" in e for e in errs))
+    check("…a fresh one passes", password_policy.check("Tout-Neuf-Et-Solide-2026")[0])
+
+    def reset(pw):
+        tok = os.urandom(8).hex()
+        db.password_resets.insert_one({"email": "vrai@commerce.fr", "used": False,
+                                       "token_hash": hashlib.sha256(tok.encode()).hexdigest(),
+                                       "expires_at": (now + dt.timedelta(minutes=30)).isoformat()})
+        return http("POST", "/api/auth/reset-password", json={"token": tok, "new_password": pw})
+    r = reset("Caisse!Royal2026")
+    check(f"« Mot de passe oublié » refuses a published password ({r.status_code})", r.status_code == 422, r.text[:200])
+    r = reset("Tout-Neuf-Et-Solide-2026")
+    check(f"…and accepts a new one, which signs in ({r.status_code})", r.status_code == 200
+          and login("vrai@commerce.fr", "Tout-Neuf-Et-Solide-2026").status_code == 200, r.text[:200])
+    os.environ.pop("VERCEL", None)
+
     # ── 6. the repo itself ─────────────────────────────────────────────────────
     print("Le dépôt")
     src = open(os.path.join(ROOT, "api", "server.py")).read()
