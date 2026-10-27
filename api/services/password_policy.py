@@ -67,6 +67,11 @@ def check(password: str) -> Tuple[bool, List[str]]:
     if lowered in _BLOCKLIST or any(b in lowered for b in _BLOCKLIST if len(b) >= 6):
         errors.append("Ce mot de passe est trop courant. Choisissez-en un autre.")
 
+    # it was published (incident 2026-10-27): it would never sign in on Vercel
+    from services import published_passwords
+    if published_passwords.blocked(pw):
+        errors.append("Ce mot de passe a été rendu public. Choisissez-en un autre.")
+
     return (len(errors) == 0), errors
 
 
