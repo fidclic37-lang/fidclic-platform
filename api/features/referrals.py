@@ -247,13 +247,11 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
     mode = cfg.get("reward_mode") if cfg.get("reward_mode") in REWARD_MODES else "once"
 
     if row.get("referrer_pending", True):
-        # The first payment — what was promised at signup. Claimed first: two
+        # The first payment — the shop's reward today, or the promise made at
+        # signup where today gives less of the same (due). Claimed first: two
         # tills scanning the same card at once must not pay twice.
-        parrain_r = row.get("referrer_reward_promised") or {
-            "kind": "points", "n": int(row.get("referrer_points_promised") or 0)}
-        filleul_r = row.get("referee_reward_promised") or {
-            "kind": "points", "n": int(row["referee_points_promised"] if "referee_points_promised" in row
-                                       else row.get("referee_points") or 0)}     # rows older than the promise fields
+        parrain_r = due(_promised(row, "referrer"), reward_of(cfg, "referrer"))
+        filleul_r = due(_promised(row, "referee"), reward_of(cfg, "referee"))
         parrain_pts, filleul_pts = _points(parrain_r), _points(filleul_r)
         claimed = _db.referral_redemptions.update_one(
             {"_id": row["_id"], "referrer_pending": True},
@@ -318,6 +316,32 @@ def reward_of(cfg: Dict[str, Any], side: str, which: str = "first") -> Dict[str,
     if kind == "stamps":
         return {"kind": "stamps", "n": max(0, int(cfg.get(f"{side}_reward_stamps{nx}") or 0))}
     return {"kind": "points", "n": max(0, int(cfg.get(f"{side}_reward_points{nx}") or 0))}
+
+
+def _promised(row: Dict[str, Any], side: str) -> Dict[str, Any]:
+    """The promise a row recorded at signup; rows older than the reward
+    fields promised points."""
+    r = row.get(f"{side}_reward_promised")
+    if isinstance(r, dict):
+        return r
+    n = row.get(f"{side}_points_promised")
+    if n is None:
+        n = row.get(f"{side}_points")
+    return {"kind": "points", "n": _n(n)}
+
+
+def due(promised: Any, today: Dict[str, Any]) -> Dict[str, Any]:
+    """What a parrainage still waiting for the filleul's visit pays (user,
+    2026-10-27: « what the business chooses is what shows »): the shop's
+    reward today — unless it is the same kind and smaller, or nothing at all,
+    where the promise made at signup stands. Points then tampons → tampons."""
+    if not isinstance(promised, dict) or promised.get("kind") not in REWARD_KINDS:
+        return today
+    if not label(today):
+        return promised
+    if promised["kind"] == today.get("kind") and today["kind"] in ("points", "stamps"):
+        return today if _n(today.get("n")) >= _n(promised.get("n")) else promised
+    return today
 
 
 def _points(r: Dict[str, Any]) -> int:
@@ -721,16 +745,12 @@ def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]
 
 
 def _row_reward(r: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-    """The parrain's side of a row: validated → what was given; pending → the
-    promise recorded with the row, in its kind (an old points number left
-    beside a tampons promise must not show)."""
+    """The parrain's side of a row: validated → what was given; pending →
+    what the visit will pay (due: the shop's reward today, or the promise
+    where today gives less of the same)."""
     if not r.get("referrer_pending"):
         return given(r, "referrer", config)
-    promised = r.get("referrer_reward_promised")
-    if not isinstance(promised, dict):
-        promised = {"kind": "points", "n": r["referrer_points_promised"] if r.get("referrer_points_promised") is not None
-                    else config.get("referrer_reward_points")}
-    return _tally(promised)
+    return _tally(due(_promised(r, "referrer"), reward_of(config, "referrer")))
 
 
 CARD_LABELS = {"points": "Points offerts", "stamps": "Tampons offerts", "offer": "Offres offertes"}

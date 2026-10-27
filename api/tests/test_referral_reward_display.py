@@ -72,6 +72,22 @@ def unit(R):
     check("three offers → « 3 offres »", R.words({**z, "offers": 3, "offer_text": "1 café offert"}) == "3 offres")
     check("mixed → every part", R.words({**z, "stamps": 2, "points": 50}) == "2 tampons · 50 points")
 
+    print("\n2b. Parrainage en attente : le choix du commerce aujourd'hui, sauf s'il donne moins (user, 2026-10-27)")
+    P = lambda n: {"kind": "points", "n": n}     # noqa: E731
+    S = lambda n: {"kind": "stamps", "n": n}     # noqa: E731
+    O = lambda t: {"kind": "offer", "text": t}   # noqa: E731
+    check("points 50 promised, today 30 points → 50 (today gives less)", R.due(P(50), P(30)) == P(50))
+    check("points 50 promised, today 80 points → 80", R.due(P(50), P(80)) == P(80))
+    check("2 tampons promised, today 3 → 3", R.due(S(2), S(3)) == S(3))
+    check("2 tampons promised, today 1 → 2", R.due(S(2), S(1)) == S(2))
+    check("50 points promised, shop now in tampons (2) → 2 tampons", R.due(P(50), S(2)) == S(2))
+    check("2 tampons promised, shop now gives an offer → the offer", R.due(S(2), O("1 coupe offerte")) == O("1 coupe offerte"))
+    check("offer promised, today another offer → today's words", R.due(O("1 café"), O("1 coupe")) == O("1 coupe"))
+    check("today gives nothing (0 tampons) → the promise stays", R.due(P(50), S(0)) == P(50))
+    check("today an offer without words → the promise stays", R.due(S(2), O("")) == S(2))
+    check("nothing promised (0 points), today 2 tampons → 2 tampons", R.due(P(0), S(2)) == S(2))
+    check("garbage promise → today's", R.due("x", S(2)) == S(2) and R.due(None, P(10)) == P(10))
+
 
 def integration(server, auth, R, db):
     def http(method, url, **kw):
@@ -145,6 +161,25 @@ def integration(server, auth, R, db):
     pend = [r for r in view()["recent"] if r["status"] == "pending"][0]
     check(f"pending row shows « 2 tampons » ({pend.get('reward')!r})", pend.get("reward") == "2 tampons")
     check("pending gives nothing to the card yet", {c["key"]: c for c in view()["cards"]}["points"]["value"] == 4)
+
+    print("\n5b. Promis en points avant le passage aux tampons (Mahdi → Adams sur Royal Trim)")
+    old = join("Evan Roth", "0699999999", parrain=ahmed)
+    eid = db.customers.find_one({"barcode_id": old})["id"]
+    db.referral_redemptions.update_one({"referee_customer_id": eid}, {"$set": {
+        "referrer_points_promised": 50, "referee_points_promised": 25,
+        "referrer_reward_promised": {"kind": "points", "n": 50}, "referee_reward_promised": {"kind": "points", "n": 25}}})
+    pend = [r for r in view()["recent"] if r["filleul"]["name"].startswith("Evan")][0]
+    check(f"pending row shows today's choice « 2 tampons » ({pend.get('reward')!r})", pend.get("reward") == "2 tampons")
+    par = db.customers.find_one({"barcode_id": ahmed})
+    pts0, mark0 = int(par.get("points") or 0), int(par.get("visits_at_last_redemption") or 0)
+    scan(old)
+    par = db.customers.find_one({"barcode_id": ahmed})
+    check("at the visit the parrain gets 2 tampons on the card…", int(par.get("visits_at_last_redemption") or 0) == mark0 - 2)
+    check("…and not the old 50 points", int(par.get("points") or 0) == pts0)
+    row = db.referral_redemptions.find_one({"referee_customer_id": eid})
+    check(f"the row records 2 tampons given ({row.get('referrer_given')})",
+          (row.get("referrer_given") or {}).get("stamps") == 2 and not (row.get("referrer_given") or {}).get("points"))
+    db.referral_redemptions.delete_one({"referee_customer_id": eid})
 
     print("\n6. Bonus puis récurrent en tampons")
     settings(reward_mode="first_then", referrer_reward_stamps_next=1, referee_reward_stamps_next=1)
