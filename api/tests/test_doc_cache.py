@@ -80,7 +80,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     DC.end(tok)
     check("les clients ne sont jamais mémorisés", "customers" not in DC.CACHED)
     check("…le scan les réécrit au milieu de sa requête",
-          set(DC.CACHED) == {"tenants", "card_templates", "plan_settings"})
+          set(DC.CACHED) == {"tenants", "card_templates", "plan_settings",
+                             # a shop's facts for Profil (2026-10-27): written in the background, never by the till
+                             "brain_shop"})
 
     print("\n— la même enveloppe à chaque accès —")
     check("un patch posé sur la collection tient", db.tenants is db.tenants)
