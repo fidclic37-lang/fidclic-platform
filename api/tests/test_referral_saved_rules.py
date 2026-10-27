@@ -77,8 +77,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           got and got["referrer_reward"] == "3 tampons" and got["referee_reward"] == "40 points")
     check("the filleul now has his 40 points", int(db.customers.find_one({"id": "f1"}).get("points") or 0) == 40)
     check("the parrain got tampons, no points", int(db.customers.find_one({"id": "p1"}).get("points") or 0) == 0)
-    check("« Points offerts » counts the 40 really given",
-          next(c for c in R.overview(token_data=TD())["cards"] if c["key"] == "points")["value"] == 40)
+    card = next(c for c in R.overview(token_data=TD())["cards"] if c["key"] == "points")
+    check(f"the card speaks the parrain's tampons, the filleul's 40 points beneath ({card})",
+          card["label"] == "Tampons offerts" and card["value"] == 3 and card.get("also") == "+ 40 points")
 
     print("\nA 0 saved stays 0")
     R.update_config(R.ReferralConfig(enabled=True, referrer_reward_points=0, referee_reward_points=0), TD())
