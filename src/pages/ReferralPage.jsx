@@ -79,6 +79,14 @@ const SeeAll = ({ onClick, label = 'Voir tous' }) => (
 );
 
 /* ── KPI ──────────────────────────────────────────────────────────────── */
+// What a parrainage gave, in the shop's own kind (« 2 tampons », « 1 café
+// offert ») — the server says it in words; a server without them, points.
+const rewardText = (x) => {
+  if (x.reward !== undefined) return x.reward || '—';
+  const n = x.reward_points ?? x.points;
+  return n ? `${nf(n)} points` : '—';
+};
+
 const KpiCard = ({ card, showCaption }) => {
   const Icon = KPI_ICONS[card.icon] || Users;
   const t = TONE[card.tone] || TONE.blue;
@@ -94,6 +102,7 @@ const KpiCard = ({ card, showCaption }) => {
           {card.unit === '€' ? `${nf(card.value)} €` : nf(card.value)}
         </p>
         <p className="mt-1 text-[12.5px] leading-tight text-[#64748B]">{card.label}</p>
+        {card.also && <p className="mt-0.5 text-[11px] leading-tight text-[#94A3B8]">{card.also}</p>}
         {card.delta_pct === null || card.delta_pct === undefined ? (
           <p className="mt-2 text-[11px] leading-tight text-[#94A3B8]">
             {card.note || 'pas encore de période précédente'}
@@ -435,7 +444,7 @@ const EXAMPLE = (() => {
     cards: [
       { key: 'referrals', label: 'Parrainages réalisés', icon: 'users', tone: 'teal', value: 56, delta_pct: 42 },
       { key: 'active', label: 'Parrains actifs', icon: 'user', tone: 'blue', value: 28, delta_pct: 35 },
-      { key: 'points', label: 'Points offerts', icon: 'gift', tone: 'amber', value: 1240, delta_pct: 28 },
+      { key: 'points', label: 'Points offerts', icon: 'gift', tone: 'amber', kind: 'points', value: 1240, delta_pct: 28 },
       { key: 'revenue', label: 'CA généré via parrainage', icon: 'euro', tone: 'violet',
         value: 280, unit: '€', all_time: true, note: 'depuis le début', delta_pct: null },
     ],
@@ -452,11 +461,11 @@ const EXAMPLE = (() => {
       ],
     },
     top_parrains: [
-      { customer_id: 'x1', name: 'Sophie L.', full_name: 'Sophie Lambert', initials: 'SL', tier: 'gold', filleuls: 12, points: 240 },
-      { customer_id: 'x2', name: 'Yassine K.', full_name: 'Yassine Kaddour', initials: 'YK', tier: 'vip', filleuls: 9, points: 180 },
-      { customer_id: 'x3', name: 'Camille R.', full_name: 'Camille Roux', initials: 'CR', tier: 'silver', filleuls: 7, points: 140 },
-      { customer_id: 'x4', name: 'Lucas M.', full_name: 'Lucas Marin', initials: 'LM', tier: 'silver', filleuls: 6, points: 120 },
-      { customer_id: 'x5', name: 'Inès B.', full_name: 'Inès Bouchard', initials: 'IB', tier: 'bronze', filleuls: 5, points: 100 },
+      { customer_id: 'x1', name: 'Sophie L.', full_name: 'Sophie Lambert', initials: 'SL', tier: 'gold', filleuls: 12, points: 240, reward: '240 points' },
+      { customer_id: 'x2', name: 'Yassine K.', full_name: 'Yassine Kaddour', initials: 'YK', tier: 'vip', filleuls: 9, points: 180, reward: '180 points' },
+      { customer_id: 'x3', name: 'Camille R.', full_name: 'Camille Roux', initials: 'CR', tier: 'silver', filleuls: 7, points: 140, reward: '140 points' },
+      { customer_id: 'x4', name: 'Lucas M.', full_name: 'Lucas Marin', initials: 'LM', tier: 'silver', filleuls: 6, points: 120, reward: '120 points' },
+      { customer_id: 'x5', name: 'Inès B.', full_name: 'Inès Bouchard', initials: 'IB', tier: 'bronze', filleuls: 5, points: 100, reward: '100 points' },
     ],
     recent: [
       ['Sophie L.', 'SL', 'gold', 'Emma D.', 'ED', 'validated', 'Validé', 'QR code', 0],
@@ -468,7 +477,7 @@ const EXAMPLE = (() => {
       id: `ex${i}`, at: day(ago),
       parrain: { name: pn, initials: pi, tier: pt },
       filleul: { name: fn, initials: fi, tier: 'bronze' },
-      status: st, status_label: sl, reward_points: 50, source: 'qr', source_label: src,
+      status: st, status_label: sl, reward_points: 50, reward: '50 points', reward_kind: 'points', source: 'qr', source_label: src,
     })),
     total_referrals: 56,
   };
@@ -677,7 +686,7 @@ export default function ReferralPage() {
                         </span>
                       </span>
                       <span className="shrink-0 text-[13.5px] font-bold text-[#0B1C3F] tabular-nums">
-                        {nf(p.points)} points
+                        {rewardText(p)}
                       </span>
                     </li>
                   ))}
@@ -787,7 +796,7 @@ export default function ReferralPage() {
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">
                         <span className="flex items-center gap-1.5 text-[12.5px] text-[#334155]">
-                          <Gift size={14} className="text-[#F59E0B]" /> {nf(r.reward_points)} points
+                          <Gift size={14} className="text-[#F59E0B]" /> {rewardText(r)}
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-[12.5px] text-[#475569]">{r.source_label}</td>

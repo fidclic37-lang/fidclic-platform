@@ -287,7 +287,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     lines = [l for l in body.splitlines() if l.strip()]
     check("it opens in French Excel", body.startswith("﻿Date;"))
     check("the header names the table's columns",
-          "Parrain;Filleul;Statut;Récompense (points);Source" in lines[0])
+          "Parrain;Filleul;Statut;Récompense;Source" in lines[0])
     check("every parrainage of the period is exported, not just the ten shown",
           len(lines) == 11)                                   # 10 redemptions + header
     check("full names are exported, not the shortened ones", "Sophie Lambert" in body)
