@@ -213,7 +213,7 @@ def main() -> None:
     print(f"   Birthday: {customers[0]['birthday']}  (today)")
     print()
     print("Next steps:")
-    print("   1. Log in as owner@cafelumiere.fr / CafeLum!2026")
+    print("   1. Log in as the Café Lumière owner (local seed account)")
     print("   2. Settings → 'Automatic messages' → 'Run birthdays now'")
     print("   3. Your real phone should receive an SMS within seconds.")
     print()

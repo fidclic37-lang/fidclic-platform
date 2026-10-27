@@ -40,8 +40,8 @@ from typing import Any, Dict, Iterable, Optional
 
 
 def _secret() -> bytes:
-    from auth import SECRET_KEY
-    return ("card-owner:" + SECRET_KEY).encode()
+    from auth import _secret as signing_key          # never the committed key on Vercel (incident 2026-10-27)
+    return ("card-owner:" + signing_key()).encode()
 
 
 def key_for(barcode_id: str) -> str:

@@ -22,15 +22,26 @@ from models import TokenData
 # redeploy. Every current session is invalidated by the change, so users
 # log in once more. That is the entire cost.
 # ─────────────────────────────────────────────────────────────────────
+# Security incident 2026-10-27 (the repo was public): on Vercel the old
+# constant is never used — without JWT_SECRET no token is issued or read
+# (503), so a missing variable is an outage everyone sees, not a hole nobody
+# does. Locally (tests, dev) it still stands in.
 _LEGACY_INSECURE_SECRET = "a3f8b2c1d4e5f67890abcdef12345678abcdef9087654321fedcba0987654321"
-SECRET_KEY = os.environ.get("JWT_SECRET", "").strip() or _LEGACY_INSECURE_SECRET
-if SECRET_KEY == _LEGACY_INSECURE_SECRET:
-    print(
-        "SECURITY WARNING: JWT_SECRET is not set — falling back to the secret "
-        "committed to the public repository. Anyone can forge a super_admin "
-        "token until this env var is set. Fix: openssl rand -hex 32 -> Vercel "
-        "env JWT_SECRET -> redeploy."
-    )
+
+
+def _secret() -> str:
+    """The signing key, read each time (a deploy sets it; tests change it)."""
+    s = os.environ.get("JWT_SECRET", "").strip()
+    if s and s != _LEGACY_INSECURE_SECRET:
+        return s
+    if os.environ.get("VERCEL"):
+        raise HTTPException(status_code=503, detail="Configuration de sécurité incomplète (JWT_SECRET). Contactez FidClic.")
+    return s or _LEGACY_INSECURE_SECRET
+
+
+SECRET_KEY = os.environ.get("JWT_SECRET", "").strip() or _LEGACY_INSECURE_SECRET   # (read _secret() instead)
+if SECRET_KEY == _LEGACY_INSECURE_SECRET and not os.environ.get("VERCEL"):
+    print("JWT_SECRET is not set: local key in use (never on Vercel).")
 ALGORITHM = "HS256"
 # A session lasts a month, and every time the app is opened it starts again
 # (server.get_me re-issues the token). Someone who uses FidClic is never asked
@@ -48,6 +59,11 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # a password published in the repository never works on Vercel, whatever
+    # the account (services/published_passwords, incident 2026-10-27)
+    from services import published_passwords as _PP
+    if _PP.blocked(plain_password):
+        return False
     return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
@@ -57,7 +73,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, _secret(), algorithm=ALGORITHM)
     return encoded_jwt
 
 _session_check = None
@@ -92,14 +108,14 @@ def _view_token(request: Request) -> Optional[str]:
     if not h.startswith("Bearer "):
         return None
     try:
-        p = jwt.decode(h[7:], SECRET_KEY, algorithms=[ALGORITHM])
+        p = jwt.decode(h[7:], _secret(), algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
         # An « Accéder au compte » token past its time must NOT fall back to the
         # super admin's own cookie: every page then answered « Not enough
         # permissions » under a banner still saying « accès complet » (user,
         # 2026-10-09). Said plainly; the tab renews it (lib/api.js).
         try:
-            p = jwt.decode(h[7:], SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+            p = jwt.decode(h[7:], _secret(), algorithms=[ALGORITHM], options={"verify_exp": False})
         except jwt.PyJWTError:
             return None
         if p.get("view_only") or p.get("act_by"):
@@ -138,7 +154,7 @@ async def get_current_user_data(request: Request) -> TokenData:
     try:
         if token.startswith("Bearer "):
             token = token[7:]
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, _secret(), algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         role: str = payload.get("role")
         tenant_id: str = payload.get("tenant_id")

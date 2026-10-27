@@ -45,7 +45,8 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from auth import require_role, TokenData, SECRET_KEY, ALGORITHM, verify_password, hash_password
+from auth import require_role, TokenData, ALGORITHM, verify_password, hash_password
+from auth import _secret as _signing_key
 
 router = APIRouter(tags=["security"])
 _db = None
@@ -131,12 +132,12 @@ def check_second_factor(user: Dict[str, Any], code: str) -> bool:
 
 
 def make_challenge(email: str) -> str:
-    return jwt.encode({"sub": email, "purpose": "2fa", "exp": _now() + timedelta(minutes=5)}, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode({"sub": email, "purpose": "2fa", "exp": _now() + timedelta(minutes=5)}, _signing_key(), algorithm=ALGORITHM)
 
 
 def read_challenge(token: str) -> str:
     try:
-        p = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        p = jwt.decode(token, _signing_key(), algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Le délai est dépassé. Reconnectez-vous.")
     if p.get("purpose") != "2fa":

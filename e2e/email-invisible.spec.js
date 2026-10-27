@@ -9,13 +9,13 @@ import { test, expect } from '@playwright/test';
 test.use({ viewport: { width: 1536, height: 960 } });
 
 const OWNER = { email: 'demo.owner@fidelitour.com', password: 'Owner!Demo2026' };   // local seed only
-const PASTED = 'mza1989fr\u200b@gmail.com\u00a0';
+const PASTED = 'lea.martin1989\u200b@example.fr\u00a0';
 
 test('the business sign-up: the pasted address is clean and valid', async ({ page }) => {
   await page.goto('/register');
   const mail = page.locator('input[type="email"]');
   await mail.fill(PASTED);
-  await expect(mail).toHaveValue('mza1989fr@gmail.com');
+  await expect(mail).toHaveValue('lea.martin1989@example.fr');
   expect(await mail.evaluate((el) => el.checkValidity()), 'the browser accepts it').toBe(true);  // a plain space typed between two words stays (visible, refused), never glued
   await mail.fill('');
   await mail.pressSequentially('marie dupont@gmail.com');
@@ -36,6 +36,6 @@ test('« Équipe & accès »: inviting a member with a pasted address', async ({
   await expect(mail).toBeVisible();
   await mail.click();
   await page.keyboard.insertText(PASTED);                        // as a paste does
-  await expect(mail).toHaveValue('mza1989fr@gmail.com');
+  await expect(mail).toHaveValue('lea.martin1989@example.fr');
   expect(await mail.evaluate((el) => el.checkValidity())).toBe(true);
 });
