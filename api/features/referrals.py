@@ -413,6 +413,26 @@ def words(t: Dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def _clean(t: Any) -> Dict[str, Any]:
+    if not isinstance(t, dict):
+        return _zero()
+    return {"points": _n(t.get("points")), "stamps": _n(t.get("stamps")), "offers": _n(t.get("offers")),
+            "offer_text": t.get("offer_text") if isinstance(t.get("offer_text"), str) else ""}
+
+
+def total_words(a: Any, b: Any) -> str:
+    """Both sides of a parrainage together (user, 2026-10-28: « 2 tampons »
+    showed while each side got 2): tampons and points add up (« 4 tampons »,
+    « 2 tampons · 75 points »); offers keep their names (« 1 coupe offerte +
+    -20 % sur la coupe », « 2 × 1 café offert »)."""
+    a, b = _clean(a), _clean(b)
+    numbers = words({**_zero(), "stamps": a["stamps"] + b["stamps"], "points": a["points"] + b["points"]})
+    offers = [words({**_zero(), "offers": t["offers"], "offer_text": t["offer_text"]}) for t in (a, b) if t["offers"]]
+    if len(offers) == 2 and offers[0] == offers[1] and a["offers"] == b["offers"] == 1:
+        offers = [f"2 × {offers[0]}"]
+    return " · ".join(x for x in (numbers, " + ".join(offers)) if x)
+
+
 def _main_kind(t: Dict[str, Any]) -> str:
     for kind, key in (("stamps", "stamps"), ("offer", "offers"), ("points", "points")):
         if t.get(key):
@@ -695,6 +715,8 @@ def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]
     pending = bool(r.get("referrer_pending"))
     source = (r.get("source") or "link").lower()
     reward = _row_reward(r, config)
+    reward_ree = _row_reward(r, config, "referee")
+    both = _add(reward, reward_ree)
     return {
         "id": str(r.get("_id") or ""),
         "at": at.isoformat() if at else None,
@@ -712,29 +734,55 @@ def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]
         "reward_points": int(r.get("referrer_points") or 0) if not pending
         else int(r["referrer_points_promised"] if r.get("referrer_points_promised") is not None
                  else config.get("referrer_reward_points") or 0),
-        # the parrain's reward in its own kind: « 2 tampons », « 1 café offert »
-        "reward": words(reward),
-        "reward_kind": _main_kind(reward),
+        # both sides together (user, 2026-10-28), each side for the tooltip
+        "reward": total_words(reward, reward_ree),
+        "reward_parrain": words(reward),
+        "reward_filleul": words(reward_ree),
+        "reward_kind": _main_kind(both),
         "source": source if source in SOURCES else "other",
         "source_label": SOURCES.get(source, SOURCES["other"]),
     }
 
 
-def _row_reward(r: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-    """The parrain's side of a row: validated → what was given; pending → the
-    promise recorded with the row, in its kind (an old points number left
-    beside a tampons promise must not show)."""
+def _row_reward(r: Dict[str, Any], config: Dict[str, Any], side: str = "referrer") -> Dict[str, Any]:
+    """One side of a row: validated → what was given; pending → the promise
+    recorded with the row, in its kind (an old points number left beside a
+    tampons promise must not show)."""
     if not r.get("referrer_pending"):
-        return given(r, "referrer", config)
-    promised = r.get("referrer_reward_promised")
+        return given(r, side, config)
+    promised = r.get(f"{side}_reward_promised")
     if not isinstance(promised, dict):
-        promised = {"kind": "points", "n": r["referrer_points_promised"] if r.get("referrer_points_promised") is not None
-                    else config.get("referrer_reward_points")}
+        promised = {"kind": "points", "n": r[f"{side}_points_promised"] if r.get(f"{side}_points_promised") is not None
+                    else (config or {}).get(f"{side}_reward_points")}
     return _tally(promised)
 
 
 CARD_LABELS = {"points": "Points offerts", "stamps": "Tampons offerts", "offer": "Offres offertes"}
 CARD_KEYS = {"points": "points", "stamps": "stamps", "offer": "offers"}
+
+
+def _parrains(rows: List[Dict[str, Any]], people: Dict[str, Any], config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every parrain of these rows, ranked: what they got (points, tampons,
+    offers), then how many friends they brought."""
+    tally: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        rid = r.get("referrer_customer_id")
+        if not rid:
+            continue
+        acc = tally.setdefault(rid, {"filleuls": 0, "got": _zero()})
+        acc["filleuls"] += 1
+        acc["got"] = _add(acc["got"], given(r, "referrer", config))
+    rank = lambda kv: (-kv[1]["got"]["points"], -kv[1]["got"]["stamps"], -kv[1]["got"]["offers"],  # noqa: E731
+                       -kv[1]["filleuls"], kv[0])
+    out = []
+    for i, (rid, acc) in enumerate(sorted(tally.items(), key=rank), 1):
+        person = people.get(rid) or {}
+        name = person.get("name") or "Client supprimé"
+        out.append({"rank": i, "customer_id": rid, "name": _short(name), "full_name": name,
+                    "initials": _initials(name), "tier": (person.get("tier") or "bronze").lower(),
+                    "filleuls": acc["filleuls"], "points": acc["got"]["points"],
+                    "reward": words(acc["got"]), "reward_kind": _main_kind(acc["got"])})
+    return out
 
 
 def _fold(text: str) -> str:
@@ -773,6 +821,37 @@ def list_referrals(
     chunk = rows[(page - 1) * per_page: page * per_page]
     return {"rows": [_table_row(r, people, config) for r in chunk],
             "total": total, "page": page, "pages": pages, "per_page": per_page}
+
+
+@router.get("/api/owner/referrals/parrains")
+def list_parrains(
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    search: str = Query("", max_length=80),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    request: Request = None,
+    token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
+):
+    """« Top parrains › Voir tous » (user, 2026-10-28: it downloaded a CSV):
+    every parrain of the period, ranked like the top five, searchable by name,
+    page by page. Only the clients of the establishments this account sees."""
+    tid = token_data.tenant_id
+    start, end = _window(date_from, date_to)
+    rows = _rows_between(tid, start, end, S.customer_ids(S.resolve(token_data, request)))
+    people = _people([r.get("referrer_customer_id") for r in rows])
+    config = _db.referral_config.find_one({"tenant_id": tid}) or {}
+    ranked = _parrains(rows, people, config)
+    terms = _fold(search).split()
+    if terms:
+        ranked = [p for p in ranked if all(w in _fold(p["full_name"]) for w in terms)]
+    total = len(ranked)
+    pages = max(1, -(-total // per_page))
+    page = min(page, pages)
+    chunk = ranked[(page - 1) * per_page: page * per_page]
+    for p in chunk:
+        p.pop("full_name", None)                 # the short name is what the screen shows
+    return {"rows": chunk, "total": total, "page": page, "pages": pages, "per_page": per_page}
 
 
 @router.get("/api/owner/referrals/overview")
@@ -863,25 +942,8 @@ def overview(
                   "pct": round(seg_counts[key] / total_seg * 100) if total_seg else 0}
                  for key, label, tone in SEGMENTS]
 
-    # ---- the leaderboard ----------------------------------------------------
-    tally: Dict[str, Dict[str, Any]] = {}
-    for r in rows:
-        rid = r.get("referrer_customer_id")
-        if not rid:
-            continue
-        acc = tally.setdefault(rid, {"filleuls": 0, "got": _zero()})
-        acc["filleuls"] += 1
-        acc["got"] = _add(acc["got"], given(r, "referrer", config))
-    top = []
-    rank = lambda kv: (-kv[1]["got"]["points"], -kv[1]["got"]["stamps"], -kv[1]["got"]["offers"],  # noqa: E731
-                       -kv[1]["filleuls"])
-    for rid, acc in sorted(tally.items(), key=rank)[:5]:
-        person = people.get(rid) or {}
-        name = person.get("name") or "Client supprimé"
-        top.append({"customer_id": rid, "name": _short(name), "full_name": name,
-                    "initials": _initials(name), "tier": (person.get("tier") or "bronze").lower(),
-                    "filleuls": acc["filleuls"], "points": acc["got"]["points"],
-                    "reward": words(acc["got"]), "reward_kind": _main_kind(acc["got"])})
+    # ---- the leaderboard (its first five; « Voir tous » lists them all) -----
+    top = _parrains(rows, people, config)[:5]
 
     # ---- the table: its first rows (« Voir tous » pages through all of them) --
     recent = [_table_row(r, people, config) for r in rows[:10]]
@@ -934,7 +996,8 @@ def export_referrals(
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
-    w.writerow(["Date", "Parrain", "Filleul", "Statut", "Récompense", "Source"])
+    w.writerow(["Date", "Parrain", "Filleul", "Statut", "Récompense parrain", "Récompense filleul",
+                "Récompense totale", "Source"])
     for r in rows:
         at = _aware(r.get("created_at"))
         w.writerow([_cell(c) for c in (
@@ -943,6 +1006,8 @@ def export_referrals(
             (people.get(r.get("referee_customer_id") or "") or {}).get("name") or "",
             "En attente" if r.get("referrer_pending") else "Validé",
             words(_row_reward(r, config)),
+            words(_row_reward(r, config, "referee")),
+            total_words(_row_reward(r, config), _row_reward(r, config, "referee")),
             SOURCES.get((r.get("source") or "link").lower(), SOURCES["other"]),
         )])
     data = "﻿" + buf.getvalue()

@@ -87,6 +87,101 @@ const rewardText = (x) => {
   return n ? `${nf(n)} points` : '—';
 };
 
+/* « Récompense » of a parrainage (user, 2026-10-28): both sides together in
+   the cell (« 4 tampons »), each side on hover, focus or tap. */
+const RewardCell = ({ r }) => {
+  const [open, setOpen] = useState(false);
+  const sides = r.reward_parrain !== undefined || r.reward_filleul !== undefined;
+  const id = `reward-tip-${r.id}`;
+  return (
+    <span className="relative inline-flex" data-testid="reward-cell"
+          onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button type="button" aria-describedby={sides && open ? id : undefined}
+              onClick={() => setOpen(true)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
+              className={`flex items-center gap-1.5 text-[12.5px] text-[#334155] ${sides ? 'cursor-help underline decoration-dotted decoration-[#CBD5E1] underline-offset-4' : 'cursor-default'}`}>
+        <Gift size={14} className="text-[#F59E0B]" /> {rewardText(r)}
+      </button>
+      {sides && open && (
+        <span role="tooltip" id={id}
+              className="absolute bottom-full right-0 z-30 mb-2 w-max max-w-[280px] rounded-xl bg-[#0B1C3F] px-3.5 py-2.5 text-left text-[12px] leading-relaxed text-white shadow-xl">
+          <span className="block"><b>Parrain</b> ({r.parrain?.name}) : {r.reward_parrain || 'rien'}</span>
+          <span className="block"><b>Filleul</b> ({r.filleul?.name}) : {r.reward_filleul || 'rien'}</span>
+          <span className="mt-1 block border-t border-white/20 pt-1 font-semibold">Total : {r.reward || '—'}</span>
+          {r.status === 'pending' && <span className="mt-0.5 block text-white/70">En attente : promis, pas encore donné.</span>}
+        </span>
+      )}
+    </span>
+  );
+};
+
+/* « Top parrains › Voir tous » (user, 2026-10-28: it downloaded a CSV):
+   every parrain of the period, ranked, searchable, page by page. */
+const AllParrainsModal = ({ range, demo, example, onClose }) => {
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [d, setD] = useState({ rows: [], total: 0, page: 1, pages: 1 });
+  const [busy, setBusy] = useState(true);
+  useEffect(() => {
+    if (demo) {
+      const fold = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const rows = example.filter((p) => fold(p.full_name || p.name).includes(fold(q.trim())))
+        .map((p, i) => ({ ...p, rank: i + 1 }));
+      setD({ rows, total: rows.length, page: 1, pages: 1 }); setBusy(false);
+      return undefined;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      setBusy(true);
+      ownerAPI.referralParrains({ ...range, page, per_page: 20, search: q.trim() || undefined })
+        .then(({ data }) => { if (alive) setD(data); })
+        .catch(() => { if (alive) setD({ rows: [], total: 0, page: 1, pages: 1 }); })
+        .finally(() => { if (alive) setBusy(false); });
+    }, q ? 250 : 0);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q, page, range, demo, example]);
+  return (
+    <Modal title="Tous les parrains" onClose={onClose}
+           footer={d.pages > 1 ? (
+             <div className="flex items-center justify-between text-[12.5px]">
+               <button type="button" disabled={page <= 1} onClick={() => setPage(page - 1)}
+                       className="inline-flex items-center gap-1 font-semibold text-[#2F6BFF] disabled:opacity-40"><ChevronLeft size={14} /> Précédents</button>
+               <span className="text-[#64748B]">Page {d.page} / {d.pages}</span>
+               <button type="button" disabled={page >= d.pages} onClick={() => setPage(page + 1)}
+                       className="inline-flex items-center gap-1 font-semibold text-[#2F6BFF] disabled:opacity-40">Suivants <ChevronRight size={14} /></button>
+             </div>
+           ) : null}>
+      <label className="mb-3 flex items-center gap-2 rounded-xl border border-[#E6EEFB] px-3 py-2">
+        <Search size={15} className="text-[#94A3B8]" />
+        <input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Rechercher un parrain…"
+               className="min-w-0 flex-1 bg-transparent text-[13.5px] outline-none" />
+      </label>
+      <p className="mb-2 text-[12px] text-[#64748B]">{d.total} parrain{d.total > 1 ? 's' : ''} sur la période</p>
+      {busy && d.rows.length === 0 ? (
+        <p className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]"><Loader2 size={15} className="animate-spin" /> Chargement…</p>
+      ) : d.rows.length === 0 ? (
+        <p className="py-6 text-center text-[13px] text-[#94A3B8]">Aucun parrain{q ? ' pour cette recherche' : ''}.</p>
+      ) : (
+        <ul className="divide-y divide-[#F1F5F9]">
+          {d.rows.map((p) => (
+            <li key={p.customer_id} className="flex items-center gap-3 py-2.5" data-testid="parrain-row">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+                    style={p.rank <= 3 ? { background: RANK[p.rank - 1], color: '#fff' } : { background: '#EEF3FB', color: '#64748B' }}>
+                {p.rank}
+              </span>
+              <Avatar initials={p.initials} tier={p.tier} />
+              <span className="min-w-0 flex-1">
+                <span translate="no" className="notranslate block truncate text-[13.5px] font-semibold text-[#0B1C3F]">{p.name}</span>
+                <span className="block text-[11.5px] text-[#94A3B8]">{p.filleuls} filleul{p.filleuls > 1 ? 's' : ''}</span>
+              </span>
+              <span className="shrink-0 text-[13.5px] font-bold tabular-nums text-[#0B1C3F]">{rewardText(p)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
+  );
+};
+
 const KpiCard = ({ card, showCaption }) => {
   const Icon = KPI_ICONS[card.icon] || Users;
   const t = TONE[card.tone] || TONE.blue;
@@ -227,7 +322,8 @@ const Modal = ({ title, onClose, children, footer }) => {
   }, [onClose]);
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#0B1C3F]/25 sm:items-center sm:p-6" onClick={onClose}>
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+      <div role="dialog" aria-modal="true" aria-label={title}
+           className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
            onClick={(e) => e.stopPropagation()}>
         <header className="flex items-center justify-between border-b border-[#E6EEFB] px-5 py-4">
           <h3 className="text-[15px] font-bold text-[#0B1C3F]">{title}</h3>
@@ -501,6 +597,7 @@ export default function ReferralPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [allRecent, setAllRecent] = useState(false);
+  const [allParrains, setAllParrains] = useState(false);
   // « Voir tous » (QA R5 F25): every parrainage of the period, 20 per page, searchable
   const [full, setFull] = useState({ rows: [], total: 0, page: 1, pages: 1 });
   const [fullPage, setFullPage] = useState(1);
@@ -667,7 +764,8 @@ export default function ReferralPage() {
             </div>
 
             <div className="grid gap-4">
-              <Panel title="Top parrains" icon={Trophy} action={<SeeAll onClick={exportCsv} label="Voir tous" />}>
+              <div data-testid="top-parrains">
+              <Panel title="Top parrains" icon={Trophy} action={<SeeAll onClick={() => setAllParrains(true)} label="Voir tous" />}>
                 {view.top_parrains.length === 0 && (
                   <p className="py-8 text-center text-[13px] text-[#94A3B8]">Pas encore de parrain sur cette période.</p>
                 )}
@@ -692,6 +790,7 @@ export default function ReferralPage() {
                   ))}
                 </ul>
               </Panel>
+              </div>
 
               {/* the encouragement card — only when the figures actually earn it */}
               {growing ? (
@@ -795,9 +894,7 @@ export default function ReferralPage() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">
-                        <span className="flex items-center gap-1.5 text-[12.5px] text-[#334155]">
-                          <Gift size={14} className="text-[#F59E0B]" /> {rewardText(r)}
-                        </span>
+                        <RewardCell r={r} />
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-[12.5px] text-[#475569]">{r.source_label}</td>
                     </tr>
@@ -826,6 +923,9 @@ export default function ReferralPage() {
                        onSaved={() => { setSettingsOpen(false); load(); }} />
       )}
       {shareOpen && <HowModal onClose={() => setShareOpen(false)} />}
+      {allParrains && (
+        <AllParrainsModal range={range} demo={demo} example={EXAMPLE.top_parrains} onClose={() => setAllParrains(false)} />
+      )}
     </div>
   );
 }

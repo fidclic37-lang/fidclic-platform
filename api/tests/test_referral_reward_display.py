@@ -119,12 +119,15 @@ def integration(server, auth, R, db):
     check(f"card says « Tampons offerts » ({card['label']})", card["label"] == "Tampons offerts")
     check(f"…and counts both sides' tampons: 4 ({card['value']})", card["value"] == 4)
     row = v["recent"][0]
-    check(f"row reward « 2 tampons » ({row.get('reward')!r})", row.get("reward") == "2 tampons")
+    # since 2026-10-28 the column is both sides together; each side stays readable
+    check(f"row: parrain « 2 tampons » ({row.get('reward_parrain')!r})", row.get("reward_parrain") == "2 tampons")
+    check(f"row: total of both « 4 tampons » ({row.get('reward')!r})", row.get("reward") == "4 tampons")
     check("row reward kind is stamps", row.get("reward_kind") == "stamps")
     top = v["top_parrains"][0]
     check(f"top parrain shows « 2 tampons » ({top.get('reward')!r})", top.get("reward") == "2 tampons")
     lst = http("GET", "/api/owner/referrals/list", headers=H).json()
-    check("« Voir tous » list says the same", lst["rows"][0].get("reward") == "2 tampons")
+    check("« Voir tous » list says the same", lst["rows"][0].get("reward") == "4 tampons"
+          and lst["rows"][0].get("reward_parrain") == "2 tampons")
     csv = http("GET", "/api/owner/referrals/export", headers=H).text
     check("CSV column is « Récompense » with « 2 tampons »", "Récompense" in csv and "2 tampons" in csv
           and "Récompense (points)" not in csv)
@@ -143,7 +146,8 @@ def integration(server, auth, R, db):
     pid = db.customers.find_one({"barcode_id": adams})["id"]
     db.referral_redemptions.update_one({"referee_customer_id": pid}, {"$set": {"referrer_points_promised": 50}})
     pend = [r for r in view()["recent"] if r["status"] == "pending"][0]
-    check(f"pending row shows « 2 tampons » ({pend.get('reward')!r})", pend.get("reward") == "2 tampons")
+    check(f"pending row shows « 2 tampons » for the parrain ({pend.get('reward_parrain')!r})",
+          pend.get("reward_parrain") == "2 tampons" and pend.get("reward") == "4 tampons")
     check("pending gives nothing to the card yet", {c["key"]: c for c in view()["cards"]}["points"]["value"] == 4)
 
     print("\n6. Bonus puis récurrent en tampons")
@@ -156,7 +160,8 @@ def integration(server, auth, R, db):
     check(f"parrain got 2 + 1 + 1 = 4 tampons on this row ({row.get('referrer_given')})",
           (row.get("referrer_given") or {}).get("stamps") == 4)
     r = [x for x in view()["recent"] if x["filleul"]["name"].startswith("Lilian")][0]
-    check(f"row reads « 4 tampons » ({r.get('reward')!r})", r.get("reward") == "4 tampons")
+    check(f"row: parrain « 4 tampons », both « 8 tampons » ({r.get('reward')!r})",
+          r.get("reward_parrain") == "4 tampons" and r.get("reward") == "8 tampons")
 
     print("\n6b. Ligne payée avant ce correctif, puis une nouvelle visite")
     old = join("Olga Ancienne", "0677777777", parrain=ahmed)
@@ -175,7 +180,8 @@ def integration(server, auth, R, db):
     amjad = join("Amjad Kaci", "0655555555", parrain=ahmed)
     scan(amjad)
     r = [x for x in view()["recent"] if x["filleul"]["name"].startswith("Amjad")][0]
-    check(f"row reads the offer « 1 coupe offerte » ({r.get('reward')!r})", r.get("reward") == "1 coupe offerte")
+    check(f"row: parrain « 1 coupe offerte », both named ({r.get('reward')!r})",
+          r.get("reward_parrain") == "1 coupe offerte" and r.get("reward") == "1 coupe offerte + -20 % sur la coupe")
     card = {c["key"]: c for c in view()["cards"]}["points"]
     check(f"card follows the current setting: « Offres offertes » ({card['label']})", card["label"] == "Offres offertes")
     check(f"…counts the 2 offers ({card['value']})", card["value"] == 2)
@@ -200,8 +206,9 @@ def integration(server, auth, R, db):
     card = {c["key"]: c for c in v["cards"]}["points"]
     check(f"« Points offerts » 75 ({card['label']}, {card['value']})",
           card["label"] == "Points offerts" and card["value"] == 75)
-    check("row « 50 points », reward_points still 50 for older screens",
-          v["recent"][0]["reward"] == "50 points" and v["recent"][0]["reward_points"] == 50)
+    check("row: parrain « 50 points » (+ filleul 25 = « 75 points »), reward_points still 50 for older screens",
+          v["recent"][0]["reward_parrain"] == "50 points" and v["recent"][0]["reward"] == "75 points"
+          and v["recent"][0]["reward_points"] == 50)
 
     print("\n9. Aucun parrainage, réglage en tampons")
     db.referral_redemptions.delete_many({})
