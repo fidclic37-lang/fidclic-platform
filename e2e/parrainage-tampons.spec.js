@@ -103,6 +103,27 @@ test.describe.serial('parrainage en tampons', () => {
     await expect(page.getByText(/^0 points$/)).toHaveCount(0);
   });
 
+  // ROYAL TRIM, 2026-10-28: made while the shop paid points (« 75 points »
+  // promised), the shop then moved to tampons — its tampons card cannot show
+  // points, so the parrainage pays (and says) today's tampons
+  test("promis en points avant le passage aux tampons : payé et affiché en tampons", async ({ page, request }) => {
+    const { H, store } = await asOwner(page, request);
+    await settings(request, H, { referrer_reward_kind: 'points', referee_reward_kind: 'points' });
+    const parrain = await join(request, `Mahdi Points${uniq}`);
+    const filleul = await join(request, `Evan Points${uniq}`, parrain);
+    await settings(request, H, {});                                  // back to tampons (2 + 2)
+    await page.goto(PAGE);
+    const pend = page.getByRole('row').filter({ hasText: 'Evan' }).first();
+    await expect(pend).toContainText('En attente', { timeout: 20000 });
+    await expect(pend).toContainText('4 tampons');
+    await expect(pend).not.toContainText('points');
+    await scan(request, H, store, filleul);
+    await page.reload();
+    const paid = page.getByRole('row').filter({ hasText: 'Evan' }).first();
+    await expect(paid).toContainText('Validé', { timeout: 20000 });
+    await expect(paid).toContainText('4 tampons');
+  });
+
   test("une offre du commerce se lit dans ses propres mots", async ({ page, request }) => {
     const { H, store } = await asOwner(page, request);
     await settings(request, H, { referrer_reward_kind: 'offer', referrer_reward_offer: '1 coupe offerte' });

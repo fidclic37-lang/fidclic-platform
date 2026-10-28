@@ -249,11 +249,11 @@ def settle(tenant_id: str, filleul_id: str) -> Optional[Dict[str, Any]]:
     if row.get("referrer_pending", True):
         # The first payment — what was promised at signup. Claimed first: two
         # tills scanning the same card at once must not pay twice.
-        parrain_r = row.get("referrer_reward_promised") or {
-            "kind": "points", "n": int(row.get("referrer_points_promised") or 0)}
-        filleul_r = row.get("referee_reward_promised") or {
-            "kind": "points", "n": int(row["referee_points_promised"] if "referee_points_promised" in row
-                                       else row.get("referee_points") or 0)}     # rows older than the promise fields
+        # …paid in what each card can show (a points promise on a tampons card
+        # becomes today's tampons — user, 2026-10-28)
+        parrain = _db.customers.find_one({"id": row.get("referrer_customer_id")}, {"_id": 0, "branch_id": 1}) or {}
+        parrain_r = effective_promise(row, "referrer", cfg, card_programme(tenant_id, parrain))
+        filleul_r = effective_promise(row, "referee", cfg, card_programme(tenant_id, filleul))
         parrain_pts, filleul_pts = _points(parrain_r), _points(filleul_r)
         claimed = _db.referral_redemptions.update_one(
             {"_id": row["_id"], "referrer_pending": True},
@@ -318,6 +318,69 @@ def reward_of(cfg: Dict[str, Any], side: str, which: str = "first") -> Dict[str,
     if kind == "stamps":
         return {"kind": "stamps", "n": max(0, int(cfg.get(f"{side}_reward_stamps{nx}") or 0))}
     return {"kind": "points", "n": max(0, int(cfg.get(f"{side}_reward_points{nx}") or 0))}
+
+
+def _promise(row: Dict[str, Any], side: str) -> Dict[str, Any]:
+    """What a side was promised at signup, as written on the row (rows older
+    than the reward kinds only kept a points number)."""
+    p = row.get(f"{side}_reward_promised")
+    if isinstance(p, dict):
+        return p
+    if f"{side}_points_promised" in row:
+        n = row.get(f"{side}_points_promised")
+    else:
+        n = row.get(f"{side}_points")                 # rows older than the promise fields
+    return {"kind": "points", "n": _n(n)}
+
+
+def fits(reward: Dict[str, Any], programme: Optional[str]) -> bool:
+    """Can this card show this reward? An offer: any card. Tampons: a tampons
+    card. Points: a points card (points per euro / per visit, cashback).
+    Nothing promised, or a card we cannot read: yes — never guess."""
+    if not programme or not isinstance(reward, dict) or not label(reward):
+        return True
+    kind = reward.get("kind")
+    if kind == "stamps":
+        return programme == "stamps"
+    if kind == "points":
+        return programme != "stamps"
+    return True
+
+
+def effective_promise(row: Dict[str, Any], side: str, cfg: Optional[Dict[str, Any]],
+                      programme: Optional[str]) -> Dict[str, Any]:
+    """What a pending parrainage will pay this side (user, 2026-10-28, ROYAL
+    TRIM: « 75 points » promised before the shop moved to tampons — invisible
+    on a tampons card's face). The promise, when it is still the kind the shop
+    gives that side today or its card can show it; else today's setting."""
+    p = _promise(row, side)
+    today = reward_of(cfg or {}, side, "first")
+    if p.get("kind") == today.get("kind") or fits(p, programme):
+        return p
+    return today
+
+
+def card_programme(tenant_id: Optional[str], customer: Optional[Dict[str, Any]],
+                   cache: Optional[Dict[Any, Optional[str]]] = None) -> Optional[str]:
+    """The programme of this client's card — their home establishment's card
+    (multi-store), the account's card otherwise. None when unreadable."""
+    if not tenant_id or _db is None:
+        return None
+    try:
+        from features import store_cards as _SC
+        from features import loyalty_card as _LC
+        key = (tenant_id, (customer or {}).get("branch_id"))
+        if cache is not None and key in cache:          # one look per establishment, not per row
+            return cache[key]
+        sid = key[1] or _SC.main_store(tenant_id)
+        with _SC.store(tenant_id, sid):
+            tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+        prog = _LC._programme(tpl) if tpl else None
+        if cache is not None:
+            cache[key] = prog
+        return prog
+    except Exception:
+        return None
 
 
 def _points(r: Dict[str, Any]) -> int:
@@ -686,7 +749,7 @@ def _people(ids: List[str]) -> Dict[str, Dict[str, Any]]:
         return {}
     rows = _db.customers.find(
         {"id": {"$in": ids}},
-        {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "is_student": 1,
+        {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "is_student": 1, "branch_id": 1,
          "created_at": 1, "total_amount_paid": 1},
     )
     return {r["id"]: r for r in rows}
@@ -707,15 +770,18 @@ def _rows_between(tid: str, start: datetime, end: datetime, mine: Optional[set] 
     return list(_db.referral_redemptions.find(q).sort("created_at", -1))
 
 
-def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any],
+               progs: Optional[Dict[Any, Optional[str]]] = None) -> Dict[str, Any]:
     """One line of « Derniers parrainages »."""
     parrain = people.get(r.get("referrer_customer_id") or "") or {}
     filleul = people.get(r.get("referee_customer_id") or "") or {}
+    progs = {} if progs is None else progs
     at = _aware(r.get("created_at"))
     pending = bool(r.get("referrer_pending"))
     source = (r.get("source") or "link").lower()
-    reward = _row_reward(r, config)
-    reward_ree = _row_reward(r, config, "referee")
+    tid = r.get("tenant_id")
+    reward = _row_reward(r, config, "referrer", card_programme(tid, parrain, progs))
+    reward_ree = _row_reward(r, config, "referee", card_programme(tid, filleul, progs))
     both = _add(reward, reward_ree)
     return {
         "id": str(r.get("_id") or ""),
@@ -744,17 +810,17 @@ def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any]
     }
 
 
-def _row_reward(r: Dict[str, Any], config: Dict[str, Any], side: str = "referrer") -> Dict[str, Any]:
-    """One side of a row: validated → what was given; pending → the promise
-    recorded with the row, in its kind (an old points number left beside a
-    tampons promise must not show)."""
+def _row_reward(r: Dict[str, Any], config: Dict[str, Any], side: str = "referrer",
+                programme: Optional[str] = None) -> Dict[str, Any]:
+    """One side of a row: validated → what was given; pending → what it will
+    pay — the promise recorded with the row, or today's setting when this
+    side's card cannot show it (`programme`, see effective_promise)."""
     if not r.get("referrer_pending"):
         return given(r, side, config)
-    promised = r.get(f"{side}_reward_promised")
-    if not isinstance(promised, dict):
-        promised = {"kind": "points", "n": r[f"{side}_points_promised"] if r.get(f"{side}_points_promised") is not None
-                    else (config or {}).get(f"{side}_reward_points")}
-    return _tally(promised)
+    if not isinstance(r.get(f"{side}_reward_promised"), dict) and r.get(f"{side}_points_promised") is None \
+            and r.get(f"{side}_points") is None:
+        r = {**r, f"{side}_points_promised": (config or {}).get(f"{side}_reward_points")}
+    return _tally(effective_promise(r, side, config, programme))
 
 
 CARD_LABELS = {"points": "Points offerts", "stamps": "Tampons offerts", "offer": "Offres offertes"}
@@ -819,7 +885,8 @@ def list_referrals(
     page = min(page, pages)
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
     chunk = rows[(page - 1) * per_page: page * per_page]
-    return {"rows": [_table_row(r, people, config) for r in chunk],
+    progs: Dict[Any, Optional[str]] = {}
+    return {"rows": [_table_row(r, people, config, progs) for r in chunk],
             "total": total, "page": page, "pages": pages, "per_page": per_page}
 
 
@@ -946,7 +1013,8 @@ def overview(
     top = _parrains(rows, people, config)[:5]
 
     # ---- the table: its first rows (« Voir tous » pages through all of them) --
-    recent = [_table_row(r, people, config) for r in rows[:10]]
+    progs: Dict[Any, Optional[str]] = {}
+    recent = [_table_row(r, people, config, progs) for r in rows[:10]]
 
     return {
         "from": start.isoformat(), "to": end.isoformat(),
@@ -996,18 +1064,21 @@ def export_referrals(
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
+    progs: Dict[Any, Optional[str]] = {}
     w.writerow(["Date", "Parrain", "Filleul", "Statut", "Récompense parrain", "Récompense filleul",
                 "Récompense totale", "Source"])
     for r in rows:
         at = _aware(r.get("created_at"))
+        rr = _row_reward(r, config, "referrer", card_programme(tid, people.get(r.get("referrer_customer_id") or ""), progs))
+        re_ = _row_reward(r, config, "referee", card_programme(tid, people.get(r.get("referee_customer_id") or ""), progs))
         w.writerow([_cell(c) for c in (
             at.strftime("%d/%m/%Y") if at else "",
             (people.get(r.get("referrer_customer_id") or "") or {}).get("name") or "",
             (people.get(r.get("referee_customer_id") or "") or {}).get("name") or "",
             "En attente" if r.get("referrer_pending") else "Validé",
-            words(_row_reward(r, config)),
-            words(_row_reward(r, config, "referee")),
-            total_words(_row_reward(r, config), _row_reward(r, config, "referee")),
+            words(rr),
+            words(re_),
+            total_words(rr, re_),
             SOURCES.get((r.get("source") or "link").lower(), SOURCES["other"]),
         )])
     data = "﻿" + buf.getvalue()
