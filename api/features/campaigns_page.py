@@ -774,6 +774,17 @@ def delete_draft(draft_id: str, token_data: TokenData = Depends(require_role(SEN
     return {"deleted": True}
 
 
+def _trade_rules(tid: str, *texts: Any) -> None:
+    """The trade's rules on the owner's own words too (pentest 2026-10-28): a
+    tabac never promotes tobacco, a CBD shop makes no health claim, a bar never
+    pushes drinking — refused, draft included, with the reason."""
+    from services import playbooks as PB
+    broken = PB.owner_text_check(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}),
+                                 *texts)
+    if broken:
+        raise HTTPException(status_code=422, detail=broken)
+
+
 @router.post("/api/owner/campaigns/compose")
 def compose(req: Compose, request: Request = None,
             token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
@@ -787,6 +798,7 @@ def compose(req: Compose, request: Request = None,
     title, message = _clean(req.title, TITLE_MAX), _clean(req.message, MESSAGE_MAX)
     if not title or not message:
         raise HTTPException(status_code=400, detail="Un titre et un message sont nécessaires.")
+    _trade_rules(tid, title, message)
     if not req.push and not req.wallet and not req.draft:
         raise HTTPException(status_code=400, detail="Choisissez au moins un canal.")
     link = clean_link(req.link_url)
@@ -1143,8 +1155,10 @@ def ai_draft(req: Draft,
 
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     who = SEGMENT_LABELS.get(req.segment or "all", "vos clients")
+    from services import playbooks as PB
+    play = PB.of(tenant)
     user = (f"Commerce : {tenant.get('name') or 'un commerce'}. "
-            f"Audience : {who}. Objectif : {objective}.")
+            f"Audience : {who}. Objectif : {objective}. {PB.prompt_context(play, PB.paris_month())}")
     # What this shop's own campaigns taught (features/campaign_learning.py):
     # the IA writes in the style that brought clients back here.
     try:
@@ -1173,4 +1187,8 @@ def ai_draft(req: Draft,
     if not title or not message:
         raise HTTPException(status_code=503,
                             detail="L'assistant n'a pas pu rédiger ce message. Reformulez votre objectif.")
+    # the trade's rules hold on what the IA wrote (loi Évin, no CBD health claim)
+    broken = PB.breaks_rules(play, f"{title} {message}")
+    if broken:
+        raise HTTPException(status_code=503, detail=broken)
     return {"title": title, "message": message, "examples": EXAMPLES}

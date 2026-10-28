@@ -264,15 +264,17 @@ NO_PROMISE = ("N'invente aucune offre, remise, cadeau ni prix : le commerçant a
 def write(tid: str, key: str) -> Tuple[str, str, str]:
     """(title, message, by) — the IA briefed with what works here, or a template."""
     from features import campaigns_page as C
-    tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1}) or {}
+    from services import playbooks as PB
+    tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1, "sector": 1, "activity_key": 1}) or {}
+    play = PB.of(tenant)
     try:
         from services import llm
         from features.campaign_learning import prompt_hints
         if llm._force_complete is not None or llm.is_configured():
             user = (f"Commerce : {tenant.get('name') or 'un commerce'}. Objectif : {OBJECTIVES[key]}. "
-                    f"{prompt_hints(tid)} {NO_PROMISE}")
+                    f"{prompt_hints(tid)} {NO_PROMISE} {PB.prompt_context(play, PB.paris_month(), offer=False)}")
             title, message = C._parse(llm.complete(C._SYSTEM, user, max_tokens=180, temperature=0.7) or "")
-            if title and message and not re.search(r"\d+\s?%|-\s?\d+\s?€|\boffert|\bgratuit|\bcadeau", (title + message).lower()):
+            if title and message and not PB.breaks_rules(play, f"{title} {message}") and not re.search(r"\d+\s?%|-\s?\d+\s?€|\boffert|\bgratuit|\bcadeau", (title + message).lower()):
                 return title, message, "ia"
     except Exception as exc:
         print(f"autopilot: IA unavailable ({exc})")

@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 from zoneinfo import ZoneInfo
 import os
+import re
 import sys
 
 import mongomock
@@ -260,8 +261,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                             "src", "pages", "DashboardHomePage.jsx")).read()
     check("the greeting is the page title, not a boxed panel",
           "<header className=" in src and "rounded-2xl border border-[#D7E6FF]" not in src)
-    check("only the name is in brand blue",
-          'Bonjour <span className="text-[#2F6BFF]">{firstName' in src)
+    greet = re.search(r'Bonjour <span className="text-\[#2F6BFF\]"([^>]*)>\{firstName', src)
+    check("only the name is in brand blue", greet is not None)
+    # a first name is never machine-translated (user, 2026-10-14: « Pierre » → « Stone »)
+    check("… and the browser never translates it", greet is not None and "translate: 'no'" in greet.group(1))
+    check("« Bonjour » itself stays out of the blue", 'text-[#2F6BFF]">Bonjour' not in src)
     check("the page names itself above the greeting, as the design does",
           "Tableau de bord\n          </p>" in src)
 

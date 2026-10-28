@@ -326,8 +326,17 @@ def _default_schedule(scenario: str) -> Dict[str, Any]:
             "slots": [], "holidays": True, "valid_from": None, "valid_to": None}
 
 
-def new_doc(tid: str, scenario: str, **over: Any) -> Dict[str, Any]:
-    meta = SCENARIOS[scenario]
+def trade_meta(tenant: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """SCENARIOS with the shop's trade words for « Client inactif » and
+    « Géolocalisation » (services/playbooks.py) — a copy; the others as they are."""
+    from services import playbooks as PB
+    texts = PB.automation_texts(PB.of(tenant or {}))
+    return {k: {**v, **texts.get(k, {})} for k, v in SCENARIOS.items()}
+
+
+def new_doc(tid: str, scenario: str, *, meta_of: Optional[Dict[str, Dict[str, Any]]] = None,
+            **over: Any) -> Dict[str, Any]:
+    meta = (meta_of or SCENARIOS)[scenario]
     now = _now()
     doc = {
         "id": str(uuid.uuid4()), "tenant_id": tid, "scenario": scenario,
@@ -375,6 +384,10 @@ def migrate(tid: str) -> None:
     if _db.automations.find_one({"tenant_id": tid}):
         return
     docs: List[Dict[str, Any]] = []
+    trade = trade_meta(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}))
+
+    def made(scenario: str, **over: Any) -> Dict[str, Any]:       # in the shop's trade words
+        return new_doc(tid, scenario, meta_of=trade, **over)
     old = {r.get("builtin") or r.get("id"): r for r in _db.push_scenarios.find({"tenant_id": tid}, {"_id": 0})}
 
     def carried(key: str, scenario: str, **over: Any) -> Dict[str, Any]:
@@ -384,7 +397,7 @@ def migrate(tid: str) -> None:
             msg["title"] = _french(r["title"])[:TITLE_MAX]
         if r.get("body"):
             msg["body"] = _french(r["body"])[:BODY_MAX]
-        return new_doc(tid, scenario, status="active" if r.get("enabled") else "paused",
+        return made(scenario, status="active" if r.get("enabled") else "paused",
                        **({"message": msg} if msg else {}), **over)
 
     docs.append(carried("birthday", "birthday"))
@@ -396,17 +409,17 @@ def migrate(tid: str) -> None:
         from features.welcome_bonus import welcome_state
         w = welcome_state(tid)
         body = _french(w.get("message") or "")[:BODY_MAX] or SCENARIOS["welcome"]["body"]
-        docs.append(new_doc(tid, "welcome", status="active" if w.get("enabled") else "paused",
+        docs.append(made("welcome", status="active" if w.get("enabled") else "paused",
                             message={"body": body}))
     except Exception:
-        docs.append(new_doc(tid, "welcome", status="paused"))
+        docs.append(made("welcome", status="paused"))
     cfg = _db.auto_message_config.find_one({"tenant_id": tid}) or {}
     gr, nr = cfg.get("google_review") or {}, cfg.get("near_reward") or {}
-    docs.append(new_doc(tid, "near_reward", status="active" if nr.get("enabled", True) else "paused",
+    docs.append(made("near_reward", status="active" if nr.get("enabled", True) else "paused",
                         trigger={"visits_left": int(nr.get("visits_left") or 1)},
                         message={k: _french(nr[k])[:TITLE_MAX if k == "title" else BODY_MAX]
                                  for k in ("title", "body") if nr.get(k)}))
-    docs.append(new_doc(tid, "google_review", status="active" if gr.get("enabled") else "paused",
+    docs.append(made("google_review", status="active" if gr.get("enabled") else "paused",
                         trigger={"frequency": gr.get("frequency") if gr.get("frequency") in GR_FREQS else "days",
                                  "every_days": int(gr.get("days") or 30),
                                  "stop_after_click": bool(gr.get("stop_after_click", True))},
@@ -416,9 +429,9 @@ def migrate(tid: str) -> None:
                                             "link_type": "google_review", "offer_id": None, "url": None}}))
     ref_on = bool((_db.referral_config.find_one({"tenant_id": tid}) or {}).get("enabled"))
     # one automation, both messages, the mockup's words (user, 2026-10-11)
-    docs.append(new_doc(tid, "referral", name="Parrainage", status="active" if ref_on else "paused"))
+    docs.append(made("referral", name="Parrainage", status="active" if ref_on else "paused"))
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "geo_enabled": 1, "geo_cooldown_days": 1}) or {}
-    docs.append(new_doc(tid, "geo", status="active" if tenant.get("geo_enabled") else "paused",
+    docs.append(made("geo", status="active" if tenant.get("geo_enabled") else "paused",
                         trigger={"cooldown_days": int(tenant.get("geo_cooldown_days") or 7)}))
     for i, d in enumerate(docs):
         d["order"] = i
@@ -2258,6 +2271,7 @@ def _list(tid: str, token: TokenData, request: Any = None) -> Dict[str, Any]:
               "ended": sum(1 for r in rows if r["status"] == "ended")}
     from features import campaigns_page as CP
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
+    trade = trade_meta(tenant)
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0, "logo_url": 1, "brand_fields": 1}) or {}
     offers = []
     for c in _db.campaigns.find({"tenant_id": tid, "status": "sent"}, {"_id": 0}).sort("sent_at", -1).limit(40):
@@ -2273,8 +2287,8 @@ def _list(tid: str, token: TokenData, request: Any = None) -> Dict[str, Any]:
     return {
         "rows": rows, "counts": counts,
         "stats": {"active": active, "total": len(rows), **_stats(tid, at)},
-        "scenarios": [{"key": k, **{f: SCENARIOS[k][f] for f in ("label", "sub", "icon", "tone", "kind",
-                                                                  "trigger_label", "title", "body", "button")},
+        "scenarios": [{"key": k, **{f: trade[k][f] for f in ("label", "sub", "icon", "tone", "kind",
+                                                              "trigger_label", "title", "body", "button")},
                        "variables": VARIABLES["common"] + VARIABLES[k]} for k in ORDER],
         "segments": CP.segment_options(tid, at, None),
         "stores": [{"id": s["id"], "name": s.get("name")} for s in T.stores(tid)],
@@ -2858,7 +2872,24 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         out["google_links"] = links
     if message_filleul is not None:
         out["message_filleul"] = message_filleul
+    # the trade's rules on the owner's words (pentest 2026-10-28): every title,
+    # body and button of every side, reminder and palier — draft included
+    from services import playbooks as PB
+    broken = PB.owner_text_check(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}),
+                                 out.get("name"), *_words(out))
+    if broken:
+        raise HTTPException(status_code=422, detail=broken)
     return out
+
+
+def _words(x: Any) -> List[str]:
+    """Every title / body / label typed in an automation, however deep."""
+    if isinstance(x, dict):
+        own = [v for k, v in x.items() if k in ("title", "body", "label") and isinstance(v, str)]
+        return own + [w for v in x.values() for w in _words(v)]
+    if isinstance(x, list):
+        return [w for v in x for w in _words(v)]
+    return []
 
 
 def current_links(tid: str) -> Dict[str, str]:
@@ -3073,9 +3104,12 @@ def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS,
     if not objective:
         raise HTTPException(status_code=400, detail="Décrivez ce que vous voulez en une phrase.")
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
-    user = (f"Commerce : {tenant.get('name') or 'un commerce'} ({tenant.get('sector') or 'commerce'}). "
+    from services import playbooks as PB
+    play = PB.of(tenant)
+    user = (f"Commerce : {tenant.get('name') or 'un commerce'}. "
             f"Message automatique de fidélité. Objectif : {objective}. "
-            "Tu peux utiliser {prénom} pour le prénom du client et {nom_commerce} pour le commerce.")
+            "Tu peux utiliser {prénom} pour le prénom du client et {nom_commerce} pour le commerce. "
+            f"{PB.prompt_context(play, PB.paris_month())}")
     try:
         from services import llm
         if llm._force_complete is None and not llm.is_configured():
@@ -3089,6 +3123,9 @@ def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS,
     title, message = CP._parse(raw)
     if not title or not message:
         raise HTTPException(status_code=502, detail="FidClic IA n'a pas trouvé de message. Reformulez votre objectif.")
+    broken = PB.breaks_rules(play, f"{title} {message}")      # loi Évin, no CBD health claim
+    if broken:
+        raise HTTPException(status_code=503, detail=broken)
     return {"title": title[:TITLE_MAX], "body": message[:BODY_MAX], "scenario": suggest(objective),
             "scenario_label": SCENARIOS[suggest(objective)]["label"]}
 

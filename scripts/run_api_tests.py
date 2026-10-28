@@ -25,11 +25,8 @@ TESTS = os.path.join(HERE, "api", "tests")
 
 # Failing on main since before this check existed. Remove a name when its test
 # is fixed — the run tells you to.
-KNOWN_RED = {
-    "test_dashboard_home.py",       # one check of the home figures
-    "test_einvoicing_lifecycle.py", # 401 « Webhook verification unavailable »
-    "test_fec.py",                  # « export is audited »
-}
+# empty since 2026-10-28 (#387): the three first ones are fixed — keep it so
+KNOWN_RED: set = set()
 
 
 def _why(r: subprocess.CompletedProcess) -> str:

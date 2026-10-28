@@ -155,6 +155,13 @@ def test_lifecycle(db):
         async def body(self): return self._b
     raw = json.dumps({"invoice_id": v["pdp_invoice_id"], "state": "refused",
                       "reject_code": "LATE_REJ"}).encode()
+    # SECURITY: a Mock connector cannot authenticate a webhook — refused
+    # unless the run opts in (local tests only, never on Vercel)
+    os.environ.pop("FACTURATION_ALLOW_MOCK_WEBHOOK", None)
+    expect_status("an unsigned webhook is refused without the local opt-in", 401,
+                  lambda: asyncio.get_event_loop().run_until_complete(F.facturation_webhook(_Req(raw))))
+    check("… and changed nothing", db.fact_invoices.find_one({"id": v["id"]})["pa_status"] != InvoiceState.REFUSED)
+    os.environ["FACTURATION_ALLOW_MOCK_WEBHOOK"] = "1"         # the rest of this run: the local opt-in
     asyncio.get_event_loop().run_until_complete(F.facturation_webhook(_Req(raw)))
     after_inv = db.fact_invoices.find_one({"id": v["id"]})
     check("webhook flipped pa_status to refused", after_inv["pa_status"] == InvoiceState.REFUSED)

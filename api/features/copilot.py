@@ -65,6 +65,7 @@ from pydantic import BaseModel
 from auth import require_role
 from features import store_scope as S
 from models import TokenData
+from services import playbooks as PB
 
 router = APIRouter(tags=["copilot"])
 _db = None
@@ -1256,6 +1257,7 @@ def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any],
     best = E._best_weekday(shop)
     return {
         "commerce": shop.tenant.get("name"), "secteur": shop.sector,
+        "metier": PB.prompt_context(shop.play, PB.paris_month(shop.at)),
         "clients_total": len(shop.people),
         "clients_inactifs_30j": len(E._inactive(shop)),
         "clients_a_risque": len(E._at_risk(shop)),
@@ -1297,7 +1299,8 @@ _SYSTEM = (
     "Appuie-toi UNIQUEMENT sur les données JSON fournies : n'invente aucun chiffre, aucun client, "
     "aucun produit. Si une donnée manque, dis-le simplement. Ne promets jamais un résultat : parle "
     "d'estimations. Ne dis jamais que tu as envoyé ou créé quelque chose : le commerçant agit lui-même "
-    "grâce aux boutons proposés sous ta réponse."
+    "grâce aux boutons proposés sous ta réponse. Le champ « metier » décrit son métier et ses règles : "
+    "tes conseils restent dans ce métier et les respectent."
 )
 
 

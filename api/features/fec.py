@@ -146,10 +146,20 @@ def render_fec(lines: List[Dict[str, str]]) -> str:
     return "\n".join(out) + "\n"
 
 
+def _period(date_from: Any, date_to: Any) -> tuple:
+    """The period as plain text — an unresolved Query default (a direct call)
+    becomes "" (it used to reach the audit row and make its write fail)."""
+    return (date_from if isinstance(date_from, str) else "", date_to if isinstance(date_to, str) else "")
+
+
+def _audit_export(tenant_id: str, token_data: Any, invoices: List[Dict[str, Any]], date_from: str, date_to: str) -> None:
+    from features import audit
+    audit.log("fec.exported", tenant_id=tenant_id, actor=token_data, object_kind="tenant", object_id=tenant_id,
+              detail={"invoices": len(invoices), "from": date_from, "to": date_to})
+
+
 def _invoices_for(tenant_id: str, date_from: str, date_to: str) -> List[Dict[str, Any]]:
-    # coerce non-string (e.g. an unresolved Query default when called directly)
-    date_from = date_from if isinstance(date_from, str) else ""
-    date_to = date_to if isinstance(date_to, str) else ""
+    date_from, date_to = _period(date_from, date_to)
     q: Dict[str, Any] = {"tenant_id": tenant_id, "review_status": "validated"}
     if date_from or date_to:
         rng = {}
@@ -179,15 +189,10 @@ def cabinet_fec(tenant_id: str,
     from features.cabinet import assert_mandate
     assert_mandate(token_data.email, tenant_id)
     tenant = _db.tenants.find_one({"id": tenant_id}) or {}
+    date_from, date_to = _period(date_from, date_to)
     invoices = _invoices_for(tenant_id, date_from, date_to)
     body = render_fec(build_fec_lines(invoices))
-    from features import audit
-    try:
-        audit.log("fec.exported", tenant_id=tenant_id, actor=token_data,
-                  object_kind="tenant", object_id=tenant_id,
-                  detail={"invoices": len(invoices), "from": date_from, "to": date_to})
-    except Exception:
-        pass
+    _audit_export(tenant_id, token_data, invoices, date_from, date_to)
     return PlainTextResponse(body, headers={
         "Content-Disposition": f'attachment; filename="{_fec_filename(tenant)}"'})
 
@@ -198,7 +203,9 @@ def owner_fec(date_from: str = Query("", alias="from"),
               token_data=Depends(require_role(["business_owner", "manager"]))):
     """Owner-side FEC for their own company."""
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
+    date_from, date_to = _period(date_from, date_to)
     invoices = _invoices_for(token_data.tenant_id, date_from, date_to)
     body = render_fec(build_fec_lines(invoices))
+    _audit_export(token_data.tenant_id, token_data, invoices, date_from, date_to)
     return PlainTextResponse(body, headers={
         "Content-Disposition": f'attachment; filename="{_fec_filename(tenant)}"'})
