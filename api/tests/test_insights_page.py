@@ -3,7 +3,7 @@ Insights — « Faites grandir votre commerce ».
 
 Boots the real server.py on mongomock. The computed impacts are checked
 against the merchant's own formula applied to the fixture, never against a
-hand-worked number; every benchmark is checked to say it is one.
+hand-worked number; every other figure is checked to carry its source.
 
 Run: /usr/local/bin/python3 api/tests/test_insights_page.py
 """
@@ -177,18 +177,17 @@ def main():
     per_visit = sum(sum(i.get("qty") or i.get("quantity", 1) for i in v["items"]) for v in with_items) / len(with_items)
     check("panier moyen reads the items per visit from the scans",
           f"en moyenne {per_visit:.1f}".replace(".", ",") in opp["panier_moyen"]["body"])
-    check("a benchmark says it is one",
-          opp["panier_moyen"]["impact"]["basis"].startswith(I.BENCHMARK)
-          and opp["panier_moyen"]["impact"]["kind"] == "secteur")
-    check("… and is applied to THIS shop's revenue, in euros",
-          opp["panier_moyen"]["impact"]["label"] ==
-          f"+{fmt(shop.monthly * 0.05)} à {fmt(shop.monthly * 0.12)} € de CA"
-          and "5–12 %" in opp["panier_moyen"]["impact"]["basis"])
-    check("an acquisition estimate becomes a number of new clients at the shop's own pace",
-          opp["proximite"]["impact"]["label"].endswith("nouveaux clients")
-          and "%" not in opp["proximite"]["impact"]["label"])
-    check("no impact on the page is a percentage any more, where money can be shown",
-          all("%" not in x["impact"]["label"] for x in data["opportunities"]["all"] + data["actions"]["all"]))
+    # only sourced numbers (user, 2026-10-26): no « estimation courante du
+    # secteur » any more — without a source the advice shows no figure
+    check("an advice with no sourced figure shows none",
+          opp["panier_moyen"]["impact"]["kind"] == "conseil"
+          and opp["panier_moyen"]["impact"]["euros"] is None
+          and not any(ch.isdigit() for ch in opp["panier_moyen"]["impact"]["label"]))
+    check("… nor does an acquisition lever aimed at people who are not clients yet",
+          opp["proximite"]["impact"]["kind"] == "conseil")
+    check("no made-up percentage left: every « % » comes with its source",
+          all("%" not in x["impact"]["label"] or x["impact"]["kind"] == "source"
+              for x in data["opportunities"]["all"] + data["actions"]["all"]))
 
     locs = I._locals(shop)
     check("proximité counts the clients within 2 km", {c["id"] for c in locs} == {"a1", "a2", "n1"})
@@ -284,10 +283,10 @@ def main():
     print("\nChaque chiffre dit d'où il vient")
     figures = [x["impact"] for x in data["opportunities"]["all"] + data["actions"]["all"]]
     check("no impact is shown without its basis", all(f.get("basis") for f in figures))
-    check("every one is either calculated or a sector estimate",
-          all(f["kind"] in ("calcule", "secteur") for f in figures))
+    check("every one is calculated, sourced, or plain advice",
+          all(f["kind"] in ("calcule", "source", "conseil") for f in figures))
     check("the page prints how the calculation works",
-          "25–35 %" in data["impact_note"] and "estimations du secteur" in data["impact_note"]
+          "25–35 %" in data["impact_note"] and "source publiée" in data["impact_note"]
           and "en euros" in data["impact_note"])
 
     # ---- a used recommendation makes way ------------------------------------------------------

@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData
 from features import store_scope as S
 from features import period as P, fidclic_impact as FI
+from services import playbooks as PB
 
 router = APIRouter(tags=["dashboard"])
 _db = None
@@ -404,7 +405,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
         # cards deleted in the last 30 days — a loss the owner must see (2026-10-09)
         "cards_lost": _cards_lost(tid, scope, at),
         "recommendations": _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
-                                            campaigns, products, goal),
+                                            campaigns, products, goal, PB.of(tenant)),
     }
 
 
@@ -419,9 +420,13 @@ def _reward_setup(tid: str, token_data: TokenData) -> Optional[Dict[str, Any]]:
 
 
 def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
-                     products: List[Dict[str, Any]], goal: Dict[str, Any]) -> List[Dict[str, Any]]:
+                     products: List[Dict[str, Any]], goal: Dict[str, Any],
+                     play: Optional[Dict[str, Any]] = None, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """Only advice the figures support. A shop with nobody to win back is not
-    told to win people back."""
+    told to win people back. The shop's playbook (services/playbooks.py) adds
+    its trade's top advice in season, and its own words."""
+    play = play or PB.of(None)
+    month = (at or datetime.now(timezone.utc)).month
     out: List[Dict[str, Any]] = []
     if buckets["inactive"]:
         out.append({
@@ -445,12 +450,23 @@ def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
             "body": "Donnez-vous un objectif de chiffre d'affaires : le tableau de bord "
                     "suivra votre progression tout au long du mois.",
             "cta": "Définir un objectif", "to": "/dashboard/settings#settings-goal"})
+    # the trade's advice comes second, so it is always among the three shown
+    lever = next((lv for shelf in ("idee", "opportunite") for lv in play["levers"]
+                  if lv["shelf"] == shelf and PB.in_season(lv, month)), None)
+    if lever:
+        to = lever.get("to") or f"/dashboard/campaigns?template={quote(lever['template']['key'], safe='')}"
+        out.insert(min(1, len(out)), {
+            "key": f"pb_{lever['key']}", "icon": "star", "tone": "violet", "title": lever["title"],
+            "body": lever["body"], "cta": lever["label"], "to": to})
     if products:
+        one = play["items"][0]
+        best = ("votre produit le plus vendu" if one == "produit" else
+                f"votre {one} la plus demandée" if one in ("prestation", "séance") else f"votre {one} le plus demandé")
         out.append({
             "key": "promote", "icon": "star", "tone": "amber",
             "title": f"Mettez « {products[0]['name']} » en avant",
-            "body": f"C'est votre produit le plus vendu ({products[0]['sales']} ventes). "
-                    "Une offre autour de lui convertit plus facilement.",
+            "body": f"C'est {best} ({products[0]['sales']} ventes). "
+                    "Une offre dessus convertit plus facilement.",
             # the composer opens on that offer (user, 2026-10-23: it opened the card page)
             "cta": "Créer une offre", "to": f"/dashboard/campaigns?template=produit:{quote(products[0]['name'], safe='')}"})
     return out[:3]

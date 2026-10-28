@@ -50,6 +50,7 @@ import json
 import os
 import re
 import unicodedata
+from urllib.parse import quote
 import urllib.parse
 import urllib.request
 import uuid
@@ -621,6 +622,20 @@ def _library(shop) -> List[Dict[str, Any]]:
                     "cta": {"kind": "activate", "action": "birthday", "label": "Activer"},
                     "audience": len(bdays), "worth": {"visits": round(v, 1), "euros": _money(e)},
                     "score": e * 0.9, "ids": []})
+
+    # The trade's own advice (services/playbooks.py) — the same levers as
+    # Insights, as suggestions: no number unless the playbook has a sourced one.
+    for lv in E.sector_levers(shop, "opportunite") + E.sector_levers(shop, "idee"):
+        imp = E._figure(shop, lv["key"], lv)
+        detail = lv["body"] + (f" {imp['text']} (Source : {imp['basis']}.)" if imp["kind"] == "source" else "")
+        to = lv.get("to") or f"/dashboard/campaigns?template={quote(lv['template']['key'], safe='')}"
+        out.append({"key": f"pb_{lv['key']}", "kind": "suggestion", "chip": shop.play["label"],
+                    "tone": "blue", "icon": "star", "title": lv["title"], "body": lv["body"],
+                    "metrics": [], "detail": detail,
+                    "cta": {"kind": "suggestion", "label": "Voir la suggestion", "to": to,
+                            "button": lv["label"]},
+                    "audience": 0, "worth": {"visits": 0, "euros": 0},
+                    "score": shop.monthly * 0.01, "ids": []})
     return out
 
 

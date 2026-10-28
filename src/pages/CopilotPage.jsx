@@ -752,7 +752,7 @@ export default function CopilotPage() {
                     className="rounded-xl border border-[#E6EEFB] px-4 py-2.5 text-[13px] font-semibold text-[#334155]">Fermer</button>
             <button type="button" onClick={() => { setModal(null); navigate(modal.rec.cta.to || '/dashboard/card'); }}
                     className="inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-4 py-2.5 text-[13px] font-semibold text-white">
-              Configurer ma carte <ArrowRight size={14} />
+              {modal.rec.cta.button || 'Configurer ma carte'} <ArrowRight size={14} />
             </button>
           </div>
         </Modal>
