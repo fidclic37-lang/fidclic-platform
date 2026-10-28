@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CalendarDays, Check, ChevronDown, Loader2 } from 'lucide-react';
 
 /**
@@ -62,6 +62,16 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
   const [unit, setUnit] = useState(cur && !cur.preset ? cur.unit : 'd');
   const [err, setErr] = useState('');
   const box = useRef(null);
+  const menu = useRef(null);
+  // which edge of the button the menu hangs from: the right one by default,
+  // the left one when that would run past the left of the screen (a phone,
+  // the button on the left — user, 2026-10-28). Measured before it paints.
+  const [side, setSide] = useState('right');
+  useLayoutEffect(() => {
+    if (!open) { setSide('right'); return; }
+    if (side !== 'right' || !menu.current) return;
+    if (menu.current.getBoundingClientRect().left < document.body.getBoundingClientRect().left + 8) setSide('left');
+  }, [open, side]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -100,8 +110,8 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
       </button>
 
       {open && (
-        <div role="listbox"
-             className="absolute right-0 z-30 mt-2 w-[248px] rounded-2xl border border-[#E6EEFB] bg-white p-1.5 text-left shadow-[0_24px_48px_-20px_rgba(11,28,63,.35)]">
+        <div role="listbox" ref={menu}
+             className={`absolute ${side === 'left' ? 'left-0' : 'right-0'} z-30 mt-2 w-[264px] max-w-[calc(100vw-24px)] rounded-2xl border border-[#E6EEFB] bg-white p-1.5 text-left shadow-[0_24px_48px_-20px_rgba(11,28,63,.35)]`}>
           {PRESETS.map((p) => {
             const on = value === p.key;
             return (
@@ -117,13 +127,13 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
               Personnalisé {custom && <Check size={13} />}
             </p>
             <div className="flex items-center gap-1.5">
-              <span className="text-[12.5px] text-[#64748B]">Les</span>
+              <span className="shrink-0 text-[12.5px] text-[#64748B]">Les</span>
               <input type="text" inputMode="numeric" autoComplete="off" value={n} placeholder="Ex. 45"
                      aria-label="Nombre"
                      onChange={(e) => { setErr(''); setN(e.target.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 3)); }}
-                     className="w-[64px] rounded-lg border border-[#E6EEFB] px-2 py-1.5 text-[13px] tabular-nums text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
+                     className="w-[62px] shrink-0 rounded-lg border border-[#E6EEFB] px-2 py-1.5 text-[13px] tabular-nums text-[#0B1C3F] outline-none focus:border-[#2F6BFF]" />
               <select value={unit} onChange={(e) => { setErr(''); setUnit(e.target.value); }} aria-label="Unité"
-                      className="rounded-lg border border-[#E6EEFB] bg-white px-2 py-1.5 text-[13px] text-[#334155] outline-none focus:border-[#2F6BFF]">
+                      className="min-w-0 flex-1 rounded-lg border border-[#E6EEFB] bg-white px-2 py-1.5 text-[13px] text-[#334155] outline-none focus:border-[#2F6BFF]">
                 <option value="d">derniers jours</option>
                 <option value="m">derniers mois</option>
               </select>

@@ -23,7 +23,7 @@ import {
   Receipt, Eye, ShieldCheck, Lock, Menu, Link2, X as XIcon,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
-import { C, themeForRole, AmbientBackdrop } from '../components/PageShell';
+import { C, themeForRole } from '../components/PageShell';
 import { protectNames } from '../lib/translator';
 import { drainWallet, kickWallet } from '../lib/walletRefresh';
 
@@ -555,8 +555,10 @@ const DashboardLayout = () => {
       className={`relative flex min-h-screen fdt-dash flc ${nuit ? "flc-nuit" : ""} ${isTeam(user) ? 'fd-admin' : ''}`}
       style={{ transition: 'background 200ms ease' }}
     >
-      {/* The super admin and the sales team use the blue design's plain canvas. */}
-      {!isTeam(user) && <AmbientBackdrop role={role} />}
+      {/* No fixed backdrop any more (user, 2026-10-28): the April theme's two
+          blurred orange / red orbs were all but invisible on the blue design,
+          yet iOS 26 tints the bar under the app from fixed elements — an
+          orange band on the shop's iPad. Every role has the plain canvas. */}
 
       {small && menuOpen && (
         <div className="fixed inset-0 z-[55] bg-[#0B1C3F]/40" onClick={() => setMenuOpen(false)} aria-hidden="true" />
