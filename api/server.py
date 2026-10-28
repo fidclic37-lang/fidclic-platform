@@ -12246,6 +12246,12 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["client_brain"] = _CB.ensure_all()
     except Exception as e:
         out["failures"].append({"step": "client_brain", "error": str(e)[:120]})
+    try:                         # « Produits qui font revenir »: each shop's figures once a week
+        # (queued here, worked by ai_jobs in the brain_journal step below)
+        from features import product_return as _PRR
+        out["product_return"] = _PRR.due(now)
+    except Exception as e:
+        out["failures"].append({"step": "product_return", "error": str(e)[:120]})
     try:                         # the prediction journal: « non revenu » rows, one shop's backtest
         from features import brain_journal as _BJ
         out["brain_journal"] = _BJ.tick()
