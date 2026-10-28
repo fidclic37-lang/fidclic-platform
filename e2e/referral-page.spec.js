@@ -82,6 +82,53 @@ test.describe('parrainage page', () => {
   });
 });
 
+// the tooltip is fully on screen — never cut by the table (user, 2026-10-28:
+// on the first row it was hidden under the header)
+async function fullyVisible(page) {
+  const tip = page.getByRole('tooltip');
+  await expect(tip).toBeVisible();
+  const box = await tip.boundingBox();
+  const vp = page.viewportSize();
+  expect(box.x, 'left edge on screen').toBeGreaterThanOrEqual(0);
+  expect(box.y, 'top edge on screen').toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width, 'right edge on screen').toBeLessThanOrEqual(vp.width);
+  expect(box.y + box.height, 'bottom edge on screen').toBeLessThanOrEqual(vp.height);
+  // nothing covers it: its four corners and centre are the tooltip itself
+  // (it ignores the mouse — pointer-events: none — so hit-testing is switched
+  // on just for this check; what is painted on top does not change)
+  await tip.evaluate((el) => { el.style.pointerEvents = 'auto'; });
+  const pts = [[box.x + 4, box.y + 4], [box.x + box.width - 4, box.y + 4], [box.x + 4, box.y + box.height - 4],
+    [box.x + box.width - 4, box.y + box.height - 4], [box.x + box.width / 2, box.y + box.height / 2]];
+  for (const [x, y] of pts) {
+    const inside = await page.evaluate(([px, py]) => !!document.elementFromPoint(px, py)?.closest('[role="tooltip"]'), [x, y]);
+    expect(inside, `tooltip not covered at ${Math.round(x)},${Math.round(y)}`).toBe(true);
+  }
+  await expect(tip).toContainText('Parrain');
+  await expect(tip).toContainText('Filleul');
+  await expect(tip).toContainText('Total');
+}
+
+test.describe('the reward tooltip is never cut', () => {
+  test.use({ viewport: { width: 1536, height: 960 } });
+  test('first row, scrolled so the row sits right under the screen top, and last row at the bottom', async ({ page, request }) => {
+    await setup(page, request);
+    await page.goto('/dashboard/referral');
+    const cells = page.getByTestId('reward-cell');
+    const first = cells.first();
+    // the first row near the top of the window: no room above
+    await first.evaluate((el) => { el.scrollIntoView({ block: 'start' }); window.scrollBy(0, -20); });
+    await first.hover();
+    await fullyVisible(page);
+    await page.mouse.move(5, 5);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    // the last row near the bottom of the window
+    const last = cells.last();
+    await last.evaluate((el) => el.scrollIntoView({ block: 'end' }));
+    await last.hover();
+    await fullyVisible(page);
+  });
+});
+
 test('phone: tapping the reward shows both sides', async ({ page, request }) => {
   await setup(page, request);
   await page.goto('/dashboard/referral');
@@ -89,4 +136,5 @@ test('phone: tapping the reward shows both sides', async ({ page, request }) => 
   await cell.scrollIntoViewIfNeeded();
   await cell.click();
   await expect(page.getByRole('tooltip')).toContainText('Filleul');
+  await fullyVisible(page);
 });
