@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { canEdit } from '../lib/pagePerms';
 import {
   Users, User, Gift, Euro, Settings2, Share2, Trophy, BarChart3, ChevronDown, Eye,
@@ -88,27 +89,55 @@ const rewardText = (x) => {
 };
 
 /* « Récompense » of a parrainage (user, 2026-10-28): both sides together in
-   the cell (« 4 tampons »), each side on hover, focus or tap. */
+   the cell (« 4 tampons »), each side on hover, focus or tap. The tooltip is
+   drawn on the page itself (a portal, fixed), not inside the table — inside,
+   the table's scroll box cut it on the first row; it opens above, or below
+   when there is no room, and never leaves the screen. */
 const RewardCell = ({ r }) => {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btn = useRef(null);
+  const tip = useRef(null);
   const sides = r.reward_parrain !== undefined || r.reward_filleul !== undefined;
   const id = `reward-tip-${r.id}`;
+  useLayoutEffect(() => {
+    if (!open || !sides) { setPos(null); return undefined; }
+    const place = () => {
+      const b = btn.current?.getBoundingClientRect();
+      const t = tip.current?.getBoundingClientRect();
+      if (!b || !t) return;
+      const gap = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const above = b.top - t.height - gap >= gap || b.bottom + t.height + gap > vh - gap;
+      const top = above ? Math.max(gap, b.top - t.height - gap) : Math.min(vh - t.height - gap, b.bottom + gap);
+      const left = Math.min(Math.max(gap, b.right - t.width), vw - t.width - gap);
+      setPos({ top, left });
+    };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
+  }, [open, sides]);
   return (
-    <span className="relative inline-flex" data-testid="reward-cell"
+    <span className="inline-flex" data-testid="reward-cell"
           onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <button type="button" aria-describedby={sides && open ? id : undefined}
+      <button ref={btn} type="button" aria-describedby={sides && open ? id : undefined}
               onClick={() => setOpen(true)} onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}
               className={`flex items-center gap-1.5 text-[12.5px] text-[#334155] ${sides ? 'cursor-help underline decoration-dotted decoration-[#CBD5E1] underline-offset-4' : 'cursor-default'}`}>
         <Gift size={14} className="text-[#F59E0B]" /> {rewardText(r)}
       </button>
-      {sides && open && (
-        <span role="tooltip" id={id}
-              className="absolute bottom-full right-0 z-30 mb-2 w-max max-w-[280px] rounded-xl bg-[#0B1C3F] px-3.5 py-2.5 text-left text-[12px] leading-relaxed text-white shadow-xl">
-          <span className="block"><b>Parrain</b> ({r.parrain?.name}) : {r.reward_parrain || 'rien'}</span>
-          <span className="block"><b>Filleul</b> ({r.filleul?.name}) : {r.reward_filleul || 'rien'}</span>
+      {sides && open && createPortal(
+        <span role="tooltip" id={id} ref={tip}
+              style={{ position: 'fixed', top: pos ? pos.top : -9999, left: pos ? pos.left : -9999,
+                       maxWidth: 'min(300px, calc(100vw - 16px))', visibility: pos ? 'visible' : 'hidden' }}
+              className="pointer-events-none z-[60] block w-max rounded-xl bg-[#0B1C3F] px-3.5 py-2.5 text-left text-[12.5px] leading-relaxed text-white shadow-[0_18px_40px_-12px_rgba(11,28,63,.55)]">
+          <span className="block"><b>Parrain</b> <span translate="no" className="notranslate">({r.parrain?.name})</span> : {r.reward_parrain || 'rien'}</span>
+          <span className="block"><b>Filleul</b> <span translate="no" className="notranslate">({r.filleul?.name})</span> : {r.reward_filleul || 'rien'}</span>
           <span className="mt-1 block border-t border-white/20 pt-1 font-semibold">Total : {r.reward || '—'}</span>
           {r.status === 'pending' && <span className="mt-0.5 block text-white/70">En attente : promis, pas encore donné.</span>}
-        </span>
+        </span>,
+        document.body,
       )}
     </span>
   );
