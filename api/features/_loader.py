@@ -88,6 +88,8 @@ MODULES = [
     "features.brain_journal",
     # the Précision page's tallies: always live, never the whole journal (2026-10-26)
     "features.journal_stats",
+    # « roz ka hisaab »: each finished day's visits summed once (2026-10-28)
+    "features.visit_days",
     # brain-v2: learns its window and its sector rhythms from the network (2026-10-25)
     "features.brain_v2",
     # FidClic IA « a repéré »: late regulars, no 2nd visit, slowing down (2026-10-25)

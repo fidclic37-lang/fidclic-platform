@@ -103,18 +103,23 @@ def _messages(tid: str, ids: set, since: datetime, until: datetime) -> Dict[str,
             out[cid].append((t, src, bool(measured)))
 
     try:
-        measured_camps = set(_db.campaigns.distinct("id", {"tenant_id": tid, "sent_at": rng,
-                                                          "holdout_ids.0": {"$exists": True}}))
+        notes = list(_db.push_notifications.find({"tenant_id": tid, "sent_at": rng},
+                                                 {"_id": 0, "customer_id": 1, "type": 1, "sent_at": 1,
+                                                  "campaign_id": 1, "temoin": 1}))
+    except Exception:
+        notes = []
+    # The campaigns a témoin measured, found by the ids the messages name —
+    # not by when the campaign was sent: a message's answer must not depend on
+    # the period it is read in (features/visit_days sums each day on its own).
+    try:
+        named = sorted({m.get("campaign_id") for m in notes if m.get("campaign_id")})
+        measured_camps = set(_db.campaigns.distinct("id", {"tenant_id": tid, "id": {"$in": named},
+                                                          "holdout_ids.0": {"$exists": True}})) if named else set()
     except Exception:
         measured_camps = set()
-    try:
-        for m in _db.push_notifications.find({"tenant_id": tid, "sent_at": rng},
-                                             {"_id": 0, "customer_id": 1, "type": 1, "sent_at": 1,
-                                              "campaign_id": 1, "temoin": 1}):
-            add(m.get("customer_id"), m.get("sent_at"), source_of(m.get("type")),
-                m.get("temoin") or (m.get("campaign_id") in measured_camps))
-    except Exception:
-        pass
+    for m in notes:
+        add(m.get("customer_id"), m.get("sent_at"), source_of(m.get("type")),
+            m.get("temoin") or (m.get("campaign_id") in measured_camps))
     try:
         for m in _db.push_wallet_log.find({"tenant_id": tid, "sent_at": rng},
                                           {"_id": 0, "customer_id": 1, "sent_at": 1}):
@@ -218,19 +223,33 @@ def expected_anyway(tid: str, visits: List[Dict[str, Any]]) -> set:
     return out
 
 
+def classify(tid: str, rows: Iterable[Dict[str, Any]]) -> List[Tuple[Optional[str], bool, bool]]:
+    """Each visit, on its own: (the FidClic source that brought it or None,
+    whether « attendus » could claim it — a message no témoin measured —,
+    whether the brain saw it coming and it is set apart). A visit's answer
+    never depends on the other visits passed with it, so a day can be judged
+    once and summed (features/visit_days)."""
+    rows = list(rows)
+    touch = _touch_by_visit(tid, rows)
+    # a message no témoin measured: the visits the brain saw coming are set apart
+    cand = [i for i, (_, src, measured) in enumerate(touch) if src and not measured and src != "parrainage"]
+    anyway = expected_anyway(tid, [rows[i] for i in cand]) if cand else set()
+    apart = {cand[j] for j in anyway}
+    cands = set(cand)
+    return [(src, i in cands, i in apart) for i, (_, src, _) in enumerate(touch)]
+
+
 def impact(tid: str, rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     """{"revenue", "visits", "sources": {key: {"revenue", "visits"}},
         "attendus": {"revenue", "visits"}}"""
+    rows = list(rows)
     by = {k: {"revenue": 0.0, "visits": 0} for k, _, _ in SOURCES}
-    touched = [(v, src, measured) for v, src, measured in _touch_by_visit(tid, rows) if src]
-    # a message no témoin measured: the visits the brain saw coming are set apart
-    unproven = [v for v, src, measured in touched if not measured and src != "parrainage"]
-    anyway_pos = expected_anyway(tid, unproven) if unproven else set()
-    anyway_ids = {id(unproven[i]) for i in anyway_pos}
     apart = {"revenue": 0.0, "visits": 0}
-    for v, src, _ in touched:
+    for v, (src, _, anyway) in zip(rows, classify(tid, rows)):
+        if not src:
+            continue
         amount = float(v.get("amount_paid") or 0)
-        if id(v) in anyway_ids:
+        if anyway:
             apart["revenue"] += amount
             apart["visits"] += 1
             continue
