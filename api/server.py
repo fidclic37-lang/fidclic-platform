@@ -8285,7 +8285,7 @@ def send_campaign_to_group(
     from features import campaigns_page as _CPG
     _res = _CPG._deliver(tid, _doc, targeted_customers)
     delivered = _res["delivered"]
-    db.campaigns.update_one({"id": _camp_id}, {"$set": {"delivered_count": delivered, "delivery.done": True}})
+    _CPG.finish(_camp_id, _res, now)          # cut by the time limit: « pending », the tick finishes it
     campaign.delivered_count = delivered
 
     return {**campaign.model_dump(), "temoin": len(_held)}

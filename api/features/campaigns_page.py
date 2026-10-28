@@ -36,6 +36,7 @@ NOTHING IS INVENTED
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -933,77 +934,147 @@ def compose(req: Compose, request: Request = None,
     doc["delivery"] = {"done": False, "at": at}
     save()
     result = _deliver(tid, doc, people)
-    _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": result["delivered"], "delivery.done": True}})
+    finish(doc["id"], result, at)
     return {"id": doc["id"], "status": "sent", "audience": len(people), "temoin": len(held), **result}
 
 
-def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Write the offer to every card, push it, then wake the wallet passes.
+# A send cut half-way (user, 2026-10-28: « sabko push jaaye, and kisi ko bhi
+# 2 baar n jaaye »): each card row says what is left — push « pending » →
+# « done », wallet the same — and the send stops ITSELF before the function's
+# time limit, between two clients, leaving the rest to the tick. Rows written
+# before this carry no mark: done.
+PUSH_MARK = 10              # pushes saved as done every ten clients (and on the way out)
+DELIVER_BUDGET_S = 300      # a send stops itself here (vercel.json maxDuration 360 s)
+RESUME_BUDGET_S = 120       # the tick's share for a resume
+_clock = time.monotonic
+
+
+def _deliver(tid: str, doc: Dict[str, Any], people: List[Dict[str, Any]],
+             budget_s: Optional[float] = None) -> Dict[str, Any]:
+    """Write the offer to every card, push it, then wake the wallet passes —
+    a hundred clients at a time.
 
     The card feed is written first and unconditionally: a customer who never
     allowed push must still find the offer when they open their card. The push
     and the wallet wake-up are best-effort on top of that — one customer's
     dead subscription must not stop the rest of the send.
+
+    Out of time (budget_s, DELIVER_BUDGET_S by default) it stops between two
+    clients and answers partial=True: what is left stays « pending » on the
+    cards for resume_due.
     """
     from services import client_status as _CS
+    budget = DELIVER_BUDGET_S if budget_s is None else budget_s
+    start = _clock()
     people = _CS.drop_paused(_db, tid, people)       # paused since it was planned: skipped
     delivered = 0
+    woken = 0
     sent_at = doc["sent_at"]
     try:
         import server as core
     except Exception:
         core = None
     tenant = _db.tenants.find_one({"id": tid}) or {}
-    # A send that stopped half-way is retried by the cron: whoever already
-    # has this campaign on their card is not messaged a second time.
-    reached = set(_db.push_notifications.distinct("customer_id", {"tenant_id": tid, "campaign_id": doc["id"]}))
+    use_push = bool(doc["channels"].get("push")) and bool(core and hasattr(core, "dispatch_to_customer"))
+    use_wallet = bool(doc["channels"].get("wallet"))
+    # A send that stopped half-way is taken up by the tick: a client with
+    # this campaign on their card gets only what is still « pending ».
+    rows = list(_db.push_notifications.find({"tenant_id": tid, "campaign_id": doc["id"]},
+                                            {"_id": 0, "customer_id": 1, "push": 1, "wallet": 1}))
+    on_card = {r.get("customer_id") for r in rows}
+    push_left = {r.get("customer_id") for r in rows if r.get("push") == "pending"}
+    wallet_left = {r.get("customer_id") for r in rows if r.get("wallet") == "pending"}
     # the groupe témoin of this send never gets it, whoever rebuilt the list
     held = set(doc.get("holdout_ids") or [])
-    people = [c for c in people if c.get("id") not in reached and c.get("id") not in held]
+    people = [c for c in people if c.get("id") not in held
+              and (c.get("id") not in on_card or c.get("id") in push_left or c.get("id") in wallet_left)]
 
+    marks: List[str] = []                            # pushed, not yet saved as done
+
+    def save_marks():
+        if marks:
+            _db.push_notifications.update_many(
+                {"tenant_id": tid, "campaign_id": doc["id"], "customer_id": {"$in": list(marks)}},
+                {"$set": {"push": "done"}})
+            marks.clear()
+
+    partial = False
     # One send, one read of what every client's send asks (services/send_batch,
     # audit 2026-10-26: ~10 round trips a client before); a hundred clients at
-    # a time: their card rows, then their pushes
+    # a time: their card rows, then their pushes, then their passes
     from services import send_batch as _SB
-    with _SB.batch(_db, tid, [c["id"] for c in people]):
-        for part in _SB.chunks(people):
-            said = []
-            for cust in part:
-                title, message = doc["name"], doc["content"]
-                if core and hasattr(core, "render_template"):
+    try:
+        with _SB.batch(_db, tid, [c["id"] for c in people]):
+            for part in _SB.chunks(people):
+                said = []
+                for cust in part:
+                    title, message = doc["name"], doc["content"]
+                    if core and hasattr(core, "render_template"):
+                        try:
+                            title = core.render_template(doc["name"], cust, tenant)
+                            message = core.render_template(doc["content"], cust, tenant)
+                        except Exception:
+                            pass
+                    said.append((cust, title, message))
+                new = [x for x in said if x[0]["id"] not in on_card]
+                if new:
                     try:
-                        title = core.render_template(doc["name"], cust, tenant)
-                        message = core.render_template(doc["content"], cust, tenant)
-                    except Exception:
-                        pass
-                said.append((cust, title, message))
-            try:
-                _db.push_notifications.insert_many([{
-                    "customer_id": cust["id"], "tenant_id": tid, "campaign_id": doc["id"],
-                    "title": title, "body": message, "image_url": doc.get("image_url"),
-                    "link_url": doc.get("link_url"), "type": "campaign", "sent_at": sent_at,
-                    "temoin": bool(held),        # measured by a groupe témoin (fidclic_impact: never « attendu »)
-                } for cust, title, message in said])
-            except Exception as exc:
-                print(f"campagnes: card feed write failed ({exc})")
-            if doc["channels"]["push"] and core and hasattr(core, "dispatch_to_customer"):
-                for cust, title, message in said:
-                    try:
-                        if core.dispatch_to_customer(tid, cust, title, message, kind="campaign")["sent"]:
-                            delivered += 1
+                        _db.push_notifications.insert_many([{
+                            "customer_id": cust["id"], "tenant_id": tid, "campaign_id": doc["id"],
+                            "title": title, "body": message, "image_url": doc.get("image_url"),
+                            "link_url": doc.get("link_url"), "type": "campaign", "sent_at": sent_at,
+                            "temoin": bool(held),    # measured by a groupe témoin (fidclic_impact: never « attendu »)
+                            **({"push": "pending"} if use_push else {}),
+                            **({"wallet": "pending"} if use_wallet and cust.get("barcode_id") else {}),
+                        } for cust, title, message in new])
                     except Exception as exc:
-                        print(f"campagnes: push failed for {cust.get('id')}: {exc}")
+                        print(f"campagnes: card feed write failed ({exc})")
+                reached: List[Dict[str, Any]] = []
+                for cust, title, message in said:
+                    cid = cust["id"]
+                    if use_push and (cid not in on_card or cid in push_left):
+                        if _clock() - start > budget:
+                            partial = True
+                            break
+                        try:
+                            if core.dispatch_to_customer(tid, cust, title, message, kind="campaign")["sent"]:
+                                delivered += 1
+                        except Exception as exc:
+                            print(f"campagnes: push failed for {cid}: {exc}")
+                        marks.append(cid)
+                        if len(marks) >= PUSH_MARK:
+                            save_marks()
+                    reached.append(cust)
+                save_marks()
+                wake = [c for c in reached if c.get("barcode_id")
+                        and (c["id"] not in on_card or c["id"] in wallet_left)] if use_wallet else []
+                if wake:
+                    try:
+                        from features.wallet_passes import notify_passes
+                        woken += int((notify_passes([c["barcode_id"] for c in wake],
+                                                    google_notify="campaign") or {}).get("sent") or 0)
+                        _db.push_notifications.update_many(
+                            {"tenant_id": tid, "campaign_id": doc["id"], "customer_id": {"$in": [c["id"] for c in wake]}},
+                            {"$set": {"wallet": "done"}})
+                    except Exception as exc:
+                        print(f"campagnes: wallet wake-up failed: {exc}")
+                if partial:
+                    break
+    finally:
+        save_marks()                                 # an error half-way: who was pushed stays known
 
-    woken = 0
-    if doc["channels"]["wallet"]:
-        try:
-            from features.wallet_passes import notify_passes
-            serials = [c.get("barcode_id") for c in people if c.get("barcode_id")]
-            woken = int((notify_passes(serials, google_notify="campaign") or {}).get("sent") or 0)
-        except Exception as exc:
-            print(f"campagnes: wallet wake-up failed: {exc}")
+    return {"delivered": delivered, "wallet_woken": woken, "reach": len(people), "partial": partial}
 
-    return {"delivered": delivered, "wallet_woken": woken, "reach": len(people)}
+
+def finish(campaign_id: str, res: Dict[str, Any], at: datetime, add: bool = False) -> None:
+    """After _deliver: done — or, cut by the time limit, « pending » again
+    from `at`, for resume_due. `add` adds to the count (a resume)."""
+    upd: Dict[str, Any] = {"$set": {"delivery.done": True} if not res.get("partial") else {"delivery.at": at}}
+    if add:
+        upd["$inc"] = {"delivered_count": int(res.get("delivered") or 0)}
+    else:
+        upd["$set"]["delivered_count"] = int(res.get("delivered") or 0)
+    _db.campaigns.update_one({"id": campaign_id}, upd)
 
 
 def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -1045,7 +1116,7 @@ def run_due(now: Optional[datetime] = None) -> Dict[str, Any]:
             _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"status": "scheduled", "sent_at": None},
                                                          "$unset": {"delivery": ""}})
             continue
-        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivered_count": res["delivered"], "delivery.done": True}})
+        finish(doc["id"], res, at)
         out["sent"] += 1
         out["recipients"] += res["reach"]
     out["resumed"] = resume_due(at)
@@ -1072,12 +1143,11 @@ def resume_due(at: Optional[datetime] = None) -> int:
                                          {"_id": 0}))
         doc.setdefault("channels", {"push": True, "wallet": True})
         try:
-            res = _deliver(doc["tenant_id"], doc, people)
+            res = _deliver(doc["tenant_id"], doc, people, budget_s=RESUME_BUDGET_S)
         except Exception as exc:
             print(f"campagnes: resuming {doc['id']} failed ({exc})")
             continue
-        _db.campaigns.update_one({"id": doc["id"]}, {"$set": {"delivery.done": True},
-                                                     "$inc": {"delivered_count": int(res["delivered"])}})
+        finish(doc["id"], res, at, add=True)
         n += 1
     return n
 
