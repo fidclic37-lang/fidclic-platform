@@ -117,8 +117,33 @@ const Chip = ({ category }) => {
 
 /* The impact, and — right under it — where it comes from. As in the design,
    a long unit ("de nouveaux clients") drops to a smaller size so the figure
-   itself stays on one line; a short one ("de CA") keeps the figure's size. */
+   itself stays on one line; a short one ("de CA") keeps the figure's size.
+   Three kinds (sector playbooks, 2026-10-28): « calcule » on the shop's
+   clients, « source » a published figure with its link, « conseil » advice
+   with no number — no sector estimate is ever shown. */
 const Impact = ({ impact }) => {
+  if (!impact) return null;
+  if (impact.kind === 'conseil') {
+    return (
+      <div className="min-w-0">
+        <p className="text-[11.5px] text-[#64748B]">Impact</p>
+        <p className="text-[13px] font-semibold leading-tight text-[#94A3B8]">Conseil</p>
+        <p className="mt-0.5 truncate text-[10px] text-[#94A3B8]" title={impact.basis}>Pas de chiffre sourcé</p>
+      </div>
+    );
+  }
+  if (impact.kind === 'source') {
+    return (
+      <div className="min-w-0">
+        <p className="text-[11.5px] text-[#64748B]">Chiffre clé</p>
+        <p className="text-[13px] font-bold leading-tight text-[#0F8B58]" title={impact.text}>{impact.label}</p>
+        <a href={impact.url} target="_blank" rel="noopener noreferrer"
+           className="mt-0.5 block truncate text-[10px] text-[#2F6BFF] hover:underline" title={impact.text}>
+          Source : {impact.basis}
+        </a>
+      </div>
+    );
+  }
   // Split before the unit — "+10 à 20%" | "de nouveaux clients" — never inside the range.
   const m = /^(.+?[%€\d])\s+(de .+|avis|nouveaux clients)$/.exec(impact.label || '');
   const long = m && m[2].length > 8;
@@ -128,9 +153,7 @@ const Impact = ({ impact }) => {
     <p className="text-[15px] font-bold leading-tight text-[#0F8B58]">
       {long ? <>{m[1]} <span className="text-[11px] font-semibold">{m[2]}</span></> : impact.label}
     </p>
-    <p className="mt-0.5 truncate text-[10px] text-[#94A3B8]" title={impact.basis}>
-      {impact.kind === 'secteur' ? 'Estimation du secteur' : 'Calculé sur vos clients'}
-    </p>
+    <p className="mt-0.5 truncate text-[10px] text-[#94A3B8]" title={impact.basis}>Calculé sur vos clients</p>
   </div>
   );
 };
@@ -433,7 +456,9 @@ export default function InsightsGrowthPage() {
       {/* opportunités */}
       <Panel id="opportunites" className="mb-4 p-5">
         <PanelHead icon={Lightbulb} title="Opportunités pour votre commerce"
-                   sub="Des leviers de croissance identifiés spécialement pour vous."
+                   sub={d?.activity?.key && d.activity.key !== 'autre'
+                     ? `Des leviers de croissance identifiés pour votre activité : ${d.activity.label}.`
+                     : 'Des leviers de croissance identifiés spécialement pour vous.'}
                    more="Voir toutes les opportunités" expanded={open.opportunities}
                    onMore={toggle('opportunities')} />
         <div className="grid gap-3 lg:grid-cols-3">
@@ -501,6 +526,14 @@ export default function InsightsGrowthPage() {
                   <Chip category={x.category} />
                   <p className="mt-1.5 text-[14px] font-bold leading-snug text-[#0B1C3F]">{x.title}</p>
                   <p className="mt-0.5 text-[11.5px] leading-snug text-[#64748B]">{x.body}</p>
+                  {x.fact && (
+                    <p className="mt-1 text-[10.5px] leading-snug text-[#0F8B58]" title={x.fact.text}>
+                      {x.fact.short} ·{' '}
+                      <a href={x.fact.url} target="_blank" rel="noopener noreferrer" className="text-[#2F6BFF] hover:underline">
+                        {x.fact.source} ({x.fact.year})
+                      </a>
+                    </p>
+                  )}
                 </div>
               </div>
               <CtaButton item={x} onAct={act} full />
