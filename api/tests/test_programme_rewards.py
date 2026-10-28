@@ -214,7 +214,14 @@ def main():
                                         "referee_customer_id": cust(old_f)["id"], "referrer_points_promised": 30,
                                         "referee_points_promised": 15, "referrer_pending": True})
     scan(old_f)
-    check("the promised points land", cust(old_p)["points"] == 30 and cust(old_f)["points"] == 15)
+    # 2026-10-28 (user): a promise the card cannot show on its face, of a kind
+    # the shop no longer gives, is paid in today's setting. The parrain's
+    # points are still today's kind → his 30 as promised; the filleul's side
+    # is tampons today on a tampons card → 1 tampon, not 15 points.
+    row = db.referral_redemptions.find_one({"referee_customer_id": cust(old_f)["id"]})
+    check(f"parrain: the promised 30 points land ({cust(old_p)['points']})", cust(old_p)["points"] == 30)
+    check(f"filleul: today's 1 tampon, not 15 points ({cust(old_f)['points']}, {row.get('referee_given')})",
+          cust(old_f)["points"] == 0 and (row.get("referee_given") or {}).get("stamps") == 1)
 
 
 if __name__ == "__main__":
