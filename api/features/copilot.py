@@ -1219,9 +1219,13 @@ def approve(step_id: str, token_data: TokenData = Depends(require_role(["busines
                                          {"_id": 0}))
         camp["sent_at"] = shop.at
         camp.setdefault("channels", {"push": True, "wallet": True})
-        res = C._deliver(tid, camp, people)
+        # saved as sent, its delivery « pending », before delivering: a send cut
+        # half-way is finished by the tick (campaigns_page.resume_due)
         _db.campaigns.update_one({"id": camp["id"]}, {"$set": {
-            "status": "sent", "sent_at": shop.at, "delivered_count": res["delivered"]}})
+            "status": "sent", "sent_at": shop.at, "channels": camp["channels"],
+            "delivery": {"done": False, "at": shop.at}}})
+        res = C._deliver(tid, camp, people)
+        C.finish(camp["id"], res, shop.at)
         return {"status": "sent", "audience": len(people)}
     when = datetime(day.year, day.month, day.day, SEND_HOUR_UTC, 55, tzinfo=timezone.utc)
     _db.campaigns.update_one({"id": camp["id"]}, {"$set": {"status": "scheduled", "scheduled_for": when}})

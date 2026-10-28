@@ -239,14 +239,25 @@ def main():
     first = {p[0] for p in pushed}
     check(f"cut after {len(first)} clients: saved as sent, its delivery not finished",
           camp and camp["status"] == "sent" and (camp.get("delivery") or {}).get("done") is False, camp and camp.get("delivery"))
+    # The tick's clock runs from the moment the send started (its delivery.at,
+    # the wall clock at compose) — not from `now`, taken when this file began:
+    # a slow run reached compose minutes after `now`, so « now + 11 min » was
+    # under 10 minutes after the send and the resume never ran.
+    started = camp["delivery"]["at"]
+    started = started if started.tzinfo else started.replace(tzinfo=UTC)
     check("the tick leaves it while the send may still be running",
-          server.tick_pass(now + dt.timedelta(minutes=5)) is not None and len({p[0] for p in pushed}) == len(first))
-    server.tick_pass(now + dt.timedelta(minutes=11))
+          server.tick_pass(started + dt.timedelta(minutes=5)) is not None and len({p[0] for p in pushed}) == len(first))
+    server.tick_pass(started + dt.timedelta(minutes=11))
     got = [p[0] for p in pushed]
     reached = {d["customer_id"] for d in db.push_notifications.find({"campaign_id": camp["id"]})}
     check(f"11 minutes later the tick finishes it: {len(reached)} of 57 on their card", len(reached) == 57)
     twice = sorted({c for c in got if got.count(c) > devices.get(c, 0)})    # one try per device, never more
     check(f"nobody pushed twice ({twice})", not twice)
+    paused = set(db.customers.distinct("id", {"paused_at": {"$ne": None}}))    # never messaged, by design
+    with_device = {c for c, n in devices.items() if n} - paused
+    missed = sorted(with_device - set(got))
+    check(f"the resume really pushed the rest: every active client with a device got it ({len(missed)} missed)",
+          not missed, missed)
     check("…and marked done", (db.campaigns.find_one({"id": camp["id"]}).get("delivery") or {}).get("done") is True)
 
     print(f"\n{passed} passed, {failed} failed")
