@@ -1143,8 +1143,10 @@ def ai_draft(req: Draft,
 
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     who = SEGMENT_LABELS.get(req.segment or "all", "vos clients")
+    from services import playbooks as PB
+    play = PB.of(tenant)
     user = (f"Commerce : {tenant.get('name') or 'un commerce'}. "
-            f"Audience : {who}. Objectif : {objective}.")
+            f"Audience : {who}. Objectif : {objective}. {PB.prompt_context(play, PB.paris_month())}")
     # What this shop's own campaigns taught (features/campaign_learning.py):
     # the IA writes in the style that brought clients back here.
     try:
@@ -1173,4 +1175,8 @@ def ai_draft(req: Draft,
     if not title or not message:
         raise HTTPException(status_code=503,
                             detail="L'assistant n'a pas pu rédiger ce message. Reformulez votre objectif.")
+    # the trade's rules hold on what the IA wrote (loi Évin, no CBD health claim)
+    broken = PB.breaks_rules(play, f"{title} {message}")
+    if broken:
+        raise HTTPException(status_code=503, detail=broken)
     return {"title": title, "message": message, "examples": EXAMPLES}

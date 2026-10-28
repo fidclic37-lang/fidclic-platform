@@ -21,7 +21,13 @@ ONE PLAYBOOK PER ACTIVITY
                               (the old « estimation courante du secteur » is gone)
       generic_facts           which of the engine's own advice a figure backs
 
-    Insights, the Copilote and the Tableau de bord all read `of(tenant)`.
+      rules                   the trade's rules (RULES): told to FidClic IA
+                              and checked on what it wrote (`breaks_rules`)
+      auto                    the words « Client inactif » and
+                              « Géolocalisation » open on
+
+    Insights, the Copilote and the Tableau de bord all read `of(tenant)`;
+    every IA brief carries `prompt_context` (PR2).
 
 RULES OF THE TRADE
     Tobacco is never promoted (loi Évin): a tabac's offers are on presse,
@@ -31,6 +37,7 @@ RULES OF THE TRADE
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Dict, List, Optional
 
 from services import activities as A
@@ -154,7 +161,7 @@ FAMILIES: Dict[str, Dict[str, Any]] = {
              "Scannez la carte pour chaque café à emporter : ce sont souvent vos clients les plus réguliers.",
              "fidelite", to="/dashboard/scan", label="Ouvrir la caisse"),
     ]},
-    "bar": {"food": True, "drinks": True, "meals": False, "items": PRODUITS, "emoji": "✨",
+    "bar": {"food": True, "drinks": True, "meals": False, "items": PRODUITS, "emoji": "✨", "rules": ["alcool"],
             "offer": "1 boisson offerte", "levers": [
         _opp("soirees", "acquisition", "Créez un rendez-vous chaque semaine",
              "Quiz, match, concert ou afterwork le même soir chaque semaine : vos habitués savent quand venir "
@@ -256,7 +263,7 @@ NOEL_COMMANDES = lambda k, img="fetes": _idea(  # noqa: E731
 
 ACTIVITIES: Dict[str, Dict[str, Any]] = {
     "boulangerie": {},
-    "patisserie": {"offer": "1 pâtisserie offerte", "levers": [
+    "patisserie": {"offer": "1 pâtisserie offerte", "emoji": "🍰", "levers": [
         _opp("gateaux_commande", "ventes", "Prenez les gâteaux sur commande",
              "Anniversaires, baptêmes, fêtes : rappelez que vous faites les gâteaux sur commande.", "panier",
              template=_t("gateaux_commande", "🎂 Vos gâteaux sur commande",
@@ -266,7 +273,7 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
               _t("patisserie_meres", "💐 Un gâteau pour la Fête des mères",
                  "Commandez votre entremets pour la Fête des mères dès maintenant, en boutique.")),
     ]},
-    "chocolatier": {"offer": "1 ballotin offert", "own_levers": True, "levers": [
+    "chocolatier": {"offer": "1 ballotin offert", "emoji": "🍫", "own_levers": True, "levers": [
         _idea("paques", [3, 4], "Pâques",
               "Le deuxième temps fort de l'année : annoncez vos créations et prenez les commandes.", "printemps",
               _t("paques", "🐣 Les chocolats de Pâques sont arrivés",
@@ -295,19 +302,19 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
              "offre_moment", template=_t("boisson_saison", "☕ La boisson de la saison est là",
                                          "Venez goûter notre nouvelle boisson de saison cette semaine !")),
     ]},
-    "salon_the": {"offer": "1 thé offert", "levers": [
+    "salon_the": {"offer": "1 thé offert", "emoji": "🫖", "levers": [
         _opp("brunch", "ventes", "Proposez un goûter ou un brunch le week-end",
              "Une formule du week-end transforme une sortie occasionnelle en rendez-vous.", "menu",
              template=_t("brunch", "🫖 Le brunch du week-end",
                          "Ce week-end, notre formule brunch vous attend. Pensez à réserver !")),
     ]},
-    "juice_bar": {"offer": "1 jus offert", "levers": [
+    "juice_bar": {"offer": "1 jus offert", "emoji": "🥤", "levers": [
         _opp("jus_saison", "ventes", "Mettez en avant le jus de la saison",
              "Des fruits de saison, une recette du moment : une nouveauté à goûter fait revenir.", "offre_moment",
              template=_t("jus_saison", "🍓 Le jus de la saison",
                          "Nouveau cette semaine : notre jus de saison, préparé avec des fruits du moment.")),
     ]},
-    "glacier": {"offer": "1 boule offerte", "levers": [
+    "glacier": {"offer": "1 boule offerte", "emoji": "🍦", "levers": [
         _idea("saison_glaces", [4, 5, 6], "Ouverture de la saison",
               "Les premiers beaux jours : prévenez vos fidèles que la saison reprend.", "ete",
               _t("saison_glaces", "🍦 La saison des glaces est ouverte",
@@ -318,7 +325,7 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
                                          "Nouveau ce mois-ci : notre parfum éphémère. Venez le goûter !")),
     ]},
     "bar": {},
-    "bar_tabac": {"offer": "1 café offert", "levers": [
+    "bar_tabac": {"offer": "1 café offert", "rules": ["tabac"], "levers": [
         _opp("cafe_matin", "fidelisation", "Récompensez le café du matin",
              "Les habitués passent chaque jour : récompensez le café et la presse, jamais le tabac "
              "(publicité interdite, loi Évin).", "fidelite", to="/dashboard/card", label="Configurer la carte"),
@@ -408,7 +415,7 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
                  "Les vacances approchent : réservez votre rendez-vous épilation dès maintenant."),
               category="printemps"),
     ]},
-    "onglerie": {"offer": "-10 % sur votre prochain remplissage", "levers": [
+    "onglerie": {"offer": "-10 % sur votre prochain remplissage", "emoji": "💅", "levers": [
         _opp("rappel_remplissage", "fidelisation", "Rappelez le remplissage au bon moment",
              "Le remplissage se fait toutes les 2 à 3 semaines : un rappel à ce moment-là évite que la "
              "cliente aille ailleurs.", "inactifs",
@@ -427,7 +434,7 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
               replaces="rentree", category="automne"),
     ]},
     "arts_martiaux": {"items": ("cours", "cours"), "offer": "1 cours offert"},
-    "tabac_presse": {"offer": "1 magazine offert", "levers": [
+    "tabac_presse": {"offer": "1 magazine offert", "emoji": "📰", "rules": ["tabac"], "levers": [
         _opp("hors_tabac", "fidelisation", "Récompensez la presse, les jeux et les services",
              "Votre carte fidélise sur la presse, la confiserie, les recharges et les services, jamais sur le "
              "tabac (publicité interdite, loi Évin).", "fidelite", to="/dashboard/card", label="Configurer la carte"),
@@ -436,7 +443,7 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
              "offre_moment", template=_t("services_comptoir", "📦 Tout ce qu'on fait pour vous",
                                          "Colis, recharges, timbres, presse : pensez à nous, on est juste à côté.")),
     ]},
-    "cbd": {"offer": "-10 % sur votre prochain achat", "levers": [
+    "cbd": {"offer": "-10 % sur votre prochain achat", "rules": ["cbd"], "levers": [
         _opp("nouveautes_cbd", "ventes", "Annoncez les nouveautés",
              "Une nouvelle variété ou un nouvel arôme : vos habitués aiment être prévenus les premiers. "
              "Parlez du produit, jamais d'effet sur la santé (interdit).", "offre_moment",
@@ -517,7 +524,7 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
              "offre_moment", template=_t("arrivages", "🍓 Nouveaux arrivages",
                                          "Les produits de saison viennent d'arriver : passez les choisir !")),
     ]},
-    "caviste": {"food": True, "offer": "-10 % sur votre prochain achat", "levers": [
+    "caviste": {"food": True, "offer": "-10 % sur votre prochain achat", "rules": ["alcool"], "levers": [
         _opp("degustation_caviste", "acquisition", "Organisez une dégustation en boutique",
              "Un samedi avec un vigneron : vos clients découvrent et reviennent pour la bouteille qu'ils ont aimée.",
              "proximite", template=_t("degustation_caviste", "🍷 Dégustation ce samedi",
@@ -552,6 +559,137 @@ ACTIVITIES: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# The rules of the trade — told to FidClic IA, and checked on what it wrote
+# ---------------------------------------------------------------------------
+RULES: Dict[str, Dict[str, Any]] = {
+    "tabac": {
+        "text": "Ne parle jamais de tabac, de cigarettes ni de vapotage et n'en fais aucune promotion "
+                "(loi Évin) : parle de presse, jeux, confiserie, recharges et services.",
+        "words": re.compile(r"tabac|cigar|cigarillo|e-cig|\bvap|\bpuff|chicha|nicotin", re.I),
+        "reason": "Ce message parle de tabac : c'est interdit (loi Évin). Reformulez sur la presse, les jeux "
+                  "ou les services.",
+    },
+    "cbd": {
+        "text": "Aucune allégation de santé ni d'effet (sommeil, stress, douleur…) : c'est interdit. "
+                "Parle des produits, des arômes et des nouveautés.",
+        "words": re.compile(r"sommeil|dormi|stress|anxi|angoiss|douleur|apais|soulag|santé|guéri|soign|"
+                            r"thérap|médic|inflamm|détend", re.I),
+        "reason": "Ce message prête un effet sur la santé au CBD : c'est interdit. Reformulez sur les produits.",
+    },
+    "alcool": {
+        "text": "Aucune incitation à boire de l'alcool (loi Évin) : pas d'offre à volonté ni de « 2 pour 1 » "
+                "sur l'alcool. Parle de l'ambiance, des événements et de la découverte.",
+        "words": re.compile(r"à volonté|open bar|pour le prix d'?\s?(un|une|1)\b|cul sec|\bbuvez plus|"
+                            r"\bshots? (offert|gratuit)", re.I),
+        "reason": "Ce message pousse à boire de l'alcool : c'est interdit (loi Évin). Reformulez sur l'ambiance "
+                  "ou l'événement.",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# The words « Client inactif » and « Géolocalisation » open on (the editor
+# and a new shop's automations). {emoji} is the playbook's; {prénom} and
+# {nom_commerce} are filled by the sender. No offer is promised here.
+# ---------------------------------------------------------------------------
+AUTO_FAMILY: Dict[str, Dict[str, Dict[str, str]]] = {
+    "bakery": {
+        "inactive": {"title": "Vos gourmandises vous attendent {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Passez nous voir chez {nom_commerce}, "
+                             "on a hâte de vous régaler."},
+        "geo": {"title": "Vous êtes tout près ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : entrez vous faire plaisir !"},
+    },
+    "cafe": {
+        "inactive": {"title": "Votre pause vous attend {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Venez faire une pause chez {nom_commerce}, "
+                             "on vous attend."},
+        "geo": {"title": "Une petite pause ? {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : entrez faire une pause !"},
+    },
+    "bar": {
+        "inactive": {"title": "Ça fait un moment ! {emoji}",
+                     "body": "Bonjour {prénom}, toute l'équipe de {nom_commerce} serait ravie de vous revoir. "
+                             "Passez nous dire bonjour !"},
+        "geo": {"title": "Vous êtes dans le quartier ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : venez dire bonjour à l'équipe !"},
+    },
+    "restaurant": {
+        "inactive": {"title": "Votre table vous attend {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Venez vous régaler chez {nom_commerce}, "
+                             "on sera ravis de vous revoir."},
+        "geo": {"title": "Une petite faim ? {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : entrez vous régaler !"},
+    },
+    "salon": {
+        "inactive": {"title": "Il est temps de rafraîchir votre coupe ? {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Prenez votre prochain rendez-vous "
+                             "chez {nom_commerce}."},
+        "geo": {"title": "Vous êtes tout près ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : profitez-en pour prendre "
+                        "votre prochain rendez-vous."},
+    },
+    "spa": {
+        "inactive": {"title": "Et si vous preniez un moment pour vous ? {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Réservez votre prochain rendez-vous "
+                             "chez {nom_commerce}."},
+        "geo": {"title": "Vous êtes tout près ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : passez réserver votre "
+                        "prochain moment de détente."},
+    },
+    "gym": {
+        "inactive": {"title": "Et si on reprenait ? {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Toute l'équipe de {nom_commerce} vous "
+                             "attend pour la reprise."},
+        "geo": {"title": "Vous êtes tout près ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : c'est peut-être le bon moment "
+                        "pour revenir !"},
+    },
+}
+AUTO_FAMILY["pizzeria"] = AUTO_FAMILY["restaurant"]
+AUTO_ACTIVITY: Dict[str, Dict[str, Dict[str, str]]] = {
+    "traiteur": {
+        "inactive": {"title": "Vos plats préférés vous attendent {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Passez chez {nom_commerce} découvrir "
+                             "nos plats de la semaine."},
+    },
+    "fleuriste": {
+        "inactive": {"title": "Un bouquet pour égayer la semaine ? {emoji}",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Les fleurs de saison vous attendent "
+                             "chez {nom_commerce}."},
+        "geo": {"title": "Vous êtes tout près ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : entrez voir les fleurs du jour !"},
+    },
+    "opticien": {
+        "inactive": {"title": "Vos lunettes vont bien ? 👓",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Passez chez {nom_commerce} : on vérifie "
+                             "et on ajuste vos lunettes."},
+        "geo": {"title": "Vous êtes tout près ! 👓",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : entrez faire ajuster vos lunettes."},
+    },
+    "librairie": {
+        "inactive": {"title": "De nouveaux livres vous attendent 📚",
+                     "body": "Bonjour {prénom}, cela fait un moment ! Venez découvrir les nouveautés "
+                             "chez {nom_commerce}."},
+        "geo": {"title": "Vous êtes tout près ! 📚",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : entrez feuilleter les nouveautés !"},
+    },
+    "tabac_presse": {
+        "inactive": {"title": "Votre presse vous attend {emoji}",
+                     "body": "Bonjour {prénom}, presse, jeux, recharges, colis : on vous attend "
+                             "chez {nom_commerce} !"},
+        "geo": {"title": "Vous êtes tout près ! {emoji}",
+                "body": "Bonjour {prénom}, vous passez près de {nom_commerce} : pensez à votre presse et "
+                        "à vos services !"},
+    },
+}
+
+
+def _auto(key: str, sector: str, emoji: str) -> Dict[str, Dict[str, str]]:
+    texts = {**(AUTO_FAMILY.get(sector) or {}), **(AUTO_ACTIVITY.get(key) or {})}
+    return {sc: {f: v.replace("{emoji}", emoji) for f, v in t.items()} for sc, t in texts.items()}
+
+
 def _build(key: str) -> Dict[str, Any]:
     act = A.BY_KEY[key]
     fam = FAMILIES.get(act["sector"]) or FAMILIES["other"]
@@ -567,6 +705,8 @@ def _build(key: str) -> Dict[str, Any]:
         "emoji": own.get("emoji") or fam["emoji"],
         "levers": levers, "generic_facts": generic,
         "facts": {k: FACTS[k] for k in sorted(wanted)},
+        "rules": sorted(set(fam.get("rules") or []) | set(own.get("rules") or [])),
+        "auto": _auto(key, act["sector"], own.get("emoji") or fam["emoji"]),
     }
 
 
@@ -592,3 +732,52 @@ def lever_by_template(play: Dict[str, Any], key: str) -> Optional[Dict[str, Any]
 
 def fact_of(play: Dict[str, Any], lever: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return play["facts"].get((lever or {}).get("fact") or "")
+
+
+def paris_month(at: Optional[Any] = None) -> int:
+    """This month in Paris — the moments of the trade follow French time."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    at = at or datetime.now(timezone.utc)
+    try:
+        return at.astimezone(ZoneInfo("Europe/Paris")).month
+    except (ValueError, TypeError, AttributeError):
+        return getattr(at, "month", 1)
+
+
+def _month(month: Any) -> int:
+    try:
+        return (int(month) - 1) % 12 + 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def prompt_context(play: Dict[str, Any], month: Any, *, offer: bool = True) -> str:
+    """What FidClic IA is told about the shop's trade: its activité, its words,
+    its key moments this month and its rules. `offer=False` where the IA must
+    promise nothing (Autopilot)."""
+    m = _month(month)
+    parts = [f"Activité du commerce : {play['label']}. Il vend des {play['items'][1]} : "
+             "écris pour ce métier, jamais avec les mots d'un autre commerce."]
+    if offer:
+        parts.append(f"Si tu proposes une offre, qu'elle reste dans le métier (exemple : {play['offer']}).")
+    moments = [lv["title"] for lv in play["levers"] if lv.get("months") and in_season(lv, m)]
+    if moments:
+        parts.append("Moments du métier en ce moment : " + ", ".join(dict.fromkeys(moments)) + ".")
+    for r in play.get("rules") or []:
+        parts.append("Règle : " + RULES[r]["text"])
+    return " ".join(parts)
+
+
+def breaks_rules(play: Dict[str, Any], text: Optional[str]) -> Optional[str]:
+    """The reason the text breaks one of the trade's rules, else None."""
+    for r in play.get("rules") or []:
+        if text and RULES[r]["words"].search(text):
+            return RULES[r]["reason"]
+    return None
+
+
+def automation_texts(play: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """{scenario: {title, body}} — the trade's words for the automations that
+    have some; the others keep the generic words."""
+    return copy.deepcopy(play.get("auto") or {})
