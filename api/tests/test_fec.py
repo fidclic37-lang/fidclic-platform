@@ -145,6 +145,17 @@ def test_fec(db):
                   lambda: FEC.cabinet_fec("tB", token_data=r))
     check("export is audited",
           A._db.audit_log.count_documents({"action": "fec.exported"}) >= 1)
+    row = A._db.audit_log.find_one({"action": "fec.exported"}) or {}
+    check("… with the period as plain text, even when called without one",
+          (row.get("detail") or {}).get("from") == "" and (row.get("detail") or {}).get("to") == "")
+    FEC.cabinet_fec("t1", date_from="2026-07-01", date_to="2026-07-31", token_data=r)
+    check("… and the period asked when there is one", A._db.audit_log.find_one(
+        {"action": "fec.exported", "detail.from": "2026-07-01", "detail.to": "2026-07-31"}) is not None)
+    check("a refused export (other cabinet) is not audited as exported",
+          A._db.audit_log.count_documents({"action": "fec.exported", "tenant_id": "tB"}) == 0)
+    FEC.owner_fec(token_data=tok("owner@t1", "business_owner", "t1"))
+    check("the owner's own export is audited too", A._db.audit_log.find_one(
+        {"action": "fec.exported", "tenant_id": "t1", "actor_role": "business_owner"}) is not None)
 
     print("\nFEC — empty is valid (header only)")
     empty = FEC.render_fec(FEC.build_fec_lines([]))

@@ -4326,6 +4326,8 @@ def create_campaign(
     source = raw_source if raw_source in ALLOWED_CAMPAIGN_SOURCES else None
     # Accept either `message` (frontend convention) or `content` (canonical)
     body_content = req.get("content") or req.get("message") or ""
+    from features.campaigns_page import _trade_rules     # loi Évin, no CBD health claim
+    _trade_rules(token_data.tenant_id, req.get("name"), body_content)
     campaign = Campaign(
         id=str(uuid.uuid4()),
         tenant_id=token_data.tenant_id,
@@ -8144,6 +8146,8 @@ def send_campaign_to_group(
       {type: 'all'}
     """
     tid = token_data.tenant_id
+    from features.campaigns_page import _trade_rules     # loi Évin, no CBD health claim
+    _trade_rules(tid, req.get("name"), req.get("content"), req.get("message"), req.get("title"))
     tenant = db.tenants.find_one({"id": tid}) or {}
     customer_ids = req.get("customer_ids") or []
     segment = req.get("segment") or None
@@ -12058,6 +12062,8 @@ def schedule_campaign(
     token_data: TokenData = Depends(require_role(["business_owner"]))
 ):
     """Queue a campaign to be dispatched later (or on a recurring cadence)."""
+    from features.campaigns_page import _trade_rules     # loi Évin, no CBD health claim
+    _trade_rules(token_data.tenant_id, req.name, req.content)
     try:
         run_at = datetime.fromisoformat(req.run_at.replace("Z", "+00:00"))
         if run_at.tzinfo is None:

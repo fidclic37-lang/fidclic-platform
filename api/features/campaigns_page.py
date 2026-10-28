@@ -774,6 +774,17 @@ def delete_draft(draft_id: str, token_data: TokenData = Depends(require_role(SEN
     return {"deleted": True}
 
 
+def _trade_rules(tid: str, *texts: Any) -> None:
+    """The trade's rules on the owner's own words too (pentest 2026-10-28): a
+    tabac never promotes tobacco, a CBD shop makes no health claim, a bar never
+    pushes drinking — refused, draft included, with the reason."""
+    from services import playbooks as PB
+    broken = PB.owner_text_check(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}),
+                                 *texts)
+    if broken:
+        raise HTTPException(status_code=422, detail=broken)
+
+
 @router.post("/api/owner/campaigns/compose")
 def compose(req: Compose, request: Request = None,
             token_data: TokenData = Depends(require_role(SENDERS, partial_ok=True))):
@@ -787,6 +798,7 @@ def compose(req: Compose, request: Request = None,
     title, message = _clean(req.title, TITLE_MAX), _clean(req.message, MESSAGE_MAX)
     if not title or not message:
         raise HTTPException(status_code=400, detail="Un titre et un message sont nécessaires.")
+    _trade_rules(tid, title, message)
     if not req.push and not req.wallet and not req.draft:
         raise HTTPException(status_code=400, detail="Choisissez au moins un canal.")
     link = clean_link(req.link_url)

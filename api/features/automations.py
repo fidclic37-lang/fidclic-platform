@@ -2872,7 +2872,24 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         out["google_links"] = links
     if message_filleul is not None:
         out["message_filleul"] = message_filleul
+    # the trade's rules on the owner's words (pentest 2026-10-28): every title,
+    # body and button of every side, reminder and palier — draft included
+    from services import playbooks as PB
+    broken = PB.owner_text_check(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}),
+                                 out.get("name"), *_words(out))
+    if broken:
+        raise HTTPException(status_code=422, detail=broken)
     return out
+
+
+def _words(x: Any) -> List[str]:
+    """Every title / body / label typed in an automation, however deep."""
+    if isinstance(x, dict):
+        own = [v for k, v in x.items() if k in ("title", "body", "label") and isinstance(v, str)]
+        return own + [w for v in x.values() for w in _words(v)]
+    if isinstance(x, list):
+        return [w for v in x for w in _words(v)]
+    return []
 
 
 def current_links(tid: str) -> Dict[str, str]:

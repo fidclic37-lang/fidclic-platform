@@ -107,6 +107,37 @@ def main():
     check("… a soirée quiz is fine", not PB.breaks_rules(br, "Soirée quiz jeudi, venez entre amis !"))
     check("a barbier is free to say « tabac »", not PB.breaks_rules(bb, "Une odeur de tabac ? Notre soin barbe"))
     check("empty text never breaks", not PB.breaks_rules(tp, "") and not PB.breaks_rules(tp, None))
+    # the pentest of 2026-10-28: hidden and indirect words (user: « saare findings mazboot karo »)
+    for txt in ("Vos c1garettes vous attendent", "Votre t-a-b-a-c préféré", "Votre t a b a c préféré",
+                "Votre tаbac", "Des clopes au comptoir", "Nouveau : sachets de snus",
+                "Nouveaux arômes pour votre vapoteuse", "Votre e-liquide préféré", "Cig@rettes en stock",
+                "Des cigarettes électroniques", "Votre TÂBÂC", "ci\u200bgarettes en stock", "🚬 nouveautés",
+                "Smokes & cigs", "taaabac", "C I G A R E T T E S", "ｔａｂａｃ", "Puffs à 8 €"):
+        check(f"tabac: « {txt} » breaks the rule", PB.breaks_rules(tp, txt))
+    for txt in ("Votre bureau de tabac vous attend", "Le tabac-presse du quartier", "Votre bar-tabac préféré",
+                "Votre bar tabac du coin", "Presse, jeux, recharges, colis", "Un café au comptoir ?",
+                "Le lien ci-joint", "Cartes à jouer et jeux de grattage", "Timbres et colis"):
+        check(f"tabac: « {txt} » (the place, no product) is fine", not PB.breaks_rules(tp, txt))
+    check("… but the place named next to a product still breaks",
+          PB.breaks_rules(tp, "Votre bureau de tabac : -10 % sur les cigarettes"))
+    for txt in ("Pour des nuits paisibles", "Zen toute la journée", "Idéal pour se relaxer",
+                "Bon pour le corps", "Découvrez les bienfaits du CBD", "Une huile relaxante",
+                "Retrouvez la sérénité", "Dormez mieux grâce à nos fleurs", "Effet garanti"):
+        check(f"CBD: « {txt} » breaks the rule", PB.breaks_rules(cb, txt))
+    for txt in ("De nouvelles références en boutique", "Arômes fruités et notes boisées", "Venez nous voir samedi"):
+        check(f"CBD: « {txt} » is fine", not PB.breaks_rules(cb, txt))
+    for txt in ("Pintes à 3 € toute la soirée", "Happy hour : 2 bières achetées = 1 offerte",
+                "Tournée générale offerte !", "Le cocktail à 5 € ce soir", "Verre de vin offert",
+                "-50 % sur les bières", "Shooter gratuit pour tous", "Spritz à 4€"):
+        check(f"bar: « {txt} » breaks the rule", PB.breaks_rules(br, txt))
+    for txt in ("Soirée quiz jeudi, venez entre amis !", "Nouvelle carte des cocktails ce mois-ci",
+                "Planche apéro offerte pour 4 personnes", "1 café offert", "Concert live samedi à 21 h",
+                "Softs et jus à 2 €"):
+        check(f"bar: « {txt} » is fine", not PB.breaks_rules(br, txt))
+    bad =[(a["key"], lv["key"]) for a in A.ACTIVITIES for p in [PB.of({"activity_key": a["key"]})]
+           for lv in p["levers"] if lv.get("template")
+           and PB.breaks_rules(p, lv["template"]["title"] + " " + lv["template"]["message"])]
+    check(f"FidClic's own trade templates follow their rules ({bad})", not bad)
 
     # ---- 3. automations open on the trade's words ----------------------------------------------
     print("\nLes messages par défaut des automatisations")
@@ -216,6 +247,43 @@ def main():
     http("GET", "/api/owner/automations", headers=H("barb"))
     check("the owner's own words are never replaced",
           db.automations.find_one({"tenant_id": "barb", "scenario": "inactive"})["message"]["title"] == "Mon titre à moi")
+
+    # ---- 5. the rules hold on the owner's own words too (pentest, 2026-10-28) ------------------
+    print("\nLes règles sur les mots du commerçant")
+    bad_words = {"title": "Promo cigarettes", "message": "Vos cigarettes à -10 % cette semaine"}
+    r = http("POST", "/api/owner/campaigns/compose", headers=H("tab"),
+             json={**bad_words, "push": True, "wallet": True, "draft": False})
+    check(f"the composer refuses a tabac's tobacco promotion ({r.status_code})", r.status_code == 422)
+    check("… saying why (loi Évin)", "loi Évin" in r.text)
+    r = http("POST", "/api/owner/campaigns/compose", headers=H("tab"),
+             json={**bad_words, "push": False, "wallet": False, "draft": True})
+    check(f"… even as a draft ({r.status_code})", r.status_code == 422)
+    check("nothing was saved", db.campaigns.count_documents({"tenant_id": "tab"}) == 0)
+    r = http("POST", "/api/owner/campaigns/compose", headers=H("tab"),
+             json={"title": "Presse et jeux", "message": "Votre bureau de tabac vous attend", "draft": True})
+    check(f"a tabac's honest words are saved ({r.status_code})", r.status_code != 422)
+    r = http("POST", "/api/owner/campaigns/compose", headers=H("barb"),
+             json={**bad_words, "draft": True})
+    check(f"a barbier is not bound by the tabac's rule ({r.status_code})", r.status_code != 422)
+    r = http("POST", "/api/owner/campaigns", headers=H("tab"), json={"name": "x", "content": "Promo clopes"})
+    check(f"the old campaign endpoint refuses it too ({r.status_code})", r.status_code == 422)
+    r = http("POST", "/api/owner/campaigns/send-to-group", headers=H("tab"),
+             json={"name": "x", "content": "Promo c1garettes", "customer_ids": []})
+    check(f"… and send-to-group ({r.status_code})", r.status_code == 422)
+    r = http("POST", "/api/owner/campaigns/schedule", headers=H("tab"),
+             json={"name": "x", "content": "Promo vapoteuses", "run_at": "2030-01-01T10:00:00Z"})
+    check(f"… and the scheduler ({r.status_code})", r.status_code == 422)
+    check("nothing was scheduled", db.scheduled_campaigns.count_documents({"tenant_id": "tab"}) == 0)
+    auto = {"scenario": "custom", "name": "x", "status": "draft", "trigger": {"type": "after_visit"},
+            "message": {"title": "Promo", "body": "Vos cigarettes vous attendent"}}
+    r = http("POST", "/api/owner/automations", headers=H("tab"), json=auto)
+    check(f"an automation with tobacco words is refused ({r.status_code})", r.status_code == 422)
+    ok_auto = {**auto, "message": {"title": "Presse", "body": "Vos journaux vous attendent"}}
+    r = http("POST", "/api/owner/automations", headers=H("tab"), json=ok_auto)
+    check(f"… one with honest words is saved ({r.status_code})", r.status_code == 200)
+    if r.status_code == 200:
+        r2 = http("PUT", f"/api/owner/automations/{r.json()['id']}", headers=H("tab"), json=auto)
+        check(f"… and cannot be changed into tobacco words ({r2.status_code})", r2.status_code == 422)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

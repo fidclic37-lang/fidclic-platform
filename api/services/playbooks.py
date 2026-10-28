@@ -566,26 +566,61 @@ RULES: Dict[str, Dict[str, Any]] = {
     "tabac": {
         "text": "Ne parle jamais de tabac, de cigarettes ni de vapotage et n'en fais aucune promotion "
                 "(loi Évin) : parle de presse, jeux, confiserie, recharges et services.",
-        "words": re.compile(r"tabac|cigar|cigarillo|e-cig|\bvap|\bpuff|chicha|nicotin", re.I),
+        # the shop's own name (« bureau de tabac », « bar-tabac ») is a place, not a product
+        "place": re.compile(r"\b(bureaux? de tabac|debits? de tabac|tabacs?[\s-]presse|bars?[\s-]tabacs?|buraliste)"),
+        "words": re.compile(r"tabac|tobacco|cigar|\bcigs?\b|ciggie|\bsmok|clope|\bsnus|liquide|\bvap|\bpuf|"
+                            r"chicha|nicotin|🚬"),
         "reason": "Ce message parle de tabac : c'est interdit (loi Évin). Reformulez sur la presse, les jeux "
                   "ou les services.",
     },
     "cbd": {
-        "text": "Aucune allégation de santé ni d'effet (sommeil, stress, douleur…) : c'est interdit. "
-                "Parle des produits, des arômes et des nouveautés.",
-        "words": re.compile(r"sommeil|dormi|stress|anxi|angoiss|douleur|apais|soulag|santé|guéri|soign|"
-                            r"thérap|médic|inflamm|détend", re.I),
-        "reason": "Ce message prête un effet sur la santé au CBD : c'est interdit. Reformulez sur les produits.",
+        "text": "Aucune allégation de santé ni d'effet (sommeil, stress, douleur, détente, bienfaits…) : "
+                "c'est interdit. Parle des produits, des arômes et des nouveautés.",
+        "words": re.compile(r"sommeil|dormi|dormez|\bnuits? (paisible|calme|sereine|reposante)|paisibl|\bzen\b|"
+                            r"relax|serein|serenit|stress|anxi|angoiss|douleur|apais|soulag|sante|gueri|soign|"
+                            r"therap|medic|inflamm|detend|detente|bienfait|bien[\s-]?etre|vertu|pour le corps|"
+                            r"(?<!en )\beffets?\b|calmant"),
+        "reason": "Ce message prête un effet sur la santé ou le bien-être au CBD : c'est interdit. "
+                  "Reformulez sur les produits.",
     },
     "alcool": {
-        "text": "Aucune incitation à boire de l'alcool (loi Évin) : pas d'offre à volonté ni de « 2 pour 1 » "
-                "sur l'alcool. Parle de l'ambiance, des événements et de la découverte.",
-        "words": re.compile(r"à volonté|open bar|pour le prix d'?\s?(un|une|1)\b|cul sec|\bbuvez plus|"
-                            r"\bshots? (offert|gratuit)", re.I),
+        "text": "Aucune incitation à boire de l'alcool (loi Évin) : pas d'alcool offert, gratuit, à volonté, "
+                "en « 2 pour 1 » ni en promotion. Parle de l'ambiance, des événements et de la découverte.",
+        # always an incitement, whatever the drink
+        "words": re.compile(r"a volonte|open bar|cul sec|\bbuvez|tournee (generale|offerte|du patron)|"
+                            r"\bdeux pour un\b|\b2 pour 1\b"),
+        "drink": re.compile(r"\b(bieres?|pintes?|verres?|vins?|cocktails?|shots?|shooters?|spritz|mojitos?|"
+                            r"whisky|whiskies|rhums?|vodkas?|gin|pastis|ricard|champagnes?|alcools?|cidres?|"
+                            r"kirs?|tournees?|apero[\s-]?spritz|digestifs?|liqueurs?)\b"),
+        # with a drink: given, discounted or bought-for-free
+        "push": re.compile(r"offerte?s?|gratuite?s?|achetee?s?|pour le prix|-\s?\d+\s?%|\d+\s?%|1\s?\+\s?1|"
+                           r"happy hour"),
+        # a bar's price per drink pushes consumption on site; a caviste may show its prices
+        "price": re.compile(r"\d+([,.]\d+)?\s?(€|euros?\b|eur\b)"),
         "reason": "Ce message pousse à boire de l'alcool : c'est interdit (loi Évin). Reformulez sur l'ambiance "
                   "ou l'événement.",
     },
 }
+
+# look-alike letters (Cyrillic, Greek) and figures used as letters
+_LOOKALIKE = str.maketrans("аеорсхіукмтнвαεορτνκ", "aeopcxiykmthbaeoptvk")
+_LEET = str.maketrans("0134@$", "oieaas")
+_SPACED = re.compile(r"\b(?:[a-z][\s.\-_*·]){2,}[a-z]\b")
+
+
+def _plain(text: str) -> str:
+    """Lower case, no accents, look-alike letters made Latin."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", (text or "").lower().translate(_LOOKALIKE))
+    # accents and invisible characters (zero-width space, joiners…) go
+    return "".join(c for c in t if not unicodedata.combining(c) and unicodedata.category(c) != "Cf")
+
+
+def _squash(plain: str) -> str:
+    """« c1g@rettes » → cigarettes, « t-a-b-a-c » → tabac."""
+    t = plain.translate(_LEET)
+    return _SPACED.sub(lambda m: re.sub(r"[^a-z]", "", m.group(0)), t)
+
 
 # ---------------------------------------------------------------------------
 # The words « Client inactif » and « Géolocalisation » open on (the editor
@@ -770,11 +805,29 @@ def prompt_context(play: Dict[str, Any], month: Any, *, offer: bool = True) -> s
 
 
 def breaks_rules(play: Dict[str, Any], text: Optional[str]) -> Optional[str]:
-    """The reason the text breaks one of the trade's rules, else None."""
-    for r in play.get("rules") or []:
-        if text and RULES[r]["words"].search(text):
-            return RULES[r]["reason"]
+    """The reason the text breaks one of the trade's rules, else None — on
+    what the IA wrote and on the owner's own words (pentest 2026-10-28:
+    hidden letters, look-alikes and indirect words are caught too)."""
+    if not text or not play.get("rules"):
+        return None
+    plain = _plain(str(text))
+    for r in play["rules"]:
+        rule = RULES[r]
+        seen = rule["place"].sub(" ", plain) if rule.get("place") else plain
+        squashed = _squash(seen)
+        # « taaabac »: the same letter repeated is read once too
+        single = re.sub(r"([a-z])\1+", r"\1", squashed)
+        if any(rule["words"].search(t) for t in (seen, squashed, single)):
+            return rule["reason"]
+        if rule.get("drink") and rule["drink"].search(seen) and (
+                rule["push"].search(seen) or (play.get("sector") == "bar" and rule["price"].search(seen))):
+            return rule["reason"]
     return None
+
+
+def owner_text_check(tenant: Optional[Dict[str, Any]], *texts: Any) -> Optional[str]:
+    """The trade's rules on what the owner typed (campaigns, automations)."""
+    return breaks_rules(of(tenant), " \n ".join(str(t) for t in texts if t))
 
 
 def automation_texts(play: Dict[str, Any]) -> Dict[str, Dict[str, str]]:

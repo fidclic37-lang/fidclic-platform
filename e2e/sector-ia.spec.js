@@ -34,6 +34,15 @@ test('a new automation opens on the shop’s own trade words', async ({ page, re
     expect((await put({ sector: 'cafe', activity_key: 'cafe' })).ok()).toBeTruthy();
     await page.goto('/dashboard/automations/nouvelle?scenario=geo&step=3');
     await expect.poll(fields, { timeout: 20_000 }).toContain('Une petite pause ? ☕');
+
+    // the trade's rules hold on the owner's own words (pentest 2026-10-28)
+    expect((await put({ sector: 'retail', activity_key: 'tabac_presse' })).ok()).toBeTruthy();
+    const draft = (title, message) => request.post('/api/owner/campaigns/compose', {
+      headers: { ...H, 'X-FidClic-Store': store }, data: { title, message, draft: true } });
+    const refused = await draft('Promo', 'Vos c1g@rettes à -10 %');
+    expect(refused.status()).toBe(422);
+    expect((await refused.json()).detail).toContain('loi Évin');
+    expect((await draft('Presse', 'Votre bureau de tabac vous attend')).status()).not.toBe(422);
   } finally {
     await put({ sector: before.sector || 'cafe', activity_key: before.activity_key || '' });
   }
