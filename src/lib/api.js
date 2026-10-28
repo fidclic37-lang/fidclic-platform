@@ -541,6 +541,8 @@ export const ownerAPI = {
   referralExport: (params) => api.get('/owner/referrals/export', { params, responseType: 'blob' }),
   // every parrainage of the period, 20 per page, searchable (QA R5 F25)
   referralList: (params) => api.get('/owner/referrals/list', { params }),
+  // « Top parrains › Voir tous » (2026-10-28): every parrain, ranked, searchable
+  referralParrains: (params) => api.get('/owner/referrals/parrains', { params }),
   saveReferralConfig: (config) => api.put('/owner/referrals/config', config),
   referralConfig: () => api.get('/owner/referrals/config'),
   // Automatisations · Push Wallet — the scenarios, their figures, and firing

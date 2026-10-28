@@ -91,9 +91,13 @@ test.describe.serial('parrainage en tampons', () => {
     await page.goto(PAGE);
     await expect(page.getByText('Tampons offerts')).toBeVisible({ timeout: 20000 });
     const paid = page.getByRole('row').filter({ hasText: 'Ingrid' }).filter({ hasText: 'Validé' });
-    await expect(paid.first()).toContainText('2 tampons');
+    // since 2026-10-28 the cell is both sides together (2 + 2), each side on hover
+    await expect(paid.first()).toContainText('4 tampons');
+    await paid.first().getByTestId('reward-cell').hover();
+    await expect(page.getByRole('tooltip')).toContainText('2 tampons');
+    await expect(page.getByRole('tooltip')).toContainText('Filleul');
     const pending = page.getByRole('row').filter({ hasText: 'Adams' });
-    await expect(pending.first()).toContainText('2 tampons');
+    await expect(pending.first()).toContainText('4 tampons');
     await expect(pending.first()).toContainText('En attente');
     await expect(page.locator('li').filter({ hasText: 'Ahmed' }).first()).toContainText('2 tampons');
     await expect(page.getByText(/^0 points$/)).toHaveCount(0);
