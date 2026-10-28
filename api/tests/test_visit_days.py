@@ -366,6 +366,72 @@ def main():
           [p["name"] for p in T.top_products(5)] == ["Thé", "Café", "Bagel", "Jus"], T.top_products(5))
     check("top 2 is two", len(T.top_products(2)) == 2 and VD.Totals().top_products(5) == [])
 
+    # ── 8c. a shop whose register was never opened ────────────────────────────
+    # An import of old visits (or a test seeding thousands) must not pay a
+    # hearing per row for a register nobody has read yet: its first read sums
+    # every day from the visits anyway.
+    print("Registre jamais ouvert")
+    db.tenants.insert_many([{"id": "t4", "name": "Neuf"}, {"id": "t5", "name": "Course"}])
+
+    class TD4:
+        email, role, tenant_id = "o@t4.fr", "business_owner", "t4"
+
+    class TD5:
+        email, role, tenant_id = "o@t5.fr", "business_owner", "t5"
+    db.users.insert_many([{"email": "o@t4.fr", "role": "business_owner", "tenant_id": "t4"},
+                          {"email": "o@t5.fr", "role": "business_owner", "tenant_id": "t5"}])
+    heard = {"n": 0}
+    real_later = VD._later_days
+
+    def counted(*a, **k):
+        heard["n"] += 1
+        return real_later(*a, **k)
+    VD._later_days = counted
+    for i in range(20):
+        db.visits.insert_one({"id": f"n{i}", "tenant_id": "t4", "customer_id": f"y{i % 4}", "branch_id": "main",
+                              "amount_paid": 5 + i, "visit_time": AT0 - dt.timedelta(days=3 + i, hours=i % 5)})
+    db.visits.update_one({"id": "n3"}, {"$set": {"amount_paid": 40}})
+    check("old visits written before any read: no hearing, no stamp",
+          heard["n"] == 0 and db.visit_days_stamps.count_documents({"tenant_id": "t4"}) == 0, heard)
+    same("…and its first read counts them all", 30, td=TD4)
+    db.visits.insert_one({"id": "n99", "tenant_id": "t4", "customer_id": "y1", "branch_id": "main",
+                          "amount_paid": 12, "visit_time": AT0 - dt.timedelta(days=6)})
+    check("once read, an old visit is heard", heard["n"] > 0 and db.visit_days_stamps.count_documents(
+        {"tenant_id": "t4", "day": VD.day_of(AT0 - dt.timedelta(days=6))}) == 1)
+    same("…and the page moves with it", 30, td=TD4)
+    VD._later_days = real_later
+
+    for i in range(6):
+        db.visits.insert_one({"id": f"q{i}", "tenant_id": "t5", "customer_id": "z1", "branch_id": "main",
+                              "amount_paid": 10, "visit_time": AT0 - dt.timedelta(days=2 + 3 * i)})
+    once["done"] = False
+
+    def racing5(*a, **k):
+        out = real(*a, **k)
+        if not once["done"]:
+            once["done"] = True
+            db.visits.insert_one({"id": "q99", "tenant_id": "t5", "customer_id": "z1", "branch_id": "main",
+                                  "amount_paid": 77, "visit_time": AT0 - dt.timedelta(days=4)})
+        return out
+    import mongomock.collection as MC
+    writes = {"n": 0}
+    real_bulk, real_replace = MC.Collection.bulk_write, MC.Collection.replace_one
+
+    def count(fn):
+        def wrapped(self, *a, **k):
+            if self.name == "visit_days":
+                writes["n"] += 1
+            return fn(self, *a, **k)
+        return wrapped
+    MC.Collection.bulk_write, MC.Collection.replace_one = count(real_bulk), count(real_replace)
+    VD._raw = racing5
+    DH.overview(request=Req(), days=30, token_data=TD5())
+    VD._raw = real
+    MC.Collection.bulk_write, MC.Collection.replace_one = real_bulk, real_replace
+    check(f"a first read writes its days in one request, not one per day ({writes['n']})", writes["n"] == 1)
+    w6, g6 = same("a visit written during a shop's very first sum is in the next read", 30, td=TD5)
+    check("…all 7 of them", g6["revenue_total"] == 137, g6["revenue_total"])
+
     # ── 9. through HTTP, with a manager's establishment ──────────────────────
     print("HTTP")
     import asyncio

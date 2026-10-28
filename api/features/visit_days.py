@@ -294,6 +294,33 @@ def brain_version(tid: str) -> str:
     return v
 
 
+# A shop's register is « open » from its first read on. Before that, nothing
+# hears its writes — its first read sums every day from the visits anyway, and
+# an import of old visits must not pay a hearing per row. The mark is written
+# before that first read reads a stamp, and a write checks it after it lands:
+# a write that saw no mark is in the visits that read sums.
+OPEN = "~open"
+_open_seen: Set[str] = set()      # only « open » is kept: it never closes
+
+
+def _open(tid: str) -> None:
+    if tid in _open_seen:
+        return
+    _db[STAMPS].update_one({"tenant_id": tid, "day": OPEN}, {"$setOnInsert": {"n": 0}}, upsert=True)
+    _open_seen.add(tid)
+
+
+def _is_open(tid: Optional[str]) -> bool:
+    if not tid:
+        return False
+    if tid in _open_seen:
+        return True
+    if _db[STAMPS].find_one({"tenant_id": tid, "day": OPEN}, {"_id": 1}):
+        _open_seen.add(tid)
+        return True
+    return False
+
+
 def _stamps(tid: str, days: Iterable[str]) -> Dict[str, int]:
     days = sorted(days)
     if not days:
@@ -314,19 +341,22 @@ def _runs(days: List[str]) -> List[List[str]]:
 
 def _build(tid: str, days: List[str], stamps: Dict[str, int], bv: str) -> Dict[str, Dict[str, Any]]:
     """Sum these days from the visits and keep them; returns {day: row}."""
+    from pymongo import ReplaceOne
     out: Dict[str, Dict[str, Any]] = {}
     built = datetime.now(timezone.utc)
     for run in _runs(days):
         sums = fold(tid, _raw(tid, day_start(run[0]), day_start(_next(run[-1])), False, {}))
         for d in run:
             stores = sums.get(d) or {}
-            row = {"tenant_id": tid, "day": d, "v": SCHEMA, "stamp": stamps.get(d, 0), "bv": bv,
-                   "cand": sum(a["cand"] for a in stores.values()), "built_at": built, "stores": _pack(stores)}
-            try:
-                _db[COLL].replace_one({"tenant_id": tid, "day": d}, row, upsert=True)
-            except Exception:
-                pass                     # two reads summing the same day: either row is right
-            out[d] = row
+            out[d] = {"tenant_id": tid, "day": d, "v": SCHEMA, "stamp": stamps.get(d, 0), "bv": bv,
+                      "cand": sum(a["cand"] for a in stores.values()), "built_at": built, "stores": _pack(stores)}
+    # one round trip, not one per day: two years cold were ~1 500 writes
+    ops = [ReplaceOne({"tenant_id": tid, "day": d}, row, upsert=True) for d, row in out.items()]
+    for i in range(0, len(ops), 1000):
+        try:
+            _db[COLL].bulk_write(ops[i:i + 1000], ordered=False)
+        except Exception:
+            pass                         # two reads summing the same day: either row is right
     return out
 
 
@@ -334,6 +364,7 @@ def _register(tid: str, days: List[str]) -> Dict[str, Dict[str, Any]]:
     """{day: row} for these finished days, each one current."""
     if not days:
         return {}
+    _open(tid)
     stamps = _stamps(tid, days)
     have = {r["day"]: r for r in _db[COLL].find(
         {"tenant_id": tid, "day": {"$gte": min(days), "$lte": max(days)}}, {"_id": 0})}
@@ -437,8 +468,10 @@ def _mark(marks: Dict[str, Set[str]]) -> None:
     """Raise the stamp of these past days."""
     today = day_of(_now())
     for tid, days in marks.items():
+        if not _is_open(tid):
+            continue
         for d in sorted(days):
-            if d >= today or not tid:
+            if d >= today:
                 continue
             _db[STAMPS].update_one({"tenant_id": tid, "day": d}, {"$inc": {"n": 1}}, upsert=True)
 
@@ -498,6 +531,8 @@ def _visits_changed(rows: List[Tuple[str, datetime, Optional[str]]]) -> None:
     first: Dict[str, datetime] = {}
     cids: Dict[str, Set[str]] = {}
     for tid, t, c in rows:
+        if not _is_open(tid):
+            continue
         marks.setdefault(tid, set()).add(day_of(t))
         first[tid] = min(first.get(tid, t), t)
         if c:
@@ -552,10 +587,11 @@ def _hear_campaigns(coll, method, a, k):
     if after is None or method.startswith("insert"):
         return after
     # its messages read whether a témoin measured it (fidclic_impact._messages)
-    ids = [c.get("id") for c in _before(coll, method, a, k, {"tenant_id": 1, "id": 1}) if c.get("id")]
+    camps = [c for c in _before(coll, method, a, k, {"tenant_id": 1, "id": 1}) if c.get("id")]
 
     def both():
         after()
+        ids = [c["id"] for c in camps if _is_open(c.get("tenant_id"))]
         if ids:
             _sent_changed(list(_db.push_notifications.find({"campaign_id": {"$in": ids}},
                                                            {"_id": 0, "tenant_id": 1, "sent_at": 1})), {}, None)
@@ -582,7 +618,7 @@ def _hear_referrals(coll, method: str, a: tuple, k: dict):
         marks: Dict[str, Set[str]] = {}
         for r in rows:
             tid, cid = r.get("tenant_id"), r.get("referee_customer_id")
-            if tid and cid:
+            if cid and _is_open(tid):
                 marks.setdefault(tid, set()).update(
                     _later_days(tid, {cid}, datetime(1970, 1, 1, tzinfo=timezone.utc)))
         _mark(marks)
