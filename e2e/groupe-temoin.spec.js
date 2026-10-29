@@ -5,6 +5,7 @@
  * on Analyses (« Ce que FidClic vous rapporte vraiment »). Local server only.
  */
 import { test, expect } from '@playwright/test';
+import { holdCount } from '../src/lib/temoin.js';
 
 const OWNER = { email: 'demo.owner@fidelitour.com', password: 'Owner!Demo2026' };   // local seed only
 test.use({ viewport: { width: 1536, height: 960 } });
@@ -18,7 +19,10 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   const store = ((br && br.branches) || br || []).find((x) => x.status !== 'closed')?.id || '';
   const SH = { ...H, 'X-FidClic-Store': store };
   const all = await (await request.post('/api/owner/campaigns/audience-preview', { headers: SH, data: { audience: { mode: 'all' } } })).json();
-  expect(all.temoin).toBe(Math.floor(all.count * 0.15));
+  expect(all.temoin).toBe(holdCount(all.count));
+  // small sends (user, 2026-10-29): at least 4, never more than half — the server says the same
+  const six = await (await request.post('/api/owner/campaigns/audience-preview', { headers: SH, data: { audience: { mode: 'custom', customer_ids: (all.ids || []).slice(0, 6) } } })).json();
+  if ((all.ids || []).length >= 6) expect(six.temoin).toBe(3);
 
   await page.goto('/login');
   await page.evaluate(([t, s]) => {
@@ -39,13 +43,13 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   await page.screenshot({ path: 'test-results/temoin-composer.png' });
   await dialog.getByRole('button', { name: 'Fermer' }).first().click().catch(() => {});
 
-  // Clients › « Contacter (N) »: the same 15 %, said in its window
+  // Clients › « Contacter (N) »: the same rule, said in its window
   await page.goto('/dashboard/customers');
   const contact = page.getByRole('button', { name: /^Contacter \(\d+\)/ });
   await expect(contact).toBeEnabled({ timeout: 20_000 });
   const n = Number((await contact.innerText()).replace(/\D/g, ''));
   await contact.click();
-  const held = Math.floor(n * 0.15);
+  const held = holdCount(n);
   if (held > 0) {
     await expect(page.getByTestId('temoin-note')).toContainText(`Groupe témoin : ${held.toLocaleString('fr-FR')} client`);
     await expect(page.getByText(`${(n - held).toLocaleString('fr-FR')} clients recevront ce message.`)).toBeVisible();
@@ -58,6 +62,7 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   const card = page.getByTestId('temoin-settings');
   await expect(card).toBeVisible({ timeout: 20_000 });
   await expect(card).toContainText('15 % des clients');
+  await expect(card).toContainText('au moins 4, jamais plus de la moitié');
   await expect(card).toContainText('anniversaire, récompense, bienvenue');
   const sw = card.getByRole('switch', { name: 'Groupe témoin' });
   await expect(sw).toHaveAttribute('aria-checked', 'true');

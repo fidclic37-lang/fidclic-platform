@@ -114,14 +114,15 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     return () => { alive = false; clearTimeout(t0); };
   }, [audienceBody]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // groupe témoin (user, 2026-10-25): 15 % of a group send, at random, are kept
+  // groupe témoin (user, 2026-10-25): 15 % of a group send (at least 4, never
+  // more than half — 2026-10-29), at random, are kept
   // out to measure what it really brings in — the owner is told, never unaware
   const temoin = preview?.temoin || 0;
   const sendCount = preview ? preview.count - temoin : null;
   const TemoinNote = temoin > 0 ? (
     <p data-testid="temoin-note" className="mt-2 flex items-start gap-2 rounded-xl bg-[#F5F3FF] px-3 py-2.5 text-[13px] leading-snug text-[#4C1D95]">
       <FlaskConical size={16} className="mt-0.5 shrink-0 text-[#7C3AED]" />
-      <span><b>Groupe témoin : {nf(temoin)} client{temoin > 1 ? 's' : ''}</b> ({preview?.temoin_share || 15} %, tirés au hasard) ne
+      <span><b>Groupe témoin : {nf(temoin)} client{temoin > 1 ? 's' : ''}</b> ({Math.round((temoin * 100) / (preview?.count || 1))} %, tirés au hasard) ne
         recevr{temoin > 1 ? 'ont' : 'a'} pas ce message. En comparant leurs visites à celles des {nf(sendCount)} autres, FidClic mesure ce que
         cet envoi vous rapporte vraiment. <span className="text-[#6D28D9]">(Paramètres › Notifications)</span></span>
     </p>

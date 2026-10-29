@@ -39,6 +39,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     from features import push_wallet as PW
 
     db = server.db
+
+    # sends of 3–6 clients here are not about the groupe témoin (since 2026-10-29 it
+
+    # holds clients from 3 up — test_temoin.py / test_ai_safety.py): switched off
+
+    import features.temoin as _TEM
+
+    _TEM.enabled = lambda tid: False
     for m in (S, T, DH, CP, KP, AN, IP, SG, AH, GEO, RF, CO, CAT, LC, WB, PW):
         m.init(db)
     passed = failed = 0

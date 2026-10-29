@@ -28,6 +28,7 @@ sync_tenants(), run when the CRM opens and every day.
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import re
 import unicodedata
@@ -858,7 +859,7 @@ def export(q: str = "", sector: str = "", city: str = "", stage: str = "", assig
     rows = list(_db.crm_prospects.find(f, {"_id": 0}).sort("name", 1))
     users = _users()
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Réf", "Nom du commerce", "Secteur", "Ville", "Code postal", "Adresse", "Contact", "Téléphone", "Email",
                 "Site web", "SIRET", "Statut", "Motif de perte", "Source", "Assigné à", "Sur FidClic", "Dernière activité"])
     for p in rows:

@@ -24,6 +24,7 @@ FIGURES
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import re
 import uuid
@@ -507,7 +508,7 @@ def export_calls(tab: str = "", q: str = "", sector: str = "", city: str = "", s
     rows = list(_db.crm_calls.find(f, {"_id": 0}).sort("at", -1).limit(20000))
     users, names = C._users(), _names(rows)
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Date", "Commerce", "Contact", "Numéro", "Durée (s)", "Résultat", "Statut", "Par", "Notes"])
     for r in rows:
         v = _view(r, users, names)

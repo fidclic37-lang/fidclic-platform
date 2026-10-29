@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import io
 import csv
+from services import safe_csv
 import secrets
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
@@ -351,7 +352,7 @@ def cabinet_alerts(token_data=Depends(require_role(["comptable"]))):
 def cabinet_export(token_data=Depends(require_role(["comptable"]))):
     """One CSV of every client's issued invoices — no per-PA logins, no re-keying."""
     buf = io.StringIO()
-    w = csv.writer(buf)
+    w = safe_csv.writer(buf, delimiter=",")
     w.writerow(["client", "siren", "type", "channel", "number", "counterparty",
                 "total_ht", "total_vat", "total_ttc", "state", "date"])
     for tid in _linked_tenant_ids(token_data.email):

@@ -22,6 +22,8 @@ from 4 points, Moyen 2–3, Faible 1.
 from __future__ import annotations
 
 import csv
+import html as _html
+from services import safe_csv
 import io
 import json
 import re
@@ -551,7 +553,7 @@ def export(key: str, question: str = "", date_from: Optional[str] = Query(None, 
         raise HTTPException(status_code=404, detail="Analyse inconnue.")
     start, end = _period(date_from, date_to)
     buf = io.StringIO()
-    csv.writer(buf, delimiter=";").writerows(_csv_rows(run(key, start, end, question)))
+    safe_csv.writer(buf).writerows(_csv_rows(run(key, start, end, question)))
     return Response(content="﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="fidclic-ai-{key}.csv"'})
 
@@ -686,11 +688,13 @@ def delete_report(rid: str, token_data: TokenData = Depends(require_admin("ai"))
 
 def _email_html(res: Dict[str, Any]) -> str:
     rows = _csv_rows(res) if res["rows"] else []
-    head = "".join(f"<th style='text-align:left;padding:6px 8px;border-bottom:1px solid #E2E8F0;color:#64748B'>{h}</th>" for h in (rows[0] if rows else []))
-    body = "".join("<tr>" + "".join(f"<td style='padding:6px 8px;border-bottom:1px solid #F1F5F9'>{c}</td>" for c in r) + "</tr>" for r in rows[1:51])
+    # shop names and sectors are typed by owners: escaped, never markup in the mail
+    e = lambda v: _html.escape("" if v is None else str(v))  # noqa: E731
+    head = "".join(f"<th style='text-align:left;padding:6px 8px;border-bottom:1px solid #E2E8F0;color:#64748B'>{e(h)}</th>" for h in (rows[0] if rows else []))
+    body = "".join("<tr>" + "".join(f"<td style='padding:6px 8px;border-bottom:1px solid #F1F5F9'>{e(c)}</td>" for c in r) + "</tr>" for r in rows[1:51])
     table = f"<table style='border-collapse:collapse;font-size:13px'>{'<tr>' + head + '</tr>' if head else ''}{body}</table>" if rows else ""
-    return (f"<div style='font-family:Arial,sans-serif;color:#0B1C3F'><h2 style='margin:0 0 4px'>FIDCLIC AI — {res['title']}</h2>"
-            f"<p style='font-size:15px'>{res['headline']}</p><p style='color:#64748B'>{res['detail']}</p>{table}"
+    return (f"<div style='font-family:Arial,sans-serif;color:#0B1C3F'><h2 style='margin:0 0 4px'>FIDCLIC AI — {e(res['title'])}</h2>"
+            f"<p style='font-size:15px'>{e(res['headline'])}</p><p style='color:#64748B'>{e(res['detail'])}</p>{table}"
             f"<p><a href='https://app.fidclic.com/admin/ai'>Ouvrir FIDCLIC AI</a></p></div>")
 
 

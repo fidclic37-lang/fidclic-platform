@@ -32,6 +32,7 @@ past days — no snapshot table to keep.
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import time
 from collections import defaultdict
@@ -323,7 +324,7 @@ def export(date_from: Optional[str] = Query(None, alias="from"), date_to: Option
     start, end = _period(date_from if isinstance(date_from, str) else None, date_to if isinstance(date_to, str) else None)
     rows = _pick(_compute(start, end)["rows"], type if type in TYPE_LABEL else "", sector, ids)
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Commerce", "Secteur", "Ville", "Plan", "Insight", "Détails", "Recommandation", "Priorité"])
     for r in rows:
         w.writerow([r["name"], r["sector"], r["city"], (r["plan"] or {}).get("label", ""), r["type_label"], r["details"],

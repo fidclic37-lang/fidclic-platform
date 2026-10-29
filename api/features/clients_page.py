@@ -33,6 +33,7 @@ THE VOCABULARY, DEFINED ONCE
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import math
 from datetime import datetime, timedelta, timezone
@@ -943,7 +944,7 @@ def export_clients(
     rows.sort(key=key, reverse=reverse)
 
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     span = ""
     if sales:
         a, b = (sales_from or sales_to)[:10], (sales_to or sales_from)[:10]

@@ -34,6 +34,7 @@ Statuses
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import os
 import re
@@ -713,7 +714,7 @@ def mark_unread(tid: str, token_data: TokenData = Depends(require_admin("support
 
 def _csv(rows: List[List[Any]], name: str) -> Response:
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     for r in rows:
         w.writerow(r)
     return Response(content="﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",

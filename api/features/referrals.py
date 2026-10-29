@@ -660,6 +660,7 @@ async def card_whose(barcode_id: str, body: WhoseRequest, request: Request):
 from typing import Any, Dict, List, Tuple                      # noqa: E402
 from datetime import timedelta                                 # noqa: E402
 import csv                                                     # noqa: E402
+from services import safe_csv  # noqa: E402
 import io                                                      # noqa: E402
 
 from fastapi import Query                                      # noqa: E402
@@ -1062,7 +1063,7 @@ def export_referrals(
     people = _people([r.get("referrer_customer_id") for r in rows]
                      + [r.get("referee_customer_id") for r in rows])
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
     progs: Dict[Any, Optional[str]] = {}
     w.writerow(["Date", "Parrain", "Filleul", "Statut", "Récompense parrain", "Récompense filleul",

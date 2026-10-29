@@ -541,10 +541,15 @@ def _usual_product(customer: dict) -> str:
 
 
 @_SC.customer_store("customer")
-def render_template(content: str, customer: dict, tenant: dict = None) -> str:
+def render_template(content: str, customer: dict, tenant: dict = None, extra: dict = None) -> str:
     """Replace curly-brace placeholders in a campaign body with per-customer values.
     Missing values are silently replaced with a neutral fallback so the message never
     renders a literal `{name}` to the recipient.
+
+    One pass (audit P07, 2026-10-29): a value is put in once — a client named
+    « {points} » or a product « {prénom} » stays text — and no value carries
+    « < » / « > » (names and products are typed by clients and owners).
+    `extra` adds the caller's own placeholders ({parrain}, {offre}…) to the pass.
     """
     if not content:
         return ""
@@ -597,12 +602,18 @@ def render_template(content: str, customer: dict, tenant: dict = None) -> str:
             nxt = tpl.get("reward_description") or "votre récompense"
             replacements["{prochaine_récompense}"] = nxt
             replacements["{prochaine_recompense}"] = nxt
-        rendered = content
-        for token, value in replacements.items():
-            rendered = rendered.replace(token, str(value))
-        return rendered
+        for k, v in (extra or {}).items():
+            replacements["{" + str(k) + "}"] = v
+        return re.sub(r"\{[^{}]+\}",
+                      lambda m: _placeholder_text(replacements[m.group(0)]) if m.group(0) in replacements else m.group(0),
+                      content)
     except Exception:
         return content
+
+
+def _placeholder_text(value) -> str:
+    """A placeholder value as plain text: no tag can ride in a name."""
+    return re.sub(r"<[^<>]*>", "", str(value)).replace("<", "").replace(">", "")
 
 
 def send_email_to_customer(to_email: str, from_name: str, subject: str, body_html: str) -> bool:
@@ -2536,6 +2547,13 @@ def _start_trial(tenant_doc: Dict[str, Any], plan: str = "silver") -> None:
     tenant_doc["trial_ends_at"] = now_utc + timedelta(days=trial_days)
 
 
+def _known_sector(v) -> Optional[str]:
+    """Only a sector of the list is saved at sign-up: the field fed the CSV
+    exports and the AI prompts as typed (audit 2026-10-29)."""
+    from features.onboarding import SECTORS
+    return v if isinstance(v, str) and v in SECTORS else None
+
+
 @app.post("/api/auth/register")
 def register(payload: Dict[str, Any], response: Response, request: Request = None):
     """Self-serve registration — STEP 1 of the onboarding (personal account).
@@ -2606,7 +2624,7 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
             slug=_unique_slug(biz_name),
             name=biz_name,
             plan="silver",
-            sector=(payload.get("sector") or None),
+            sector=_known_sector(payload.get("sector")),
             phone=(payload.get("phone") or ""),
             address="",
             # "verify": the e-mail/SMS code comes first (features/signup_verify.py)

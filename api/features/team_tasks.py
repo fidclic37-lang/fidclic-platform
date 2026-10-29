@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import calendar
 import csv
+from services import safe_csv
 import io
 import re
 import uuid
@@ -889,7 +890,7 @@ def history_export(date_from: Optional[str] = None, date_to: Optional[str] = Non
     users, types, series = _ctx(rows)
     now = _now()
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Tâche", "Description", "Type", "Priorité", "Assignée à", "Échéance", "Statut",
                 "Terminée le", "Terminée par", "Retard (min)", "Répétition", "Créée le", "Créée par"])
 

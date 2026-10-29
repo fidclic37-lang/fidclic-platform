@@ -30,6 +30,7 @@ Mounts at /api/owner/privacy/* (owner; managers and administrateurs read).
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import json
 import re
@@ -243,7 +244,7 @@ def _csv(rows: List[Dict[str, Any]]) -> bytes:
         return "﻿".encode("utf-8")
     buf = io.StringIO()
     keys = list({k: None for r in rows for k in r})
-    w = csv.DictWriter(buf, fieldnames=keys, delimiter=";")
+    w = safe_csv.dict_writer(buf, keys)
     w.writeheader()
     for r in rows:
         w.writerow(r)

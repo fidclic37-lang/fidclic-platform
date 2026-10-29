@@ -13,8 +13,11 @@ they cancel out.
     Held back    group campaigns (the composer, Autopilot, Copilote, « a
                  repéré ») and the relance automations (inactifs, géolocali-
                  sation). NEVER: anniversaire, récompense, bienvenue, a message
-                 to one client.
-    Small sends  15 % of fewer than 7 clients is less than one: nobody held.
+                 to one client (a group send never escapes by its label).
+    Small sends  at least MIN_SEND_HOLD (4) held, so a small send still
+                 measures, but never more than half of it and nobody under 3
+                 clients (user, 2026-10-29: 3→1, 4–5→2, 6–7→3, 8–26→4,
+                 27+→15 %). Splitting a big send in small ones escapes nothing.
     Owner        ON by default, switchable in Paramètres (« pas mesuré » then);
                  told in the composer, the automation editor, Paramètres and
                  Analyses. Only the counts are shown, never the témoin's
@@ -45,6 +48,7 @@ from models import TokenData
 SHARE = 0.15                     # user, 2026-10-25: « 15 % rakho »
 WINDOW_DAYS = 15                 # the CA FidClic window (fidclic_impact)
 MIN_HOLD = 30                    # témoin clients before a figure is claimed
+MIN_SEND_HOLD = 4                # user, 2026-10-29: « 3-4 ko nahi jaayega », not 15 % of a few
 AUTOMATION_SCENARIOS = {"inactive", "geo"}          # the relance automations
 SINGLE_TEMPLATES = {"client", "brain"}              # « Contacter » one client
 READERS = ["business_owner", "administrateur", "manager"]
@@ -85,11 +89,18 @@ def enabled(tid: Optional[str]) -> bool:
 
 
 def hold_count(n: int) -> int:
-    return int(n * SHARE) if n > 0 else 0
+    """How many of a send of n clients are held back: 15 %, at least 4, at
+    most half — the messaged side is never the smaller one."""
+    if n < 3:
+        return 0
+    return min(max(MIN_SEND_HOLD, int(n * SHARE)), n // 2)
 
 
-def for_campaign(template: Optional[str]) -> bool:
-    return (template or "").split(":")[0] not in SINGLE_TEMPLATES
+def for_campaign(template: Optional[str], n: int = 2) -> bool:
+    """Only a message to ONE client is free of the témoin; the « client » /
+    « brain » label comes from the request body, so it frees nothing else
+    (audit P25: a send to everyone labelled « client » escaped)."""
+    return n != 1 or (template or "").split(":")[0] not in SINGLE_TEMPLATES
 
 
 def split(tid: str, people: Sequence[Dict[str, Any]], seed: str,
@@ -98,7 +109,7 @@ def split(tid: str, people: Sequence[Dict[str, Any]], seed: str,
     for one client, or for a send too small to spare one."""
     people = list(people)
     k = hold_count(len(people))
-    if not k or not for_campaign(template) or not enabled(tid):
+    if not k or not for_campaign(template, len(people)) or not enabled(tid):
         return people, []
     rng = random.Random(f"temoin:{seed}")
     held_ids = {c["id"] for c in rng.sample(sorted(people, key=lambda c: c["id"]), k)}
@@ -237,7 +248,7 @@ class TemoinIn(BaseModel):
 @router.get("/api/owner/temoin")
 def get_settings(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     return {"enabled": enabled(token_data.tenant_id), "share": int(SHARE * 100), "window_days": WINDOW_DAYS,
-            "min_hold": MIN_HOLD, "can_edit": token_data.role == "business_owner"}
+            "min_hold": MIN_HOLD, "min_hold_send": MIN_SEND_HOLD, "can_edit": token_data.role == "business_owner"}
 
 
 @router.put("/api/owner/temoin")

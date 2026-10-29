@@ -34,6 +34,7 @@ that is not a read, the page shows a banner, and each opening is audited.
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import re
 import secrets
@@ -310,7 +311,7 @@ def export_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "
                      token_data: TokenData = Depends(require_admin("commerces"))):
     rows = _filtered(snapshot(), tab, q, sector, city, plan, status)
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Commerce", "Secteur", "Ville", "Code postal", "Plan", "Clients", "Visites", "Cartes / semaine", "Scans / semaine",
                 "Dernière activité", "Statut", "Situation", "Inscrit le"])
     for r in rows:
