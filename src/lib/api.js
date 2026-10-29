@@ -424,6 +424,8 @@ export const adminAPI = {
   labExportStart: (tenantId) => api.post('/admin/ai/lab/exports', { tenant_id: tenantId }),
   labExportPart: (id, n) => api.get(`/admin/ai/lab/exports/${id}/parts/${n}`),
   aiUplift: () => api.get('/admin/ai/uplift'),
+  // Super admin › FIDCLIC AI › Recommandations (journal of ideas, 2026-10-29)
+  aiRecos: (days) => api.get('/admin/ai/recos', { params: { days } }),
   aiPrecisionLearn: () => api.post('/admin/ai/precision/learn', {}),
   aiPrecisionChampion: (body) => api.post('/admin/ai/precision/champion', body),
   aiSave: (body) => api.post('/admin/ai/saved', body),
@@ -769,8 +771,8 @@ export const ownerAPI = {
 
   // Insights — « Faites grandir votre commerce ».
   insightsPage: () => api.get('/owner/insights/page'),
-  insightTemplate: (key, day, store) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`, {
-    params: { ...(day != null && day !== '' ? { day } : {}), ...(store ? { store } : {}) },
+  insightTemplate: (key, day, store, from) => api.get(`/owner/insights/templates/${encodeURIComponent(key)}`, {
+    params: { ...(day != null && day !== '' ? { day } : {}), ...(store ? { store } : {}), ...(from ? { from } : {}) },
   }),
   activateInsight: (action) => api.post(`/owner/insights/actions/${action}/activate`),
   setGoogleReview: (body) => api.put('/owner/insights/google-review', body),

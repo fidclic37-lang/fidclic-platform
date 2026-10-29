@@ -184,8 +184,12 @@ def get_detectors(request: Request = None, token_data: TokenData = Depends(requi
     tid = token_data.tenant_id
     scope = S.resolve(token_data, request)
     found = detect(tid, people(tid, scope))
-    return {"detectors": [{k: v for k, v in d.items() if k != "ids"} for d in found],
-            "window": second_visit_window(tid)}
+    out = [{k: v for k, v in d.items() if k != "ids"} for d in found]
+    # the journal of ideas (2026-10-29)
+    from features import reco_journal as RJ
+    RJ.shown(tid, "repere", out, scope.key)
+    RJ.attach(tid, out)
+    return {"detectors": out, "window": second_visit_window(tid)}
 
 
 # ---------------------------------------------------------------------------

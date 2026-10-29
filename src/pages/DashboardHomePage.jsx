@@ -16,6 +16,7 @@ import { eur } from '../lib/money';
 import CampaignLists from '../components/dashboard/CampaignLists';
 import IaSpotted from '../components/dashboard/IaSpotted';
 import CampaignDetail from '../components/campagnes/CampaignDetail';
+import RecoLastResult, { withFrom } from '../components/RecoLastResult';
 
 /**
  * Tableau de bord — the home page, built to the approved design.
@@ -616,7 +617,8 @@ export default function DashboardHomePage() {
                     </span>
                     <p className="text-[12.5px] font-bold leading-snug text-[#0B1C3F]">{r.title}</p>
                     <p className="mt-1 flex-1 text-[11.5px] leading-snug text-[#64748B]">{r.body}</p>
-                    <button type="button" onClick={() => navigate(r.to)}
+                    <RecoLastResult r={r} className="mt-1.5" />
+                    <button type="button" onClick={() => navigate(withFrom(r.to, 'dashboard'))}
                             className="mt-2.5 rounded-lg border border-[#E6EEFB] px-3 py-1.5 text-[12px] font-semibold text-[#2F6BFF] transition hover:border-[#2F6BFF]">
                       {r.cta}
                     </button>

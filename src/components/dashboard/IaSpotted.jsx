@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Sparkles, Clock, Repeat, TrendingDown, Send, Users, ChevronDown } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
 import { eur } from '../../lib/money';
+import RecoLastResult from '../RecoLastResult';
 
 /* Tableau de bord › « FidClic IA a repéré » (user, 2026-10-25): the client
    brain's three lists — habitués en retard, pas revenus après la 1ère visite,
@@ -70,13 +71,14 @@ export default function IaSpotted() {
                       <Users size={13} /> Voir les clients
                     </button>
                     <button type="button" data-testid={`ia-${r.key}-cta`}
-                            onClick={() => navigate(`/dashboard/campaigns?template=${encodeURIComponent(r.template)}&from=dashboard`)}
+                            onClick={() => navigate(`/dashboard/campaigns?template=${encodeURIComponent(r.template)}&from=repere`)}
                             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#5B3FD6] px-3 text-[12.5px] font-semibold text-white hover:bg-[#4C32C0]">
                       <Send size={13} /> Préparer le message
                     </button>
                   </>
                 )}
               </div>
+              <RecoLastResult r={r} className="mt-1.5" />
               {open === r.key && <p className="mt-2 rounded-lg bg-[#F8FAFF] px-3 py-2 text-[12.5px] leading-relaxed text-[#475569]">{r.why}</p>}
             </li>
           );

@@ -956,7 +956,9 @@ def _prepare_step(shop, step: Dict[str, Any]) -> Optional[str]:
         return None
     res = C.compose(body, token_data=type("T", (), {"tenant_id": shop.tid})())
     _db.campaigns.update_one({"id": res["id"]}, {"$set": {"copilot_step": step["id"],
-                                                          "template": step["template"]}})
+                                                          "template": step["template"],
+                                                          # the journal of ideas: what the Autopilot sent
+                                                          "reco_key": step["template"], "reco_surface": "autopilot"}})
     return res["id"]
 
 
@@ -1072,6 +1074,10 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
         recs = recs[:cap]
     fc = forecast_week(shop)
     opps = opportunities(shop, fc)
+    # the journal of ideas (2026-10-29): shown, and what each brought last time
+    from features import reco_journal as RJ
+    RJ.shown(shop.tid, "copilote", recs, scope.key)
+    RJ.attach(shop.tid, recs)
     return {
         "shop": {"name": shop.tenant.get("name") or "votre commerce", "sector": shop.sector},
         "scope": scope.describe(),
@@ -1110,6 +1116,9 @@ def feedback(key: str, body: Feedback, request: Request = None,
     if body.kind in FEEDBACK_DAYS:
         row["until"] = at + timedelta(days=FEEDBACK_DAYS[body.kind])
     _db.copilot_feedback.insert_one(row)
+    from features import reco_journal as RJ
+    RJ.event(token_data.tenant_id, key, {"not_relevant": "dismissed"}.get(body.kind, body.kind), "copilote",
+             row["store_key"], at)
     return {"ok": True}
 
 
