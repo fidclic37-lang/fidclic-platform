@@ -60,8 +60,14 @@ def main():
     today = CF._paris_today()
 
     def born(years_ago, days=0):
-        d = dt.date(today.year - years_ago, today.month, min(today.day, 28)) + dt.timedelta(days=days)
-        return d.strftime("%d/%m/%Y")
+        # today's day of the month, not « at most 28 »: on the 29th–31st that
+        # made a birthday tomorrow's, and « 85 and 364 days » a day short of 86
+        # (CI red from the 29th, 2026-10-29). Only a 29 February falls back.
+        try:
+            d = today.replace(year=today.year - years_ago)
+        except ValueError:
+            d = today.replace(year=today.year - years_ago, day=28)
+        return (d + dt.timedelta(days=days)).strftime("%d/%m/%Y")
 
     print("\nAge: 85 at most")
     check("85 today: welcome", CF.birth(born(85), need_year=True)["birth_date"])
