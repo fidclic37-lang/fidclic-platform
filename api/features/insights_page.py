@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import io
 import re
-from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -303,24 +302,32 @@ class Shop:
         self.sells_products = self.play["items"][0] == "produit"
         self.people = list(_db.customers.find(S.customer_filter(scope) if scope else {"tenant_id": tid, "deleted_at": None},
                                               {"_id": 0}))
-        since = at - timedelta(days=90)
-        self.visits = list(_db.visits.find(
-            {"tenant_id": tid, "visit_time": {"$gte": since - timedelta(days=62)},
-             **(S.visit_filter(scope) if scope else {})},
-            {"_id": 0, "amount_paid": 1, "visit_time": 1, "items": 1, "customer_id": 1}))
+        # The periods the page reasons over, added up from the register of
+        # past days — today and the cut ends live (features/visit_days): no
+        # visit read whole, none judged for CA FidClic (not shown here). A
+        # visit dated after `at` is in none of them.
+        from features import visit_days as VD
+        start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_start = (start - timedelta(days=1)).replace(day=1)
+        tick = timedelta(microseconds=1)
+        spans = {"d15": (at - timedelta(days=15), at), "p15": (at - timedelta(days=30), at - timedelta(days=15) - tick),
+                 "d30": (at - timedelta(days=30), at), "d56": (at - timedelta(days=56), at),
+                 "d90": (at - timedelta(days=90), at),
+                 "month": (start, at), "prev_month": (prev_start, prev_start + (at - start))}
+        self.tot = dict(zip(spans, VD.span_many(tid, scope, list(spans.values()), at, judge=False)))
         # « Panier moyen » = what was spent ÷ the visits, as on Analyses (QA
         # F15: an average of each client's average said 15,56 € where
         # Analyses said 13,30 €): the last 30 days, else the whole history.
-        month = [v for v in self.visits if (t := _aware(v.get("visit_time"))) and t >= at - timedelta(days=30)]
-        if month:
-            self.shop_avg = sum(_num(v.get("amount_paid")) for v in month) / len(month)
+        month = self.tot["d30"]
+        if month.n:
+            self.shop_avg = month.revenue / month.n
             self.shop_avg_window = 30
         else:
             n = sum(int(_num(c.get("visits"))) for c in self.people)
             self.shop_avg = (sum(_num(c.get("total_amount_paid")) for c in self.people) / n) if n else 0.0
             self.shop_avg_window = None
-        self.monthly = sum(_num(v.get("amount_paid")) for v in self.visits
-                           if (t := _aware(v.get("visit_time"))) and t >= at - timedelta(days=30))
+        self.monthly = month.revenue
+        self._visits = None
         self.reviews = [r for r in _db.reviews.find({"tenant_id": tid}, {"_id": 0, "rating": 1,
                                                                           "customer_id": 1})
                         if self.mine is None or r.get("customer_id") in self.mine]
@@ -328,7 +335,17 @@ class Shop:
                                if (d := _aware(c.get("created_at"))) and (at - d).days <= 30])
         self.used = used_templates(tid, at, scope=scope)
 
-    # -- recent visits only, for the things that describe "now" -----------
+    # -- the visits themselves, read only when something asks -------------
+    # (the page's own figures come from `tot`)
+    @property
+    def visits(self) -> List[Dict[str, Any]]:
+        if self._visits is None:
+            self._visits = list(_db.visits.find(
+                {"tenant_id": self.tid, "visit_time": {"$gte": self.at - timedelta(days=152)},
+                 **(S.visit_filter(self.scope) if self.scope else {})},
+                {"_id": 0, "amount_paid": 1, "visit_time": 1, "items": 1, "customer_id": 1}))
+        return self._visits
+
     def recent(self, days: int = 90) -> List[Dict[str, Any]]:
         cut = self.at - timedelta(days=days)
         return [v for v in self.visits if (t := _aware(v.get("visit_time"))) and t >= cut]
@@ -344,17 +361,7 @@ def _hero(shop: Shop) -> Dict[str, Any]:
     a decline until its last day. And the headline never claims progress that
     is not there: a falling month is called a falling month.
     """
-    at = shop.at
-    start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    prev_start = (start - timedelta(days=1)).replace(day=1)
-    elapsed = at - start
-    prev_end = prev_start + elapsed
-
-    def rev(a, b):
-        return sum(_num(v.get("amount_paid")) for v in shop.visits
-                   if (t := _aware(v.get("visit_time"))) and a <= t <= b)
-
-    now, was = rev(start, at), rev(prev_start, prev_end)
+    now, was = shop.tot["month"].revenue, shop.tot["prev_month"].revenue
     if was <= 0:
         return {"direction": "start", "pct": None,
                 "title": "Votre activité démarre",
@@ -382,9 +389,7 @@ def _goal(shop: Shop) -> Dict[str, Any]:
         target = DH.goal_target(shop.tenant, shop.scope)
     else:
         target = _num(shop.tenant.get("monthly_revenue_goal"))
-    start = shop.at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    made = sum(_num(v.get("amount_paid")) for v in shop.visits
-               if (t := _aware(v.get("visit_time"))) and t >= start)
+    made = shop.tot["month"].revenue
     return {"target": _money(target), "reached": _money(made),
             "remaining": _money(max(0.0, target - made)),
             "pct": round(min(100, made / target * 100)) if target else None,
@@ -436,18 +441,12 @@ def _best_weekday(shop: Shop) -> Optional[Dict[str, Any]]:
 
     Needs at least three weeks of that day to say anything.
     """
-    rows = shop.recent(56)
-    if len(rows) < 20:
+    tot = shop.tot["d56"]
+    if tot.n < 20:
         return None
-    per_day: Dict[int, int] = defaultdict(int)
-    seen_dates: Dict[int, set] = defaultdict(set)
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        if t:
-            t = _paris(t)                  # the shop's own calendar, not UTC's (QA F19)
-            per_day[t.weekday()] += 1
-            seen_dates[t.weekday()].add(t.date())
-    avg = {d: per_day[d] / len(seen_dates[d]) for d in per_day if len(seen_dates[d]) >= 3}
+    # the shop's own calendar, not UTC's (QA F19)
+    per_day, seen_dates = tot.by_weekday()
+    avg = {d: per_day[d] / seen_dates[d] for d in per_day if seen_dates[d] >= 3}
     if len(avg) < 3:
         return None
     best = max(avg, key=avg.get)
@@ -482,21 +481,16 @@ def _qty(line: Dict[str, Any]) -> int:
 
 
 def _items_per_visit(shop: Shop) -> Optional[float]:
-    rows = [v for v in shop.recent(90) if v.get("items")]
-    if len(rows) < 5:
+    tot = shop.tot["d90"]
+    if tot.iv < 5:
         return None
-    n = sum(sum(_qty(i) for i in v["items"]) for v in rows)
-    return n / len(rows)
+    return tot.iq / tot.iv
 
 
 def _top_product(shop: Shop) -> Optional[str]:
-    tally: Counter = Counter()
-    for v in shop.recent(90):
-        for i in (v.get("items") or []):
-            name = str(i.get("name") or "").strip()
-            if name:
-                tally[name] += _qty(i)
-    return tally.most_common(1)[0][0] if tally else None
+    # the most sold; at equal sales the one that brought more, then by name
+    top = shop.tot["d90"].top_products(1)
+    return top[0]["name"] if top else None
 
 
 HOURS_DAYS = 90          # the period the créneaux are read on
@@ -516,20 +510,16 @@ def _hours(shop: Shop) -> Optional[Dict[str, Any]]:
     their UTC hour, so 14:48 in the shop read as « 12h » and the advice said
     « 11h–13h » to a shop that had no visit then. A tie goes to the slot that
     starts on the busier hour, so visits all at 14h read « 14h–16h »."""
-    rows = shop.recent(HOURS_DAYS)
-    if len(rows) < HOURS_MIN_VISITS:
+    tot = shop.tot["d90"]                 # HOURS_DAYS
+    if tot.n < HOURS_MIN_VISITS:
         return None
-    per: Dict[int, int] = defaultdict(int)
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        if t:
-            per[_paris(t).hour] += 1
+    per = tot.by_hour()
     slots = {h: per.get(h, 0) + per.get(h + 1, 0) for h in range(7, 22)}
     busy = max(slots, key=lambda h: (slots[h], per.get(h, 0), -h))
     open_slots = {h: n for h, n in slots.items() if n > 0}
     quiet = min(open_slots, key=lambda h: (open_slots[h], h)) if len(open_slots) > 2 else None
     return {"busy": (busy, busy + 2), "quiet": (quiet, quiet + 2) if quiet is not None else None,
-            "visits": len(rows), "days": HOURS_DAYS}
+            "visits": tot.n, "days": HOURS_DAYS}
 
 
 def _satisfied(shop: Shop) -> int:

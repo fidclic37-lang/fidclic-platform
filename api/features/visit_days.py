@@ -56,7 +56,7 @@ from features import period as P
 
 _db = None
 ENABLED = True                 # False: every figure from the visits (the tests' reference)
-SCHEMA = 1                     # a row summed by another layout is summed again
+SCHEMA = 2                     # a row summed by another layout is summed again (2: iv, iq)
 MICRO = 1_000_000
 NONE = "~none"                 # the establishment of a visit with no branch_id
 COLL, STAMPS = "visit_days", "visit_days_stamps"
@@ -104,8 +104,11 @@ def _aware(value: Any) -> Optional[datetime]:
     return None
 
 
-def _micro(x: float) -> int:
-    return int(round(float(x) * MICRO))
+def _micro(x: Any) -> int:
+    try:
+        return int(round(float(x) * MICRO))
+    except (TypeError, ValueError):
+        return 0                 # « n/a » on a till line: nothing paid, as Insights read it
 
 
 def day_of(t: datetime) -> str:
@@ -138,7 +141,20 @@ def scope_keys(scope) -> Optional[Set[str]]:
 # summing
 # ---------------------------------------------------------------------------
 def _blank() -> Dict[str, Any]:
-    return {"n": 0, "r": 0, "h": {}, "p": {}, "src": {}, "att": [0, 0], "cand": 0}
+    return {"n": 0, "r": 0, "h": {}, "p": {}, "src": {}, "att": [0, 0], "cand": 0, "iv": 0, "iq": 0}
+
+
+def _units(item: Dict[str, Any]) -> int:
+    """How many of a product one till line holds, as Insights counts them
+    (insights_page._qty): « 2 » or 2, else 1."""
+    for k in ("qty", "quantity"):
+        try:
+            n = float(item.get(k))
+        except (TypeError, ValueError):
+            continue
+        if n:
+            return int(n)
+    return 1
 
 
 def _add(agg: Dict[str, Any], v: Dict[str, Any], t: datetime, cls: Tuple[Optional[str], bool, bool]) -> None:
@@ -148,12 +164,20 @@ def _add(agg: Dict[str, Any], v: Dict[str, Any], t: datetime, cls: Tuple[Optiona
     h = agg["h"].setdefault(P.local(t).hour, [0, 0])
     h[0] += 1
     h[1] += r
-    for item in (v.get("items") or []):
+    lines = [i for i in (v.get("items") or []) if isinstance(i, dict)]
+    if v.get("items"):
+        # Insights' « produits par visite »: the visits with a till, every line
+        agg["iv"] += 1
+        agg["iq"] += sum(_units(i) for i in lines)
+    for item in lines:
         name = str(item.get("name") or "").strip()
         if not name:
             continue
         # The Scan page writes `qty`; older imports wrote `quantity`.
-        qty = int(item.get("qty") or item.get("quantity") or 1)
+        try:
+            qty = int(item.get("qty") or item.get("quantity") or 1)
+        except (TypeError, ValueError):
+            qty = _units(item)
         p = agg["p"].setdefault(name, [0, 0])
         p[0] += qty
         p[1] += _micro(float(item.get("price") or 0) * qty)
@@ -189,13 +213,14 @@ def _pack(stores: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Lists, not maps: a product named « Thé.vert » or « $pécial » is no field name."""
     return [{"s": s, "n": a["n"], "r": a["r"], "h": [[k, *v] for k, v in sorted(a["h"].items())],
              "p": [[k, *v] for k, v in a["p"].items()], "src": [[k, *v] for k, v in a["src"].items()],
-             "att": a["att"], "cand": a["cand"]} for s, a in stores.items()]
+             "att": a["att"], "cand": a["cand"], "iv": a["iv"], "iq": a["iq"]} for s, a in stores.items()]
 
 
 def _unpack(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {x["s"]: {"n": x["n"], "r": x["r"], "h": {k: [n, r] for k, n, r in x["h"]},
                      "p": {k: [q, r] for k, q, r in x["p"]}, "src": {k: [n, r] for k, n, r in x["src"]},
-                     "att": list(x["att"]), "cand": x.get("cand", 0)} for x in rows or []}
+                     "att": list(x["att"]), "cand": x.get("cand", 0),
+                     "iv": x.get("iv", 0), "iq": x.get("iq", 0)} for x in rows or []}
 
 
 class Totals:
@@ -208,10 +233,14 @@ class Totals:
         self.products: Dict[str, List[int]] = {}
         self.src: Dict[str, List[int]] = {}
         self.att = [0, 0]
+        self.iv = 0              # visits with a till
+        self.iq = 0              # …and the units on them
 
     def add(self, day: str, agg: Dict[str, Any]) -> None:
         self.n += agg["n"]
         self.r += agg["r"]
+        self.iv += agg.get("iv", 0)
+        self.iq += agg.get("iq", 0)
         for h, (n, r) in agg["h"].items():
             x = self.hours.setdefault((day, int(h)), [0, 0])
             x[0] += n
@@ -240,6 +269,24 @@ class Totals:
                 "sources": {k: {"revenue": round(r / MICRO, 2), "visits": n} for k, (n, r) in by.items()},
                 "attendus": {"revenue": round(self.att[1] / MICRO, 2), "visits": self.att[0]}}
 
+    def by_hour(self) -> Dict[int, int]:
+        """Visits per hour of the shop's clock."""
+        out: Dict[int, int] = {}
+        for (_, hour), (n, _) in self.hours.items():
+            out[hour] = out.get(hour, 0) + n
+        return out
+
+    def by_weekday(self) -> Tuple[Dict[int, int], Dict[int, int]]:
+        """Visits per weekday (0 = lundi), and on how many dates each came."""
+        visits: Dict[int, int] = {}
+        dates: Dict[int, Set[str]] = {}
+        for (day, _), (n, _) in self.hours.items():
+            if n:
+                wd = date.fromisoformat(day).weekday()
+                visits[wd] = visits.get(wd, 0) + n
+                dates.setdefault(wd, set()).add(day)
+        return visits, {wd: len(d) for wd, d in dates.items()}
+
     def top_products(self, k: int) -> List[Dict[str, Any]]:
         # the most sold; at equal sales the one that brought more, then by name
         # (before, a tie fell in whatever order the database returned the rows)
@@ -255,6 +302,28 @@ def _raw(tid: str, lo: datetime, hi: datetime, hi_inclusive: bool, vfilter: Dict
     return list(_db.visits.find(
         {"tenant_id": tid, "visit_time": {"$gte": lo, ("$lte" if hi_inclusive else "$lt"): hi}, **vfilter},
         {"_id": 0, "customer_id": 1, "amount_paid": 1, "visit_time": 1, "items": 1, "branch_id": 1}))
+
+
+def _raw_many(tid: str, pieces: List[Tuple[datetime, datetime, bool]],
+              vfilter: Dict[str, Any]) -> Dict[Tuple[datetime, datetime, bool], List[Dict[str, Any]]]:
+    """The visits of each piece, in one trip to the database: a page that
+    reads seven periods has seven cut ends (insights_page.Shop)."""
+    if len(pieces) < 2:
+        return {p: _raw(tid, p[0], p[1], p[2], vfilter) for p in pieces}
+    ors = [{"visit_time": {"$gte": a, ("$lte" if inc else "$lt"): b}} for a, b, inc in pieces]
+    rows = list(_db.visits.find(
+        {"tenant_id": tid, "$or": ors, **vfilter},
+        {"_id": 0, "customer_id": 1, "amount_paid": 1, "visit_time": 1, "items": 1, "branch_id": 1}))
+    out: Dict[Tuple[datetime, datetime, bool], List[Dict[str, Any]]] = {p: [] for p in pieces}
+    for v in rows:
+        t = v.get("visit_time")
+        if not isinstance(t, datetime):              # what the date filter matched: dates only
+            continue
+        t = _aware(t)
+        for a, b, inc in pieces:
+            if a <= t and (t <= b if inc else t < b):
+                out[(a, b, inc)].append(v)
+    return out
 
 
 def _cut(a: datetime, b: datetime, today: str) -> Tuple[List[str], List[Tuple[datetime, datetime, bool]]]:
@@ -406,7 +475,8 @@ def span_many(tid: str, scope, ranges: List[Tuple[datetime, datetime]], at: Opti
     reg = {d: _unpack(r["stores"]) for d, r in _register(tid, days).items()}
     # each live piece read and judged once (today is the same piece for the
     # period and the month)
-    live = {p: fold(tid, _raw(tid, p[0], p[1], p[2], vfilter), judge) for _, ps in plans for p in ps}
+    pieces = list(dict.fromkeys(p for _, ps in plans for p in ps))
+    live = {p: fold(tid, rows, judge) for p, rows in _raw_many(tid, pieces, vfilter).items()}
     out = []
     for full, ps in plans:
         tot = Totals()
