@@ -171,12 +171,14 @@ def _add(agg: Dict[str, Any], v: Dict[str, Any], t: datetime, cls: Tuple[Optiona
         s[1] += r
 
 
-def fold(tid: str, rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, Any]]]:
-    """{day: {establishment: sums}} for these visits."""
+def fold(tid: str, rows: List[Dict[str, Any]], judge: bool = True) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """{day: {establishment: sums}} for these visits. Without `judge`, no
+    visit is judged for CA FidClic — its sources and « attendus » stay at 0."""
     from features import fidclic_impact as FI
     rows = [v for v in rows if _aware(v.get("visit_time"))]
     out: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    for v, cls in zip(rows, FI.classify(tid, rows) if rows else []):
+    cls_all = FI.classify(tid, rows) if rows and judge else [(None, False, False)] * len(rows)
+    for v, cls in zip(rows, cls_all):
         t = _aware(v["visit_time"])
         agg = out.setdefault(day_of(t), {}).setdefault(store_of(v.get("branch_id")), _blank())
         _add(agg, v, t, cls)
@@ -387,8 +389,11 @@ def _register(tid: str, days: List[str]) -> Dict[str, Dict[str, Any]]:
     return rows
 
 
-def span_many(tid: str, scope, ranges: List[Tuple[datetime, datetime]], at: Optional[datetime] = None) -> List[Totals]:
-    """Each [a, b] period's Totals, for this shop and establishment(s)."""
+def span_many(tid: str, scope, ranges: List[Tuple[datetime, datetime]], at: Optional[datetime] = None,
+              judge: bool = True) -> List[Totals]:
+    """Each [a, b] period's Totals, for this shop and establishment(s). A page
+    that shows no CA FidClic passes judge=False: today's visits are then not
+    judged (no client brain built), and Totals.impact() means nothing."""
     from features import store_scope as S
     at = at or _now()
     keys = scope_keys(scope)
@@ -401,7 +406,7 @@ def span_many(tid: str, scope, ranges: List[Tuple[datetime, datetime]], at: Opti
     reg = {d: _unpack(r["stores"]) for d, r in _register(tid, days).items()}
     # each live piece read and judged once (today is the same piece for the
     # period and the month)
-    live = {p: fold(tid, _raw(tid, p[0], p[1], p[2], vfilter)) for _, ps in plans for p in ps}
+    live = {p: fold(tid, _raw(tid, p[0], p[1], p[2], vfilter), judge) for _, ps in plans for p in ps}
     out = []
     for full, ps in plans:
         tot = Totals()

@@ -30,7 +30,7 @@ from __future__ import annotations
 import csv
 import io
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -136,6 +136,26 @@ class Reader:
         span = self.end - self.start
         self.prev_end = self.start - timedelta(microseconds=1)
         self.prev_start = self.prev_end - span
+        self._totals = None
+
+    def totals(self):
+        """The period's figures and the period before's, CA FidClic included:
+        finished days from the register of past days, today and the cut ends
+        from the visits — the same figures, without reading every visit
+        (features/visit_days)."""
+        if self._totals is None:
+            from features import visit_days as VD
+            self._totals = VD.span_many(self.tid, self.scope, [(self.start, self.end),
+                                                               (self.prev_start, self.prev_end)], self.at)
+        return self._totals
+
+    def counts(self):
+        """The period's visits, hours and products only — no period before,
+        no CA FidClic: today's visits are not judged (Moments, Produits)."""
+        if self._totals is not None:
+            return self._totals[0]
+        from features import visit_days as VD
+        return VD.span_many(self.tid, self.scope, [(self.start, self.end)], self.at, judge=False)[0]
 
     def visits(self, start=None, end=None) -> List[Dict[str, Any]]:
         return list(_db.visits.find(
@@ -187,10 +207,6 @@ class Reader:
             return []
 
 
-def _revenue(rows) -> float:
-    return sum(float(v.get("amount_paid") or 0) for v in rows)
-
-
 def _empty(label: str) -> Dict[str, Any]:
     return {"empty": True, "message": label}
 
@@ -200,9 +216,9 @@ def _empty(label: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def _tab_vue(r: Reader) -> Dict[str, Any]:
     from features import clients_page as CP
-    rows, prev = r.visits(), r.visits(r.prev_start, r.prev_end)
+    tot, prev = r.totals()
     people, rules = r.customers(), r.rules()
-    revenue, prev_revenue = _revenue(rows), _revenue(prev)
+    revenue, prev_revenue = tot.revenue, prev.revenue
     # « Clients fidélisés » / « Clients inactifs »: the Clients page's own
     # (the shop's Règles clients) — the same figures as the Tableau de bord.
     loyal = sum(1 for c in people if CP.is_loyal(c, r.at, rules))
@@ -213,7 +229,7 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
                    if r.prev_start <= (_aware(c.get("created_at")) or r.at) <= r.prev_end)
 
     # CA FidClic: the visits a FidClic feature brought in (features/fidclic_impact.py).
-    imp, prev_imp = FI.impact(r.tid, rows), FI.impact(r.tid, prev)
+    imp, prev_imp = tot.impact(), prev.impact()
     src, prev_src = imp["sources"], prev_imp["sources"]
     referral, prev_referral = src["parrainage"]["revenue"], prev_src["parrainage"]["revenue"]
     campaign_visits = src["campagnes"]["visits"] + src["automatisations"]["visits"]
@@ -231,12 +247,12 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
          # Opens the Parrainage page itself (user, 2026-10-03), not a panel here.
          "hint": "Clients venus par parrainage", "to": "/dashboard/referral", "row": 1},
         {"key": "basket", "label": "Panier moyen", "unit": "€",
-         "value": _money(revenue / len(rows)) if rows else 0, "icon": "bag",
-         "delta_pct": _delta(revenue / len(rows) if rows else 0,
-                             prev_revenue / len(prev) if prev else 0), "row": 1},
+         "value": _money(revenue / tot.n) if tot.n else 0, "icon": "bag",
+         "delta_pct": _delta(revenue / tot.n if tot.n else 0,
+                             prev_revenue / prev.n if prev.n else 0), "row": 1},
         # Opens « Visites par jour de la semaine », highlighted (user, 2026-10-03).
-        {"key": "visits", "label": "Visites total", "value": len(rows), "icon": "activity",
-         "delta_pct": _delta(len(rows), len(prev)), "anchor": "weekdays", "row": 2},
+        {"key": "visits", "label": "Visites total", "value": tot.n, "icon": "activity",
+         "delta_pct": _delta(tot.n, prev.n), "anchor": "weekdays", "row": 2},
         {"key": "campaign_visits", "label": "Visites avec campagnes", "value": campaign_visits,
          "icon": "send", "delta_pct": _delta(campaign_visits, prev_campaign_visits),
          "hint": f"Venus dans les {FI.WINDOW_DAYS} jours suivant une campagne", "tab": "campagnes", "row": 2},
@@ -252,7 +268,7 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
     # The clients' whole history (« Comportement » before, user 2026-10-02).
     life = _lifetime(people)
     gone = r.deleted_spend()
-    period_visits = round(len(rows) / len(people), 1) if people else 0.0
+    period_visits = round(tot.n / len(people), 1) if people else 0.0
     strip += [
         {"key": "ltv", "label": "LTV moyenne", "unit": "€", "value": life["ltv"], "icon": "chart",
          "delta_pct": None, "hint": "Dépense moyenne d'un client depuis son inscription",
@@ -295,13 +311,13 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
     return {
         "strip": strip,
         "impact": impact,
-        "revenue_series": _series(rows, r, money=True),
+        "revenue_series": _revenue_series(tot, r),
         "new_series": _new_series(people, r),
         "new_total": new_in_window, "new_delta": _delta(new_in_window, prev_new),
         "revenue_total": _money(revenue), "revenue_delta": _delta(revenue, prev_revenue),
-        "hours": _hours_grid(rows),
-        "moments": _moments(rows),
-        "products": _top_products(rows),
+        "hours": _hours_grid(tot),
+        "moments": _moments(tot),
+        "products": tot.top_products(5),
         "status_mix": CP.status_mix(people, r.at, rules),
         "avg_visits": {"lifetime": life["avg_visits"], "period": period_visits},
         "basket_bands": _basket_bands(people),
@@ -309,21 +325,19 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
 
 
 # One point per Paris day — or per hour for « Aujourd'hui » (features/period.py).
-def _series(rows, r: Reader, money: bool = False) -> List[Dict[str, Any]]:
+def _revenue_series(tot, r: Reader) -> List[Dict[str, Any]]:
+    from features import visit_days as VD
     slots = P.slots(r.start, r.end, r.days)
-    per_day = {x["date"]: 0.0 for x in slots}
+    money = {x["date"]: 0 for x in slots}
     visits = {x["date"]: 0 for x in slots}
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        key = P.key_of(t, r.days) if t else None
-        if key in per_day:
-            per_day[key] += float(v.get("amount_paid") or 0) if money else 1
-            visits[key] += 1
-    # On a revenue series, « visits » is what the point's card shows under the
-    # figure — the visits behind that day, and with them the basket.
-    return [{**x, "value": _money(per_day[x["date"]]) if money else int(per_day[x["date"]]),
-             **({"visits": visits[x["date"]]} if money else {})}
-            for x in slots]
+    for (day, hour), (n, rev) in tot.hours.items():
+        key = f"{day}T{hour:02d}:00" if P.hourly(r.days) else day
+        if key in money:
+            money[key] += rev
+            visits[key] += n
+    # « visits » is what the point's card shows under the figure — the visits
+    # behind that day, and with them the basket.
+    return [{**x, "value": _money(money[x["date"]] / VD.MICRO), "visits": visits[x["date"]]} for x in slots]
 
 
 def _new_series(people, r: Reader) -> List[Dict[str, Any]]:
@@ -337,39 +351,20 @@ def _new_series(people, r: Reader) -> List[Dict[str, Any]]:
     return [{**x, "value": per_day[x["date"]]} for x in slots]
 
 
-def _hours_grid(rows) -> Dict[str, Any]:
+def _hours_grid(tot) -> Dict[str, Any]:
     grid = [[0 for _ in HOURS] for _ in WEEKDAYS]
     outside = 0
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        if not t:
-            continue
-        t = P.local(t)          # the hour on the shop's clock
+    for (day, hour), (n, _) in tot.hours.items():     # the hour on the shop's clock
+        wd = date.fromisoformat(day).weekday()
         for hi, (lo, hi_h) in enumerate(HOURS):
-            if lo <= t.hour < hi_h:
-                grid[t.weekday()][hi] += 1
+            if lo <= hour < hi_h:
+                grid[wd][hi] += n
                 break
         else:
-            outside += 1
+            outside += n
     return {"weekdays": WEEKDAYS, "slots": [f"{a}h-{b}h" for a, b in HOURS], "grid": grid,
             "peak": max((n for row in grid for n in row), default=0),
             "outside": outside, "covers": f"{HOURS[0][0]}h – {HOURS[-1][1]}h"}
-
-
-def _top_products(rows, limit: int = 5) -> List[Dict[str, Any]]:
-    tally: Dict[str, Dict[str, float]] = {}
-    for v in rows:
-        for item in (v.get("items") or []):
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            acc = tally.setdefault(name, {"sales": 0, "revenue": 0.0})
-            # The Scan page writes `qty`; older imports wrote `quantity`.
-            qty = int(item.get("qty") or item.get("quantity") or 1)
-            acc["sales"] += qty
-            acc["revenue"] += float(item.get("price") or 0) * qty
-    return [{"name": n, "sales": int(a["sales"]), "revenue": _money(a["revenue"])}
-            for n, a in sorted(tally.items(), key=lambda kv: -kv[1]["sales"])[:limit]]
 
 
 def _tab_campagnes(r: Reader) -> Dict[str, Any]:
@@ -497,21 +492,19 @@ def _tab_avis(r: Reader) -> Dict[str, Any]:
 
 
 def _tab_moments(r: Reader) -> Dict[str, Any]:
-    rows = r.visits()
-    if not rows:
+    tot = r.counts()
+    if not tot.n:
         return {"empty": True, "message": "Aucune visite sur cette période."}
-    return _moments(rows)
+    return _moments(tot)
 
 
-def _moments(rows) -> Dict[str, Any]:
+def _moments(tot) -> Dict[str, Any]:
     """The hours grid, the weekdays, and the busiest of each — on the shop's clock."""
     per_weekday = [0] * 7
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        if t:
-            per_weekday[P.local(t).weekday()] += 1
+    for (day, _), (n, _) in tot.hours.items():
+        per_weekday[date.fromisoformat(day).weekday()] += n
     best_day = max(range(7), key=lambda i: per_weekday[i])
-    grid = _hours_grid(rows)
+    grid = _hours_grid(tot)
     flat = [(d, h, grid["grid"][d][h]) for d in range(7) for h in range(len(HOURS))]
     best = max(flat, key=lambda t: t[2])
     return {
@@ -520,13 +513,13 @@ def _moments(rows) -> Dict[str, Any]:
         "best_day": {"label": WEEKDAYS[best_day], "visits": per_weekday[best_day]},
         "best_slot": {"label": f"{WEEKDAYS[best[0]]} {grid['slots'][best[1]]}",
                       "visits": best[2]} if best[2] else None,
-        "total": len(rows),
+        "total": tot.n,
     }
 
 
 def _tab_produits(r: Reader) -> Dict[str, Any]:
-    rows = r.visits()
-    products = _top_products(rows, limit=20)
+    tot = r.counts()
+    products = tot.top_products(20)
     if not products:
         return {"empty": True,
                 "message": "Aucun produit enregistré. Les ventes apparaissent quand vos "
