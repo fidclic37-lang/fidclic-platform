@@ -182,6 +182,8 @@ def event(tid: Optional[str], key: Any, kind: str, surface: Any, store_key: str 
         if not tid or not k or kind not in KINDS:
             return
         _write([_op(tid, k, surface_of(surface), kind, store_key or "all", at or _now(), sector=_sector(tid))])
+        from features import reco_ranking as RR
+        RR.forget(tid)
     except Exception as exc:
         print(f"reco_journal: {kind} not recorded ({exc})")
 

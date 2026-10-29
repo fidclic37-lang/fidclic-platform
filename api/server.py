@@ -12275,6 +12275,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["brain_journal"] = _BJ.tick()
     except Exception as e:
         out["failures"].append({"step": "brain_journal", "error": str(e)[:120]})
+    try:                         # the ranking that learns: the network, relearned once a day
+        from features import reco_ranking as _RR
+        out["reco_network"] = _RR.learn_due(now)
+    except Exception as e:
+        out["failures"].append({"step": "reco_network", "error": str(e)[:120]})
     return out
 
 

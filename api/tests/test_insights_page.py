@@ -415,7 +415,7 @@ def main():
           "reportlab" in open(os.path.join(here, "..", "requirements.txt")).read())
     comp = open(os.path.join(here, "..", "..", "src", "pages", "CampagnesPage.jsx")).read()
     check("the composer reads ?template= and asks the server for the copy",
-          "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))" in comp)
+          "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'), params.get('from'))" in comp)
     wiz = open(os.path.join(here, "..", "..", "src", "components", "campagnes", "CampaignWizard.jsx")).read()
     check("… and sends the recommendation's key with the campaign, so it can step aside",
           "st.template = /^(client|produit|brain|ia):/.test(key) ? key.split(':')[0] : key;" in comp

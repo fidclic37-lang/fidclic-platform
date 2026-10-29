@@ -17,7 +17,8 @@ test('the three lists, why, their clients and the message', async ({ page, reque
   const br = await (await request.get('/api/owner/branches', { headers: H })).json();
   const store = ((br && br.branches) || br || []).find((x) => x.status !== 'closed')?.id || '';
   const det = (await (await request.get('/api/owner/brain/detectors', { headers: { ...H, 'X-FidClic-Store': store } })).json()).detectors;
-  expect(det.map((d) => d.key)).toEqual(['en_retard', 'one_timers', 'moins_souvent']);
+  // the three lists; their order is the learning ranking's (2026-10-30), not fixed
+  expect(det.map((d) => d.key).sort()).toEqual(['en_retard', 'moins_souvent', 'one_timers']);
 
   await page.goto('/login');
   await page.evaluate(([t, s]) => {

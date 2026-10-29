@@ -79,7 +79,8 @@ export default function IaSpotted() {
                 )}
               </div>
               <RecoLastResult r={r} className="mt-1.5" />
-              {open === r.key && <p className="mt-2 rounded-lg bg-[#F8FAFF] px-3 py-2 text-[12.5px] leading-relaxed text-[#475569]">{r.why}</p>}
+              {open === r.key && <p className="mt-2 rounded-lg bg-[#F8FAFF] px-3 py-2 text-[12.5px] leading-relaxed text-[#475569]">{r.why}
+                {r.why_rank?.text && <span data-testid="reco-why" className="mt-1 block text-[#64748B]">En premier ? {r.why_rank.text}</span>}</p>}
             </li>
           );
         })}

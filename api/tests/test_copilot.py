@@ -177,7 +177,8 @@ def main():
     for _ in range(2):
         K.feedback("seconde_visite", K.Feedback(kind="accepted"), token_data=T())
     after = {r["key"]: r for r in K.recommendations(shop)}["seconde_visite"]["score"]
-    check("a card the merchant keeps acting on rises", abs(after - before * 1.30) < 1e-6)
+    # the ranking that learns (2026-10-30): taken ideas rise — by what was learned, not a fixed +15 %
+    check("a card the merchant keeps acting on rises", after > before)
     try:
         K.feedback("x", K.Feedback(kind="whatever"), token_data=T())
         bad = False

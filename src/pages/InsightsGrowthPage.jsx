@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import RecoLastResult from '../components/RecoLastResult';
+import RecoLastResult, { RecoWhy } from '../components/RecoLastResult';
 
 /**
  * Insights — « Faites grandir votre commerce », built to the approved mockup.
@@ -192,12 +192,13 @@ const CtaButton = ({ item, onAct, busy, full = false }) => {
       {item.cta.label}
     </button>
   );
-  // « La dernière fois : +X € » under the button, when this idea was measured here
-  if (!item.last_result?.text) return button;
+  // « La dernière fois : +X € » and « Pourquoi en premier ? » under the button
+  if (!item.last_result?.text && !item.why_rank?.text) return button;
   return (
     <span className={`${full ? 'flex w-full' : 'inline-flex'} flex-col items-stretch gap-1`}>
       {button}
       <RecoLastResult r={item} className="text-center" />
+      <RecoWhy r={item} className="text-center" />
     </span>
   );
 };
