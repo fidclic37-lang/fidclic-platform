@@ -10,7 +10,9 @@ Mounts at:
 WHY ONE PAYLOAD
     The page draws eleven panels off the same month of visits. Asking for it
     eleven times would read the same rows eleven times; this reads them once and
-    hands back what each panel needs.
+    hands back what each panel needs. The finished days come from the register
+    of past days (features/visit_days, 2026-10-28) — only today and the cut
+    ends of a period are read from the visits.
 
 WHAT IS COUNTED, AND FROM WHERE
     Every figure comes from `visits`, `customers`, `campaigns` and
@@ -31,7 +33,7 @@ WHAT IS COUNTED, AND FROM WHERE
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -144,17 +146,6 @@ def set_goal(body: Goal, request: Request = None,
 # ---------------------------------------------------------------------------
 # the page
 # ---------------------------------------------------------------------------
-def _visits(tid: str, start: datetime, end: datetime, scope: Optional["S.Scope"] = None) -> List[Dict[str, Any]]:
-    return list(_db.visits.find(
-        {"tenant_id": tid, "visit_time": {"$gte": start, "$lte": end},
-         **(S.visit_filter(scope) if scope else {})},
-        {"_id": 0, "customer_id": 1, "amount_paid": 1, "visit_time": 1, "items": 1}))
-
-
-def _revenue(rows: List[Dict[str, Any]]) -> float:
-    return sum(float(v.get("amount_paid") or 0) for v in rows)
-
-
 def _cards_lost(tid: str, scope, at: datetime) -> Dict[str, Any]:
     from features import card_status as CS
     try:
@@ -233,13 +224,18 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     prev_start = prev_end - span
 
     tenant = _db.tenants.find_one({"id": tid}) or {}
-    rows = _visits(tid, start, end, scope)
-    prev_rows = _visits(tid, prev_start, prev_end, scope)
+    # The period, the one before and the month: finished days from the
+    # register of past days, today and the cut ends from the visits — the
+    # same figures, without reading every visit (features/visit_days).
+    from features import visit_days as VD
+    month_start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    tot, prev_tot, month_tot = VD.span_many(
+        tid, scope, [(start, end), (prev_start, prev_end), (month_start, at)], at)
     from features import clients_page as CP
     # The Clients page's columns: the shop's rules may read any of them.
     customers = list(_db.customers.find(S.customer_filter(scope), CP.FIELDS))
 
-    revenue, prev_revenue = _revenue(rows), _revenue(prev_rows)
+    revenue, prev_revenue = tot.revenue, prev_tot.revenue
     # « Clients fidélisés » and « Clients inactifs » are the Clients page's own
     # (the shop's Règles clients, features/clients_page.py): a click on a card
     # opens a list with exactly that many people (user, 2026-10-02).
@@ -268,8 +264,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     ]
 
     # ---- the month's goal ---------------------------------------------------
-    month_start = at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month_revenue = _revenue(_visits(tid, month_start, at, scope))
+    month_revenue = month_tot.revenue
     goal_amount = goal_target(tenant, scope)
     goal = {
         "target": _money(goal_amount),
@@ -284,8 +279,8 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     # CA FidClic: only the visits a FidClic feature brought in — a campaign, a
     # proximity push, an offer, an automation received in the 15 days before,
     # or a filleul's (features/fidclic_impact.py). A plain scan is not counted.
-    impact_now = FI.impact(tid, rows)
-    impact_value, prev_impact = impact_now["revenue"], FI.impact(tid, prev_rows)["revenue"]
+    impact_now = tot.impact()
+    impact_value, prev_impact = impact_now["revenue"], prev_tot.impact()["revenue"]
     impact = {
         "value": _money(impact_value), "delta_pct": _delta(impact_value, prev_impact),
         "note": "CA des clients revenus grâce à FidClic : campagnes, géolocalisation, offres, automatisations, parrainage",
@@ -296,12 +291,12 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     per_day_rev = {s["date"]: 0.0 for s in P.slots(start, end, days)}
     labels = {s["date"]: s.get("label") for s in P.slots(start, end, days)}
     per_day_visits = {d: 0 for d in per_day_rev}
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        k = P.key_of(t, days) if t else None
+    for (day, hour), (n, money) in tot.hours.items():
+        k = f"{day}T{hour:02d}:00" if P.hourly(days) else day
         if k in per_day_rev:
-            per_day_rev[k] += float(v.get("amount_paid") or 0)
-            per_day_visits[k] += 1
+            per_day_rev[k] += money
+            per_day_visits[k] += n
+    per_day_rev = {k: x / VD.MICRO for k, x in per_day_rev.items()}
     # « visits » is what the point's card shows under the figure — the visits
     # behind that day's revenue, and with them the basket (user, 2026-10-16).
     revenue_series = [{"date": d, "label": labels[d], "value": _money(per_day_rev[d]),
@@ -345,31 +340,16 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
                  "sales": attributed, "best": best}
 
     # ---- products ----------------------------------------------------------------
-    tally: Dict[str, Dict[str, float]] = {}
-    for v in rows:
-        for item in (v.get("items") or []):
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            acc = tally.setdefault(name, {"sales": 0, "revenue": 0.0})
-            # The Scan page writes `qty`; older imports wrote `quantity`.
-            qty = int(item.get("qty") or item.get("quantity") or 1)
-            acc["sales"] += qty
-            acc["revenue"] += float(item.get("price") or 0) * qty
-    products = [{"name": n, "sales": int(a["sales"]), "revenue": _money(a["revenue"])}
-                for n, a in sorted(tally.items(), key=lambda kv: -kv[1]["sales"])[:5]]
+    products = tot.top_products(5)
 
     # ---- when people come ------------------------------------------------------
     grid = [[0 for _ in HOURS] for _ in WEEKDAYS]
     outside = 0
-    for v in rows:
-        t = _aware(v.get("visit_time"))
-        if not t:
-            continue
-        t = P.local(t)          # the hour on the shop's clock
+    for (day, hour), (n, _) in tot.hours.items():     # the hour on the shop's clock
+        wd = date.fromisoformat(day).weekday()
         for hi, (lo, hi_h) in enumerate(HOURS):
-            if lo <= t.hour < hi_h:
-                grid[t.weekday()][hi] += 1
+            if lo <= hour < hi_h:
+                grid[wd][hi] += n
                 break
         else:
             # The design's grid runs 8h–20h, but a bar or a bakery trades
@@ -377,7 +357,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
             # silently dropped, so the page can say the grid is not the whole
             # story instead of showing a shop its quietest hours as its only
             # hours.
-            outside += 1
+            outside += n
     peak = max((n for row in grid for n in row), default=0)
     hours = {"weekdays": WEEKDAYS, "slots": [f"{a}h – {b}h" for a, b in HOURS],
              "grid": grid, "peak": peak, "outside": outside,

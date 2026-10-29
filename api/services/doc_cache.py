@@ -26,11 +26,19 @@ WHAT IT DELIBERATELY LEAVES ALONE
 
     Outside a request — crons, startup, scripts — the contextvar is unset and
     nothing is cached at all.
+
+WRITE HOOKS
+    The same wrapper lets a feature hear every write to a collection, wherever
+    it comes from: `on_write(name, fn)`. `fn(collection, method, args, kwargs)`
+    runs before the write and may return a callable run after it (never let it
+    break the write). The register of past days (features/visit_days) hears
+    `visits` and what decides CA FidClic this way, instead of every writer
+    having to remember it.
 """
 from __future__ import annotations
 
 import contextvars
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 # Read many times per request, written rarely, and never by the till.
 CACHED = ("tenants", "card_templates", "plan_settings",
@@ -38,6 +46,13 @@ CACHED = ("tenants", "card_templates", "plan_settings",
 WRITES = ("insert_one", "insert_many", "update_one", "update_many", "replace_one",
           "delete_one", "delete_many", "find_one_and_update", "find_one_and_replace",
           "find_one_and_delete", "bulk_write")
+
+HOOKS: Dict[str, Callable[..., Optional[Callable[[], None]]]] = {}
+
+
+def on_write(name: str, fn: Callable[..., Optional[Callable[[], None]]]) -> None:
+    HOOKS[name] = fn
+
 
 _REQ: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
     "fidclic_doc_cache", default=None)
@@ -107,6 +122,35 @@ class Memo:
         return doc
 
 
+class Watched:
+    """A collection whose writes a hook hears (WRITE HOOKS above)."""
+
+    def __init__(self, real, name: str):
+        self._real = real
+        self._name = name
+
+    def __getattr__(self, attr):
+        target = getattr(self._real, attr)
+        hook = HOOKS.get(self._name)
+        if attr not in WRITES or hook is None:
+            return target
+
+        def wrapped(*a, **k):
+            try:
+                after = hook(self._real, attr, a, k)
+            except Exception as exc:          # a hook never stops a write
+                print(f"doc_cache: {self._name}.{attr} hook failed ({exc})")
+                after = None
+            out = target(*a, **k)
+            if after:
+                try:
+                    after()
+                except Exception as exc:
+                    print(f"doc_cache: {self._name}.{attr} after-hook failed ({exc})")
+            return out
+        return wrapped
+
+
 def install(db) -> None:
     """db.tenants / db["tenants"] … → the memo. Idempotent."""
     cls = type(db)
@@ -116,6 +160,13 @@ def install(db) -> None:
 
     def getitem(self, name):
         coll = orig_getitem(self, name)
+        if name in HOOKS:
+            box = self.__dict__.setdefault("_fidclic_watched", {})
+            w = box.get(name)
+            if w is None or w._real is not coll:
+                w = Watched(coll, name)
+                box[name] = w
+            return w
         if name not in CACHED:
             return coll
         # The SAME wrapper every time, not a fresh one per access: the driver
