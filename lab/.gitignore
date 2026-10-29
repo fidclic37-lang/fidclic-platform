@@ -1,0 +1,3 @@
+# FidClic Lab: exports and results stay on the laptop, never in git
+data/
+out/
