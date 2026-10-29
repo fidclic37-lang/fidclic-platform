@@ -76,10 +76,10 @@ function TemoinCard() {
       </header>
       <div className="grid gap-3 text-[13px] leading-snug text-[#334155] md:grid-cols-3">
         <p><b className="text-[#0B1C3F]">Comment ?</b> À chaque campagne groupée et à chaque relance automatique (clients inactifs, géolocalisation),
-          {' '}<b>{t.share} % des clients</b>, tirés au hasard, ne reçoivent pas le message. Un nouveau tirage à chaque envoi : personne n'est mis de côté pour de bon.</p>
+          {' '}<b>{t.share} % des clients</b> (au moins {t.min_hold_send || 4}, jamais plus de la moitié), tirés au hasard, ne reçoivent pas le message. Un nouveau tirage à chaque envoi : personne n'est mis de côté pour de bon.</p>
         <p><b className="text-[#0B1C3F]">Pourquoi ?</b> {t.window_days} jours après, FidClic compare leurs visites à celles des clients qui ont reçu le message.
           La différence, c'est ce que le message a vraiment rapporté : « +X € grâce à FidClic » dans Analyses, le détail des campagnes et des automatisations.</p>
-        <p><b className="text-[#0B1C3F]">Jamais :</b> anniversaire, récompense, bienvenue, ni un message envoyé à un seul client. Moins de 7 destinataires : personne n'est retenu.
+        <p><b className="text-[#0B1C3F]">Jamais :</b> anniversaire, récompense, bienvenue, ni un message envoyé à un seul client. Moins de 3 destinataires : personne n'est retenu.
           Les noms du groupe témoin ne sont pas affichés, pour ne pas fausser la mesure.</p>
       </div>
       <p className={`mt-3 rounded-lg px-3 py-2 text-[12.5px] ${t.enabled ? 'bg-[#F5F3FF] text-[#4C1D95]' : 'bg-[#FFF7ED] text-[#9A3412]'}`}>

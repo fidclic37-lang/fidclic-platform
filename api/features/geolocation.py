@@ -37,6 +37,7 @@ HOW HONEST ARE THE NUMBERS
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import hashlib
 import io
 import math
@@ -537,7 +538,7 @@ def export_csv(
     start, end = _window(date_from, date_to)
     d = compute(token_data.tenant_id, start, end, mode, scope, S.resolve(token_data, request), population)
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Section", "Libellé", "Détail", "Clients", "Part (%)"])
     for z in d["catchment"]["zones"]:
         w.writerow(["Zone de chalandise", z["label"],

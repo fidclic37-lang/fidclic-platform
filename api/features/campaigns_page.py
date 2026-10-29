@@ -328,7 +328,7 @@ def audience_preview(req: PreviewIn, request: Request = None,
                   "next_reward": tpl.get("reward_description") or "votre récompense"}
     # how many of them the groupe témoin will keep out of this send (told on screen)
     from features import temoin as T
-    held = T.hold_count(len(people)) if T.for_campaign(req.template) and T.enabled(tid) else 0
+    held = T.hold_count(len(people)) if T.for_campaign(req.template, len(people)) and T.enabled(tid) else 0
     return {"count": len(people), "label": label, "zone": zone, "sample": sample, "names": names,
             "ids": [c["id"] for c in people] if len(people) <= 5000 else None,
             "temoin": held, "temoin_share": int(T.SHARE * 100)}

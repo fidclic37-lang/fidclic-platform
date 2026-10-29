@@ -26,6 +26,7 @@ What each number is (the same definitions as the rest of FidClic):
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import time
 from collections import defaultdict
@@ -379,7 +380,7 @@ def usage_export(tab: str = "commerces", ids: str = "", q: str = "", plan: str =
                  ia: str = "", geo: str = "", wallet: str = "", multi: str = "", usage: str = "", renew: str = "", sub: str = "",
                  within: str = "30", kind: str = "", token_data: TokenData = Depends(require_admin("analytics"))):
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     yn = lambda v: "Oui" if v else "Non"                             # noqa: E731
     geo_txt = {"on": "Activée", "off": "Incluse, non activée", "none": "Non incluse"}
     if tab == "plans":

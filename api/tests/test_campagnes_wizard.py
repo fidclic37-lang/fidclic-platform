@@ -38,6 +38,14 @@ def main():
     from features import campaign_kinds as K, defis as D
 
     db = server.db
+
+    # sends of 3–6 clients here are not about the groupe témoin (since 2026-10-29 it
+
+    # holds clients from 3 up — test_temoin.py / test_ai_safety.py): switched off
+
+    import features.temoin as _TEM
+
+    _TEM.enabled = lambda tid: False
     sent_push = []
     real_dispatch = server.dispatch_to_customer
     server.dispatch_to_customer = lambda tid, cust, title, body, kind="campaign", url=None: (

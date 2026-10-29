@@ -877,13 +877,15 @@ def status_of(row: Dict[str, Any], at: Optional[datetime] = None) -> str:
 # what
 # ---------------------------------------------------------------------------
 def _render(text: str, cust: Dict[str, Any], tenant: Dict[str, Any], extra: Dict[str, Any]) -> str:
-    out = text or ""
-    for k, v in (extra or {}).items():
-        out = out.replace("{" + k + "}", str(v))
+    # one pass with the shop-wide placeholders: a sponsor named « {points} »
+    # stays text (audit P07, 2026-10-29)
     try:
         import server as core
-        return core.render_template(out, {**cust, "tenant_id": tenant.get("id")}, tenant)
+        return core.render_template(text or "", {**cust, "tenant_id": tenant.get("id")}, tenant, extra=extra)
     except Exception:
+        out = text or ""
+        for k, v in (extra or {}).items():
+            out = out.replace("{" + k + "}", str(v))
         return out
 
 

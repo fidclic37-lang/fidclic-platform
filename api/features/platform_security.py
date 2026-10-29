@@ -18,6 +18,7 @@ LOGINS (decided with the user)
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import re
 import uuid
@@ -456,7 +457,7 @@ def journal_export(date_from: Optional[str] = Query(None, alias="from"), date_to
                    token_data: TokenData = Depends(require_admin("securite"))):
     start, end = _period(date_from if isinstance(date_from, str) else None, date_to if isinstance(date_to, str) else None)
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Date", "Utilisateur", "Email", "Action", "Détails", "Cible", "Catégorie", "Adresse IP", "Statut"])
     for r in _journal_query(_team_emails(), start, end, q, user, category, status):
         w.writerow([r["at"], r["user"], r["email"], r["label"], r["detail"], r["target"], r["category"], r["ip"], r["status"]])

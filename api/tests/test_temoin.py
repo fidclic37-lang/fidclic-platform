@@ -81,9 +81,11 @@ def main():
     check("the same send draws the same témoin", [c["id"] for c in T.split("t1", people, "seed-a")[1]]
           == [c["id"] for c in held])
     check("another send, another draw", {c["id"] for c in T.split("t1", people, "seed-b")[1]} != {c["id"] for c in held})
-    check("fewer than 7 clients: nobody held", T.split("t1", people[:6], "x")[1] == [])
-    check("one client (« Contacter », profil): never", T.split("t1", people, "x", "client")[1] == []
-          and T.split("t1", people, "x", "brain")[1] == [])
+    # small sends (user, 2026-10-29): at least 4, never more than half, nobody under 3
+    check("6 clients: 3 held (min 4, at most half)", len(T.split("t1", people[:6], "x")[1]) == 3)
+    check("2 clients: nobody held", T.split("t1", people[:2], "x")[1] == [])
+    check("one client (« Contacter », profil): never", T.split("t1", people[:1], "x", "client")[1] == []
+          and T.split("t1", people[:1], "x", "brain")[1] == [])
 
     print("Une campagne")
     r = http("POST", "/api/owner/campaigns/audience-preview", headers=H, json={"audience": {"mode": "all"}})
@@ -119,8 +121,8 @@ def main():
     r = http("POST", "/api/owner/campaigns/send-to-group", headers=H,
              json={"customer_ids": ids20, "name": "Coucou", "content": "Bonjour"})
     g = db.campaigns.find_one({"id": r.json()["id"]})
-    check("« Contacter (20) »: 17 messaged, 3 témoin", r.json()["temoin"] == 3 and len(g["recipient_ids"]) == 17
-          and len(g["holdout_ids"]) == 3 and not {p[0] for p in pushed} & set(g["holdout_ids"])
+    check("« Contacter (20) »: 16 messaged, 4 témoin (the minimum)", r.json()["temoin"] == 4 and len(g["recipient_ids"]) == 16
+          and len(g["holdout_ids"]) == 4 and not {p[0] for p in pushed} & set(g["holdout_ids"])
           and not db.push_notifications.find_one({"campaign_id": g["id"], "customer_id": {"$in": g["holdout_ids"]}}), r.json())
     r = http("POST", "/api/owner/campaigns/send-to-group", headers=H,
              json={"customer_ids": ["c01", "c02"], "name": "Coucou", "content": "Bonjour"})

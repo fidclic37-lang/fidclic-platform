@@ -28,6 +28,7 @@ NOTHING IS PAINTED IN
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -725,7 +726,7 @@ def export_analyses(request: Request = None, days: int = Query(30, ge=1, le=P.MA
     r = Reader(token_data.tenant_id, days, S.resolve(token_data, request))
     vue = _tab_vue(r)
     buf = io.StringIO()
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     w.writerow(["Indicateur", "Valeur"])
     for s in vue["strip"]:
         w.writerow([s["label"], f"{s['value']}".replace(".", ",")])

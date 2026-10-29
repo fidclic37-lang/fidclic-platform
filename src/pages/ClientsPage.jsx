@@ -20,6 +20,7 @@ import { ImportModal, InvitationsPanel } from '../components/ClientImport';
 import { FicheModal, AdjustModal, DeleteClientModal, DeletedClientsModal } from '../components/ClientEdit';
 import CardReaddModal, { CardStateBadge } from '../components/CardReaddModal';
 import ClientPurchases from '../components/ClientPurchases';
+import { holdCount, heldPct } from '../lib/temoin';
 
 /**
  * Clients — built to the approved mockup.
@@ -262,10 +263,11 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const ready = title.trim() && message.trim();
-  // groupe témoin (user, 2026-10-25): « Contacter (N) » keeps 15 % out too — said here
+  // groupe témoin (user, 2026-10-25): « Contacter (N) » keeps clients out too — said here;
+  // 15 %, at least 4, never more than half (2026-10-29)
   const [tem, setTem] = useState(null);
   useEffect(() => { ownerAPI.temoinSettings().then(({ data }) => setTem(data)).catch(() => {}); }, []);
-  const held = tem?.enabled ? Math.floor(count * (tem.share || 15) / 100) : 0;
+  const held = tem?.enabled ? holdCount(count, tem.share || 15, tem.min_hold_send || 4) : 0;
 
   const send = async () => {
     setBusy(true); setErr('');
@@ -295,7 +297,7 @@ const ComposeModal = ({ count, label, onClose, onSend }) => {
         {held > 0 && (
           <p data-testid="temoin-note" className="mb-3 flex items-start gap-2 rounded-xl bg-[#F5F3FF] px-3 py-2.5 text-[12.5px] leading-snug text-[#4C1D95]">
             <FlaskConical size={15} className="mt-0.5 shrink-0 text-[#7C3AED]" />
-            <span><b>Groupe témoin : {nf(held)} client{held > 1 ? 's' : ''}</b> ({tem.share} %, tirés au hasard) ne recevr{held > 1 ? 'ont' : 'a'} pas ce
+            <span><b>Groupe témoin : {nf(held)} client{held > 1 ? 's' : ''}</b> ({heldPct(held, count)} %, tirés au hasard) ne recevr{held > 1 ? 'ont' : 'a'} pas ce
               message. En comparant leurs visites, FidClic mesure ce que cet envoi vous rapporte vraiment. (Paramètres › Notifications)</span>
           </p>
         )}

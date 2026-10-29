@@ -53,6 +53,7 @@ user: « chhota karo », keep everything, the whole history replayed)
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import time
 import uuid
@@ -831,7 +832,7 @@ def export(token_data: TokenData = Depends(require_admin("ai"))):
         # streamed, a thousand rows at a time (audit 2026-10-26: one response
         # is capped at 4.5 MB on Vercel, and the whole journal sat in memory)
         buf = io.StringIO()
-        w = csv.writer(buf, delimiter=";")
+        w = safe_csv.writer(buf)
         buf.write("\ufeff")
         w.writerow(cols + [f"f_{c}" for c in fcols])
         n = 0

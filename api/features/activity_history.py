@@ -31,6 +31,7 @@ PAGINATION ACROSS SIX COLLECTIONS
 from __future__ import annotations
 
 import csv
+from services import safe_csv
 import io
 import re
 from datetime import datetime, timedelta, timezone
@@ -594,7 +595,7 @@ def export_csv(
 
     buf = io.StringIO()
     # utf-8-sig via the BOM below: Excel in France opens CSV as latin-1 without it.
-    w = csv.writer(buf, delimiter=";")
+    w = safe_csv.writer(buf)
     # the establishment and its stable id (QA F29: a combined export could not be split by branch)
     w.writerow(["Date et heure", "Établissement", "ID établissement", "Client", "Numéro de carte", "Type d'activité",
                 "Détails", "Points", "Tampons", "Montant (€)"])
