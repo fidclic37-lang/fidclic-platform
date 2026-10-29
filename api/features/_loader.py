@@ -97,6 +97,7 @@ MODULES = [
     # FidClic IA « a repéré »: late regulars, no 2nd visit, slowing down (2026-10-25)
     "features.brain_detectors",
     "features.temoin",                 # groupe témoin: what FidClic really brings in
+    "features.lab_export",             # FidClic Lab: one shop's history, anonymous (super admin)
     # FidClic IA Copilote — recommendations, growth potential, forecast
     # (history + weather + local events), a 7-day plan with Autopilot, and a chat
     # grounded on the shop's own figures.

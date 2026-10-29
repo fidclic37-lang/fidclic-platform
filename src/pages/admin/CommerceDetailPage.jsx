@@ -5,9 +5,11 @@ import {
   Users, UserCheck, UserX, Store, Target, Gift, RefreshCcw, ExternalLink, Mail, Pencil, MoreHorizontal, LayoutDashboard,
   Heart, Megaphone, Bell, Gauge, CreditCard, Settings, TrendingUp, PieChart as PieIcon, MapPinned, Award, Star, Crown,
   AlertTriangle, Send, Eye, MousePointerClick, ArrowRight, CalendarDays, BadgeCheck, Receipt, PauseCircle, PlayCircle,
-  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2,
+  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
+import { downloadLabExport } from '../../lib/labExport';
+import { useAuth } from '../../contexts/AuthContext';
 import { protectNames } from '../../lib/translator';
 import { Card, Head, Kpi, Donut, Select, Loading, Breadcrumb, Pager, Modal, useToast, nf, BLUE, inputCls } from '../crm/ui';
 import { ComposeEmail } from '../crm/emailUi';
@@ -38,6 +40,8 @@ export default function CommerceDetailPage() {
   const [tab, setTab] = useState('apercu');
   const [menu, setMenu] = useState(false);
   const [modal, setModal] = useState(null);
+  const { user } = useAuth();
+  const boss = user?.role === 'super_admin';
   // Offers created on Plan Limits are offered too (active ones).
   useEffect(() => {
     if (modal?.type !== 'plan' || modal.custom) return;
@@ -59,6 +63,14 @@ export default function CommerceDetailPage() {
       body: `Bonjour {prenom},\n\nVos clients n'ont pas reçu de campagne depuis un moment. Une offre simple (un café offert, -10 % le week-end…) envoyée depuis FidClic les fait revenir.\n\nVoulez-vous que nous en préparions une ensemble ?\n\nL'équipe FIDCLIC` } : null);
   }, [ask, d]); // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (fn, m) => { try { await fn(); say(m); load(); } catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); } };
+  const labExport = async () => {
+    if (!window.confirm(`Exporter l'historique de ${d.name} pour FidClic Lab ? Lecture seule, sans nom, téléphone ni e-mail : `
+      + 'chaque client devient un code, différent à chaque export. Le fichier se travaille en local ; l\'export est noté dans le Journal d\'activité.')) return;
+    try {
+      const c = await downloadLabExport(d.id, (n, of) => say(`Export en cours… partie ${n} / ${of}`));
+      say(`Export prêt : ${nf(c.customers || 0)} clients, ${nf(c.visits || 0)} visites.`);
+    } catch (e) { say(e?.response?.data?.detail || "L'export n'a pas pu être fait."); }
+  };
 
   if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
   const contact = (preset) => {
@@ -95,9 +107,11 @@ export default function CommerceDetailPage() {
           <span className="relative" onClick={(e) => e.stopPropagation()}>
             <button type="button" aria-label="Plus d'actions" onClick={() => setMenu((v) => !v)} className="h-10 rounded-xl border border-[#DCE3EE] bg-white px-3 text-[#0B1C3F]"><MoreHorizontal size={16} /></button>
             {menu && (
-              <span className="absolute right-0 top-full z-30 mt-1 flex w-56 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 text-[13px] shadow-lg">
+              <span className="absolute right-0 top-full z-30 mt-1 flex w-72 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 text-[13px] shadow-lg">
                 <button type="button" onClick={() => { setMenu(false); setModal({ type: 'plan' }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><CreditCard size={14} /> Changer de plan</button>
                 <button type="button" onClick={() => { setMenu(false); setModal({ type: 'franchise' }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Building2 size={14} /> Conditions Franchise</button>
+                {/* FidClic Lab (user, 2026-10-29): the shop's history, anonymous, read only — Super Admin only */}
+                {boss && <button type="button" onClick={() => { setMenu(false); labExport(); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><FlaskConical size={14} /> Export anonymisé (FidClic Lab)</button>}
                 {d.suspended
                   ? <button type="button" onClick={() => { setMenu(false); act(() => adminAPI.reactivateCommerce(d.id), 'Commerce réactivé.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><PlayCircle size={14} /> Réactiver</button>
                   : <button type="button" onClick={() => { setMenu(false); setModal({ type: 'suspend' }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><PauseCircle size={14} /> Suspendre</button>}

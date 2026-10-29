@@ -420,6 +420,9 @@ export const adminAPI = {
   aiPrecision: (params) => api.get('/admin/ai/precision', { params }),
   aiPrecisionBacktest: (body) => api.post('/admin/ai/precision/backtest', body),
   aiPrecisionExport: () => api.get('/admin/ai/precision/export.csv', { responseType: 'blob' }),
+  // FidClic Lab (2026-10-29): one shop's history, anonymous, in parts — Super Admin only
+  labExportStart: (tenantId) => api.post('/admin/ai/lab/exports', { tenant_id: tenantId }),
+  labExportPart: (id, n) => api.get(`/admin/ai/lab/exports/${id}/parts/${n}`),
   aiUplift: () => api.get('/admin/ai/uplift'),
   aiPrecisionLearn: () => api.post('/admin/ai/precision/learn', {}),
   aiPrecisionChampion: (body) => api.post('/admin/ai/precision/champion', body),
