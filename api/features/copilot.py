@@ -244,7 +244,7 @@ def _visits_between(tid: str, a: datetime, b: datetime,
 
 def _base_visits(shop) -> int:
     """Visits in the last 30 days — what a "+x % visites" is measured against."""
-    return len(shop.recent(30))
+    return shop.tot["d30"].n
 
 
 # ---------------------------------------------------------------------------
@@ -799,17 +799,16 @@ def opportunities(shop, fc: Dict[str, Any]) -> List[Dict[str, Any]]:
     if aff:
         out.append(aff)
 
-    last15 = shop.recent(15)
-    prev15 = [v for v in shop.recent(30) if v not in last15]
-    if len(last15) >= 10 and len(prev15) >= 10:
-        cur = sum(_num(v.get("amount_paid")) for v in last15) / len(last15)
-        was = sum(_num(v.get("amount_paid")) for v in prev15) / len(prev15)
+    last15, prev15 = shop.tot["d15"], shop.tot["p15"]
+    if last15.n >= 10 and prev15.n >= 10:
+        cur = last15.revenue / last15.n
+        was = prev15.revenue / prev15.n
         drop = round((cur - was) / was * 100) if was else 0
         if drop <= -5:
             out.append({"key": "panier", "icon": "bag", "tone": "violet",
                         "title": "Panier moyen en baisse",
                         "body": f"{drop}% sur les 15 derniers jours.",
-                        "potential": _money((was - cur) * len(last15)),
+                        "potential": _money((was - cur) * last15.n),
                         "cta": {"kind": "navigate", "to": "/dashboard/insights"}})
 
     bdays = E._birthdays(shop, 7)

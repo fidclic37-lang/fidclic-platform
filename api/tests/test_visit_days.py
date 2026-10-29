@@ -198,18 +198,24 @@ def main():
     check("no row for today or the future", db.visit_days.count_documents(
         {"tenant_id": "t1", "day": {"$gte": AT0.astimezone(PARIS).date().isoformat()}}) == 0)
     reads = {"n": 0}
-    real = VD._raw
+    real, real_many = VD._raw, VD._raw_many
 
     def counting(*a, **k):
         out = real(*a, **k)
         if VD.ENABLED:                      # the register's read, not the reference's
             reads["n"] += len(out)
         return out
-    VD._raw = counting
+
+    def counting_many(*a, **k):
+        out = real_many(*a, **k)
+        if VD.ENABLED:
+            reads["n"] += len({id(v) for rows in out.values() for v in rows})
+        return out
+    VD._raw, VD._raw_many = counting, counting_many
     for days in (30, 365):
         for store in (None, "b2"):
             same(f"{days} jours, {store or 'tous'}: identical (warm)", days, store)
-    VD._raw = real
+    VD._raw, VD._raw_many = real, real_many
     today = sum(1 for r in rows if FI._aware(r.get("visit_time")) and
                 FI._aware(r["visit_time"]).astimezone(PARIS).date() == AT0.astimezone(PARIS).date())
     check(f"warm: only today's and the cut days' visits are read ({reads['n']} rows for 4 pages; "
