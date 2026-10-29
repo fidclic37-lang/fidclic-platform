@@ -58,7 +58,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -1064,7 +1064,14 @@ def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"]
 
 @router.get("/api/owner/insights/page")
 def page(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    return _payload(token_data.tenant_id, scope=S.resolve(token_data, request))
+    scope = S.resolve(token_data, request)
+    data = _payload(token_data.tenant_id, scope=scope)
+    # the journal of ideas (2026-10-29): what the page shows first, and what each brought last time
+    from features import reco_journal as RJ
+    shelves = [data.get(k) or {} for k in ("opportunities", "actions", "ideas")]
+    RJ.shown(token_data.tenant_id, "insights", [i for s in shelves for i in s.get("shown") or []], scope.key)
+    RJ.attach(token_data.tenant_id, [i for s in shelves for i in (s.get("all") or []) + (s.get("shown") or [])])
+    return data
 
 
 def _home_note(seen: int, home: int) -> str:
@@ -1083,6 +1090,7 @@ def _home_note(seen: int, home: int) -> str:
 
 @router.get("/api/owner/insights/templates/{key:path}")
 def template(key: str, day: Optional[int] = None, request: Request = None,
+             source: Optional[str] = Query(None, alias="from"),
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """What a campaign CTA pre-fills the composer with.
 
@@ -1093,6 +1101,9 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
     """
     tid = token_data.tenant_id
     scope = S.resolve(token_data, request)
+    if request is not None:                 # an owner opened it (not the Autopilot): the idea was taken up
+        from features import reco_journal as RJ
+        RJ.event(tid, key, "opened", source if isinstance(source, str) else None, scope.key)
     shop = Shop(tid, _now(), scope)
     # Any segment — a model or one the merchant built — can be messaged: its
     # members are resolved now, by the same evaluator the Segmentation page uses.

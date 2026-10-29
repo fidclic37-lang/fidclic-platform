@@ -60,6 +60,7 @@ export const emptyState = (kind) => ({
   audience: { mode: 'all', segment: '', customer_ids: [], km: 5, filters: { active: false, inactive: false, new: false, min_points: null } },
   visibleUntil: addDays(todayYmd(), 7),     // a Nouveauté's « Sur la carte jusqu'au »
   sendMode: null, date: '', time: '14:00', draftId: null, template: null,
+  recoKey: null, recoSurface: null,   // the idea it came from, and where (journal of ideas, 2026-10-29)
   walletPhoto: false,     // the photo on the Wallet card too? (BUG-006, off unless chosen)
 });
 
@@ -236,6 +237,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       wallet_photo: !!(s.image && s.walletPhoto),
       audience: audienceBody, draft: mode === 'draft', schedule_at: mode === 'draft' ? null : scheduleIso(),
       ...(s.draftId ? { draft_id: s.draftId } : {}), ...(s.template ? { template: s.template } : {}),
+      ...(s.recoKey ? { reco_key: s.recoKey, reco_surface: s.recoSurface || null } : {}),
     };
     if (OFFERISH.includes(s.kind)) {
       const v = s.kind === 'offre' ? String(o.discount_value ?? '').replace(',', '.') : '';

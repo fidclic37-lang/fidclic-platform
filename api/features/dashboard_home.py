@@ -369,6 +369,12 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     # the same people on the Clients page (segments *_active / occasional).
     status_mix = CP.status_mix(customers, at, rules)
 
+    recos = _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
+                             campaigns, products, goal, PB.of(tenant))
+    # the journal of ideas (2026-10-29): shown, and what each brought last time
+    from features import reco_journal as RJ
+    RJ.shown(tid, "dashboard", recos, scope.key)
+    RJ.attach(tid, recos)
     return {
         "from": start.isoformat(), "to": end.isoformat(), "days": days,
         "scope": scope.describe(),
@@ -384,8 +390,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
         "reward_setup": _reward_setup(tid, token_data),
         # cards deleted in the last 30 days — a loss the owner must see (2026-10-09)
         "cards_lost": _cards_lost(tid, scope, at),
-        "recommendations": _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
-                                            campaigns, products, goal, PB.of(tenant)),
+        "recommendations": recos,
     }
 
 

@@ -98,6 +98,7 @@ MODULES = [
     "features.brain_detectors",
     "features.temoin",                 # groupe témoin: what FidClic really brings in
     "features.lab_export",             # FidClic Lab: one shop's history, anonymous (super admin)
+    "features.reco_journal",           # the journal of ideas: shown, opened, sent, € (témoin)
     # FidClic IA Copilote — recommendations, growth potential, forecast
     # (history + weather + local events), a 7-day plan with Autopilot, and a chat
     # grounded on the shop's own figures.

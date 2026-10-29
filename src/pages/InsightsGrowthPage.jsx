@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import RecoLastResult from '../components/RecoLastResult';
 
 /**
  * Insights — « Faites grandir votre commerce », built to the approved mockup.
@@ -184,12 +185,20 @@ const CtaButton = ({ item, onAct, busy, full = false }) => {
       </span>
     );
   }
-  return (
+  const button = (
     <button type="button" onClick={() => onAct(item)} disabled={busy}
             className={`inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#2F6BFF] bg-white px-4 py-2 text-[12.5px] font-semibold text-[#2F6BFF] transition hover:bg-[#F6F9FF] disabled:opacity-50 ${full ? 'w-full' : 'min-w-[112px]'}`}>
       {busy && <Loader2 size={13} className="animate-spin" />}
       {item.cta.label}
     </button>
+  );
+  // « La dernière fois : +X € » under the button, when this idea was measured here
+  if (!item.last_result?.text) return button;
+  return (
+    <span className={`${full ? 'flex w-full' : 'inline-flex'} flex-col items-stretch gap-1`}>
+      {button}
+      <RecoLastResult r={item} className="text-center" />
+    </span>
   );
 };
 
@@ -305,7 +314,7 @@ export default function InsightsGrowthPage() {
 
   const act = async (item) => {
     const cta = item.cta;
-    if (cta.kind === 'template') { navigate(`/dashboard/campaigns?template=${encodeURIComponent(cta.template)}`); return; }
+    if (cta.kind === 'template') { navigate(`/dashboard/campaigns?template=${encodeURIComponent(cta.template)}&from=insights`); return; }
     if (cta.kind === 'navigate') { navigate(cta.to); return; }
     if (cta.kind === 'scroll') { scrollTo(cta.target); return; }
     if ((cta.kind === 'google_review' || cta.kind === 'activate') && !owner) {

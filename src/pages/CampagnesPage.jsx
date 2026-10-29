@@ -126,11 +126,13 @@ export default function CampagnesPage() {
     if (shown) { setResultOf(shown); clean(); return; }
     const key = params.get('template');
     if (!key) return;
-    ownerAPI.insightTemplate(key, params.get('day'), params.get('store'))
+    ownerAPI.insightTemplate(key, params.get('day'), params.get('store'), params.get('from'))
       .then(({ data: t }) => {
         const st = emptyState(KINDS_OK.includes(t.kind) ? t.kind : 'offre');
         st.title = (t.title || '').slice(0, 50); st.message = (t.message || '').slice(0, 160);
         st.template = /^(client|produit|brain|ia):/.test(key) ? key.split(':')[0] : key;
+        // the idea's full key and the surface it was taken from (journal of ideas, 2026-10-29)
+        st.recoKey = key; st.recoSurface = params.get('from') || null;
         // a narrower audience is sent by id, never widened to everyone — even
         // when no client matches it today (then the wizard asks for a choice)
         if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };
@@ -162,6 +164,7 @@ export default function CampagnesPage() {
       const st = emptyState(kind);
       Object.assign(st, { title: d.title || '', message: d.message || '', details: d.details || '', image: d.image_url || '',
         link: d.link_url || '', draftId: d.id, template: d.template || null, walletPhoto: !!d.wallet_photo,
+        recoKey: d.reco_key || null, recoSurface: d.reco_surface || null,
         visibleUntil: d.visible_until || st.visibleUntil });
       if (d.offer) st.offer = { ...st.offer, ...d.offer, discount_type: d.offer.discount_type || null,   // a saved offer with no type keeps none
         discount_value: d.offer.discount_value ?? '', start_date: d.offer.start_date || '', end_date: d.offer.end_date || '',

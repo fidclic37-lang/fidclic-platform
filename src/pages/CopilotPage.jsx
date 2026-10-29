@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import RecoLastResult from '../components/RecoLastResult';
 
 /**
  * FidClic IA Copilote — built to the approved mockup.
@@ -153,8 +154,9 @@ const RecCard = ({ r, n, onAct, onFeedback, onMore }) => {
           })}
         </div>
       </div>
+      <RecoLastResult r={r} className="mb-2" />
       <div className="flex gap-2">
-        <button type="button" onClick={() => onAct(r)}
+        <button type="button" onClick={() => onAct(r)} data-testid={r.cta?.kind === 'template' ? 'reco-cta' : undefined}
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#2F6BFF] px-3 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
           {r.kind === 'campaign' ? <Send size={14} /> : r.kind === 'suggestion' ? <Star size={14} /> : <Gift size={14} />}
           {r.cta.label}
@@ -209,7 +211,8 @@ export default function CopilotPage() {
     if (!cta) return;
     if (key) ownerAPI.copilotFeedback(key, 'accepted').catch(() => {});
     if (cta.kind === 'template') {
-      const q = new URLSearchParams({ template: cta.template });
+      // the journal of ideas (2026-10-29): the composer is told where the idea came from
+      const q = new URLSearchParams({ template: cta.template, from: 'copilote' });
       if (cta.day !== undefined && cta.day !== null) q.set('day', String(cta.day));
       navigate(`/dashboard/campaigns?${q.toString()}`);
     } else if (cta.kind === 'navigate') navigate(cta.to);

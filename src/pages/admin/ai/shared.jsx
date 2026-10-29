@@ -3,14 +3,15 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, LabelList, LineChart, Line, Legend,
 } from 'recharts';
-import { ShieldAlert, Eye, Sparkles, Bookmark, FileBarChart, Target, PieChart as PieIcon, BarChart3, LineChart as LineIcon } from 'lucide-react';
+import { ShieldAlert, Eye, Sparkles, Bookmark, FileBarChart, Target, Lightbulb, PieChart as PieIcon, BarChart3, LineChart as LineIcon } from 'lucide-react';
 import { Donut, nf } from '../../crm/ui';
 import { PlanPill, CommerceLogo } from '../CommercesPage';
 
 /* Shared by the FIDCLIC AI pages (features/admin_ai.py). */
 
 export const AI_ITEMS = [['/admin/ai', 'AI Intelligence', Sparkles], ['/admin/ai/sauvegardes', 'Analyses sauvegardées', Bookmark],
-  ['/admin/ai/rapports', 'Rapports automatiques', FileBarChart], ['/admin/ai/precision', 'Précision', Target]];
+  ['/admin/ai/rapports', 'Rapports automatiques', FileBarChart], ['/admin/ai/precision', 'Précision', Target],
+  ['/admin/ai/recommandations', 'Recommandations', Lightbulb]];
 
 export const eur = (v, dec = 0) => `€${Number(v || 0).toLocaleString('fr-FR', { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
 export const day = (iso) => (iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');

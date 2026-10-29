@@ -48,6 +48,7 @@ from auth import require_role
 from models import TokenData
 from features import store_scope as S
 from features import campaign_kinds as K
+from features import reco_journal as _RJ
 
 # Campaigns are the owner's, an administrateur's (its establishments) and a
 # manager's (its establishment) — each reaches only its own clients.
@@ -665,6 +666,10 @@ class Compose(BaseModel):
     # FidClic IA). Recorded so the recommendation can step aside once it has
     # been used, and something new can take its place.
     template: Optional[str] = None
+    # The journal of ideas (2026-10-29): the idea's full key (« ia:en_retard »,
+    # where `template` keeps « ia ») and the surface it was taken from.
+    reco_key: Optional[str] = None
+    reco_surface: Optional[str] = None
     # The redesign (2026-10-10): the kind and its step-1 terms, the details
     # shown on the card, and the audience as chosen in step 3.
     kind: Optional[str] = None
@@ -744,7 +749,7 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "push": bool((d.get("channels") or {}).get("push", True)),
         "wallet": bool((d.get("channels") or {}).get("wallet", True)),
         "wallet_photo": bool(d.get("wallet_photo")),
-        "template": d.get("template"),
+        "template": d.get("template"), "reco_key": d.get("reco_key"), "reco_surface": d.get("reco_surface"),
         "visible_until": d.get("visible_until"),
         "status": d.get("status"),
         "scheduled_for": when.isoformat() if when else None,
@@ -894,6 +899,7 @@ def compose(req: Compose, request: Request = None,
         "wallet_offer": bool(req.wallet),
         "wallet_photo": bool(req.wallet_photo and req.image_url),
         "template": (req.template or "").strip()[:40] or None,
+        "reco_key": _RJ.clean(req.reco_key), "reco_surface": _RJ.surface_of(req.reco_surface) if req.reco_surface else None,
         "kind": kind, **terms, "details": details, "visible_until": visible_until,
         "audience_spec": req.audience.dict() if req.audience is not None else None,
         # For which establishments it was sent (None = the whole shop), and by whom.
