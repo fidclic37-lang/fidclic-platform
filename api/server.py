@@ -6613,8 +6613,7 @@ def per_card_manifest(barcode_id: str, k: Optional[str] = None):
         "scope": "/card/",
         "display": "standalone",
         "orientation": "portrait",
-        "background_color": "#FDFBF7",
-        "theme_color": "#B85C38",
+        # no theme / background colour (user, 2026-10-30): the device paints its own bars
         "icons": [
             {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
             {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},

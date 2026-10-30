@@ -55,22 +55,61 @@ const warm = ([r, g, b]) => {
   return h < 55 || h > 320;
 };
 
-for (const size of [{ width: 1180, height: 820 }, { width: 820, height: 1180 }]) {
-  test(`iPad ${size.width}×${size.height}: nothing fixed is orange (iOS tints the bottom bar from it)`, async ({ page, request }) => {
+// coloured = any clear hue (orange, blue…): only white, grey and black are the device's own
+const coloured = ([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b) >= 24;
+
+// what sits on the bottom edge of the screen: fixed elements reaching it, and
+// every painted child inside the bottom 40 px — what iOS 26 tints the bar from
+const bottomColours = () => {
+  const out = [];
+  const vh = window.innerHeight;
+  const rgba = (s) => { const m = s.match(/[\d.]+/g); return m ? m.map(Number) : null; };
+  for (const el of document.querySelectorAll('body *')) {
+    const cs0 = getComputedStyle(el);
+    if (cs0.position !== 'fixed' || cs0.display === 'none' || cs0.visibility === 'hidden') continue;
+    const r0 = el.getBoundingClientRect();
+    if (r0.bottom < vh - 2 || r0.width === 0) continue;
+    for (const n of [el, ...el.querySelectorAll('*')]) {
+      const cs = getComputedStyle(n);
+      const r = n.getBoundingClientRect();
+      if (cs.display === 'none' || cs.visibility === 'hidden' || r.bottom < vh - 40 || r.top > vh) continue;
+      const c = rgba(cs.backgroundColor);
+      if (c && (c[3] === undefined || c[3] > 0)) out.push({ where: `${n.tagName}.${String(n.className).slice(0, 70)}`, c });
+      (cs.backgroundImage.match(/rgba?\([^)]+\)/g) || [])
+        .forEach((x) => out.push({ where: `${n.tagName}.${String(n.className).slice(0, 70)} (gradient)`, c: rgba(x) }));
+    }
+  }
+  return out;
+};
+
+// user, 2026-10-30: « koi color n aaye, ekdm normal default » — the orange went,
+// then a blue band came: nothing on the bottom edge may carry a colour at all
+for (const size of [{ width: 1180, height: 820 }, { width: 820, height: 1180 }, { width: 390, height: 844 }]) {
+  test(`${size.width}×${size.height}: nothing on the bottom edge is coloured (iOS tints the bar from it)`, async ({ page, request }) => {
     await page.setViewportSize(size);
     await signIn(page, request);
-    for (const url of ['/dashboard', '/dashboard/scan', '/dashboard/clients']) {
+    const found = [];
+    for (const url of ['/dashboard', '/dashboard/scan', '/dashboard/customers', '/dashboard/insights']) {
       await page.goto(url);
       await page.waitForLoadState('networkidle');
-      const hot = (await page.evaluate(fixedColours)).filter((x) => warm(x.c));
-      expect(hot, `${url}: fixed + orange`).toEqual([]);
+      (await page.evaluate(bottomColours)).filter((x) => coloured(x.c))
+        .forEach((x) => found.push(`${url} bottom ${x.where} rgb(${x.c.slice(0, 3)})`));
+      (await page.evaluate(fixedColours)).filter((x) => warm(x.c))
+        .forEach((x) => found.push(`${url} fixed+orange ${x.where} rgb(${x.c.slice(0, 3)})`));
     }
+    expect(found).toEqual([]);
   });
 }
 
-test('the installed app is no longer themed terracotta', async () => {
-  const m = JSON.parse(fs.readFileSync('public/manifest.json', 'utf8'));
-  const hex = m.theme_color.replace('#', '');
-  const rgb = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  expect(warm(rgb), `theme_color ${m.theme_color}`).toBe(false);
+test('no theme colour anywhere: the device paints its own bars', async ({ request }) => {
+  for (const f of ['public/manifest.json', 'public/manifest-scan.json']) {
+    const m = JSON.parse(fs.readFileSync(f, 'utf8'));
+    expect(m.theme_color, `${f} theme_color`).toBeUndefined();
+    expect(m.background_color, `${f} background_color`).toBeUndefined();
+  }
+  const html = fs.readFileSync('index.html', 'utf8');
+  expect(html, 'index.html theme-color').not.toMatch(/name=["']theme-color/);
+  const card = await (await request.get('/api/manifest/FT-NOPE')).json();
+  expect(card.theme_color, 'card manifest theme_color').toBeUndefined();
+  expect(card.background_color, 'card manifest background_color').toBeUndefined();
 });
