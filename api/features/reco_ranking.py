@@ -19,8 +19,9 @@ read off it; the more data, the narrower the draw. One draw per shop ×
 idea × Paris day, so the owner sees one order all day.
 
 THE NETWORK (user: every shop weighs the same — one shop cannot bend it,
-audit of #400): each shop's own rate and € per send first, then their plain
-average; by activité (Barbier, CBD…), then secteur — never another trade's,
+audit of #400): each shop's own rate and € per send first, then the middle
+shop's (median, user 2026-10-30: one odd shop — a typo at the till or fake
+sends — moved the average 93 → 3 215 €, it does not move the median); by activité (Barbier, CBD…), then secteur — never another trade's,
 and only from 3 shops (fewer would show one competitor's own figure). Relearned
 once a day by the tick; it keeps counts, never a shop id.
 
@@ -33,7 +34,7 @@ import random
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from statistics import mean, pstdev
+from statistics import mean, median, pstdev
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from features import reco_journal as RJ
@@ -198,7 +199,8 @@ def _groups(tenant: Dict[str, Any]) -> List[str]:
 
 
 def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
-    """The network, every shop weighing the same. Stored, never a shop id."""
+    """The network, every shop weighing the same — the middle shop's figure,
+    so one odd shop cannot pull it. Stored, never a shop id."""
     now = now or NOW()
     counts = _counts({"day": {"$gte": _since(now, HORIZON)}})
     res = _results({})
@@ -230,11 +232,11 @@ def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
         ee = ee if len(ee) >= NET_MIN_SHOPS else []
         if not rr and not ee:
             continue
-        by[f"{g}|{k}"] = {"open": round(mean(rr), 6) if rr else None, "eur": round(mean(ee), 2) if ee else None,
+        by[f"{g}|{k}"] = {"open": round(median(rr), 6) if rr else None, "eur": round(median(ee), 2) if ee else None,
                           "shops": max(len(rr), len(ee)), "shops_open": len(rr), "shops_eur": len(ee)}
     doc = {"key": NET_KEY, "at": now, "by": by,
-           "ref": {"open": round(mean(all_rates), 6) if all_rates else None,
-                   "eur": round(mean(all_eur), 2) if all_eur else None, "shops": len(shops)}}
+           "ref": {"open": round(median(all_rates), 6) if all_rates else None,
+                   "eur": round(median(all_eur), 2) if all_eur else None, "shops": len(shops)}}
     _db.platform_settings.update_one({"key": NET_KEY}, {"$set": doc}, upsert=True)
     _cache.pop("net", None)
     return {"ideas": len(by), "shops": len(shops)}
@@ -282,7 +284,7 @@ def why(parts: Dict[str, Any], label: str) -> str:
         n = parts.get("sends") or 0
         bits.append(f"Chez vous : {_eur(parts['eur'])} par envoi en moyenne ({n} envoi{'s' if n > 1 else ''} mesuré{'s' if n > 1 else ''})")
     elif parts.get("net_eur") is not None:
-        bits.append(f"Chez les {label} comme vous : {_eur(parts['net_eur'])} par envoi en moyenne")
+        bits.append(f"Chez les {label} comme vous : {_eur(parts['net_eur'])} par envoi en général")
     if parts.get("shown", 0) >= 3 and parts.get("opened"):
         bits.append(f"Vous l'ouvrez {parts['opened']} fois sur {parts['shown']}")
     if parts.get("dismissed"):

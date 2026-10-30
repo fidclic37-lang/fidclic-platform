@@ -120,10 +120,33 @@ def main():
         shown(t, "relance_inactifs", 10, opened=2)
     out = RR.learn(now)
     net = RR.network_for({"sector": "salon", "activity_key": "barbier"}, "relance_inactifs")
-    check("network € per send = average of shops (1 000 + 0 × 4) / 5 = 200, not ~900", net and net["eur"] == 200.0 and net["shops"] == 5, net)
-    check("network open rate = average of each shop's (2 / 10)", net and abs(net["open"] - 0.2) < 1e-9, net)
+    check("network € per send = the middle shop (median of 1 000, 0, 0, 0, 0 = 0), not ~900 nor 200",
+          net and net["eur"] == 0.0 and net["shops"] == 5, net)
+    check("network open rate = the middle shop's (2 / 10)", net and abs(net["open"] - 0.2) < 1e-9, net)
     check("learning ran and is remembered for the day", out.get("ideas") and RR.learn_due(now) is None
           and RR.learn_due(now + dt.timedelta(hours=25)) is not None)
+    # one odd shop (a typo at the till, or on purpose) must not move the network (pentest #401)
+    for i, e in enumerate((80.0, 90.0, 100.0, 110.0)):
+        db.tenants.insert_one({"id": f"m{i}", "name": "m", "sector": "salon", "activity_key": "barbier", "is_active": True})
+        sends(f"m{i}", "median_test", [e])
+        shown(f"m{i}", "median_test", 10, opened=(1, 2, 3, 4)[i])
+    db.tenants.insert_one({"id": "odd", "name": "odd", "sector": "salon", "activity_key": "barbier", "is_active": True})
+    sends("odd", "median_test", [100000.0] * 200)
+    shown("odd", "median_test", 10, opened=10)
+    RR.learn(now)
+    mt = RR.network_for({"sector": "salon", "activity_key": "barbier"}, "median_test")
+    check("one shop claiming +100 000 € a send among four at 80–110 €: the network stays at 100 €",
+          mt and mt["eur"] == 100.0 and mt["shops"] == 5, mt)
+    check("…and its 10 opens in 10 do not lift the open rate (middle shop: 3 in 10)", mt and abs(mt["open"] - 0.3) < 1e-9, mt)
+    db.campaigns.delete_many({"tenant_id": "m3"})
+    RR.learn(now)
+    mt = RR.network_for({"sector": "salon", "activity_key": "barbier"}, "median_test")
+    check("an even count: the two middle shops' average (90 + 100) / 2 = 95", mt and mt["eur"] == 95.0, mt)
+    ref_eur = RR._network_doc()["ref"]["eur"]
+    check("the all-trades reference is the middle shop too, not pulled by +100 000 €", ref_eur is not None and ref_eur < 1000, ref_eur)
+    w = RR.why({"net_eur": 100.0, "shown": 1}, "barbiers")
+    check("the network line says « en général » (a middle shop), not « en moyenne »",
+          "Chez les barbiers comme vous : +100 € par envoi en général" in w and "moyenne" not in w, w)
     for t in ("o1", "o2"):
         db.tenants.insert_one({"id": t, "name": t, "sector": "retail", "activity_key": "opticien", "is_active": True})
         sends(t, "offre_jour", [400.0])
