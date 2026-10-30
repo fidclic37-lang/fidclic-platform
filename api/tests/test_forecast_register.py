@@ -206,6 +206,37 @@ def main():
     src = open(os.path.join(os.path.dirname(__file__), "..", "server.py")).read()
     check("the tick runs it", "holiday_learning" in src)
 
+    print("\nLa charge (audit de #411)")
+    doc = db.holiday_measures.find_one({"tenant_id": "own", "scope": "all"})
+    check("a shop's holiday measures are stored (not rebuilt at each page)", doc and doc.get("ratios", {}).get("toussaint") == [2.0, 2.0], doc)
+    built = []
+    own_shop = shop_of("own")
+    from features import visit_days as VD
+    real_many = VD.span_many
+    VD.span_many = lambda tid, scope, ranges, *a, **k: (built.append(max((b - a2).days for a2, b in ranges)), real_many(tid, scope, ranges, *a, **k))[1]
+    counted = []
+    real_count = db.visits.count_documents
+    db.visits.count_documents = lambda *a, **k: (counted.append(1), real_count(*a, **k))[1]
+    HL._cache.clear()
+    K.forecast_week(own_shop)
+    VD.span_many = real_many
+    db.visits.count_documents = real_count
+    check("a page never reads two years of register (60 days at most: the weekday averages)", max(built or [0]) <= 60, built)
+    check("…and with its measures stored, counts no holiday at all", not counted, len(counted))
+    HL.PASS_SECONDS, real_budget = 0.0, HL.PASS_SECONDS
+    db.holiday_measures.delete_many({})
+    out = HL.learn(now)
+    HL.PASS_SECONDS = real_budget
+    check("the network pass keeps to its time budget: what it did not measure waits for the next pass",
+          out.get("measured", 0) <= 1, out)
+    while db.holiday_measures.count_documents({"scope": "all"}) < db.tenants.count_documents({}):
+        if not HL.learn(now).get("measured"):
+            break
+    check("…then every shop is measured", db.holiday_measures.count_documents({"scope": "all"}) == db.tenants.count_documents({}))
+    db.holiday_measures.delete_one({"tenant_id": "own"})
+    check("a shop still unmeasured: the next tick goes on at once (not a day later)", HL.learn_due(now) is not None)
+    check("…all measured: once a day again", HL.learn_due(now) is None)
+
     tenant("busy")
     history("busy", {w: 10 for w in range(7)})
     holidays_history("busy", {2025: 3.0, 2024: 3.0}, {w: 10 for w in range(7)})
