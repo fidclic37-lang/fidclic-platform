@@ -72,6 +72,7 @@ from pydantic import BaseModel
 from auth import require_role, TokenData
 
 from features import store_cards as _SC  # one card per establishment (multi-store)
+from services import pass_identity as _PI  # one Apple Pass Type ID per business
 
 router = APIRouter(tags=["wallet-passes"])
 _db = None
@@ -80,6 +81,7 @@ _db = None
 def init(db):
     global _db
     _db = db
+    _PI.init(db)
     try:
         _db.pass_registrations.create_index([("device_id", 1), ("serial", 1)], unique=True)
         _db.pass_registrations.create_index([("serial", 1)])
@@ -215,7 +217,16 @@ def changed_since_pass(c: Dict[str, Any], now: Optional[datetime] = None) -> boo
     return now - latest <= CATCH_UP_WINDOW
 
 
-def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str]) -> None:
+def _apns_push(tokens: List[str], pass_type_id: Optional[str] = None) -> Dict[str, Any]:
+    """APNs for the passes of one pass type id: its topic, its certificate."""
+    from services import apns_passes
+    if not pass_type_id or pass_type_id == _PI.shared_pt():
+        return apns_passes.push_to_tokens(tokens)
+    return apns_passes.push_to_tokens(tokens, pass_type_id=pass_type_id)
+
+
+def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str],
+              pass_type_id: Optional[str] = None) -> None:
     """Push the iPhone that just registered — only that one — and stamp the
     change, so its « what changed since my pass » gets this card. Never
     raises: a push must not fail a registration."""
@@ -227,7 +238,7 @@ def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str])
         if not apns_passes.is_configured():
             return
         reg = {"device_id": device_id, "serial": serial, "push_token": token, "tenant_id": tenant_id}
-        res = apns_passes.push_to_tokens([token])
+        res = _apns_push([token], pass_type_id)
         _log_pushes([reg], res.get("results") or [], now)
         _db.pass_registrations.update_one({"device_id": device_id, "serial": serial}, {"$set": {
             "last_push_at": now, "last_push_result": ("ok" if res.get("sent") else
@@ -1298,6 +1309,7 @@ def _card_payload(barcode_id: str) -> Dict[str, Any]:
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
     payload = core._serialize_card_payload(cust)
+    payload["pass_type_id"] = _PI.pin(cust)          # chosen once, then kept
     if cust.get("paused_at"):
         # paused by the business (services/client_status): the card works,
         # but carries no campaign offer, « Dernier message » or news
@@ -1750,7 +1762,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     pass_json: Dict[str, Any] = {
         "formatVersion": 1,
-        "passTypeIdentifier": _env("APPLE_PASS_TYPE_ID"),
+        "passTypeIdentifier": payload.get("pass_type_id") or _env("APPLE_PASS_TYPE_ID"),
         "teamIdentifier": _env("APPLE_TEAM_ID"),
         "serialNumber": serial,
         # the card's name, as typed in « Nom de la carte » (user, 2026-10-14)
@@ -1936,14 +1948,18 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Signing + bundling
 # ---------------------------------------------------------------------------
-def _sign_manifest(manifest: bytes) -> bytes:
+def _sign_manifest(manifest: bytes, pass_type_id: Optional[str] = None) -> bytes:
+    """Signed with the certificate of the pass's own type id (one per
+    business, services/pass_identity); the shared one by default."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.serialization import pkcs7
 
-    cert = x509.load_pem_x509_certificate(_b64_env("APPLE_PASS_CERT_B64"))
-    pw = _env("APPLE_PASS_KEY_PASSWORD")
-    key = serialization.load_pem_private_key(_b64_env("APPLE_PASS_KEY_B64"), password=pw.encode() if pw else None)
+    ident = _PI.get(pass_type_id)
+    if ident is None:
+        raise HTTPException(status_code=404, detail="Identifiant Apple inconnu")
+    cert = x509.load_pem_x509_certificate(ident.cert_pem)
+    key = serialization.load_pem_private_key(ident.key_pem, password=ident.key_password)
     wwdr = x509.load_pem_x509_certificate(_b64_env("APPLE_WWDR_B64"))
     return (pkcs7.PKCS7SignatureBuilder()
             .set_data(manifest)
@@ -2771,7 +2787,9 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     files = pass_files_for_wallet(payload)
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
-    files["signature"] = _sign_manifest(manifest)
+    pt = payload.get("pass_type_id")
+    files["signature"] = (_sign_manifest(manifest, pt) if pt and pt != _PI.shared_pt()
+                          else _sign_manifest(manifest))
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -2856,10 +2874,22 @@ def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> by
     return data
 
 
-def _pkpass_response(barcode_id: str) -> Response:
+def _pkpass_response(barcode_id: str, pass_type_id: Optional[str] = None) -> Response:
+    """`pass_type_id`: the id the iPhone holds the card under — an update is
+    always served under it, never switched (an installed pass whose
+    identifier changed would stop updating)."""
     if not apple_configured():
         raise HTTPException(status_code=503, detail="Apple Wallet n'est pas encore configuré")
-    data = signed_pass(barcode_id)
+    payload = None
+    if pass_type_id:
+        payload = _card_payload(barcode_id)
+        if pass_type_id != _PI.shared_pt():
+            owner = _db.pass_identities.find_one({"pass_type_id": pass_type_id}, {"tenant_id": 1}) or {}
+            cust = _db.customers.find_one({"barcode_id": barcode_id}, {"tenant_id": 1}) or {}
+            if not owner or owner.get("tenant_id") != cust.get("tenant_id") or _PI.get(pass_type_id) is None:
+                raise HTTPException(status_code=404, detail="Identifiant Apple inconnu")
+        payload["pass_type_id"] = pass_type_id
+    data = signed_pass(barcode_id, payload)
     fname = f"fidclic-{barcode_id}.pkpass"
     # in one piece, with its length (2026-10-15): a BytesIO handed to
     # StreamingResponse is iterated line by line — a 1,6 Mo pass went out as
@@ -2898,11 +2928,22 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     _db.pass_registrations.update_many({"serial": {"$in": serials}},
                                        {"$set": {"pass_changed_at": datetime.now(timezone.utc)}})
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
-                                            {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1}))
+                                            {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1,
+                                             "pass_type_id": 1}))
     if not regs:
         return {"devices": 0, "sent": 0}
     sent_at = datetime.now(timezone.utc)
-    res = apns_passes.push_to_tokens([r.get("push_token") for r in regs])
+    # one push per pass type id: each goes with its own topic and certificate
+    groups: Dict[str, List[str]] = {}
+    for r in regs:
+        groups.setdefault(r.get("pass_type_id") or _PI.shared_pt(), []).append(r.get("push_token"))
+    res: Dict[str, Any] = {"sent": 0, "gone": [], "failed": 0, "errors": [], "results": []}
+    for pt, tokens in groups.items():
+        part = _apns_push(tokens, pt)
+        for k in ("sent", "failed"):
+            res[k] += part.get(k, 0)
+        for k in ("gone", "errors", "results"):
+            res[k] += part.get(k) or []
     _log_pushes(regs, res.get("results") or [], sent_at)
     # What Apple answered, kept on the registrations: the owner's Wallet stats
     # show it, so « no notification » can be traced without server logs.
@@ -3516,7 +3557,7 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
             print(f"wallet: welcome not sent (non-fatal): {exc}")
     # scanned before this iPhone registered: the scan had no device to push
     if (not existing or existing.get("push_token") != body.pushToken) and changed_since_pass(cust):
-        _catch_up(device_id, serial, body.pushToken, cust.get("tenant_id"))
+        _catch_up(device_id, serial, body.pushToken, cust.get("tenant_id"), pass_type_id)
     return Response(status_code=200 if existing else 201)
 
 
@@ -3610,7 +3651,7 @@ def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = H
                                       {"$set": {"fetched_at": datetime.now(timezone.utc)}})
     except Exception:
         pass
-    return _pkpass_response(serial)
+    return _pkpass_response(serial, pass_type_id)
 
 
 @router.get("/api/card/{serial}/action/{identifier}")

@@ -94,12 +94,14 @@ def _cert_files() -> Optional[tuple]:
         return _cert_paths
 
 
-def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
+def push_to_tokens(tokens: Iterable[str], pass_type_id: Optional[str] = None) -> Dict[str, Any]:
     """Send the empty pass-update push to each device token.
     Returns {sent, gone, failed, errors[], results[]} — `gone` tokens are dead
     and should be deleted by the caller (it owns the registrations
     collection); `results` has one {token, status, reason, apns_id} per token:
-    Apple's answer and its receipt number, kept in the push history."""
+    Apple's answer and its receipt number, kept in the push history.
+    `pass_type_id`: a business's own id (services/pass_identity) — its topic
+    and its certificate; the shared one by default."""
     out: Dict[str, Any] = {"sent": 0, "gone": [], "failed": 0, "errors": [], "results": []}
     tokens = [t for t in dict.fromkeys(tokens) if t]
     if not tokens:
@@ -107,7 +109,12 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
     if not is_configured():
         out["errors"].append("apple pass certificate not configured")
         return out
-    paths = _cert_files()
+    shared = not pass_type_id or pass_type_id == _env("APPLE_PASS_TYPE_ID")
+    if shared:
+        paths = _cert_files()
+    else:
+        from services import pass_identity as PI
+        paths = PI.cert_files(pass_type_id)
     if not paths:
         out["errors"].append("certificate could not be materialised")
         return out
@@ -118,7 +125,7 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
         out["errors"].append("httpx missing — add httpx[http2] to api/requirements.txt")
         return out
 
-    topic = _env("APPLE_PASS_TYPE_ID")
+    topic = _env("APPLE_PASS_TYPE_ID") if shared else pass_type_id
     # alert + priority 10, not background + 5 (user, 2026-10-05: pushes
     # « reçus » by Apple, yet some iPhones never updated, or only on
     # pull-to-refresh, and the lock-screen alert came late or silently).
