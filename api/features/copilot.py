@@ -368,12 +368,12 @@ def events_nearby(pos: Tuple[float, float], start: date, end: date) -> Dict[str,
 # The forecast
 # ---------------------------------------------------------------------------
 def _daily_counts(tid: str, days: int, at: datetime, scope: Optional["S.Scope"] = None) -> Dict[date, int]:
-    counts: Dict[date, int] = defaultdict(int)
-    for v in _visits_between(tid, at - timedelta(days=days), at, scope):
-        t = v.get("visit_time")
-        if isinstance(t, datetime):
-            counts[(t if t.tzinfo else t.replace(tzinfo=timezone.utc)).date()] += 1
-    return counts
+    """Visits per Paris day over the last `days` days, from the daily register
+    (features/visit_days) — the days Analyses counts (2026-10-30: they were
+    UTC days, read from every visit at each load)."""
+    from features import holiday_learning as HL
+    today = HL._paris_today(at)
+    return HL.daily_counts(tid, scope, today - timedelta(days=days), today - timedelta(days=1), at)
 
 
 def rain_sensitivity(tid: str, pos: Optional[Tuple[float, float]], at: datetime,
@@ -412,59 +412,127 @@ def rain_sensitivity(tid: str, pos: Optional[Tuple[float, float]], at: datetime,
     return round(max(0.5, min(1.5, factor)), 3)
 
 
+def _closed_days(shop):
+    """A function date → why the shop is closed that day, or None: its
+    Horaires (weekly day off, holidays ticked, annual closures), then what
+    the owner (and the account looking) told FidClic IA (« je ferme le
+    mardi »)."""
+    from features import business_hours as BH
+    tenant = shop.tenant or {}
+    try:
+        cons = CM.constraints(shop.tid, getattr(shop, "viewer", None))
+    except Exception:
+        cons = {"closed": set(), "said": {}}
+
+    def why(d: date) -> Optional[str]:
+        r = BH.closed_reason(tenant, d)
+        if r:
+            return r
+        if d.weekday() in cons["closed"]:
+            return f"Selon ce que vous avez dit : « {CM.scrub(cons['said'][('closed', d.weekday())])} »"
+        return None
+    weekly = BH._resolve_weekly(tenant)
+    # the weekdays closed for good (Horaires' weekly day off, or said), not a one-off closure
+    why.weekdays = {i for i, x in enumerate(weekly[:7]) if x.get("closed")} | set(cons["closed"])
+    return why
+
+
+def _weekday_bases(shop, closed=None, counts=None) -> Dict[int, float]:
+    """Each weekday's usual visits: its open days of the last 8 weeks (a day
+    the shop was closed, or a holiday, is not a zero to average), and only
+    for a weekday with visits on 3 of them at least."""
+    from features import holiday_learning as HL
+    closed = closed or _closed_days(shop)
+    counts = counts if counts is not None else _daily_counts(shop.tid, 56, shop.at, getattr(shop, "scope", None))
+    today = HL._paris_today(shop.at)
+    hols = {h["date"] for h in HL.holidays_between(today - timedelta(days=56), today)}
+    by_wd: Dict[int, List[int]] = defaultdict(list)
+    for i in range(1, 57):
+        d = today - timedelta(days=i)
+        if d in hols or closed(d):
+            continue
+        by_wd[d.weekday()].append(counts.get(d, 0))
+    off = getattr(closed, "weekdays", set())
+    return {w: sum(v) / len(v) for w, v in by_wd.items() if len([x for x in v if x]) >= 3 and w not in off}
+
+
 def forecast_week(shop) -> Dict[str, Any]:
-    """The next seven days: expected visits, and what the expectation rests on."""
+    """The next seven Paris days: expected visits, and what the expectation
+    rests on — the weekday's usual (open days only), the weather, events,
+    and on a jour férié what the shop's past ones and shops like it taught
+    (features/holiday_learning). A closed day says « Fermé »."""
+    from features import holiday_learning as HL
     at = shop.at
     scope = getattr(shop, "scope", None)
-    counts = _daily_counts(shop.tid, 56, at, scope)
-    by_wd: Dict[int, List[int]] = defaultdict(list)
-    # Fill silent days with zero so an occasional busy Monday is not a pattern.
-    for i in range(1, 57):
-        d = (at - timedelta(days=i)).date()
-        by_wd[d.weekday()].append(counts.get(d, 0))
-    base = {w: sum(v) / len(v) for w, v in by_wd.items() if len([x for x in v if x]) >= 3}
+    closed = _closed_days(shop)
+    base = _weekday_bases(shop, closed)
     if len(base) < 3:
         return {"days": [], "mean": None, "sources": []}
 
     pos = _shop_position(shop.tenant, scope)
     wx = weather_forecast(pos) if pos else None
     factor = rain_sensitivity(shop.tid, pos, at, scope) if wx else None
-    today = at.date()
+    today = HL._paris_today(at)
     ev = events_nearby(pos, today, today + timedelta(days=6)) if pos else {}
+    hols = {h["date"]: h for h in HL.holidays_between(today, today + timedelta(days=6))}
 
     days = []
     for i in range(7):
         d = today + timedelta(days=i)
+        shut = closed(d)
+        if shut:
+            days.append({"date": d.isoformat(), "weekday": d.weekday(), "base": None, "predicted": 0,
+                         "closed": True, "closed_reason": shut, "rain_mm": None, "tmax": None,
+                         "weather_applied": False, "events": [],
+                         **({"holiday": {"key": hols[d]["key"], "name": hols[d]["name"]}} if d in hols else {})})
+            continue
         b = base.get(d.weekday())
         if b is None:
             continue
         w = (wx or {}).get(d.isoformat())
         rainy = bool(w and w["rain"] >= RAINY_MM)
         pred = b * (factor if (rainy and factor) else 1.0)
-        days.append({"date": d.isoformat(), "weekday": d.weekday(), "base": round(b, 1),
-                     "predicted": round(pred, 1), "rain_mm": w["rain"] if w else None,
-                     "tmax": w["tmax"] if w else None, "weather_applied": bool(rainy and factor),
-                     "events": ev.get(d.isoformat(), [])})
+        row = {"date": d.isoformat(), "weekday": d.weekday(), "base": round(b, 1),
+               "rain_mm": w["rain"] if w else None, "tmax": w["tmax"] if w else None,
+               "weather_applied": bool(rainy and factor), "events": ev.get(d.isoformat(), [])}
+        if d in hols:
+            row["holiday"] = {"key": hols[d]["key"], "name": hols[d]["name"]}
+            try:
+                hf = HL.factor(shop.tid, shop.tenant or {}, scope, hols[d], at)
+            except Exception as exc:              # never a broken forecast
+                print(f"copilot: holiday factor unavailable ({exc})")
+                hf = None
+            row["holiday_factor"] = hf["factor"] if hf else None
+            row["holiday_basis"] = hf["basis"] if hf else None
+            if hf:
+                pred *= hf["factor"]
+        row["predicted"] = round(pred, 1)
+        days.append(row)
     mean = sum(base.values()) / len(base)
     sources = ["historique"]
     if wx:
         sources.insert(0, "météo")
     if events_configured():
         sources.append("événements")
+    if any(d.get("holiday_factor") for d in days):
+        sources.append("jours fériés")
     return {"days": days, "mean": round(mean, 1), "rain_factor": factor, "sources": sources}
 
 
 def _affluence(shop, fc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     E = _engine()
-    if not fc["days"] or not fc["mean"]:
+    open_days = [d for d in fc["days"] if not d.get("closed")]
+    if not open_days or not fc["mean"]:
         return None
-    peak = max(fc["days"], key=lambda d: d["predicted"])
+    peak = max(open_days, key=lambda d: d["predicted"])
     if peak["predicted"] < fc["mean"] * (1 + AFFLUENCE_LIFT):
         return None
     extra = peak["predicted"] - fc["mean"]
     day = E.WEEKDAY_FR[peak["weekday"]]
     has_event = bool(peak["events"])
-    if has_event and "météo" in fc["sources"]:
+    if peak.get("holiday_factor"):
+        why = f"{peak['holiday']['name']} : {peak.get('holiday_basis') or 'jour férié'}."
+    elif has_event and "météo" in fc["sources"]:
         why = "Météo + événement dans la zone."
     elif has_event:
         why = "Événement dans la zone + historique."
