@@ -431,9 +431,6 @@ def _at_risk(shop: Shop) -> List[Dict[str, Any]]:
     return [c for c in shop.people if CP.is_at_risk(c, shop.at)]
 
 
-def _students(shop: Shop) -> List[Dict[str, Any]]:
-    """Clients who declared themselves students at signup."""
-    return [c for c in shop.people if c.get("is_student")]
 
 
 def _best_weekday(shop: Shop) -> Optional[Dict[str, Any]]:
@@ -614,10 +611,6 @@ def _templates(food: bool, play: Optional[Dict[str, Any]] = None) -> Dict[str, D
                      "message": "Cela fait un moment ! Revenez cette semaine : une attention vous attend "
                                 "sur présentation de votre carte.",
                      "segment": "all", "audience": "at_risk"},
-        "etudiants": {"title": "🎓 Offre étudiants",
-                      "message": "Sur présentation de votre carte étudiante : -15 % toute la semaine. "
-                                 "On vous attend !",
-                      "segment": "all", "audience": "students"},
         "anniversaires_semaine": {"title": "🎂 Joyeux anniversaire !",
                                   "message": "Pour votre anniversaire, une surprise vous attend cette "
                                              "semaine sur présentation de votre carte.",
@@ -1205,10 +1198,6 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
         risk = _at_risk(shop)
         out["audience"] = {"label": "Clients à risque", "hint": "Des habitués qui ne viennent plus",
                            "ids": [c["id"] for c in risk]}
-    elif who == "students":
-        st = _students(shop)
-        out["audience"] = {"label": "Étudiants", "hint": "Déclarés à l'inscription",
-                           "ids": [c["id"] for c in st]}
     # A day-specific offer names the day it was suggested for — the one asked
     # for (the Copilote's forecast peak), or else the shop's strongest day.
     if not isinstance(day, int) or not (0 <= day <= 6):

@@ -81,7 +81,7 @@ export function FicheModal({ clientId, onClose, onSaved }) {
   const save = async () => {
     setBusy(true); setMsg('');
     const body = {};
-    ['name', 'phone', 'email', 'postal_code', 'is_student', 'acquisition_source'].forEach((k) => {
+    ['name', 'phone', 'email', 'postal_code', 'acquisition_source'].forEach((k) => {
       if (f[k] !== d.client[k]) body[k] = f[k];
     });
     if (f.birthday !== d.client.birthday || (f.birth_date || '') !== (d.client.birth_date || '')) {
@@ -173,10 +173,6 @@ export function FicheModal({ clientId, onClose, onSaved }) {
               <option value="">Non renseigné</option>
               {d.sources.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
             </select>
-          </label>
-          <label className="flex items-center gap-2.5 self-end pb-2.5 text-[13px] text-[#334155]">
-            <input type="checkbox" checked={!!f.is_student} onChange={(e) => setF({ ...f, is_student: e.target.checked })} className="h-4 w-4 accent-[#2F6BFF]" />
-            Étudiant·e
           </label>
         </div>
       )}

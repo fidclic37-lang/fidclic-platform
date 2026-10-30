@@ -20,8 +20,8 @@ import { useAuth } from '../contexts/AuthContext';
  *   • "CA généré via parrainage" is every filleul's whole spend since joining,
  *     for the life of the programme — so the card says "depuis le début" and
  *     deliberately does not move with the date filter.
- *   • The breakdown splits parrains into Clients réguliers / Étudiants /
- *     Nouveaux clients / Autres, étudiant being declared at signup.
+ *   • The breakdown splits parrains into Clients réguliers / Nouveaux clients
+ *     / Autres (« Étudiants » removed, user 2026-10-30).
  */
 const KPI_ICONS = { users: Users, user: User, gift: Gift, euro: Euro };
 const TONE = {
@@ -579,8 +579,7 @@ const EXAMPLE = (() => {
     breakdown: {
       total: 56,
       segments: [
-        { key: 'reguliers', label: 'Clients réguliers', tone: 'blue', count: 29, pct: 52 },
-        { key: 'etudiants', label: 'Étudiants', tone: 'teal', count: 16, pct: 28 },
+        { key: 'reguliers', label: 'Clients réguliers', tone: 'blue', count: 45, pct: 80 },
         { key: 'nouveaux', label: 'Nouveaux clients', tone: 'amber', count: 8, pct: 15 },
         { key: 'autres', label: 'Autres', tone: 'violet', count: 3, pct: 5 },
       ],

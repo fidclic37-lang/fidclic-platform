@@ -6684,10 +6684,8 @@ class JoinRequest(BaseModel):
     city: Optional[str] = ""
     birthday: str
     acquisition_source: Optional[str] = None
-    # Student status, declared by the customer at signup. French merchants run
-    # student offers constantly, so this is a first-class segment rather than a
-    # tag — the referral page's breakdown and any "étudiants" campaign read it.
-    is_student: Optional[bool] = False
+    # (« étudiant » is no longer asked nor kept — user, 2026-10-30; an old form
+    # still sending it is ignored.)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     # Multi-touch attribution: every URL ?src=... the visitor landed on
@@ -6965,7 +6963,6 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         longitude=req.longitude
     )
     cust_doc = c.model_dump()
-    cust_doc["is_student"] = bool(req.is_student)
     # The home store: the store of the link / the form, or the parrain's
     # (features/store_links) — found above, before anything is written.
     cust_doc["branch_id"] = home
@@ -12986,6 +12983,28 @@ def _points_split_once() -> None:
 
 
 _points_split_once()
+
+
+def _drop_student_flag_once() -> None:
+    """The « étudiant » category is gone (user, 2026-10-30: « purana data mein
+    se etudiant waala info bas hatao, baaki ka data intact rkho »). Only the
+    old `is_student` field leaves each client, in every shop; nothing else is
+    touched. Once, marked in platform_settings with how many clients it
+    changed. Never fatal: a start that fails here is retried next time."""
+    try:
+        done = db.platform_settings.find_one({"key": "drop_is_student"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        res = db.customers.update_many({"is_student": {"$exists": True}}, {"$unset": {"is_student": ""}})
+        n = int(getattr(res, "modified_count", 0) or 0)
+        db.platform_settings.update_one({"key": "drop_is_student"}, {"$set": {
+            "key": "drop_is_student", "value": "v1", "at": datetime.now(timezone.utc), "customers": n}}, upsert=True)
+        print(f"clients: « étudiant » removed from {n} customers", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it
+        print(f"clients: « étudiant » not removed yet ({exc})", flush=True)
+
+
+_drop_student_flag_once()
 
 
 def _cache_purge_once() -> None:

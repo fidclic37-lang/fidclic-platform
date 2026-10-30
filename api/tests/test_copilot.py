@@ -120,7 +120,7 @@ def main():
     risk = {c["id"] for c in E._at_risk(shop)}
     check("at-risk: regulars silent > 45 days AND > twice their own rhythm", risk == {"k1", "k2"})
     check("a dormant occasional client is not 'at risk' — just inactive", "d1" not in risk)
-    check("students are the ones who declared it", {c["id"] for c in E._students(shop)} == {"r3", "n1"})
+    check("no « étudiants » audience any more (removed, user 2026-10-30)", not hasattr(E, "_students"))
     best = E._best_weekday(shop)
     check("the strongest day is found in the visits", best["weekday"] == 5 and best["lift"] > 50)
 
@@ -128,6 +128,7 @@ def main():
     print("\nRecommandations")
     recs = K.recommendations(shop)
     by = {r["key"]: r for r in recs}
+    check("no « Étudiants » recommendation, even with declared students in the base", "etudiants" not in by)
     dormant = E._inactive(shop)
 
     def worth(people):
@@ -359,14 +360,17 @@ def main():
           view[today_step["id"]]["status"] == "Envoyée" and view[tomorrow_step["id"]]["status"] == "Programmée")
     check("… and the analysis step is now 'À suivre'", list(view.values())[-1]["status"] == "À suivre")
 
-    K.edit_plan(K.PlanEdit(steps=[{"key": "relance_inactifs", "offset": 0},
+    # a step still recommended right now (today's step was just sent, so it is not)
+    live = [r for r in K.recommendations(E.Shop("cafe", K._now())) if r.get("kind", "campaign") == "campaign"]
+    kept = live[0]["key"]
+    K.edit_plan(K.PlanEdit(steps=[{"key": kept, "offset": 0},
                                   {"key": "hack", "offset": 1},
-                                  {"key": "etudiants", "offset": 9},
-                                  {"key": "relance_inactifs", "offset": 2},
+                                  {"key": "etudiants", "offset": 2},
+                                  {"key": kept, "offset": 3},
                                   {"key": "analyse", "offset": 5}]), token_data=T())
     keys = [(s["key"], s["offset"]) for s in K._plan(shop, recs)["steps"]]
-    check("'Modifier le plan' keeps only what is recommended, once, inside the week",
-          keys == [("relance_inactifs", 0), ("analyse", 5)])
+    check(f"'Modifier le plan' keeps only what is recommended, once, inside the week ({kept})",
+          keys == [(kept, 0), ("analyse", 5)])
     try:
         K.edit_plan(K.PlanEdit(steps=[{"key": "hack", "offset": 0}]), token_data=T())
         emptyp = False
@@ -381,8 +385,12 @@ def main():
     check("an offer for a given day names that day", "samedi" in t["title"])
     t = E.template("a_risque", token_data=T())
     check("the at-risk campaign goes to the at-risk clients, by id", set(t["audience"]["ids"]) == risk)
-    t = E.template("etudiants", token_data=T())
-    check("the student campaign goes to the students", set(t["audience"]["ids"]) == {"r3", "n1"})
+    try:
+        E.template("etudiants", token_data=T())
+        gone = False
+    except Exception as exc:
+        gone = getattr(exc, "status_code", None) == 404
+    check("the student campaign is gone (404)", gone)
 
     # ---- the chat ----------------------------------------------------------------------------
     print("\nLe chat")
@@ -399,8 +407,9 @@ def main():
     check("the action buttons come from the server, not the model",
           out["actions"] and out["actions"][0]["template"] == "relance_inactifs")
     out = K.chat(K.ChatIn(message="Créer une campagne pour les étudiants"), token_data=T())
-    check("students → the student campaign, even right after one was sent",
-          out["actions"][0]["template"] == "etudiants")
+    check("« étudiants » no longer opens a student campaign",
+          all(a.get("template") != "etudiants" for a in out.get("actions") or []))
+    check("…and the facts given to the model carry no student count", '"etudiants"' not in seen["user"])
     check("… and the model is told what went out recently", '"campagnes_recentes"' in seen["user"])
     out = K.chat(K.ChatIn(message="Analyser mes derniers résultats"), token_data=T())
     check("results → the analytics page", out["actions"][0]["to"] == "/dashboard/analytics")

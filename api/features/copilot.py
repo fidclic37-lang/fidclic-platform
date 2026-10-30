@@ -3,7 +3,7 @@ FidClic IA Copilote — the strategic assistant, built to the approved mockup.
 
 ONE BRAIN
     The Copilote does not have opinions of its own. Its groups of clients —
-    inactive, at risk, one-time, students, birthdays, local — and its campaign
+    inactive, at risk, one-time, birthdays, local — and its campaign
     copy come from the same engine as the Insights page (features.insights_
     page), so the two pages can never give a merchant different advice about
     the same shop.
@@ -567,12 +567,6 @@ def _library(shop) -> List[Dict[str, Any]]:
              "Ils ne sont venus qu'une fois : une offre pour la deuxième visite les fidélise.",
              once, "seconde_visite", "Lancer la campagne")
 
-    students = E._students(shop)
-    campaign("etudiants", "Étudiants", "blue", "graduation",
-             f"Offre pour {len(students)} étudiant{'s' if len(students) > 1 else ''}",
-             "Des clients déclarés étudiants : une offre dédiée les fait revenir.",
-             students, "etudiants", "Créer l'offre")
-
     near = E._locals(shop) or []
     campaign("proximite", "Clients locaux", "green", "pin",
              f"Cibler {len(near)} clients à moins de 2 km",
@@ -822,14 +816,6 @@ def opportunities(shop, fc: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "potential": _money(e),
                     "cta": {"kind": "template", "template": "anniversaires_semaine"}})
 
-    students = E._students(shop)
-    if students:
-        _, e = _worth(students, shop)
-        out.append({"key": "etudiants", "icon": "graduation", "tone": "blue",
-                    "title": f"{len(students)} étudiant{'s' if len(students) > 1 else ''} dans votre base",
-                    "body": "Une offre étudiante dédiée les fait revenir.",
-                    "potential": _money(e), "cta": {"kind": "template", "template": "etudiants"}})
-
     once = E._one_timers(shop)
     if once:
         _, e = _worth(once, shop)
@@ -845,7 +831,7 @@ def opportunities(shop, fc: Dict[str, Any]) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 SHORT = {"relance_inactifs": "Relance inactifs", "offre_jour": "Offre spéciale",
          "a_risque": "Reconquête habitués", "anniversaires": "Anniversaires",
-         "seconde_visite": "2e visite", "etudiants": "Offre étudiants",
+         "seconde_visite": "2e visite",
          "proximite": "Offre locale", "palier_vip": "Palier VIP",
          "avis_google": "Demande d'avis", "anniversaire_auto": "Push Wallet anniversaire",
          "analyse": "Analyse résultats"}
@@ -1093,7 +1079,7 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
         "learning": LEARNING,
         "assistant": {"online": _llm_ready(),
                       "prompts": ["Augmenter mes ventes ce week-end", "Relancer mes clients inactifs",
-                                  "Créer une campagne pour les étudiants",
+                                  "Faire revenir les nouveaux clients",
                                   "Analyser mes derniers résultats",
                                   "Proposer une offre pour les anniversaires", "Autre demande…"]},
         "events_configured": events_configured(),
@@ -1248,7 +1234,6 @@ def approve(step_id: str, token_data: TokenData = Depends(require_role(["busines
 INTENTS: List[Tuple[str, Tuple[str, ...]]] = [
     ("relance_inactifs", ("inactif", "relanc", "revenir", "reviennent")),
     ("offre_jour", ("week-end", "weekend", "vendredi", "samedi", "dimanche", "ventes")),
-    ("etudiants", ("etudiant",)),
     ("anniversaires", ("anniversaire",)),
     ("a_risque", ("risque", "partir", "perdre", "habitue")),
     ("proximite", ("local", "proximite", "quartier", "a cote")),
@@ -1276,7 +1261,6 @@ def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any],
         "clients_inactifs_30j": len(E._inactive(shop)),
         "clients_a_risque": len(E._at_risk(shop)),
         "anniversaires_7j": len(E._birthdays(shop, 7)),
-        "etudiants": len(E._students(shop)),
         "nouveaux_une_visite": len(E._one_timers(shop)),
         "visites_30j": cards["visits"]["value"], "evolution_visites_pct": cards["visits"]["delta"],
         "ca_30j_eur": cards["revenue"]["value"], "evolution_ca_pct": cards["revenue"]["delta"],

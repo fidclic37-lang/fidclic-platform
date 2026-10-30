@@ -72,7 +72,7 @@ export default function AiMemoryList({ onCount }) {
       )}
       <form onSubmit={add} className="mt-3 flex items-center gap-2">
         <input value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={max}
-               placeholder="Ex. : Fermé le lundi, ma cible : les étudiants…" aria-label="Ajouter ce que FidClic IA doit retenir"
+               placeholder="Ex. : Fermé le lundi, ma cible : les familles du quartier…" aria-label="Ajouter ce que FidClic IA doit retenir"
                className="min-w-0 flex-1 rounded-lg border border-[#DCE3EE] px-3 py-2 text-[13px] outline-none focus:border-[#2F6BFF]" />
         <button type="submit" disabled={!draft.trim() || busy === 'add'}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[#2F6BFF] px-3 py-2 text-[12.5px] font-semibold text-white hover:bg-[#2559DB] disabled:opacity-50">
