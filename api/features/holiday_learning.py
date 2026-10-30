@@ -4,7 +4,10 @@ also from other shops of same sectors, taaki learning ekdm robust ho »).
 
 A holiday's effect on a shop open that day is its visits that day over the
 usual visits of that weekday — the open days of the 8 weeks before, holidays
-left out. Read from the daily register (features/visit_days), Paris days.
+left out. Counted on those days only (Paris days, indexed counts — never two years
+of register: audit of #411, 2443 s for 35 shops), stored per shop in
+`holiday_measures` by the tick within a time budget; a page reads what is
+stored and measures only a shop never measured.
 
 - The shop's own: every past holiday it was open (it had visits that day,
   and its Horaires do not say closed), over two years.
@@ -35,6 +38,7 @@ BASE_WEEKS = 8
 BASE_MIN_DAYS = 3
 CLIP = (0.2, 4.0)
 LEARN_EVERY = timedelta(hours=24)
+PASS_SECONDS = 60.0        # the tick's share: shops not measured in time wait for the next pass
 CACHE_TTL_S = 6 * 3600
 _cache: Dict[str, Tuple[float, Any]] = {}
 MASCULINE = {"jour_de_lan", "lundi_paques", "lundi_pentecote", "armistice", "noel"}
@@ -85,6 +89,19 @@ def _closed_fn(tid: str):
     return lambda d: BH.closed_reason(tenant, d)
 
 
+def count_days(tid: str, scope, days) -> Dict[date, int]:
+    """Visits on each of these Paris days — one indexed count a day."""
+    from features import store_scope as S
+    from features import visit_days as VD
+    flt = S.visit_filter(scope) if scope is not None else {}
+    out: Dict[date, int] = {}
+    for d in sorted(set(days)):
+        a = VD.day_start(d.isoformat())
+        b = VD.day_start((d + timedelta(days=1)).isoformat())
+        out[d] = _db.visits.count_documents({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}, **flt})
+    return out
+
+
 def ratios(tid: str, scope, at: datetime) -> Dict[str, List[float]]:
     """{holiday key: [visits that day / that weekday's usual]} — the shop's
     past holidays it was open, over two years."""
@@ -92,10 +109,10 @@ def ratios(tid: str, scope, at: datetime) -> Dict[str, List[float]]:
     hols = holidays_between(today - timedelta(days=LOOKBACK_DAYS), today - timedelta(days=1))
     if not hols:
         return {}
-    first = min(h["date"] for h in hols) - timedelta(weeks=BASE_WEEKS)
-    counts = daily_counts(tid, scope, first, today - timedelta(days=1), at)
-    if not counts:
+    if not _db.visits.find_one({"tenant_id": tid, "visit_time": {"$lt": at}}, {"_id": 1}):
         return {}
+    need = {h["date"] - timedelta(weeks=k) for h in hols for k in range(0, BASE_WEEKS + 1)}
+    counts = count_days(tid, scope, need)
     closed = _closed_fn(tid)
     hol_days = {h["date"] for h in hols}
     out: Dict[str, List[float]] = defaultdict(list)
@@ -113,12 +130,35 @@ def ratios(tid: str, scope, at: datetime) -> Dict[str, List[float]]:
     return dict(out)
 
 
+def _scope_key(scope) -> str:
+    return "all" if scope is None or getattr(scope, "is_all", True) else scope.key
+
+
+def _fresh(doc: Optional[Dict[str, Any]], at: datetime) -> bool:
+    """Measured after the last holiday that has passed (nothing new to learn)."""
+    if not doc or not doc.get("day"):
+        return False
+    today = _paris_today(at)
+    past = holidays_between(today - timedelta(days=LOOKBACK_DAYS), today - timedelta(days=1))
+    last = max((h["date"] for h in past), default=None)
+    return last is None or doc["day"] > last.isoformat()
+
+
+def measure(tid: str, scope, at: datetime) -> Dict[str, List[float]]:
+    r = ratios(tid, scope, at)
+    _db.holiday_measures.update_one({"tenant_id": tid, "scope": _scope_key(scope)},
+                                    {"$set": {"ratios": r, "day": _paris_today(at).isoformat(), "at": at}}, upsert=True)
+    return r
+
+
 def own_ratios(tid: str, scope, at: datetime) -> Dict[str, List[float]]:
-    key = f"{tid}|{getattr(scope, 'key', 'all')}|{_paris_today(at)}"
+    """What is stored; measured here only for a shop never measured (or after a holiday passed)."""
+    key = f"{tid}|{_scope_key(scope)}|{_paris_today(at)}"
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
         return hit[1]
-    r = ratios(tid, scope, at)
+    doc = _db.holiday_measures.find_one({"tenant_id": tid, "scope": _scope_key(scope)}, {"_id": 0})
+    r = doc["ratios"] if _fresh(doc, at) else measure(tid, scope, at)
     _cache[key] = (time.monotonic(), r)
     return r
 
@@ -133,13 +173,19 @@ def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
     """The network, each shop one vote, the middle shop's figure. Stored, never a shop id."""
     now = now or NOW()
     per: Dict[Tuple[str, str], List[float]] = defaultdict(list)
-    shops = 0
-    for t in _db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0, "id": 1, "sector": 1, "activity_key": 1}):
-        try:
-            r = ratios(t["id"], None, now)
-        except Exception as exc:                  # one shop never stops the network
-            print(f"holiday_learning: {t.get('id')} skipped ({exc})")
-            continue
+    shops = measured = 0
+    deadline = time.monotonic() + PASS_SECONDS
+    tenants = list(_db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0, "id": 1, "sector": 1, "activity_key": 1}))
+    stored = {d["tenant_id"]: d for d in _db.holiday_measures.find({"scope": "all"}, {"_id": 0})}
+    for t in tenants:
+        doc = stored.get(t["id"])
+        if not _fresh(doc, now) and time.monotonic() <= deadline:
+            try:                                  # measured within the pass's time; the rest next pass
+                doc = {"ratios": measure(t["id"], None, now)}
+                measured += 1
+            except Exception as exc:              # one shop never stops the network
+                print(f"holiday_learning: {t.get('id')} skipped ({exc})")
+        r = (doc or {}).get("ratios") or {}
         if not r:
             continue
         shops += 1
@@ -152,7 +198,7 @@ def learn(now: Optional[datetime] = None) -> Dict[str, Any]:
           for (g, k), v in per.items() if len(v) >= NET_MIN_SHOPS}
     _db.platform_settings.update_one({"key": NET_KEY}, {"$set": {"key": NET_KEY, "at": now, "by": by}}, upsert=True)
     _cache.pop("net", None)
-    return {"figures": len(by), "shops": shops}
+    return {"figures": len(by), "shops": shops, "measured": measured}
 
 
 def learn_due(now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -161,9 +207,16 @@ def learn_due(now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     at = d.get("at")
     if isinstance(at, datetime):
         at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
-        if now - at < LEARN_EVERY:
+        if now - at < LEARN_EVERY and not _unmeasured(now):
             return None
     return learn(now)
+
+
+def _unmeasured(now: datetime) -> bool:
+    """A shop still waiting for its measures: each tick goes on until none is."""
+    stored = {d["tenant_id"]: d for d in _db.holiday_measures.find({"scope": "all"}, {"_id": 0, "tenant_id": 1, "day": 1})}
+    return any(not _fresh(stored.get(t["id"]), now)
+               for t in _db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0, "id": 1}))
 
 
 def _network() -> Dict[str, Any]:
