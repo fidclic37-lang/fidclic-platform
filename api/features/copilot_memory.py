@@ -345,7 +345,7 @@ def _run(jobs: List[Tuple[str, str, int]], deadline: float) -> List[Optional[str
     before the deadline is skipped (None) and waits for the next pass; a
     call that fails is an exception in its slot."""
     def one(job):
-        if time.monotonic() > deadline:
+        if _mono() > deadline:
             return _SKIP
         try:
             return _ask(*job)
@@ -358,6 +358,7 @@ def _run(jobs: List[Tuple[str, str, int]], deadline: float) -> List[Optional[str
 
 
 _SKIP = object()
+_mono = time.monotonic       # the pass's clock (tests set it: a slow CI machine must not decide)
 
 
 def _pending_accounts(limit: int) -> List[Tuple[str, str]]:
@@ -425,7 +426,7 @@ def _summary_pass(accounts: List[Tuple[str, str]], budget: List[int], deadline: 
     """Rounds: one part per account at a time (each part builds on the
     summary before it), until done, out of calls or out of time."""
     todo = list(accounts)
-    while todo and budget[0] > 0 and time.monotonic() < deadline:
+    while todo and budget[0] > 0 and _mono() < deadline:
         jobs = []
         for tid, by in todo[:budget[0]]:
             j = _summary_job(tid, by)
@@ -463,7 +464,7 @@ def learn_due(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["failures"] += 1
     if not _llm_ready():
         return out
-    deadline = time.monotonic() + PASS_SECONDS
+    deadline = _mono() + PASS_SECONDS
     budget = [PASS_CALLS]
     accounts = _pending_accounts(PASS_CALLS)
     for st in _db.copilot_memory_state.find({"rebuild": True}, {"_id": 0, "tenant_id": 1, "by": 1}).limit(PASS_CALLS):

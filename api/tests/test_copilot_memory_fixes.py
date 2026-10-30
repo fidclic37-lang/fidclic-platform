@@ -114,18 +114,20 @@ def main():
     db.copilot_chats.insert_many([{"tenant_id": f"w{s}", "by": f"o@w{s}", "role": "user", "text": "je ferme tard",
                                    "at": now} for s in range(40)])
 
+    fake = {"t": 0.0}                             # the pass's clock: each model call takes 0.2 s of it
+
     def slow(system, user):
-        time.sleep(0.2)
+        with lock:
+            fake["t"] += 0.2
         return model(system, user)
     llm._force_complete = slow
-    real_budget = CM.PASS_SECONDS
-    CM.PASS_SECONDS = 0.5
-    t0 = time.perf_counter()
+    real_budget, real_mono = CM.PASS_SECONDS, CM._mono
+    CM.PASS_SECONDS, CM._mono = 0.5, (lambda: fake["t"])
     CM.learn_due(now)
-    took = time.perf_counter() - t0
-    CM.PASS_SECONDS = real_budget
+    CM.PASS_SECONDS, CM._mono = real_budget, real_mono
     left = pending()
-    check("a slow model: the pass stops at its time budget", took < 3, took)
+    started = sum(1 for c in calls if CM.EXTRACT_MARK in c["system"])
+    check("a slow model: the pass stops at its time budget (no call starts after it)", started <= 3 + CM.PASS_WORKERS, started)
     check("…and what it did not read waits for the next pass (nothing lost)", 0 < left < 40, left)
     llm._force_complete = model
     while pending():
