@@ -103,7 +103,8 @@ MODULES = [
     # FidClic IA Copilote — recommendations, growth potential, forecast
     # (history + weather + local events), a 7-day plan with Autopilot, and a chat
     # grounded on the shop's own figures.
-    "features.copilot_memory",         # the Copilote's memory: every message kept, facts, summary
+    "features.copilot_memory",
+    "features.copilot_tools",          # the Copilote's read-only tools (no router)         # the Copilote's memory: every message kept, facts, summary
     "features.copilot",
     # Insights — « Faites grandir votre commerce » : opportunités, actions,
     # idées de campagnes et conseils, ranked on the shop's own data and sector.
