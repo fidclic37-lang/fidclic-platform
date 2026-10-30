@@ -370,7 +370,10 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     status_mix = CP.status_mix(customers, at, rules)
 
     recos = _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
-                             campaigns, products, goal, PB.of(tenant))
+                             campaigns, products, goal, PB.of(tenant), limit=None)
+    # the ranking that learns (2026-10-30): the figures' order × what was learned, then three
+    from features import reco_ranking as RR
+    recos = RR.rank(tid, recos, lambda r, n: float(len(recos) - n))[:3]
     # the journal of ideas (2026-10-29): shown, and what each brought last time
     from features import reco_journal as RJ
     RJ.shown(tid, "dashboard", recos, scope.key)
@@ -406,7 +409,8 @@ def _reward_setup(tid: str, token_data: TokenData) -> Optional[Dict[str, Any]]:
 
 def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
                      products: List[Dict[str, Any]], goal: Dict[str, Any],
-                     play: Optional[Dict[str, Any]] = None, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
+                     play: Optional[Dict[str, Any]] = None, at: Optional[datetime] = None,
+                     limit: Optional[int] = 3) -> List[Dict[str, Any]]:
     """Only advice the figures support. A shop with nobody to win back is not
     told to win people back. The shop's playbook (services/playbooks.py) adds
     its trade's top advice in season, and its own words."""
@@ -454,4 +458,4 @@ def _recommendations(buckets: Dict[str, int], campaigns: Dict[str, Any],
                     "Une offre dessus convertit plus facilement.",
             # the composer opens on that offer (user, 2026-10-23: it opened the card page)
             "cta": "Créer une offre", "to": f"/dashboard/campaigns?template=produit:{quote(products[0]['name'], safe='')}"})
-    return out[:3]
+    return out[:limit] if limit else out

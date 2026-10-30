@@ -672,11 +672,11 @@ def recommendations(shop) -> List[Dict[str, Any]]:
     used = getattr(shop, "used", None) or _engine().used_templates(shop.tid, shop.at, scope=scope)
     items = [i for i in _library(shop) if i["key"] not in hidden
              and (i.get("cta") or {}).get("template") not in used]
-    for i in items:
-        # A recommendation the merchant keeps acting on rises; it never
-        # outranks one worth more than twice as much.
-        i["score"] = i["score"] * (1 + 0.15 * min(3, accepted.get(i["key"], 0)))
-    return sorted(items, key=lambda i: -i["score"])
+    items = sorted(items, key=lambda i: -i["score"])
+    # the ranking that learns (2026-10-30): the estimate × what every shown,
+    # opened, pushed-back and measured idea taught (features/reco_ranking)
+    from features import reco_ranking as RR
+    return RR.rank(shop.tid, items, lambda i, _n: i["score"])
 
 
 def _public(i: Dict[str, Any]) -> Dict[str, Any]:

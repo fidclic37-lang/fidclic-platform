@@ -28,10 +28,13 @@ test('Insights advises the shop’s own activity, with only sourced figures', as
     }, [login.access_token, store]);
     await page.goto('/dashboard/insights');
     await expect(page.getByText('pour votre activité : Barbier')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText('Proposez le prochain rendez-vous en caisse')).toBeVisible();
     await expect(page.getByText('Estimation du secteur')).toHaveCount(0);
     await expect(page.getByText(/boisson/i)).toHaveCount(0);
     await page.getByRole('button', { name: /Voir toutes les actions/ }).click();
+    // the learning ranking (2026-10-30) may put it behind « Voir toutes les opportunités »
+    const moreOpps = page.getByRole('button', { name: /Voir toutes les opportunités/ });
+    if (await moreOpps.isVisible()) await moreOpps.click();
+    await expect(page.getByText('Proposez le prochain rendez-vous en caisse').first()).toBeVisible();
     const source = page.getByRole('link', { name: /Source : BrightLocal/ });
     await expect(source.first()).toBeVisible();
     await expect(source.first()).toHaveAttribute('href', /^https:\/\/www\.brightlocal\.com\//);

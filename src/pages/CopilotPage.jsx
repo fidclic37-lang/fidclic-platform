@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import RecoLastResult from '../components/RecoLastResult';
+import RecoLastResult, { RecoWhy } from '../components/RecoLastResult';
 
 /**
  * FidClic IA Copilote — built to the approved mockup.
@@ -155,6 +155,7 @@ const RecCard = ({ r, n, onAct, onFeedback, onMore }) => {
         </div>
       </div>
       <RecoLastResult r={r} className="mb-2" />
+      <RecoWhy r={r} className="mb-2" />
       <div className="flex gap-2">
         <button type="button" onClick={() => onAct(r)} data-testid={r.cta?.kind === 'template' ? 'reco-cta' : undefined}
                 className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#2F6BFF] px-3 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#2559DB]">
