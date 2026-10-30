@@ -811,7 +811,11 @@ const DashboardLayout = () => {
                   style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }}>Quitter</button>
         </div>
       ))}
-      <main className="relative z-10 flex-1 overflow-auto">
+      {/* No z-index here (user, 2026-10-30): with one, <main> was its own layer
+          UNDER the phone's bottom tab bar (BottomNav, z-40), so every window
+          opened from a page had its bottom — its save button — painted under
+          the bar. Without it, a window's own z-50 puts it above the bar. */}
+      <main className="relative flex-1 overflow-auto">
         {/* A team member whose role may look at this section but not change it. */}
         {isTeam(user) && role !== 'super_admin' && moduleOfPath(currentPath) && can(user, moduleOfPath(currentPath))
           && !can(user, moduleOfPath(currentPath), 'edit') && (
