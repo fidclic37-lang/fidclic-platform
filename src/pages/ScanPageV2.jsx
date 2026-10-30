@@ -179,6 +179,51 @@ export function programmeOf(tpl) {
   return tpl?.points_mode === 'per_euro' ? 'points_euro' : 'stamps';
 }
 
+/* « Plusieurs personnes » (user, 2026-10-30): a client pays for several
+   people (a mother and her children at the hairdresser) — the card gets each
+   one's tampons, or « points par visite ». One visit all the same. */
+function MultiPerson({ persons, setPersons, max, programme }) {
+  const on = persons > 1;
+  const hint = programme === 'stamps' ? `La carte recevra les tampons de ${persons} visites (une seule visite enregistrée).`
+    : programme === 'points_visit' ? `La carte recevra ${persons} fois les points d'une visite.`
+      : programme === 'cashback' ? 'La cagnotte suit le montant payé, déjà pour toutes les personnes.'
+        : 'Les points suivent le montant payé, déjà pour toutes les personnes.';
+  return (
+    <div className="mb-4 rounded-xl border border-[#E6EEFB] bg-[#F8FAFF] p-3" data-testid="multi-person">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Plusieurs personnes ?</p>
+          <p className="text-[12px] text-[#64748B]">Le client paie pour plusieurs personnes (ses enfants, un proche…).</p>
+        </div>
+        <button type="button" role="switch" aria-checked={on} aria-label="Plusieurs personnes"
+                onClick={() => setPersons(on ? 1 : 2)}
+                className={`h-7 w-12 shrink-0 rounded-full transition ${on ? 'bg-[#2F6BFF]' : 'bg-[#CBD5E1]'}`}>
+          <span className={`block h-6 w-6 rounded-full bg-white transition ${on ? 'translate-x-[22px]' : 'translate-x-[2px]'}`} />
+        </button>
+      </div>
+      {on && (
+        <div className="mt-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[13px] font-semibold text-[#334155]">Nombre de personnes</span>
+            <div className="flex items-center gap-1.5">
+              <button type="button" aria-label="Une personne de moins" disabled={persons <= 2}
+                      onClick={() => setPersons(Math.max(2, persons - 1))}
+                      className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#C9DBFB] bg-white text-[18px] font-bold text-[#1463FF] disabled:opacity-40">−</button>
+              <span aria-live="polite" data-testid="persons-count"
+                    className="w-10 text-center text-[18px] font-bold tabular-nums text-[#0B1C3F]">{persons}</span>
+              <button type="button" aria-label="Une personne de plus" disabled={persons >= max}
+                      onClick={() => setPersons(Math.min(max, persons + 1))}
+                      className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#C9DBFB] bg-white text-[18px] font-bold text-[#1463FF] disabled:opacity-40">+</button>
+            </div>
+          </div>
+          <p className="mt-2 text-[12.5px] text-[#0F7A45]">{hint}</p>
+          {persons >= max && <p className="mt-1 text-[12px] text-[#64748B]">{max} personnes au maximum (Carte de fidélité › Paramètres).</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TillReminders({ offers = [], rewards = [], onRedeemed, customerId, branchId }) {
   const [busy, setBusy] = useState('');
   const [done, setDone] = useState({});
@@ -910,6 +955,9 @@ const ScanPage = () => {
   const [panelQ, setPanelQ] = useState('');
   const [panelCat, setPanelCat] = useState('Tous');
   const [paperOn, setPaperOn] = useState(false);
+  // « Plusieurs personnes » (user, 2026-10-30): one client pays for several
+  // people — the card gets each one's tampons (or « points par visite »). 1 = off.
+  const [persons, setPersons] = useState(1);
 
   // Everything the paper card needs comes from /scan/card (features/scan_page),
   // which already answers for this very client — asking /scan/preview for the
@@ -992,7 +1040,7 @@ const ScanPage = () => {
   });
   const panelTotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
 
-  const resetVisit = () => { setPicked({}); setApply(''); setManual(false); setAmountPaid(''); setAmountErr(null); setPaperStamps(''); setPaperOn(false); };
+  const resetVisit = () => { setPicked({}); setApply(''); setManual(false); setAmountPaid(''); setAmountErr(null); setPaperStamps(''); setPaperOn(false); setPersons(1); };
   const amountProblem = amountErr
     || (manual && amountPaid !== '' && !/^\d+(\.\d{1,2})?$/.test(amountPaid) ? 'Montant invalide : un nombre positif, par exemple 12,50.' : null);
   // what the field says: DecimalInput's own word first (a minus), else the format check
@@ -1021,7 +1069,7 @@ const ScanPage = () => {
     return () => window.removeEventListener('fc:scan-again', scanAgain);
   });
   // a new code read (camera, photo, typed): a new visit, not the last one's summary
-  useEffect(() => { setRecorded(null); setStep('items'); }, [barcode]);
+  useEffect(() => { setRecorded(null); setStep('items'); setPersons(1); }, [barcode]);
 
   // The scanner (douchette) works from anywhere on this page, no field to click
   // first: its burst opens the client, like the camera does — then the
@@ -1089,6 +1137,7 @@ const ScanPage = () => {
         items: lines.length ? lines.map((l) => ({ item_id: l.id, qty: l.qty })) : undefined,
         apply: apply || undefined,
         paper_stamps: paper > 0 ? paper : undefined,
+        persons: persons > 1 ? persons : undefined,
         branch_id: branchId || undefined,
       });
       setScanResult(data);
@@ -1310,7 +1359,11 @@ const ScanPage = () => {
                     : recorded.data?.programme === 'cashback'
                       // a cagnotte credits euros (QA R7 F39: the receipt said « +100 points »)
                       ? `+${money((recorded.data?.points_earned ?? 0) / 100)} de cagnotte`
-                      : `+${recorded.data?.points_earned ?? 0} point${(recorded.data?.points_earned ?? 0) > 1 ? 's' : ''}`}</dd></div>
+                      : `+${recorded.data?.points_earned ?? 0} point${(recorded.data?.points_earned ?? 0) > 1 ? 's' : ''}`}{recorded.data?.persons > 1 ? ` · ${recorded.data.persons} personnes` : ''}</dd></div>
+                {recorded.data?.persons > 1 && recorded.data?.cards_completed > 0 && (
+                  <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2" data-testid="cards-completed"><dt className="text-[#64748B]">Carte</dt>
+                    <dd className="text-right font-semibold text-[#EA580C]">🎉 {recorded.data.cards_completed > 1 ? `${recorded.data.cards_completed} cartes complétées` : 'Carte complétée'} — récompense à remettre</dd></div>
+                )}
                 {recorded.lines.length > 0 && (
                   <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2"><dt className="text-[#64748B]">{words.many.charAt(0).toUpperCase() + words.many.slice(1)}</dt>
                     <dd className="text-right text-[#0B1C3F]">{recorded.lines.map((l) => `${l.qty} × ${l.name}`).join(', ')}</dd></div>
@@ -1335,6 +1388,10 @@ const ScanPage = () => {
           {!recorded && step === 'items' && (
           <div className="rounded-2xl border border-[#E6EEFB] bg-white p-5" data-testid="visit-items">
             <p className="mb-3 text-[16px] font-bold text-[#0B1C3F]">Enregistrer une visite</p>
+
+            {card?.multi?.enabled && (
+              <MultiPerson persons={persons} setPersons={setPersons} max={card.multi.max} programme={card.multi.programme} />
+            )}
 
             {phone && (catalog || []).length > 0 && (
               <div data-testid="product-tiles">
@@ -1468,6 +1525,10 @@ const ScanPage = () => {
             <dl className="grid gap-y-2 text-[13.5px]">
               <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">{words.many.charAt(0).toUpperCase() + words.many.slice(1)}</dt>
                 <dd className="text-right text-[#0B1C3F]">{lines.length ? lines.map((l) => `${l.qty} × ${l.name}`).join(', ') : 'Aucun'}</dd></div>
+              {persons > 1 && (
+                <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2" data-testid="review-persons"><dt className="text-[#64748B]">Personnes</dt>
+                  <dd className="text-right font-semibold text-[#0B1C3F]">{persons} personnes</dd></div>
+              )}
               {paperOn && parseInt(paperStamps || '0', 10) > 0 && (
                 <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Carte papier</dt>
                   <dd className="text-right text-[#0B1C3F]">{parseInt(paperStamps, 10)} tampon{parseInt(paperStamps, 10) > 1 ? 's' : ''} reporté{parseInt(paperStamps, 10) > 1 ? 's' : ''}</dd></div>

@@ -726,6 +726,9 @@ export default function LoyaltyCardPage() {
         reward_threshold_stamps: Number(programme.reward_threshold_stamps),
         reward_points: Number(programme.reward_points),
         reward_description: programme.reward_description,
+        // « Plusieurs personnes » at the till (features/multi_person)
+        ...(programme.multi_person ? { multi_person: !!programme.multi_person.enabled,
+                                       multi_person_max: Number(programme.multi_person.max) } : {}),
         ...toggles,
         show_qr: true, wallet_enabled: true,
         ...(advanced || {}),
@@ -812,6 +815,28 @@ export default function LoyaltyCardPage() {
                 <Input value={design.card_message} maxLength={120}
                        onChange={(e) => setDesign({ ...design, card_message: e.target.value })} />
               </div>
+              {programme.multi_person && (
+                <div className="lg:col-span-2" data-testid="multi-person-setting">
+                  <div className="-mx-2">
+                    <Toggle icon={Users} label="Visite à plusieurs personnes" checked={!!programme.multi_person.enabled}
+                            onChange={(v) => setProgramme({ ...programme, multi_person: { ...programme.multi_person, enabled: v } })} />
+                  </div>
+                  <p className="mt-0.5 text-[11.5px] text-[#94A3B8]">
+                    Un client paie pour plusieurs personnes (ses enfants, un proche) : à l'enregistrement de la visite,
+                    l'équipe choisit le nombre de personnes et la carte reçoit les tampons (ou les points par visite) de chacune.
+                    Une seule visite est comptée. {programme.multi_person.default ? 'Activé par défaut pour votre activité.' : ''}
+                  </p>
+                  {programme.multi_person.enabled && (
+                    <div className="mt-2 max-w-[260px]">
+                      <Label>Personnes au maximum par visite</Label>
+                      <Select value={String(programme.multi_person.max)}
+                              onChange={(e) => setProgramme({ ...programme, multi_person: { ...programme.multi_person, max: Number(e.target.value) } })}>
+                        {Array.from({ length: 19 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n} personnes</option>)}
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="-mx-2 space-y-0.5 pt-1">
                 <Toggle icon={CreditCard} label="Afficher le message sur la carte" checked={toggles.show_message}
                         onChange={(v) => setToggles({ ...toggles, show_message: v })} />

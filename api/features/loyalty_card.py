@@ -317,6 +317,9 @@ class CardSettings(BaseModel):
     reward_threshold_stamps: Optional[int] = None
     reward_points: Optional[int] = None          # points for the default reward
     reward_description: Optional[str] = None
+    # « Plusieurs personnes » at the till (features/multi_person)
+    multi_person: Optional[bool] = None
+    multi_person_max: Optional[Any] = None
     # toggles
     show_points: Optional[bool] = None
     show_qr: Optional[bool] = None
@@ -404,6 +407,11 @@ def _sector_reward(sector):
     return default_reward(sector)
 
 
+def _multi_person(tenant: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]:
+    from features import multi_person as MP
+    return MP.settings(tenant, tpl)
+
+
 @router.get("/api/owner/card/settings")
 def get_card_settings(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
@@ -435,6 +443,9 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "reward_threshold_stamps": int(tpl.get("reward_threshold_stamps") or 10),
             "reward_points": int(tpl.get("reward_points") or 100),
             "reward_description": tpl.get("reward_description") or _sector_reward(tenant.get("sector")),
+            # « Plusieurs personnes » (user, 2026-10-30): on, the most, and the
+            # trade's default (on for the service trades)
+            "multi_person": _multi_person(tenant, tpl),
         },
         "toggles": {
             "show_points": tpl.get("show_points") is not False,
@@ -533,6 +544,12 @@ def put_card_settings(body: CardSettings,
                                   else "per_visit")
     if payload.get("cashback_rate") is not None:
         payload["cashback_rate"] = max(0.5, min(50, float(payload["cashback_rate"])))
+    if "multi_person_max" in payload:
+        from features import multi_person as MP
+        n = MP.clean_max(payload["multi_person_max"])
+        if n is None:
+            raise HTTPException(status_code=400, detail=f"Entre {MP.LOWEST_MAX} et {MP.HIGHEST_MAX} personnes au maximum.")
+        payload["multi_person_max"] = n
 
     from features.wallet_passes import BARCODE_FORMATS
     if payload.get("code_type") is not None and payload["code_type"] not in ("qr", "barcode", "pdf417", "aztec", *BARCODE_FORMATS):
