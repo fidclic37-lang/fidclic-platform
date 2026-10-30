@@ -157,15 +157,14 @@ def _public(f: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # what a question carries
 # ---------------------------------------------------------------------------
-def _account(tid: str, by: Optional[str], owner: bool) -> Dict[str, Any]:
+def _account(tid: str, by: Optional[str], owner: bool, view_by: Optional[str] = None) -> Dict[str, Any]:
     """The account's conversation. Messages from before accounts were told
-    apart belong to the owner (as in the chat's history)."""
-    q: Dict[str, Any] = {"tenant_id": tid}
-    if owner:
-        q["$or"] = [{"by": by}, {"by": {"$exists": False}}, {"by": None}]
-    else:
-        q["by"] = by
-    return q
+    apart belong to the owner (as in the chat's history). What a super admin
+    wrote in « Accéder au compte » is never the owner's: only that super
+    admin's own session reads it back."""
+    own = [{"by": by}, {"by": {"$exists": False}}, {"by": None}] if owner else [{"by": by}]
+    seen = [{"view_by": {"$exists": False}}] + ([{"view_by": view_by}] if view_by else [])
+    return {"tenant_id": tid, "$and": [{"$or": own}, {"$or": seen}]}
 
 
 def _window(q: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
@@ -187,7 +186,7 @@ def _state(tid: str, by: Optional[str]) -> Dict[str, Any]:
     return _db.copilot_memory_state.find_one({"tenant_id": tid, "by": by}, {"_id": 0}) or {}
 
 
-def context(tid: str, by: Optional[str], owner: bool) -> str:
+def context(tid: str, by: Optional[str], owner: bool, view_by: Optional[str] = None) -> str:
     """The memory block put before the shop's figures, all scrubbed."""
     parts: List[str] = []
     kept, used = [], 0
@@ -202,7 +201,7 @@ def context(tid: str, by: Optional[str], owner: bool) -> str:
     summary = (_state(tid, by).get("summary") or "").strip()
     if summary:
         parts.append("Résumé des conversations plus anciennes :\n" + scrub(summary)[:SUMMARY_CHARS])
-    recent, _ = _window(_account(tid, by, owner))
+    recent, _ = _window(_account(tid, by, owner, view_by))
     if recent:
         lines = [f"{'Commerçant' if m.get('role') == 'user' else 'FidClic IA'} : {scrub(m.get('text') or '')}" for m in recent]
         parts.append("Conversation récente (de la plus ancienne à la plus récente) :\n" + "\n".join(lines))

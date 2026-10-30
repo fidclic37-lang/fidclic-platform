@@ -131,6 +131,46 @@ def main():
         CM.learn_due(now)
     check("…then everything is read", not pending())
 
+    # ------------------------------------------------------------------ b
+    print("\nb · « Accéder au compte » n'écrit pas la mémoire du commerçant")
+    db.tenants.insert_one({"id": "v", "slug": "v", "name": "Shop v", "sector": "salon", "activity_key": "barbier",
+                           "plan": "vip", "is_active": True, "subscription_status": "active"})
+    db.users.insert_one({"email": "o@v.fr", "role": "business_owner", "tenant_id": "v", "active": True})
+    OV = tok("o@v.fr", "business_owner", "v")
+    AV = tok("o@v.fr", "business_owner", "v", view_by="admin@fidclic.com", act_by="admin@fidclic.com")   # as admin_commerces makes it
+    seen = []
+
+    def m2(system, user):
+        seen.append(user)
+        if CM.EXTRACT_MARK in system:
+            return json.dumps(["Le super admin a testé ici"]) if "super admin" in user else "[]"
+        return "ok"
+    llm._force_complete = m2
+    http("POST", "/api/owner/copilot/chat", OV, json={"message": "Question du propriétaire"})
+    r = http("POST", "/api/owner/copilot/chat", AV, json={"message": "Retiens que le super admin a testé ici"})
+    check("the super admin's chat still answers", r.status_code == 200, r.text)
+    check("…and says nothing is kept for the shop", "rien n'est retenu" in r.json()["reply"], r.json()["reply"])
+    items = http("GET", "/api/me/ai-memory", OV).json()["items"]
+    check("« Retiens que… » from « Accéder au compte » is not kept in the owner's memory",
+          not any("super admin" in i["text"] for i in items), items)
+    row = db.copilot_chats.find_one({"tenant_id": "v", "text": "Retiens que le super admin a testé ici"})
+    check("the message says who wrote it (view_by)", row and row.get("view_by") == "admin@fidclic.com", row)
+    http("POST", "/api/owner/copilot/chat", OV, json={"message": "Et ensuite ?"})
+    check("the owner's next question does not carry the super admin's messages", "super admin" not in seen[-1], seen[-1][-400:])
+    hist = [m["text"] for m in http("GET", "/api/owner/copilot/chat", OV).json()["messages"]]
+    check("the owner's history does not show them", not any("super admin" in t for t in hist), hist)
+    ahist = [m["text"] for m in http("GET", "/api/owner/copilot/chat", AV).json()["messages"]]
+    check("the super admin sees the owner's conversation and their own",
+          "Question du propriétaire" in ahist and "Retiens que le super admin a testé ici" in ahist, ahist)
+    http("POST", "/api/owner/copilot/chat", AV, json={"message": "Et pour la suite ?"})
+    check("…and their follow-up carries both (to help the owner)", "Question du propriétaire" in seen[-1]
+          and "Retiens que le super admin" in seen[-1])
+    n = len(seen)
+    db.copilot_chats.update_many({"tenant_id": "v"}, {"$unset": {"memo": ""}})   # even if marked unread
+    CM.learn_due(clock["t"])
+    check("the regular pass never reads the super admin's messages", not any("super admin" in u for u in seen[n:]))
+    check("…so no fact comes from them", not any("super admin" in i["text"] for i in http("GET", "/api/me/ai-memory", OV).json()["items"]))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 
