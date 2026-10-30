@@ -189,6 +189,13 @@ def _habit(tid: str, cust: Dict[str, Any]) -> Optional[str]:
     return CB.caisse_line(b)
 
 
+def _multi(tenant: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]:
+    from features import multi_person as MP
+    from features import loyalty_card as LC
+    s = MP.settings(tenant, tpl)
+    return {"enabled": s["enabled"], "max": s["max"], "programme": LC._programme(tpl)}
+
+
 @router.get("/api/owner/scan/card")
 def card(barcode: str = Query(..., min_length=2, max_length=64),
          token_data: TokenData = Depends(require_role(TILL))):
@@ -202,7 +209,7 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
         # (QA R7: the till identified a deleted client, the final save refused)
         raise HTTPException(status_code=410, detail=core.DELETED_CARD_MSG)
     tpl = _db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
-    tenant = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "sector": 1}) or {}
+    tenant = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
 
     rule = core._card_rule(token_data.tenant_id)
     on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
@@ -226,4 +233,7 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
             "message": core._paper_done_message(cust) if paper_done else None,
         },
         "wording": wording(tenant.get("sector")),
+        # « Plusieurs personnes » (user, 2026-10-30): whether the till offers it,
+        # how many at most, and the programme (what « × N » multiplies)
+        "multi": _multi(tenant, tpl),
     }

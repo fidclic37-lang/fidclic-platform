@@ -4578,6 +4578,11 @@ class ScanRequest(BaseModel):
     # catalogue's own total always wins, so a tampered browser cannot inflate
     # revenue by sending a number of its own.
     amount_manual: bool = False
+    # « Plusieurs personnes » (user, 2026-10-30): one client paid for this many
+    # people — the card gets the tampons (and the « points par visite ») of
+    # each; it stays ONE visit. Any: validated by features/multi_person.persons
+    # (pydantic would turn `true` into 1).
+    persons: Optional[Any] = None
 
 
 # ============================================================
@@ -5367,6 +5372,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # Stamps of a paper card (validated BEFORE anything is written: a refused
     # transfer refuses the whole scan, so the till can correct and resend).
     paper = _paper_stamps_check(cust, token_data.tenant_id, req.paper_stamps, current_visits)
+    # the card's meter before this visit, in visits (tampons × visits per tampon)
+    units_before = max(0, current_visits - int(cust.get("visits_at_last_redemption") or 0))
 
     # If the scan came with a product-picker payload, resolve the items
     # against the tenant catalog and OVERRIDE amount_paid with the
@@ -5406,6 +5413,12 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         card_template = db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     except Exception:
         card_template = {}
+    # « Plusieurs personnes »: how many this visit is for — refused, like the
+    # paper stamps, before anything of the visit is written.
+    from features import multi_person as _MP
+    persons = _MP.persons(req.persons,
+                          db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "sector": 1, "activity_key": 1}),
+                          card_template)
     mode = (card_template.get("points_mode") or "per_visit").lower()
     ppe = float(card_template.get("points_per_euro") or 10)
     ppv = int(card_template.get("points_per_visit", 10) or 10)
@@ -5428,12 +5441,20 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # back to « points par visite »)
         points_to_add = int(round(ppe * amount)) if amount > 0 else 0
     else:
-        points_to_add = ppv
+        # « points par visite »: each person of the visit earns them
+        points_to_add = ppv * persons
     # A points or cashback card has no tampons (QA R7 BUG-009): its visits must
     # not fill a stamp card in the background — the stamp baseline moves with
     # them, so nothing shows « 1/10 » if the shop goes back to Tampons, and no
     # stamp reward is banked beside the points.
     stamp_card = programme == "stamps"
+    # Each extra person is one more visit on the card's meter — never on
+    # `visits` (it stays one visit): the meter is visits − visits_at_last_
+    # redemption, so the baseline moves down, in the same write as the visit,
+    # as paper stamps and manual adjustments do.
+    extra_units = (persons - 1) if stamp_card else 0
+    per_stamp_now = max(int(card_template.get("visits_per_stamp") or 1), 1)
+    visit_stamps = ((units_before + persons) // per_stamp_now - units_before // per_stamp_now) if stamp_card else 0
 
     new_visits = current_visits + 1
     new_points = current_points + points_to_add
@@ -5480,7 +5501,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                            "paper_stamps_by": getattr(token_data, "email", None)})
         res = db.customers.update_one(
             {"id": cid, "paper_stamps": {"$exists": False}},
-            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"] + (0 if stamp_card else 1)}})
+            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"] + (0 if stamp_card else 1) - extra_units}})
         if res.matched_count == 0:
             raise HTTPException(status_code=409, detail=_paper_done_message(db.customers.find_one({"id": cid}) or {}))
         try:
@@ -5494,8 +5515,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         except Exception as _e:
             print(f"scan_visit: paper stamps not logged (non-fatal): {_e}")
     else:
-        db.customers.update_one({"id": cid}, {"$set": update_set,
-                                              **({} if stamp_card else {"$inc": {"visits_at_last_redemption": 1}})})
+        _inc = ({"visits_at_last_redemption": -extra_units} if extra_units else {}) if stamp_card \
+            else {"visits_at_last_redemption": 1}
+        db.customers.update_one({"id": cid}, {"$set": update_set, **({"$inc": _inc} if _inc else {})})
 
     # Insert visit row — must succeed for analytics.
     try:
@@ -5507,7 +5529,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             # the tampons this visit put on the card (Historique shows tampons
             # on a tampons card, user 2026-10-15): one visit is one tampon, or
             # less when the card asks several visits per tampon
-            "stamps_awarded": _stamps_gained(cust, card_template) if stamp_card else 0,
+            "stamps_awarded": visit_stamps,
             "programme": programme,
             "amount_paid": float(req.amount_paid or 0),
             "visit_time": datetime.now(timezone.utc),
@@ -5515,6 +5537,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         }
         if paper:
             visit_doc["paper_stamps"] = paper["stamps"]
+        if persons > 1:                      # « Plusieurs personnes »: one visit for N people
+            visit_doc["persons"] = persons
         # Stamp the line items on the visit when a catalog-driven picker
         # was used. This is what powers the real "Top produits" panel
         # going forward (replacing the DEMO data in analyticsExtra.js).
@@ -5655,6 +5679,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     stamps_in_cycle = max(0, new_visits - last_red_visits) if stamp_card else 0
     stamps_capped = min(stamps_in_cycle, reward_threshold)
     reward_unlocked = stamp_card and stamps_in_cycle >= reward_threshold
+    # Cards this visit filled (« Plusieurs personnes » can fill one — or more —
+    # at once): the meter crossed a full card that many times.
+    units_added = (persons + (paper["visits"] if paper else 0)) if stamp_card else 0
+    cards_completed = ((units_before + units_added) // reward_threshold - units_before // reward_threshold) \
+        if stamp_card else 0
 
     # Notification subscription status — drives the staff scan-page prompt
     # ("This customer isn't receiving offers — show enable QR?"). We check
@@ -5679,7 +5708,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # customer's next pull-to-refresh.
     # « Récompense débloquée » is the scan that fills the card (10/10); the
     # card is banked and restarts on the NEXT visit (the loop above).
-    refresh_wallet_pass(cid, reward_earned=(cycles_completed == 0 and stamps_in_cycle == reward_threshold),
+    refresh_wallet_pass(cid, reward_earned=((cycles_completed == 0 and stamps_in_cycle == reward_threshold)
+                                            if persons == 1 else cards_completed > 0),
                         google_notify=near_google)
 
     notification_status = "subscribed"
@@ -5730,8 +5760,11 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # in tampons — « +1 tampon » was written whatever « visites par
         # tampon » said, and 6/20 showed for 3 tampons out of 10.
         "programme": programme,
-        "stamps_earned": ((1 if per_stamp_scan == 1 or stamps_in_cycle % per_stamp_scan == 0 else 0)
-                          + (paper["stamps"] if paper else 0)) if stamp_card else 0,
+        "stamps_earned": (visit_stamps + (paper["stamps"] if paper else 0)) if stamp_card else 0,
+        # « Plusieurs personnes »: how many this visit was for, and the cards
+        # it filled (one person: 0 or 1)
+        "persons": persons,
+        "cards_completed": cards_completed,
         "stamps_on_card": stamps_capped // per_stamp_scan,
         "stamps_target": reward_threshold // per_stamp_scan,
         # the filleul's parrainage reward, when this visit validated it

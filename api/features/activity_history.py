@@ -171,7 +171,10 @@ def _sources(tid: str, start: datetime, end: datetime,
             "query": {"tenant_id": tid, "visit_time": span, **tills},
             "row": lambda d: {
                 "customer_id": d.get("customer_id"),
-                "detail": "Scan de la carte en magasin",
+                # « Plusieurs personnes » (2026-10-30): said on the row, so the
+                # owner sees which visits gave several people's tampons
+                "detail": "Scan de la carte en magasin" + (f" · {int(d['persons'])} personnes"
+                                                           if int(d.get("persons") or 1) > 1 else ""),
                 "points": int(d.get("points_awarded") or 0),
                 "stamps": _visit_stamps(d, rule),
                 # a 0 € visit is 0 €, not blank (QA F14); no amount at all stays blank
