@@ -299,12 +299,20 @@ def why(parts: Dict[str, Any], label: str) -> str:
 # applying it
 # ---------------------------------------------------------------------------
 def rank(tid: Optional[str], items: List[Dict[str, Any]], base: Callable[[Dict[str, Any], int], float],
-         now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """The items, best first by base × learned, each with `why_rank`. On any
-    failure: the items as they came, untouched."""
+         now: Optional[datetime] = None, by: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The items, best first by base × learned × what the owner (and `by`,
+    the account looking) told FidClic IA, each with `why_rank`. An advice for
+    a day the shop is closed is left out. On any failure: the items as they
+    came, untouched."""
     if not tid or not items:
         return items
     try:
+        from features import copilot_memory as CM
+        try:                                       # « Ce que FidClic IA retient » (2026-10-30)
+            cons = CM.constraints(tid, by)
+        except Exception as exc:
+            print(f"reco_ranking: memory unavailable ({exc})")
+            cons = {"closed": set(), "targets": set(), "avoid": set(), "said": {}}
         now = now or NOW()
         tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
         own = own_stats(tid, now)
@@ -320,16 +328,26 @@ def rank(tid: Optional[str], items: List[Dict[str, Any]], base: Callable[[Dict[s
         for i, item in enumerate(items):
             k = RJ.key_of(item)
             b = _f(base(item, i), 0.0)
+            said_m, said = CM.item_effect(item, {k, item.get("key")}, cons)
+            if said_m is None:                     # a closed day's advice
+                continue
+            if said:
+                b = b * said_m if b > 0 else b
             if not k:
-                scored.append((b, i, item, None))
+                scored.append((b, i, item, {"said": said} if said else None))
                 continue
             m, parts = factor(own.get(k) or {}, network_for(tenant, k), ref, (tid, k, day))
+            if said:
+                parts = {**parts, "said": said}
             scored.append((b * m if b > 0 else b, i, item, parts))
         scored.sort(key=lambda x: (-x[0], x[1]))
         out = []
         for score, _i, item, parts in scored:
             item = dict(item)
-            item["why_rank"] = {"text": why(parts or {}, label), "m": (parts or {}).get("m", 1.0)}
+            said = (parts or {}).get("said")
+            text = why({k: v for k, v in (parts or {}).items() if k != "said"}, label)
+            item["why_rank"] = {"text": f"{said}. {text}" if said else text, "m": (parts or {}).get("m", 1.0),
+                                **({"selon": said} if said else {})}
             if "score" in item:                  # a surface that sorts again (Insights' shelves) keeps this order
                 item["score"] = score
             out.append(item)

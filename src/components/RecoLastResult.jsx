@@ -22,9 +22,12 @@ export default function RecoLastResult({ r, className = '' }) {
 export function RecoWhy({ r, className = '' }) {
   const [open, setOpen] = useState(false);
   const t = r?.why_rank?.text;
+  // « Ce que FidClic IA retient » changed this advice (2026-10-30): said on the card, not behind the toggle
+  const said = r?.why_rank?.selon;
   if (!t) return null;
   return (
     <div className={className}>
+      {said && <p data-testid="reco-said" className="mb-1 text-[11.5px] font-medium leading-snug text-[#7C3AED]">{said}</p>}
       <button type="button" aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
               className="text-[11.5px] font-semibold text-[#2F6BFF] hover:underline">Pourquoi en premier ?</button>
       {open && <p data-testid="reco-why" className="mt-1 rounded-lg bg-[#F8FAFF] px-2.5 py-1.5 text-[11.5px] leading-snug text-[#475569]">{t}</p>}

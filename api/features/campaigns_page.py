@@ -1244,6 +1244,13 @@ def ai_draft(req: Draft,
             user += " " + hints
     except Exception as exc:
         print(f"campagnes: learning hints unavailable ({exc})")
+    try:                                          # « Ce que FidClic IA retient » (2026-10-30)
+        from features import copilot_memory as CM
+        said = CM.memory_block(token_data.tenant_id, getattr(token_data, "email", None))
+        if said:
+            user += "\n" + said
+    except Exception as exc:
+        print(f"campagnes: memory unavailable ({exc})")
     try:
         from services import llm
         # Say which of the two it is: "reformulez" is the wrong advice when the
