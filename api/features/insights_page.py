@@ -1030,12 +1030,13 @@ def _shelf(items: List[Dict[str, Any]], show: int, by_category: bool = False) ->
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-def _learned(tid: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _learned(tid: str, items: List[Dict[str, Any]], by: Optional[str] = None) -> List[Dict[str, Any]]:
     from features import reco_ranking as RR
-    return RR.rank(tid, items, lambda i, _n: i.get("score", 0))
+    return RR.rank(tid, items, lambda i, _n: i.get("score", 0), by=by)
 
 
-def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
+def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"] = None,
+             by: Optional[str] = None) -> Dict[str, Any]:
     shop = Shop(tid, at or _now(), scope)
     return {
         "scope": scope.describe() if scope else None,
@@ -1044,9 +1045,9 @@ def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"]
         "hero": _hero(shop),
         "goal": _goal(shop),
         # the ranking that learns (2026-10-30): estimate × what was learned
-        "opportunities": _shelf(_mark_used(_learned(tid, _opportunities(shop)), shop.used), 3, by_category=True),
-        "actions": _shelf(_mark_used(_learned(tid, _actions(shop)), shop.used), 4),
-        "ideas": _idea_shelf(_mark_used(_learned(tid, _ideas(shop)), shop.used)),
+        "opportunities": _shelf(_mark_used(_learned(tid, _opportunities(shop), by), shop.used), 3, by_category=True),
+        "actions": _shelf(_mark_used(_learned(tid, _actions(shop), by), shop.used), 4),
+        "ideas": _idea_shelf(_mark_used(_learned(tid, _ideas(shop), by), shop.used)),
         "tips": {"shown": _tips(shop)[:4], "all": _tips(shop),
                  "more": max(0, len(_tips(shop)) - 4)},
         "google_review": {"url": shop.tenant.get("google_review_url") or "",
@@ -1064,7 +1065,7 @@ def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"]
 @router.get("/api/owner/insights/page")
 def page(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     scope = S.resolve(token_data, request)
-    data = _payload(token_data.tenant_id, scope=scope)
+    data = _payload(token_data.tenant_id, scope=scope, by=getattr(token_data, "email", None))
     # the journal of ideas (2026-10-29): what the page shows first, and what each brought last time
     from features import reco_journal as RJ
     shelves = [data.get(k) or {} for k in ("opportunities", "actions", "ideas")]
@@ -1303,7 +1304,7 @@ def export_pdf(request: Request = None, token_data: TokenData = Depends(require_
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     tid = token_data.tenant_id
-    data = _payload(tid, scope=S.resolve(token_data, request))
+    data = _payload(tid, scope=S.resolve(token_data, request), by=getattr(token_data, "email", None))
     tenant = _db.tenants.find_one({"id": tid}) or {}
     ink, muted, blue = colors.HexColor("#0B1C3F"), colors.HexColor("#64748B"), colors.HexColor("#2F6BFF")
 

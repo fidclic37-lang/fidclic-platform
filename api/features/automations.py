@@ -3112,6 +3112,13 @@ def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS,
             f"Message automatique de fidélité. Objectif : {objective}. "
             "Tu peux utiliser {prénom} pour le prénom du client et {nom_commerce} pour le commerce. "
             f"{PB.prompt_context(play, PB.paris_month())}")
+    try:                                          # « Ce que FidClic IA retient » (2026-10-30)
+        from features import copilot_memory as CM
+        said = CM.memory_block(token_data.tenant_id, getattr(token_data, "email", None))
+        if said:
+            user += "\n" + said
+    except Exception as exc:
+        print(f"automations: memory unavailable ({exc})")
     try:
         from services import llm
         if llm._force_complete is None and not llm.is_configured():

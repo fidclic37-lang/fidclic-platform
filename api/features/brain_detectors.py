@@ -187,7 +187,8 @@ def get_detectors(request: Request = None, token_data: TokenData = Depends(requi
     out = [{k: v for k, v in d.items() if k != "ids"} for d in found]
     # the ranking that learns (2026-10-30): what these clients are worth × what was learned
     from features import reco_ranking as RR
-    out = RR.rank(tid, out, lambda d, n: float(d.get("worth") or 0) + float(d.get("count") or 0) / 100 + (len(out) - n) / 1000)
+    out = RR.rank(tid, out, lambda d, n: float(d.get("worth") or 0) + float(d.get("count") or 0) / 100 + (len(out) - n) / 1000,
+                  by=getattr(token_data, "email", None))
     # the journal of ideas (2026-10-29)
     from features import reco_journal as RJ
     RJ.shown(tid, "repere", out, scope.key)

@@ -273,6 +273,12 @@ def write(tid: str, key: str) -> Tuple[str, str, str]:
         if llm._force_complete is not None or llm.is_configured():
             user = (f"Commerce : {tenant.get('name') or 'un commerce'}. Objectif : {OBJECTIVES[key]}. "
                     f"{prompt_hints(tid)} {NO_PROMISE} {PB.prompt_context(play, PB.paris_month(), offer=False)}")
+            try:                                  # automatic work: the owner's « Ce que FidClic IA retient »
+                from features import copilot_memory as CM
+                said = CM.memory_block(tid, None)
+                user += ("\n" + said) if said else ""
+            except Exception as exc:
+                print(f"autopilot: memory unavailable ({exc})")
             title, message = C._parse(llm.complete(C._SYSTEM, user, max_tokens=180, temperature=0.7) or "")
             if title and message and not PB.breaks_rules(play, f"{title} {message}") and not re.search(r"\d+\s?%|-\s?\d+\s?€|\boffert|\bgratuit|\bcadeau", (title + message).lower()):
                 return title, message, "ia"

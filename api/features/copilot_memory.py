@@ -159,7 +159,8 @@ def add(tid: str, by: Optional[str], text: str, source: str,
         return None
     now = NOW()
     doc = {"id": uuid.uuid4().hex, "tenant_id": tid, "by": by, "text": t, "source": source, "at": now, "updated_at": now,
-           "src_at": list(src_at or [])}            # the messages it came from: deleting it forgets them
+           "src_at": list(src_at or []),             # the messages it came from: deleting it forgets them
+           "rules": rules_of(t), "rules_by": "regle"}   # firm facts at once; the model refines them next pass
     _db.copilot_memory.insert_one(dict(doc))
     return doc
 
@@ -478,8 +479,198 @@ def learn_due(now: Optional[datetime] = None) -> Dict[str, Any]:
         _summary_pass(accounts, budget, deadline, out)
     except Exception:
         out["failures"] += 1
+    try:
+        _rules_pass(budget, deadline, out)
+    except Exception:
+        out["failures"] += 1
     out["accounts"] = len(accounts)
     return out
+
+
+# ---------------------------------------------------------------------------
+# « Ce que FidClic IA retient » partout (user, 2026-10-30, PR 3)
+#
+# The owner's facts are the shop's truth; the account's own come with them;
+# automatic work (Autopilote) reads the owner's. Every AI that writes reads
+# memory_block(); the pages that advise by rules read constraints() through
+# features/reco_ranking: a closed day's offer is not shown, advice for the
+# clients the shop aims at goes up, an offer it does not want goes down.
+# ---------------------------------------------------------------------------
+WEEKDAYS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+TARGETS = {
+    "etudiants": ("etudiant",),
+    "familles": ("famille", "parents", "enfant"),
+    "seniors": ("senior", "retraite", "personnes agees"),
+    "jeunes": ("jeune", "ado"),
+    "professionnels": ("professionnel", "entreprise", "salarie", "bureau"),
+    "quartier": ("quartier", "voisin", "habitant", "locaux", "moins de 2 km", "a proximite", "a cote"),
+    "touristes": ("touriste", "vacancier"),
+    "nouveaux": ("nouveaux clients", "nouveau client"),
+    "fideles": ("fidele", "habitue", "regulier"),
+}
+AVOID = {
+    "offres": ("promo", "remise", "reduction", "rabais", "solde", "offre", "gratuit", "cadeau"),
+    "anniversaires": ("anniversaire",),
+    "parrainage": ("parrainage", "parrain"),
+    "avis_google": ("avis google", "avis"),
+    "relances": ("relance", "relancer"),
+}
+_CLOSED = re.compile(r"ferm|pas ouvert|ne (?:travaill|bosse|ouvr)|n'ouvr|repos|conge|jour off|on ne bosse pas")
+_AIM = re.compile(r"cibl|vise|viser|clientele|surtout|principalement|majoritairement|beaucoup d|attir|touch|public|pour les")
+_NO = re.compile(r"\b(?:pas|jamais|sans|aucune?|evit\w*|refus\w*|interdit\w*|ne veu\w* pas|n'aime pas|ne fais pas|stop)\b")
+RULES_MARK = "FAITS_FERMES"
+_RULES_SYSTEM = (
+    f"[{RULES_MARK}] Un commerçant a dit cette phrase à son assistant. Extrais les faits fermes, en JSON "
+    "UNIQUEMENT : {\"jours_fermes\": [jours en minuscules parmi lundi…dimanche où le commerce est FERMÉ], "
+    "\"cible\": [clientèles qu'il VISE parmi " + ", ".join(TARGETS) + "], \"eviter\": [ce qu'il NE VEUT PAS "
+    "proposer parmi " + ", ".join(AVOID) + "]}. Listes vides si la phrase ne le dit pas clairement."
+)
+
+
+def _words(text: str) -> str:
+    return " " + re.sub(r"[^a-z0-9']+", " ", "".join(
+        ch for ch in unicodedata.normalize("NFD", (text or "").lower()) if unicodedata.category(ch) != "Mn")) + " "
+
+
+def rules_of(text: str) -> Dict[str, List[Any]]:
+    """The firm facts a sentence says, by rules (at once; the model refines
+    them in the regular pass): {jours_fermes: [0-6], cible: [...], eviter: [...]}."""
+    w = _words(text)
+    closed: List[int] = []
+    if _CLOSED.search(w):
+        closed = [i for i, d in enumerate(WEEKDAYS_FR) if re.search(rf"\b{d}s?\b", w)]
+        if re.search(r"\bweek ?end", w):
+            closed = sorted(set(closed) | {5, 6})
+    cible = sorted(k for k, kws in TARGETS.items() if any(kw in w for kw in kws)) if _AIM.search(w) else []
+    eviter = sorted(k for k, kws in AVOID.items() if any(kw in w for kw in kws)) if _NO.search(w) else []
+    return {"jours_fermes": closed, "cible": cible, "eviter": eviter}
+
+
+def _clean_rules(data: Any) -> Optional[Dict[str, List[Any]]]:
+    if not isinstance(data, dict):
+        return None
+    days = [WEEKDAYS_FR.index(d) for d in (data.get("jours_fermes") or []) if isinstance(d, str) and d.lower() in WEEKDAYS_FR]
+    return {"jours_fermes": sorted(set(days)),
+            "cible": sorted({x for x in (data.get("cible") or []) if x in TARGETS}),
+            "eviter": sorted({x for x in (data.get("eviter") or []) if x in AVOID})}
+
+
+def _owner(tid: str) -> Optional[str]:
+    u = _db.users.find_one({"tenant_id": tid, "role": "business_owner"}, {"_id": 0, "email": 1}, sort=[("created_at", 1)])
+    return (u or {}).get("email")
+
+
+def shop_facts(tid: str, by: Optional[str]) -> List[Dict[str, Any]]:
+    """The owner's facts (the shop's truth), then the account's own."""
+    owner = _owner(tid)
+    out, seen = [], set()
+    for who in [owner] + ([by] if by and by != owner else []):
+        for f in facts(tid, who) if who else []:
+            k = _fold(f.get("text"))
+            if k not in seen:
+                seen.add(k)
+                out.append(f)
+    return out
+
+
+def memory_block(tid: str, by: Optional[str]) -> str:
+    """What every AI that writes is told — scrubbed, within MEMO_CHARS."""
+    lines, used = [], 0
+    for f in shop_facts(tid, by):
+        line = f"- {scrub(f['text'])}"
+        if used + len(line) > MEMO_CHARS:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return ("Ce que le commerçant a dit à FidClic IA (à respecter) :\n" + "\n".join(lines)) if lines else ""
+
+
+def constraints(tid: str, by: Optional[str] = None) -> Dict[str, Any]:
+    """{closed: {0-6}, targets: {...}, avoid: {...}, said: {(kind, value): fact text}}."""
+    out: Dict[str, Any] = {"closed": set(), "targets": set(), "avoid": set(), "said": {}}
+    for f in shop_facts(tid, by):
+        r = f.get("rules") or rules_of(f.get("text") or "")
+        for kind, key, vals in (("closed", "jours_fermes", r.get("jours_fermes")), ("targets", "cible", r.get("cible")),
+                                ("avoid", "eviter", r.get("eviter"))):
+            for v in vals or []:
+                out[kind].add(v)
+                out["said"].setdefault((kind, v), f["text"])
+    return out
+
+
+_KEY_TARGETS = {"etudiants": {"etudiants"}, "proximite": {"quartier"}, "offre_locale": {"quartier"}, "seconde_visite": {"nouveaux"},
+                "one_timers": {"nouveaux"}, "nouveaux_j7": {"nouveaux"}, "loyal": {"fideles"}, "palier_vip": {"fideles"},
+                "familles": {"familles"}, "seniors": {"seniors"}}
+_KEY_AVOID = {"offre_jour": {"offres"}, "anniversaires": {"anniversaires"}, "avis_google": {"avis_google"},
+              "parrainage": {"parrainage"}, "relance_inactifs": {"relances"}, "a_risque": {"relances"}}
+
+
+def _item_text(item: Dict[str, Any]) -> str:
+    return _words(" ".join(str(item.get(k)) for k in ("title", "subtitle", "label", "description", "desc", "text")
+                           if isinstance(item.get(k), str)))
+
+
+def _item_days(item: Dict[str, Any], text: str) -> set:
+    cta = item.get("cta") if isinstance(item.get("cta"), dict) else {}
+    for v in (cta.get("day"), item.get("day"), item.get("weekday")):
+        if isinstance(v, int) and 0 <= v <= 6:
+            return {v}
+    to = item.get("to") or cta.get("to")
+    if isinstance(to, str) and (m := re.search(r"[?&]day=(\d)", to)):
+        return {int(m.group(1))}
+    days = {i for i, d in enumerate(WEEKDAYS_FR) if re.search(rf"\b{d}s?\b", text)}
+    if re.search(r"\bweek ?end", text):
+        days |= {5, 6}
+    return days
+
+
+def item_effect(item: Dict[str, Any], keys: Any, cons: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
+    """(multiplier, « Selon ce que vous avez dit : … ») — None: not shown (an
+    advice for a day the shop is closed)."""
+    if not (cons["closed"] or cons["targets"] or cons["avoid"]):
+        return 1.0, None
+    text = _item_text(item)
+    days = _item_days(item, text)
+    if days and days <= cons["closed"]:
+        return None, None
+    said = lambda kind, v: f"Selon ce que vous avez dit : « {scrub(cons['said'][(kind, v)])} »"   # noqa: E731
+    keys = {k for k in ([keys] if isinstance(keys, str) or keys is None else keys) if k}   # its template and its own key
+    targets = set().union(*(_KEY_TARGETS.get(k, set()) for k in keys)) | {k for k, kws in TARGETS.items() if any(kw in text for kw in kws)}
+    hit = sorted(targets & cons["targets"])
+    if hit:
+        return 1.5, said("targets", hit[0])
+    kinds = set().union(*(_KEY_AVOID.get(k, set()) for k in keys)) | {k for k, kws in AVOID.items() if any(kw in text for kw in kws)}
+    hit = sorted(kinds & cons["avoid"])
+    if hit:
+        return 0.5, said("avoid", hit[0])
+    return 1.0, None
+
+
+def _rules_pass(budget: List[int], deadline: float, out: Dict[str, Any]) -> None:
+    """Each fact read once by the model for its firm facts (closed days,
+    clients aimed at, offers not wanted)."""
+    todo = list(_db.copilot_memory.find({"rules_by": {"$ne": "ia"}}, {"_id": 0, "id": 1, "text": 1})
+                .sort("updated_at", 1).limit(max(0, budget[0])))
+    if not todo:
+        return
+    replies = _run([(_RULES_SYSTEM, f"Phrase : {scrub(f.get('text') or '')}", 120) for f in todo], deadline)
+    for f, reply in zip(todo, replies):
+        if reply is _SKIP:
+            continue
+        budget[0] -= 1
+        if reply is None or isinstance(reply, Exception):
+            out["failures"] += 1
+            continue
+        m = re.search(r"\{.*\}", str(reply), re.DOTALL)
+        try:
+            rules = _clean_rules(json.loads(m.group(0))) if m else None
+        except Exception:
+            rules = None
+        if rules is None:
+            out["failures"] += 1
+            continue
+        _db.copilot_memory.update_one({"id": f["id"], "text": f["text"]}, {"$set": {"rules": rules, "rules_by": "ia"}})
+        out["rules"] = out.get("rules", 0) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +728,8 @@ def edit_memory(fid: str, body: FactIn, token_data: TokenData = Depends(require_
     if _fold(t) != _fold(f.get("text")):
         forget(f)                                  # the old wording leaves what the model reads
     _db.copilot_memory.update_one({"id": f["id"], "tenant_id": f["tenant_id"], "by": f["by"]},
-                                  {"$set": {"text": t, "updated_at": NOW(), "src_at": []}})
+                                  {"$set": {"text": t, "updated_at": NOW(), "src_at": [],
+                                            "rules": rules_of(t), "rules_by": "regle"}})
     return {"item": _public(_mine(token_data, fid))}
 
 

@@ -672,7 +672,7 @@ def recommendations(shop) -> List[Dict[str, Any]]:
     # the ranking that learns (2026-10-30): the estimate × what every shown,
     # opened, pushed-back and measured idea taught (features/reco_ranking)
     from features import reco_ranking as RR
-    return RR.rank(shop.tid, items, lambda i, _n: i["score"])
+    return RR.rank(shop.tid, items, lambda i, _n: i["score"], by=getattr(shop, "viewer", None))
 
 
 def _public(i: Dict[str, Any]) -> Dict[str, Any]:
@@ -1055,6 +1055,7 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
     days = days if days in ACTIVITY_WINDOWS else 7
     scope = S.resolve(token_data, request)
     shop = E.Shop(token_data.tenant_id, _now(), scope)
+    shop.viewer = getattr(token_data, "email", None)      # « Ce que FidClic IA retient »: theirs with the owner's
     recs = _for(token_data, recommendations(shop))
     from features import plan_limits                      # « Analyses de base »: a few recommendations
     cap = plan_limits.ai_recommendation_limit(token_data.tenant_id)
@@ -1426,6 +1427,7 @@ def chat(body: ChatIn, request: Request = None,
     tid = token_data.tenant_id
     scope = S.resolve(token_data, request)
     shop = E.Shop(tid, _now(), scope)
+    shop.viewer = getattr(token_data, "email", None)
     recs = _for(token_data, recommendations(shop))
     # What the merchant asks for directly is always available — even a
     # recommendation resting after recent use or one they dismissed. The

@@ -8618,6 +8618,13 @@ def ai_analyze_campaign(
         f"{perf['baseline_visits']} baseline visits, "
         f"lift {perf['lift_pct']}% , revenue €{perf['revenue_attributed']}.\n"
     )
+    try:                                          # « Ce que FidClic IA retient » (2026-10-30)
+        from features import copilot_memory as _CM
+        said = _CM.memory_block(t_id, getattr(token_data, "email", None))
+        if said:
+            prompt += "\nWhat the shop owner told FidClic IA (respect it):\n" + said + "\n"
+    except Exception as exc:
+        print(f"ai-analyze: memory unavailable ({exc})")
 
     bullets, provider_label = _call_llm(prompt)
     used_ai = bool(bullets)
