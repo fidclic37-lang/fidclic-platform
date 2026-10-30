@@ -36,7 +36,7 @@ def main():
 
     big = os.urandom(1_610_064)
     WP.apple_configured = lambda: True
-    WP.signed_pass = lambda bc, payload=None: big
+    WP.signed_pass = lambda bc, payload=None, **kw: big
     r = WP._pkpass_response("FT-ONEPIECE")
     sends = []
 

@@ -86,8 +86,12 @@ class FakeApple:
         self.fail = None         # (method, path-fragment, status)
         self.cert_wants_identifier = False
         self.lock = threading.Lock()
+        self.delay = 0.0         # seconds Apple takes to answer
 
     def __call__(self, method, url, headers, body):
+        if self.delay:
+            import time
+            time.sleep(self.delay)
         with self.lock:
             self.calls.append((method, url, json.loads(body) if body else None, headers))
         path = url.split("api.appstoreconnect.apple.com", 1)[-1]
@@ -269,9 +273,13 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     print("\nThe tick: every business, retries, renewals")
     db.wallet_pass_types.delete_many({"tenant_id": {"$in": ["t-noasc"]}})
+    tenant("t-empty", "empty", "Empty")          # fix 3: no customer yet → no id asked of Apple
+    customer("c-noasc", "t-noasc", "FT-NOASC001")
     res = WI.run_due(now)
     check(f"the business without an id gets one ({res})", db.wallet_pass_types.find_one({"tenant_id": "t-noasc", "status": "ready"}))
     check("a closed business is skipped", not db.wallet_pass_types.find_one({"tenant_id": "t-closed"}))
+    check("a business with no customer yet is skipped (fake signups make no ids)",
+          not db.wallet_pass_types.find_one({"tenant_id": "t-empty"}))
     db.wallet_pass_types.update_one({"tenant_id": "t-cafe"}, {"$set": {"expires_at": now + dt.timedelta(days=10)}})
     old_cert = db.wallet_pass_types.find_one({"tenant_id": "t-cafe"})["cert_pem"]
     WI.run_due(now)
@@ -356,6 +364,53 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("new card's token with the business's certificate", by_topic.get(i1, {}).get("tokens") == ["tokNEW1"]
           and b"BEGIN CERTIFICATE" in (by_topic.get(i1, {}).get("cert") or b"")
           and by_topic[i1]["cert"] != base64.b64decode(os.environ["APPLE_PASS_CERT_B64"]))
+
+    print("\nA rush of first downloads while the id is being made (fix 1)")
+    tenant("t-rush", "rush", "Rush")
+    for i in range(20):
+        customer(f"ru{i}", "t-rush", f"FT-RUSH{i:04d}")
+    apple.delay = 0.3
+    got = []
+    ths = [threading.Thread(target=lambda i=i: got.append(WP._card_payload(f"FT-RUSH{i:04d}", make=True)["_pass_type"]))
+           for i in range(20)]
+    [t.start() for t in ths]
+    [t.join() for t in ths]
+    apple.delay = 0.0
+    own = WI.tenant_type("t-rush")
+    check(f"20 at once → all get the business's id ({sum(g == own for g in got)}/20)", own and got.count(own) == 20, got)
+
+    print("\nAn iPhone registers only under the card's own id (fix 2)")
+    au = f"ApplePass {WP._auth_token('FT-NEW00001')}"
+
+    def reg_status(ptype, dev):
+        try:
+            return WP.register_device(dev, ptype, "FT-NEW00001", WP.Registration(pushToken=f"tok{dev}"), au).status_code
+        except HTTPException as e:
+            return e.status_code
+    check("under another business's id → 404", reg_status(i_cafe, "DEVX0000000000000001") == 404)
+    check("…nothing stored", not db.pass_registrations.find_one({"device_id": "DEVX0000000000000001"}))
+    check("under an id no business owns → as before (201): nothing to protect, no edge case broken",
+          reg_status("pass.com.other.x", "DEVX0000000000000002") == 201)
+    check("under its business's id → 201", reg_status(i1, "DEVX0000000000000003") == 201)
+    check("under the common id (an old card) → 201", reg_status("pass.com.fidclic.loyalty", "DEVX0000000000000004") == 201)
+
+    print("\nSuper admin makes one business's id now (the first real test, fix 4)")
+    tenant("t-now", "now", "Now")
+    HW = {"Authorization": "Bearer " + auth.create_access_token({"sub": "sa@x.fr", "role": "super_admin"})}
+    HOW = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t-now"})}
+    import asyncio as _aio
+    import httpx as _hx
+
+    def post(path, h):
+        async def run():
+            async with _hx.AsyncClient(transport=_hx.ASGITransport(app=server.app), base_url="http://t") as ac:
+                return await ac.post(path, headers=h)
+        return _aio.get_event_loop().run_until_complete(run())
+    check("a business owner → 403", post("/api/admin/wallet-identities/t-now/make", HOW).status_code == 403)
+    r = post("/api/admin/wallet-identities/t-now/make", HW)
+    check(f"super admin → made, even without customers ({r.status_code} {r.text[:120]})",
+          r.status_code == 200 and r.json().get("status") == "ready" and "PRIVATE KEY" not in r.text)
+    check("unknown business → 404", post("/api/admin/wallet-identities/nope/make", HW).status_code == 404)
 
     print("\nSuper admin sees where each business stands")
     H = {"Authorization": "Bearer " + auth.create_access_token({"sub": "sa@x.fr", "role": "super_admin"})}

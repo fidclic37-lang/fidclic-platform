@@ -41,6 +41,7 @@ RENEW_BEFORE = timedelta(days=30)
 LEASE = timedelta(minutes=3)               # one maker at a time per business
 PER_TICK = 5                               # Apple's rate limit, and the tick's time
 MAX_BACKOFF = timedelta(hours=24)
+WAIT_FOR_MAKER = 8.0                       # seconds a download waits for the id being made
 COMMON_PREFIX = "pass.com.fidclic"
 _CACHE: Dict[str, Dict[str, Any]] = {}
 _LOCK = threading.Lock()
@@ -238,8 +239,11 @@ def run_due(now: Optional[datetime] = None, limit: int = PER_TICK) -> Dict[str, 
         return {"skipped": "App Store Connect non configuré"}
     rows = {r["tenant_id"]: r for r in _db.wallet_pass_types.find({}, {"_id": 0, "key_enc": 0, "cert_pem": 0})}
     todo: List[str] = []
+    # only businesses with a customer (2026-10-30): a fake signup makes no id
+    # at Apple; a real one gets it at its first card download anyway
+    with_clients = set(_db.customers.distinct("tenant_id"))
     for t in _db.tenants.find({"resiliated_at": None, "is_active": {"$ne": False}}, {"_id": 0, "id": 1}):
-        if _due(rows.get(t["id"]), now, False):
+        if (t["id"] in with_clients or t["id"] in rows) and _due(rows.get(t["id"]), now, False):
             todo.append(t["id"])
     out = {"due": len(todo), "made": 0, "failed": 0}
     for tid in todo[:limit]:
@@ -256,6 +260,24 @@ def tenant_type(tenant_id: Optional[str]) -> Optional[str]:
         return None
     row = _db.wallet_pass_types.find_one({"tenant_id": tenant_id, "status": "ready"}, {"identifier": 1})
     return (row or {}).get("identifier")
+
+
+def wait_ready(tenant_id: str, seconds: float = WAIT_FOR_MAKER) -> Optional[str]:
+    """Another request is making this business's id (the lease): wait for it
+    rather than give this customer the common id for good (2026-10-30 load
+    run: 16 of 100 first downloads did)."""
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        own = tenant_type(tenant_id)
+        if own:
+            return own
+        row = _db.wallet_pass_types.find_one({"tenant_id": tenant_id}, {"lease_until": 1, "status": 1})
+        lease = _aware((row or {}).get("lease_until"))
+        if not lease or lease < _now():
+            return tenant_type(tenant_id)          # the maker finished (or gave up)
+        time.sleep(0.2)
+    return tenant_type(tenant_id)
 
 
 def tenant_of_type(identifier: str) -> Optional[str]:
@@ -280,6 +302,20 @@ def identity_for_type(identifier: str) -> Optional[Dict[str, bytes]]:
     with _LOCK:
         _CACHE[identifier] = {"cert": row["cert_pem"], "identity": identity}
     return identity
+
+
+@router.post("/api/admin/wallet-identities/{tid}/make")
+def admin_make(tid: str, token_data=Depends(require_admin("commerces", write=True))):
+    """Super admin: make (or retry) one business's id now — the first real
+    test on Apple, or a business whose last try failed."""
+    from fastapi import HTTPException
+    if not _db.tenants.find_one({"id": tid}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    r = ensure(tid, force=True)
+    if r.get("status") == "pending":
+        own = wait_ready(tid)
+        r = {"status": "ready" if own else "pending", "identifier": own or r.get("identifier")}
+    return {"status": r.get("status"), "identifier": r.get("identifier"), "error": r.get("error"), "reason": r.get("reason")}
 
 
 @router.get("/api/admin/wallet-identities")

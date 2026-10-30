@@ -1312,8 +1312,10 @@ def pass_type_for(cust: Dict[str, Any], make: bool = False) -> str:
         from features import wallet_identities as _WI
         own = _WI.tenant_type(cust.get("tenant_id"))
         if not own and make:
-            _WI.ensure(cust.get("tenant_id"), force=True)
+            made = _WI.ensure(cust.get("tenant_id"), force=True)
             own = _WI.tenant_type(cust.get("tenant_id"))
+            if not own and made.get("status") == "pending":       # another request is making it
+                own = _WI.wait_ready(cust.get("tenant_id"))
         return own or common
     except Exception as exc:                       # noqa: BLE001 — the common id always works
         print(f"wallet: business pass type not read ({exc})")
@@ -3570,6 +3572,13 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
                                                            "apple_downloaded_at": 1})
     if not cust:
         raise HTTPException(status_code=404)
+    if pass_type_id != _env("APPLE_PASS_TYPE_ID"):
+        # never under ANOTHER business's id (2026-10-30 pentest): its pushes
+        # would go out with that business's certificate
+        from features import wallet_identities as _WI
+        owner = _WI.tenant_of_type(pass_type_id)
+        if owner and owner != cust.get("tenant_id"):
+            raise HTTPException(status_code=404)
     existing = _db.pass_registrations.find_one({"device_id": device_id, "serial": serial})
     if not existing:
         _reg_event(serial, "added", device_id, tenant_id=cust.get("tenant_id"))

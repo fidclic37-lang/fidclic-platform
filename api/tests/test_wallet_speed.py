@@ -72,7 +72,7 @@ def main():
     KEY = {"X-Card-Key": CO.key_for(BC)}
 
     WP.apple_configured = lambda: True
-    WP._sign_manifest = lambda manifest: b"signature"
+    WP._sign_manifest = lambda manifest, pass_type=None: b"signature"
     builds = []
     real_build = WP.build_pkpass
 
