@@ -30,9 +30,10 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 
-from features.platform_access import require_admin
+from features.platform_access import require_admin, require_super
 
 router = APIRouter(tags=["wallet-identities"])
 _db = None
@@ -304,6 +305,101 @@ def identity_for_type(identifier: str) -> Optional[Dict[str, bytes]]:
     return identity
 
 
+# ---------------------------------------------------------------------------
+# By hand (user, 2026-10-30): the Super Admin imports a certificate made in
+# the Apple Developer portal — the fallback when App Store Connect cannot
+# make it. Same row, same sealed key, same signing and pushes.
+# ---------------------------------------------------------------------------
+MAX_PEM = 20_000
+
+
+def _checked(identifier: str, cert_pem: str, key_pem: str) -> datetime:
+    """Refuses what Apple would not accept; returns the certificate's end."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.x509.oid import NameOID
+
+    if not identifier.startswith("pass.") or len(identifier) > 128 or not re.fullmatch(r"[A-Za-z0-9.\-]+", identifier):
+        raise ValueError("L'identifiant doit commencer par « pass. » (lettres, chiffres, points, tirets).")
+    if identifier == common_type():
+        raise ValueError("C'est l'identifiant commun de FidClic : il ne peut pas appartenir à un seul commerce.")
+    if len(cert_pem or "") > MAX_PEM or len(key_pem or "") > MAX_PEM:
+        raise ValueError("Fichier trop long : un certificat et une clé PEM font quelques Ko.")
+    try:
+        cert = x509.load_pem_x509_certificate((cert_pem or "").encode())
+    except Exception:
+        raise ValueError("Certificat illisible (format PEM attendu : « -----BEGIN CERTIFICATE----- »).")
+    try:
+        key = serialization.load_pem_private_key((key_pem or "").encode(), password=None)
+    except Exception:
+        raise ValueError("Clé privée illisible (PEM sans mot de passe attendu).")
+    uid = [str(a.value) for a in cert.subject.get_attributes_for_oid(NameOID.USER_ID)]
+    cn = [str(a.value) for a in cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)]
+    if identifier not in uid and not any(v.endswith(identifier) for v in cn):
+        raise ValueError(f"Ce certificat n'est pas celui de {identifier}.")
+    spki = serialization.PublicFormat.SubjectPublicKeyInfo
+    if (key.public_key().public_bytes(serialization.Encoding.PEM, spki)
+            != cert.public_key().public_bytes(serialization.Encoding.PEM, spki)):
+        raise ValueError("La clé privée ne correspond pas au certificat.")
+    end = _aware(getattr(cert, "not_valid_after_utc", None)) or cert.not_valid_after.replace(tzinfo=timezone.utc)
+    if end <= _now():
+        raise ValueError("Ce certificat a expiré.")
+    return end
+
+
+def upload(tenant_id: str, cert_pem: str, key_pem: str, identifier: Optional[str] = None) -> Dict[str, Any]:
+    tenant = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "id": 1, "slug": 1, "name": 1})
+    if not tenant:
+        raise LookupError("Commerce introuvable")
+    row = _db.wallet_pass_types.find_one({"tenant_id": tenant_id}) or {}
+    current = row.get("identifier")
+    ident = (identifier or "").strip() or current or identifier_for(tenant)
+    if current and ident != current and _db.customers.count_documents({"apple_pass_type": current}, limit=1):
+        raise ValueError(f"Des cartes portent déjà {current} : seul son certificat peut être remplacé.")
+    if _db.wallet_pass_types.find_one({"identifier": ident, "tenant_id": {"$ne": tenant_id}}, {"_id": 1}):
+        raise ValueError("Cet identifiant appartient déjà à un autre commerce.")
+    end = _checked(ident, cert_pem, key_pem)
+    now = _now()
+    upd = {"identifier": ident, "status": "ready", "source": "manual", "cert_pem": cert_pem.strip() + "\n",
+           "key_enc": _seal(key_pem.strip().encode() + b"\n"), "expires_at": end, "error": None, "attempts": 0,
+           "next_try_at": None, "lease_until": None, "ready_at": now, "asc_cert_id": None}
+    unset = {"asc_id": ""} if current and ident != current else {}
+    _db.wallet_pass_types.update_one({"tenant_id": tenant_id},
+                                     {"$set": upd, "$setOnInsert": {"created_at": now},
+                                      **({"$unset": unset} if unset else {})}, upsert=True)
+    with _LOCK:
+        _CACHE.pop(ident, None)
+        if current:
+            _CACHE.pop(current, None)
+    return {"tenant_id": tenant_id, "identifier": ident, "status": "ready", "source": "manual",
+            "expires_at": end.isoformat()}
+
+
+class UploadIn(BaseModel):
+    certificate_pem: str
+    key_pem: str
+    identifier: Optional[str] = None
+
+
+@router.post("/api/admin/wallet-identities/{tid}/upload")
+def admin_upload(tid: str, body: UploadIn, request: Request = None, token_data=Depends(require_super())):
+    """Super Admin only: a certificate signs every card of the business."""
+    from fastapi import HTTPException
+    try:
+        out = upload(tid, body.certificate_pem, body.key_pem, body.identifier)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        import server as core
+        core.log_audit("admin.wallet_identity.upload", actor=token_data.email, actor_type="user", target=tid,
+                       tenant_id=tid, request=request, meta={"identifier": out["identifier"], "expires_at": out["expires_at"]})
+    except Exception as exc:                       # noqa: BLE001
+        print(f"wallet identity upload: audit not kept ({exc})")
+    return out
+
+
 @router.post("/api/admin/wallet-identities/{tid}/make")
 def admin_make(tid: str, token_data=Depends(require_admin("commerces", write=True))):
     """Super admin: make (or retry) one business's id now — the first real
@@ -328,8 +424,11 @@ def admin_list(token_data=Depends(require_admin("commerces", write=False))):
         counts[st] = counts.get(st, 0) + 1
         rows.append({"tenant_id": r["tenant_id"], "name": names.get(r["tenant_id"]), "identifier": r.get("identifier"),
                      "status": st, "error": r.get("error"), "attempts": r.get("attempts") or 0,
+                     "source": r.get("source") or "api",
                      "expires_at": _aware(r.get("expires_at")).isoformat() if r.get("expires_at") else None,
                      "next_try_at": _aware(r.get("next_try_at")).isoformat() if r.get("next_try_at") else None})
     from services import asc_api as A
     return {"configured": A.configured(), "common": common_type(), "counts": counts, "rows": rows,
+            # every business, for the manual import's picker
+            "businesses": sorted(({"id": i, "name": n} for i, n in names.items()), key=lambda b: str(b["name"] or "").lower()),
             "without": len([t for t in names if t not in {r["tenant_id"] for r in rows}])}
