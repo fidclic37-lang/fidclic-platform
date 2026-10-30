@@ -8,6 +8,7 @@ import {
 import { adminAPI } from '../../lib/api';
 import { Card, Kpi, Select, Loading, Breadcrumb, Pager, Modal, Logo, useToast, downloadBlob, nf, BLUE, inputCls } from '../crm/ui';
 import { toneOf } from '../crm/emailUi';
+import WalletIdentitiesBanner from './WalletIdentitiesBanner';
 
 /* Super admin › Commerces — built to the approved « Tous les commerces »
    mockup. Statut = weekly cards AND scans, the weaker decides (rules
@@ -118,6 +119,8 @@ export default function CommercesPage() {
         </button>
         <Kpi icon={Users} tone="#10B981" bg="#E7F7EE" value={nf(K.clients?.value)} label="Clients finaux" delta={K.clients?.delta} series={K.clients?.series || []} />
       </div>
+
+      <WalletIdentitiesBanner />
 
       <Card className="mt-4">
         <div className="grid gap-2 md:grid-cols-[1.6fr_repeat(4,1fr)] md:items-end">

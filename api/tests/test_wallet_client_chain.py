@@ -138,7 +138,7 @@ def main():
 
     print("\nDownloaded from the card page, and an iPhone that updates without being registered")
     real_resp = W._pkpass_response
-    W._pkpass_response = lambda serial: None
+    W._pkpass_response = lambda serial, **kw: None
     real_plan, real_owner = W._wallet_in_plan, W._owner_only
     W._wallet_in_plan, W._owner_only = (lambda b: True), (lambda b, r: None)
     try:

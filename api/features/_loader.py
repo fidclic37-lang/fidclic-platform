@@ -160,6 +160,7 @@ MODULES = [
     # Native wallet passes — Apple .pkpass + Google Wallet. No-ops (503) until
     # APPLE_PASS_* / GOOGLE_WALLET_* are set in Vercel.
     "features.wallet_passes",
+    "features.wallet_identities",       # one Apple Pass Type ID per business (App Store Connect)
     "features.pass_designer",           # Apple Pass Designer templates as the card's design
     # Carte de fidélité — design, programme rules, tiers and the page's figures.
     "features.loyalty_card",

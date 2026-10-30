@@ -53,7 +53,7 @@ def main():
     db.users.insert_one({"email": "o@x.fr", "role": "business_owner", "tenant_id": "t1", "active": True})
     H = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})}
     WP.apple_configured = lambda: True
-    WP._sign_manifest = lambda m: b"sig"
+    WP._sign_manifest = lambda m, pass_type=None: b"sig"
 
     def L(text, over=None):
         over = over or {}

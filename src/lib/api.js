@@ -362,6 +362,8 @@ export const adminAPI = {
   franchise: () => api.get('/admin/franchise'),
   dashboard: (params) => api.get('/admin/dashboard', { params }),
   commerces: (params) => api.get('/admin/commerces', { params }),
+  // Apple Wallet: each business's own pass type id (features/wallet_identities)
+  walletIdentities: () => api.get('/admin/wallet-identities'),
   commercesExport: (params) => api.get('/admin/commerces/export', { params, responseType: 'blob' }),
   commercesRules: (body) => api.put('/admin/commerces/rules', body),
   addCommerce: (body) => api.post('/admin/commerces', body),
