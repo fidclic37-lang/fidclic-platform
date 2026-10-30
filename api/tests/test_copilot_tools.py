@@ -175,6 +175,7 @@ def main():
           and f.get("recompenses_utilisees") == 1 and f.get("campagnes_recues") == 1 and f.get("filleuls") == 1, f)
     check("…birthday and age, never phone or e-mail", f.get("anniversaire") == "02/11" and f.get("age") == 35
           and "0612345678" not in txt and "karim@mail.fr" not in txt, f)
+    check("…no « étudiant » field in the file", "etudiant" not in f, f)
     check("another shop's client → not found", not run("client_fiche", {"id": "x1"})["ok"])
 
     r = run("clients_segment", {"segment": "inactifs"})
@@ -185,6 +186,7 @@ def main():
     r = run("clients_segment", {"segment": "anniversaires", "jours": 7})
     check("…birthdays in the next 7 days", r["ok"] and "Karim Benali" in r["data"]["exemples"], r)
     check("…an unknown segment is an error, with the list", not run("clients_segment", {"segment": "martiens"})["ok"])
+    check("…« etudiants » is not a segment any more", not run("clients_segment", {"segment": "etudiants"})["ok"])
 
     r = run("campagnes", {"periode": "30 derniers jours"})
     check("campagnes: what was sent, to how many", r["ok"] and r["data"]["campagnes"][0]["nom"] == "Relance octobre"

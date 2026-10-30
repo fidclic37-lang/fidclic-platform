@@ -3,7 +3,8 @@ Clients › « Modifier la fiche » and « Ajuster points / tampons » (QA UX04,
 user, 2026-10-08: there was no way to correct a customer).
 
 DECIDED WITH THE USER
-    • Editable: name, phone, e-mail, birthday, postal code, student, source.
+    • Editable: name, phone, e-mail, birthday, postal code, source. (« étudiant »
+      removed, user 2026-10-30: an old flag is neither shown nor changed.)
       The same rules as the signup form (services/customer_fields); a phone
       or an e-mail already on another client of the shop is refused, so no
       duplicate card appears.
@@ -34,7 +35,7 @@ EDITORS = ["business_owner", "administrateur", "manager"]
 
 FIELD_LABELS = {"name": "nom", "phone": "téléphone", "email": "e-mail", "birthday": "anniversaire",
                 "birth_date": "date de naissance",
-                "postal_code": "code postal", "is_student": "étudiant", "acquisition_source": "source"}
+                "postal_code": "code postal", "acquisition_source": "source"}
 
 
 def init(db):
@@ -127,7 +128,7 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
         "id": c["id"], "name": c.get("name") or "", "phone": c.get("phone") or "", "email": c.get("email") or "",
         "birthday": c.get("birthday") or "", "postal_code": c.get("postal_code") or "",
         "birth_date": c.get("birth_date") or "", "age": CF.age_of(c.get("birth_date")),
-        "is_student": bool(c.get("is_student")), "acquisition_source": c.get("acquisition_source") or "",
+        "acquisition_source": c.get("acquisition_source") or "",
         "barcode_id": c.get("barcode_id"), "points": int(c.get("points") or 0), "visits": visits,
         # « 12 visites · dernière le 10/10 » at the top of the fiche (QA BUG-005)
         "last_visit": (lv.isoformat() if (lv := _aware(c.get("last_visit_date"))) else None),
@@ -179,7 +180,6 @@ class FicheIn(BaseModel):
     email: Optional[str] = None
     birthday: Optional[str] = None
     postal_code: Optional[str] = None
-    is_student: Optional[bool] = None
     acquisition_source: Optional[str] = None
 
 
@@ -210,8 +210,6 @@ def save_fiche(customer_id: str, body: FicheIn, request: Request = None,
     if body.postal_code is not None:
         same = (body.postal_code or "").strip() == (c.get("postal_code") or "").strip()
         new["postal_code"] = (body.postal_code or "").strip() if same else CF.postal_code(body.postal_code)
-    if body.is_student is not None:
-        new["is_student"] = bool(body.is_student)
     if body.acquisition_source is not None:
         from services import sources as SRC
         key = SRC.normalize(body.acquisition_source) if body.acquisition_source else None
@@ -233,7 +231,7 @@ def save_fiche(customer_id: str, body: FicheIn, request: Request = None,
         if clash:
             raise HTTPException(status_code=409, detail=f"Cet e-mail est déjà celui de {clash.get('name') or 'un autre client'}.")
 
-    changed = [k for k, v in new.items() if (c.get(k) or ("" if k != "is_student" else False)) != (v if v is not None else "")]
+    changed = [k for k, v in new.items() if (c.get(k) or "") != (v if v is not None else "")]
     if not changed:
         return {"client": _view(c), "changed": []}
     _db.customers.update_one({"id": customer_id}, {"$set": {**{k: new[k] for k in changed}, "updated_at": _now()}})

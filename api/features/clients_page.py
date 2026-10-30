@@ -344,7 +344,7 @@ def status_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = 
 FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visits": 1,
           "points": 1, "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
           "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,
-          "latitude": 1, "longitude": 1, "is_student": 1, "acquisition_source": 1,
+          "latitude": 1, "longitude": 1, "acquisition_source": 1,
           # is the card still on the phone (features/card_status)
           "card_deleted_at": 1, "wallet_removed_at": 1, "card_claimed_at": 1, "wallet_added_at": 1, "paused_at": 1,
           "google_removed_at": 1, "google_added_at": 1,

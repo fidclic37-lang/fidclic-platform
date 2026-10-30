@@ -653,9 +653,8 @@ async def card_whose(barcode_id: str, body: WhoseRequest, request: Request):
 #     joined, for the life of the programme — not just the selected period. It
 #     answers "what has parrainage brought me", so the card says "depuis le
 #     début" and deliberately does not move with the date filter.
-#   • The breakdown splits parrains by who they are: étudiants first (declared
-#     at signup — the segment French merchants build offers around), then
-#     réguliers, nouveaux, and everyone else.
+#   • The breakdown splits parrains by who they are: réguliers, nouveaux, and
+#     everyone else (« Étudiants » removed, user 2026-10-30).
 # ===========================================================================
 from typing import Any, Dict, List, Tuple                      # noqa: E402
 from datetime import timedelta                                 # noqa: E402
@@ -677,14 +676,14 @@ SOURCES: Dict[str, str] = {
     "other": "Autre",
 }
 
-# Who the parrain is. Étudiant wins over everything else — it is the segment
-# the merchant builds offers around, so a student who also visits often is
-# still counted as a student.
+# Who the parrain is — by their visits and how long they have been a client.
+# There is no « Étudiants » slice any more (user, 2026-10-30): the student
+# category was dropped from signup, and an old « is_student » flag counts for
+# nothing here.
 REGULAR_MIN_VISITS = 5
 NEW_CUSTOMER_DAYS = 90
 SEGMENTS: List[Tuple[str, str, str]] = [
     ("reguliers", "Clients réguliers", "blue"),
-    ("etudiants", "Étudiants", "teal"),
     ("nouveaux", "Nouveaux clients", "amber"),
     ("autres", "Autres", "violet"),
 ]
@@ -716,8 +715,6 @@ def _window(date_from: Optional[str], date_to: Optional[str]) -> Tuple[datetime,
 
 
 def _segment_of(cust: Dict[str, Any]) -> str:
-    if cust.get("is_student"):
-        return "etudiants"
     if int(cust.get("visits") or 0) >= REGULAR_MIN_VISITS:
         return "reguliers"
     joined = _aware(cust.get("created_at"))
@@ -750,7 +747,7 @@ def _people(ids: List[str]) -> Dict[str, Dict[str, Any]]:
         return {}
     rows = _db.customers.find(
         {"id": {"$in": ids}},
-        {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "is_student": 1, "branch_id": 1,
+        {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "branch_id": 1,
          "created_at": 1, "total_amount_paid": 1},
     )
     return {r["id"]: r for r in rows}

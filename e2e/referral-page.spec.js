@@ -138,3 +138,15 @@ test('phone: tapping the reward shows both sides', async ({ page, request }) => 
   await expect(page.getByRole('tooltip')).toContainText('Filleul');
   await fullyVisible(page);
 });
+
+// « Étudiants » is gone (user, 2026-10-30: « students waali category hata di
+// thi pehle hi, toh hatao students ko full power »)
+test('Répartition des parrainages: three slices, no Étudiants', async ({ page, request }) => {
+  await setup(page, request);
+  await page.goto('/dashboard/referral');
+  const card = page.locator('section, div').filter({ has: page.getByText('Répartition des parrainages', { exact: true }) }).last();
+  await expect(card.getByText('Clients réguliers')).toBeVisible();
+  await expect(card.getByText('Nouveaux clients')).toBeVisible();
+  await expect(card.getByText('Autres', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Étudiant/)).toHaveCount(0);
+});

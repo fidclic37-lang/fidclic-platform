@@ -176,14 +176,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # ---- who the parrains are -------------------------------------------------
     print("\nRépartition des parrainages")
     seg = {s["key"]: s for s in d["breakdown"]["segments"]}
-    check("the four slices of the design are there, in order",
+    check("three slices, in order — no « Étudiants » (removed, user 2026-10-30)",
           [s["key"] for s in d["breakdown"]["segments"]]
-          == ["reguliers", "etudiants", "nouveaux", "autres"])
+          == ["reguliers", "nouveaux", "autres"])
     check("they are labelled in French",
           [s["label"] for s in d["breakdown"]["segments"]]
-          == ["Clients réguliers", "Étudiants", "Nouveaux clients", "Autres"])
-    check("Sophie's and Yassine's five parrainages are réguliers", seg["reguliers"]["count"] == 5)
-    check("Camille's two are étudiants — declared at signup", seg["etudiants"]["count"] == 2)
+          == ["Clients réguliers", "Nouveaux clients", "Autres"])
+    check("Sophie's, Yassine's and Camille's seven parrainages are réguliers (Camille: 9 visits)",
+          seg["reguliers"]["count"] == 7)
     check("Lucas's one is a nouveau client", seg["nouveaux"]["count"] == 1)
     check("Inès's one falls to autres", seg["autres"]["count"] == 1)
     check("the slices account for every parrainage",
@@ -191,10 +191,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("shares add up to about 100 %",
           99 <= sum(s["pct"] for s in d["breakdown"]["segments"]) <= 101)
 
-    print("\nÉtudiant beats every other rule")
-    check("a student with many visits is still counted as a student",
+    print("\nNo student rule any more")
+    check("a client once declared « étudiant » is counted by their visits like everyone",
           R._segment_of({"is_student": True, "visits": 99,
-                         "created_at": now - dt.timedelta(days=900)}) == "etudiants")
+                         "created_at": now - dt.timedelta(days=900)}) == "reguliers")
     check("a customer with 5 visits is régulier",
           R._segment_of({"visits": R.REGULAR_MIN_VISITS}) == "reguliers")
     check("a fresh customer with few visits is nouveau",

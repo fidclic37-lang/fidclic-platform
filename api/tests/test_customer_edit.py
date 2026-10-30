@@ -74,9 +74,11 @@ def main():
     r = call("PUT", "/api/owner/clients/c1/fiche", json={"name": "Léa Dupont", "phone": "07 33 33 33 33", "birthday": "25/12",
                                                          "postal_code": "37100", "is_student": True, "acquisition_source": "insta"})
     c = db.customers.find_one({"id": "c1"})
-    check(f"saved ({r.status_code}): name, phone (stored as 0733333333), birthday read « 25/12 » as 12-25, postal, student, source",
+    check(f"saved ({r.status_code}): name, phone (stored as 0733333333), birthday read « 25/12 » as 12-25, postal, source",
           r.status_code == 200 and c["name"] == "Léa Dupont" and c["phone"] == "0733333333" and c["birthday"] == "12-25"
-          and c["postal_code"] == "37100" and c["is_student"] is True and c["acquisition_source"] == "instagram")
+          and c["postal_code"] == "37100" and c["acquisition_source"] == "instagram")
+    check("« étudiant » is no longer a field: sent, it is ignored (removed, user 2026-10-30)",
+          not c.get("is_student") and "is_student" not in call("GET", "/api/owner/clients/c1/fiche").json()["client"])
     check("the name is on the Wallet card: it is refreshed", "FT-0000000A" in woken)
     for field, bad in (("phone", "abc"), ("postal_code", "ABCDE"), ("birthday", "13-99"), ("email", "x@"), ("name", " ")):
         check(f"{field} « {bad} » refused", call("PUT", "/api/owner/clients/c1/fiche", json={field: bad}).status_code == 400)

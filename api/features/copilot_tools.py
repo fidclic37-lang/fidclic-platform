@@ -296,7 +296,7 @@ def t_client_fiche(c: Ctx, args: Dict[str, Any]):
            "unite_carte": unit,
            "anniversaire": f"{bday[3:5]}/{bday[0:2]}" if re.fullmatch(r"\d{2}-\d{2}", bday) else None,
            "age": CF.age_of(p.get("birth_date"), c.now.astimezone(PARIS).date()),
-           "etudiant": bool(p.get("is_student")), "source": p.get("acquisition_source") or None,
+           "source": p.get("acquisition_source") or None,
            "dernieres_visites": last,
            "recompenses_utilisees": len(rew),
            "derniere_recompense": ({"nom": rew[0].get("reward_name") or "Récompense", "le": _day(rew[0].get("redeemed_at"))}
@@ -311,7 +311,6 @@ SEGMENTS = {
     "nouveaux": ("Nouveaux clients", "new"),
     "une_visite": ("Pas revenus après la 1ère visite", "one_timers"),
     "anniversaires": ("Anniversaires à venir", "birthday"),
-    "etudiants": ("Étudiants", None),
     "meilleurs_clients": ("Meilleurs clients", "loyal"),
 }
 
@@ -364,8 +363,6 @@ def t_clients_segment(c: Ctx, args: Dict[str, Any]):
         within = 7 if jours is None else jours
         hit = [p for p in people if (n := _days_to_birthday(str(p.get("birthday") or ""), today)) is not None and n <= within]
         hit.sort(key=lambda p: _days_to_birthday(str(p.get("birthday") or ""), today))
-    elif key == "etudiants":
-        hit = [p for p in people if p.get("is_student")]
     else:
         hit = sorted(people, key=lambda p: -_money(p.get("total_amount_paid")))[:LIST_MAX]
     label, seg = SEGMENTS[key]

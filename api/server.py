@@ -6684,10 +6684,8 @@ class JoinRequest(BaseModel):
     city: Optional[str] = ""
     birthday: str
     acquisition_source: Optional[str] = None
-    # Student status, declared by the customer at signup. French merchants run
-    # student offers constantly, so this is a first-class segment rather than a
-    # tag — the referral page's breakdown and any "étudiants" campaign read it.
-    is_student: Optional[bool] = False
+    # (« étudiant » is no longer asked nor kept — user, 2026-10-30; an old form
+    # still sending it is ignored.)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     # Multi-touch attribution: every URL ?src=... the visitor landed on
@@ -6965,7 +6963,6 @@ def join_program(slug: str, req: JoinRequest, request: Request = None):
         longitude=req.longitude
     )
     cust_doc = c.model_dump()
-    cust_doc["is_student"] = bool(req.is_student)
     # The home store: the store of the link / the form, or the parrain's
     # (features/store_links) — found above, before anything is written.
     cust_doc["branch_id"] = home

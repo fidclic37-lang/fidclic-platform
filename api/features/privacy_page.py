@@ -120,7 +120,7 @@ def get_privacy(token_data: TokenData = Depends(require_role(READERS, partial_ok
             {"key": "visits", "label": "Données de visite", "sub": "Fréquence, date des visites", "status": "collected",
              "fields": ["Date et heure de chaque visite", "Établissement", "Produits achetés (si saisis en caisse)"]},
             {"key": "preferences", "label": "Données de préférence", "sub": "Centres d'intérêt, produits préférés", "status": "collected",
-             "fields": ["Produits préférés (déduits des achats)", "Statut étudiant (déclaré)", "Préférences de notification"]},
+             "fields": ["Produits préférés (déduits des achats)", "Préférences de notification"]},
             {"key": "location", "label": "Données de localisation", "sub": "Position (avec consentement)",
              "status": "optional" if s["consent"]["geo"] else "off",
              "fields": ["Position approximative, seulement si le client l'autorise sur sa carte"], "count": geo},
