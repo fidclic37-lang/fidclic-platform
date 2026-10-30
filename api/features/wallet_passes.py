@@ -85,6 +85,8 @@ def init(db):
         _db.pass_registrations.create_index([("serial", 1)])
         _db.pass_push_log.create_index([("serial", 1), ("sent_at", -1)])
         _db.pass_push_log.create_index([("device_id", 1), ("checked_at", 1)])
+        _db.pass_registration_log.create_index([("serial", 1), ("at", -1)])
+        _db.pass_registration_log.create_index("at", expireAfterSeconds=REG_LOG_DAYS * 24 * 3600)
         _db.img_cache.create_index("at", expireAfterSeconds=30 * 24 * 3600)
     except Exception:
         pass
@@ -138,6 +140,124 @@ def _push_state(row: Dict[str, Any], now: datetime) -> str:
     if row.get("checked_at"):
         return "demandé, pas téléchargé"
     return "pas récupéré"
+
+
+# ---------------------------------------------------------------------------
+# Registration history (user, 2026-10-30, ROYAL TRIM LIBÉRTÉ: « 80 % des
+# clients doivent rafraîchir leur carte »). An iPhone gets pushes only while
+# it is registered; every way a registration starts, fails or ends is kept
+# here with its reason, so one client's card can be traced, not guessed.
+# ---------------------------------------------------------------------------
+REG_LOG_DAYS = 90
+UNREGISTERED_FETCH_EVERY = timedelta(hours=1)
+REFUSED_EVERY = timedelta(hours=1)        # a card number is on its QR: no flood of refusals
+REGISTER_GRACE = timedelta(minutes=10)    # an iPhone registers seconds after the add
+REG_EVENTS = {
+    "added": "Ajoutée sur un iPhone",
+    "renewed": "iPhone réinscrit (nouveau jeton de notification)",
+    "removed_by_phone": "Retirée de l'iPhone, ou mises à jour automatiques coupées",
+    "token_dropped": "Apple : cet iPhone ne reçoit plus les notifications",
+    "register_refused": "Inscription de l'iPhone refusée",
+    "downloaded": "Carte téléchargée depuis sa page",
+    "fetched_unregistered": "Mise à jour par un iPhone non inscrit",
+    "caught_up": "Inscrit après un changement : carte mise à jour tout de suite",
+}
+APPLE_STATES = {
+    "registered": "Sur un iPhone — mises à jour automatiques",
+    "on_phone_unregistered": "Sur un iPhone, mais pas inscrit — pas de mise à jour automatique",
+    "removed": "Retirée d'Apple Wallet",
+    "google": "Google Wallet",
+    "downloaded_not_registered": "Téléchargée, jamais inscrite sur un iPhone",
+    "none": "Pas dans Apple Wallet",
+}
+
+
+def _reg_event(serial: str, kind: str, device_id: Optional[str] = None, detail: Optional[str] = None,
+               tenant_id: Optional[str] = None) -> None:
+    """One line of a card's registration history. Only a real card is filed
+    (under its shop); a log never blocks the callback it describes."""
+    try:
+        if tenant_id is None:
+            c = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "tenant_id": 1}) if serial else None
+            if not c:
+                return
+            tenant_id = c.get("tenant_id")
+        _db.pass_registration_log.insert_one({"tenant_id": tenant_id, "serial": serial, "kind": kind,
+                                              "device": _short(device_id), "detail": (detail or None) and str(detail)[:120],
+                                              "at": datetime.now(timezone.utc)})
+    except Exception as exc:                       # noqa: BLE001
+        print(f"wallet: registration event not kept ({exc})")
+
+
+def _aware_dt(d: Any) -> Optional[datetime]:
+    if not isinstance(d, datetime):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+CATCH_UP_WINDOW = timedelta(minutes=30)
+
+
+def changed_since_pass(c: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """Did this card change after the pass the iPhone holds was made? (user,
+    2026-10-30, FT-1F64304A: scanned 17 s before its iPhone registered — no
+    device to push, the card stayed on 0.) Measured from the download of the
+    pass; for a card downloaded before that was kept, a change in the last
+    CATCH_UP_WINDOW."""
+    now = now or datetime.now(timezone.utc)
+    changes = [d for d in (_aware_dt((c or {}).get("last_visit_date")), _aware_dt((c or {}).get("updated_at"))) if d]
+    if not changes:
+        return False
+    latest = max(changes)
+    downloaded = _aware_dt((c or {}).get("apple_downloaded_at"))
+    if downloaded:
+        return latest > downloaded
+    return now - latest <= CATCH_UP_WINDOW
+
+
+def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str]) -> None:
+    """Push the iPhone that just registered — only that one — and stamp the
+    change, so its « what changed since my pass » gets this card. Never
+    raises: a push must not fail a registration."""
+    from services import apns_passes
+    try:
+        now = datetime.now(timezone.utc)
+        _db.pass_registrations.update_one({"device_id": device_id, "serial": serial},
+                                          {"$set": {"pass_changed_at": now}})
+        if not apns_passes.is_configured():
+            return
+        reg = {"device_id": device_id, "serial": serial, "push_token": token, "tenant_id": tenant_id}
+        res = apns_passes.push_to_tokens([token])
+        _log_pushes([reg], res.get("results") or [], now)
+        _db.pass_registrations.update_one({"device_id": device_id, "serial": serial}, {"$set": {
+            "last_push_at": now, "last_push_result": ("ok" if res.get("sent") else
+                                                      ("; ".join(res.get("errors", [])[:2]) or "not sent"))[:200]}})
+        _reg_event(serial, "caught_up", device_id, tenant_id=tenant_id)
+    except Exception as exc:                       # noqa: BLE001
+        print(f"wallet: catch-up push not sent ({exc})")
+
+
+def apple_state(c: Dict[str, Any], registered: set, google: set, now: Optional[datetime] = None) -> Dict[str, str]:
+    """Where this client's card is, in the merchant's words. `registered` /
+    `google`: the card numbers registered on an iPhone / held by Google."""
+    now = now or datetime.now(timezone.utc)
+    serial = (c or {}).get("barcode_id")
+    removed = _aware_dt((c or {}).get("wallet_removed_at"))
+    seen = _aware_dt((c or {}).get("apple_unregistered_fetch_at"))
+    downloaded = _aware_dt((c or {}).get("apple_downloaded_at"))
+    if serial and serial in registered:
+        key = "registered"
+    elif seen and not (removed and removed > seen):
+        key = "on_phone_unregistered"
+    elif removed:
+        key = "removed"
+    elif serial and serial in google:
+        key = "google"
+    elif downloaded and now - downloaded > REGISTER_GRACE:
+        key = "downloaded_not_registered"
+    else:
+        key = "none"
+    return {"key": key, "label": APPLE_STATES[key]}
 
 
 # ---------------------------------------------------------------------------
@@ -2789,7 +2909,11 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     outcome = "ok" if res.get("sent") else ("; ".join(res.get("errors", [])[:2]) or "not sent")
     _db.pass_registrations.update_many({"serial": {"$in": serials}}, {"$set": {
         "last_push_at": datetime.now(timezone.utc), "last_push_result": outcome[:200]}})
+    why = {r.get("token"): r.get("reason") or str(r.get("status")) for r in res.get("results") or []}
     for dead in res.get("gone", []):
+        for reg in regs:
+            if reg.get("push_token") == dead:
+                _reg_event(reg.get("serial"), "token_dropped", reg.get("device_id"), why.get(dead), reg.get("tenant_id"))
         try:
             _db.pass_registrations.delete_many({"push_token": dead})
         except Exception:
@@ -2946,7 +3070,9 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     a native pass, on how many devices, and when they were last refreshed."""
     tid = token_data.tenant_id
     people = [c for c in _db.customers.find({"tenant_id": tid, "barcode_id": {"$exists": True}},
-                                             {"_id": 0, "barcode_id": 1, "name": 1, "created_at": 1})
+                                             {"_id": 0, "barcode_id": 1, "name": 1, "created_at": 1,
+                                              "wallet_removed_at": 1, "apple_downloaded_at": 1,
+                                              "apple_unregistered_fetch_at": 1})
               if c.get("barcode_id")]
     serials = [c["barcode_id"] for c in people]
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
@@ -2961,6 +3087,10 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
             history[key].append(row)
     names = {c["barcode_id"]: c.get("name") for c in people}
     with_pass = {r.get("serial") for r in regs}
+    in_google = {g.get("serial") for g in _db.google_wallet_objects.find({"serial": {"$in": serials}}, {"serial": 1})}
+    apple_states = {k: 0 for k in APPLE_STATES}
+    for c in people:
+        apple_states[apple_state(c, with_pass, in_google, now)["key"]] += 1
     customers = len(serials)
     installed = len({r["serial"] for r in regs})
     last = max([r.get("updated_at") or r.get("created_at") for r in regs if r.get("updated_at") or r.get("created_at")],
@@ -2977,6 +3107,9 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         "passes_installed": installed,        # customers carrying the pass
         "devices": len(regs),                 # iPhone + Watch count as two
         "install_rate": round(installed / customers * 100) if customers else 0,
+        # every client once, by where the card is (2026-10-30): « pas inscrit »
+        # apart from Android, never added and removed
+        "apple_states": apple_states,
         "last_registration_at": last.isoformat() if last else None,
         # The update chain, newest device first: we push → the iPhone asks
         # what changed → it fetches the pass. A gap shows where it breaks.
@@ -3024,6 +3157,49 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         "device_logs": [{"at": _iso_or_none(d.get("at")), "line": d.get("line")}
                         for d in _db.pass_device_logs.find({}, {"_id": 0}).sort("at", -1).limit(200)
                         if any(sr in (d.get("line") or "") for sr in serials)][:10],
+    }
+
+
+@router.get("/api/owner/clients/{customer_id}/wallet")
+def client_wallet(customer_id: str, request: Request = None,
+                  token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager"],
+                                                              partial_ok=True))):
+    """One client's whole Wallet chain (user, 2026-10-30): where the card is,
+    each iPhone, the last pushes with what happened, the registration events.
+    The shop's stats show only the newest iPhones; a returning client's card
+    is traced here. Device ids are shortened, push tokens never shown."""
+    from features import card_status as _CS
+    c = _CS._customer(token_data, request, customer_id)
+    serial = c.get("barcode_id")
+    now = datetime.now(timezone.utc)
+    regs = list(_db.pass_registrations.find({"serial": serial})) if serial else []
+    g = _db.google_wallet_objects.find_one({"serial": serial}, {"_id": 0}) if serial else None
+    state = apple_state(c, {serial} if regs else set(), {serial} if g else set(), now)
+    pushes = list(_db.pass_push_log.find({"serial": serial}, {"_id": 0}).sort("sent_at", -1).limit(10)) if serial else []
+    events = list(_db.pass_registration_log.find({"serial": serial, "tenant_id": c.get("tenant_id")})
+                  .sort([("at", -1), ("_id", -1)]).limit(20)) if serial else []
+    return {
+        "serial": serial,
+        "apple": {
+            "state": state,
+            "devices": [{"device": _short(r.get("device_id")), "pass_type": r.get("pass_type_id"),
+                         "registered_at": _iso_or_none(r.get("created_at")),
+                         "registration_updated_at": _iso_or_none(r.get("updated_at")),
+                         "last_push_at": _iso_or_none(r.get("last_push_at")), "last_push_result": r.get("last_push_result"),
+                         "last_check_at": _iso_or_none(r.get("last_check_at")),
+                         "last_fetch_at": _iso_or_none(r.get("last_fetch_at"))} for r in regs],
+            "pushes": [{"device": h.get("device_id") and _short(h.get("device_id")), "sent_at": _iso_or_none(h.get("sent_at")),
+                        "apple": h.get("status"), "reason": h.get("reason"),
+                        "asked_at": _iso_or_none(h.get("checked_at")), "downloaded_at": _iso_or_none(h.get("fetched_at")),
+                        "state": _push_state(h, now)} for h in pushes],
+            "events": [{"at": _iso_or_none(e.get("at")), "kind": e.get("kind"),
+                        "label": REG_EVENTS.get(e.get("kind"), e.get("kind")), "detail": e.get("detail"),
+                        "device": e.get("device")} for e in events],
+            "downloaded_at": _iso_or_none(c.get("apple_downloaded_at")),
+            "removed_at": _iso_or_none(c.get("wallet_removed_at")),
+        },
+        "google": {"card": bool(g), "last_sync_at": _iso_or_none((g or {}).get("last_sync_at")),
+                   "last_sync_result": (g or {}).get("last_sync_result")},
     }
 
 
@@ -3258,7 +3434,13 @@ def download_apple_pass(barcode_id: str, request: Request = None):
     _owner_only(barcode_id, request)
     if not _wallet_in_plan(barcode_id):
         raise HTTPException(status_code=403, detail="Apple Wallet n'est pas inclus dans l'offre de ce commerce.")
-    return _pkpass_response(barcode_id)
+    resp = _pkpass_response(barcode_id)
+    try:
+        _db.customers.update_one({"barcode_id": barcode_id}, {"$set": {"apple_downloaded_at": datetime.now(timezone.utc)}})
+    except Exception:
+        pass
+    _reg_event(barcode_id, "downloaded")
+    return resp
 
 
 @router.get("/api/card/{barcode_id}/wallet-strip.png")
@@ -3296,11 +3478,26 @@ class Registration(BaseModel):
 @router.post("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}/{serial}")
 def register_device(device_id: str, pass_type_id: str, serial: str, body: Registration,
                     authorization: Optional[str] = Header(default=None)):
-    _check_pass_auth(authorization, serial)
-    cust = _db.customers.find_one({"barcode_id": serial}, {"tenant_id": 1})
+    try:
+        _check_pass_auth(authorization, serial)
+    except HTTPException:
+        try:
+            recent = _db.pass_registration_log.find_one({"serial": serial, "kind": "register_refused",
+                                                         "at": {"$gte": datetime.now(timezone.utc) - REFUSED_EVERY}})
+        except Exception:                      # noqa: BLE001
+            recent = None
+        if not recent:
+            _reg_event(serial, "register_refused", device_id, "clé de la carte invalide")
+        raise
+    cust = _db.customers.find_one({"barcode_id": serial}, {"tenant_id": 1, "last_visit_date": 1, "updated_at": 1,
+                                                           "apple_downloaded_at": 1})
     if not cust:
         raise HTTPException(status_code=404)
     existing = _db.pass_registrations.find_one({"device_id": device_id, "serial": serial})
+    if not existing:
+        _reg_event(serial, "added", device_id, tenant_id=cust.get("tenant_id"))
+    elif existing.get("push_token") != body.pushToken:
+        _reg_event(serial, "renewed", device_id, tenant_id=cust.get("tenant_id"))
     _db.pass_registrations.update_one(
         {"device_id": device_id, "serial": serial},
         {"$set": {"push_token": body.pushToken, "pass_type_id": pass_type_id, "tenant_id": cust.get("tenant_id"),
@@ -3317,6 +3514,9 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
                 AU.wallet_added(full.get("tenant_id"), full, "apple")
         except Exception as exc:
             print(f"wallet: welcome not sent (non-fatal): {exc}")
+    # scanned before this iPhone registered: the scan had no device to push
+    if (not existing or existing.get("push_token") != body.pushToken) and changed_since_pass(cust):
+        _catch_up(device_id, serial, body.pushToken, cust.get("tenant_id"))
     return Response(status_code=200 if existing else 201)
 
 
@@ -3357,7 +3557,8 @@ def serials_for_device(device_id: str, pass_type_id: str, passesUpdatedSince: Op
 def unregister_device(device_id: str, pass_type_id: str, serial: str,
                       authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
-    _db.pass_registrations.delete_one({"device_id": device_id, "serial": serial})
+    if _db.pass_registrations.delete_one({"device_id": device_id, "serial": serial}).deleted_count:
+        _reg_event(serial, "removed_by_phone", device_id)
     # removed from the last Wallet that had it: the card no longer counts as
     # on the phone until its owner opens it again (services/card_owner.held)
     if not _db.pass_registrations.count_documents({"serial": serial}, limit=1):
@@ -3367,6 +3568,23 @@ def unregister_device(device_id: str, pass_type_id: str, serial: str,
         # c'est bien le téléphone du client — jamais le commerce.
         _log_card(serial, "Carte retirée d'Apple Wallet", now)
     return Response(status_code=200)
+
+
+def _seen_unregistered(serial: str) -> None:
+    """An iPhone holds this card (it just asked for it) but no device is
+    registered for it: it gets no push. Kept once an hour per card."""
+    now = datetime.now(timezone.utc)
+    try:
+        c = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "tenant_id": 1, "apple_unregistered_fetch_at": 1})
+        if not c:
+            return
+        last = _aware_dt(c.get("apple_unregistered_fetch_at"))
+        if last and now - last < UNREGISTERED_FETCH_EVERY:
+            return
+        _db.customers.update_one({"barcode_id": serial}, {"$set": {"apple_unregistered_fetch_at": now}})
+        _reg_event(serial, "fetched_unregistered", tenant_id=c.get("tenant_id"))
+    except Exception as exc:                       # noqa: BLE001
+        print(f"wallet: unregistered update not noted ({exc})")
 
 
 def _log_card(serial: str, text: str, at: datetime) -> None:
@@ -3384,7 +3602,9 @@ def _log_card(serial: str, text: str, at: datetime) -> None:
 @router.api_route("/api/passes/v1/passes/{pass_type_id}/{serial}", methods=["GET", "HEAD"])
 def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
-    _db.pass_registrations.update_many({"serial": serial}, {"$set": {"last_fetch_at": datetime.now(timezone.utc)}})
+    if not _db.pass_registrations.update_many({"serial": serial},
+                                              {"$set": {"last_fetch_at": datetime.now(timezone.utc)}}).matched_count:
+        _seen_unregistered(serial)
     try:        # push history: downloaded by the devices that asked (the GET carries no device id)
         _db.pass_push_log.update_many({"serial": serial, "checked_at": {"$ne": None}, "fetched_at": None},
                                       {"$set": {"fetched_at": datetime.now(timezone.utc)}})
