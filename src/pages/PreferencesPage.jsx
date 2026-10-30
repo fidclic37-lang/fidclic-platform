@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Settings, Globe, Clock, CalendarDays, Coins, Mail, SlidersHorizontal, RotateCcw, Eye, Check, Loader2, Lock,
-  LayoutList,
+  LayoutList, Brain,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { applyPrefs, allCurrencies, allTimezones, tzLabel, symbolFor } from '../lib/prefs';
 import { applyGoogleTranslate } from '../components/GoogleTranslateBridge';
+import AiMemoryList from '../components/AiMemoryList';
 
 /* Paramètres › Préférences — built to the approved mockup, without
    « Préférences d'affichage » (removed by the user). Each change is saved at
@@ -196,6 +197,13 @@ export default function PreferencesPage() {
               <Switch on={p.confirm_actions} label="Confirmation des actions importantes" onChange={(v) => save({ confirm_actions: v })} />
             </div>
           </div>
+        </Card>
+
+        {/* every plan, every account (user, 2026-10-30) — api/features/copilot_memory.py */}
+        <Card className="lg:col-span-2">
+          <Head icon={Brain} title="Ce que FidClic IA retient"
+                sub="Ce que vous avez dit à FidClic IA sur vous et votre commerce. Il s'en sert pour vous répondre ; modifiez ou supprimez ce que vous voulez. Les numéros de téléphone et e-mails ne sont jamais gardés." />
+          <AiMemoryList />
         </Card>
 
         <section className="flex flex-col rounded-2xl border border-[#EDF1F7] bg-[#F8FAFF] p-4">
