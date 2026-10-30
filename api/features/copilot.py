@@ -1394,7 +1394,8 @@ def chat_history(before: Optional[str] = None,
     oldest = rows[-1]["at"] if rows else None
     if isinstance(oldest, datetime) and oldest.tzinfo is None:
         oldest = oldest.replace(tzinfo=timezone.utc)
-    return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or []}
+    return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or [],
+                          **({"forgotten": True} if r.get("forgotten") else {})}
                          for r in reversed(rows)],
             "has_more": more, "before": oldest.isoformat() if isinstance(oldest, datetime) else None}
 
@@ -1430,8 +1431,7 @@ def chat(body: ChatIn, request: Request = None,
     email = getattr(token_data, "email", None)
     view_by = getattr(token_data, "view_by", None)   # a super admin in « Accéder au compte »
     remembered = CM.explicit(message)            # « Retiens que… »: kept at once — never from a super admin
-    if remembered and not view_by:
-        CM.add(tid, email, remembered, "chat")
+    kept = CM.add(tid, email, remembered, "chat") if remembered and not view_by else None
 
     reply, source = None, "model"
     if _llm_ready():
@@ -1465,4 +1465,5 @@ def chat(body: ChatIn, request: Request = None,
         {"tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(), **who,
          "actions": actions, "source": source, "at": at + timedelta(milliseconds=1)},
     ])
+    CM.link(kept, at)                            # deleting the fact forgets this message
     return {"reply": reply.strip(), "actions": actions, "source": source}

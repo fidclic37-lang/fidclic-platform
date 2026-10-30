@@ -374,8 +374,10 @@ export default function CopilotPage() {
         </div>
         {messages.map((m, i) => (
           m.role === 'user' ? (
-            <div key={i} className="flex justify-end">
-              <span className="max-w-[85%] rounded-2xl rounded-tr-md bg-[#2F6BFF] px-3.5 py-2 text-[12.5px] text-white">{m.text}</span>
+            <div key={i} className="flex flex-col items-end">
+              <span className={`max-w-[85%] rounded-2xl rounded-tr-md px-3.5 py-2 text-[12.5px] ${m.forgotten ? 'bg-[#CBD5E1] text-[#334155]' : 'bg-[#2F6BFF] text-white'}`}>{m.text}</span>
+              {/* a fact deleted from « Ce que FidClic IA retient »: the model no longer reads this message */}
+              {m.forgotten && <span data-testid="chat-forgotten" className="mt-0.5 text-[10.5px] text-[#94A3B8]">Oublié par FidClic IA</span>}
             </div>
           ) : (
             <div key={i} className="flex items-start gap-2.5">
