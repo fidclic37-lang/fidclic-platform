@@ -2324,3 +2324,7 @@ html.fit-wide body {
     font-size: 16px !important;
   }
 }
+
+/* A window as a bottom sheet (ClientEdit): the visible screen's height on a
+   phone (dvh), the older vh where dvh is unknown. */
+.fc-sheet { max-height: 92vh; max-height: 92dvh; }
