@@ -12985,6 +12985,28 @@ def _points_split_once() -> None:
 _points_split_once()
 
 
+def _drop_student_flag_once() -> None:
+    """The « étudiant » category is gone (user, 2026-10-30: « purana data mein
+    se etudiant waala info bas hatao, baaki ka data intact rkho »). Only the
+    old `is_student` field leaves each client, in every shop; nothing else is
+    touched. Once, marked in platform_settings with how many clients it
+    changed. Never fatal: a start that fails here is retried next time."""
+    try:
+        done = db.platform_settings.find_one({"key": "drop_is_student"}, {"_id": 0, "value": 1}) or {}
+        if done.get("value") == "v1":
+            return
+        res = db.customers.update_many({"is_student": {"$exists": True}}, {"$unset": {"is_student": ""}})
+        n = int(getattr(res, "modified_count", 0) or 0)
+        db.platform_settings.update_one({"key": "drop_is_student"}, {"$set": {
+            "key": "drop_is_student", "value": "v1", "at": datetime.now(timezone.utc), "customers": n}}, upsert=True)
+        print(f"clients: « étudiant » removed from {n} customers", flush=True)
+    except Exception as exc:  # noqa: BLE001 — a start must never fail on it
+        print(f"clients: « étudiant » not removed yet ({exc})", flush=True)
+
+
+_drop_student_flag_once()
+
+
 def _cache_purge_once() -> None:
     """The image caches kept in MongoDB (img_cache, pkpass_cache) made the free
     cluster slower, not faster (2026-10-13): they are no longer used, and what
