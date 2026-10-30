@@ -261,6 +261,24 @@ def main():
     p = chat_prompt()
     check("an edited fact: the model reads the new text, not the old message", "ma couleur est le vert" in p and "le bleu" not in p, p[-600:])
 
+    # ------------------------------------------------------------------ d
+    print("\nd · Plus de formes de téléphone et d'e-mail cachées")
+    hide = ["+44 20 7946 0958", "+1 415 555 2671", "+1 (415) 555-2671", "0044 20 7946 0958", "+212 6 12 34 56 78",
+            "+32 470 12 34 56", "+33612345678", "06 12 34 56 78", "06.12.34.56.78", "06-12-34-56-78",
+            "zéro six douze trente-quatre cinquante-six soixante-dix-huit",
+            "zero six, douze, trente quatre, cinquante six, soixante dix huit",
+            "karim@mail.fr", "KARIM@MAIL.FR", "karim [at] mail [dot] fr", "karim (at) mail (dot) fr",
+            "karim[at]mail.fr", "karim arobase mail point fr", "karim at gmail dot com", "karim [@] mail [.] fr"]
+    for h in hide:
+        out = CM.scrub(f"Contact : {h} merci")
+        digits = sum(ch.isdigit() for ch in out)
+        check(f"hidden: {h}", "karim" not in out.lower() and digits == 0 and "douze" not in out and "soixante" not in out, out)
+    keep = ["12,50 € le 30/10/2026, 150 clients, 2026", "1 500 € de CA en 2025", "150 000 € par an",
+            "entre 18 h et 20 h, 3 fois par semaine", "deux cent cinquante clients", "trente-quatre visites et quarante-cinq",
+            "je suis au point de vente", "un café à 2,50 €", "la commande 1234567", "Nous sommes at home"]
+    for k in keep:
+        check(f"kept as is: {k}", CM.scrub(k) == k, CM.scrub(k))
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 

@@ -94,7 +94,17 @@ def NOW() -> datetime:                      # the clock (tests set it)
 # the pure part
 # ---------------------------------------------------------------------------
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# « karim [at] mail [dot] fr », « karim (at) mail.fr », « karim arobase mail point fr », « karim at gmail dot com »
+_AT = r"(?:\s*[\[(]\s*(?:at|@|arobase)\s*[\])]\s*|\s+(?:at|arobase)\s+)"
+_DOT = r"(?:\s*[\[(]\s*(?:dot|point|\.)\s*[\])]\s*|\s+(?:dot|point)\s+|\.)"
+_EMAIL_SPOKEN = re.compile(rf"[\w.+-]+{_AT}[\w-]+(?:{_DOT}[\w-]+)+", re.IGNORECASE)
 _PHONE = re.compile(r"(?<![\w/])(?:(?:\+|00)\d{1,3}[\s.\-]?)?\(?0?\d\)?(?:[\s.\-]?\d{2}){4}(?![\w/])")
+# abroad: + or 00, then 8 to 15 digits however they are grouped (+44 20 7946 0958, +1 (415) 555-2671)
+_PHONE_INTL = re.compile(r"(?<![\w/])(?:\+|00)\s?\d[\d\s.\-()]{5,24}\d(?![\w/])")
+# in words: six number words or more in a row (« zéro six douze trente-quatre… »)
+_NUM_WORD = (r"(?:z[ée]ro|une?|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|"
+             r"seize|vingts?|trente|quarante|cinquante|soixante|cents?)")
+_PHONE_WORDS = re.compile(rf"\b{_NUM_WORD}(?:[\s,\-]+(?:et[\s\-]+)?{_NUM_WORD}){{5,}}\b", re.IGNORECASE)
 _EXPLICIT = re.compile(
     r"^\s*(?:retiens(?:\s+bien)?|souviens[\s-]+toi|rappelle[\s-]+toi|n['’]oublie\s+pas|note\s+bien|note(?=\s+que\b)|"
     r"garde\s+en\s+t[eê]te|m[ée]morise)\s*(?:que\s+|qu['’]|:\s*|,\s*)?(?P<fact>.+?)\s*[.!]*\s*$",
@@ -104,7 +114,10 @@ _EXPLICIT = re.compile(
 def scrub(text: str) -> str:
     """The text with every phone number and e-mail hidden."""
     t = _EMAIL.sub("[e-mail]", text or "")
-    return _PHONE.sub("[téléphone]", t)
+    t = _EMAIL_SPOKEN.sub("[e-mail]", t)
+    t = _PHONE_INTL.sub(lambda m: "[téléphone]" if 8 <= sum(c.isdigit() for c in m.group(0)) <= 15 else m.group(0), t)
+    t = _PHONE.sub("[téléphone]", t)
+    return _PHONE_WORDS.sub("[téléphone]", t)
 
 
 def explicit(message: str) -> Optional[str]:
