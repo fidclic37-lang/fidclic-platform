@@ -1,0 +1,408 @@
+"""
+La mémoire du Copilote (user, 2026-10-30: « jitna max yaad rakh sake »).
+
+Every message of the chat is kept for good (`copilot_chats`, never deleted).
+What a question carries to the model:
+
+    Ce que FidClic IA retient   the facts this account told it (« je ferme le
+                                lundi », « ma cible : les étudiants ») — the
+                                owner sees, edits and deletes them
+                                (Paramètres › Préférences, and the Copilote)
+    a summary                   of the conversation older than the recent part
+    the recent conversation     in full, up to a size budget — never « the
+                                last 10 »: short messages all fit
+
+Facts come two ways: at once when the message says so (« Retiens que… »),
+and from the regular pass (the tick, every 15 min), where the model reads
+the new messages once and keeps what lasts. The same pass sums up the part
+of the conversation that left the recent window.
+
+Each account has its own memory, on every plan (user: « sab plans, har
+account »). Phone numbers and e-mails never reach the model: they are hidden
+in everything sent to it and in every fact kept (user: names yes, phone and
+e-mail never). Nothing here may break the chat or the tick.
+"""
+from __future__ import annotations
+
+import json
+import re
+import unicodedata
+import uuid
+from collections import defaultdict
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from auth import require_role
+from models import TokenData
+
+router = APIRouter(tags=["copilot-memory"])
+_db = None
+
+RECENT_CHARS = 24_000      # the recent conversation, in full (~6 000 tokens)
+SUMMARY_CHARS = 6_000      # the summary of the older one
+MEMO_CHARS = 8_000         # « Ce que FidClic IA retient », newest first
+FACT_MAX = 300             # one fact
+FACTS_MAX = 2_000          # per account — far beyond what anyone tells
+EXTRACT_CHUNK = 12_000     # characters of messages read per model call
+PASS_CALLS = 12            # model calls per pass at most (the tick stays short)
+PASS_MESSAGES = 300
+ROLES = ["business_owner", "administrateur", "manager", "staff"]
+
+EXTRACT_MARK = "FAITS_DURABLES"
+SUMMARY_MARK = "RESUME_CONVERSATION"
+
+_EXTRACT_SYSTEM = (
+    f"[{EXTRACT_MARK}] Tu lis des messages qu'un commerçant a écrits à son assistant FidClic IA. "
+    "Relève UNIQUEMENT les faits durables sur son commerce ou ses préférences : horaires et fermetures, "
+    "clientèle visée, offres et habitudes, ton souhaité, contraintes, objectifs, équipe. Ignore les "
+    "questions, les demandes ponctuelles et les chiffres du moment. Ne recopie jamais un numéro de "
+    "téléphone ni une adresse e-mail. Ne répète pas un fait déjà connu. Réponds UNIQUEMENT par un "
+    "tableau JSON de phrases courtes en français (12 mots au plus chacune), ou [] s'il n'y a rien."
+)
+_SUMMARY_SYSTEM = (
+    f"[{SUMMARY_MARK}] Tu tiens le résumé des conversations entre un commerçant et son assistant FidClic IA. "
+    "On te donne le résumé précédent et la suite de la conversation : rends le nouveau résumé, en "
+    "français, 250 mots au plus. Garde ses décisions, ses préférences, ses questions récurrentes, les "
+    "campagnes évoquées et les chiffres cités avec leur période. Pas de numéro de téléphone ni d'e-mail."
+)
+
+
+def init(db):
+    global _db
+    _db = db
+    try:
+        db.copilot_memory.create_index([("tenant_id", 1), ("by", 1), ("at", -1)])
+        db.copilot_memory_state.create_index([("tenant_id", 1), ("by", 1)], unique=True)
+        db.copilot_chats.create_index([("tenant_id", 1), ("by", 1), ("at", -1)])
+        db.copilot_chats.create_index([("role", 1), ("memo", 1), ("at", 1)])
+    except Exception:
+        pass
+
+
+def NOW() -> datetime:                      # the clock (tests set it)
+    return datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# the pure part
+# ---------------------------------------------------------------------------
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"(?<![\w/])(?:(?:\+|00)\d{1,3}[\s.\-]?)?\(?0?\d\)?(?:[\s.\-]?\d{2}){4}(?![\w/])")
+_EXPLICIT = re.compile(
+    r"^\s*(?:retiens(?:\s+bien)?|souviens[\s-]+toi|rappelle[\s-]+toi|n['’]oublie\s+pas|note\s+bien|note(?=\s+que\b)|"
+    r"garde\s+en\s+t[eê]te|m[ée]morise)\s*(?:que\s+|qu['’]|:\s*|,\s*)?(?P<fact>.+?)\s*[.!]*\s*$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def scrub(text: str) -> str:
+    """The text with every phone number and e-mail hidden."""
+    t = _EMAIL.sub("[e-mail]", text or "")
+    return _PHONE.sub("[téléphone]", t)
+
+
+def explicit(message: str) -> Optional[str]:
+    """« Retiens que je ferme le lundi » → « je ferme le lundi »."""
+    m = _EXPLICIT.match(message or "")
+    if not m:
+        return None
+    fact = m.group("fact").strip()
+    return fact if len(fact) >= 3 else None
+
+
+def _fold(s: str) -> str:
+    s = "".join(ch for ch in unicodedata.normalize("NFD", (s or "").lower()) if unicodedata.category(ch) != "Mn")
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+def _clean_fact(text: str) -> str:
+    return re.sub(r"\s+", " ", scrub(text or "")).strip()
+
+
+# ---------------------------------------------------------------------------
+# the facts
+# ---------------------------------------------------------------------------
+def facts(tid: str, by: Optional[str]) -> List[Dict[str, Any]]:
+    return list(_db.copilot_memory.find({"tenant_id": tid, "by": by}, {"_id": 0}).sort("at", -1).limit(FACTS_MAX))
+
+
+def add(tid: str, by: Optional[str], text: str, source: str) -> Optional[Dict[str, Any]]:
+    """Keep a fact, once. None when it is already known or there is no room."""
+    t = _clean_fact(text)[:FACT_MAX]
+    if len(t) < 3 or not by:
+        return None
+    key = _fold(t)
+    for f in facts(tid, by):
+        if _fold(f.get("text")) == key:
+            return None
+    if _db.copilot_memory.count_documents({"tenant_id": tid, "by": by}) >= FACTS_MAX:
+        return None
+    now = NOW()
+    doc = {"id": uuid.uuid4().hex, "tenant_id": tid, "by": by, "text": t, "source": source, "at": now, "updated_at": now}
+    _db.copilot_memory.insert_one(dict(doc))
+    return doc
+
+
+def _public(f: Dict[str, Any]) -> Dict[str, Any]:
+    at = f.get("updated_at") or f.get("at")
+    return {"id": f["id"], "text": f["text"], "source": f.get("source") or "chat",
+            "at": at.isoformat() if isinstance(at, datetime) else at}
+
+
+# ---------------------------------------------------------------------------
+# what a question carries
+# ---------------------------------------------------------------------------
+def _account(tid: str, by: Optional[str], owner: bool) -> Dict[str, Any]:
+    """The account's conversation. Messages from before accounts were told
+    apart belong to the owner (as in the chat's history)."""
+    q: Dict[str, Any] = {"tenant_id": tid}
+    if owner:
+        q["$or"] = [{"by": by}, {"by": {"$exists": False}}, {"by": None}]
+    else:
+        q["by"] = by
+    return q
+
+
+def _window(q: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
+    """The recent conversation, newest kept first until the budget is spent;
+    returned oldest first, with the date of its oldest message."""
+    out: List[Dict[str, Any]] = []
+    used = 0
+    for m in _db.copilot_chats.find(q, {"_id": 0, "role": 1, "text": 1, "at": 1}).sort("at", -1):
+        n = len(m.get("text") or "") + 16
+        if out and used + n > RECENT_CHARS:
+            break
+        out.append(m)
+        used += n
+    out.reverse()
+    return out, (out[0].get("at") if out else None)
+
+
+def _state(tid: str, by: Optional[str]) -> Dict[str, Any]:
+    return _db.copilot_memory_state.find_one({"tenant_id": tid, "by": by}, {"_id": 0}) or {}
+
+
+def context(tid: str, by: Optional[str], owner: bool) -> str:
+    """The memory block put before the shop's figures, all scrubbed."""
+    parts: List[str] = []
+    kept, used = [], 0
+    for f in facts(tid, by):
+        line = f"- {scrub(f['text'])}"
+        if used + len(line) > MEMO_CHARS:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    if kept:
+        parts.append("Ce que FidClic IA retient sur ce commerçant (ce qu'il t'a dit, à respecter) :\n" + "\n".join(kept))
+    summary = (_state(tid, by).get("summary") or "").strip()
+    if summary:
+        parts.append("Résumé des conversations plus anciennes :\n" + scrub(summary)[:SUMMARY_CHARS])
+    recent, _ = _window(_account(tid, by, owner))
+    if recent:
+        lines = [f"{'Commerçant' if m.get('role') == 'user' else 'FidClic IA'} : {scrub(m.get('text') or '')}" for m in recent]
+        parts.append("Conversation récente (de la plus ancienne à la plus récente) :\n" + "\n".join(lines))
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# the regular pass (the tick)
+# ---------------------------------------------------------------------------
+def _llm_ready() -> bool:
+    try:
+        from services import llm
+        return bool(llm._force_complete) or llm.is_configured()
+    except Exception:
+        return False
+
+
+def _ask(system: str, user: str, max_tokens: int) -> Optional[str]:
+    from services import llm
+    return llm.complete(system, user, max_tokens=max_tokens, temperature=0.2)
+
+
+def _json_list(text: str) -> List[str]:
+    m = re.search(r"\[.*\]", text or "", re.DOTALL)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return []
+    return [str(x) for x in data if isinstance(x, (str, int, float)) and str(x).strip()] if isinstance(data, list) else []
+
+
+def _owners(tids: List[str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for u in _db.users.find({"tenant_id": {"$in": tids}, "role": "business_owner"}, {"_id": 0, "tenant_id": 1, "email": 1}):
+        out.setdefault(u["tenant_id"], u.get("email"))
+    return out
+
+
+def _backfill_owner() -> int:
+    """Messages from before accounts were told apart become the owner's."""
+    q = {"$or": [{"by": {"$exists": False}}, {"by": None}]}
+    tids = list({m["tenant_id"] for m in _db.copilot_chats.find(q, {"_id": 0, "tenant_id": 1}).limit(5000) if m.get("tenant_id")})
+    n = 0
+    for tid, email in _owners(tids).items():
+        if email:
+            n += _db.copilot_chats.update_many({"tenant_id": tid, **q}, {"$set": {"by": email}}).modified_count
+    return n
+
+
+def _extract(tid: str, by: str, msgs: List[Dict[str, Any]], calls: List[int]) -> int:
+    """Read the account's new messages once; keep what lasts."""
+    kept = 0
+    i = 0
+    while i < len(msgs) and calls[0] < PASS_CALLS:
+        chunk, size = [], 0
+        while i < len(msgs) and (not chunk or size + len(msgs[i].get("text") or "") <= EXTRACT_CHUNK):
+            chunk.append(msgs[i])
+            size += len(msgs[i].get("text") or "")
+            i += 1
+        known = "\n".join(f"- {scrub(f['text'])}" for f in facts(tid, by)[:200]) or "(aucun)"
+        body = "\n".join(f"- {scrub(m.get('text') or '')}" for m in chunk)
+        calls[0] += 1
+        reply = _ask(_EXTRACT_SYSTEM, f"Faits déjà connus :\n{known}\n\nNouveaux messages du commerçant :\n{body}", 300)
+        if reply is None:
+            raise RuntimeError("no model answer")
+        for f in _json_list(reply)[:20]:
+            kept += add(tid, by, f, "chat") is not None
+        _db.copilot_chats.update_many({"tenant_id": tid, "by": by, "at": {"$in": [m["at"] for m in chunk]}, "role": "user"},
+                                      {"$set": {"memo": True}})
+    return kept
+
+
+def _summarise(tid: str, by: str, calls: List[int]) -> bool:
+    """Sum up what left the recent window since the last summary."""
+    _recent, oldest = _window({"tenant_id": tid, "by": by})
+    if oldest is None:
+        return False
+    st = _state(tid, by)
+    q: Dict[str, Any] = {"tenant_id": tid, "by": by, "at": {"$lt": oldest}}
+    if st.get("upto_at"):
+        q["at"]["$gt"] = st["upto_at"]
+    done = False
+    while calls[0] < PASS_CALLS:
+        chunk, size = [], 0
+        for m in _db.copilot_chats.find(q, {"_id": 0, "role": 1, "text": 1, "at": 1}).sort("at", 1).limit(400):
+            n = len(m.get("text") or "") + 16
+            if chunk and size + n > EXTRACT_CHUNK:
+                break
+            chunk.append(m)
+            size += n
+        if not chunk:
+            break
+        prev = (_state(tid, by).get("summary") or "(aucun)")
+        body = "\n".join(f"{'Commerçant' if m.get('role') == 'user' else 'FidClic IA'} : {scrub(m.get('text') or '')}"
+                         for m in chunk)
+        calls[0] += 1
+        reply = _ask(_SUMMARY_SYSTEM, f"Résumé précédent :\n{prev}\n\nSuite de la conversation :\n{body}", 600)
+        if not (reply or "").strip():
+            raise RuntimeError("no model answer")
+        upto = chunk[-1]["at"]
+        _db.copilot_memory_state.update_one({"tenant_id": tid, "by": by},
+                                            {"$set": {"summary": scrub(reply.strip())[:SUMMARY_CHARS], "upto_at": upto,
+                                                      "at": NOW()}}, upsert=True)
+        q["at"]["$gt"] = upto
+        done = True
+    return done
+
+
+def learn_due(now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The tick's call: new messages read once for facts, the older
+    conversation summed up. A model that does not answer leaves the messages
+    for the next pass."""
+    out: Dict[str, Any] = {"owners": 0, "facts": 0, "summaries": 0, "failures": 0}
+    try:
+        out["owners"] = _backfill_owner()
+    except Exception:
+        out["failures"] += 1
+    if not _llm_ready():
+        return out
+    pending = list(_db.copilot_chats.find({"role": "user", "memo": {"$exists": False}, "by": {"$nin": [None]}},
+                                          {"_id": 0, "tenant_id": 1, "by": 1, "text": 1, "at": 1})
+                   .sort("at", 1).limit(PASS_MESSAGES))
+    groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for m in pending:
+        if m.get("tenant_id") and m.get("by"):
+            groups[(m["tenant_id"], m["by"])].append(m)
+    calls = [0]
+    for (tid, by), msgs in groups.items():
+        try:
+            out["facts"] += _extract(tid, by, msgs, calls)
+        except Exception:
+            out["failures"] += 1
+        try:
+            out["summaries"] += _summarise(tid, by, calls)
+        except Exception:
+            out["failures"] += 1
+        if calls[0] >= PASS_CALLS:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# « Ce que FidClic IA retient » — each account's own list
+# ---------------------------------------------------------------------------
+class FactIn(BaseModel):
+    text: str
+
+
+def _text(body: FactIn) -> str:
+    t = _clean_fact(body.text)
+    if not t:
+        raise HTTPException(status_code=400, detail="Écrivez ce que FidClic IA doit retenir.")
+    if len(t) > FACT_MAX:
+        raise HTTPException(status_code=400, detail=f"{FACT_MAX} caractères au plus.")
+    return t
+
+
+def _writable(token_data: TokenData) -> None:
+    if getattr(token_data, "view_only", False):
+        raise HTTPException(status_code=403, detail="Accès en lecture seule.")
+
+
+def _mine(token_data: TokenData, fid: str) -> Dict[str, Any]:
+    f = _db.copilot_memory.find_one({"id": fid, "tenant_id": token_data.tenant_id, "by": token_data.email}, {"_id": 0})
+    if not f:
+        raise HTTPException(status_code=404, detail="Introuvable.")
+    return f
+
+
+@router.get("/api/me/ai-memory")
+def list_memory(token_data: TokenData = Depends(require_role(ROLES, partial_ok=True))):
+    items = [_public(f) for f in facts(token_data.tenant_id, token_data.email)]
+    return {"items": items, "count": len(items), "max_chars": FACT_MAX}
+
+
+@router.post("/api/me/ai-memory")
+def add_memory(body: FactIn, token_data: TokenData = Depends(require_role(ROLES, partial_ok=True))):
+    _writable(token_data)
+    t = _text(body)
+    doc = add(token_data.tenant_id, token_data.email, t, "vous")
+    if doc is None:
+        same = next((f for f in facts(token_data.tenant_id, token_data.email) if _fold(f["text"]) == _fold(t)), None)
+        if same:
+            return {"item": _public(same), "already": True}
+        raise HTTPException(status_code=400, detail="La mémoire de ce compte est pleine : supprimez un élément.")
+    return {"item": _public(doc)}
+
+
+@router.patch("/api/me/ai-memory/{fid}")
+def edit_memory(fid: str, body: FactIn, token_data: TokenData = Depends(require_role(ROLES, partial_ok=True))):
+    _writable(token_data)
+    f = _mine(token_data, fid)
+    t = _text(body)
+    _db.copilot_memory.update_one({"id": f["id"], "tenant_id": f["tenant_id"], "by": f["by"]},
+                                  {"$set": {"text": t, "updated_at": NOW()}})
+    return {"item": _public(_mine(token_data, fid))}
+
+
+@router.delete("/api/me/ai-memory/{fid}")
+def delete_memory(fid: str, token_data: TokenData = Depends(require_role(ROLES, partial_ok=True))):
+    _writable(token_data)
+    f = _mine(token_data, fid)
+    _db.copilot_memory.delete_one({"id": f["id"], "tenant_id": f["tenant_id"], "by": f["by"]})
+    return {"ok": True}

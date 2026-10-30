@@ -6,11 +6,12 @@ import {
   RefreshCcw, Gift, Star, MoreHorizontal, Send, Megaphone, Target, ChevronRight,
   ChevronDown, AlertTriangle, Sun, ShoppingBag, CalendarDays, Maximize2, Minimize2,
   Loader2, X, Check, Lightbulb, Euro, Cake, Repeat, GraduationCap, MapPin, Settings2,
-  ArrowRight, Info, MessageSquare,
+  ArrowRight, Info, MessageSquare, Brain,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import RecoLastResult, { RecoWhy } from '../components/RecoLastResult';
+import AiMemoryList from '../components/AiMemoryList';
 
 /**
  * FidClic IA Copilote — built to the approved mockup.
@@ -186,6 +187,8 @@ export default function CopilotPage() {
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
   const [bigChat, setBigChat] = useState(false);
+  const [older, setOlder] = useState({ more: false, before: null, busy: false });   // the whole conversation is kept
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const inputRef = useRef(null);
   const listRef = useRef(null);
 
@@ -203,9 +206,25 @@ export default function CopilotPage() {
   }, [horizon, days]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    ownerAPI.copilotChatHistory().then(({ data }) => setMessages(data.messages || [])).catch(() => {});
+    ownerAPI.copilotChatHistory().then(({ data }) => {
+      setMessages(data.messages || []);
+      setOlder({ more: !!data.has_more, before: data.before, busy: false });
+    }).catch(() => {});
   }, []);
-  useEffect(() => { listRef.current?.scrollTo({ top: 1e6, behavior: 'smooth' }); }, [messages, thinking]);
+  const stick = useRef(true);                     // older pages load at the top without jumping down
+  useEffect(() => {
+    if (stick.current) listRef.current?.scrollTo({ top: 1e6, behavior: 'smooth' });
+    stick.current = true;
+  }, [messages, thinking]);
+  const loadOlder = async () => {
+    setOlder((o) => ({ ...o, busy: true }));
+    try {
+      const { data } = await ownerAPI.copilotChatHistory(older.before);
+      stick.current = false;
+      setMessages((m) => [...(data.messages || []), ...m]);
+      setOlder({ more: !!data.has_more, before: data.before, busy: false });
+    } catch { setOlder((o) => ({ ...o, busy: false })); }
+  };
 
   /* what a button does — the same four kinds everywhere on the page */
   const run = (cta, key) => {
@@ -321,6 +340,10 @@ export default function CopilotPage() {
           <span className={`h-1.5 w-1.5 rounded-full ${d.assistant.online ? 'bg-[#10B981]' : 'bg-[#94A3B8]'}`} />
           {d.assistant.online ? 'En ligne' : 'Mode données'}
         </span>
+        <button type="button" onClick={() => setMemoryOpen(true)} aria-label="Ce que FidClic IA retient"
+                title="Ce que FidClic IA retient" className="rounded-md p-1 text-[#64748B] hover:bg-[#F4F7FC]">
+          <Brain size={15} />
+        </button>
         {/* named after what it does now (QA R7 F38: « Agrandir » also on the button that reduces) */}
         <button type="button" onClick={() => setBigChat((b) => !b)} aria-label={bigChat ? 'Réduire' : 'Agrandir'}
                 title={bigChat ? 'Réduire' : 'Agrandir'} aria-expanded={bigChat}
@@ -330,6 +353,12 @@ export default function CopilotPage() {
       </header>
 
       <div ref={listRef} className={`space-y-3 overflow-y-auto pr-1 ${bigChat ? 'flex-1' : 'max-h-[420px]'}`}>
+        {older.more && (
+          <button type="button" onClick={loadOlder} disabled={older.busy}
+                  className="mx-auto flex items-center gap-1.5 rounded-full border border-[#D7E3FB] bg-white px-3 py-1 text-[11.5px] font-semibold text-[#1D4ED8] hover:border-[#2F6BFF] disabled:opacity-50">
+            {older.busy && <Loader2 size={12} className="animate-spin" />} Voir les messages précédents
+          </button>
+        )}
         <div className="flex items-start gap-2.5">
           <img src="/copilot/robot-avatar.webp" alt="" className="h-12 w-12 shrink-0 object-contain" />
           <div className="space-y-2">
@@ -694,6 +723,15 @@ export default function CopilotPage() {
       )}
 
       {/* ── modals ── */}
+      {memoryOpen && (
+        <Modal title="Ce que FidClic IA retient" onClose={() => setMemoryOpen(false)}>
+          <p className="mb-3 text-[12.5px] leading-snug text-[#64748B]">
+            Ce que vous avez dit à FidClic IA sur vous et votre commerce. Il s'en sert pour vous répondre ;
+            vous pouvez le modifier ou le supprimer. Votre conversation entière reste aussi en mémoire.
+          </p>
+          <AiMemoryList />
+        </Modal>
+      )}
       {modal?.type === 'recs' && (
         <Modal wide title={`Toutes les recommandations (${recs.total})`} onClose={() => setModal(null)}>
           <div className="grid gap-3 sm:grid-cols-2">

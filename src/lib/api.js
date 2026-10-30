@@ -637,6 +637,11 @@ export const ownerAPI = {
   preferences: () => api.get('/me/preferences'),
   savePreferences: (body) => api.put('/me/preferences', body),
   resetPreferences: () => api.post('/me/preferences/reset'),
+  // « Ce que FidClic IA retient » — each account's own (Préférences and the Copilote)
+  aiMemory: () => api.get('/me/ai-memory'),
+  addAiMemory: (text) => api.post('/me/ai-memory', { text }),
+  editAiMemory: (id, text) => api.patch(`/me/ai-memory/${id}`, { text }),
+  deleteAiMemory: (id) => api.delete(`/me/ai-memory/${id}`),
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
@@ -786,7 +791,7 @@ export const ownerAPI = {
   copilotRebuildPlan: () => api.post('/owner/copilot/plan/rebuild'),
   copilotApprove: (stepId) => api.post(`/owner/copilot/plan/steps/${stepId}/approve`),
   copilotChat: (message) => api.post('/owner/copilot/chat', { message }),
-  copilotChatHistory: () => api.get('/owner/copilot/chat'),
+  copilotChatHistory: (before) => api.get('/owner/copilot/chat', { params: before ? { before } : {} }),
 
   walletNotify: () => api.post('/owner/wallet/notify'),
   walletRefresh: () => api.post('/owner/wallet/refresh'),

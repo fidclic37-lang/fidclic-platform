@@ -12280,6 +12280,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["reco_network"] = _RR.learn_due(now)
     except Exception as e:
         out["failures"].append({"step": "reco_network", "error": str(e)[:120]})
+    try:                         # the Copilote's memory: new messages read once for facts, older ones summed up
+        from features import copilot_memory as _CM
+        out["copilot_memory"] = _CM.learn_due(now)
+    except Exception as e:
+        out["failures"].append({"step": "copilot_memory", "error": str(e)[:120]})
     return out
 
 

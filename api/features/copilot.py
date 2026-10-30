@@ -63,6 +63,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_role
+from features import copilot_memory as CM
 from features import store_scope as S
 from models import TokenData
 from services import playbooks as PB
@@ -1312,7 +1313,11 @@ _SYSTEM = (
     "aucun produit. Si une donnée manque, dis-le simplement. Ne promets jamais un résultat : parle "
     "d'estimations. Ne dis jamais que tu as envoyé ou créé quelque chose : le commerçant agit lui-même "
     "grâce aux boutons proposés sous ta réponse. Le champ « metier » décrit son métier et ses règles : "
-    "tes conseils restent dans ce métier et les respectent."
+    "tes conseils restent dans ce métier et les respectent. "
+    "Tu disposes aussi de la conversation récente, d'un résumé des échanges plus anciens et de « Ce que "
+    "FidClic IA retient » (ce que le commerçant t'a dit de lui) : sers-t'en pour comprendre une question "
+    "de suite (« et la semaine dernière ? ») et respecte ce qu'il t'a dit ; les chiffres viennent "
+    "toujours des données JSON."
 )
 
 
@@ -1368,12 +1373,30 @@ def _mine(token_data: TokenData) -> Dict[str, Any]:
     return q
 
 
+HISTORY_PAGE = 20
+
+
 @router.get("/api/owner/copilot/chat")
-def chat_history(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    rows = list(_db.copilot_chats.find(_mine(token_data), {"_id": 0})
-                .sort("at", -1).limit(20))
+def chat_history(before: Optional[str] = None,
+                 token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    """The whole conversation is kept (user: « max yaad »): a page of it,
+    older pages with `before`."""
+    q = _mine(token_data)
+    if before:
+        try:
+            b = datetime.fromisoformat(before.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Date invalide.")
+        q = {"$and": [q, {"at": {"$lt": b if b.tzinfo else b.replace(tzinfo=timezone.utc)}}]}
+    rows = list(_db.copilot_chats.find(q, {"_id": 0}).sort("at", -1).limit(HISTORY_PAGE + 1))
+    more = len(rows) > HISTORY_PAGE
+    rows = rows[:HISTORY_PAGE]
+    oldest = rows[-1]["at"] if rows else None
+    if isinstance(oldest, datetime) and oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=timezone.utc)
     return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or []}
-                         for r in reversed(rows)]}
+                         for r in reversed(rows)],
+            "has_more": more, "before": oldest.isoformat() if isinstance(oldest, datetime) else None}
 
 
 @router.post("/api/owner/copilot/chat")
@@ -1404,24 +1427,38 @@ def chat(body: ChatIn, request: Request = None,
     if per["explicit"] and "resultats" not in intents:
         intents.insert(0, "resultats")
 
+    email = getattr(token_data, "email", None)
+    remembered = CM.explicit(message)            # « Retiens que… »: kept at once
+    if remembered:
+        CM.add(tid, email, remembered, "chat")
+
     reply, source = None, "model"
     if _llm_ready():
         try:
             from services import llm
-            reply = llm.complete(_SYSTEM, f"Données du commerce (JSON) :\n{json.dumps(facts, ensure_ascii=False)}"
-                                          f"\n\nQuestion du commerçant : {message}",
+            try:
+                memory = CM.context(tid, email, _is_owner(token_data))
+            except Exception as exc:              # the memory never stops an answer
+                print(f"copilot: memory unavailable ({exc})")
+                memory = ""
+            reply = llm.complete(_SYSTEM, (f"{memory}\n\n" if memory else "")
+                                 + f"Données du commerce (JSON) :\n{json.dumps(facts, ensure_ascii=False)}"
+                                   f"\n\nQuestion du commerçant : {CM.scrub(message)}",
                                  max_tokens=320, temperature=0.4)
         except Exception as exc:
             print(f"copilot: chat model failed ({exc})")
             reply = None
     if not (reply or "").strip():
         reply, source = _fallback(intents, facts, by_key), "facts"
+        if remembered:
+            reply = f"C'est noté : « {CM.scrub(remembered)} ». Vous le retrouvez dans « Ce que FidClic IA retient ». {reply}"
     actions = _actions(intents, by_key)
 
     at = _now()
     _db.copilot_chats.insert_many([
-        {"tenant_id": tid, "by": getattr(token_data, "email", None), "role": "user", "text": message, "at": at},
-        {"tenant_id": tid, "by": getattr(token_data, "email", None), "role": "assistant", "text": reply.strip(),
+        {"tenant_id": tid, "by": email, "role": "user", "text": message, "at": at,
+         **({"memo": True} if remembered else {})},
+        {"tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(),
          "actions": actions, "source": source, "at": at + timedelta(milliseconds=1)},
     ])
     return {"reply": reply.strip(), "actions": actions, "source": source}
