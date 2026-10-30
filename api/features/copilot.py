@@ -1363,14 +1363,14 @@ class ChatIn(BaseModel):
 
 def _mine(token_data: TokenData) -> Dict[str, Any]:
     """Each account keeps its own conversation. Messages from before accounts
-    were told apart belong to the owner."""
-    q: Dict[str, Any] = {"tenant_id": token_data.tenant_id}
+    were told apart belong to the owner. A super admin in « Accéder au
+    compte » sees the owner's conversation and their own; the owner never
+    sees theirs (2026-10-30, #403 pentest)."""
     email = getattr(token_data, "email", None)
-    if _is_owner(token_data):
-        q["$or"] = [{"by": email}, {"by": {"$exists": False}}]
-    else:
-        q["by"] = email
-    return q
+    own = [{"by": email}, {"by": {"$exists": False}}] if _is_owner(token_data) else [{"by": email}]
+    view_by = getattr(token_data, "view_by", None)
+    seen = [{"view_by": {"$exists": False}}] + ([{"view_by": view_by}] if view_by else [])
+    return {"tenant_id": token_data.tenant_id, "$and": [{"$or": own}, {"$or": seen}]}
 
 
 HISTORY_PAGE = 20
@@ -1394,7 +1394,8 @@ def chat_history(before: Optional[str] = None,
     oldest = rows[-1]["at"] if rows else None
     if isinstance(oldest, datetime) and oldest.tzinfo is None:
         oldest = oldest.replace(tzinfo=timezone.utc)
-    return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or []}
+    return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or [],
+                          **({"forgotten": True} if r.get("forgotten") else {})}
                          for r in reversed(rows)],
             "has_more": more, "before": oldest.isoformat() if isinstance(oldest, datetime) else None}
 
@@ -1428,16 +1429,16 @@ def chat(body: ChatIn, request: Request = None,
         intents.insert(0, "resultats")
 
     email = getattr(token_data, "email", None)
-    remembered = CM.explicit(message)            # « Retiens que… »: kept at once
-    if remembered:
-        CM.add(tid, email, remembered, "chat")
+    view_by = getattr(token_data, "view_by", None)   # a super admin in « Accéder au compte »
+    remembered = CM.explicit(message)            # « Retiens que… »: kept at once — never from a super admin
+    kept = CM.add(tid, email, remembered, "chat") if remembered and not view_by else None
 
     reply, source = None, "model"
     if _llm_ready():
         try:
             from services import llm
             try:
-                memory = CM.context(tid, email, _is_owner(token_data))
+                memory = CM.context(tid, email, _is_owner(token_data), view_by)
             except Exception as exc:              # the memory never stops an answer
                 print(f"copilot: memory unavailable ({exc})")
                 memory = ""
@@ -1450,15 +1451,19 @@ def chat(body: ChatIn, request: Request = None,
             reply = None
     if not (reply or "").strip():
         reply, source = _fallback(intents, facts, by_key), "facts"
-        if remembered:
+        if remembered and not view_by:
             reply = f"C'est noté : « {CM.scrub(remembered)} ». Vous le retrouvez dans « Ce que FidClic IA retient ». {reply}"
+    if remembered and view_by:
+        reply = f"Accès administrateur : rien n'est retenu pour le commerçant. {reply}"
     actions = _actions(intents, by_key)
 
     at = _now()
+    who = {"view_by": view_by} if view_by else {}
     _db.copilot_chats.insert_many([
-        {"tenant_id": tid, "by": email, "role": "user", "text": message, "at": at,
-         **({"memo": True} if remembered else {})},
-        {"tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(),
+        {"tenant_id": tid, "by": email, "role": "user", "text": message, "at": at, **who,
+         **({"memo": True} if remembered or view_by else {})},
+        {"tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(), **who,
          "actions": actions, "source": source, "at": at + timedelta(milliseconds=1)},
     ])
+    CM.link(kept, at)                            # deleting the fact forgets this message
     return {"reply": reply.strip(), "actions": actions, "source": source}

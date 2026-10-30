@@ -65,5 +65,9 @@ test('the Copilote remembers, and the owner keeps the last word', async ({ page,
   await list.getByRole('button', { name: 'Supprimer « je ferme le lundi »' }).click();
   await expect(list.getByText('je ferme le lundi', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/ai-memory-preferences.png' });
+
+  // a deleted fact: the message it came from is marked « oublié » in the chat
+  await page.goto('/dashboard/ai-assistant');
+  await expect(page.getByTestId('chat-forgotten').first()).toHaveText('Oublié par FidClic IA', { timeout: 20_000 });
   expect(errors).toEqual([]);
 });
