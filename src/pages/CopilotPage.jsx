@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { openUpgrade } from '../components/PlanAccess';
 import {
   Sparkle, CircleCheck, BarChart3, TrendingUp, Heart, Zap, ArrowUp, Users, UserPlus,
@@ -311,7 +311,7 @@ export default function CopilotPage() {
     setThinking(true);
     try {
       const { data } = await ownerAPI.copilotChat(q);
-      setMessages((m) => [...m, { role: 'assistant', text: data.reply, actions: data.actions || [] }]);
+      setMessages((m) => [...m, { role: 'assistant', text: data.reply, actions: data.actions || [], sources: data.sources || [] }]);
     } catch (e) {
       setMessages((m) => [...m, { role: 'assistant', text: e?.response?.data?.detail || "Je n'ai pas pu répondre. Réessayez dans un instant.", actions: [] }]);
     } finally { setThinking(false); }
@@ -384,6 +384,19 @@ export default function CopilotPage() {
               <img src="/copilot/robot-avatar.webp" alt="" className="h-8 w-8 shrink-0 object-contain" />
               <div className="min-w-0 max-w-[88%]">
                 <div className="whitespace-pre-line rounded-2xl rounded-tl-md bg-[#EEF3FF] px-3.5 py-2.5 text-[12.5px] leading-snug text-[#1E293B]">{m.text}</div>
+                {/* what FidClic IA read to answer (api/features/copilot_tools.py), each a link to its page */}
+                {m.sources?.length > 0 && (
+                  <p data-testid="chat-sources" className="mt-1 text-[11px] leading-snug text-[#64748B]">
+                    J'ai consulté :{' '}
+                    {m.sources.map((src, j) => (
+                      <React.Fragment key={j}>
+                        {j > 0 && ' · '}
+                        {src.to ? <Link to={src.to} className="font-semibold text-[#2F6BFF] hover:underline">{src.label}</Link>
+                          : <span className="font-semibold">{src.label}</span>}
+                      </React.Fragment>
+                    ))}
+                  </p>
+                )}
                 {m.actions?.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {m.actions.map((a, j) => (
