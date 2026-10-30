@@ -38,12 +38,15 @@ export default function BottomNav({ path, onMenu, canScan = true }) {
             <Link to="/dashboard/scan" aria-label="Scanner une carte"
                   // already on the scanner (a visit just recorded): a new scan, camera on (user, 2026-10-16)
                   onClick={() => { if (path.startsWith('/dashboard/scan')) window.dispatchEvent(new Event('fc:scan-again')); }}
-                  className={`flex flex-col items-center justify-center rounded-full text-white ${
+                  // white, the blue only in its icon and border (user, 2026-10-30: « koi color n
+                  // aaye, ekdm normal default »): iOS 26 tints the bar under the app from what
+                  // sits on the bottom edge — a blue button there painted the bar blue
+                  className={`flex flex-col items-center justify-center rounded-full border-2 bg-white ${
                     path === '/dashboard/scan'
                       // on the till itself it stays in the bar: the page's own bar sits right above
-                      ? 'mt-1.5 h-[52px] w-[52px] bg-[#1E4FD8]'
-                      : '-mt-5 h-[62px] w-[62px] bg-[#1463FF] shadow-[0_12px_26px_-10px_rgba(20,99,255,.9)] ring-4 ring-white'}`}>
-              <QrCode size={26} strokeWidth={2.3} />
+                      ? 'mt-1.5 h-[52px] w-[52px] border-[#1E4FD8] text-[#1E4FD8]'
+                      : '-mt-5 h-[62px] w-[62px] border-[#1463FF] text-[#1463FF] shadow-[0_10px_24px_-12px_rgba(11,28,63,.45)] ring-4 ring-white'}`}>
+              <QrCode size={path === '/dashboard/scan' ? 21 : 26} strokeWidth={2.3} />
               <span className="text-[10px] font-bold">Scanner</span>
             </Link>
           ) : <span />}
