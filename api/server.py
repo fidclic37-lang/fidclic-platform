@@ -12235,6 +12235,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["published_lock"] = _PP.lock_due(db)
     except Exception as e:
         out["failures"].append({"step": "published_lock", "error": str(e)[:120]})
+    try:                         # one Apple Pass Type ID per business, made and renewed by the platform
+        from features import wallet_identities as _WI
+        out["wallet_identities"] = _WI.run_due(now)
+    except Exception as e:
+        out["failures"].append({"step": "wallet_identities", "error": str(e)[:120]})
     try:                         # planned campaigns — the merchant's and the Autopilot's
         from features.campaigns_page import run_due as _run_due_campaigns
         out["campaigns"] = _run_due_campaigns(now)

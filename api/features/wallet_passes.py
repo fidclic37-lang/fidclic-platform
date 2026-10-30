@@ -226,8 +226,10 @@ def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str])
                                           {"$set": {"pass_changed_at": now}})
         if not apns_passes.is_configured():
             return
-        reg = {"device_id": device_id, "serial": serial, "push_token": token, "tenant_id": tenant_id}
-        res = apns_passes.push_to_tokens([token])
+        row = _db.pass_registrations.find_one({"device_id": device_id, "serial": serial}, {"pass_type_id": 1}) or {}
+        reg = {"device_id": device_id, "serial": serial, "push_token": token, "tenant_id": tenant_id,
+               "pass_type_id": row.get("pass_type_id")}
+        res = _apns_send([reg])
         _log_pushes([reg], res.get("results") or [], now)
         _db.pass_registrations.update_one({"device_id": device_id, "serial": serial}, {"$set": {
             "last_push_at": now, "last_push_result": ("ok" if res.get("sent") else
@@ -1292,11 +1294,43 @@ def _make_strip_variants(png3x: bytes) -> Dict[str, bytes]:
 TIER_LABELS = {"bronze": "Bronze", "silver": "Argent", "gold": "Or", "vip": "VIP"}
 
 
-def _card_payload(barcode_id: str) -> Dict[str, Any]:
+def pass_type_for(cust: Dict[str, Any], make: bool = False) -> str:
+    """The Pass Type ID a card is downloaded under (user, 2026-10-30): a card
+    already on an iPhone keeps the id it has (« purana card chalta rahe » —
+    never a second card); otherwise the business's own id, made on the spot
+    if the tick has not made it yet; the common id if Apple could not."""
+    common = _env("APPLE_PASS_TYPE_ID")
+    serial = (cust or {}).get("barcode_id")
+    reg = _db.pass_registrations.find_one({"serial": serial}, {"pass_type_id": 1}) if serial else None
+    if reg:
+        return reg.get("pass_type_id") or common
+    pinned = cust.get("apple_pass_type")
+    just = _aware_dt(cust.get("apple_downloaded_at"))
+    if pinned and just and datetime.now(timezone.utc) - just < REGISTER_GRACE:
+        return pinned                       # downloaded seconds ago, its iPhone has not registered yet
+    try:
+        from features import wallet_identities as _WI
+        own = _WI.tenant_type(cust.get("tenant_id"))
+        if not own and make:
+            _WI.ensure(cust.get("tenant_id"), force=True)
+            own = _WI.tenant_type(cust.get("tenant_id"))
+        return own or common
+    except Exception as exc:                       # noqa: BLE001 — the common id always works
+        print(f"wallet: business pass type not read ({exc})")
+        return common
+
+
+def _card_payload(barcode_id: str, pass_type: Optional[str] = None, make: bool = False) -> Dict[str, Any]:
     import server as core
     cust = _db.customers.find_one({"barcode_id": barcode_id})
     if not cust:
         raise HTTPException(status_code=404, detail="Card not found")
+    payload = _card_payload_of(core, cust)
+    payload["_pass_type"] = pass_type or pass_type_for(cust, make=make)
+    return payload
+
+
+def _card_payload_of(core: Any, cust: Dict[str, Any]) -> Dict[str, Any]:
     payload = core._serialize_card_payload(cust)
     if cust.get("paused_at"):
         # paused by the business (services/client_status): the card works,
@@ -1750,7 +1784,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     pass_json: Dict[str, Any] = {
         "formatVersion": 1,
-        "passTypeIdentifier": _env("APPLE_PASS_TYPE_ID"),
+        "passTypeIdentifier": payload.get("_pass_type") or _env("APPLE_PASS_TYPE_ID"),
         "teamIdentifier": _env("APPLE_TEAM_ID"),
         "serialNumber": serial,
         # the card's name, as typed in « Nom de la carte » (user, 2026-10-14)
@@ -1936,14 +1970,23 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Signing + bundling
 # ---------------------------------------------------------------------------
-def _sign_manifest(manifest: bytes) -> bytes:
+def _sign_manifest(manifest: bytes, pass_type: Optional[str] = None) -> bytes:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.serialization import pkcs7
 
-    cert = x509.load_pem_x509_certificate(_b64_env("APPLE_PASS_CERT_B64"))
-    pw = _env("APPLE_PASS_KEY_PASSWORD")
-    key = serialization.load_pem_private_key(_b64_env("APPLE_PASS_KEY_B64"), password=pw.encode() if pw else None)
+    if pass_type and pass_type != _env("APPLE_PASS_TYPE_ID"):
+        # a business's own id: its own certificate (features/wallet_identities)
+        from features import wallet_identities as _WI
+        ident = _WI.identity_for_type(pass_type)
+        if not ident:
+            raise HTTPException(status_code=503, detail="Le certificat Apple de ce commerce n'est pas disponible.")
+        cert = x509.load_pem_x509_certificate(ident["cert_pem"])
+        key = serialization.load_pem_private_key(ident["key_pem"], password=None)
+    else:
+        cert = x509.load_pem_x509_certificate(_b64_env("APPLE_PASS_CERT_B64"))
+        pw = _env("APPLE_PASS_KEY_PASSWORD")
+        key = serialization.load_pem_private_key(_b64_env("APPLE_PASS_KEY_B64"), password=pw.encode() if pw else None)
     wwdr = x509.load_pem_x509_certificate(_b64_env("APPLE_WWDR_B64"))
     return (pkcs7.PKCS7SignatureBuilder()
             .set_data(manifest)
@@ -2771,7 +2814,7 @@ def build_pkpass(payload: Dict[str, Any]) -> bytes:
     files = pass_files_for_wallet(payload)
     manifest = json.dumps({name: hashlib.sha1(data).hexdigest() for name, data in files.items()}).encode()
     files["manifest.json"] = manifest
-    files["signature"] = _sign_manifest(manifest)
+    files["signature"] = _sign_manifest(manifest, payload.get("_pass_type"))
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -2845,8 +2888,9 @@ def _note_geo(payload: Dict[str, Any]) -> None:
         print(f"wallet: geolocation state not kept ({exc})")
 
 
-def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> bytes:
-    payload = payload or _card_payload(barcode_id)
+def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None,
+                pass_type: Optional[str] = None, make: bool = False) -> bytes:
+    payload = payload or _card_payload(barcode_id, pass_type=pass_type, make=make)
     key = _pkpass_key(payload)
     _note_geo(payload)
     data = _pkpass_cache_get(barcode_id, key)
@@ -2856,10 +2900,11 @@ def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None) -> by
     return data
 
 
-def _pkpass_response(barcode_id: str) -> Response:
+def _pkpass_response(barcode_id: str, pass_type: Optional[str] = None, make: bool = False,
+                     payload: Optional[Dict[str, Any]] = None) -> Response:
     if not apple_configured():
         raise HTTPException(status_code=503, detail="Apple Wallet n'est pas encore configuré")
-    data = signed_pass(barcode_id)
+    data = signed_pass(barcode_id, payload=payload, pass_type=pass_type, make=make)
     fname = f"fidclic-{barcode_id}.pkpass"
     # in one piece, with its length (2026-10-15): a BytesIO handed to
     # StreamingResponse is iterated line by line — a 1,6 Mo pass went out as
@@ -2898,11 +2943,12 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     _db.pass_registrations.update_many({"serial": {"$in": serials}},
                                        {"$set": {"pass_changed_at": datetime.now(timezone.utc)}})
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
-                                            {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1}))
+                                            {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1,
+                                             "pass_type_id": 1}))
     if not regs:
         return {"devices": 0, "sent": 0}
     sent_at = datetime.now(timezone.utc)
-    res = apns_passes.push_to_tokens([r.get("push_token") for r in regs])
+    res = _apns_send(regs)
     _log_pushes(regs, res.get("results") or [], sent_at)
     # What Apple answered, kept on the registrations: the owner's Wallet stats
     # show it, so « no notification » can be traced without server logs.
@@ -2921,6 +2967,35 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     return {"devices": len(regs), "sent": res.get("sent", 0),
             "dropped": len(res.get("gone", [])), "failed": res.get("failed", 0),
             "errors": res.get("errors", [])[:3]}
+
+
+def _apns_send(regs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Push each registration with its own pass type id: the common one with
+    the env certificate, a business's own id with that business's certificate
+    (features/wallet_identities). Results merged as one answer."""
+    from services import apns_passes
+    common = _env("APPLE_PASS_TYPE_ID")
+    groups: Dict[str, List[str]] = {}
+    for r in regs:
+        groups.setdefault(r.get("pass_type_id") or common, []).append(r.get("push_token"))
+    out: Dict[str, Any] = {"sent": 0, "gone": [], "failed": 0, "errors": [], "results": []}
+    for ptype, tokens in groups.items():
+        if ptype == common:
+            res = apns_passes.push_to_tokens(tokens)
+        else:
+            from features import wallet_identities as _WI
+            ident = _WI.identity_for_type(ptype)
+            paths = apns_passes.cert_files_for(ptype, ident["cert_pem"], ident["key_pem"]) if ident else None
+            if not paths:
+                res = {"sent": 0, "gone": [], "failed": len(tokens), "errors": [f"{ptype}: certificat introuvable"],
+                       "results": [{"token": t, "status": 0, "reason": "certificat introuvable", "apns_id": None} for t in tokens]}
+            else:
+                res = apns_passes.push_to_tokens(tokens, topic=ptype, cert_paths=paths)
+        for k in ("sent", "failed"):
+            out[k] += res.get(k, 0)
+        for k in ("gone", "errors", "results"):
+            out[k] += res.get(k) or []
+    return out
 
 
 def notify_customer(customer_id: str, message: Optional[str] = None,
@@ -3434,9 +3509,11 @@ def download_apple_pass(barcode_id: str, request: Request = None):
     _owner_only(barcode_id, request)
     if not _wallet_in_plan(barcode_id):
         raise HTTPException(status_code=403, detail="Apple Wallet n'est pas inclus dans l'offre de ce commerce.")
-    resp = _pkpass_response(barcode_id)
-    try:
-        _db.customers.update_one({"barcode_id": barcode_id}, {"$set": {"apple_downloaded_at": datetime.now(timezone.utc)}})
+    payload = _card_payload(barcode_id, make=True)
+    resp = _pkpass_response(barcode_id, payload=payload)
+    try:        # the id this card now carries (wallet_passes.pass_type_for)
+        _db.customers.update_one({"barcode_id": barcode_id}, {"$set": {"apple_downloaded_at": datetime.now(timezone.utc),
+                                                                      "apple_pass_type": payload.get("_pass_type")}})
     except Exception:
         pass
     _reg_event(barcode_id, "downloaded")
@@ -3602,6 +3679,13 @@ def _log_card(serial: str, text: str, at: datetime) -> None:
 @router.api_route("/api/passes/v1/passes/{pass_type_id}/{serial}", methods=["GET", "HEAD"])
 def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None)):
     _check_pass_auth(authorization, serial)
+    # Wallet asks under the id the card has; a card never changes id. The
+    # common id, or this card's own business's id — nothing else.
+    if pass_type_id != _env("APPLE_PASS_TYPE_ID"):
+        from features import wallet_identities as _WI
+        cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "tenant_id": 1}) or {}
+        if not cust or _WI.tenant_of_type(pass_type_id) != cust.get("tenant_id"):
+            raise HTTPException(status_code=404)
     if not _db.pass_registrations.update_many({"serial": serial},
                                               {"$set": {"last_fetch_at": datetime.now(timezone.utc)}}).matched_count:
         _seen_unregistered(serial)
@@ -3610,7 +3694,7 @@ def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = H
                                       {"$set": {"fetched_at": datetime.now(timezone.utc)}})
     except Exception:
         pass
-    return _pkpass_response(serial)
+    return _pkpass_response(serial, pass_type=pass_type_id)
 
 
 @router.get("/api/card/{serial}/action/{identifier}")
@@ -4274,7 +4358,7 @@ def wallet_prepare(barcode_id: str, request: Request = None, only: str = ""):
     payload = None
     if "apple" in want and apple_configured():
         try:
-            payload = _card_payload(barcode_id)
+            payload = _card_payload(barcode_id, make=True)      # the business's id is made here if missing
             signed_pass(barcode_id, payload)
             out["apple"] = True
         except Exception as exc:

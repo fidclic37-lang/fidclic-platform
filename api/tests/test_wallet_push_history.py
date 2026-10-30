@@ -74,7 +74,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     print("\nThe iPhones come back (or not)")
     W.serials_for_device("DEVICEAAAAAAAAAA1111", PT, None)
     real_resp = W._pkpass_response
-    W._pkpass_response = lambda serial: None
+    W._pkpass_response = lambda serial, **kw: None
     try:
         W.latest_pass(PT, "FT-HIST0001", f"ApplePass {W._auth_token('FT-HIST0001')}")
     finally:

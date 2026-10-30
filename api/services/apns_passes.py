@@ -94,7 +94,30 @@ def _cert_files() -> Optional[tuple]:
         return _cert_paths
 
 
-def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
+_TYPE_PATHS: Dict[str, tuple] = {}
+
+
+def cert_files_for(pass_type: str, cert_pem: bytes, key_pem: bytes) -> Optional[tuple]:
+    """A business's own certificate on disk for httpx (one set per id; a
+    renewed certificate writes new files)."""
+    import hashlib
+    tag = hashlib.sha1(cert_pem).hexdigest()[:12]
+    with _CERT_LOCK:
+        hit = _TYPE_PATHS.get(pass_type)
+        if hit and hit[0] == tag:
+            return hit[1]
+        d = tempfile.mkdtemp(prefix="fidclic-apns-")
+        cp, kp = os.path.join(d, "cert.pem"), os.path.join(d, "key.pem")
+        for path, data in ((cp, cert_pem), (kp, key_pem)):
+            with open(path, "wb") as fh:
+                fh.write(data)
+            os.chmod(path, 0o600)
+        _TYPE_PATHS[pass_type] = (tag, (cp, kp))
+        return (cp, kp)
+
+
+def push_to_tokens(tokens: Iterable[str], topic: Optional[str] = None,
+                   cert_paths: Optional[tuple] = None) -> Dict[str, Any]:
     """Send the empty pass-update push to each device token.
     Returns {sent, gone, failed, errors[], results[]} — `gone` tokens are dead
     and should be deleted by the caller (it owns the registrations
@@ -107,7 +130,7 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
     if not is_configured():
         out["errors"].append("apple pass certificate not configured")
         return out
-    paths = _cert_files()
+    paths = cert_paths or _cert_files()
     if not paths:
         out["errors"].append("certificate could not be materialised")
         return out
@@ -118,7 +141,7 @@ def push_to_tokens(tokens: Iterable[str]) -> Dict[str, Any]:
         out["errors"].append("httpx missing — add httpx[http2] to api/requirements.txt")
         return out
 
-    topic = _env("APPLE_PASS_TYPE_ID")
+    topic = topic or _env("APPLE_PASS_TYPE_ID")     # a business's own id pushes under its own topic
     # alert + priority 10, not background + 5 (user, 2026-10-05: pushes
     # « reçus » by Apple, yet some iPhones never updated, or only on
     # pull-to-refresh, and the lock-screen alert came late or silently).
