@@ -95,6 +95,32 @@ def _resolve_weekly(tenant: dict) -> List[dict]:
     return DEFAULT_WEEKLY
 
 
+DAY_NAMES_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+
+
+def closed_reason(tenant: dict, target: date) -> Optional[str]:
+    """Why the shop is closed on `target` (its Horaires), or None when open.
+    Read from an already loaded tenant: the forecast asks for many days."""
+    if not tenant:
+        return None
+    weekly = _resolve_weekly(tenant)
+    weekday_idx = target.weekday()                           # 0=Mon..6=Sun
+    if weekday_idx < len(weekly) and weekly[weekday_idx].get("closed"):
+        return f"Fermé le {DAY_NAMES_FR[weekday_idx]} (Horaires)"
+    iso = target.isoformat()
+    holidays = tenant.get("holiday_closures") or {}          # e.g. {"2026-04-13": true}
+    if isinstance(holidays, dict) and holidays.get(iso):
+        named = next((h["name"] for h in french_public_holidays(target.year) if h["date"] == iso), None)
+        return f"Fermé : {named} (Horaires)" if named else "Fermeture exceptionnelle (Horaires)"
+    for window in tenant.get("annual_closures") or []:       # vacances: {"start": …, "end": …}
+        try:
+            if date.fromisoformat(window.get("start")) <= target <= date.fromisoformat(window.get("end")):
+                return "Congés (Horaires)"
+        except Exception:
+            continue
+    return None
+
+
 def is_open_on(tenant_id: str, target: date) -> bool:
     """Public helper: is `tenant_id` open on `target` date?
 
@@ -108,35 +134,7 @@ def is_open_on(tenant_id: str, target: date) -> bool:
     """
     if _db is None:
         return True                                          # safe default — don't block messages
-    tenant = _resolve_tenant(tenant_id)
-    if not tenant:
-        return True
-
-    # 1. Weekly rhythm
-    weekly = _resolve_weekly(tenant)
-    weekday_idx = target.weekday()                           # 0=Mon..6=Sun
-    if weekday_idx < len(weekly) and weekly[weekday_idx].get("closed"):
-        return False
-
-    iso = target.isoformat()
-
-    # 2. Holiday closures (e.g. {"2026-04-13": true})
-    holidays = tenant.get("holiday_closures") or {}
-    if isinstance(holidays, dict) and holidays.get(iso):
-        return False
-
-    # 3. Annual closure ranges (vacances) — list of {"start": "2026-08-05", "end": "2026-08-25"}
-    annual = tenant.get("annual_closures") or []
-    for window in annual:
-        try:
-            start = date.fromisoformat(window.get("start"))
-            end = date.fromisoformat(window.get("end"))
-            if start <= target <= end:
-                return False
-        except Exception:
-            continue
-
-    return True
+    return closed_reason(_resolve_tenant(tenant_id), target) is None
 
 
 # ─── API endpoints ─────────────────────────────────────────────────────────
