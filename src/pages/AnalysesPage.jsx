@@ -13,6 +13,7 @@ import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
 import { Uplift, HowItWorks } from '../components/TemoinResult';
 import TrendChart from '../components/TrendChart';
+import ProductReturnBlock from '../components/ProductReturnBlock';
 import { eur } from '../lib/money';
 
 /**
@@ -571,9 +572,11 @@ const MomentsPanels = ({ d }) => (
 
 const TabMoments = ({ d }) => d.empty ? <Empty message={d.message} /> : <MomentsPanels d={d} />;
 
-const TabProduits = ({ d }) => d.empty ? <Empty message={d.message} /> : (
+// « Produits qui font revenir » at the top (user, 2026-10-31), above the table
+const TabProduits = ({ d }) => d.empty ? <><ProductReturnBlock /><Empty message={d.message} /></> : (
   <>
     <Strip items={d.strip} />
+    <ProductReturnBlock />
     <Panel title="Tous les produits">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[480px] border-collapse">

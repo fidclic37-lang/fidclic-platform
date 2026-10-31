@@ -603,6 +603,7 @@ def produits_retour(request: Request = None, view: str = "first",
 
     first = next(d for _, d in docs if d)
     out = {"status": "ready", "level": level, "view": view, "refreshing": _running(tid),
+           "can_edit": _may_edit(token_data, request),
            "min_buyers": MIN_BUYERS, **one(first)}
     if len(docs) > 1:
         out["stores"] = [{"store": k, "name": scope.names.get(k, k), **one(d)} for k, d in docs if d]
@@ -613,9 +614,24 @@ class WindowIn(BaseModel):
     days: Optional[int] = None
 
 
+def _may_edit(token_data: TokenData, request: Request = None) -> bool:
+    """« Modifier » on Analyses (Équipe & accès) — the owner always. Reading
+    takes « Voir »; changing the shop's window or recomputing takes this
+    (pentest of #417: a manager who only saw Analyses could do both)."""
+    from features import role_perms as RP
+    return RP.may(token_data, "analytics", "edit", request)
+
+
+def _need_edit(token_data: TokenData, request: Request = None) -> None:
+    if not _may_edit(token_data, request):
+        raise HTTPException(status_code=403, detail="Accès non autorisé : il faut « Modifier » sur Analyses.")
+
+
 @router.put("/api/owner/analyses/produits-retour/fenetre")
-def set_window(body: WindowIn, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def set_window(body: WindowIn, request: Request = None,
+               token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     from features import ai_jobs as JOBS
+    _need_edit(token_data, request)
     if body.days is not None and not (WINDOW_MIN <= body.days <= WINDOW_MAX):
         raise HTTPException(status_code=400,
                             detail=f"Choisissez entre {WINDOW_MIN} et {WINDOW_MAX} jours.")
@@ -628,7 +644,8 @@ def set_window(body: WindowIn, token_data: TokenData = Depends(require_role(READ
 
 
 @router.post("/api/owner/analyses/produits-retour/recalculer")
-def recompute(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def recompute(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     from features import ai_jobs as JOBS
+    _need_edit(token_data, request)
     job, _ = JOBS.start("product_return", token_data.tenant_id, by="owner")
     return {"job_id": job["id"], "status": job["status"]}
