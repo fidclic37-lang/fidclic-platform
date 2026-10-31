@@ -373,10 +373,10 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
                              campaigns, products, goal, PB.of(tenant), limit=None)
     # the ranking that learns (2026-10-30): the figures' order × what was learned, then three
     from features import reco_ranking as RR
-    recos = RR.rank(tid, recos, lambda r, n: float(len(recos) - n), by=getattr(token_data, "email", None))[:3]
+    recos = RR.rank(tid, recos, lambda r, n: float(len(recos) - n), at, by=getattr(token_data, "email", None))[:3]
     # the journal of ideas (2026-10-29): shown, and what each brought last time
     from features import reco_journal as RJ
-    RJ.shown(tid, "dashboard", recos, scope.key)
+    RJ.shown(tid, "dashboard", recos, scope.key, at=at)
     RJ.attach(tid, recos)
     return {
         "from": start.isoformat(), "to": end.isoformat(), "days": days,
