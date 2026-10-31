@@ -170,6 +170,8 @@ def main():
             db.visits.insert_one({"id": f"v{i}-{k}", "tenant_id": "t1", "customer_id": f"c{i:03d}", "amount_paid": 15.0,
                                   "visit_time": last - dt.timedelta(days=21 * k)})
     RR.NOW = lambda: now                          # the page's clock (sends 30 days ago are finished)
+    from features import copilot as K
+    K._now = lambda: now                          # …one clock for the page: its draw and the journal's day
     base = [RJ.key_of(r) for r in (http("GET", "/api/owner/copilot/page", headers=H).json()["recommendations"]["all"])]
     check("the page lists ideas", len(base) >= 2, base)
     last = base[-1]

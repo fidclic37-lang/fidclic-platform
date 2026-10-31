@@ -85,6 +85,7 @@ def main():
     check("« on vise surtout les familles du quartier » → families and the neighbourhood",
           sorted(r("on vise surtout les familles du quartier")["cible"]) == ["familles", "quartier"])
     check("« j'ai deux étudiants en apprentissage » → no target (no aim said)", r("j'ai deux étudiants en apprentissage")["cible"] == [])
+    check("« ma cible : les clients inactifs » → target the inactive", r("Ma cible : les clients inactifs")["cible"] == ["inactifs"])
     check("« je ne fais jamais de promo » → avoid offers", r("je ne fais jamais de promo")["eviter"] == ["offres"])
     check("« pas de remise, jamais » → avoid offers", r("pas de remise, jamais")["eviter"] == ["offres"])
     check("« j'aime les promos » → nothing to avoid", r("j'aime les promos")["eviter"] == [])

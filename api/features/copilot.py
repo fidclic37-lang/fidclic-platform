@@ -740,7 +740,9 @@ def recommendations(shop) -> List[Dict[str, Any]]:
     # the ranking that learns (2026-10-30): the estimate × what every shown,
     # opened, pushed-back and measured idea taught (features/reco_ranking)
     from features import reco_ranking as RR
-    return RR.rank(shop.tid, items, lambda i, _n: i["score"], by=getattr(shop, "viewer", None))
+    # the shop's clock, one for the whole page: the day's draw and the journal's day (2026-10-31:
+    # the real date crept in, and tests passed or failed with the calendar)
+    return RR.rank(shop.tid, items, lambda i, _n: i["score"], shop.at, by=getattr(shop, "viewer", None))
 
 
 def _public(i: Dict[str, Any]) -> Dict[str, Any]:
@@ -1133,7 +1135,7 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
     opps = opportunities(shop, fc)
     # the journal of ideas (2026-10-29): shown, and what each brought last time
     from features import reco_journal as RJ
-    RJ.shown(shop.tid, "copilote", recs, scope.key)
+    RJ.shown(shop.tid, "copilote", recs, scope.key, at=shop.at)
     RJ.attach(shop.tid, recs)
     return {
         "shop": {"name": shop.tenant.get("name") or "votre commerce", "sector": shop.sector},

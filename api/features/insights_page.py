@@ -1030,9 +1030,10 @@ def _shelf(items: List[Dict[str, Any]], show: int, by_category: bool = False) ->
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-def _learned(tid: str, items: List[Dict[str, Any]], by: Optional[str] = None) -> List[Dict[str, Any]]:
+def _learned(tid: str, items: List[Dict[str, Any]], by: Optional[str] = None,
+             at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     from features import reco_ranking as RR
-    return RR.rank(tid, items, lambda i, _n: i.get("score", 0), by=by)
+    return RR.rank(tid, items, lambda i, _n: i.get("score", 0), at, by=by)
 
 
 def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"] = None,
@@ -1045,9 +1046,9 @@ def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"]
         "hero": _hero(shop),
         "goal": _goal(shop),
         # the ranking that learns (2026-10-30): estimate × what was learned
-        "opportunities": _shelf(_mark_used(_learned(tid, _opportunities(shop), by), shop.used), 3, by_category=True),
-        "actions": _shelf(_mark_used(_learned(tid, _actions(shop), by), shop.used), 4),
-        "ideas": _idea_shelf(_mark_used(_learned(tid, _ideas(shop), by), shop.used)),
+        "opportunities": _shelf(_mark_used(_learned(tid, _opportunities(shop), by, shop.at), shop.used), 3, by_category=True),
+        "actions": _shelf(_mark_used(_learned(tid, _actions(shop), by, shop.at), shop.used), 4),
+        "ideas": _idea_shelf(_mark_used(_learned(tid, _ideas(shop), by, shop.at), shop.used)),
         "tips": {"shown": _tips(shop)[:4], "all": _tips(shop),
                  "more": max(0, len(_tips(shop)) - 4)},
         "google_review": {"url": shop.tenant.get("google_review_url") or "",

@@ -507,6 +507,7 @@ TARGETS = {
     "touristes": ("touriste", "vacancier"),
     "nouveaux": ("nouveaux clients", "nouveau client"),
     "fideles": ("fidele", "habitue", "regulier"),
+    "inactifs": ("inactif", "ne viennent plus", "perdus", "decroch"),
 }
 AVOID = {
     "offres": ("promo", "remise", "reduction", "rabais", "solde", "offre", "gratuit", "cadeau"),
@@ -598,7 +599,7 @@ def constraints(tid: str, by: Optional[str] = None) -> Dict[str, Any]:
     return out
 
 
-_KEY_TARGETS = {"etudiants": {"etudiants"}, "proximite": {"quartier"}, "offre_locale": {"quartier"}, "seconde_visite": {"nouveaux"},
+_KEY_TARGETS = {"relance_inactifs": {"inactifs"}, "a_risque": {"inactifs"}, "etudiants": {"etudiants"}, "proximite": {"quartier"}, "offre_locale": {"quartier"}, "seconde_visite": {"nouveaux"},
                 "one_timers": {"nouveaux"}, "nouveaux_j7": {"nouveaux"}, "loyal": {"fideles"}, "palier_vip": {"fideles"},
                 "familles": {"familles"}, "seniors": {"seniors"}}
 _KEY_AVOID = {"offre_jour": {"offres"}, "anniversaires": {"anniversaires"}, "avis_google": {"avis_google"},
