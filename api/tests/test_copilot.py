@@ -49,6 +49,7 @@ def main():
         m._db = db
     now = dt.datetime(2026, 9, 23, 15, 0, tzinfo=dt.timezone.utc)   # a Wednesday
     K._now = lambda: now
+    E._now = lambda: now          # one clock for the Copilote and the composer's templates (2026-10-31)
 
     def T(tid="cafe"):
         return type("TD", (), {"email": "o@x", "role": "business_owner", "tenant_id": tid})()
@@ -175,10 +176,13 @@ def main():
     later = E.Shop("cafe", now + dt.timedelta(days=8))
     check("… and brings it back after a week", "a_risque" in {r["key"] for r in K.recommendations(later)})
     before = by["seconde_visite"]["score"]
-    for _ in range(2):
+    for d in range(8):                       # taken on 8 days (a day counts once: clicks can't inflate it)
+        K._now = lambda d=d: now - dt.timedelta(days=d)
         K.feedback("seconde_visite", K.Feedback(kind="accepted"), token_data=T())
+    K._now = lambda: now
     after = {r["key"]: r for r in K.recommendations(shop)}["seconde_visite"]["score"]
-    # the ranking that learns (2026-10-30): taken ideas rise — by what was learned, not a fixed +15 %
+    # the ranking that learns (2026-10-30): taken ideas rise — by what was learned, not a fixed +15 %.
+    # It explores (a draw a day): twice on one day was a coin toss with the calendar (2026-10-31)
     check("a card the merchant keeps acting on rises", after > before)
     try:
         K.feedback("x", K.Feedback(kind="whatever"), token_data=T())
