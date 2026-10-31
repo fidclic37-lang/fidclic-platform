@@ -649,6 +649,10 @@ export const ownerAPI = {
   // Analyses — one tab per request, and the overview as a CSV.
   analyses: (params) => api.get('/owner/analyses', { params }),
   analysesExport: (params) => api.get('/owner/analyses/export', { params, responseType: 'blob' }),
+  // « Produits qui font revenir » (api/features/product_return.py)
+  produitsRetour: (view) => api.get('/owner/analyses/produits-retour', { params: { view } }),
+  setProduitsWindow: (days) => api.put('/owner/analyses/produits-retour/fenetre', { days }),
+  recalculerProduits: () => api.post('/owner/analyses/produits-retour/recalculer'),
   // Tableau de bord — the home page's eleven panels, and the monthly goal.
   homeOverview: (params) => api.get('/owner/home/overview', { params }),
   homeCampaigns: (params) => api.get('/owner/home/campaigns', { params }),
