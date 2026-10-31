@@ -364,6 +364,8 @@ export const adminAPI = {
   commerces: (params) => api.get('/admin/commerces', { params }),
   // Apple Wallet: each business's own pass type id (features/wallet_identities)
   walletIdentities: () => api.get('/admin/wallet-identities'),
+  // Super Admin only: a certificate made by hand in the Apple Developer portal (features/wallet_identities.admin_upload)
+  walletIdentityUpload: (tid, body) => api.post(`/admin/wallet-identities/${tid}/upload`, body),
   commercesExport: (params) => api.get('/admin/commerces/export', { params, responseType: 'blob' }),
   commercesRules: (body) => api.put('/admin/commerces/rules', body),
   addCommerce: (body) => api.post('/admin/commerces', body),
