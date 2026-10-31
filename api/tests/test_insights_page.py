@@ -418,7 +418,7 @@ def main():
           "get('template')" in comp and "ownerAPI.insightTemplate(key, params.get('day'), params.get('store'), params.get('from'))" in comp)
     wiz = open(os.path.join(here, "..", "..", "src", "components", "campagnes", "CampaignWizard.jsx")).read()
     check("… and sends the recommendation's key with the campaign, so it can step aside",
-          "st.template = /^(client|produit|brain|ia):/.test(key) ? key.split(':')[0] : key;" in comp
+          "st.template = /^(client|produit|brain|ia|prc):/.test(key) ? key.split(':')[0] : key;" in comp
           and "...(s.template ? { template: s.template } : {})" in wiz)
     check("a narrower audience is sent by id, not widened to a card",
           "if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };" in comp

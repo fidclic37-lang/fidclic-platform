@@ -69,6 +69,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
+from features import product_actions as PA
 from features import store_scope as S
 
 router = APIRouter(tags=["product_return"])
@@ -422,7 +423,9 @@ def _analyse(exs: List[Dict[str, Any]], cat: _Catalog, stores: List[str], nth: b
     for u, g in enumerate(groups):
         name = " + ".join(cat.names.get(k, k) for k in g)
         n_cli = len(clients[u])
-        entry: Dict[str, Any] = {"name": name, "clients": n_cli, "together": len(g) > 1}
+        entry: Dict[str, Any] = {"name": name, "clients": n_cli, "together": len(g) > 1,
+                                 # the actions (features/product_actions) name it in a link
+                                 "ref": PA.ref(g), "keys": list(g), "names": [cat.names.get(k, k) for k in g]}
         if n_cli < MIN_BUYERS:
             out["products"].append({**entry, "bucket": "insufficient", "needed": MIN_BUYERS})
             continue
@@ -506,7 +509,9 @@ def compute(tid: str, now: Optional[datetime] = None) -> Dict[str, Any]:
     cat_doc = _db.tenant_catalog.find_one({"tenant_id": tid}, {"_id": 0, "items": 1}) or {}
     cat = _Catalog(cat_doc.get("items") or [])
     timelines, promo, cov = _occasions(tid, now, cat)
-    exs = _examples(timelines, promo, _joined(tid), now, window)
+    joined = _joined(tid)
+    exs = _examples(timelines, promo, joined, now, window)
+    alive = PA._alive(tid)
     stores = sorted({e["store"] for e in exs["all"]} | {k for k in cov if k != ALL})
     keys = [ALL] + (stores if len(stores) > 1 else [])
     for key in keys:
@@ -518,7 +523,10 @@ def compute(tid: str, now: Optional[datetime] = None) -> Dict[str, Any]:
         doc = {"tenant_id": tid, "store": key, "built_at": now, "window_days": window,
                "window_source": source, "usual_gap": gap,
                "coverage": {"total": c[0], "with_items": c[1], "pct": round(100 * c[1] / c[0]) if c[0] else 0},
-               "views": views}
+               "views": views,
+               # what to do about it (PR3): counts only, the clients are found again on « Créer »
+               "actions": PA.actions(tid, views, timelines, paris_day(now), window, joined, now,
+                                     None if key == ALL else key, alive)}
         _db.product_return.replace_one({"tenant_id": tid, "store": key}, doc, upsert=True)
     return {"stores": keys, "window_days": window}
 
@@ -545,9 +553,10 @@ def due(now: Optional[datetime] = None) -> List[str]:
         tid = t.get("id")
         if not tid:
             continue
-        doc = _db.product_return.find_one({"tenant_id": tid, "store": ALL}, {"_id": 0, "built_at": 1})
+        doc = _db.product_return.find_one({"tenant_id": tid, "store": ALL}, {"_id": 0, "built_at": 1, "actions": 1})
         built = _aware((doc or {}).get("built_at"))
-        if built and now - built < REBUILD_EVERY:
+        # a document from before the actions (PR3) is rebuilt once, whatever its age
+        if built and now - built < REBUILD_EVERY and "actions" in doc:
             continue
         if not _db.visits.find_one({"tenant_id": tid, "items.0": {"$exists": True}}, {"_id": 1}):
             continue
@@ -595,11 +604,21 @@ def produits_retour(request: Request = None, view: str = "first",
         job, _ = JOBS.start("product_return", tid, by="page")
         return {"status": "pending", "level": level, "view": view}
 
+    tested = {}
+    if level == "full":
+        refs = {p.get("ref") for _, d in docs if d for p in (d.get("views") or {}).get(view, {}).get("products") or []}
+        tested = PA.tests(tid, refs)
+
     def one(doc):
+        shaped = _shape(doc["views"][view], level)
+        if tested:
+            shaped = {**shaped, "products": [{**p, "test": tested[p["ref"]]} if p.get("ref") in tested else p
+                                             for p in shaped.get("products") or []]}
         return {"window_days": doc["window_days"], "window_source": doc["window_source"],
                 "usual_gap": doc.get("usual_gap"), "coverage": doc["coverage"],
                 "built_at": _aware(doc.get("built_at")).isoformat() if doc.get("built_at") else None,
-                "views": {view: _shape(doc["views"][view], level)}}
+                "views": {view: shaped},
+                **({"actions": doc["actions"]} if level == "full" and doc.get("actions") else {})}
 
     first = next(d for _, d in docs if d)
     out = {"status": "ready", "level": level, "view": view, "refreshing": _running(tid),

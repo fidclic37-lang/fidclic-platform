@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, ShoppingBag, CalendarClock, Euro, Repeat, Store, Sparkles, Send, ChevronDown, Zap, TrendingDown, TrendingUp } from 'lucide-react';
+import { Loader2, ShoppingBag, CalendarClock, Euro, Repeat, Store, Sparkles, Send, ChevronDown, Zap, TrendingDown, TrendingUp, Magnet } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 
 /* « Profil client » (FidClic IA, user 2026-10-24): what the client brain
@@ -18,6 +18,12 @@ const STATUS = {
   en_retard: { bg: '#FFF4DB', fg: '#92400E', dot: '#F59E0B' },
   decroche: { bg: '#FEECEC', fg: '#B42318', dot: '#EF4444' },
   trop_tot: { bg: '#F1F5F9', fg: '#475569', dot: '#94A3B8' },
+};
+
+const PR_TONE = {
+  aimant: { bg: '#ECFDF3', fg: '#0F7A45' },
+  neutre: { bg: '#F4F7FC', fg: '#475569' },
+  one_shot: { bg: '#FFF7ED', fg: '#B45309' },
 };
 
 const Row = ({ icon: Icon, label, children, testid }) => (
@@ -131,7 +137,35 @@ export default function ClientProfile({ clientId }) {
           ) : <span className="text-[#94A3B8]">Connu à partir de 3 jours de visite.</span>}
         </Row>
         {d.store && <Row icon={Store} label="Établissement habituel"><span translate="no" className="notranslate">{d.store}</span></Row>}
+        {/* « Produits qui font revenir » (Pro AI): the kind of each of their products */}
+        {d.produits?.tags?.length > 0 && (
+          <Row icon={Magnet} label="Ses produits" testid="profile-products">
+            <span className="flex flex-wrap gap-1.5">
+              {d.produits.tags.map((t) => (
+                <span key={t.name} className="rounded-md px-2 py-0.5 text-[12px] font-medium"
+                      style={{ background: PR_TONE[t.bucket]?.bg, color: PR_TONE[t.bucket]?.fg }}>
+                  <span translate="no" className="notranslate">{t.name}</span> ({t.label})
+                </span>
+              ))}
+            </span>
+          </Row>
+        )}
       </div>
+
+      {d.produits?.suggest && (
+        <div className="rounded-2xl border border-[#CDEFD9] bg-[#F3FCF6] p-4" data-testid="profile-product-suggest">
+          <p className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#0F8B58]"><Magnet size={13} /> À proposer</p>
+          <p className="mt-1 text-[15px] font-bold text-[#0B1C3F]"><span translate="no" className="notranslate">{d.produits.suggest.name}</span></p>
+          {d.produits.suggest.back != null && (
+            <p className="text-[12.5px] text-[#475569]">Après ce produit, {d.produits.suggest.back} clients sur 10 reviennent. Il ne l&apos;a jamais pris.</p>
+          )}
+          <button type="button" data-testid="profile-product-cta"
+                  onClick={() => navigate(`/dashboard/campaigns?template=${encodeURIComponent(d.produits.suggest.template)}&from=clients`)}
+                  className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-[#0F8B58] px-4 text-[13px] font-semibold text-white hover:bg-[#0C7449]">
+            <Send size={14} /> Contacter
+          </button>
+        </div>
+      )}
 
       {/* the one thing worth doing */}
       <div className="rounded-2xl border border-[#DCD3FF] bg-[#FAF8FF] p-4" data-testid="profile-offer">

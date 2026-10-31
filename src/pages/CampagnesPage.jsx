@@ -130,7 +130,7 @@ export default function CampagnesPage() {
       .then(({ data: t }) => {
         const st = emptyState(KINDS_OK.includes(t.kind) ? t.kind : 'offre');
         st.title = (t.title || '').slice(0, 50); st.message = (t.message || '').slice(0, 160);
-        st.template = /^(client|produit|brain|ia):/.test(key) ? key.split(':')[0] : key;
+        st.template = /^(client|produit|brain|ia|prc):/.test(key) ? key.split(':')[0] : key;
         // the idea's full key and the surface it was taken from (journal of ideas, 2026-10-29)
         st.recoKey = key; st.recoSurface = params.get('from') || null;
         // a narrower audience is sent by id, never widened to everyone — even

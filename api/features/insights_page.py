@@ -757,6 +757,9 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
             "score": m * 0.05, "done": False,
         })
 
+    # « Produits qui font revenir »: the One-shot buyers, the new clients (Pro AI)
+    out += _product_cards(shop)
+
     # The trade's own advice (services/playbooks.py). Its first lever ranks
     # above everything else, so each shop sees at least one piece of advice
     # written for its activity among the three shown.
@@ -769,6 +772,59 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
             "difficulty": {"label": "Facile", "tone": "green", "filled": 2},
             "cta": _lever_cta(lv), "sector": shop.play["label"],
             "score": top + 1 if n == 0 else m * 0.06, "done": False,
+        })
+    return out
+
+
+def _product_cards(shop: Shop) -> List[Dict[str, Any]]:
+    """« Produits qui font revenir » (PR3, 2026-10-31, Pro AI): the One-shot
+    product whose buyers did not come back, and the new clients — both offered
+    the Aimant product. The last test (groupe témoin) is said on the card."""
+    from features import product_actions as PA
+    act = PA.shop_actions(shop.tid, shop.scope, shop.at)
+    aim = (act or {}).get("aimant")
+    if not aim:
+        return []
+    out: List[Dict[str, Any]] = []
+    tests = act.get("tests") or {}
+
+    def impact(t):
+        if t and t.get("extra_revenue") and t["extra_revenue"] > 0:
+            return {"label": f"+{_eur(t['extra_revenue'])}", "kind": "calcule", "euros": [t["extra_revenue"]] * 2,
+                    "basis": "mesuré au dernier test, avec le groupe témoin"}
+        return _figure(shop, "produits_retour")
+    one = next((o for o in act.get("one_shot") or [] if o.get("lapsed")), None)
+    if one:
+        n, t = one["lapsed"], tests.get(one["ref"])
+        back = (f" : {aim['back']} sur 10 de ses acheteurs reviennent, contre {one['back']} sur 10"
+                if aim.get("back") is not None and one.get("back") is not None else "")
+        out.append({
+            "key": "produit_one_shot", "category": _category("fidelisation"),
+            "title": f"« {one['name']} » ne fait pas revenir"[:70],
+            "body": (f"{n} client{'s' if n > 1 else ''} {'ont' if n > 1 else 'a'} pris « {one['name']} » et "
+                     f"{'ne sont pas revenus' if n > 1 else 'n’est pas revenu'}. Proposez-leur « {aim['name']} »{back}. "
+                     + PA.test_text(t)).strip(),
+            "image": "fidelite", "icon": "repeat", "impact": impact(t),
+            "difficulty": {"label": "Facile", "tone": "green", "filled": 3},
+            "cta": {"label": f"Relancer ces {n} clients" if n > 1 else "Relancer ce client", "kind": "template",
+                    "template": f"{PA.OS_PREFIX}{one['ref']}"},
+            "score": n * max(shop.shop_avg, 1) * 0.3, "done": False,
+        })
+    n = int(act.get("new") or 0)
+    if n:
+        t = tests.get(aim["ref"])
+        back = f" : {aim['back']} sur 10 de ses acheteurs reviennent" if aim.get("back") is not None else ""
+        out.append({
+            "key": "produit_aimant_nouveaux", "category": _category("fidelisation"),
+            "title": f"Faites découvrir « {aim['name']} » aux nouveaux clients"[:70],
+            "body": (f"{n} nouveau{'x' if n > 1 else ''} client{'s' if n > 1 else ''} ne {'sont' if n > 1 else 'est'} "
+                     f"venu{'s' if n > 1 else ''} qu'une fois. « {aim['name']} » fait revenir{back}. "
+                     "Proposez-le pour leur 2e visite. " + PA.test_text(t)).strip(),
+            "image": "fidelite", "icon": "repeat", "impact": impact(t),
+            "difficulty": {"label": "Facile", "tone": "green", "filled": 3},
+            "cta": {"label": f"Leur proposer « {aim['name']} »"[:40], "kind": "template",
+                    "template": f"{PA.NEW_PREFIX}{aim['ref']}"},
+            "score": n * max(shop.shop_avg, 1) * 0.3, "done": False,
         })
     return out
 
@@ -1166,6 +1222,11 @@ def template(key: str, day: Optional[int] = None, request: Request = None,
             audience["note"] = _home_note(len(d["ids"]), len(ids))
         return {"key": key, "title": spec["title"], "message": spec["message"], "segment": "all",
                 "audience": audience}
+    # « Produits qui font revenir » (PR3, 2026-10-31): the One-shot buyers who
+    # did not come back, the new clients, one client — an offer on the Aimant.
+    if key.startswith(("pr:", "prc:")):
+        from features import product_actions as PA
+        return PA.template(key, tid, scope)
     # A product to put forward (the dashboard's « Créer une offre », 2026-10-23):
     # the composer opens on step 1, the offer, for the owner to set the discount.
     if key.startswith("produit:"):

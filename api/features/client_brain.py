@@ -819,4 +819,10 @@ def get_profil(customer_id: str, request: Request = None,
     b = cust.get("brain")
     if not current(b):
         b = refresh(token_data.tenant_id, customer_id) or {}
-    return payload(token_data.tenant_id, cust, b)
+    out = payload(token_data.tenant_id, cust, b)
+    # « Produits qui font revenir » (PR3, Pro AI): their products' kind, the Aimant to suggest
+    from features import product_actions as PA
+    produits = PA.for_client(token_data.tenant_id, customer_id, out["habits"]["items"])
+    if produits:
+        out["produits"] = produits
+    return out

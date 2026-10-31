@@ -240,6 +240,11 @@ def t_produits(c: Ctx, args: Dict[str, Any]):
             {"label": f"Produits ({per['label']})", "to": "/dashboard/catalogue"})
 
 
+def t_produits_retour(c: Ctx, args: Dict[str, Any]):
+    from features import product_actions as PA
+    return PA.tool(c.tid, c.scope), {"label": "Produits qui font revenir", "to": "/dashboard/analytics#produits"}
+
+
 def t_clients_chercher(c: Ctx, args: Dict[str, Any]):
     from features import customer_rules as R
     q = str(args.get("nom") or "").strip()[:60]
@@ -475,6 +480,9 @@ TOOLS: Dict[str, Tool] = {
                            f"les chiffres de chaque établissement, pour les comparer ; {_P}"),
     "produits": Tool(t_produits, ("catalogue", "analytics"), "Catalogue",
                      f"produits et services les plus vendus (ventes, CA, période d'avant) ; {_P} ; « nombre » (10 par défaut)"),
+    "produits_retour": Tool(t_produits_retour, ("analytics",), "Analyses",
+                            "quels produits font revenir les clients (Aimant), lesquels non (One-shot), sur 10 combien reviennent, "
+                            "les clients à relancer et le dernier test avec groupe témoin ; pas d'args"),
     "clients_chercher": Tool(t_clients_chercher, ("customers",), "Clients",
                              "trouver des clients par leur nom (args : « nom ») : visites, dépense, dernière visite, statut, id"),
     "client_fiche": Tool(t_client_fiche, ("customers",), "Clients",
