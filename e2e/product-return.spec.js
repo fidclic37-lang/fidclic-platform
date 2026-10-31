@@ -12,7 +12,7 @@ test.use({ viewport: { width: 1536, height: 960 } });
 
 const P = (name, bucket, extra = {}) => ({ name, bucket, clients: 64, together: false, ...extra });
 const FULL = {
-  status: 'ready', level: 'full', view: 'first', refreshing: false, min_buyers: 30,
+  status: 'ready', level: 'full', view: 'first', refreshing: false, min_buyers: 30, can_edit: true,
   window_days: 21, window_source: 'rythme', usual_gap: 15, built_at: '2026-10-30T03:00:00+00:00',
   coverage: { total: 400, with_items: 288, pct: 72 },
   views: { first: {
@@ -145,4 +145,14 @@ test('the real server: the block is there, whatever its state', async ({ page, r
   await page.goto('/dashboard/analytics#produits');
   await expect(page.getByTestId('product-return')).toBeVisible({ timeout: 20_000 });
   expect(errors).toEqual([]);
+});
+
+test('an account that may only see Analyses: no « Modifier »', async ({ page, request }) => {
+  await login(page, request);
+  await page.route('**/api/owner/analyses/produits-retour**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...FULL, can_edit: false }) }));
+  await page.goto('/dashboard/analytics#produits');
+  const block = page.getByTestId('product-return');
+  await expect(block).toContainText('Fenêtre : 21 jours', { timeout: 20_000 });
+  await expect(block.getByRole('button', { name: 'Modifier la fenêtre' })).toHaveCount(0);
 });

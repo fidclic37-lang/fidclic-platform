@@ -153,10 +153,13 @@ export default function ProductReturnBlock() {
         {edit === null ? (
           <span>
             Fenêtre : {d.window_days} jours ({d.window_source === 'personnalise' ? 'choisie par vous' : 'le rythme de votre commerce'})
-            {' '}<button type="button" onClick={() => setEdit(d.window_source === 'personnalise' ? String(d.window_days) : '')}
-                         aria-label="Modifier la fenêtre" className="inline-flex items-center gap-1 font-semibold text-[#2F6BFF] hover:underline">
-              <Pencil size={11} /> Modifier
-            </button>
+            {/* « Modifier » on Analyses only (the server refuses the others too) */}
+            {d.can_edit && (
+              <>{' '}<button type="button" onClick={() => setEdit(d.window_source === 'personnalise' ? String(d.window_days) : '')}
+                             aria-label="Modifier la fenêtre" className="inline-flex items-center gap-1 font-semibold text-[#2F6BFF] hover:underline">
+                <Pencil size={11} /> Modifier
+              </button></>
+            )}
           </span>
         ) : (
           <span className="inline-flex items-center gap-2">
