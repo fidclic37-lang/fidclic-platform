@@ -357,7 +357,8 @@ const ImpactPanel = ({ imp }) => (
               <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#F43F5E]" />
               <span translate="no" className="notranslate flex-1 font-medium text-[#334155]">{s.name}</span>
               <span className="text-[#94A3B8] tabular-nums">{nf(s.visits)} visite{s.visits > 1 ? 's' : ''}</span>
-              <span className="w-24 text-right font-bold text-[#64748B] tabular-nums">{money(s.revenue)}</span>
+              {/* no € for a store this account does not cover (user, 2026-11-01) */}
+              {s.revenue != null && <span className="w-24 text-right font-bold text-[#64748B] tabular-nums">{money(s.revenue)}</span>}
             </div>
           ))}
           <p className="mt-1.5 text-[11.5px] leading-snug text-[#64748B]">{imp.elsewhere.note}</p>

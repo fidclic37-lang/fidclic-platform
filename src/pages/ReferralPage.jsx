@@ -918,7 +918,7 @@ export default function ReferralPage() {
                                 Carte : <span translate="no" className="notranslate">{r.filleul.card_store}</span>
                                 {' · '}
                                 {r.filleul.elsewhere.map((e, i) => (
-                                  <span key={e.store}>{i > 0 ? ', ' : ''}{e.visits} visite{e.visits > 1 ? 's' : ''} ({nf(e.revenue)} €) à{' '}
+                                  <span key={e.store}>{i > 0 ? ', ' : ''}{e.visits} visite{e.visits > 1 ? 's' : ''}{e.revenue != null ? ` (${nf(e.revenue)} €)` : ''} à{' '}
                                     <span translate="no" className="notranslate">{e.store}</span></span>
                                 ))}
                               </span>

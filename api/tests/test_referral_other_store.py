@@ -53,8 +53,10 @@ def main():
     for email, tid in (("o@x.fr", "t1"), ("s@x.fr", "t2")):
         db.users.insert_one({"email": email, "role": "business_owner", "tenant_id": tid})
     db.users.insert_one({"email": "m@x.fr", "role": "manager", "tenant_id": "t1", "branch_ids": ["mon"]})
+    db.users.insert_one({"email": "m2@x.fr", "role": "manager", "tenant_id": "t1", "branch_ids": ["mon", "main"]})
     tok = lambda e, role, tid: "Bearer " + auth.create_access_token({"sub": e, "role": role, "tenant_id": tid})
     OWNER, SOLO, MGR = tok("o@x.fr", "business_owner", "t1"), tok("s@x.fr", "business_owner", "t2"), tok("m@x.fr", "manager", "t1")
+    MGR2 = tok("m2@x.fr", "manager", "t1")
 
     def cust(cid, home, tid="t1", name=None):
         db.customers.insert_one({"id": cid, "tenant_id": tid, "name": name or cid.capitalize(), "branch_id": home,
@@ -145,11 +147,30 @@ def main():
     check("all establishments: everything is already counted → no box", a["data"]["impact"].get("elsewhere") is None)
     code, a = get("/api/owner/analyses?tab=vue&days=30", who=SOLO)
     check("a single-store shop: no box", code == 200 and a["data"]["impact"].get("elsewhere") is None)
+
+    print("\nA manager of PL-Monstre only (user, 2026-11-01: the link, not the other store's €)")
     code, a = get("/api/owner/analyses?tab=vue&days=30", who=MGR)
-    check("a PL-Monstre manager sees PL-Monstre's explanation", code == 200 and a["data"]["impact"]["elsewhere"]["revenue"] == 22)
+    el = a["data"]["impact"]["elsewhere"]
+    check("sees that its filleuls went to Liberté, 2 visits", code == 200 and el["stores"][0]["name"] == "LIBÉRTÉ"
+          and el["stores"][0]["visits"] == 2 and el["visits"] == 2 and el["clients"] == 2)
+    check("…but not Liberté's €", el["stores"][0]["revenue"] is None and el["revenue"] is None)
+    check("the note says it without an amount", "€" not in el["note"] and "22" not in el["note"] and "LIBÉRTÉ" in el["note"])
     code, a = get("/api/owner/analyses?tab=vue&days=30", who=MGR, store="main")
-    check("…and cannot read Liberté's by asking for it (falls back to PL-Monstre)",
+    check("cannot read Liberté's own page by asking for it (falls back to PL-Monstre)",
           a["data"]["impact"]["elsewhere"]["stores"][0]["name"] == "LIBÉRTÉ")
+    code, a = get("/api/owner/analyses?tab=vue&days=30", who=MGR2, store="mon")
+    check("a manager of PL-Monstre AND Liberté sees the € (22 €)",
+          a["data"]["impact"]["elsewhere"]["stores"][0]["revenue"] == 22)
+    code, l = get("/api/owner/referrals/list?per_page=100&from=2020-01-01", who=MGR, store="mon")
+    rows = {r["filleul"]["name"]: r["filleul"] for r in l["rows"]}
+    check("Parrainage list: Apia, 2 visits at LIBÉRTÉ, no €",
+          (rows.get("Apia K.") or {}).get("elsewhere") == [{"store": "LIBÉRTÉ", "visits": 2, "revenue": None}])
+    code, o = get("/api/owner/referrals/overview", who=MGR, store="mon")
+    rec = {r["filleul"]["name"]: r["filleul"] for r in o["recent"]}
+    check("…the first rows too", rec["Apia K."]["elsewhere"][0]["revenue"] is None)
+    code, l = get("/api/owner/referrals/list?per_page=100&from=2020-01-01", who=MGR2, store="mon")
+    rows = {r["filleul"]["name"]: r["filleul"] for r in l["rows"]}
+    check("the two-store manager sees Apia's 52 €", rows["Apia K."]["elsewhere"][0]["revenue"] == 52)
 
     print("\nParrainage › Derniers parrainages")
     code, l = get("/api/owner/referrals/list?per_page=100&from=2020-01-01", store="mon")

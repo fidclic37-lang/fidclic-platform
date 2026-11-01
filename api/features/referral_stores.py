@@ -103,22 +103,32 @@ def elsewhere(scope, start: datetime, end: datetime) -> Optional[Dict[str, Any]]
     if not per:
         return None
     rows = sorted(per.values(), key=lambda r: (-r["revenue"], -r["visits"], r["name"]))
-    revenue = round(sum(r["revenue"] for r in rows), 2)
     visits = sum(r["visits"] for r in rows)
+    # An account limited to some establishments sees the link — where its
+    # filleuls went, how often — not the € of a store it does not cover
+    # (user, 2026-11-01).
+    covered = set(scope.allowed or [])
+    hidden = False
+    for r in rows:
+        if r["id"] not in covered:
+            r["revenue"], hidden = None, True
+    revenue = None if hidden else round(sum(r["revenue"] for r in rows), 2)
     where = ", ".join(r["name"] for r in rows)
     n = len(who)
+    amount = "" if hidden else f"{_eur(revenue)}, "
     note = (f"{n} filleul{'s' if n > 1 else ''} dont la carte est de cet établissement "
             f"{'sont passés' if n > 1 else 'est passé'} dans un autre : {visits} visite{'s' if visits > 1 else ''}, "
-            f"{_eur(revenue)}, à {where}. Une visite est comptée dans l'établissement où elle passe en caisse : "
-            f"ce montant est dans le CA FidClic de {where}, pas ici.")
+            f"{amount}à {where}. Une visite est comptée dans l'établissement où elle passe en caisse : "
+            f"{'elle est' if visits == 1 else 'elles sont'} dans le CA FidClic de {where}, pas ici.")
     return {"revenue": revenue, "visits": visits, "clients": n, "stores": rows, "note": note}
 
 
 def stamp(tid: str, rows: List[Dict[str, Any]], people: Dict[str, Dict[str, Any]],
-          referee_of: Dict[str, str]) -> None:
+          referee_of: Dict[str, str], covered: Optional[Iterable[str]] = None) -> None:
     """Adds to each table row's filleul its card store and the other stores it
     visited ({"store", "visits", "revenue"}, all time). `referee_of` maps a
-    row id to its filleul's customer id. A one-store shop gets None / []."""
+    row id to its filleul's customer id. A one-store shop gets None / [].
+    `covered`: the stores the account covers — the € of any other is None."""
     st = _stores(tid)
     for r in rows:
         r["filleul"]["card_store"] = None
@@ -127,6 +137,7 @@ def stamp(tid: str, rows: List[Dict[str, Any]], people: Dict[str, Dict[str, Any]
         return
     ids = [referee_of.get(r["id"]) for r in rows]
     seen = visits_by_store(tid, [i for i in ids if i], main=st["main"])
+    covered = None if covered is None else set(covered)
     for r, cid in zip(rows, ids):
         person = people.get(cid or "") or {}
         if not person:
@@ -134,6 +145,7 @@ def stamp(tid: str, rows: List[Dict[str, Any]], people: Dict[str, Dict[str, Any]
         card = _store_of(person.get("branch_id"), st["main"])
         r["filleul"]["card_store"] = st["names"].get(card)
         r["filleul"]["elsewhere"] = [
-            {"store": st["names"][sid], "visits": c["visits"], "revenue": c["revenue"]}
+            {"store": st["names"][sid], "visits": c["visits"],
+             "revenue": c["revenue"] if covered is None or sid in covered else None}
             for sid, c in sorted((seen.get(cid) or {}).items(), key=lambda kv: -kv[1]["revenue"])
             if sid != card and sid in st["names"]]
