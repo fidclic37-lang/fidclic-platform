@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 _db = None
 MAIN = "main"
+FEW_IDS = 300          # up to this many clients: asked by client, through the index
 
 
 def init(db):
@@ -43,9 +44,10 @@ def _store_of(value: Any, main: str) -> str:
 def visits_by_store(tid: str, ids: Iterable[str], start: Optional[datetime] = None,
                     end: Optional[datetime] = None, main: str = MAIN,
                     skip: Optional[List[Any]] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
-    """{customer_id: {store_id: {"visits", "revenue"}}} — one query. A period
-    reads the tenant's visits of that period (the tenant + visit_time index)
-    and keeps these clients here, rather than a long $in of every filleul;
+    """{customer_id: {store_id: {"visits", "revenue"}}} — one query. A few
+    clients are read by client (the tenant + customer_id + visit_time index,
+    store_scope.init); many over a period, by period (tenant + visit_time),
+    kept here by client — never a query carrying thousands of ids.
     `skip` leaves out the visits of those store values."""
     ids = [i for i in dict.fromkeys(ids) if i]
     if not ids:
@@ -53,7 +55,7 @@ def visits_by_store(tid: str, ids: Iterable[str], start: Optional[datetime] = No
     q: Dict[str, Any] = {"tenant_id": tid}
     if start or end:
         q["visit_time"] = {**({"$gte": start} if start else {}), **({"$lte": end} if end else {})}
-    else:
+    if len(ids) <= FEW_IDS or "visit_time" not in q:
         q["customer_id"] = {"$in": ids}
     if skip:
         q["branch_id"] = {"$nin": list(skip)}
