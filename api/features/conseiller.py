@@ -187,7 +187,7 @@ def _phrase(cabinet_name: str, client_name: str, cand: Dict[str, Any],
     user = (f"Client : {client_name}. Situation détectée : {cand['facts']} "
             f"Action envisagée : {cand['suggested_action']}."
             + (f" Contexte connu du dossier : {memory}." if memory else ""))
-    txt = llm.complete(system, user, max_tokens=180)
+    txt = llm.complete(system, user, max_tokens=180, feature="conseiller")
     if txt:
         return txt
     # template fallback

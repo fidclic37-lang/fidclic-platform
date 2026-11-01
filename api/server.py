@@ -125,6 +125,10 @@ app.add_middleware(_DC.Middleware)
 from features import store_cards as _SC  # noqa: E402
 _SC.init(db)
 app.add_middleware(_SC.StoreMiddleware)
+# The AI meter's request context (features/ai_meter, 2026-11-01): which shop
+# and user a model call bills, read from the token only if a model is called.
+from features import ai_meter as _AM  # noqa: E402
+app.add_middleware(_AM.Middleware)
 # Pictures out of the documents every page reads (services/media, 2026-10-13):
 # the card, campaigns and notifications keep a « /api/media/<id> » link.
 from services import media as _MEDIA  # noqa: E402
@@ -4688,6 +4692,55 @@ def _strip_data_url(b64: str) -> str:
     return b64
 
 
+class _MeterResp:
+    """What the provider helpers read off a `requests` response, from the AI meter."""
+
+    def __init__(self, status: int, data: Optional[dict], text: str):
+        self.status_code, self._data, self.text = status, data or {}, text
+
+    def json(self) -> dict:
+        return self._data
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}: {self.text[:200]}")
+
+
+def _meter_post(url: str, *, feature: str, headers: Optional[dict] = None, json: Optional[dict] = None,
+                timeout: float = 45) -> "_MeterResp":
+    """A provider POST through the AI meter (features/ai_meter): billed to the
+    shop, refused at its limit (then HTTP 429, « blocked »)."""
+    from features import ai_meter as AM
+    prov = ("anthropic" if "anthropic.com" in url else "groq" if "groq.com" in url
+            else "nvidia" if "nvidia.com" in url else "openrouter" if "openrouter.ai" in url
+            else "gemini" if "googleapis.com" in url else "autre")
+
+    def read(d):
+        if d.get("candidates"):
+            return "".join(p.get("text", "") for p in ((d["candidates"][0].get("content") or {}).get("parts") or []))
+        if d.get("content"):
+            return "".join(b.get("text", "") for b in d["content"] if b.get("type") == "text")
+        return (((d.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+    m = re.search(r"/models/([^:/?]+):", url)
+    model = (json or {}).get("model") or (m.group(1) if m else "")
+    data, err = AM.call(prov, model, url, headers or {}, dict(json or {}),
+                        feature=feature, timeout=timeout, out_text=read)
+    if err == "blocked":
+        return _MeterResp(429, None, "blocked: " + (AM.blocked_reason() or ""))
+    if err:
+        st = int(err.split()[1].rstrip(":")) if err.startswith("HTTP ") and err.split()[1].rstrip(":").isdigit() else 502
+        return _MeterResp(st or 502, None, err)
+    return _MeterResp(200, data, "")
+
+
+def _menu_post(url: str, **kw) -> "_MeterResp":
+    return _meter_post(url, feature="menu_import", **kw)
+
+
+def _recap_post(url: str, **kw) -> "_MeterResp":
+    return _meter_post(url, feature="campaign_recap", **kw)
+
+
 def _call_vision_anthropic(image_b64: str, mime: str, prompt: str) -> tuple:
     """Claude vision — used by the menu-photo → catalogue import.
     Returns (output_text_or_none, error_string), same contract as the others.
@@ -4702,7 +4755,7 @@ def _call_vision_anthropic(image_b64: str, mime: str, prompt: str) -> tuple:
         media = "image/jpeg"
     try:
         import requests as _rq
-        r = _rq.post(
+        r = _menu_post(
             "https://api.anthropic.com/v1/messages",
             headers={
                 "x-api-key": ANTHROPIC_API_KEY,
@@ -4742,7 +4795,7 @@ def _call_vision_nvidia(image_b64: str, mime: str, prompt: str) -> tuple:
     try:
         import requests as _rq
         model = os.environ.get("NVIDIA_VISION_MODEL", "meta/llama-3.2-11b-vision-instruct")
-        r = _rq.post(
+        r = _menu_post(
             "https://integrate.api.nvidia.com/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {NVIDIA_API_KEY}",
@@ -4789,7 +4842,7 @@ def _call_vision_groq(image_b64: str, mime: str, prompt: str) -> tuple:
         #   meta-llama/llama-4-maverick-17b-128e-instruct
         # Owner can override via GROQ_VISION_MODEL env var.
         model = os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-        r = _rq.post(
+        r = _menu_post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
             json={
@@ -4823,7 +4876,7 @@ def _call_vision_openrouter(image_b64: str, mime: str, prompt: str) -> tuple:
     try:
         import requests as _rq
         model = os.environ.get("OPENROUTER_VISION_MODEL", "meta-llama/llama-3.2-11b-vision-instruct:free")
-        r = _rq.post(
+        r = _menu_post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -4912,6 +4965,9 @@ def parse_menu_from_photo(
             errors.append(f"[{label}] {err}")
 
     if not raw:
+        from features import ai_meter as _AMx
+        if _AMx.blocked_reason() in ("budget", "global", "spike"):        # a limit, not a provider (features/ai_meter)
+            raise HTTPException(status_code=429, detail=_AMx.limit_message())
         # If no key at all is set, give the configure-a-provider message.
         # Otherwise (at least one key is set but all failed), surface the
         # actual upstream errors so the owner can see what's wrong (model
@@ -8482,7 +8538,7 @@ def _call_anthropic(prompt: str) -> Optional[list]:
         return None
     try:
         import requests as _rq
-        r = _rq.post(
+        r = _recap_post(
             "https://api.anthropic.com/v1/messages",
             headers={
                 "x-api-key": ANTHROPIC_API_KEY,
@@ -8526,7 +8582,7 @@ def _call_nvidia(prompt: str) -> Optional[list]:
         return None
     try:
         import requests as _rq
-        r = _rq.post(
+        r = _recap_post(
             "https://integrate.api.nvidia.com/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {NVIDIA_API_KEY}",
@@ -8560,7 +8616,7 @@ def _call_groq(prompt: str) -> Optional[list]:
         return None
     try:
         import requests as _rq
-        r = _rq.post(
+        r = _recap_post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
             json={
@@ -8586,7 +8642,7 @@ def _call_openrouter(prompt: str) -> Optional[list]:
         return None
     try:
         import requests as _rq
-        r = _rq.post(
+        r = _recap_post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -8618,7 +8674,7 @@ def _call_gemini(prompt: str) -> Optional[list]:
     try:
         import requests as _rq
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-        r = _rq.post(
+        r = _recap_post(
             url,
             json={
                 "contents": [{"parts": [{"text": prompt}]}],

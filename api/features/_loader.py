@@ -75,6 +75,7 @@ MODULES = [
     # Analyses — eight tabs over one window, one tab answered per request.
     "features.analyses",
     # Produits qui font revenir — which products bring clients back (weekly, in ai_jobs).
+    "features.ai_meter",               # every model call billed + the limits (2026-11-01)
     "features.product_actions",        # what to do with it: One-shot → Aimant, new clients (no router)
     "features.product_return",
     # Tableau de bord — the home page's eleven panels, read off one month of

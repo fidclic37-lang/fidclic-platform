@@ -476,7 +476,7 @@ def _general_answer(question: str, start: datetime, end: datetime) -> Dict[str, 
                         "Réponds en français, en 3 à 5 phrases, uniquement à partir des chiffres fournis. N'invente aucun chiffre ; "
                         "si l'information manque, dis-le et propose une des analyses disponibles.",
                         f"Chiffres de la plateforme (JSON) : {json.dumps(facts, ensure_ascii=False, default=str)}\n\nQuestion : {question}",
-                        max_tokens=320, temperature=0.3)
+                        max_tokens=320, temperature=0.3, feature="admin_ai")
     return {"key": "general", "title": "Réponse", "question": question, "period": {"from": AC._iso(start), "to": AC._iso(end)},
             "at": _now().isoformat(), "headline": text or "", "detail": "", "columns": [], "rows": [], "charts": None, "source": "llm"}
 
@@ -505,7 +505,7 @@ def ask(body: AskIn, date_from: Optional[str] = Query(None, alias="from"), date_
         if llm.is_configured():
             pick = llm.complete("Classe la question du super admin dans UNE de ces analyses et réponds uniquement par sa clé, "
                                 "ou « aucune » : " + ", ".join(f"{k} ({t})" for k, t, _ in ANALYSES),
-                                body.question, max_tokens=10, temperature=0) or ""
+                                body.question, max_tokens=10, temperature=0, feature="admin_ai") or ""
             pick = pick.strip().strip("«»\"' .").lower()
             if pick in RUNNERS:
                 key, source = pick, "llm"
