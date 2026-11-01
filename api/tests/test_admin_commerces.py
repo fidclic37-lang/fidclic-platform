@@ -8,6 +8,7 @@ Run: cd api && /usr/local/bin/python3 tests/test_admin_commerces.py
 """
 import asyncio
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -56,6 +57,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     ADMIN = TokenData(email="boss@fidclic.com", role="super_admin", tenant_id=None)
     now = dt.datetime.now(dt.timezone.utc)
     old = now - dt.timedelta(days=200)
+    # a moment surely inside this month, by the UTC and by the Paris clock: the
+    # suite also runs on the 1st, when « 2 days ago » is last month
+    _p = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    _start = max(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), _p.astimezone(dt.timezone.utc))
+    in_month = _start + (now - _start) / 2
     db.tenants.insert_many([
         {"id": "busy", "name": "Boulangerie Saint-Michel", "sector": "Boulangerie", "city": "Tours", "plan": "gold",
          "subscription_status": "active", "created_at": old},
@@ -64,7 +70,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "idle", "name": "Burger Republic", "sector": "Restaurant", "city": "Blois", "plan": "vip",
          "subscription_status": "active", "created_at": old},
         {"id": "young", "name": "Juice Lab", "sector": "Bien-être", "city": "Tours", "plan": "silver",
-         "subscription_status": "trialing", "trial_ends_at": now + dt.timedelta(days=26), "created_at": now - dt.timedelta(days=2)},
+         "subscription_status": "trialing", "trial_ends_at": now + dt.timedelta(days=26), "created_at": in_month},
         {"id": "gone", "name": "Fermé", "is_active": False, "created_at": old},
     ])
 

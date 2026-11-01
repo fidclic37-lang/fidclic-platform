@@ -7,6 +7,7 @@ renouvellements) and the CSV export.
 Run: cd api && /usr/local/bin/python3 tests/test_analytics_usage.py
 """
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -33,6 +34,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     now = dt.datetime.now(dt.timezone.utc)
     d = lambda n: now - dt.timedelta(days=n)                  # noqa: E731
     later = lambda n: now + dt.timedelta(days=n)              # noqa: E731
+    # a moment surely inside this month, by the UTC and by the Paris clock: the
+    # suite also runs on the 1st, when « 2 days ago » is last month
+    _p = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    _start = max(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), _p.astimezone(dt.timezone.utc))
+    in_month = _start + (now - _start) / 2
     db.tenants.insert_many([
         {"id": "a", "name": "Café Lumière", "city": "Tours", "sector": "cafe", "plan": "gold", "subscription_status": "active",
          "created_at": d(200), "geo_enabled": True, "subscription_period_end": later(3)},
@@ -57,6 +63,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.delivery_log.insert_many([push("a", 1), push("a", 1), push("a", 2), push("b", 1), push("a", 1, sent=0),
                                  {"tenant_id": "a", "channel": "email", "result": {"sent": 1}, "timestamp": d(1)},
                                  push("a", 40), push("z", 1)])
+    db.delivery_log.update_one({"tenant_id": "b", "timestamp": d(1)}, {"$set": {"timestamp": in_month}})
     for i in range(1800):                                     # Fit Gym (Starter, 2 000 notifications) near its limit
         db.delivery_log.insert_one(push("b", 0.01))
 

@@ -6,6 +6,7 @@ recent activity.
 Run: cd api && /usr/local/bin/python3 tests/test_admin_dashboard.py
 """
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -33,6 +34,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     ADMIN = TokenData(email="boss@fidclic.com", role="super_admin", tenant_id=None)
     now = dt.datetime.now(dt.timezone.utc)
     old = now - dt.timedelta(days=200)
+    # a moment surely inside this month, by the UTC and by the Paris clock: the
+    # suite also runs on the 1st, when « 2 days ago » is last month
+    _p = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    _start = max(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), _p.astimezone(dt.timezone.utc))
+    in_month = _start + (now - _start) / 2
     db.tenants.insert_many([
         {"id": "a", "name": "Boulangerie Saint-Michel", "sector": "boulangerie", "city": "Tours", "plan": "gold",
          "subscription_status": "active", "created_at": old},
@@ -41,7 +47,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "c", "name": "Réseau Loire", "sector": "restaurant", "city": "Blois", "plan": "franchise",
          "franchise_terms": {"price": 450, "establishments": 5}, "subscription_status": "active", "created_at": old},
         {"id": "d", "name": "Juice Lab", "sector": "cafe", "city": "Tours", "plan": "silver", "subscription_status": "trialing",
-         "trial_ends_at": now + dt.timedelta(days=2), "created_at": now - dt.timedelta(days=5)},
+         "trial_ends_at": now + dt.timedelta(days=2), "created_at": in_month},
     ])
     # a: 12 new cards a day for 3 weeks; b: 3 a day; c, d: almost none.
     db.customers.insert_many([{"id": f"a{i}", "tenant_id": "a", "name": "X", "pass_issued": True, "visits": 2,
