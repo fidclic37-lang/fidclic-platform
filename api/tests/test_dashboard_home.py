@@ -18,6 +18,20 @@ import sys
 
 import mongomock
 
+
+def _month_start(now):
+    """The later of the Paris and the UTC month start: inside « this month »
+    whichever the code reads — so a date set « N days ago » does not fall in
+    last month when the suite runs on the 1st (2026-11-01: 4 files failed)."""
+    from zoneinfo import ZoneInfo
+    paris = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return max(paris.astimezone(dt.timezone.utc), now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+
+
+def _this_month(at, now):
+    """`at`, or the start of this month if `at` falls in the last one."""
+    return min(max(at, _month_start(now)), now)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DISABLE_SEED"] = "1"
 
@@ -104,6 +118,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("unset, the card says so rather than inventing a target",
           d["goal"]["is_set"] is False and d["goal"]["target"] == 0)
     check("and shows no percentage against nothing", d["goal"]["pct"] is None)
+    # a visit of this month, whatever the date the suite runs (the 1st had none)
+    db.visits.insert_one({"id": "v-month", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 12.0,
+                          "visit_time": _this_month(now - dt.timedelta(hours=1), now)})
     DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), token_data=TD())
     g = DH.overview(days=30, token_data=TD())["goal"]
     check("once set, it is the merchant's own figure", g["target"] == 250.0)
@@ -116,6 +133,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("and nothing is left to do", over["remaining"] == 0)
     check("the goal survives a reload", DH.get_goal(token_data=TD())["monthly_revenue_goal"] == 1.0)
     DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), token_data=TD())
+    db.visits.delete_one({"id": "v-month"})
 
     # ---- impact -------------------------------------------------------------------
     print("\nImpact FidClic claims only what it can tie to a send")
