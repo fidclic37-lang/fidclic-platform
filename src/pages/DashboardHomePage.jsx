@@ -535,6 +535,24 @@ export default function DashboardHomePage() {
               </tbody>
             </table>
           )}
+          {/* « Produits qui font revenir » (Pro AI): the best Aimant, the worst One-shot */}
+          {d?.product_return && (
+            <button type="button" data-testid="home-product-return" onClick={() => navigate('/dashboard/analytics#produits')}
+                    className="mt-3 grid w-full gap-2 rounded-xl border border-[#EEF3FB] bg-[#F8FAFF] p-3 text-left text-[12px] hover:border-[#C9D8F5] sm:grid-cols-2">
+              {d.product_return.aimant && (
+                <span><span className="font-semibold text-[#0F8B58]">Aimant</span>{' · '}
+                  <span translate="no" className="notranslate font-semibold text-[#0B1C3F]">{d.product_return.aimant.name}</span>
+                  {d.product_return.aimant.back != null && <span className="text-[#64748B]"> — {d.product_return.aimant.back} sur 10 reviennent</span>}
+                </span>
+              )}
+              {d.product_return.one_shot && (
+                <span><span className="font-semibold text-[#B45309]">One-shot</span>{' · '}
+                  <span translate="no" className="notranslate font-semibold text-[#0B1C3F]">{d.product_return.one_shot.name}</span>
+                  {d.product_return.one_shot.back != null && <span className="text-[#64748B]"> — {d.product_return.one_shot.back} sur 10 reviennent</span>}
+                </span>
+              )}
+            </button>
+          )}
         </Panel>
       </div>
 

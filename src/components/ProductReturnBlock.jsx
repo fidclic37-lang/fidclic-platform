@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Magnet, Circle, TrendingDown, Loader2, Lock, RefreshCcw, Pencil, Link2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Magnet, Circle, TrendingDown, Loader2, Lock, RefreshCcw, Pencil, Link2, Send, FlaskConical } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { eur } from '../lib/money';
 import { openUpgrade } from './PlanAccess';
@@ -10,6 +11,9 @@ import { openUpgrade } from './PlanAccess';
  * engine stored each week (api/features/product_return.py); it never
  * computes. Pro: the verdicts; Pro AI: each card's « X sur 10 reviennent »,
  * its range, days to come back, CA 90 jours and Fiabilité, and the combos.
+ * The actions (PR3, Pro AI): « Relancer » the One-shot buyers who did not
+ * come back, « Proposer » the Aimant to the new clients — the composer opens
+ * pre-filled — and the last test against the groupe témoin on the card.
  */
 const COLS = [
   { key: 'aimant', label: 'Aimant', icon: Magnet, tone: '#0F8B58', bg: '#ECFDF3', sub: 'Après ce produit, les clients reviennent plus.' },
@@ -20,7 +24,20 @@ const VIEWS = [['first', '1ère visite'], ['all', 'Toutes les visites']];
 const POLL_MS = 5000;
 const POLL_MAX = 36;                          // 3 minutes, then « revenez plus tard » (a failing job is not asked again every 5 s)
 
-function Card({ p, full }) {
+const pct = (x) => (x == null ? '—' : String(x).replace('.', ','));
+const day = (iso) => (iso ? new Date(iso).toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'short' }) : '');
+
+function Test({ t }) {
+  return (
+    <p data-testid="pr-test" className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-[#F3EEFF] px-2 py-0.5 text-[11px] font-semibold text-[#5B3FD6]">
+      <FlaskConical size={11} />
+      {t.ready ? `Test : ${pct(t.rate)} % revenus vs ${pct(t.temoin_rate)} % témoin${t.enough ? '' : ' (peu de clients)'}`
+        : `Test en cours : résultat le ${day(t.ready_on)}`}
+    </p>
+  );
+}
+
+function Card({ p, full, act, onAct }) {
   return (
     <li data-testid="pr-card" className="rounded-xl border border-[#EEF3FB] bg-white p-3">
       <p className="text-[13px] font-semibold leading-snug text-[#0B1C3F]">{p.name}</p>
@@ -38,11 +55,19 @@ function Card({ p, full }) {
       ) : (
         <p className="mt-1 text-[11.5px] text-[#94A3B8]">{p.clients} clients</p>
       )}
+      {full && p.test && <Test t={p.test} />}
+      {act && (
+        <button type="button" onClick={() => onAct(act.template)} data-testid="pr-act"
+                className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#0B1C3F] px-2.5 py-1.5 text-[11.5px] font-semibold text-white hover:bg-[#1E3A6E]">
+          <Send size={12} /> {act.label}
+        </button>
+      )}
     </li>
   );
 }
 
 export default function ProductReturnBlock() {
+  const navigate = useNavigate();
   const [view, setView] = useState('first');
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
@@ -136,6 +161,20 @@ export default function ProductReturnBlock() {
   const few = by('insufficient');
   const everywhere = by('everywhere');
   const combos = full ? (v.combos || []) : [];
+  // the actions (Pro AI): what each card's button opens in the composer
+  const acts = full ? (src.actions || d.actions || null) : null;
+  const actOf = (p) => {
+    if (!acts || !p.ref) return null;
+    if (p.bucket === 'one_shot') {
+      const o = (acts.one_shot || []).find((x) => x.ref === p.ref);
+      if (o && o.lapsed > 0) return { template: `pr:os:${p.ref}`, label: o.lapsed > 1 ? `Relancer ces ${o.lapsed} clients` : 'Relancer ce client' };
+    }
+    if (p.bucket === 'aimant' && acts.aimant?.ref === p.ref && acts.new > 0) {
+      return { template: `pr:new:${p.ref}`, label: acts.new > 1 ? `Proposer aux ${acts.new} nouveaux clients` : 'Proposer au nouveau client' };
+    }
+    return null;
+  };
+  const onAct = (template) => navigate(`/dashboard/campaigns?template=${encodeURIComponent(template)}`);
 
   return shell(
     <>
@@ -190,7 +229,7 @@ export default function ProductReturnBlock() {
                 <Icon size={15} /> {c.label} ({list.length})
               </p>
               <p className="mb-2 text-[11px] text-[#64748B]">{c.sub}</p>
-              {list.length ? <ul className="space-y-2">{list.map((p) => <Card key={p.name} p={p} full={full} />)}</ul>
+              {list.length ? <ul className="space-y-2">{list.map((p) => <Card key={p.name} p={p} full={full} act={actOf(p)} onAct={onAct} />)}</ul>
                 : <p className="text-[11.5px] text-[#94A3B8]">Aucun produit pour l'instant.</p>}
             </div>
           );

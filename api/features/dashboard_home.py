@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field
 from auth import require_role, TokenData
 from features import store_scope as S
 from features import period as P, fidclic_impact as FI
+from features import product_actions as _PA
 from services import playbooks as PB
 
 router = APIRouter(tags=["dashboard"])
@@ -394,6 +395,8 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
         # cards deleted in the last 30 days — a loss the owner must see (2026-10-09)
         "cards_lost": _cards_lost(tid, scope, at),
         "recommendations": recos,
+        # « Produits qui font revenir » (PR3, Pro AI): the best Aimant, the worst One-shot
+        "product_return": _PA.dashboard(tid, scope),
     }
 
 

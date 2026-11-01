@@ -40,8 +40,8 @@ PARIS = ZoneInfo("Europe/Paris")
 SURFACES = {"copilote", "insights", "dashboard", "repere", "clients", "segmentation", "alerte", "autopilot", "autre"}
 KINDS = {"shown", "opened", "dismissed", "later", "accepted"}
 # « Contacter » one client is not an idea (its key names a client)
-ONE_CLIENT = ("client", "brain")
-FAMILIES = ("produit", "seg")          # « produit:Coupe » → « produit » in the super admin's table
+ONE_CLIENT = ("client", "brain", "prc")   # prc: the Fiche client « À proposer » (product actions)
+FAMILIES = ("produit", "seg", "pr")    # « produit:Coupe » → « produit » in the super admin's table; « pr:os:… » → « pr »
 RESULT_TTL_S = 600
 
 
