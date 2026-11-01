@@ -5372,8 +5372,6 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # Stamps of a paper card (validated BEFORE anything is written: a refused
     # transfer refuses the whole scan, so the till can correct and resend).
     paper = _paper_stamps_check(cust, token_data.tenant_id, req.paper_stamps, current_visits)
-    # the card's meter before this visit, in visits (tampons × visits per tampon)
-    units_before = max(0, current_visits - int(cust.get("visits_at_last_redemption") or 0))
 
     # If the scan came with a product-picker payload, resolve the items
     # against the tenant catalog and OVERRIDE amount_paid with the
@@ -5454,56 +5452,60 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # as paper stamps and manual adjustments do.
     extra_units = (persons - 1) if stamp_card else 0
     per_stamp_now = max(int(card_template.get("visits_per_stamp") or 1), 1)
-    visit_stamps = ((units_before + persons) // per_stamp_now - units_before // per_stamp_now) if stamp_card else 0
 
-    new_visits = current_visits + 1
-    new_points = current_points + points_to_add
-    new_paid = current_paid + float(req.amount_paid or 0)
-    # The palier follows the owner's ladder (Carte de fidélité › Récompenses et
-    # paliers) and its VIP shortcut — one rule, shown where it is set (QA F21).
-    from features import loyalty_card as _LC
-    new_tier = _LC.tier_of({"visits": new_visits, "points": new_points, "total_amount_paid": new_paid},
-                           token_data.tenant_id)
-
-    update_set = {
-        "visits": new_visits,
-        "points": new_points,
+    # The same card scanned twice at once — a double tap, two tills (user,
+    # 2026-11-01: « race condition waala fix kr do »): the totals are ADDED by
+    # the database ($inc), never read, added here and written back — two scans
+    # at once each count. What this scan returns is read off its own write.
+    now_ts = datetime.now(timezone.utc)
+    # an old record's counter left empty (null) cannot be added to: 0 first
+    for _f in ("visits", "points", "total_amount_paid", "visits_at_last_redemption"):
+        if _f in cust and not isinstance(cust.get(_f), (int, float)):
+            db.customers.update_one({"id": cid, _f: cust.get(_f)}, {"$set": {_f: 0}})
+    if not isinstance(cust.get("points_lifetime"), (int, float)):
+        # what was earned before « points_lifetime » existed is the balance then
+        db.customers.update_one({"id": cid, "points_lifetime": cust.get("points_lifetime")},
+                                {"$set": {"points_lifetime": current_points}})
+    inc: Dict[str, Any] = {
+        "visits": 1,
+        "points": points_to_add,
         # What was EARNED, never spent: the palier is read from this, so buying
         # a reward with points cannot send the client back down a rung.
-        "points_lifetime": int(cust.get("points_lifetime") if cust.get("points_lifetime") is not None
-                             else current_points) + points_to_add,
-        # A rung reached is kept for good (user, 2026-10-13).
-        "tier_best": new_tier,
-        "total_amount_paid": round(new_paid, 2),
-        "last_visit_date": datetime.now(timezone.utc),
-        "tier": new_tier,
+        "points_lifetime": points_to_add,
+        "total_amount_paid": round(float(req.amount_paid or 0), 2),
+    }
+    # The card's baseline: a points / cashback card moves it with the visit
+    # (no tampons in the background, QA R7 BUG-009); paper stamps and the extra
+    # people of « Plusieurs personnes » move it down — the meter is visits −
+    # visits_at_last_redemption.
+    _base = (0 if stamp_card else 1) - (paper["visits"] if paper else 0) - extra_units
+    if _base:
+        inc["visits_at_last_redemption"] = _base
+    set_now: Dict[str, Any] = {
+        "last_visit_date": now_ts,
         # Read by the Apple PassKit web service (passesUpdatedSince) so a
         # wallet pass refreshes after every scan.
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": now_ts,
     }
-    # When the palier actually changes, stamp it: the Push Wallet scenario
-    # "Atteinte d'un palier" fires on this, and without a timestamp there was
-    # no way to tell a client who just levelled up from one who always was gold.
-    if new_tier != previous_tier:
-        update_set["tier_changed_at"] = datetime.now(timezone.utc)
-        update_set["previous_tier"] = previous_tier
     # Stamp home branch on first scan only.
     if req.branch_id and not cust.get("branch_id"):
-        update_set["branch_id"] = req.branch_id
-
-    # Update customer — must succeed. A paper-card transfer rides on the SAME
-    # write, guarded by « not transferred yet »: two tills scanning the card
-    # at once can never move the stamps twice, and the visit and the stamps
-    # are written together or not at all.
+        set_now["branch_id"] = req.branch_id
+    # A paper-card transfer rides on the SAME write, guarded by « not
+    # transferred yet »: two tills scanning the card at once can never move the
+    # stamps twice, and the visit and the stamps are written together or not at all.
+    _filter: Dict[str, Any] = {"id": cid}
     if paper:
-        now_paper = datetime.now(timezone.utc)
-        update_set.update({"paper_stamps": paper["stamps"], "paper_stamps_at": now_paper,
-                           "paper_stamps_by": getattr(token_data, "email", None)})
-        res = db.customers.update_one(
-            {"id": cid, "paper_stamps": {"$exists": False}},
-            {"$set": update_set, "$inc": {"visits_at_last_redemption": -paper["visits"] + (0 if stamp_card else 1) - extra_units}})
-        if res.matched_count == 0:
+        now_paper = now_ts
+        _filter["paper_stamps"] = {"$exists": False}
+        set_now.update({"paper_stamps": paper["stamps"], "paper_stamps_at": now_paper,
+                        "paper_stamps_by": getattr(token_data, "email", None)})
+    from pymongo import ReturnDocument as _RD
+    after = db.customers.find_one_and_update(_filter, {"$inc": inc, "$set": set_now}, return_document=_RD.AFTER)
+    if after is None:
+        if paper:
             raise HTTPException(status_code=409, detail=_paper_done_message(db.customers.find_one({"id": cid}) or {}))
+        raise HTTPException(status_code=404, detail="Client introuvable.")
+    if paper:
         try:
             db.customer_changes.insert_one({
                 "id": str(uuid.uuid4()), "tenant_id": token_data.tenant_id, "customer_id": cid,
@@ -5514,10 +5516,39 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             })
         except Exception as _e:
             print(f"scan_visit: paper stamps not logged (non-fatal): {_e}")
-    else:
-        _inc = ({"visits_at_last_redemption": -extra_units} if extra_units else {}) if stamp_card \
-            else {"visits_at_last_redemption": 1}
-        db.customers.update_one({"id": cid}, {"$set": update_set, **({"$inc": _inc} if _inc else {})})
+
+    new_visits = int(after.get("visits") or 0)
+    new_points = int(after.get("points") or 0)
+    new_paid = float(after.get("total_amount_paid") or 0)
+    # The card's meter before this scan, read off this scan's own write (not
+    # the read at the start, which another scan may have moved since).
+    units_added = (persons + (paper["visits"] if paper else 0)) if stamp_card else 0
+    units_before = max(0, new_visits - int(after.get("visits_at_last_redemption") or 0) - units_added) \
+        if stamp_card else 0
+    visit_stamps = ((units_before + persons) // per_stamp_now - units_before // per_stamp_now) if stamp_card else 0
+
+    # The palier follows the owner's ladder (Carte de fidélité › Récompenses et
+    # paliers) and its VIP shortcut — one rule, shown where it is set (QA F21).
+    # Read from the client as they are now, so a scan running beside this one
+    # is counted too.
+    from features import loyalty_card as _LC
+    _now_c = db.customers.find_one({"id": cid}, {"_id": 0, "visits": 1, "points": 1,
+                                                  "total_amount_paid": 1}) or after
+    new_tier = _LC.tier_of({"visits": int(_now_c.get("visits") or 0), "points": int(_now_c.get("points") or 0),
+                            "total_amount_paid": float(_now_c.get("total_amount_paid") or 0)},
+                           token_data.tenant_id)
+    tier_set: Dict[str, Any] = {
+        # A rung reached is kept for good (user, 2026-10-13).
+        "tier_best": new_tier,
+        "tier": new_tier,
+    }
+    # When the palier actually changes, stamp it: the Push Wallet scenario
+    # "Atteinte d'un palier" fires on this, and without a timestamp there was
+    # no way to tell a client who just levelled up from one who always was gold.
+    if new_tier != previous_tier:
+        tier_set["tier_changed_at"] = now_ts
+        tier_set["previous_tier"] = previous_tier
+    db.customers.update_one({"id": cid}, {"$set": tier_set})
 
     # Insert visit row — must succeed for analytics.
     try:
@@ -5635,7 +5666,6 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # computes the right number (visits - visits_at_last_redemption,
     # capped at the threshold) and ships `stamps_in_cycle`,
     # `reward_threshold`, `reward_unlocked` so the frontend just renders.
-    last_red_visits = int((db.customers.find_one({"id": cid}) or {}).get("visits_at_last_redemption") or 0)
     try:
         scan_tpl = db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     except Exception:
@@ -5653,8 +5683,24 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # meter that never moved again. Now, when a visit lands on a card that was
     # already complete, the finished card is banked as an earned reward and
     # this visit becomes stamp 1 of the new one.
+    # Each full card is CLAIMED before it is banked (user, 2026-11-01): the
+    # baseline moves only if no other scan moved it since this one read it, so
+    # two scans at once never bank the same card twice. Read fresh each round.
     cycles_completed = 0
-    while stamp_card and (new_visits - last_red_visits) > reward_threshold:
+    card_visits, last_red_visits = new_visits, 0
+    for _round in range(500):
+        _c = db.customers.find_one({"id": cid}, {"_id": 0, "visits": 1, "visits_at_last_redemption": 1}) or {}
+        card_visits = int(_c.get("visits") or 0)
+        _raw = _c.get("visits_at_last_redemption")
+        last_red_visits = int(_raw or 0)
+        if not stamp_card or card_visits - last_red_visits <= reward_threshold:
+            break
+        claimed = db.customers.update_one(
+            {"id": cid, "visits_at_last_redemption": _raw},
+            {"$set": {"visits_at_last_redemption": last_red_visits + reward_threshold,
+                      "updated_at": datetime.now(timezone.utc)}})
+        if not getattr(claimed, "modified_count", 0):
+            continue                          # another scan banked it first: read again
         try:
             db.rewards_earned.insert_one({
                 "id": str(uuid.uuid4()),
@@ -5668,20 +5714,14 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
             })
         except Exception as _e:
             print(f"scan_visit: could not bank the earned reward: {_e}")
-        last_red_visits += reward_threshold
         cycles_completed += 1
-    if cycles_completed:
-        db.customers.update_one({"id": cid}, {"$set": {
-            "visits_at_last_redemption": last_red_visits,
-            "updated_at": datetime.now(timezone.utc),
-        }})
+        last_red_visits += reward_threshold
 
-    stamps_in_cycle = max(0, new_visits - last_red_visits) if stamp_card else 0
+    stamps_in_cycle = max(0, card_visits - last_red_visits) if stamp_card else 0
     stamps_capped = min(stamps_in_cycle, reward_threshold)
     reward_unlocked = stamp_card and stamps_in_cycle >= reward_threshold
     # Cards this visit filled (« Plusieurs personnes » can fill one — or more —
     # at once): the meter crossed a full card that many times.
-    units_added = (persons + (paper["visits"] if paper else 0)) if stamp_card else 0
     cards_completed = ((units_before + units_added) // reward_threshold - units_before // reward_threshold) \
         if stamp_card else 0
 
