@@ -126,7 +126,8 @@ def main():
           db.brain_predictions.count_documents({"customer_id": "sami", "status": "open"}) == 1)
 
     print("Backtest")
-    base = now - dt.timedelta(days=200)
+    # mid-day, so « +30 min » never crosses Paris midnight (CI ran it at 23:32 Paris and saw 7 days)
+    base = (now - dt.timedelta(days=200)).replace(hour=10, minute=0)
     db.visits.insert_many([visit("bt", base + dt.timedelta(days=10 * i), "t2", 5) for i in range(6)])
     # two scans on one of those days: one visit day
     db.visits.insert_one({**visit("bt", base + dt.timedelta(days=20, minutes=30), "t2", 5), "id": "bt-dup"})
