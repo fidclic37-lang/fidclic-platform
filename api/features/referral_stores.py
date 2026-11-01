@@ -18,7 +18,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 _db = None
 MAIN = "main"
-FEW_IDS = 300          # up to this many clients: asked by client, through the index
 
 
 def init(db):
@@ -44,10 +43,11 @@ def _store_of(value: Any, main: str) -> str:
 def visits_by_store(tid: str, ids: Iterable[str], start: Optional[datetime] = None,
                     end: Optional[datetime] = None, main: str = MAIN,
                     skip: Optional[List[Any]] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
-    """{customer_id: {store_id: {"visits", "revenue"}}} — one query. A few
-    clients are read by client (the tenant + customer_id + visit_time index,
-    store_scope.init); many over a period, by period (tenant + visit_time),
-    kept here by client — never a query carrying thousands of ids.
+    """{customer_id: {store_id: {"visits", "revenue"}}} — one query, always
+    by client through the tenant + customer_id + visit_time index
+    (store_scope.init), however many clients. Reading the whole period and
+    keeping the clients here was 7× slower on a real MongoDB (491 ms against
+    69 ms for 3 328 filleuls of a 300 000-visit shop, 2026-11-01).
     `skip` leaves out the visits of those store values."""
     ids = [i for i in dict.fromkeys(ids) if i]
     if not ids:
@@ -55,15 +55,11 @@ def visits_by_store(tid: str, ids: Iterable[str], start: Optional[datetime] = No
     q: Dict[str, Any] = {"tenant_id": tid}
     if start or end:
         q["visit_time"] = {**({"$gte": start} if start else {}), **({"$lte": end} if end else {})}
-    if len(ids) <= FEW_IDS or "visit_time" not in q:
-        q["customer_id"] = {"$in": ids}
+    q["customer_id"] = {"$in": ids}
     if skip:
         q["branch_id"] = {"$nin": list(skip)}
-    wanted = set(ids)
     out: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for v in _db.visits.find(q, {"_id": 0, "customer_id": 1, "branch_id": 1, "amount_paid": 1}):
-        if v.get("customer_id") not in wanted:
-            continue
         cell = out.setdefault(v["customer_id"], {}).setdefault(_store_of(v.get("branch_id"), main),
                                                                 {"visits": 0, "revenue": 0.0})
         cell["visits"] += 1

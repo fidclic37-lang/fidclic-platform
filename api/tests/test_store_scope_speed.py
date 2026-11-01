@@ -103,7 +103,7 @@ def main():
     check("visits (tenant_id, customer_id, visit_time) — « this client's visits »",
           ("tenant_id", "customer_id", "visit_time") in vi)
 
-    print("\nA client's visits: through the new index when the clients are few")
+    print("\nA client's visits: always through the (tenant, client, time) index")
     from features import referral_stores as RS
     seen = []
     orig_find = db.visits.find
@@ -118,10 +118,14 @@ def main():
           "customer_id" in seen[-1] and "visit_time" in seen[-1])
     check("…same answer: m0 10 € and m1 10 € at PL-Monstre",
           few == {"m0": {"mon": {"visits": 1, "revenue": 10.0}}, "m1": {"mon": {"visits": 1, "revenue": 10.0}}})
-    many = [f"m{i}" for i in range(6)] + [f"x{i}" for i in range(RS.FEW_IDS)]
+    many = [f"m{i}" for i in range(6)] + [f"x{i}" for i in range(400)]
     got = RS.visits_by_store("t1", many, lo, now)
-    check("many clients over a period: read by period, kept by client (no huge $in)",
-          "customer_id" not in seen[-1] and "visit_time" in seen[-1])
+    # Measured on a real MongoDB 8 (2026-11-01, 30 000 clients, 300 000 visits,
+    # 3 328 filleuls, 90 days): by client 69 ms, by period 491 ms — the period
+    # read was chosen on mongomock numbers and is 7× slower on the real engine.
+    check("many clients over a period: still asked by client and period (index), never the whole period",
+          "customer_id" in seen[-1] and "visit_time" in seen[-1])
+    check("…with every one of them", len(seen[-1]["customer_id"]["$in"]) == len(many))
     check("…same answer for them", got == RS.visits_by_store("t1", [f"m{i}" for i in range(6)], lo, now))
     RS.visits_by_store("t1", ["m0"])
     check("all time: by client", "customer_id" in seen[-1] and "visit_time" not in seen[-1])
