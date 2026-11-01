@@ -8,11 +8,24 @@ Run: cd api && /usr/local/bin/python3 tests/test_admin_commerces.py
 """
 import asyncio
 import datetime as dt
-from zoneinfo import ZoneInfo
 import os
 import sys
 
 import mongomock
+
+
+def _month_start(now):
+    """The later of the Paris and the UTC month start: inside « this month »
+    whichever the code reads — so a date set « N days ago » does not fall in
+    last month when the suite runs on the 1st (2026-11-01: 4 files failed)."""
+    from zoneinfo import ZoneInfo
+    paris = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return max(paris.astimezone(dt.timezone.utc), now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+
+
+def _this_month(at, now):
+    """`at`, or the start of this month if `at` falls in the last one."""
+    return min(max(at, _month_start(now)), now)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DISABLE_SEED"] = "1"
@@ -57,11 +70,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     ADMIN = TokenData(email="boss@fidclic.com", role="super_admin", tenant_id=None)
     now = dt.datetime.now(dt.timezone.utc)
     old = now - dt.timedelta(days=200)
-    # a moment surely inside this month, by the UTC and by the Paris clock: the
-    # suite also runs on the 1st, when « 2 days ago » is last month
-    _p = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    _start = max(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), _p.astimezone(dt.timezone.utc))
-    in_month = _start + (now - _start) / 2
     db.tenants.insert_many([
         {"id": "busy", "name": "Boulangerie Saint-Michel", "sector": "Boulangerie", "city": "Tours", "plan": "gold",
          "subscription_status": "active", "created_at": old},
@@ -70,7 +78,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         {"id": "idle", "name": "Burger Republic", "sector": "Restaurant", "city": "Blois", "plan": "vip",
          "subscription_status": "active", "created_at": old},
         {"id": "young", "name": "Juice Lab", "sector": "Bien-être", "city": "Tours", "plan": "silver",
-         "subscription_status": "trialing", "trial_ends_at": now + dt.timedelta(days=26), "created_at": in_month},
+         "subscription_status": "trialing", "trial_ends_at": now + dt.timedelta(days=26), "created_at": _this_month(now - dt.timedelta(days=2), now)},
         {"id": "gone", "name": "Fermé", "is_active": False, "created_at": old},
     ])
 

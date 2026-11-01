@@ -7,11 +7,24 @@ renouvellements) and the CSV export.
 Run: cd api && /usr/local/bin/python3 tests/test_analytics_usage.py
 """
 import datetime as dt
-from zoneinfo import ZoneInfo
 import os
 import sys
 
 import mongomock
+
+
+def _month_start(now):
+    """The later of the Paris and the UTC month start: inside « this month »
+    whichever the code reads — so a date set « N days ago » does not fall in
+    last month when the suite runs on the 1st (2026-11-01: 4 files failed)."""
+    from zoneinfo import ZoneInfo
+    paris = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return max(paris.astimezone(dt.timezone.utc), now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+
+
+def _this_month(at, now):
+    """`at`, or the start of this month if `at` falls in the last one."""
+    return min(max(at, _month_start(now)), now)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DISABLE_SEED"] = "1"
@@ -34,11 +47,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     now = dt.datetime.now(dt.timezone.utc)
     d = lambda n: now - dt.timedelta(days=n)                  # noqa: E731
     later = lambda n: now + dt.timedelta(days=n)              # noqa: E731
-    # a moment surely inside this month, by the UTC and by the Paris clock: the
-    # suite also runs on the 1st, when « 2 days ago » is last month
-    _p = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    _start = max(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), _p.astimezone(dt.timezone.utc))
-    in_month = _start + (now - _start) / 2
     db.tenants.insert_many([
         {"id": "a", "name": "Café Lumière", "city": "Tours", "sector": "cafe", "plan": "gold", "subscription_status": "active",
          "created_at": d(200), "geo_enabled": True, "subscription_period_end": later(3)},
@@ -60,10 +68,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     # Before the period (30 days ago): a0..a3 had come within the year (visit 50 days ago), b/c did not exist yet.
     db.visits.insert_many([{"id": f"v{i}", "tenant_id": "a", "customer_id": f"a{i}", "visit_time": d(50)} for i in range(4)])
     push = lambda tid, days, sent=1: {"tenant_id": tid, "channel": "web_push", "result": {"sent": sent}, "timestamp": d(days)}   # noqa: E731
-    db.delivery_log.insert_many([push("a", 1), push("a", 1), push("a", 2), push("b", 1), push("a", 1, sent=0),
+    db.delivery_log.insert_many([push("a", 1), push("a", 1), push("a", 2), dict(push("b", 1), timestamp=_this_month(d(1), now)), push("a", 1, sent=0),
                                  {"tenant_id": "a", "channel": "email", "result": {"sent": 1}, "timestamp": d(1)},
                                  push("a", 40), push("z", 1)])
-    db.delivery_log.update_one({"tenant_id": "b", "timestamp": d(1)}, {"$set": {"timestamp": in_month}})
     for i in range(1800):                                     # Fit Gym (Starter, 2 000 notifications) near its limit
         db.delivery_log.insert_one(push("b", 0.01))
 

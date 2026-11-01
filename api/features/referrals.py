@@ -60,6 +60,8 @@ _db = None
 def init(db):
     global _db
     _db = db
+    from features import referral_stores as RS
+    RS.init(db)
     try:
         db.referral_config.create_index("tenant_id", unique=True)
         db.referral_redemptions.create_index([("tenant_id", 1), ("referee_customer_id", 1)], unique=True)
@@ -768,6 +770,15 @@ def _rows_between(tid: str, start: datetime, end: datetime, mine: Optional[set] 
     return list(_db.referral_redemptions.find(q).sort("created_at", -1))
 
 
+def _stamp_stores(tid: str, out: List[Dict[str, Any]], raw: List[Dict[str, Any]],
+                  people: Dict[str, Any], covered: Optional[List[str]] = None) -> None:
+    """The filleul's card store and the other stores it visited (user,
+    2026-11-01 — features/referral_stores.py)."""
+    from features import referral_stores as RS
+    RS.stamp(tid, out, people, {str(r.get("_id") or ""): r.get("referee_customer_id") for r in raw},
+             covered=covered)
+
+
 def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any],
                progs: Optional[Dict[Any, Optional[str]]] = None) -> Dict[str, Any]:
     """One line of « Derniers parrainages »."""
@@ -869,7 +880,8 @@ def list_referrals(
     of fifty-one; the rest was reachable only in the CSV)."""
     tid = token_data.tenant_id
     start, end = _window(date_from, date_to)
-    rows = _rows_between(tid, start, end, S.customer_ids(S.resolve(token_data, request)))
+    scope = S.resolve(token_data, request)
+    rows = _rows_between(tid, start, end, S.customer_ids(scope))
     people = _people([r.get("referrer_customer_id") for r in rows]
                      + [r.get("referee_customer_id") for r in rows])
     words = _fold(search).split()
@@ -884,7 +896,9 @@ def list_referrals(
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
     chunk = rows[(page - 1) * per_page: page * per_page]
     progs: Dict[Any, Optional[str]] = {}
-    return {"rows": [_table_row(r, people, config, progs) for r in chunk],
+    out = [_table_row(r, people, config, progs) for r in chunk]
+    _stamp_stores(tid, out, chunk, people, scope.allowed)
+    return {"rows": out,
             "total": total, "page": page, "pages": pages, "per_page": per_page}
 
 
@@ -927,7 +941,8 @@ def overview(
     token_data: TokenData = Depends(require_role(READERS, partial_ok=True)),
 ):
     tid = token_data.tenant_id
-    mine = S.customer_ids(S.resolve(token_data, request))
+    scope = S.resolve(token_data, request)
+    mine = S.customer_ids(scope)
     start, end = _window(date_from, date_to)
     span = end - start
     prev_end = start - timedelta(microseconds=1)
@@ -1013,6 +1028,7 @@ def overview(
     # ---- the table: its first rows (« Voir tous » pages through all of them) --
     progs: Dict[Any, Optional[str]] = {}
     recent = [_table_row(r, people, config, progs) for r in rows[:10]]
+    _stamp_stores(tid, recent, rows[:10], people, scope.allowed)
 
     return {
         "from": start.isoformat(), "to": end.isoformat(),

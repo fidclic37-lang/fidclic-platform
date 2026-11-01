@@ -76,6 +76,8 @@ def init(db):
     global _db
     _db = db
     FI.init(db)
+    from features import referral_stores as RS
+    RS.init(db)
 
 
 def _now() -> datetime:
@@ -306,6 +308,10 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
                  "n'est pas compté, ni un client venu à son rythme habituel après un message "
                  "sans groupe témoin (« attendus de toute façon »)."),
     }
+    # its filleuls' visits scanned in another establishment: counted there,
+    # said here (user, 2026-11-01 — features/referral_stores.py)
+    from features import referral_stores as RS
+    impact["elsewhere"] = RS.elsewhere(r.scope, r.start, r.end)
     # « +X € grâce à FidClic »: the groupe témoin's answer (features/temoin.py)
     from features import temoin as T
     impact["uplift"] = T.period(r.tid, r.start, r.end, r.at, {c["id"] for c in people})

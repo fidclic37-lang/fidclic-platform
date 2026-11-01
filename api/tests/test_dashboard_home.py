@@ -18,6 +18,20 @@ import sys
 
 import mongomock
 
+
+def _month_start(now):
+    """The later of the Paris and the UTC month start: inside « this month »
+    whichever the code reads — so a date set « N days ago » does not fall in
+    last month when the suite runs on the 1st (2026-11-01: 4 files failed)."""
+    from zoneinfo import ZoneInfo
+    paris = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return max(paris.astimezone(dt.timezone.utc), now.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+
+
+def _this_month(at, now):
+    """`at`, or the start of this month if `at` falls in the last one."""
+    return min(max(at, _month_start(now)), now)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DISABLE_SEED"] = "1"
 
@@ -41,11 +55,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         email, role, tenant_id = "b@b.fr", "business_owner", "t2"
 
     now = dt.datetime.now(dt.timezone.utc)
-    # a moment surely inside this month, by the UTC and by the Paris clock: the
-    # suite also runs on the 1st, when « 2 days ago » is last month
-    _p = now.astimezone(ZoneInfo("Europe/Paris")).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    _start = max(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), _p.astimezone(dt.timezone.utc))
-    in_month = _start + (now - _start) / 2
     db.tenants.insert_one({"id": "t1", "name": "Le Petit Café", "city": "Tours"})
     db.tenants.insert_one({"id": "t2", "name": "Rival"})
 
@@ -109,9 +118,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("unset, the card says so rather than inventing a target",
           d["goal"]["is_set"] is False and d["goal"]["target"] == 0)
     check("and shows no percentage against nothing", d["goal"]["pct"] is None)
-    # one sale this month for the goal (only here: the hour grid below keeps its noon visits)
-    db.visits.insert_one({"id": "vgoal", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 30.0, "visit_time": in_month})
-    db.visit_days.delete_many({"tenant_id": "t1"})                # past days rebuild with it
+    # a visit of this month, whatever the date the suite runs (the 1st had none)
+    db.visits.insert_one({"id": "v-month", "tenant_id": "t1", "customer_id": "c1", "amount_paid": 12.0,
+                          "visit_time": _this_month(now - dt.timedelta(hours=1), now)})
     DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), token_data=TD())
     g = DH.overview(days=30, token_data=TD())["goal"]
     check("once set, it is the merchant's own figure", g["target"] == 250.0)
@@ -122,10 +131,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     over = DH.overview(days=30, token_data=TD())["goal"]
     check("beating the goal caps the bar at 100, not 4000", over["pct"] == 100)
     check("and nothing is left to do", over["remaining"] == 0)
-    db.visits.delete_one({"id": "vgoal"})
-    db.visit_days.delete_many({"tenant_id": "t1"})
     check("the goal survives a reload", DH.get_goal(token_data=TD())["monthly_revenue_goal"] == 1.0)
     DH.set_goal(DH.Goal(monthly_revenue_goal=250.0), token_data=TD())
+    db.visits.delete_one({"id": "v-month"})
 
     # ---- impact -------------------------------------------------------------------
     print("\nImpact FidClic claims only what it can tie to a send")
