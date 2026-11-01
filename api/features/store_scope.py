@@ -40,6 +40,14 @@ _db = None
 def init(db):
     global _db
     _db = db
+    # « this store's clients » (customer_ids) reads the visits by store;
+    # « this client's visits » (referral_stores, client pages) by client
+    # (user, 2026-11-01: Analyses for one store took ~5 s)
+    try:
+        db.visits.create_index([("tenant_id", 1), ("branch_id", 1), ("customer_id", 1)])
+        db.visits.create_index([("tenant_id", 1), ("customer_id", 1), ("visit_time", 1)])
+    except Exception:
+        pass
 
 
 @dataclass
@@ -49,6 +57,9 @@ class Scope:
     allowed: List[str] = field(default_factory=list)
     all_ids: List[str] = field(default_factory=list)
     names: Dict[str, str] = field(default_factory=dict)
+    # what this request already worked out (its clients, its home clients):
+    # a Scope lives one request, so nothing outlives it
+    memo: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def is_all(self) -> bool:
@@ -124,11 +135,13 @@ def customer_ids(scope: Scope) -> Optional[Set[str]]:
     one. None = everyone (the whole shop)."""
     if scope.is_all:
         return None
-    vals = _branch_values(scope)
-    ids = set(_db.visits.distinct("customer_id", {"tenant_id": scope.tenant_id, "branch_id": {"$in": vals}}))
-    ids.update(_db.customers.distinct("id", {"tenant_id": scope.tenant_id, "branch_id": {"$in": vals}}))
-    ids.discard(None)
-    return ids
+    if "clients" not in scope.memo:
+        vals = _branch_values(scope)
+        ids = set(_db.visits.distinct("customer_id", {"tenant_id": scope.tenant_id, "branch_id": {"$in": vals}}))
+        ids.update(_db.customers.distinct("id", {"tenant_id": scope.tenant_id, "branch_id": {"$in": vals}}))
+        ids.discard(None)
+        scope.memo["clients"] = frozenset(ids)
+    return set(scope.memo["clients"])          # the caller's own copy
 
 
 def customer_filter(scope: Scope) -> Dict[str, Any]:
@@ -153,6 +166,8 @@ def home_customer_ids(scope: Scope) -> Optional[Set[str]]:
     """Members of these establishments (their home store). None = everyone."""
     if scope.is_all:
         return None
+    if "home" in scope.memo:
+        return set(scope.memo["home"])
     vals = _branch_values(scope)
     # a client never given a store belongs to the main one (as server._ensure_branch_assignments does)
     t = _db.tenants.find_one({"id": scope.tenant_id}, {"_id": 0, "branches": 1}) or {}
@@ -164,7 +179,8 @@ def home_customer_ids(scope: Scope) -> Optional[Set[str]]:
     if main in (scope.ids or []):
         ids.update(_db.customers.distinct("id", {"tenant_id": scope.tenant_id, "branch_id": {"$exists": False}}))
     ids.discard(None)
-    return ids
+    scope.memo["home"] = frozenset(ids)
+    return set(ids)
 
 
 def is_multi(tid: str) -> bool:

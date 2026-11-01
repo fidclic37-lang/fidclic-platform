@@ -170,9 +170,11 @@ class Reader:
     def customers(self) -> List[Dict[str, Any]]:
         from features import clients_page as CP
         # The Clients page's columns too: the shop's Règles clients may read any of them.
-        return list(_db.customers.find(
-            S.customer_filter(self.scope) if self.scope else {"tenant_id": self.tid, "deleted_at": None},
-            {**CP.FIELDS, "acquisition_source": 1, "visits_at_last_redemption": 1}))
+        # One establishment: the shop's clients, kept here by this request's
+        # set — not a query carrying thousands of ids (user, 2026-11-01).
+        rows = _db.customers.find({"tenant_id": self.tid, "deleted_at": None},
+                                  {**CP.FIELDS, "id": 1, "acquisition_source": 1, "visits_at_last_redemption": 1})
+        return [c for c in rows if self.mine is None or c.get("id") in self.mine]
 
     def deleted_spend(self) -> float:
         """What clients SINCE DELETED had spent. Their visits stay in the
@@ -180,10 +182,10 @@ class Reader:
         any more (store_scope.customer_filter, user 2026-10-16). Without this
         the two figures on the same screen could not be reconciled: the CA of
         a period could be larger than the LTV of all time (user, 2026-10-21)."""
-        q = dict(S.customer_filter(self.scope)) if self.scope else {"tenant_id": self.tid}
-        q["deleted_at"] = {"$ne": None}
+        rows = _db.customers.find({"tenant_id": self.tid, "deleted_at": {"$ne": None}},
+                                  {"_id": 0, "id": 1, "total_amount_paid": 1})
         return _money(sum(float(c.get("total_amount_paid") or 0)
-                          for c in _db.customers.find(q, {"_id": 0, "total_amount_paid": 1})))
+                          for c in rows if self.mine is None or c.get("id") in self.mine))
 
     def rules(self):
         from features import customer_rules as R
