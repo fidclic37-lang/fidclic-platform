@@ -347,6 +347,22 @@ const ImpactPanel = ({ imp }) => (
             ces clients sont venus dans leur rythme habituel : ils seraient venus de toute façon. Pas comptés dans le CA FidClic.</p>
         </div>
       )}
+      {imp.elsewhere && (
+        /* this establishment's filleuls, scanned in another one: counted
+           there, said here (user, 2026-11-01) */
+        <div data-testid="filleuls-ailleurs" className="mt-4 rounded-xl bg-[#FFF1F4] px-3 py-2.5 text-[12.5px]">
+          <p className="font-semibold text-[#0B1C3F]">Vos filleuls passés dans un autre établissement</p>
+          {imp.elsewhere.stores.map((s) => (
+            <div key={s.id} className="mt-1.5 flex items-center gap-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#F43F5E]" />
+              <span translate="no" className="notranslate flex-1 font-medium text-[#334155]">{s.name}</span>
+              <span className="text-[#94A3B8] tabular-nums">{nf(s.visits)} visite{s.visits > 1 ? 's' : ''}</span>
+              <span className="w-24 text-right font-bold text-[#64748B] tabular-nums">{money(s.revenue)}</span>
+            </div>
+          ))}
+          <p className="mt-1.5 text-[11.5px] leading-snug text-[#64748B]">{imp.elsewhere.note}</p>
+        </div>
+      )}
       <p className="mt-4 flex items-start gap-1.5 text-[11px] leading-snug text-[#94A3B8]">
         <Info size={12} className="mt-px shrink-0" /> {imp.note}
       </p>

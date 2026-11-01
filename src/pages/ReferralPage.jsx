@@ -910,7 +910,20 @@ export default function ReferralPage() {
                       <td className="px-3 py-3">
                         <span className="flex items-center gap-2.5">
                           <Avatar initials={r.filleul.initials} tier={r.filleul.tier} size={28} />
-                          <span className="truncate text-[13px] font-medium text-[#0B1C3F]">{r.filleul.name}</span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-medium text-[#0B1C3F]">{r.filleul.name}</span>
+                            {/* card here, visits in another store (user, 2026-11-01) */}
+                            {r.filleul.elsewhere?.length > 0 && (
+                              <span data-testid="filleul-ailleurs" className="block text-[11px] leading-snug text-[#64748B]">
+                                Carte : <span translate="no" className="notranslate">{r.filleul.card_store}</span>
+                                {' · '}
+                                {r.filleul.elsewhere.map((e, i) => (
+                                  <span key={e.store}>{i > 0 ? ', ' : ''}{e.visits} visite{e.visits > 1 ? 's' : ''} ({nf(e.revenue)} €) à{' '}
+                                    <span translate="no" className="notranslate">{e.store}</span></span>
+                                ))}
+                              </span>
+                            )}
+                          </span>
                         </span>
                       </td>
                       <td className="px-3 py-3">

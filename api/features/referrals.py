@@ -60,6 +60,8 @@ _db = None
 def init(db):
     global _db
     _db = db
+    from features import referral_stores as RS
+    RS.init(db)
     try:
         db.referral_config.create_index("tenant_id", unique=True)
         db.referral_redemptions.create_index([("tenant_id", 1), ("referee_customer_id", 1)], unique=True)
@@ -768,6 +770,14 @@ def _rows_between(tid: str, start: datetime, end: datetime, mine: Optional[set] 
     return list(_db.referral_redemptions.find(q).sort("created_at", -1))
 
 
+def _stamp_stores(tid: str, out: List[Dict[str, Any]], raw: List[Dict[str, Any]],
+                  people: Dict[str, Any]) -> None:
+    """The filleul's card store and the other stores it visited (user,
+    2026-11-01 — features/referral_stores.py)."""
+    from features import referral_stores as RS
+    RS.stamp(tid, out, people, {str(r.get("_id") or ""): r.get("referee_customer_id") for r in raw})
+
+
 def _table_row(r: Dict[str, Any], people: Dict[str, Any], config: Dict[str, Any],
                progs: Optional[Dict[Any, Optional[str]]] = None) -> Dict[str, Any]:
     """One line of « Derniers parrainages »."""
@@ -884,7 +894,9 @@ def list_referrals(
     config = _db.referral_config.find_one({"tenant_id": tid}) or {}
     chunk = rows[(page - 1) * per_page: page * per_page]
     progs: Dict[Any, Optional[str]] = {}
-    return {"rows": [_table_row(r, people, config, progs) for r in chunk],
+    out = [_table_row(r, people, config, progs) for r in chunk]
+    _stamp_stores(tid, out, chunk, people)
+    return {"rows": out,
             "total": total, "page": page, "pages": pages, "per_page": per_page}
 
 
@@ -1013,6 +1025,7 @@ def overview(
     # ---- the table: its first rows (« Voir tous » pages through all of them) --
     progs: Dict[Any, Optional[str]] = {}
     recent = [_table_row(r, people, config, progs) for r in rows[:10]]
+    _stamp_stores(tid, recent, rows[:10], people)
 
     return {
         "from": start.isoformat(), "to": end.isoformat(),
