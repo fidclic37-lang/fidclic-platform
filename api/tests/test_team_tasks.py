@@ -56,7 +56,13 @@ def main():
         return asyncio.get_event_loop().run_until_complete(run())
 
     paris = T.PARIS
-    now = dt.datetime.now(paris)
+    # A mid-week clock — this week's Wednesday, at the real time of day, still
+    # ticking. The board shows one week, and tasks at « now ± 4 h » run on a
+    # Sunday after 21:00 or a Monday before 04:00 fell into the other week
+    # (CI red every weekend night). The statuses still read a moving clock.
+    shift = dt.timedelta(days=2 - dt.datetime.now(paris).weekday())
+    T._now = lambda: dt.datetime.now(dt.timezone.utc) + shift
+    now = T._now().astimezone(paris)
     today = now.date()
 
     def at(delta_h):
@@ -140,7 +146,7 @@ def main():
     # its due time set to the instant itself: the night the clocks go back,
     # « 02:05 » names two moments and the form can only name the first
     T._db.team_tasks.update_one({"id": soon}, {"$set": {
-        "due_at": dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=30), "reminder_sent": False}})
+        "due_at": T._now() + dt.timedelta(minutes=30), "reminder_sent": False}})
     http("GET", "/api/admin/equipe/alerts")
     mt = [x["title"] for x in http("GET", "/api/admin/equipe/alerts", MAHDI).json()["alerts"]]
     check("one hour before", any("moins d'une heure" in x and "Dans 30 min" in x for x in mt))
