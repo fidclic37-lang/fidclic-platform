@@ -29,6 +29,7 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
 import uuid
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -54,6 +55,7 @@ OUTCOME_AFTER = timedelta(days=16)
 GOAL = 10000                   # good examples before a FidClic model is trained
 INPUT_MAX = 60000
 NAMES_TTL_S = 600
+TEMPLATE_DAY_MAX = 200         # prefill rows a shop adds a day (pentest: a script opening every client's template)
 _names: Dict[str, Any] = {}
 
 
@@ -83,28 +85,43 @@ def _aware(v: Any) -> Optional[datetime]:
 # scrub
 # ---------------------------------------------------------------------------
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,3})?\b")
+# pentest 2026-11-02: addresses and birth dates went through
+_ADDRESS = re.compile(r"\b\d{1,4}\s*(?:bis|ter)?\s*,?\s*(?:rue|avenue|av\.|bd|boulevard|chemin|all[ée]e|place|impasse|route|quai|cours|"
+                      r"square|passage|r[ée]sidence|lotissement|lieu[- ]dit)\b[^,.;\n()]{0,60}", re.IGNORECASE)
+_DATE = re.compile(r"\b(?:(\d{1,2})[/.-](\d{1,2})[/.-]((?:19|20)\d{2})|((?:19|20)\d{2})-(\d{2})-(\d{2}))\b")
+_WORD = re.compile(r"(?<![{_\w])[^\W\d_]{2,}(?![}_\w])")
+# short or everyday words never taken for a client's name (« Anne Le Goff » must not hide « le »)
+_STOP = set("""le la les de du des un une et en au aux ce se sa son ses mon ma mes ton ta tes on ne pas par pour sur dans avec est il elle ils
+elles nous vous je tu me te lui leur qui que ou oui non plus moins tout tous toute bien bon bonne jour semaine mois an ans fois
+lundi mardi mercredi jeudi vendredi samedi dimanche janvier fevrier mars avril mai juin juillet aout septembre octobre novembre
+decembre client clients cliente commerce boutique salon cafe offre carte visite merci bonjour bonsoir chez vos votre nos notre
+ici si ni car mais donc or as am pm ok via vs mr mme mlle""".split())
 
 
-def _name_rx(tid: str) -> Optional[re.Pattern]:
+def _fold(w: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", (w or "").lower()) if unicodedata.category(ch) != "Mn")
+
+
+def _names_of(tid: str) -> set:
+    """The shop's clients' name words, folded (no accent, lower case) — a set, so a
+    text is scrubbed in one pass whatever the number of clients."""
     hit = _names.get(tid)
     if hit and time.time() - hit[0] < NAMES_TTL_S:
         return hit[1]
-    words = set()
-    for c in _db.customers.find({"tenant_id": tid}, {"_id": 0, "name": 1, "first_name": 1, "last_name": 1}).limit(20000):
-        full = " ".join(str(c.get(k) or "") for k in ("name",)).strip() or \
-            f"{c.get('first_name') or ''} {c.get('last_name') or ''}".strip()
-        if not full:
-            continue
-        words.add(full)
-        for w in re.split(r"[\s\-]+", full):
-            if len(w) >= 3 and w.isalpha():
-                words.add(w)
-    rx = None
-    if words:
-        alt = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
-        rx = re.compile(rf"(?<![\w{{])(?:{alt})(?![\w}}])", re.IGNORECASE)
-    _names[tid] = (time.time(), rx)
-    return rx
+    words: set = set()
+    for c in _db.customers.find({"tenant_id": tid}, {"_id": 0, "name": 1, "first_name": 1, "last_name": 1}):
+        for full in (c.get("name"), c.get("first_name"), c.get("last_name")):
+            for w in re.split(r"[\s\-'’]+", str(full or "")):
+                f = _fold(w)
+                if len(f) >= 2 and f.isalpha() and f not in _STOP:
+                    words.add(f)
+    _names[tid] = (time.time(), words)
+    return words
+
+
+def _date(m: re.Match) -> str:
+    year = int(m.group(3) or m.group(4))
+    return "[date]" if year <= datetime.now(timezone.utc).year - 12 else m.group(0)   # a birth date, not « jusqu'au 15/11/2026 »
 
 
 def _shop_rx(tid: str) -> Optional[re.Pattern]:
@@ -119,14 +136,16 @@ def scrub(tid: Optional[str], text: Any) -> str:
     from features import copilot_memory as CM
     t = str(text or "")
     t = _IBAN.sub("[IBAN]", t)
+    t = _DATE.sub(_date, t)
     t = CM.scrub(t)
+    t = _ADDRESS.sub("[adresse]", t)
     if tid and _db is not None:
         shop = _shop_rx(tid)
         if shop:
             t = shop.sub("{commerce}", t)
-        rx = _name_rx(tid)
-        if rx:
-            t = rx.sub("{prénom}", t)
+        names = _names_of(tid)
+        if names:
+            t = _WORD.sub(lambda m: "{prénom}" if _fold(m.group(0)) in names else m.group(0), t)
             t = re.sub(r"\{prénom\}(?:\s+\{prénom\})+", "{prénom}", t)
     return t
 
@@ -177,6 +196,9 @@ def capture(tid: Optional[str], surface: str, output: Dict[str, Any], *, source_
                                            {"_id": 0, "id": 1})
             if hit:
                 return hit["id"]
+            if surface == "template" and _db.ai_examples.count_documents(
+                    {"tenant_id": tid, "surface": "template", "day": day}) >= TEMPLATE_DAY_MAX:
+                return None
         call = call or {}
         doc = {"id": ex_id or uuid.uuid4().hex, "tenant_id": tid, "activity": _activity(tid), "surface": surface,
                "source_key": source_key, "day": now.astimezone(PARIS).strftime("%Y-%m-%d"), "created_at": now,
@@ -387,6 +409,8 @@ def _jsonl(label: Optional[str]):
 
 @router.get("/api/admin/ai/learning/export.jsonl")
 def export(label: Optional[str] = "good", token_data: TokenData = Depends(require_admin("ai"))):
+    if token_data.role != "super_admin":          # the whole corpus leaves the platform: the super admin only
+        raise HTTPException(status_code=403, detail="Réservé au super admin.")
     lab = label if label in ("good", "bad") else None
     return StreamingResponse(_jsonl(lab), media_type="application/x-ndjson",
                              headers={"Content-Disposition": f'attachment; filename="fidclic-ia-exemples-{lab or "tous"}.jsonl"'})

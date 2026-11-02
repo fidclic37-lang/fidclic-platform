@@ -230,6 +230,41 @@ def main():
     check("…no name, phone, e-mail anywhere", all(w not in r.text for w in ("Sophie", "Karim", "06 12 34", "@mail.fr", "o@rt.fr")))
     check("export refused to owners", http("GET", "/api/admin/ai/learning/export.jsonl", headers=OWNER).status_code in (401, 403))
 
+    print("Pentest (2026-11-02) : les failles corrigées")
+    db.customers.insert_many([{"id": f"p{i}", "tenant_id": "t1", "name": n, "deleted_at": None}
+                              for i, n in enumerate(["Li Wang", "Bo Dupont", "Anne Le Goff"])])
+    LL._names.clear()
+    s = LL.scrub("t1", "Li et Bo viennent; sôphie aussi. Elle habite 12 rue des Lilas 37000 Tours, née le 03/04/1990 (1990-04-03). "
+                      "Le salon est ouvert le lundi, la semaine.")
+    check("2-letter names are scrubbed (Li, Bo)", " Li " not in f" {s} " and " Bo" not in s and s.startswith("{prénom} et {prénom}"), s)
+    check("a name written without its accent or with another one (sôphie) too", "sôphie" not in s.lower() and "sophie" not in s.lower(), s)
+    check("a street address → [adresse]", "rue des Lilas" not in s and "[adresse]" in s, s)
+    check("a birth date, either way → [date]", "03/04/1990" not in s and "1990-04-03" not in s and s.count("[date]") == 2, s)
+    check("common words stay, even when a client is called « Le Goff »", "Le salon est ouvert le lundi, la semaine." in s, s)
+    import time as _t
+    db.customers.insert_many([{"id": f"big{i}", "tenant_id": "t1", "name": f"Prenom{chr(97 + i % 26)}{chr(97 + (i // 26) % 26)} Nomx{i}"}
+                              for i in range(20000)])
+    LL._names.clear()
+    LL.scrub("t1", "warm-up")
+    big = ("Sophie revient le mardi; Données du commerce (JSON) : " + '{"clients": 3000, "ca": 12345.6, "jour": "mardi"} ' * 300)
+    t0 = _t.perf_counter()
+    out = LL.scrub("t1", big)
+    ms = (_t.perf_counter() - t0) * 1000
+    check(f"a 20 KB prompt on a 20 000-client shop is scrubbed fast ({ms:.0f} ms)", ms < 300 and out.startswith("{prénom} revient"))
+    db.customers.delete_many({"id": {"$regex": "^big"}})
+    LL._names.clear()
+    db.users.insert_one({"email": "lecture@fidclic.com", "role": "fidclic_team", "platform_role": "lecture_ai", "active": True})
+    db.platform_roles.insert_one({"id": "lecture_ai", "name": "Lecture IA", "perms": {"ai": {"view": True, "edit": True}}})
+    TEAM = tok("lecture@fidclic.com", "fidclic_team", None)
+    check("a team member with FIDCLIC AI reads the page", http("GET", "/api/admin/ai/learning", headers=TEAM).status_code == 200)
+    check("…but only the super admin downloads the examples", http("GET", "/api/admin/ai/learning/export.jsonl", headers=TEAM).status_code == 403
+          and http("GET", "/api/admin/ai/learning/export.jsonl", headers=BOSS).status_code == 200)
+    LL.TEMPLATE_DAY_MAX = 3
+    ids = [LL.capture("t1", "template", {"title": "t", "message": "m"}, source_key=f"client:x{i}", dedupe_day=True) for i in range(5)]
+    check("prefills: at most N new rows a day per shop (a script opening every client's template)",
+          ids[:3] == [x for x in ids[:3] if x] and ids[3] is None and ids[4] is None
+          or sum(1 for x in ids if x) <= 3, ids)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 
