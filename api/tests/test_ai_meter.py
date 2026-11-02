@@ -73,7 +73,8 @@ def main():
     clock = [dt.datetime(2026, 11, 10, 9, 0, tzinfo=UTC)]
     AM._now = lambda: clock[0]
     mails = []
-    mailer.send = lambda to, subject, html, **kw: mails.append((to, subject)) or {"sent": True}
+    htmls = []
+    mailer.send = lambda to, subject, html, **kw: mails.append((to, subject)) or htmls.append(html) or {"sent": True}
 
     sent = []
     usage = {"input_tokens": 1000, "output_tokens": 500, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
@@ -87,9 +88,14 @@ def main():
         for c in ("ai_calls", "ai_spend", "ai_cache", "platform_alerts"):
             db[c].delete_many({})
         db.platform_settings.delete_many({"key": "ai_meter"})
+        # the sections before « Pentest » test one guard at a time: the per-shop day ceiling out of the way
+        db.platform_settings.insert_one({"key": "ai_meter", "shop_day_share": 1.0})
+        for c in ("ai_blocks", "ai_rate"):
+            db[c].delete_many({})
         db.tenants.update_many({}, {"$unset": {"ai_budget_eur": ""}})
         sent.clear()
         mails.clear()
+        htmls.clear()
         usage.update(input_tokens=1000, output_tokens=500, cache_read_input_tokens=0, cache_creation_input_tokens=0)
 
     def ask(tid="t1", feature="campaign_ai", user="o@a.fr", text="Écris un message", **kw):
@@ -137,7 +143,7 @@ def main():
     check("then the call is refused before the model: None (the caller's template answers)",
           out is None and len(sent) == before)
     check("…and written down as refused, at 0 €",
-          db.ai_calls.count_documents({"status": "blocked", "reason": "budget", "eur": 0}) == 1)
+          AM.blocks(reason="budget") == 1 and not db.ai_calls.count_documents({"status": "blocked"}))
     usage["output_tokens"] = 500
     check("another shop is untouched", ask("t2") == "Bonjour")
     kinds = [a["kind"] for a in db.platform_alerts.find({}, {"_id": 0, "kind": 1})]
@@ -245,7 +251,7 @@ def main():
     oks = sum(1 for _ in range(lim) if ask("t3", user="spam@b.fr") == "Bonjour")
     check(f"{lim} calls in a minute by one user go", oks == lim)
     check("the next one is refused (rate)", ask("t3", user="spam@b.fr") is None
-          and db.ai_calls.count_documents({"reason": "rate"}) == 1)
+          and AM.blocks(reason="rate") == 1)
     check("another user of the same shop is not slowed", ask("t3", user="calm@b.fr") == "Bonjour")
     clock[0] = clock[0] + dt.timedelta(minutes=2)
     check("a minute later it goes again", ask("t3", user="spam@b.fr") == "Bonjour")
@@ -255,7 +261,7 @@ def main():
     check(f"one request: {cap} model calls at most (a tool loop stops)", got[:cap] == ["Bonjour"] * cap and got[cap] is None)
     big = "x" * (AM.settings()["input_chars"] + 1)
     check("a 50-page paste is refused (too_long), nothing sent", ask("t3", text=big) is None
-          and db.ai_calls.count_documents({"reason": "too_long"}) == 1)
+          and AM.blocks(reason="too_long") == 1)
     sent.clear()
     ask("t3", max_tokens=50_000)
     check("max_tokens capped per feature", sent[-1]["max_tokens"] == AM.out_cap("campaign_ai"))
@@ -356,6 +362,47 @@ def main():
           and http("GET", "/api/admin/ai/costs", headers=MANAGER).status_code in (401, 403))
     check("each change by the super admin is in the audit log",
           db.audit_logs.count_documents({"action": {"$regex": "^ai_meter\\."}}) >= 1 or db.audit_log.count_documents({"action": {"$regex": "^ai_meter\\."}}) >= 1)
+
+    print("Pentest (2026-11-02) : les failles corrigées")
+    reset()
+    db.platform_settings.delete_many({"key": "ai_meter"})           # the real defaults
+    usage["output_tokens"] = 230_000                                  # ≈ 2,1 €: past 10 % of the 20 € day
+    ask("t3")
+    check("one shop cannot eat the platform's day: past 10 % of the cap it waits for tomorrow",
+          ask("t3") is None and AM.blocks(reason="shop_day") == 1 and AM.state("t3")["blocked"] == "shop_day")
+    usage["output_tokens"] = 500
+    check("…the others go on", ask("t2") == "Bonjour")
+    db.tenants.insert_one({"id": "t4", "slug": "trial", "name": "Essai", "plan": "vip", "subscription_status": "trialing", "is_active": True})
+    check("a free trial gets the trial budget (5 €), not Pro AI's 25 €", AM.limit_for("t4") == 5.0)
+    db.tenants.update_one({"id": "t4"}, {"$set": {"ai_budget_eur": 12}})
+    check("…unless the super admin set one", AM.limit_for("t4") == 12.0)
+    lim = AM.settings()["per_user_day"]["support"]
+    got = [ask("t2", feature="support", user="caisse@b.fr") for _ in range(lim + 1)]
+    check(f"the support chat: {lim} answers a day per person, then no more (a till account cannot burn the month)",
+          got[:lim] == ["Bonjour"] * lim and got[lim] is None and AM.blocks(reason="user_day") == 1)
+    check("…the Copilote of the same person is not touched", ask("t2", feature="copilot", user="caisse@b.fr") == "Bonjour")
+    before, refused = db.ai_calls.count_documents({}), AM.blocks()
+    for _ in range(50):
+        ask("t2", feature="support", user="caisse@b.fr")
+    check("refusals add no row (one counter per day, shop, feature, reason): spam cannot fill the database",
+          db.ai_calls.count_documents({}) == before and AM.blocks() == refused + 50
+          and db.ai_blocks.count_documents({}) <= 4)
+    reset()
+    db.tenants.update_one({"id": "t1"}, {"$set": {"name": "<a href='https://evil.test'>Cliquez</a>"}})
+    usage["output_tokens"] = 1_000_000
+    ask("t1")
+    check("a shop name with HTML is escaped in the alert e-mail", htmls and all("<a href='https://evil.test'" not in h for h in htmls)
+          and any("&lt;a href" in h for h in htmls))
+    db.tenants.update_one({"id": "t1"}, {"$set": {"name": "Café A"}})
+    reset()
+    usage["output_tokens"] = 500
+    act = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@c.fr", "role": "business_owner", "tenant_id": "t3",
+                                                                  "act_by": "boss@fidclic.com", "view_by": "boss@fidclic.com"})}
+    http("POST", "/api/owner/campaigns/ai-draft", headers=act, json={"objective": "Test", "segment": "all"})
+    row = db.ai_calls.find_one({}, {"_id": 0}) or {}
+    check("« Accéder au compte »: the super admin's calls are the platform's, not the shop's budget",
+          row.get("tenant_id") is None and row.get("as_tenant") == "t3" and row.get("user") == "boss@fidclic.com"
+          and AM.state("t3")["month_eur"] == 0)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

@@ -96,9 +96,13 @@ def main():
                 ep = f"https://push/{i}-{k}" + ("-dead" if i % 7 == 0 and k == 0 else "")
                 db.push_subscriptions.insert_one({"tenant_id": "t1", "customer_id": f"c{i:03d}", "endpoint": ep,
                                                   "subscription": {"endpoint": ep, "cid": f"c{i:03d}"}})
+        # « today » is Paris's: half an hour ago was yesterday when the suite ran at 00:24 (CI red on #424)
+        from zoneinfo import ZoneInfo
+        midnight = now.astimezone(ZoneInfo("Europe/Paris")).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        today_at = max(now - dt.timedelta(minutes=30), midnight + (now - midnight) / 2)
         for i in range(3, 9):                                 # already messaged today: over their daily limit
             db.send_counter.insert_one({"tenant_id": "t1", "customer_id": f"c{i:03d}", "kind": "campaign",
-                                        "at": now - dt.timedelta(minutes=30)})
+                                        "at": today_at})
         # the month's push quota (Pro: 6 000) is reached 20 sends in
         db.delivery_log.insert_many([{"tenant_id": "t1", "customer_id": "old", "channel": "web_push",
                                       "kind": "campaign", "result": {"sent": 1}, "timestamp": now - dt.timedelta(hours=2)}
