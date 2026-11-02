@@ -77,7 +77,7 @@ def main():
             "id": f"cust-{i}", "tenant_id": "rt", "barcode_id": f"BAR{SECRET}{i}", "name": f"Jean {SECRET}",
             "first_name": SECRET, "last_name": SECRET, "phone": f"06{SECRET}", "email": f"{SECRET}@x.fr",
             "birthday": "1990-05-12" if i == 0 else ("07-14" if i == 1 else None), "postal_code": "37000",
-            "address": SECRET, "city": SECRET, "notes": SECRET, "latitude": 47.39, "longitude": 0.68,
+            "address": SECRET, "city": SECRET, "notes": SECRET, "latitude": 47.391827, "longitude": 0.683514,
             "acquisition_source": "employee:" + SECRET if i == 2 else "qr", "gender": "homme" if i < 4 else "femme",
             "branch_id": "b1" if i < 5 else "b2", "pass_issued": True, "created_at": now - dt.timedelta(days=200),
             "deleted_at": now if i == 6 else None, "paused_at": now if i == 5 else None,
@@ -159,7 +159,18 @@ def main():
     check("a group campaign keeps its text, without tags", camp["content"] == "Bonjour {prénom} -20 %"
           and camp["title"] == "Promo d'automne", camp)
     check("a one-client message keeps no text at all", one["content"] is None and one["title"] is None, one)
-    check("no GPS position", "47.39" not in blob and "0.68" not in blob)
+    # the client's own digits — « 0.68 » alone also turned up in a time (…:30.684…) and failed CI by chance
+    def nums(x):
+        if isinstance(x, dict):
+            for v in x.values():
+                yield from nums(v)
+        elif isinstance(x, list):
+            for v in x:
+                yield from nums(v)
+        elif isinstance(x, (int, float)) and not isinstance(x, bool):
+            yield float(x)
+    near = [n for n in nums(data) if abs(n - 47.391827) < 0.01 or abs(n - 0.683514) < 0.01]
+    check("no GPS position", "47.391827" not in blob and "0.683514" not in blob and not near, near)
 
     print("\nLecture seule, et tracé")
     after = {c: list(db[c].find({}, {"_id": 0})) for c in before}
