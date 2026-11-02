@@ -49,6 +49,7 @@ from models import TokenData
 from features import store_scope as S
 from features import campaign_kinds as K
 from features import reco_journal as _RJ
+from features import learning_log as _LL     # the IA text a campaign started from (2026-11-02)
 
 # Campaigns are the owner's, an administrateur's (its establishments) and a
 # manager's (its establishment) — each reaches only its own clients.
@@ -670,6 +671,9 @@ class Compose(BaseModel):
     # where `template` keeps « ia ») and the surface it was taken from.
     reco_key: Optional[str] = None
     reco_surface: Optional[str] = None
+    # The learning log (2026-11-02): the IA text this campaign started from
+    # (« Rédiger avec l'IA », a prefill) — what the owner did with it is kept.
+    ai_example_id: Optional[str] = None
     # The redesign (2026-10-10): the kind and its step-1 terms, the details
     # shown on the card, and the audience as chosen in step 3.
     kind: Optional[str] = None
@@ -750,6 +754,7 @@ def get_draft(draft_id: str, token_data: TokenData = Depends(require_role(SENDER
         "wallet": bool((d.get("channels") or {}).get("wallet", True)),
         "wallet_photo": bool(d.get("wallet_photo")),
         "template": d.get("template"), "reco_key": d.get("reco_key"), "reco_surface": d.get("reco_surface"),
+        "ai_example_id": d.get("ai_example_id"),
         "visible_until": d.get("visible_until"),
         "status": d.get("status"),
         "scheduled_for": when.isoformat() if when else None,
@@ -900,6 +905,7 @@ def compose(req: Compose, request: Request = None,
         "wallet_photo": bool(req.wallet_photo and req.image_url),
         "template": (req.template or "").strip()[:40] or None,
         "reco_key": _RJ.clean(req.reco_key), "reco_surface": _RJ.surface_of(req.reco_surface) if req.reco_surface else None,
+        "ai_example_id": _LL.owned(tid, req.ai_example_id) or (previous or {}).get("ai_example_id"),
         "kind": kind, **terms, "details": details, "visible_until": visible_until,
         "audience_spec": req.audience.dict() if req.audience is not None else None,
         # For which establishments it was sent (None = the whole shop), and by whom.
@@ -926,6 +932,8 @@ def compose(req: Compose, request: Request = None,
 
     if status != "sent":
         save()
+        _LL.settle(tid, doc.get("ai_example_id"), {"title": title, "message": message}, campaign_id=doc["id"],
+                   sent=status == "scheduled")
         return {"id": doc["id"], "status": status, "audience": len(people), "temoin": len(held),
                 "scheduled_for": when.isoformat() if when else None}
 
@@ -939,6 +947,7 @@ def compose(req: Compose, request: Request = None,
     # (the function's time limit) is finished by the tick — resume_due
     doc["delivery"] = {"done": False, "at": at}
     save()
+    _LL.settle(tid, doc.get("ai_example_id"), {"title": title, "message": message}, campaign_id=doc["id"])
     result = _deliver(tid, doc, people)
     finish(doc["id"], result, at)
     return {"id": doc["id"], "status": "sent", "audience": len(people), "temoin": len(held), **result}
@@ -1277,4 +1286,5 @@ def ai_draft(req: Draft,
     broken = PB.breaks_rules(play, f"{title} {message}")
     if broken:
         raise HTTPException(status_code=503, detail=broken)
-    return {"title": title, "message": message, "examples": EXAMPLES}
+    return {"title": title, "message": message, "examples": EXAMPLES,
+            "ai_example_id": _LL.capture_last(token_data.tenant_id, "campaign_ai", {"title": title, "message": message})}

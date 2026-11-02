@@ -1149,6 +1149,19 @@ def _home_note(seen: int, home: int) -> str:
 def template(key: str, day: Optional[int] = None, request: Request = None,
              source: Optional[str] = Query(None, alias="from"),
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    """The prefill, and — opened by an owner — its learning-log example
+    (features/learning_log): what he sends from it is kept beside it."""
+    out = template_body(key, day, request, source, token_data)
+    if request is not None and isinstance(out, dict) and out.get("message"):
+        from features import learning_log as LL
+        out["ai_example_id"] = LL.capture(token_data.tenant_id, "template",
+                                          {"title": out.get("title") or "", "message": out.get("message") or ""},
+                                          source_key=key[:60], dedupe_day=True)
+    return out
+
+
+def template_body(key: str, day: Optional[int] = None, request: Request = None,
+                  source: Optional[str] = None, token_data: TokenData = None):
     """What a campaign CTA pre-fills the composer with.
 
     When the template names an audience narrower than the composer's four

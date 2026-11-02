@@ -238,6 +238,8 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
       audience: audienceBody, draft: mode === 'draft', schedule_at: mode === 'draft' ? null : scheduleIso(),
       ...(s.draftId ? { draft_id: s.draftId } : {}), ...(s.template ? { template: s.template } : {}),
       ...(s.recoKey ? { reco_key: s.recoKey, reco_surface: s.recoSurface || null } : {}),
+      // the learning log (2026-11-02): the IA text this message started from
+      ...(s.aiExampleId ? { ai_example_id: s.aiExampleId } : {}),
     };
     if (OFFERISH.includes(s.kind)) {
       const v = s.kind === 'offre' ? String(o.discount_value ?? '').replace(',', '.') : '';
@@ -282,7 +284,7 @@ export default function CampaignWizard({ initial, startStep = 1, page, onClose, 
     setBusy('ai'); setError('');
     try {
       const { data: g } = await ownerAPI.campaignAiDraft({ objective: objective || s.title || meta.label, segment: 'all' });
-      set({ message: g.message.slice(0, MSG_MAX), title: s.title || g.title });
+      set({ message: g.message.slice(0, MSG_MAX), title: s.title || g.title, ...(g.ai_example_id ? { aiExampleId: g.ai_example_id } : {}) });
     } catch (e) { setError(e?.response?.data?.detail || "L'assistant n'est pas disponible."); } finally { setBusy(''); }
   };
 

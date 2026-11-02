@@ -1481,6 +1481,8 @@ def chat_history(before: Optional[str] = None,
     if isinstance(oldest, datetime) and oldest.tzinfo is None:
         oldest = oldest.replace(tzinfo=timezone.utc)
     return {"messages": [{"role": r["role"], "text": r["text"], "actions": r.get("actions") or [],
+                          **({"id": r["id"], "can_vote": r.get("source") == "model" and not r.get("view_by")} if r.get("id") else {}),
+                          **({"vote": r["vote"]} if r.get("vote") else {}),
                           **({"sources": r["sources"]} if r.get("sources") else {}),
                           **({"forgotten": True} if r.get("forgotten") else {})}
                          for r in reversed(rows)],
@@ -1546,11 +1548,16 @@ def chat(body: ChatIn, request: Request = None,
 
     at = _now()
     who = {"view_by": view_by} if view_by else {}
+    mid = uuid.uuid4().hex
+    if source == "model" and not view_by:        # the learning log: the model's answer, scrubbed, 👍 / 👎 later
+        from features import learning_log as LL
+        LL.capture_last(tid, "copilot", {"text": reply.strip()}, ex_id=mid)
     _db.copilot_chats.insert_many([
         {"tenant_id": tid, "by": email, "role": "user", "text": message, "at": at, **who,
          **({"memo": True} if remembered or view_by else {})},
-        {"tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(), **who,
+        {"id": mid, "tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(), **who,
          "actions": actions, "source": source, "sources": sources, "at": at + timedelta(milliseconds=1)},
     ])
     CM.link(kept, at)                            # deleting the fact forgets this message
-    return {"reply": reply.strip(), "actions": actions, "source": source, "sources": sources}
+    return {"id": mid, "reply": reply.strip(), "actions": actions, "source": source, "sources": sources,
+            "can_vote": source == "model" and not view_by}
