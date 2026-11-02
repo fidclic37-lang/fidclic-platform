@@ -109,9 +109,9 @@ def main():
     calls = []
     real = llm._call
 
-    def fake(name, model, system, user, max_tokens, temperature):
+    def fake(name, model, system, user, max_tokens, temperature, *meter):
         calls.append(name)
-        return None if name == "groq" else f"réponse de {name}"
+        return (None, "HTTP 500") if name == "groq" else (f"réponse de {name}", None)
     llm._call = fake
     check("Groq fails → NVIDIA answers", llm.complete("s", "u") == "réponse de nvidia" and calls == ["groq", "nvidia"])
     calls.clear()
@@ -125,18 +125,18 @@ def main():
     calls.clear()
     seen_models = []
 
-    def fake2(name, model, system, user, max_tokens, temperature):
+    def fake2(name, model, system, user, max_tokens, temperature, *meter):
         seen_models.append((name, model))
-        return "ok"
+        return "ok", None
     llm._call = fake2
     llm.complete("s", "u")
     check("a Groq model left in LLM_MODEL is not sent to Claude", seen_models == [("anthropic", "claude-sonnet-5-5")])
     seen_models.clear()
     os.environ["LLM_MODEL"] = "claude-old-name"
 
-    def fake3(name, model, system, user, max_tokens, temperature):
+    def fake3(name, model, system, user, max_tokens, temperature, *meter):
         seen_models.append(model)
-        return None if model == "claude-old-name" else "ok"
+        return (None, "HTTP 404") if model == "claude-old-name" else ("ok", None)
     llm._call = fake3
     check("a chosen model that fails is retried once with the default",
           llm.complete("s", "u") == "ok" and seen_models == ["claude-old-name", "claude-sonnet-5-5"])

@@ -78,9 +78,10 @@ def main():
     check("Claude Sonnet 5.5: effort low", llm.anthropic_extras("claude-sonnet-5-5") == {"output_config": {"effort": "low"}})
     check("Claude Haiku 4.5: nothing (it refuses effort)", llm.anthropic_extras("claude-haiku-4-5") == {})
     sent = []
-    real_post = requests.post
-    requests.post = lambda url, **kw: sent.append(kw["json"]) or Resp(
-        {"content": [{"type": "text", "text": '[{"name":"Coupe + barbe+ coiffage","price":29,"category":"Coupe / Coiffage / Barbe"}]'}]})
+    from features import ai_meter as AM            # every provider POST goes through the AI meter's sender
+    real_post = AM._send
+    AM._send = lambda url, headers, body, timeout: sent.append(body) or (200, Resp(
+        {"content": [{"type": "text", "text": '[{"name":"Coupe + barbe+ coiffage","price":29,"category":"Coupe / Coiffage / Barbe"}]'}]}).json())
     old_key = server.ANTHROPIC_API_KEY
     server.ANTHROPIC_API_KEY = "sk-test"
     try:
@@ -103,7 +104,7 @@ def main():
         server._call_anthropic("Bonjour")
         check("the text helper sends no temperature either", sent and "temperature" not in sent[0])
     finally:
-        requests.post = real_post
+        AM._send = real_post
         server.ANTHROPIC_API_KEY = old_key
 
     print("\n3. services/llm and services/ocr (campaign lines, invoices)")
@@ -121,8 +122,9 @@ def main():
 
         def read(self):
             return json.dumps({"content": [{"type": "text", "text": "{}"}]}).encode()
-    real_open = llm.urllib.request.urlopen
-    llm.urllib.request.urlopen = ocr.urllib.request.urlopen = lambda req, timeout=0: U(req)
+    import urllib.request as _UR
+    real_open = _UR.urlopen
+    _UR.urlopen = lambda req, timeout=0: U(req)          # llm and ocr both reach the model through features/ai_meter
     os.environ["ANTHROPIC_API_KEY"] = "sk-test"
     try:
         llm._call("anthropic", "claude-sonnet-5-5", "", "Une phrase", 100, 0.7)
@@ -138,7 +140,7 @@ def main():
         src = last["messages"][0]["content"][0]["source"]
         check("ocr: no temperature, the photo as a JPEG", "temperature" not in last and src["media_type"] == "image/jpeg")
     finally:
-        llm.urllib.request.urlopen = real_open
+        _UR.urlopen = real_open
         os.environ.pop("ANTHROPIC_API_KEY", None)
 
     print(f"\n{passed} passed, {failed} failed")

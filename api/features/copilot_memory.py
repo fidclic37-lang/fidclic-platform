@@ -281,9 +281,9 @@ def _llm_ready() -> bool:
         return False
 
 
-def _ask(system: str, user: str, max_tokens: int) -> Optional[str]:
+def _ask(system: str, user: str, max_tokens: int, tid: Optional[str] = None) -> Optional[str]:
     from services import llm
-    return llm.complete(system, user, max_tokens=max_tokens, temperature=0.2)
+    return llm.complete(system, user, max_tokens=max_tokens, temperature=0.2, feature="copilot_memory", tenant_id=tid)
 
 
 def _json_facts(text: str) -> List[Tuple[str, Optional[int]]]:
@@ -340,7 +340,7 @@ def _chunks(msgs: List[Dict[str, Any]], size: int) -> List[List[Dict[str, Any]]]
     return out
 
 
-def _run(jobs: List[Tuple[str, str, int]], deadline: float) -> List[Optional[str]]:
+def _run(jobs: List[Tuple[Any, ...]], deadline: float) -> List[Optional[str]]:
     """The model calls of a pass, PASS_WORKERS at a time — only the calls:
     the database is read and written by the caller. A job not started
     before the deadline is skipped (None) and waits for the next pass; a
@@ -386,7 +386,7 @@ def _extract_pass(accounts: List[Tuple[str, str]], budget: List[int], deadline: 
     for tid, by, chunk in order:
         known = "\n".join(f"- {scrub(f['text'])}" for f in facts(tid, by)[:200]) or "(aucun)"
         body = "\n".join(f"{i}. {scrub(m.get('text') or '')}" for i, m in enumerate(chunk, 1))
-        prompts.append((_EXTRACT_SYSTEM, f"Faits déjà connus :\n{known}\n\nNouveaux messages du commerçant :\n{body}", 300))
+        prompts.append((_EXTRACT_SYSTEM, f"Faits déjà connus :\n{known}\n\nNouveaux messages du commerçant :\n{body}", 300, tid))
     replies = _run(prompts, deadline)
     for (tid, by, chunk), reply in zip(order, replies):
         if reply is _SKIP:
@@ -432,7 +432,7 @@ def _summary_pass(accounts: List[Tuple[str, str]], budget: List[int], deadline: 
         for tid, by in todo[:budget[0]]:
             j = _summary_job(tid, by)
             if j:
-                jobs.append((tid, by, j[0], j[1]))
+                jobs.append((tid, by, j[0], (*j[1], tid)))
             else:                                  # caught up: a rebuild after « oublier » is done
                 _db.copilot_memory_state.update_one({"tenant_id": tid, "by": by, "rebuild": True}, {"$unset": {"rebuild": ""}})
         if not jobs:
@@ -650,11 +650,11 @@ def item_effect(item: Dict[str, Any], keys: Any, cons: Dict[str, Any]) -> Tuple[
 def _rules_pass(budget: List[int], deadline: float, out: Dict[str, Any]) -> None:
     """Each fact read once by the model for its firm facts (closed days,
     clients aimed at, offers not wanted)."""
-    todo = list(_db.copilot_memory.find({"rules_by": {"$ne": "ia"}}, {"_id": 0, "id": 1, "text": 1})
+    todo = list(_db.copilot_memory.find({"rules_by": {"$ne": "ia"}}, {"_id": 0, "id": 1, "text": 1, "tenant_id": 1})
                 .sort("updated_at", 1).limit(max(0, budget[0])))
     if not todo:
         return
-    replies = _run([(_RULES_SYSTEM, f"Phrase : {scrub(f.get('text') or '')}", 120) for f in todo], deadline)
+    replies = _run([(_RULES_SYSTEM, f"Phrase : {scrub(f.get('text') or '')}", 120, f.get("tenant_id")) for f in todo], deadline)
     for f, reply in zip(todo, replies):
         if reply is _SKIP:
             continue

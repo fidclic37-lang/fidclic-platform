@@ -13,6 +13,7 @@ Run: cd api && /usr/local/bin/python3 tests/test_reco_ranking.py
 import asyncio
 import contextlib
 import datetime as dt
+import json
 import io
 import os
 import sys
@@ -156,7 +157,8 @@ def main():
     check("a café reads no barber figures (sector first)", RR.network_for({"sector": "cafe"}, "relance_inactifs") is None
           or RR.network_for({"sector": "cafe"}, "relance_inactifs")["shops"] != 5)
     check("only finished, measured sends count (a shop with only a pending send is not in it)",
-          net and net["shops"] == 5 and "b5" not in str(RR._network_doc()))
+          # its figures only: str() of the whole doc also printed a date's memory address (« …0x10b5… »)
+          net and net["shops"] == 5 and "b5" not in json.dumps(RR._network_doc().get("by") or {}))
 
     print("\nLe Copilote apprend")
     db.users.insert_one({"email": "o@t1.fr", "role": "business_owner", "tenant_id": "t1", "active": True})

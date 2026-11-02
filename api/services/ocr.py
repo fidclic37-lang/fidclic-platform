@@ -35,7 +35,6 @@ import json
 import logging
 import os
 import re
-import urllib.request
 
 logger = logging.getLogger("fidelitour.ocr")
 
@@ -150,6 +149,7 @@ def _parse_json(text: str) -> dict:
 
 
 def _call_vision(image_b64: str, mime: str) -> dict:
+    from features import ai_meter as AM
     from services.llm import anthropic_extras
     from services.vision_image import for_vision
     image_b64, mime = for_vision(image_b64, mime)   # HEIC, huge photos → a JPEG every provider reads
@@ -174,18 +174,13 @@ def _call_vision(image_b64: str, mime: str) -> dict:
                 ],
             }],
         }
-        req = urllib.request.Request(
-            url, data=json.dumps(body).encode(),
-            headers={"x-api-key": key,
-                     "anthropic-version": ANTHROPIC_VERSION,
-                     "content-type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
-            data = json.loads(r.read().decode() or "{}")
-        blocks = data.get("content") or []
-        content = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-        return _parse_json(content)
+        read = lambda d: "".join(b.get("text", "") for b in (d.get("content") or []) if b.get("type") == "text")  # noqa: E731
+        data, err = AM.call("anthropic", model, url, {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION,
+                                                       "content-type": "application/json"},
+                            body, feature="invoice_ocr", timeout=60, cache_ttl=3600, out_text=read)
+        if err:
+            raise RuntimeError(f"OCR: {err}")
+        return _parse_json(read(data))
 
     payload = {
         "model": model,
@@ -200,16 +195,12 @@ def _call_vision(image_b64: str, mime: str) -> dict:
             ],
         }],
     }
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {key}",
-                 "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=40) as r:  # noqa: S310
-        data = json.loads(r.read().decode() or "{}")
-    content = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
-    return _parse_json(content)
+    read = lambda d: (((d.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""  # noqa: E731
+    data, err = AM.call(_provider_name(), model, url, {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        payload, feature="invoice_ocr", timeout=40, cache_ttl=3600, out_text=read)
+    if err:
+        raise RuntimeError(f"OCR: {err}")
+    return _parse_json(read(data))
 
 
 def extract_invoice(image_b64: str, mime: str = "image/jpeg",

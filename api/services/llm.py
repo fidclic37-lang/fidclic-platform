@@ -21,12 +21,10 @@ SEAM
 """
 from __future__ import annotations
 
-import json
 import re
 import logging
 import os
-import urllib.request
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("fidelitour.llm")
 
@@ -77,19 +75,30 @@ def is_configured() -> bool:
 
 
 def complete(system: str, user: str, *, max_tokens: int = 400,
-             temperature: float = 0.4) -> Optional[str]:
-    """Return the model's text, or None if no provider answered (caller falls back)."""
+             temperature: float = 0.4, feature: Optional[str] = None,
+             tenant_id: Any = None) -> Optional[str]:
+    """Return the model's text, or None if no provider answered (caller falls back).
+
+    Every call goes through the AI meter (features/ai_meter): billed to the
+    shop of the request (or `tenant_id`, for background jobs), refused when a
+    limit is reached — then None, like a provider that did not answer.
+    `tenant_id` left out: the shop of the request."""
+    from features import ai_meter as AM
+    tid = AM._UNSET if tenant_id is None else tenant_id
     if _force_complete is not None:
-        return _force_complete(system, user)
+        return _force_complete(system, user) if AM.allow_forced(feature, tid) else None
+    cache_ttl = 600 if temperature <= 0.3 else 0          # a creative call (« Rédiger ») wants a new idea each time
     for i, name in enumerate(_chain()):
         if not _has_key(name):
             continue
         default = _ENDPOINTS[name][2]
         chosen = _model_for(name) if i == 0 else default
         for model in dict.fromkeys((chosen, default)):     # the chosen model, then the default once
-            txt = _call(name, model, system, user, max_tokens, temperature)
+            txt, err = _call(name, model, system, user, max_tokens, temperature, feature, tid, cache_ttl)
             if txt:
                 return txt
+            if err == "blocked":                           # a limit, not a provider: no other provider either
+                return None
             logger.warning("LLM %s / %s gave no answer", name, model)
     return None
 
@@ -116,10 +125,22 @@ def anthropic_extras(model: str) -> dict:
     return {"output_config": {"effort": "low"}} if _EFFORT_MODELS.match((model or "").lower()) else {}
 
 
+def _anthropic_text(data: dict) -> str:
+    return "".join(b.get("text", "") for b in (data.get("content") or []) if b.get("type") == "text")
+
+
+def _openai_text(data: dict) -> str:
+    return (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+
+
 def _call(name: str, model: str, system: str, user: str, max_tokens: int,
-          temperature: float) -> Optional[str]:
+          temperature: float, feature: Optional[str] = None, tenant_id: Any = None,
+          cache_ttl: int = 0) -> tuple:
+    """(text or None, error or None) — error "blocked" when the meter refused."""
+    from features import ai_meter as AM
     url, key_env, _default = _ENDPOINTS[name]
     key = os.environ.get(key_env, "").strip()
+    tid = AM._UNSET if tenant_id is None else tenant_id
 
     # Anthropic speaks its own dialect: x-api-key instead of a bearer token, a
     # mandatory version header, `system` hoisted out of the message list, and a
@@ -135,35 +156,24 @@ def _call(name: str, model: str, system: str, user: str, max_tokens: int,
         # string, and several callers pass "" when the prompt needs no framing.
         if (system or "").strip():
             body["system"] = system
-        try:
-            req = urllib.request.Request(
-                url, data=json.dumps(body).encode(),
-                headers={"x-api-key": key,
-                         "anthropic-version": ANTHROPIC_VERSION,
-                         "content-type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=45) as r:  # noqa: S310
-                data = json.loads(r.read().decode() or "{}")
-            blocks = data.get("content") or []
-            txt = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-            return (txt or "").strip() or None
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Anthropic completion failed: %s", exc)
-            return None
-
-    payload = {
-        "model": model, "temperature": temperature, "max_tokens": max_tokens,
-        "messages": [{"role": "system", "content": system},
-                     {"role": "user", "content": user}],
-    }
+        headers = {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json"}
+        reader = _anthropic_text
+    else:
+        body = {
+            "model": model, "temperature": temperature, "max_tokens": max_tokens,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+        }
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        reader = _openai_text
     try:
-        req = urllib.request.Request(
-            url, data=json.dumps(payload).encode(),
-            headers={"Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310
-            data = json.loads(r.read().decode() or "{}")
-        txt = (((data.get("choices") or [{}])[0]).get("message") or {}).get("content")
-        return (txt or "").strip() or None
+        data, err = AM.call(name, model, url, headers, body, feature=feature, tenant_id=tid,
+                            timeout=45 if name == "anthropic" else 30, cache_ttl=cache_ttl, out_text=reader)
+        if err:
+            if err != "blocked":
+                logger.warning("LLM completion failed (%s): %s", name, err)
+            return None, err
+        return (reader(data) or "").strip() or None, None
     except Exception as exc:  # noqa: BLE001
         logger.exception("LLM completion failed (%s): %s", name, exc)
-        return None
+        return None, str(exc)

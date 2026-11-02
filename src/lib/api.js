@@ -428,6 +428,11 @@ export const adminAPI = {
   labExportStart: (tenantId) => api.post('/admin/ai/lab/exports', { tenant_id: tenantId }),
   labExportPart: (id, n) => api.get(`/admin/ai/lab/exports/${id}/parts/${n}`),
   aiUplift: () => api.get('/admin/ai/uplift'),
+  // Super admin › FIDCLIC AI › Coûts IA (AI meter, 2026-11-01)
+  aiCosts: () => api.get('/admin/ai/costs'),
+  aiCostsShop: (tenantId, body) => api.put(`/admin/ai/costs/shops/${tenantId}`, body),
+  aiCostsRelease: (tenantId) => api.post(`/admin/ai/costs/shops/${tenantId}/release`, {}),
+  aiCostsSettings: (body) => api.put('/admin/ai/costs/settings', body),
   // Super admin › FIDCLIC AI › Recommandations (journal of ideas, 2026-10-29)
   aiRecos: (days) => api.get('/admin/ai/recos', { params: { days } }),
   aiPrecisionLearn: () => api.post('/admin/ai/precision/learn', {}),

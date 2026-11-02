@@ -344,7 +344,7 @@ def answer(question: str, tenant_name: Optional[str] = None) -> Dict[str, Any]:
         from services import llm
         user = (f"Question du commerçant{f' ({tenant_name})' if tenant_name else ''} : {question}\n\n"
                 f"Extraits de la documentation FidClic :\n{context}")
-        phrased = llm.complete(SYSTEM, user, max_tokens=220, temperature=0.2)
+        phrased = llm.complete(SYSTEM, user, max_tokens=220, temperature=0.2, feature="support")
     except Exception as exc:  # noqa: BLE001 — the model must never break support
         print(f"support_assistant: llm unavailable ({exc})")
 

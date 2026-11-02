@@ -403,11 +403,20 @@ def _message(tpl: str, pct: int, what: str) -> str:
 @router.get("/api/owner/limit-alerts")
 def limit_alerts(token_data: TokenData = Depends(require_role(OWNER))):
     s = settings()
-    if not s["notify_near_limit"] or not token_data.tenant_id:
+    if not token_data.tenant_id:
         return {"alerts": []}
+    # The shop's monthly AI budget used up (features/ai_meter): said whatever
+    # the other alerts' switch says — FidClic IA answers more simply until the 1st.
+    try:
+        from features import ai_meter as AM
+        ai = AM.owner_alert(token_data.tenant_id)
+    except Exception:
+        ai = None
+    if not s["notify_near_limit"]:
+        return {"alerts": [ai] if ai else []}
     t = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0})
     if not t:
-        return {"alerts": []}
+        return {"alerts": [ai] if ai else []}
     import server as core
     f = core.features_for(t)
     alerts = []
@@ -415,6 +424,8 @@ def limit_alerts(token_data: TokenData = Depends(require_role(OWNER))):
         if u["pct"] >= s["alert_threshold"]:
             alerts.append({**u, "message": _message(s["alert_message"], min(u["pct"], 999), u["what"]),
                            "upgrade": _next_bigger(f, u["key"])})
+    if ai:
+        alerts.append(ai)
     return {"alerts": alerts, "threshold": s["alert_threshold"]}
 
 

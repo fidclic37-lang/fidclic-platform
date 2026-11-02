@@ -279,7 +279,8 @@ def write(tid: str, key: str) -> Tuple[str, str, str]:
                 user += ("\n" + said) if said else ""
             except Exception as exc:
                 print(f"autopilot: memory unavailable ({exc})")
-            title, message = C._parse(llm.complete(C._SYSTEM, user, max_tokens=180, temperature=0.7) or "")
+            title, message = C._parse(llm.complete(C._SYSTEM, user, max_tokens=180, temperature=0.7,
+                                                         feature="autopilot", tenant_id=tid) or "")
             if title and message and not PB.breaks_rules(play, f"{title} {message}") and not re.search(r"\d+\s?%|-\s?\d+\s?€|\boffert|\bgratuit|\bcadeau", (title + message).lower()):
                 return title, message, "ia"
     except Exception as exc:
