@@ -499,7 +499,8 @@ export default function NouvelleEditor({ page, row, ai, onReload }) {
     setBusy(status); setError('');
     try {
       if (editing) await ownerAPI.updateAutomation(row.id, bodyOut(status));
-      else await ownerAPI.createAutomation(bodyOut(status));
+      // the learning log (2026-11-02): the IA proposal it started from
+      else await ownerAPI.createAutomation({ ...bodyOut(status), ...(ai?.ai_example_id ? { ai_example_id: ai.ai_example_id } : {}) });
       navigate('/dashboard/automations', { state: { flash: status === 'draft' ? 'Brouillon enregistré.' : status === 'active' ? 'Automatisation enregistrée et activée.' : 'Automatisation enregistrée (en pause).' } });
       onReload?.();
     } catch (e) {

@@ -715,7 +715,8 @@ export default function AutomationEditorPage() {
         await ownerAPI.saveReferralConfig({ ...full, ...Object.fromEntries(Object.entries(refCfg).filter(([k]) => k !== 'can_edit')) });
       }
       if (editing) await ownerAPI.updateAutomation(id, body(status));
-      else await ownerAPI.createAutomation(body(status));
+      // the learning log (2026-11-02): the IA proposal it started from
+      else await ownerAPI.createAutomation({ ...body(status), ...(location.state?.ai?.ai_example_id ? { ai_example_id: location.state.ai.ai_example_id } : {}) });
       navigate('/dashboard/automations', { state: { flash: status === 'draft' ? 'Brouillon enregistré.'
         : status === 'active' ? 'Automatisation enregistrée et activée.' : 'Automatisation enregistrée (en pause).' } });
     } catch (e) {

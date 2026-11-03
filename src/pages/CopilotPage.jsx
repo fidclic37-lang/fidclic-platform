@@ -9,6 +9,7 @@ import {
   ArrowRight, Info, MessageSquare, Brain,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
+import ChatVote from '../components/ChatVote';
 import { useAuth } from '../contexts/AuthContext';
 import RecoLastResult, { RecoWhy } from '../components/RecoLastResult';
 import AiMemoryList from '../components/AiMemoryList';
@@ -311,7 +312,8 @@ export default function CopilotPage() {
     setThinking(true);
     try {
       const { data } = await ownerAPI.copilotChat(q);
-      setMessages((m) => [...m, { role: 'assistant', text: data.reply, actions: data.actions || [], sources: data.sources || [] }]);
+      setMessages((m) => [...m, { role: 'assistant', text: data.reply, actions: data.actions || [], sources: data.sources || [],
+        id: data.id, can_vote: data.can_vote }]);
     } catch (e) {
       setMessages((m) => [...m, { role: 'assistant', text: e?.response?.data?.detail || "Je n'ai pas pu répondre. Réessayez dans un instant.", actions: [] }]);
     } finally { setThinking(false); }
@@ -397,6 +399,8 @@ export default function CopilotPage() {
                     ))}
                   </p>
                 )}
+                {/* 👍 / 👎: what FidClic IA learns from (learning log, 2026-11-02) */}
+                {m.can_vote && m.id && <ChatVote id={m.id} vote={m.vote} />}
                 {m.actions?.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {m.actions.map((a, j) => (

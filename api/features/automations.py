@@ -2445,6 +2445,7 @@ class AutomationIn(BaseModel):
     status: str = "active"
     trigger: Dict[str, Any] = {}
     message: MessageIn
+    ai_example_id: Optional[str] = None      # the learning log (2026-11-02): the IA draft it started from
     message_reminder: Optional["MessageIn"] = None   # Annuelle › « Rappel avant la date »
     message_filleul: Optional[MessageIn] = None      # Parrainage: the filleul's own words
     targeting: TargetingIn = TargetingIn()
@@ -2994,9 +2995,18 @@ def create_automation(body: AutomationIn, request: Request = None,
     doc["order"] = _db.automations.count_documents({"tenant_id": tid})
     doc["created_by"] = token_data.email
     _db.automations.insert_one(dict(doc))
+    _learned(tid, body, doc["id"])
     if doc["scenario"] == "geo":
         _wake_geo(tid)
     return _row_view(doc, tid)
+
+
+def _learned(tid: str, body: "AutomationIn", aid: str) -> None:
+    """The IA draft this automation started from, and the owner's words (features/learning_log)."""
+    if body.ai_example_id:
+        from features import learning_log as LL
+        LL.settle(tid, LL.owned(tid, body.ai_example_id), {"title": body.message.title, "message": body.message.body},
+                  automation_id=aid)
 
 
 @router.put("/api/owner/automations/{aid}")
@@ -3015,6 +3025,7 @@ def update_automation(aid: str, body: AutomationIn,
             _db.tenants.update_one({"id": tid}, {"$set": {"geo_radius_meters": int(r)}})
     data["updated_at"] = _now()
     _db.automations.update_one({"id": aid}, {"$set": data})
+    _learned(tid, body, aid)
     if data["status"] != "active":
         _db.automation_queue.delete_many({"automation_id": aid})
     if data["scenario"] == "geo":
@@ -3138,7 +3149,9 @@ def ai_draft(body: IdeaIn, token_data: TokenData = Depends(require_role(EDITORS,
     broken = PB.breaks_rules(play, f"{title} {message}")      # loi Évin, no CBD health claim
     if broken:
         raise HTTPException(status_code=503, detail=broken)
-    return {"title": title[:TITLE_MAX], "body": message[:BODY_MAX], "scenario": suggest(objective),
+    from features import learning_log as LL
+    ex = LL.capture_last(token_data.tenant_id, "automation_ai", {"title": title[:TITLE_MAX], "message": message[:BODY_MAX]})
+    return {"title": title[:TITLE_MAX], "body": message[:BODY_MAX], "scenario": suggest(objective), "ai_example_id": ex,
             "scenario_label": SCENARIOS[suggest(objective)]["label"]}
 
 

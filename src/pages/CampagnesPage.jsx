@@ -133,6 +133,7 @@ export default function CampagnesPage() {
         st.template = /^(client|produit|brain|ia|prc):/.test(key) ? key.split(':')[0] : key;
         // the idea's full key and the surface it was taken from (journal of ideas, 2026-10-29)
         st.recoKey = key; st.recoSurface = params.get('from') || null;
+        st.aiExampleId = t.ai_example_id || null;      // the learning log: what is sent from this prefill
         // a narrower audience is sent by id, never widened to everyone — even
         // when no client matches it today (then the wizard asks for a choice)
         if (t.audience) st.audience = { ...st.audience, mode: 'custom', customer_ids: t.audience.ids || [] };
@@ -164,7 +165,7 @@ export default function CampagnesPage() {
       const st = emptyState(kind);
       Object.assign(st, { title: d.title || '', message: d.message || '', details: d.details || '', image: d.image_url || '',
         link: d.link_url || '', draftId: d.id, template: d.template || null, walletPhoto: !!d.wallet_photo,
-        recoKey: d.reco_key || null, recoSurface: d.reco_surface || null,
+        recoKey: d.reco_key || null, recoSurface: d.reco_surface || null, aiExampleId: d.ai_example_id || null,
         visibleUntil: d.visible_until || st.visibleUntil });
       if (d.offer) st.offer = { ...st.offer, ...d.offer, discount_type: d.offer.discount_type || null,   // a saved offer with no type keeps none
         discount_value: d.offer.discount_value ?? '', start_date: d.offer.start_date || '', end_date: d.offer.end_date || '',

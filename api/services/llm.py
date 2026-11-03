@@ -30,6 +30,15 @@ logger = logging.getLogger("fidelitour.llm")
 
 _force_complete = None
 
+# The last model call of this request / job, for the learning log
+# (features/learning_log): its prompt and its answer, never stored here.
+import contextvars as _cv
+_LAST: _cv.ContextVar = _cv.ContextVar("llm_last_call", default=None)
+
+
+def last_call() -> Optional[dict]:
+    return _LAST.get()
+
 _ENDPOINTS = {
     "anthropic": ("https://api.anthropic.com/v1/messages",
                   "ANTHROPIC_API_KEY", "claude-sonnet-5-5"),
@@ -86,7 +95,11 @@ def complete(system: str, user: str, *, max_tokens: int = 400,
     from features import ai_meter as AM
     tid = AM._UNSET if tenant_id is None else tenant_id
     if _force_complete is not None:
-        return _force_complete(system, user) if AM.allow_forced(feature, tid) else None
+        if not AM.allow_forced(feature, tid):
+            return None
+        txt = _force_complete(system, user)
+        _LAST.set({"system": system, "user": user, "text": txt, "model": "test", "provider": "test"})
+        return txt
     cache_ttl = 600 if temperature <= 0.3 else 0          # a creative call (« Rédiger ») wants a new idea each time
     for i, name in enumerate(_chain()):
         if not _has_key(name):
@@ -96,6 +109,7 @@ def complete(system: str, user: str, *, max_tokens: int = 400,
         for model in dict.fromkeys((chosen, default)):     # the chosen model, then the default once
             txt, err = _call(name, model, system, user, max_tokens, temperature, feature, tid, cache_ttl)
             if txt:
+                _LAST.set({"system": system, "user": user, "text": txt, "model": model, "provider": name})
                 return txt
             if err == "blocked":                           # a limit, not a provider: no other provider either
                 return None

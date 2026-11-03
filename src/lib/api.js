@@ -433,6 +433,9 @@ export const adminAPI = {
   aiCostsShop: (tenantId, body) => api.put(`/admin/ai/costs/shops/${tenantId}`, body),
   aiCostsRelease: (tenantId) => api.post(`/admin/ai/costs/shops/${tenantId}/release`, {}),
   aiCostsSettings: (body) => api.put('/admin/ai/costs/settings', body),
+  // Super admin › FIDCLIC AI › Apprentissage (learning log, 2026-11-02)
+  aiLearning: () => api.get('/admin/ai/learning'),
+  aiLearningExport: (label) => api.get('/admin/ai/learning/export.jsonl', { params: { label }, responseType: 'blob' }),
   // Super admin › FIDCLIC AI › Recommandations (journal of ideas, 2026-10-29)
   aiRecos: (days) => api.get('/admin/ai/recos', { params: { days } }),
   aiPrecisionLearn: () => api.post('/admin/ai/precision/learn', {}),
@@ -806,6 +809,7 @@ export const ownerAPI = {
   copilotRebuildPlan: () => api.post('/owner/copilot/plan/rebuild'),
   copilotApprove: (stepId) => api.post(`/owner/copilot/plan/steps/${stepId}/approve`),
   copilotChat: (message) => api.post('/owner/copilot/chat', { message }),
+  aiFeedback: (body) => api.post('/owner/ai/feedback', body),
   copilotChatHistory: (before) => api.get('/owner/copilot/chat', { params: before ? { before } : {} }),
 
   walletNotify: () => api.post('/owner/wallet/notify'),

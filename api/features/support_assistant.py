@@ -390,6 +390,9 @@ def chat(body: ChatMessage,
     except Exception:
         tenant = {}     # the shop's name is a nicety; the answer is not
     result = answer(body.message, tenant.get("name"))
+    if result.get("phrased_by") == "model" and token_data.tenant_id:     # the learning log (2026-11-02)
+        from features import learning_log as LL
+        LL.capture_last(token_data.tenant_id, "support", {"text": result["answer"]})
     now = datetime.now(timezone.utc)
     try:
         _db.support_chats.insert_one({

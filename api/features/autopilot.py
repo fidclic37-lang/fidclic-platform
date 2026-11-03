@@ -317,12 +317,16 @@ def _save(tid: str, kind: str, day, send_at: datetime, seg: str, ids: List[str],
                "status": "empty", "reasons": reasons, "created_at": now}
     else:
         title, message, by = write(tid, key)
+        from features import learning_log as LL
+        from services import llm as _llm
+        ex = LL.capture(tid, "autopilot", {"title": title, "message": message}, source_key=key,
+                        call=_llm.last_call() if by == "ia" else None)
         doc = {"id": str(uuid.uuid4()), "tenant_id": tid, "kind": kind, "for_date": day.isoformat(),
                "status": "pending", "title": title, "message": message, "written_by": by,
                "segment": seg, "customer_ids": ids, "audience_label": label, "audience_count": len(ids),
                "left_out": left, "reasons": reasons, "advice": _advice(tid),
                "send_at": send_at, "expires_at": send_at + timedelta(hours=VALID_HOURS),
-               "created_at": now}
+               "created_at": now, "ai_example_id": ex}
     try:
         _db.autopilot_proposals.insert_one(dict(doc))
     except Exception:                                   # prepared twice at once: the first one stays
@@ -368,8 +372,12 @@ def prepare(tid: str, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
 
 def expire(now: Optional[datetime] = None) -> int:
     now = now or _now()
-    r = _db.autopilot_proposals.update_many({"status": "pending", "expires_at": {"$lt": now}},
-                                            {"$set": {"status": "expired"}})
+    q = {"status": "pending", "expires_at": {"$lt": now}}
+    gone = [p for p in _db.autopilot_proposals.find(q, {"_id": 0, "tenant_id": 1, "ai_example_id": 1}) if p.get("ai_example_id")]
+    r = _db.autopilot_proposals.update_many(q, {"$set": {"status": "expired"}})
+    from features import learning_log as LL
+    for p in gone:                                     # the learning log: never decided
+        LL.mark(p["tenant_id"], p["ai_example_id"], "expired")
     return int(getattr(r, "modified_count", 0) or 0)
 
 
@@ -538,6 +546,9 @@ def approve(proposal_id: str, body: Approve = None, request: Request = None,
         "edited": bool(body.title or body.message),
         # What actually left — the history shows the owner's words.
         "title": (body.title or p["title"]).strip(), "message": (body.message or p["message"]).strip()}})
+    from features import learning_log as LL
+    LL.settle(tid, p.get("ai_example_id"), {"title": (body.title or p["title"]).strip(),
+                                            "message": (body.message or p["message"]).strip()}, campaign_id=res["id"])
     return {"status": status, "campaign_id": res["id"], "audience": res.get("audience")}
 
 
@@ -548,4 +559,7 @@ def skip(proposal_id: str, token_data: TokenData = Depends(require_role(OWNER)))
         {"$set": {"status": "skipped", "decided_by": token_data.email, "decided_at": _now()}})
     if not getattr(r, "modified_count", 1):
         raise HTTPException(status_code=409, detail="Cette proposition a déjà été traitée.")
+    from features import learning_log as LL         # « Passer »: the owner did not want it
+    p = _db.autopilot_proposals.find_one({"id": proposal_id}, {"_id": 0, "ai_example_id": 1}) or {}
+    LL.mark(token_data.tenant_id, p.get("ai_example_id"), "rejected")
     return {"status": "skipped"}

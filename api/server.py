@@ -12427,6 +12427,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["copilot_memory"] = _CM.learn_due(now)
     except Exception as e:
         out["failures"].append({"step": "copilot_memory", "error": str(e)[:120]})
+    try:                         # the learning log: the témoin's answer 15 days on, drafts never sent (2026-11-02)
+        from features import learning_log as _LLOG
+        out["learning_log"] = _LLOG.due(now)
+    except Exception as e:
+        out["failures"].append({"step": "learning_log", "error": str(e)[:120]})
     return out
 
 
