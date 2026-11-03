@@ -19,6 +19,7 @@ const PLANS = { silver: 'Starter', gold: 'Pro', vip: 'Pro AI', franchise: 'Franc
 const STATE = {
   ok: ['OK', '#047857', '#ECFDF5'], near: ['80 %', '#B45309', '#FFFBEB'], budget: ['Limite atteinte', '#B91C1C', '#FEF2F2'],
   spike: ['Pic — en pause', '#B91C1C', '#FEF2F2'], global: ['Pause globale', '#B91C1C', '#FEF2F2'],
+  shop_day: ['Plafond du jour', '#B45309', '#FFFBEB'],
 };
 const euro = (v, d = 2) => (v == null ? '—' : `${Number(v).toLocaleString('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d })} €`);
 const when = (iso) => new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -61,7 +62,7 @@ function ShopRow({ s, onSave, onRelease }) {
 }
 
 function Settings({ s, onSave }) {
-  const [f, setF] = useState(() => ({ ...s, plan_budgets: { ...s.plan_budgets } }));
+  const [f, setF] = useState(() => ({ ...s, plan_budgets: { ...s.plan_budgets }, shop_day_share_pct: Math.round((s.shop_day_share ?? 0.1) * 100) }));
   const num = (k, label, step = '1') => (
     <label className="text-[12.5px] text-[#475569]">{label}
       <input type="number" step={step} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}
@@ -70,7 +71,8 @@ function Settings({ s, onSave }) {
   );
   const save = () => onSave({
     global_day_eur: Number(f.global_day_eur), usd_eur: Number(f.usd_eur), user_per_min: Number(f.user_per_min),
-    request_calls: Number(f.request_calls),
+    request_calls: Number(f.request_calls), trial_budget: Number(f.trial_budget),
+    shop_day_share: Number(f.shop_day_share_pct) / 100,
     plan_budgets: Object.fromEntries(Object.entries(f.plan_budgets).map(([k, x]) => [k, Number(x)])),
   });
   return (
@@ -89,6 +91,8 @@ function Settings({ s, onSave }) {
         {num('usd_eur', '1 $ = … €', '0.01')}
         {num('user_per_min', 'Appels par personne et par minute')}
         {num('request_calls', 'Appels par requête')}
+        {num('trial_budget', 'Essai gratuit (€/mois)')}
+        {num('shop_day_share_pct', 'Un commerce par jour (% du plafond)')}
       </div>
       <button type="button" onClick={save} className="mt-3 rounded-lg bg-[#2F6BFF] px-3.5 py-2 text-[13px] font-semibold text-white" data-testid="cost-settings-save">Enregistrer les limites</button>
     </section>

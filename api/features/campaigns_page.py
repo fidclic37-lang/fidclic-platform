@@ -1270,7 +1270,7 @@ def ai_draft(req: Draft,
                 detail="L'assistant n'est pas configuré sur cette installation.")
         raw = llm.complete(_SYSTEM, user, max_tokens=180, temperature=0.7, feature="campaign_ai")
         from features import ai_meter as AM
-        if raw is None and AM.blocked_reason() in ("budget", "global", "spike"):
+        if raw is None and AM.blocked_reason() in AM.LIMITS:
             raise HTTPException(status_code=429, detail=AM.limit_message())
     except HTTPException:
         raise

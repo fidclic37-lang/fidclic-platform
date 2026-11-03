@@ -4966,7 +4966,7 @@ def parse_menu_from_photo(
 
     if not raw:
         from features import ai_meter as _AMx
-        if _AMx.blocked_reason() in ("budget", "global", "spike"):        # a limit, not a provider (features/ai_meter)
+        if _AMx.blocked_reason() in _AMx.LIMITS:        # a limit, not a provider (features/ai_meter)
             raise HTTPException(status_code=429, detail=_AMx.limit_message())
         # If no key at all is set, give the configure-a-provider message.
         # Otherwise (at least one key is set but all failed), surface the

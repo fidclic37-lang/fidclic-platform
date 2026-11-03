@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import hashlib
+import html
 import json
 import math
 import time
@@ -65,6 +66,10 @@ DEFAULTS: Dict[str, Any] = {
     "spike_factor": 5.0,            # today vs the 14 days before
     "spike_min_share": 0.2,         # …and at least this share of the month's budget
     "prices": {},                   # overrides: {model: [in, out, cache_read, cache_write]} $/M
+    # pentest 2026-11-02: no handful of shops (free trials…) may eat the platform's day
+    "shop_day_share": 0.1,          # one shop: at most 10 % of the daily cap a day
+    "trial_budget": 5.0,            # a free trial's month, whatever plan it tries
+    "per_user_day": {"support": 20},   # a till account cannot burn the shop's month through the support chat
 }
 
 # $ per million tokens: input, output, cache read, cache write (1,25 × input).
@@ -91,6 +96,7 @@ CACHE_FEATURES = {"copilot"}         # several rounds on the same long rules: An
 CACHE_MIN_CHARS = 8000
 IMAGE_TOKENS = 1600                  # what one photo is reckoned at before the answer says
 ALERT_KINDS = {"ai_budget_80", "ai_budget_100", "ai_global", "ai_spike"}
+LIMITS = ("budget", "global", "spike", "shop_day", "user_day")      # refusals the owner is told about
 LIMIT_MESSAGE = "Limite IA du mois atteinte. FidClic IA reprend le 1er du mois prochain."
 PAUSE_MESSAGE = "FidClic IA est en pause pour aujourd'hui. Réessayez demain."
 MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
@@ -108,6 +114,8 @@ def init(db):
         db.ai_calls.create_index([("tenant_id", 1), ("at", -1)])
         db.ai_calls.create_index("at", name="ai_calls_ttl", expireAfterSeconds=400 * 86400)
         db.ai_cache.create_index("exp", expireAfterSeconds=0)
+        db.ai_rate.create_index("exp", expireAfterSeconds=0)
+        db.ai_blocks.create_index([("day", 1)])
     except Exception:
         pass
 
@@ -194,10 +202,12 @@ def out_cap(feature: Optional[str]) -> int:
 def limit_for(tid: Optional[str]) -> float:
     if not tid or _db is None:
         return math.inf
-    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "plan": 1, "ai_budget_eur": 1}) or {}
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "plan": 1, "ai_budget_eur": 1, "subscription_status": 1}) or {}
     if t.get("ai_budget_eur") is not None:
         return float(t["ai_budget_eur"])
     s = settings()
+    if t.get("subscription_status") == "trialing":
+        return float(s["trial_budget"])
     return float(s["plan_budgets"].get(t.get("plan") or "", s["default_budget"]))
 
 
@@ -255,6 +265,9 @@ def _who(ctx: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
             if token:
                 p = jwt.decode(token, auth._secret(), algorithms=[auth.ALGORITHM], options={"verify_exp": False})
                 tid, email = p.get("tenant_id"), p.get("sub")
+                if p.get("act_by") or p.get("view_only"):      # « Accéder au compte »: the super admin pays, not the shop
+                    ctx["as_tenant"] = tid
+                    tid, email = None, p.get("view_by") or p.get("act_by") or email
         except Exception:
             pass
         ctx["_resolved"] = (tid, email)
@@ -330,6 +343,8 @@ def state(tid: Optional[str]) -> Dict[str, Any]:
     blocked = None
     if tid and limit != math.inf and _full(key_month(tid), limit):
         blocked = "budget"
+    elif tid and _full(key_day(tid), _shop_day_cap()):
+        blocked = "shop_day"
     elif tid and _spiking(tid, limit):
         blocked = "spike"
     elif _full(key_day(None), float(settings()["global_day_eur"])):
@@ -337,6 +352,11 @@ def state(tid: Optional[str]) -> Dict[str, Any]:
     return {"month_eur": month, "today_eur": today, "limit_eur": limit if limit != math.inf else None,
             "pct": round(100 * month / limit) if tid and limit not in (0, math.inf) else (100 if tid and limit == 0 else 0),
             "blocked": blocked}
+
+
+def _shop_day_cap() -> float:
+    s = settings()
+    return float(s["global_day_eur"]) * float(s["shop_day_share"])
 
 
 def _reserve(tid: Optional[str], est: float) -> Optional[str]:
@@ -351,14 +371,18 @@ def _reserve(tid: Optional[str], est: float) -> Optional[str]:
         if _spiking(tid, limit):
             _add(key_month(tid), -est)
             return "spike"
+        day_cap = _shop_day_cap()
+        if not _take(key_day(tid), est, day_cap):
+            _add(key_month(tid), -est)
+            _mark_full(key_day(tid), day_cap, est)
+            return "shop_day"
     if not _take(g, est, cap):
         if tid:
             _add(key_month(tid), -est)
+            _add(key_day(tid), -est)
         _mark_full(g, cap, est)
         _alerts_after(None)
         return "global"
-    if tid:
-        _add(key_day(tid), est)
     return None
 
 
@@ -385,7 +409,7 @@ def _alert_once(key: str, stamp: str, kind: str, text: str, tid: Optional[str]) 
         for u in _db.users.find({"role": "super_admin", "active": {"$ne": False}}, {"_id": 0, "email": 1}):
             if u.get("email"):
                 mailer.send(u["email"], f"FidClic — {text.split(' : ')[0]}",
-                            f"<div style='font-family:Arial,sans-serif;font-size:14px;color:#0B1C3F'><p>{text}</p>"
+                            f"<div style='font-family:Arial,sans-serif;font-size:14px;color:#0B1C3F'><p>{html.escape(text)}</p>"
                             f"<p><a href='https://app.fidclic.com/admin/ai/couts'>Voir Coûts IA</a></p></div>")
     except Exception as exc:                 # noqa: BLE001 — the alert row is written either way
         print(f"ai_meter: alert email failed ({exc})")
@@ -453,8 +477,10 @@ def _system_chars(body: Dict[str, Any]) -> int:
 
 def _record(tid, user, feature, provider, model, status, reason=None, u=None, eur=0.0, ms=0) -> None:
     u = u or {}
+    as_tenant = (_ctx.get() or {}).get("as_tenant")
     _db.ai_calls.insert_one({
         "id": uuid.uuid4().hex, "at": _now(), "tenant_id": tid, "user": user, "feature": feature,
+        **({"as_tenant": as_tenant} if as_tenant and not tid else {}),
         "provider": provider, "model": model, "status": status, "reason": reason,
         "in": int(u.get("in") or 0), "out": int(u.get("out") or 0),
         "cache_read": int(u.get("cache_read") or 0), "cache_write": int(u.get("cache_write") or 0),
@@ -462,9 +488,30 @@ def _record(tid, user, feature, provider, model, status, reason=None, u=None, eu
 
 
 def _block(ctx, tid, user, feature, provider, model, reason) -> Tuple[None, str]:
+    """Refused: one counter per (day, shop, feature, reason) — never a row per refusal
+    (pentest 2026-11-02: a spammer must not fill the database)."""
     ctx["last_block"] = reason
-    _record(tid, user, feature, provider, model, "blocked", reason)
+    day = _paris().strftime("%Y-%m-%d")
+    _db.ai_blocks.update_one({"_id": f"{day}|{tid or 'all'}|{feature}|{reason}"},
+                             {"$inc": {"n": 1}, "$set": {"day": day, "tenant_id": tid, "feature": feature, "reason": reason}},
+                             upsert=True)
     return None, "blocked"
+
+
+def blocks(tid: Any = _UNSET, reason: Optional[str] = None, since_day: Optional[str] = None) -> int:
+    """How many calls were refused (today by default)."""
+    q: Dict[str, Any] = {"day": {"$gte": since_day} if since_day else _paris().strftime("%Y-%m-%d")}
+    if tid is not _UNSET:
+        q["tenant_id"] = tid
+    if reason:
+        q["reason"] = reason
+    return sum(int(r.get("n") or 0) for r in _db.ai_blocks.find(q, {"n": 1}))
+
+
+def _count_once(key: str, cap: int, ttl_s: int) -> bool:
+    """Atomic: one more under `cap` for this key, or False (no race lets a 31st through)."""
+    _db.ai_rate.update_one({"_id": key}, {"$setOnInsert": {"n": 0, "exp": _now() + timedelta(seconds=ttl_s)}}, upsert=True)
+    return _db.ai_rate.update_one({"_id": key, "n": {"$lt": cap}}, {"$inc": {"n": 1}}).modified_count == 1
 
 
 def allow_forced(feature: Optional[str] = None, tenant_id: Any = _UNSET) -> bool:
@@ -518,9 +565,11 @@ def call(provider: str, model: str, url: str, headers: Dict[str, str], body: Dic
 
     if ctx["calls"][0] >= int(s["request_calls"]):
         return _block(ctx, tid, user, feature, provider, model, "loop")
-    if user and _db.ai_calls.count_documents({"user": user, "at": {"$gte": _now() - timedelta(seconds=60)},
-                                               "status": {"$ne": "blocked"}}) >= int(s["user_per_min"]):
+    if user and not _count_once(f"m|{user}|{_now().strftime('%Y%m%d%H%M')}", int(s["user_per_min"]), 120):
         return _block(ctx, tid, user, feature, provider, model, "rate")
+    per_day = (s.get("per_user_day") or {}).get(feature)
+    if user and per_day and not _count_once(f"d|{user}|{feature}|{_paris().strftime('%Y-%m-%d')}", int(per_day), 2 * 86400):
+        return _block(ctx, tid, user, feature, provider, model, "user_day")
 
     est = cost_eur(provider, model, {"in": math.ceil(chars / 4) + images * IMAGE_TOKENS, "out": out_max})
     reason = _reserve(tid, est)
@@ -599,10 +648,13 @@ def costs(token_data: TokenData = Depends(require_admin("ai"))):
         f = feats.setdefault(r.get("feature") or "autre", {"feature": r.get("feature") or "autre", "eur": 0.0, "calls": 0, "blocked": 0})
         f["eur"] += float(r.get("eur") or 0)
         f["calls"] += 1
-        f["blocked"] += r.get("status") == "blocked"
         if _aware(r["at"]) >= day_start:
             calls_today += 1
-            blocked_today += r.get("status") == "blocked"
+    month_tag = _paris(now).strftime("%Y-%m")
+    for b in _db.ai_blocks.find({"day": {"$gte": f"{month_tag}-01"}}, {"_id": 0}):
+        f = feats.setdefault(b.get("feature") or "autre", {"feature": b.get("feature") or "autre", "eur": 0.0, "calls": 0, "blocked": 0})
+        f["blocked"] += int(b.get("n") or 0)
+    blocked_today = blocks()
     by_feature = sorted(({**f, "eur": _round(f["eur"])} for f in feats.values()), key=lambda f: -f["eur"])
 
     shops = []
@@ -623,7 +675,8 @@ def costs(token_data: TokenData = Depends(require_admin("ai"))):
                         "global_day_eur": float(s["global_day_eur"]), "paused": paused,
                         "calls_today": calls_today, "blocked_today": blocked_today},
             "by_day": by_day, "by_feature": by_feature, "shops": shops, "alerts": alerts,
-            "settings": {k: s[k] for k in ("plan_budgets", "global_day_eur", "usd_eur", "user_per_min", "request_calls", "input_chars")}}
+            "settings": {k: s[k] for k in ("plan_budgets", "global_day_eur", "usd_eur", "user_per_min", "request_calls", "input_chars",
+                                           "shop_day_share", "trial_budget")}}
 
 
 class ShopBudgetIn(BaseModel):
@@ -637,6 +690,8 @@ class SettingsIn(BaseModel):
     user_per_min: Optional[int] = Field(None, ge=1, le=600)
     request_calls: Optional[int] = Field(None, ge=1, le=50)
     input_chars: Optional[int] = Field(None, ge=1000, le=400000)
+    shop_day_share: Optional[float] = Field(None, ge=0.01, le=1)
+    trial_budget: Optional[float] = Field(None, ge=0, le=1000)
 
     @field_validator("plan_budgets")
     @classmethod
