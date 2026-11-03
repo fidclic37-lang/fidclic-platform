@@ -23,6 +23,30 @@ import mongomock
 import pymongo
 
 pymongo.MongoClient = mongomock.MongoClient
+
+# Production's MongoDB runs each single operation atomically; mongomock has no
+# lock, so ten threads interleaved INSIDE one update and the test measured
+# mongomock, not the scan (CI flakes on #425 and #426: a 500, a card banked
+# twice). One lock per operation is exactly what the real database guarantees;
+# any race left between two operations is the scan's own, and still caught.
+import mongomock.collection as _MC
+_DB_LOCK = threading.RLock()
+
+
+def _atomic(fn):
+    def run(*a, **k):
+        with _DB_LOCK:
+            return fn(*a, **k)
+    return run
+
+
+for _name in dir(_MC.Collection):
+    _attr = getattr(_MC.Collection, _name)
+    if not _name.startswith("_") and callable(_attr) and not isinstance(_attr, type):
+        setattr(_MC.Collection, _name, _atomic(_attr))
+for _name in ("__next__", "next"):
+    if hasattr(_MC.Cursor, _name):
+        setattr(_MC.Cursor, _name, _atomic(getattr(_MC.Cursor, _name)))
 os.environ.setdefault("JWT_SECRET", "test-secret-scan-concurrency")
 os.environ.setdefault("DISABLE_SEED", "1")
 
