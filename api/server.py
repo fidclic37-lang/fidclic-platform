@@ -104,12 +104,50 @@ MONGODB_URI = os.environ.get("MONGODB_URI", "")
 from services import server_timing as _ST  # noqa: E402
 _ST.install_listener()
 
-if MONGODB_URI:
-    client = pymongo.MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000, tz_aware=True)
-    db = client.fidelitour_db
-else:
-    client = pymongo.MongoClient(tz_aware=True)
-    db = client.fidelitour_db
+# Small pool per Vercel instance (outage 2026-11-03: Atlas M0 at 502/500
+# connections, the primary refused new ones and every login failed).
+# pymongo's default is 100 connections per client and idle ones are never
+# closed, so five or six warm instances filled the free cluster on their own.
+MONGO_CLIENT_OPTIONS = dict(
+    serverSelectionTimeoutMS=5000,
+    maxPoolSize=10,           # per instance: 50 instances before M0's 500
+    minPoolSize=0,
+    maxIdleTimeMS=30_000,     # idle sockets are handed back to Atlas
+    waitQueueTimeoutMS=10_000,  # a full pool fails fast instead of hanging
+    connectTimeoutMS=5000,
+    appname="fidclic-api",
+    tz_aware=True,
+)
+
+
+def make_client(uri):
+    """The one MongoClient of this process, always with MONGO_CLIENT_OPTIONS."""
+    if uri:
+        return pymongo.MongoClient(uri, **MONGO_CLIENT_OPTIONS)
+    return pymongo.MongoClient(**MONGO_CLIENT_OPTIONS)
+
+
+client = make_client(MONGODB_URI)
+db = client.fidelitour_db
+
+
+# A database that cannot be reached is an outage, not a bug: every route
+# answers 503 with a sentence people can read (the login page used to turn
+# the 500 into « Email ou mot de passe incorrect »). ConnectionFailure covers
+# ServerSelectionTimeoutError, AutoReconnect, NetworkTimeout and
+# WaitQueueTimeoutError; a query error (OperationFailure) stays a 500.
+from pymongo import errors as _mongo_errors  # noqa: E402
+from fastapi.responses import JSONResponse as _JSONResponse  # noqa: E402
+
+DB_UNAVAILABLE_DETAIL = "Service momentanément indisponible, réessayez dans quelques minutes."
+
+
+@app.exception_handler(_mongo_errors.ConnectionFailure)
+async def _database_unavailable(request: Request, exc: Exception):
+    import logging
+    logging.getLogger("fidclic.db").warning("database unreachable on %s: %s", request.url.path, type(exc).__name__)
+    return _JSONResponse(status_code=503, content={"detail": DB_UNAVAILABLE_DETAIL, "code": "db_unavailable"},
+                         headers={"Retry-After": "30"})
 
 # The same document is not fetched twice in one request (services/doc_cache,
 # 2026-10-14): a scan read the tenant six times and the card template five.

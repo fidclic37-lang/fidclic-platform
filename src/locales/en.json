@@ -129,6 +129,7 @@
     "terms_suffix": "of FidClic.",
     "terms_required": "You must accept the Terms of Service, the Privacy Policy and the DPA.",
     "invalid_credentials": "Incorrect email or password.",
+    "service_unavailable": "Service temporarily unavailable, please try again in a few minutes.",
     "optional": "optional"
   },
   "join": {
