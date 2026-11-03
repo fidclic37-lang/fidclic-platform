@@ -165,6 +165,7 @@ def _sent_in(tid: str, start: datetime, end: datetime, scope: "S.Scope", mine: O
 
 @router.get("/api/owner/home/campaigns")
 def campaign_lists(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
+                   date_from: Optional[str] = None, date_to: Optional[str] = None,
                    token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """The four cards of « Performance des campagnes », opened (user,
     2026-10-23: a click opened the Campagnes page instead of what the card
@@ -173,7 +174,8 @@ def campaign_lists(request: Request = None, days: int = Query(30, ge=1, le=P.MAX
     from services import campaign_figures as CF
     tid = token_data.tenant_id
     scope = S.resolve(token_data, request)
-    start, end = _window(P.clamp_days(days))
+    span = P.span(P.clamp_days(days), date_from, date_to, _now())
+    start, end = span.start, span.end
     mine = None if scope.is_all else S.customer_ids(scope)
     sent = sorted(_sent_in(tid, start, end, scope, mine), key=lambda c: _aware(c.get("sent_at")) or start, reverse=True)
     att = CF.attribution(_db, tid, sent, S.visit_filter(scope), detail=True)
@@ -214,15 +216,16 @@ def campaign_lists(request: Request = None, days: int = Query(30, ge=1, le=P.MAX
 
 @router.get("/api/owner/home/overview")
 def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
+             date_from: Optional[str] = None, date_to: Optional[str] = None,
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
-    scope = S.resolve(token_data, request)
     at = _now()
-    days = P.clamp_days(days)
-    start, end = _window(days)
-    span = end - start
-    prev_end = start - timedelta(microseconds=1)
-    prev_start = prev_end - span
+    # a calendar period (a month, a date, a range) or the days back from today
+    period = P.span(P.clamp_days(days), date_from, date_to, at)
+    scope = S.resolve(token_data, request)
+    days = period.days
+    start, end = period.start, period.end
+    prev_start, prev_end = period.prev_start, period.prev_end
 
     tenant = _db.tenants.find_one({"id": tid}) or {}
     # The period, the one before and the month: finished days from the
@@ -381,6 +384,7 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
     RJ.attach(tid, recos)
     return {
         "from": start.isoformat(), "to": end.isoformat(), "days": days,
+        "date_from": period.date_from, "date_to": period.date_to,
         "scope": scope.describe(),
         "shop": {"name": tenant.get("name") or "votre commerce", "city": tenant.get("city") or ""},
         "cards": cards, "goal": goal, "impact": impact,

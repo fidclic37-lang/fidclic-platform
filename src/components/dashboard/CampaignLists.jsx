@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Loader2, Send, Users, MousePointerClick, ShoppingCart } from 'lucide-react';
 import { ownerAPI } from '../../lib/api';
 import { eur } from '../../lib/money';
+import { periodParams } from '../../lib/period';
 
 /*
  * « Performance des campagnes », opened (user, 2026-10-23: a card opened the
@@ -25,17 +26,17 @@ const nf = (n) => Number(n || 0).toLocaleString('fr-FR');
 const day = (iso) => { try { return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }); } catch { return ''; } };
 const dayTime = (iso) => { try { return new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
-export default function CampaignLists({ days, start = 'campaigns', onClose, onOpenCampaign, onOpenClient }) {
+export default function CampaignLists({ period, start = 'campaigns', onClose, onOpenCampaign, onOpenClient }) {
   const [tab, setTab] = useState(start);
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => {
     let alive = true;
-    ownerAPI.homeCampaigns({ days })
+    ownerAPI.homeCampaigns(periodParams(period))
       .then(({ data }) => { if (alive) setD(data); })
       .catch((e) => { if (alive) setErr(e?.response?.data?.detail || 'Impossible de charger le détail.'); });
     return () => { alive = false; };
-  }, [days]);
+  }, [period]);
   useEffect(() => {
     const esc = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', esc);

@@ -287,16 +287,18 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the page names itself above the greeting, as the design does",
           "Tableau de bord\n          </p>" in src)
 
-    check("the period survives a reload", "localStorage.setItem('fidclic:dh_days'" in src)
+    # one period for the Tableau de bord and Analyses (lib/period, 2026-11-03)
+    check("the period survives a reload, shared with Analyses", "savePeriod(value)" in src and "readPeriod()" in src)
     check("and travels in the URL, so a shared link shows the same thing",
-          "url.searchParams.set('days'" in src)
+          "url.searchParams.set('period'" in src)
     check("a period that is not valid never reaches the API",
-          "validPeriod(next) ? String(next) : '30'" in src)
+          "validPeriod(next) ? String(next) : readPeriod('')" in src)
     check("every picker on the page reads the same value",
           src.count("RangePicker value={period} onChange={setDays}") == 3)
-    menu = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "components", "PeriodMenu.jsx")).read()
+    menu = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "lib", "period.js")).read()
     check("the menu offers « Aujourd'hui » and a period of one's own",
-          "label: \"Aujourd'hui\"" in menu and "Personnalisé" in menu)
+          "label: \"Aujourd'hui\"" in menu and "Personnalisé" in open(os.path.join(
+              os.path.dirname(__file__), "..", "..", "src", "components", "PeriodMenu.jsx")).read())
     check("a typed period is capped at two years, as the API is",
           "MAX_DAYS = 730" in menu and "MAX_MONTHS = 24" in menu)
 

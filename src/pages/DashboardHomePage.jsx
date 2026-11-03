@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
-import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
+import PeriodMenu, { periodParams, readPeriod, savePeriod, validPeriod } from '../components/PeriodMenu';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
 import TrendChart from '../components/TrendChart';
@@ -214,32 +214,24 @@ const GoalModal = ({ current, onClose, onSaved }) => {
 export default function DashboardHomePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  // The period survives a reload and travels in the URL, so a merchant who
-  // works on 90 days does not land back on 30 every morning, and a link they
-  // send shows what they were looking at. Only a valid period is accepted —
-  // « Aujourd'hui », a preset, or one typed up to two years (?days=99999 never
-  // reaches the API).
-  const [period, setPeriodState] = useState(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get('days');
-    if (validPeriod(fromUrl)) return fromUrl;
-    try {
-      const stored = localStorage.getItem('fidclic:dh_days');
-      if (validPeriod(stored)) return stored;
-    } catch (_e) { /* private window — fall through to the default */ }
-    return '30';
-  });
-  const days = periodDays(period);
+  // One period for the Tableau de bord and Analyses (lib/period): the link's,
+  // else the one chosen this month on either page, else « Ce mois-ci » — a
+  // new month opens on the new month (user, 2026-11-03). Only a valid period
+  // is accepted (?days=99999 never reaches the API).
+  const [period, setPeriodState] = useState(() => readPeriod());
+  const params = useMemo(() => periodParams(period), [period]);
   // « Performance des campagnes »: a card opens what it counts, a campaign its detail (2026-10-23)
   const [campLists, setCampLists] = useState(null);
   const [campaignOf, setCampaignOf] = useState(null);
 
   const setDays = useCallback((next) => {
-    const value = validPeriod(next) ? String(next) : '30';
+    const value = validPeriod(next) ? String(next) : readPeriod('');
     setPeriodState(value);
-    try { localStorage.setItem('fidclic:dh_days', value); } catch (_e) { /* ignore */ }
+    savePeriod(value);
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('days', value);
+      url.searchParams.delete('days');
+      url.searchParams.set('period', value);
       window.history.replaceState({}, '', url);
     } catch (_e) { /* ignore */ }
   }, []);
@@ -251,11 +243,11 @@ export default function DashboardHomePage() {
 
   const load = useCallback(() => {
     setLoading(true); setError('');
-    ownerAPI.homeOverview({ days })
+    ownerAPI.homeOverview(params)
       .then(({ data }) => setD(data))
       .catch((e) => setError(e?.response?.data?.detail || 'Impossible de charger le tableau de bord.'))
       .finally(() => setLoading(false));
-  }, [days]);
+  }, [params]);
   useEffect(() => { load(); }, [load]);
 
   const firstName = useMemo(() => {
@@ -280,7 +272,7 @@ export default function DashboardHomePage() {
   return (
     <div className="dh">
       {campLists && (
-        <CampaignLists days={days} start={campLists} onClose={() => setCampLists(null)}
+        <CampaignLists period={period} start={campLists} onClose={() => setCampLists(null)}
                        onOpenCampaign={(id) => setCampaignOf(id)}
                        onOpenClient={(cid) => navigate(`/dashboard/customers?segment=${encodeURIComponent(`client:${cid}`)}`)} />
       )}
