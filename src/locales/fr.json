@@ -129,6 +129,7 @@
     "terms_suffix": "de FidClic.",
     "terms_required": "Vous devez accepter les Conditions Générales, la Politique de Confidentialité et le DPA.",
     "invalid_credentials": "Email ou mot de passe incorrect.",
+    "service_unavailable": "Service momentanément indisponible, réessayez dans quelques minutes.",
     "optional": "optionnel"
   },
   "join": {

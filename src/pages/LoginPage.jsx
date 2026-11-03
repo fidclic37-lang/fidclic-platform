@@ -52,8 +52,12 @@ const LoginPage = () => {
       const res = await login(form);
       routeAfterAuth(navigate, res);
     } catch (err) {
+      // No answer, or a 5xx (database down, Vercel timeout): an outage, never
+      // « mot de passe incorrect » — that is what people saw on 2026-11-03.
+      const status = err?.response?.status;
       const detail = err?.response?.data?.detail;
-      setError(detail && detail !== 'Incorrect credentials' ? detail : t('auth.invalid_credentials'));
+      if (!err?.response || status >= 500) setError(t('auth.service_unavailable'));
+      else setError(detail && detail !== 'Incorrect credentials' ? detail : t('auth.invalid_credentials'));
     } finally {
       setLoading(false);
     }
