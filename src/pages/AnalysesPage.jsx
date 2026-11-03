@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, Users, Activity, Send, Crown, AlertTriangle, ShoppingBag,
@@ -7,7 +7,7 @@ import {
   FlaskConical,
 } from 'lucide-react';
 import { ownerAPI } from '../lib/api';
-import PeriodMenu, { periodDays, validPeriod } from '../components/PeriodMenu';
+import PeriodMenu, { periodParams, readPeriod, savePeriod, validPeriod } from '../components/PeriodMenu';
 import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
@@ -685,7 +685,6 @@ const RENDERERS = {
 };
 
 /* ── page ─────────────────────────────────────────────────────────────── */
-const PERIOD_KEY = 'fidclic:an_period';
 
 export default function AnalysesPage() {
   const navigate = useNavigate();
@@ -701,24 +700,20 @@ export default function AnalysesPage() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // The period: « Aujourd'hui », a preset, or one the merchant typed — kept
-  // for the next visit.
-  const [period, setPeriodState] = useState(() => {
-    // The Tableau de bord sends its own period along (« Impact FidClic »).
-    const fromUrl = new URLSearchParams(window.location.search).get('period');
-    if (validPeriod(fromUrl)) return fromUrl;
-    try {
-      const stored = localStorage.getItem(PERIOD_KEY);
-      if (validPeriod(stored)) return stored;
-    } catch (_e) { /* private window */ }
-    return '30';
-  });
+  // One period for Analyses and the Tableau de bord (lib/period): the link's
+  // (the Tableau de bord sends its own along, « Impact FidClic »), else the
+  // one chosen this month on either page, else « Ce mois-ci » (2026-11-03).
+  const [period, setPeriodState] = useState(() => readPeriod());
   const setPeriod = useCallback((token) => {
-    const next = validPeriod(token) ? token : '30';
+    const next = validPeriod(token) ? token : readPeriod('');
     setPeriodState(next);
-    try { localStorage.setItem(PERIOD_KEY, next); } catch (_e) { /* ignore */ }
+    savePeriod(next);
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('period')) { url.searchParams.set('period', next); window.history.replaceState({}, '', url); }
+    } catch (_e) { /* ignore */ }
   }, []);
-  const days = periodDays(period);
+  const params = useMemo(() => periodParams(period), [period]);
   const [payload, setPayload] = useState(null);
   const [tabs, setTabs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -727,17 +722,17 @@ export default function AnalysesPage() {
 
   const load = useCallback(() => {
     setLoading(true); setError('');
-    ownerAPI.analyses({ tab, days })
+    ownerAPI.analyses({ tab, ...params })
       .then(({ data }) => { setPayload(data); if (data.tabs) setTabs(data.tabs); })
       .catch((e) => setError(e?.response?.data?.detail || 'Impossible de charger les analyses.'))
       .finally(() => setLoading(false));
-  }, [tab, days]);
+  }, [tab, params]);
   useEffect(() => { load(); }, [load]);
 
   const exportCsv = async () => {
     setExporting(true);
     try {
-      const { data: blob } = await ownerAPI.analysesExport({ days });
+      const { data: blob } = await ownerAPI.analysesExport(params);
       const url = URL.createObjectURL(new Blob([blob], { type: 'text/csv;charset=utf-8' }));
       const a = document.createElement('a');
       a.href = url; a.download = `fidclic-analyses-${new Date().toISOString().slice(0, 10)}.csv`;

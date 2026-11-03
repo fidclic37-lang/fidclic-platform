@@ -1,66 +1,35 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CalendarDays, Check, ChevronDown, Loader2 } from 'lucide-react';
+import {
+  MAX_DAYS, MAX_MONTHS, PRESETS, periodLabel, months, rangeError, today, oldest, lastParts,
+} from '../lib/period';
 
 /**
- * The period a page reads its figures over — Tableau de bord and Analyses.
- *
- * A period is a short token, so it fits in the URL and in localStorage:
- *   '1' '7' '30' '90' '365'  the offered ones (« Aujourd'hui » is '1')
- *   '45d' / '6m'             one the merchant typed, in days or in months
- * `periodDays(token)` turns it into the `days` the API reads; a month is a
- * calendar month (6 mois back from today), not 30 days.
- *
- * The API reaches back two years: 730 jours, 24 mois.
+ * The period menu of the Tableau de bord and Analyses: the presets, « Ce
+ * mois-ci », a whole month, one date, a from–to range, and the last N days or
+ * months typed by hand (user, 2026-11-03). The tokens, their labels and what
+ * the API reads live in lib/period.js.
  */
-export const MAX_DAYS = 730;
-export const MAX_MONTHS = 24;
+export {
+  MAX_DAYS, MAX_MONTHS, PRESETS, validPeriod, periodDays, periodLabel, periodParams, readPeriod, savePeriod,
+} from '../lib/period';
 
-export const PRESETS = [
-  { key: '1', label: "Aujourd'hui" },
-  { key: '7', label: '7 derniers jours' },
-  { key: '30', label: '30 derniers jours' },
-  { key: '90', label: '90 derniers jours' },
-  { key: '365', label: '12 derniers mois' },
-];
-
-const parse = (token) => {
-  const m = /^(\d+)([dm]?)$/.exec(String(token ?? '').trim());
-  if (!m) return null;
-  const n = Number(m[1]);
-  const unit = m[2] || 'd';
-  if (!n || n < 1) return null;
-  if (unit === 'd' && n > MAX_DAYS) return null;
-  if (unit === 'm' && n > MAX_MONTHS) return null;
-  return { n, unit, preset: !m[2] && PRESETS.some((p) => p.key === String(n)) };
-};
-
-export const validPeriod = (token) => parse(token) !== null;
-
-export function periodDays(token) {
-  const p = parse(token);
-  if (!p) return 30;
-  if (p.unit === 'd') return p.n;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const from = new Date(today);
-  from.setMonth(from.getMonth() - p.n);
-  return Math.min(MAX_DAYS, Math.max(1, Math.round((today - from) / 86400000)));
-}
-
-export function periodLabel(token) {
-  const p = parse(token);
-  if (!p) return '30 derniers jours';
-  if (p.preset) return PRESETS.find((x) => x.key === String(p.n)).label;
-  if (p.unit === 'm') return p.n === 1 ? 'Le dernier mois' : `${p.n} derniers mois`;
-  return p.n === 1 ? "Aujourd'hui" : `${p.n} derniers jours`;
-}
+const section = (on) => `mb-2 flex items-center justify-between text-[11.5px] font-semibold uppercase tracking-wide ${on ? 'text-[#2F6BFF]' : 'text-[#94A3B8]'}`;
+const field = 'min-w-0 rounded-lg border border-[#E6EEFB] bg-white px-2 py-1.5 text-[13px] text-[#334155] outline-none focus:border-[#2F6BFF]';
+const go = 'mt-2 w-full rounded-lg bg-[#2F6BFF] py-1.5 text-[12.5px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-50';
 
 export default function PeriodMenu({ value, onChange, busy = false, lead = false }) {
   const [open, setOpen] = useState(false);
-  const cur = parse(value);
+  const cur = lastParts(value);
   const [n, setN] = useState(cur && !cur.preset ? String(cur.n) : '');
   const [unit, setUnit] = useState(cur && !cur.preset ? cur.unit : 'd');
   const [err, setErr] = useState('');
+  const kind = /^[mdr]\d/.test(value || '') ? value[0] : '';
+  const [day, setDay] = useState(kind === 'd' ? value.slice(1) : '');
+  const [from, setFrom] = useState(kind === 'r' ? value.slice(1, 11) : '');
+  const [to, setTo] = useState(kind === 'r' ? value.slice(12) : '');
+  const [rangeErr, setRangeErr] = useState('');
+  const [dayErr, setDayErr] = useState('');
   const box = useRef(null);
   const menu = useRef(null);
   // which edge of the button the menu hangs from: the right one by default,
@@ -95,7 +64,22 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
     pick(token);
   };
 
+  const showDay = (e) => {
+    e.preventDefault();
+    const why = rangeError(day, day);
+    if (why) { setDayErr(why === 'Choisissez une date de début et une date de fin.' ? 'Choisissez une date.' : why); return; }
+    pick(`d${day}`);
+  };
+  const showRange = (e) => {
+    e.preventDefault();
+    const why = rangeError(from, to);
+    if (why) { setRangeErr(why); return; }
+    pick(from === to ? `d${from}` : `r${from}_${to}`);
+  };
   const custom = cur && !cur.preset;
+  const max = today();
+  const min = oldest();
+  const monthList = months();
   return (
     <div ref={box} className="relative">
       <button type="button" disabled={busy} onClick={() => setOpen((o) => !o)}
@@ -111,7 +95,7 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
 
       {open && (
         <div role="listbox" ref={menu}
-             className={`absolute ${side === 'left' ? 'left-0' : 'right-0'} z-30 mt-2 w-[264px] max-w-[calc(100vw-24px)] rounded-2xl border border-[#E6EEFB] bg-white p-1.5 text-left shadow-[0_24px_48px_-20px_rgba(11,28,63,.35)]`}>
+             className={`absolute ${side === 'left' ? 'left-0' : 'right-0'} z-30 mt-2 max-h-[min(78vh,640px)] w-[264px] max-w-[calc(100vw-24px)] overflow-y-auto overscroll-contain rounded-2xl border border-[#E6EEFB] bg-white p-1.5 text-left shadow-[0_24px_48px_-20px_rgba(11,28,63,.35)]`}>
           {PRESETS.map((p) => {
             const on = value === p.key;
             return (
@@ -122,8 +106,36 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
               </button>
             );
           })}
-          <form onSubmit={apply} className="mt-1.5 border-t border-[#EEF3FB] px-2 pb-1.5 pt-2.5">
-            <p className={`mb-2 flex items-center justify-between text-[11.5px] font-semibold uppercase tracking-wide ${custom ? 'text-[#2F6BFF]' : 'text-[#94A3B8]'}`}>
+          <div className="mt-1.5 border-t border-[#EEF3FB] px-2 pb-1.5 pt-2.5">
+            <label htmlFor="period-month" className={section(kind === 'm')}>Un mois {kind === 'm' && <Check size={13} />}</label>
+            <select id="period-month" aria-label="Un mois" value={kind === 'm' ? value : ''}
+                    onChange={(e) => e.target.value && pick(e.target.value)} className={`${field} w-full`}>
+              <option value="">Choisir un mois…</option>
+              {monthList.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+            </select>
+          </div>
+          <form onSubmit={showDay} className="border-t border-[#EEF3FB] px-2 pb-1.5 pt-2.5">
+            <label htmlFor="period-day" className={section(kind === 'd')}>Une date {kind === 'd' && <Check size={13} />}</label>
+            <input id="period-day" type="date" lang="fr" aria-label="Une date" value={day} min={min} max={max}
+                   onChange={(e) => { setDayErr(''); setDay(e.target.value); }} className={`${field} w-full`} />
+            {dayErr && <p className="mt-1.5 text-[11.5px] text-[#C0392B]">{dayErr}</p>}
+            <button type="submit" disabled={!day} className={go}>Voir ce jour</button>
+          </form>
+          <form onSubmit={showRange} className="border-t border-[#EEF3FB] px-2 pb-1.5 pt-2.5">
+            <p className={section(kind === 'r')}>Du … au … {kind === 'r' && <Check size={13} />}</p>
+            <div className="grid grid-cols-[auto_1fr] items-center gap-x-1.5 gap-y-1.5">
+              <span className="text-[12.5px] text-[#64748B]">Du</span>
+              <input type="date" lang="fr" aria-label="Du" value={from} min={min} max={max}
+                     onChange={(e) => { setRangeErr(''); setFrom(e.target.value); }} className={field} />
+              <span className="text-[12.5px] text-[#64748B]">Au</span>
+              <input type="date" lang="fr" aria-label="Au" value={to} min={min} max={max}
+                     onChange={(e) => { setRangeErr(''); setTo(e.target.value); }} className={field} />
+            </div>
+            {rangeErr && <p className="mt-1.5 text-[11.5px] text-[#C0392B]">{rangeErr}</p>}
+            <button type="submit" disabled={!from || !to} className={go}>Voir la période</button>
+          </form>
+          <form onSubmit={apply} className="border-t border-[#EEF3FB] px-2 pb-1.5 pt-2.5">
+            <p className={section(custom)}>
               Personnalisé {custom && <Check size={13} />}
             </p>
             <div className="flex items-center gap-1.5">
@@ -139,8 +151,7 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
               </select>
             </div>
             {err && <p className="mt-1.5 text-[11.5px] text-[#C0392B]">{err}</p>}
-            <button type="submit" disabled={!n}
-                    className="mt-2 w-full rounded-lg bg-[#2F6BFF] py-1.5 text-[12.5px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-50">
+            <button type="submit" disabled={!n} className={go}>
               Appliquer
             </button>
           </form>

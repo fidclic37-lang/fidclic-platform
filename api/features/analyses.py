@@ -130,15 +130,17 @@ def _days(value: Any, fallback: int = 30) -> int:
 class Reader:
     """One trip to the database per request, shared by whichever tab asked."""
 
-    def __init__(self, tid: str, days: int, scope: Optional["S.Scope"] = None):
-        days = _days(days)
-        self.tid, self.days, self.at = tid, days, _now()
+    def __init__(self, tid: str, days: int, scope: Optional["S.Scope"] = None,
+                 span: Optional["P.Span"] = None):
+        # A calendar period (a month, a date, a range — period.span) or the
+        # `days` back from today, with the period it is compared with.
+        self.at = _now()
+        span = span or P.span(_days(days), now=self.at)
+        self.tid, self.days, self.span = tid, span.days, span
         self.scope = scope
         self.mine = S.customer_ids(scope) if scope else None
-        self.start, self.end = _window(days)
-        span = self.end - self.start
-        self.prev_end = self.start - timedelta(microseconds=1)
-        self.prev_start = self.prev_end - span
+        self.start, self.end = span.start, span.end
+        self.prev_start, self.prev_end = span.prev_start, span.prev_end
         self._totals = None
 
     def totals(self):
@@ -719,19 +721,23 @@ BUILDERS = {
 
 @router.get("/api/owner/analyses")
 def analyses(request: Request = None, tab: str = "vue", days: int = Query(30, ge=1, le=P.MAX_DAYS),
+             date_from: Optional[str] = None, date_to: Optional[str] = None,
              token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     key = tab if tab in BUILDERS else "vue"
-    r = Reader(token_data.tenant_id, days, S.resolve(token_data, request))
+    span = P.span(days, date_from, date_to, _now())
+    r = Reader(token_data.tenant_id, days, S.resolve(token_data, request), span)
     return {"tab": key, "days": r.days, "tabs": TABS,
             "from": r.start.isoformat(), "to": r.end.isoformat(),
+            "date_from": span.date_from, "date_to": span.date_to,
             "data": BUILDERS[key](r), "scope": r.scope.describe()}
 
 
 @router.get("/api/owner/analyses/export")
 def export_analyses(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS),
+                    date_from: Optional[str] = None, date_to: Optional[str] = None,
                     token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     """The overview's figures, day by day, as a CSV."""
-    r = Reader(token_data.tenant_id, days, S.resolve(token_data, request))
+    r = Reader(token_data.tenant_id, days, S.resolve(token_data, request), P.span(days, date_from, date_to, _now()))
     vue = _tab_vue(r)
     buf = io.StringIO()
     w = safe_csv.writer(buf)
