@@ -76,7 +76,8 @@ MODULES = [
     "features.analyses",
     # Produits qui font revenir — which products bring clients back (weekly, in ai_jobs).
     "features.ai_meter",
-    "features.learning_log",           # every IA text and what the owner did with it (2026-11-02)               # every model call billed + the limits (2026-11-01)
+    "features.learning_log",
+    "features.golden_set",             # ~250 known questions on demo shops, graded at 100 % (2026-11-03)           # every IA text and what the owner did with it (2026-11-02)               # every model call billed + the limits (2026-11-01)
     "features.product_actions",        # what to do with it: One-shot → Aimant, new clients (no router)
     "features.product_return",
     # Tableau de bord — the home page's eleven panels, read off one month of

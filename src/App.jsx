@@ -164,6 +164,7 @@ const AiPrecisionPage = lazyPage(() => import('./pages/admin/ai/AiPrecisionPage'
 const AiRecosPage = lazyPage(() => import('./pages/admin/ai/AiRecosPage'));
 const AiCostsPage = lazyPage(() => import('./pages/admin/ai/AiCostsPage'));
 const AiLearningPage = lazyPage(() => import('./pages/admin/ai/AiLearningPage'));
+const GoldenSetPage = lazyPage(() => import('./pages/admin/ai/GoldenSetPage'));
 // Removed from the super admin (2026-09-30): import AdminCampaignsPage from './pages/AdminCampaignsPage';
 // Rollback: the previous Insights page — import AdminInsightsPage from './pages/AdminInsightsPage';
 const AdminInsightsBoard = lazyPage(() => import('./pages/admin/InsightsPage'));
@@ -579,6 +580,7 @@ function App() {
             <Route path="ai/precision" element={<AdminGate><AiPrecisionPage /></AdminGate>} />
             <Route path="ai/couts" element={<AdminGate><AiCostsPage /></AdminGate>} />
             <Route path="ai/apprentissage" element={<AdminGate><AiLearningPage /></AdminGate>} />
+            <Route path="ai/golden-set" element={<AdminGate><GoldenSetPage /></AdminGate>} />
             <Route path="ai/recommandations" element={<AdminGate><AiRecosPage /></AdminGate>} />
             {/* CRM de prospection */}
             <Route path="crm" element={<AdminGate><CrmOverviewPage /></AdminGate>} />
