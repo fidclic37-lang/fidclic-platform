@@ -435,6 +435,8 @@ export const adminAPI = {
   aiCostsSettings: (body) => api.put('/admin/ai/costs/settings', body),
   // Super admin › FIDCLIC AI › Apprentissage (learning log, 2026-11-02)
   aiLearning: () => api.get('/admin/ai/learning'),
+  aiGolden: () => api.get('/admin/ai/golden'),
+  aiGoldenRun: () => api.post('/admin/ai/golden/run', {}),
   aiLearningExport: (label) => api.get('/admin/ai/learning/export.jsonl', { params: { label }, responseType: 'blob' }),
   // Super admin › FIDCLIC AI › Recommandations (journal of ideas, 2026-10-29)
   aiRecos: (days) => api.get('/admin/ai/recos', { params: { days } }),
