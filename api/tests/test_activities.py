@@ -67,7 +67,7 @@ def main():
           and V2.sector_prior({"sector": "retail", "activity_key": "opticien"})[0] == 180.0)
     db.tenants.insert_one({"id": "t1", "name": "RT", "sector": "salon", "activity_key": "barbier"})
     check("the shop's own brain-v2 prior reads its activity", CB.prior_for("t1", 2) == (21.0, "secteur"))
-    check("v1 is left as it shipped (salon: 35 days)", CB.prior_for("t1", 1) == (35.0, "secteur"))
+    check("v1 starts from the same place since 2026-11-04", CB.prior_for("t1", 1) == (21.0, "secteur"))
 
     print("Établissement")
     db.users.insert_one({"email": "o@x.fr", "role": "business_owner", "tenant_id": "t1", "active": True})

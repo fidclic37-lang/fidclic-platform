@@ -9,11 +9,12 @@ nothing else, so the journal can tell which one helped:
 
 1. THE USUAL RHYTHM COMES FROM THE NETWORK
    A client with few visits is still pulled to a usual rhythm (v1's
-   shrinkage), but before the shop has 10 regulars of its own, that rhythm is
-   what FidClic learned from every shop of the same ACTIVITY (Barbier, CBD,
-   Opticien… — services/activities) — the median rhythm of their regulars —
-   and, until 30 such regulars exist, the activity's researched figure
-   (a barber 21 days, a « coiffure femme » 56, a tabac 2, an opticien 180).
+   shrinkage), but before the shop has its own (client_brain.usual_gap), that
+   rhythm is what FidClic learned from every shop of the same ACTIVITY
+   (Barbier, CBD, Opticien… — services/activities) — the median rhythm of the
+   clients who came back — weighed against the activity's researched figure (a
+   barber 21 days, a « coiffure femme » 56, a tabac 2, an opticien 180), from
+   the network's first client (user, 2026-11-04: no waiting for 30 regulars).
 
 2. THE WINDOW IS LEARNED, NOT ASSUMED (user: « 10 mein 7 baar sahi »)
    For every past prediction, how far the real return fell from the rhythm,
@@ -54,7 +55,7 @@ from features import client_brain as CB
 MODEL = "brain-v2"
 LOW_Q, MID_Q, HIGH_Q = 0.15, 0.50, 0.85      # 7 returns in 10 between LOW and HIGH
 BUCKET_MIN_ROWS = 40                         # fewer: the coarser group answers
-PRIOR_MIN_CLIENTS = 30                       # a sector's network rhythm needs this many regulars
+NET_WEIGHT = 10                              # the researched figure counts as this many clients
 LEARN_EVERY = timedelta(hours=24)
 CACHE_TTL_S = 600
 
@@ -168,21 +169,26 @@ def _keys(tenant: Dict[str, Any]) -> Tuple[str, str, bool]:
 def sector_prior(tenant: Any, priors: Optional[Dict[str, Any]] = None) -> Tuple[float, str]:
     """The usual rhythm a shop starts from (services/activities, user
     2026-10-25: one per trade, researched):
-        a precise activity (Barbier, CBD, Opticien…): what the network learned
-        for that activity (PRIOR_MIN_CLIENTS regulars), else its researched figure;
-        only a sector: what the network learned for the sector, else the
-        researched figure of the sector's most common trade."""
+        a precise activity (Barbier, CBD, Opticien…): its researched figure,
+        moved by what the network learned for that activity;
+        only a sector: the researched figure of the sector's most common trade,
+        moved by what the network learned for the sector.
+    The more clients the network has, the less the research weighs (NET_WEIGHT)."""
     from services import activities as A
     tenant = tenant if isinstance(tenant, dict) else {"sector": tenant}
     act, sec, precise = _keys(tenant)
     if priors is None:
         doc = _doc()
         priors = (doc or {}).get("priors") or {}
-    for key in ((f"a:{act}",) if precise else (f"s:{sec}",)):
-        p = priors.get(key)
-        if p and int(p.get("clients") or 0) >= PRIOR_MIN_CLIENTS:
-            return float(p["gap"]), "reseau"
-    return float(A.BY_KEY[act]["gap"]), "secteur"
+    researched = float(A.BY_KEY[act]["gap"])
+    p = priors.get(f"a:{act}" if precise else f"s:{sec}") or {}
+    try:
+        gap, clients = float(p.get("gap") or 0), int(p.get("clients") or 0)
+    except (TypeError, ValueError):
+        gap, clients = 0.0, 0
+    if gap <= 0 or clients <= 0:
+        return researched, "secteur"
+    return round((clients * gap + NET_WEIGHT * researched) / (clients + NET_WEIGHT), 1), "reseau"
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +226,7 @@ def _day_ends(visits: List[Dict[str, Any]]) -> List[int]:
 
 def _own_gap(visits: List[Dict[str, Any]]) -> Optional[float]:
     ends = _day_ends(visits)
-    if len(ends) < CB.RHYTHM_MIN_VISITS:
+    if len(ends) < 2:                              # came back once is enough to count (2026-11-04)
         return None
     days = [visits[i]["visit_time"] for i in ends]
     gaps = [CB._days(days[i - 1], days[i]) for i in range(1, len(days))][-CB.RECENT_GAPS:]
@@ -228,7 +234,7 @@ def _own_gap(visits: List[Dict[str, Any]]) -> Optional[float]:
 
 
 def _priors(rhythms: Dict[str, Dict[str, List[float]]], skip: Optional[str] = None) -> Dict[str, Any]:
-    """Per sector: the median rhythm of its regulars, other shops than `skip`."""
+    """Per sector: the median rhythm of the clients who came back, other shops than `skip`."""
     out: Dict[str, Any] = {}
     for key, shops in rhythms.items():
         vals = [g for tid, gs in shops.items() if tid != skip for g in gs]

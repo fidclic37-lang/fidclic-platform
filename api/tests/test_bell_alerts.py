@@ -45,7 +45,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     now = dt.datetime.now(dt.timezone.utc)
     ago = lambda d: now - dt.timedelta(days=d)
 
-    db.tenants.insert_one({"id": "t1", "name": "Café Lumière", "sector": "cafe", "plan": "gold",
+    db.tenants.insert_one({"id": "t1", "name": "Café Lumière", "sector": "patisserie", "plan": "gold",
                            "subscription_status": "active", "created_at": ago(400),
                            "branches": [{"id": "b1", "name": "Centre"}, {"id": "b2", "name": "Plumereau"}]})
     db.users.insert_one({"email": "o@c.fr", "role": "business_owner", "tenant_id": "t1"})

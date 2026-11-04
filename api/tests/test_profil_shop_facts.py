@@ -59,7 +59,7 @@ def main():
         return asyncio.new_event_loop().run_until_complete(run())
 
     for tid in ("t1", "t2"):
-        db.tenants.insert_one({"id": tid, "slug": tid, "name": tid.upper(), "sector": "cafe", "plan": "vip",
+        db.tenants.insert_one({"id": tid, "slug": tid, "name": tid.upper(), "sector": "patisserie", "plan": "vip",
                                "subscription_status": "active", "is_active": True})
         db.users.insert_one({"email": f"o@{tid}.fr", "role": "business_owner", "tenant_id": tid, "active": True})
 

@@ -56,9 +56,9 @@ def main():
 
     now = dt.datetime.now(UTC).replace(microsecond=0)
     db.tenants.insert_many([
-        {"id": "t1", "slug": "cafe", "name": "Café", "sector": "cafe", "plan": "vip",
+        {"id": "t1", "slug": "cafe", "name": "Café", "sector": "patisserie", "plan": "vip",
          "subscription_status": "active", "is_active": True},
-        {"id": "t2", "slug": "strict", "name": "Strict", "sector": "cafe", "plan": "vip",
+        {"id": "t2", "slug": "strict", "name": "Strict", "sector": "patisserie", "plan": "vip",
          "subscription_status": "active", "is_active": True},
     ])
     db.card_templates.insert_many([{"tenant_id": "t1", "programme": "stamps"}, {"tenant_id": "t2", "programme": "stamps"}])
@@ -81,7 +81,7 @@ def main():
 
     print("La fenêtre « 1ère visite »")
     w = BD.second_visit_window("t1", fresh=True)
-    check("café: from 1.5 × its 7-day rhythm (10.5 days), to the owner's dormant (90)",
+    check("a trade researched at 7 days: from 1.5 × that rhythm (10.5 days), to the owner's dormant (90)",
           w["start"] == 10.5 and w["end"] == 90 and w["by"] == "rythme" and not w["empty"], w)
     rules = R.load("t2")
     next(r for r in rules if r["key"] == "bientot_perdu")["conditions"][0]["value"] = 4
