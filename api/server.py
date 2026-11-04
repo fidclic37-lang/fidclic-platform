@@ -120,6 +120,10 @@ MONGO_CLIENT_OPTIONS = dict(
 )
 
 
+from services import mongo_pool as _mongo_pool  # noqa: E402
+_mongo_pool.install()
+
+
 def make_client(uri):
     """The one MongoClient of this process, always with MONGO_CLIENT_OPTIONS."""
     if uri:
@@ -5678,7 +5682,15 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # going forward (replacing the DEMO data in analyticsExtra.js).
         if resolved_lines:
             visit_doc["items"] = resolved_lines
-        db.visits.insert_one(visit_doc)
+        # A full pool wrote nothing, so trying again cannot make a second row;
+        # the counters are already up, and a lost row would make the figures lie.
+        for _left in (2, 1, 0):
+            try:
+                db.visits.insert_one(visit_doc)
+                break
+            except _mongo_errors.WaitQueueTimeoutError:
+                if not _left:
+                    raise
     except Exception as _e:
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
 

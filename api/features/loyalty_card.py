@@ -103,6 +103,8 @@ def init(db):
     try:
         _db.visits.create_index([("tenant_id", 1), ("visit_time", 1)])
         _db.rewards_redeemed.create_index([("tenant_id", 1), ("redeemed_at", 1)])
+        # « what is waiting for this client? » is asked at every scan and hand-over
+        _db.rewards_earned.create_index([("customer_id", 1), ("status", 1), ("earned_at", 1)])
     except Exception:
         pass
 
