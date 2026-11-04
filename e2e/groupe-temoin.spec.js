@@ -75,9 +75,9 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   await expect(sw).toHaveAttribute('aria-checked', 'true');
 
   // Analyses: « Ce que FidClic vous rapporte vraiment », with how it is computed
-  const shown = page.waitForResponse((r) => r.url().includes('/api/owner/analyses') && r.url().includes('tab=vue') && r.ok(), { timeout: 30_000 });
+  // the figures the page itself was given: it shows this month, not the last 30 days
+  const vueResponse = page.waitForResponse((r) => r.url().includes('/owner/analyses') && r.url().includes('tab=vue'));
   await page.goto('/dashboard/analytics');
-  const vue = (await (await shown).json()).data.impact;   // the page's own period (« Ce mois-ci »), not 30 days
   const panel = page.getByTestId('uplift-panel');
   await expect(panel).toBeVisible({ timeout: 20_000 });
   await panel.getByRole('button', { name: /Comment c'est calculé/ }).click();
@@ -85,6 +85,7 @@ test('the owner is told about the groupe témoin, and can switch it', async ({ p
   await panel.scrollIntoViewIfNeeded();
   await page.screenshot({ path: 'test-results/temoin-analyses.png' });
   // « attendus de toute façon » (2026-10-25): set apart from CA FidClic, said in the panel
+  const vue = (await (await vueResponse).json()).data.impact;
   expect(vue.note).toContain('attendus de toute façon');
   if (vue.attendus?.visits > 0) await expect(page.getByTestId('attendus')).toContainText('Attendus de toute façon');
   await page.locator('#impact').scrollIntoViewIfNeeded();
