@@ -31,6 +31,11 @@ hands over the email and password (no invitation e-mail):
 One can only see, edit, switch off or delete accounts below one's own role
 and inside one's own establishments.
 
+THE STORE OPEN IN THE MENU. Only an owner reaches every establishment here; it
+keeps them all in view, and the invite form alone narrows to the open one. A
+non-owner gets only the open establishment, or all of its own when none is
+open: others are absent from the reply, and a request naming one is refused.
+
 ESTABLISHMENTS are the shop's branches (tenant.branches). A shop without
 branches has one establishment, "main", named after the shop.
 
@@ -47,12 +52,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import auth as auth_mod
 from auth import require_role, TokenData, hash_password
 from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
+from features import store_scope as S
 
 router = APIRouter(tags=["team-access"])
 _db = None
@@ -206,6 +212,29 @@ def assignable(me: Dict[str, Any]) -> List[str]:
     return RP.below(me.get("tenant_id"), RP.my_key(me))
 
 
+def _open_store(request: Optional[Request], me: Dict[str, Any], all_ids: List[str]) -> Optional[str]:
+    """The establishment this request names, in the menu's header or ?store=
+    ("all" names none and never widens one). This page hands out access, so a
+    non-owner naming another establishment is refused rather than sent back to
+    its own (store_scope.resolve), and two at once are refused for anyone."""
+    if request is None:
+        return None
+    named = {v.strip() for v in [*request.headers.getlist(S.HEADER), *request.query_params.getlist("store")]} - {"", S.ALL}
+    if len(named) > 1:
+        raise HTTPException(status_code=400, detail="Choisissez un seul établissement.")
+    sid = next(iter(named), None)
+    if sid is not None and me.get("role") != "business_owner" and sid not in _covered(me, all_ids):
+        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à cet établissement.")
+    return sid if sid in all_ids and len(all_ids) > 1 else None
+
+
+def _reach(me: Dict[str, Any], all_ids: List[str], sel: Optional[str]) -> Optional[List[str]]:
+    """What this account may see and change on this request. None: an owner, everything."""
+    if me.get("role") == "business_owner":
+        return None
+    return [sel] if sel else _covered(me, all_ids)
+
+
 def _can_manage(me: Dict[str, Any], other: Dict[str, Any], all_ids: List[str]) -> bool:
     from features import role_perms as RP
     if other.get("email") == me.get("email") or other.get("role") == "business_owner":
@@ -254,11 +283,18 @@ def _display_name(u: Dict[str, Any]) -> str:
     return re.sub(r"[._-]+", " ", local).strip().title() or "Utilisateur"
 
 
-def _public(u: Dict[str, Any], me: Dict[str, Any], all_ids: List[str], store_names: Dict[str, str]) -> Dict[str, Any]:
+def _within(by_store: Optional[Dict[str, Any]], reach: Optional[List[str]]) -> Optional[Dict[str, Any]]:
+    if by_store is None or reach is None:
+        return by_store
+    return {sid: v for sid, v in by_store.items() if sid in reach}
+
+
+def _public(u: Dict[str, Any], me: Dict[str, Any], all_ids: List[str], store_names: Dict[str, str],
+            reach: Optional[List[str]] = None) -> Dict[str, Any]:
     from features import role_perms as RP
     role = u.get("role")
-    covered = _covered(u, all_ids)
-    eff = RP.effective(u)
+    covered = [b for b in _covered(u, all_ids) if reach is None or b in reach]
+    eff = _within(RP.effective(u), reach)
     perms = [p["label"] for p in RP.PAGES
              if any(RP.RANKV[(lv or {}).get(p["key"], "none")] >= 1 for lv in (eff or {}).values())]
     if role == "business_owner":
@@ -296,7 +332,21 @@ def _find(tid: str, uid: str) -> Dict[str, Any]:
     return u
 
 
-def _payload(token: TokenData) -> Dict[str, Any]:
+def _target(token: TokenData, request: Optional[Request], uid: str,
+            refused: str = "Vous ne pouvez pas modifier ce compte."):
+    """(me, establishments, account, open store) for an action on one account:
+    one this account manages and, for a non-owner, working in the open store."""
+    me = _me(token)
+    all_ids = [s["id"] for s in stores(token.tenant_id)]
+    sel = _open_store(request, me, all_ids)
+    u = _find(token.tenant_id, uid)
+    reach = _reach(me, all_ids, sel)
+    if not _can_manage(me, u, all_ids) or (reach is not None and not set(reach) & set(_covered(u, all_ids))):
+        raise HTTPException(status_code=403, detail=refused)
+    return me, all_ids, u, sel
+
+
+def _payload(token: TokenData, request: Optional[Request] = None) -> Dict[str, Any]:
     me = _me(token)
     tid = token.tenant_id
     st = stores(tid)
@@ -308,19 +358,18 @@ def _payload(token: TokenData) -> Dict[str, Any]:
     # The establishment chosen in the menu (user, 2026-10-14: « jisko jo stores
     # alloted hai, woh keval usi stores k roles and access mein dikhe »): the
     # list, the role counts and the pending invitations are its team — the
-    # owner and the accounts that have it. « Accès par établissement » still
-    # lists everyone (all_users): it is where a store is given or taken.
-    sel = None
-    if len(all_ids) > 1:
-        from features import store_cards as SC
-        sid = SC.store_for(tid)
-        sel = sid if sid in all_ids else None
+    # owner and the accounts that have it. For an owner « Accès par
+    # établissement » still lists everyone (all_users): it is where a store is
+    # given or taken. A non-owner's view stops at what it may reach.
+    sel = _open_store(request, me, all_ids)
+    reach = _reach(me, all_ids, sel)
     shown = [u for u in everyone if sel is None or u.get("role") == "business_owner"
              or u.get("email") == me.get("email") or sel in _covered(u, all_ids)]
-    rows = [_public(u, me, all_ids, names) for u in shown]
-    all_rows = rows if sel is None else [_public(u, me, all_ids, names) for u in everyone]
+    rows = [_public(u, me, all_ids, names, reach) for u in shown]
+    all_rows = rows if sel is None or reach is not None else [_public(u, me, all_ids, names) for u in everyone]
     counts = {r: sum(1 for u in shown if u.get("role") == r) for r in ROLES}
-    mine = _covered(me, all_ids)
+    mine = _covered(me, all_ids) if reach is None else reach
+    in_view = [s for s in st if s["id"] in mine]
     from features import role_perms as RP
     tpls = RP.templates(tid)
     custom_counts: Dict[str, int] = {}
@@ -335,10 +384,12 @@ def _payload(token: TokenData) -> Dict[str, Any]:
                "assignable_roles": assignable(me), "manageable_roles": RP.manageable_roles(me),
                "scope": scope_of(me),
                # what the creator may hand out (an account never gets more), None: everything
-               "perms": RP.effective(me),
+               "perms": _within(RP.effective(me), reach),
                "can_define_roles": RP.can_define_roles(me)},
-        "stores": [s for s in st if s["id"] in mine],
-        "all_stores_count": len(st),
+        "stores": in_view,
+        # the form « Inviter un utilisateur »: the open store, whoever is asking
+        "invite_stores": [s for s in in_view if s["id"] == sel] if sel else in_view,
+        "all_stores_count": len(in_view),
         "roles": [{"key": r, **ROLE_META[r], "count": counts[r]} for r in ROLES if r != "membre"]
         + [{"key": k, "label": d["label"], "tone": "slate", "icon": "badge", "custom": True,
             "description": d.get("description") or "Rôle personnalisé.", "count": custom_counts.get(k, 0)}
@@ -373,8 +424,8 @@ def _audit(action: str, token: TokenData, target: str) -> None:
 
 
 @router.get("/api/owner/team-access")
-def get_team(token: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    return _payload(token)
+def get_team(token: TokenData = Depends(require_role(READERS, partial_ok=True)), request: Request = None):
+    return _payload(token, request)
 
 
 class UserIn(BaseModel):
@@ -431,9 +482,12 @@ def _clean_names(body: UserIn) -> Dict[str, str]:
 
 
 @router.post("/api/owner/team-access/users")
-def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, partial_ok=True)), request: Request = None):
     me = _me(token)
     all_ids = [s["id"] for s in stores(token.tenant_id)]
+    reach = _reach(me, all_ids, _open_store(request, me, all_ids))
+    if reach is not None and any(b and b not in reach for b in body.branch_ids or []):
+        raise HTTPException(status_code=403, detail="Vous ne pouvez attribuer que l'établissement ouvert.")
     sys_role, custom = _system_role(token.tenant_id, body.role)
     if (custom or sys_role) not in assignable(me):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas créer ce rôle.")
@@ -462,7 +516,7 @@ def create_user(body: UserIn, token: TokenData = Depends(require_role(READERS, p
            "created_by": me.get("email")}
     _db.users.insert_one(doc)
     _audit("team.user_created", token, email)
-    return {"credentials": {"email": email, "password": password}, **_payload(token)}
+    return {"credentials": {"email": email, "password": password}, **_payload(token, request)}
 
 
 class UserUpdate(BaseModel):
@@ -480,22 +534,33 @@ class UserUpdate(BaseModel):
 
 @router.put("/api/owner/team-access/users/{uid}")
 @SV.records("equipe", token_arg="token")
-def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    me = _me(token)
-    all_ids = [s["id"] for s in stores(token.tenant_id)]
-    u = _find(token.tenant_id, uid)
-    if not _can_manage(me, u, all_ids):
-        raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier ce compte.")
+def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_role(READERS, partial_ok=True)),
+                request: Request = None):
+    me, all_ids, u, sel = _target(token, request, uid)
     from features import role_perms as RP
     chosen = body.role or RP.role_key(u) or u["role"]
     role, custom = _system_role(token.tenant_id, chosen)
     if (custom or role) not in assignable(me):
         raise HTTPException(status_code=403, detail="Vous ne pouvez pas attribuer ce rôle.")
-    ids = _check_assignment(role, body.branch_ids if body.branch_ids is not None
-                            else _covered(u, all_ids), me, all_ids)
+    covered = _covered(u, all_ids)
     same_role = (custom or role) == (RP.role_key(u) or u["role"])
+    wanted, raw = (body.branch_ids if body.branch_ids is not None else covered), body.perms
+    if sel and me.get("role") != "business_owner":
+        # Only the open store is this request's to change. A role goes with the
+        # whole account, so it waits for a person who works nowhere else.
+        others = [b for b in covered if b != sel]
+        if others and not same_role:
+            raise HTTPException(status_code=403, detail="Ce compte travaille aussi dans un autre établissement : "
+                                                        "son rôle ne se change pas depuis celui-ci.")
+        if body.branch_ids is not None:
+            if any(b and b != sel for b in body.branch_ids):
+                raise HTTPException(status_code=403, detail="Vous ne pouvez attribuer que l'établissement ouvert.")
+            wanted = ([sel] if sel in body.branch_ids else []) + others
+        if raw is not None:
+            raw = {sid: v for sid, v in raw.items() if sid == sel}
+    ids = _check_assignment(role, wanted, me, all_ids)
     keep = u.get("perms") if same_role and isinstance(u.get("perms"), dict) else None
-    perms = _perms_for(token.tenant_id, custom or role, ids, body.perms, me, keep=keep)
+    perms = _perms_for(token.tenant_id, custom or role, ids, raw, me, keep=keep)
     names = _clean_names(UserIn(role=role, first_name=body.first_name, last_name=body.last_name))
     sets = {**names, "role": role, "branch_ids": ids, "updated_at": _now()}
     # Only the owner and an administrateur hand out the choice of establishment
@@ -518,7 +583,7 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
         unset["can_switch_store"] = ""      # back to what the role says
     _db.users.update_one({"email": u["email"]}, {"$set": sets, **({"$unset": unset} if unset else {})})
     _audit("team.user_updated", token, u["email"])
-    return _payload(token)
+    return _payload(token, request)
 
 
 class StatusIn(BaseModel):
@@ -527,23 +592,16 @@ class StatusIn(BaseModel):
 
 @router.post("/api/owner/team-access/users/{uid}/status")
 @SV.records("equipe", token_arg="token")
-def set_status(uid: str, body: StatusIn, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    me = _me(token)
-    all_ids = [s["id"] for s in stores(token.tenant_id)]
-    u = _find(token.tenant_id, uid)
-    if not _can_manage(me, u, all_ids):
-        raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier ce compte.")
+def set_status(uid: str, body: StatusIn, token: TokenData = Depends(require_role(READERS, partial_ok=True)),
+               request: Request = None):
+    _, _, u, _ = _target(token, request, uid)
     _db.users.update_one({"email": u["email"]}, {"$set": {"active": bool(body.active), "updated_at": _now()}})
-    return _payload(token)
+    return _payload(token, request)
 
 
 @router.post("/api/owner/team-access/users/{uid}/password")
-def new_password(uid: str, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    me = _me(token)
-    all_ids = [s["id"] for s in stores(token.tenant_id)]
-    u = _find(token.tenant_id, uid)
-    if not _can_manage(me, u, all_ids):
-        raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier ce compte.")
+def new_password(uid: str, token: TokenData = Depends(require_role(READERS, partial_ok=True)), request: Request = None):
+    _, _, u, _ = _target(token, request, uid)
     from services import password_policy
     password = password_policy.generate()
     _db.users.update_one({"email": u["email"]}, {"$set": {"hashed_password": hash_password(password),
@@ -555,18 +613,14 @@ def new_password(uid: str, token: TokenData = Depends(require_role(READERS, part
     except Exception:
         pass
     _audit("team.password_reset", token, u["email"])
-    return {"credentials": {"email": u["email"], "password": password}, **_payload(token)}
+    return {"credentials": {"email": u["email"], "password": password}, **_payload(token, request)}
 
 
 @router.delete("/api/owner/team-access/users/{uid}")
-def delete_user(uid: str, token: TokenData = Depends(require_role(READERS, partial_ok=True))):
-    me = _me(token)
-    all_ids = [s["id"] for s in stores(token.tenant_id)]
-    u = _find(token.tenant_id, uid)
-    if not _can_manage(me, u, all_ids):
-        raise HTTPException(status_code=403, detail="Vous ne pouvez pas supprimer ce compte.")
+def delete_user(uid: str, token: TokenData = Depends(require_role(READERS, partial_ok=True)), request: Request = None):
+    _, _, u, _ = _target(token, request, uid, refused="Vous ne pouvez pas supprimer ce compte.")
     _db.users.delete_one({"email": u["email"], "tenant_id": token.tenant_id})
-    return _payload(token)
+    return _payload(token, request)
 
 
 class StoreAccessIn(BaseModel):
@@ -576,15 +630,14 @@ class StoreAccessIn(BaseModel):
 @router.put("/api/owner/team-access/stores/{store_id}/users/{uid}")
 @SV.records("equipe", token_arg="token")
 def store_access(store_id: str, uid: str, body: StoreAccessIn,
-                 token: TokenData = Depends(require_role(READERS, partial_ok=True))):
+                 token: TokenData = Depends(require_role(READERS, partial_ok=True)), request: Request = None):
     """Accès par établissement. An administrateur's establishments are a set
     and can be given or taken one by one; a manager or an employé works in
     exactly one, so "giving" one moves them there."""
-    me = _me(token)
-    all_ids = [s["id"] for s in stores(token.tenant_id)]
-    u = _find(token.tenant_id, uid)
-    if not _can_manage(me, u, all_ids):
-        raise HTTPException(status_code=403, detail="Vous ne pouvez pas modifier ce compte.")
+    me, all_ids, u, sel = _target(token, request, uid)
+    reach = _reach(me, all_ids, sel)
+    if reach is not None and store_id not in reach:
+        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à cet établissement.")
     covered = _covered(u, all_ids)
     if u["role"] in ("administrateur", "membre"):
         ids = sorted(set(covered) | {store_id}) if body.enabled else [b for b in covered if b != store_id]
@@ -598,7 +651,7 @@ def store_access(store_id: str, uid: str, body: StoreAccessIn,
         from features import role_perms as RP
         sets["perms"] = _perms_for(token.tenant_id, RP.role_key(u) or u["role"], ids, None, me, keep=u["perms"])
     _db.users.update_one({"email": u["email"]}, {"$set": sets})
-    return _payload(token)
+    return _payload(token, request)
 
 
 # ---------------------------------------------------------------------------
@@ -669,9 +722,11 @@ def _role_guard(token: TokenData, key: Optional[str], perms: Optional[Dict[str, 
 
 @router.post("/api/owner/team-access/roles")
 @SV.records("equipe", token_arg="token")
-def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True))):
+def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True)),
+                request: Request = None):
     from features import role_perms as RP
     tid = token.tenant_id
+    _open_store(request, _me(token), [s["id"] for s in stores(tid)])
     label = _role_label(body.label, tid)
     key = RP.new_role_key()
     perms = RP.clean_perms(body.perms or {})
@@ -681,14 +736,16 @@ def create_role(body: RoleIn, token: TokenData = Depends(require_role(["business
         "parent": RP.my_key(me),                 # its place in the role tree
         "created_at": _now(), "created_by": token.email}}})
     _audit("team.role_created", token, label)
-    return {"role": key, **_payload(token)}
+    return {"role": key, **_payload(token, request)}
 
 
 @router.put("/api/owner/team-access/roles/{key}")
 @SV.records("equipe", token_arg="token")
-def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True))):
+def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True)),
+                request: Request = None):
     from features import role_perms as RP
     tid = token.tenant_id
+    _open_store(request, _me(token), [s["id"] for s in stores(tid)])
     tpls = RP.templates(tid)
     if key not in tpls:
         raise HTTPException(status_code=404, detail="Rôle introuvable.")
@@ -714,14 +771,16 @@ def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(
     _db.tenants.update_one({"id": tid}, {"$set": sets})
     applied = _apply_to_accounts(tid, key, perms) if body.apply == "all" else 0
     _audit("team.role_updated", token, key)
-    return {"applied": applied, **_payload(token)}
+    return {"applied": applied, **_payload(token, request)}
 
 
 @router.delete("/api/owner/team-access/roles/{key}")
 @SV.records("equipe", token_arg="token")
-def delete_role(key: str, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True))):
+def delete_role(key: str, token: TokenData = Depends(require_role(["business_owner"], partial_ok=True)),
+                request: Request = None):
     from features import role_perms as RP
     tid = token.tenant_id
+    _open_store(request, _me(token), [s["id"] for s in stores(tid)])
     if key in RP.BUILTIN or key not in RP.templates(tid):
         raise HTTPException(status_code=404, detail="Rôle introuvable.")
     _role_guard(token, key, None)
@@ -731,4 +790,4 @@ def delete_role(key: str, token: TokenData = Depends(require_role(["business_own
                                                     "changez-leur de rôle d'abord.")
     _db.tenants.update_one({"id": tid}, {"$unset": {f"role_defs.{key}": ""}})
     _audit("team.role_deleted", token, key)
-    return _payload(token)
+    return _payload(token, request)
