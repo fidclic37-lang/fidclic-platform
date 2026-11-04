@@ -359,9 +359,11 @@ def redeem(body: RedeemIn, c: ApiCaller = Depends(writer)):
     try:
         core.redeem_reward(core.RedeemRewardRequest(customer_id=cust["id"], reward_name=body.reward_name, notes="API"), token_data=_as_owner(c))
     except HTTPException as e:
-        if e.detail != core.NEXT_VISIT_REFUSAL:
-            raise
-        raise HTTPException(status_code=409, detail={"code": "reward_next_visit", "message": e.detail})
+        if e.detail == core.NEXT_VISIT_REFUSAL:
+            raise HTTPException(status_code=409, detail={"code": "reward_next_visit", "message": e.detail})
+        if e.status_code == 400:             # another till took it since the check above
+            raise HTTPException(status_code=409, detail={"code": "no_reward", "message": "Ce client n'a pas de récompense disponible."})
+        raise
     out = {"customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})), "redeemed": True}
     _remember(c.tenant_id, "redeem", body.external_id, out)
     return {**out, "duplicate": False}
