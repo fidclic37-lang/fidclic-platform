@@ -41,6 +41,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from auth import TokenData
 from features.platform_access import require_admin
+from services.ai_checks import (MONTHS, _DATE, _EMAIL, _EN, _FR, _HOUR, _NUM, _PHONE, _euros_in, _plain,  # noqa: F401
+                               fold, numbers_in, unread_amounts)
 
 router = APIRouter()
 _db = None
@@ -104,11 +106,6 @@ OTHER_SHOP = ("boulangerie voisine", "marc voisin", "helene voisin")
 def init(db):
     global _db
     _db = db
-
-
-def fold(s: Any) -> str:
-    s = unicodedata.normalize("NFKD", str(s or "")).replace("’", "'")
-    return "".join(ch for ch in s if not unicodedata.combining(ch)).lower()
 
 
 def _utc(day: date, h: int, m: int = 0) -> datetime:
@@ -768,13 +765,6 @@ def oracle(q: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 # reading an answer
 # ---------------------------------------------------------------------------
-MONTHS = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre"]
-_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b|\b\d{1,2}\.\d{1,2}\.\d{2,4}\b|\b\d{1,2}(?:er)?\s+(?:"
-                   + "|".join(MONTHS) + r")(?:\s+\d{4})?\b|\b(?:19|20)\d{2}\b")
-_HOUR = re.compile(r"\b\d{1,2}\s?h(?:\s?\d{2})?\b|\b\d{1,2}:\d{2}\b")
-_NUM = re.compile(r"(?<![\d,.])(\d{1,3}(?: \d{3})+|\d+)(?:([,.])(\d+))?(?!\d)")
-_PHONE = re.compile(r"(?:\+33\s?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _ACTED = re.compile(r"\b(?:j'ai|je viens d'|je viens de|je vais)\s*(?:bien\s+)?(?:envoy|cree|creer|programm|lance|supprim|modifi|"
                     r"active|activer|desactiv|planifi)|(?:campagne|message|offre|promo|notification)s?\s+(?:a|ont|est|sont)\s+"
                     r"(?:bien\s+)?(?:ete\s+)?(?:envoye|programme|partie?|lance)")
@@ -782,36 +772,6 @@ _GUARANTEE = re.compile(r"\bgaranti|\bje vous promets\b|\bc'est sur\b|\bsans auc
 _UP = re.compile(r"hausse|augment|progress|plus de|en plus|\+|mieux|monte")
 _DOWN = re.compile(r"baisse|diminu|recul|moins|chute|-|−|descend|bais")
 _ZERO = re.compile(r"\baucune?\b|\bpas de\b|\bpas encore\b|\bzero\b|\b0\b|\bnul")
-_FR = {"le", "la", "les", "de", "des", "du", "vous", "votre", "vos", "est", "et", "pour", "un", "une", "sur", "avec", "pas",
-       "en", "au", "aux", "ce", "cette", "que", "qui", "nous", "a", "il", "elle", "dans", "par", "ne", "plus"}
-_EN = {"the", "and", "you", "your", "is", "of", "with", "for", "this", "are", "was", "were", "have", "has", "visits", "revenue"}
-
-
-def _plain(text: str) -> str:
-    return (text or "").replace(" ", " ").replace(" ", " ").replace("−", "-")
-
-
-def numbers_in(text: str) -> List[float]:
-    t = _HOUR.sub(" ; ", _DATE.sub(" ; ", fold(_plain(text))))
-    out = []
-    for m in _NUM.finditer(t):
-        whole = int(m.group(1).replace(" ", ""))
-        if m.group(3):
-            out.append(float(f"{whole}.{m.group(3)}"))
-            if m.group(2) == "." and len(m.group(3)) == 3:
-                out.append(float(whole * 1000 + int(m.group(3))))
-        else:
-            out.append(float(whole))
-    return out
-
-
-def _euros_in(text: str) -> List[float]:
-    out = []
-    for m in re.finditer(r"(\d{1,3}(?: \d{3})+|\d+)(?:[,.](\d{1,2}))?\s?(?:€|euros?\b)", _plain(text)):
-        out.append(float(f"{int(m.group(1).replace(' ', ''))}.{m.group(2) or 0}"))
-    return out
-
-
 def _date_said(d: date, f: str) -> bool:
     today = DEMO_NOW.astimezone(PARIS).date()
     if d == today and "aujourd'hui" in f:
@@ -896,15 +856,8 @@ def grade(q: Dict[str, Any], answer: Optional[str], need: List[Dict[str, Any]],
     if q.get("surface") == "copilot" and len(a.split()) > MAX_WORDS:
         why.append(f"trop long ({len(a.split())} mots, {MAX_WORDS} au plus)")
     if seen is not None:
-        pool = [s for s in seen if s >= 1]
-        sums = set()
-        for i, x in enumerate(pool[:400]):
-            for y in pool[i:400]:
-                sums.add(round(x + y, 2))
-                sums.add(round(abs(x - y), 2))
-        for x in _euros_in(a):
-            if x >= 1 and not any(abs(x - s) <= 0.5 for s in pool) and not any(abs(x - s) <= 0.5 for s in sums):
-                why.append(f"donne un montant qu'il n'a lu nulle part ({x:g} €)")
+        for x in unread_amounts(a, seen):
+            why.append(f"donne un montant qu'il n'a lu nulle part ({x:g} €)")
     return {"ok": not why, "why": why}
 
 
@@ -985,6 +938,17 @@ def fake_reply(system: str, user: str) -> str:
     return "Voici ce que je vois dans vos données, je vous conseille de regarder la page Analyses."
 
 
+def fake_model(system: str, user: str) -> str:
+    """The test model as the Copilote meets it: reads with its tools, then
+    answers from what it read (an amount it never read is refused)."""
+    q = _CURRENT.get("q")
+    if "Question du commerçant" not in user:
+        return fake_reply(system, user)
+    if q is not None and q.get("tools") and "Résultats des outils" not in user:
+        return json.dumps({"outils": [{"nom": n, "args": a} for n, a in q["tools"]]}, ensure_ascii=False)
+    return json.dumps({"reponse": fake_reply(system, user)}, ensure_ascii=False)
+
+
 _BANK_CACHE: List[Dict[str, Any]] = []
 _CURRENT: Dict[str, Any] = {}
 _TRUTH: Dict[str, Dict[str, Any]] = {}
@@ -1004,8 +968,9 @@ def _model_name() -> str:
     if llm._force_complete is not None:
         return "test"
     try:
+        from features import ai_routing
         name = llm._provider_name()
-        return f"{name}/{llm._model_for(name)}"
+        return f"{name}/{ai_routing.model_for('copilot') if name == 'anthropic' else llm._model_for(name)}"
     except Exception:                          # noqa: BLE001
         return "inconnu"
 
@@ -1023,11 +988,16 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
     K._now = lambda: DEMO_NOW
     CT.NOW = lambda: DEMO_NOW
     prompts: List[str] = []
+    from features import ai_routing
+    climbs_before = sum(int(d.get("escalated") or 0) for d in _db.ai_route_stats.find({}, {"escalated": 1}))
+    refused: List[str] = []
     real_complete = llm.complete
 
     def spy(system, user, **kw):
         prompts.append(user)
-        return real_complete(system, user, **kw)
+        out = real_complete(system, user, **kw)
+        refused[:] = (ai_routing.last_refusal() or []) if out is None else []
+        return out
     llm.complete = spy
     results = []
     try:
@@ -1043,6 +1013,7 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
                 continue
             _db.copilot_chats.delete_many({"tenant_id": {"$in": list(DEMO_TENANTS)}})   # each question on its own
             prompts.clear()
+            refused.clear()
             _CURRENT["q"] = q
             surface = SURFACES[q["surface"]]
             if answer is not None:
@@ -1063,6 +1034,8 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
             else:
                 seen = list(t["seen"]) + [x for p in prompts for x in numbers_in(p)]
                 row["why"] = grade(q, reply, t["need"], seen=seen, forbidden=t["forbidden"])["why"]
+                if refused and not (reply or "").strip():      # the live checks threw the answer away: say which
+                    row["why"] = [f"réponse refusée par les contrôles ({', '.join(refused)})"]
             results.append(row)
     finally:
         llm.complete = real_complete
@@ -1075,7 +1048,9 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
     by_type = {k: v for k, v in by_type.items() if v["total"]}
     cost = sum(float(c.get("eur") or 0) for c in _db.ai_calls.find({"at": {"$gte": started}}, {"_id": 0, "eur": 1}))
     passed = sum(1 for r in results if not r["why"])
-    return {"at": started.isoformat(), "model": _model_name(), "total": len(results), "passed": passed,
+    climbs = sum(int(d.get("escalated") or 0) for d in _db.ai_route_stats.find({}, {"escalated": 1})) - climbs_before
+    return {"at": started.isoformat(), "model": _model_name(), "routes": ai_routing.current(), "escalated": climbs,
+            "total": len(results), "passed": passed,
             "ok": passed == len(results) and bool(results), "cost_eur": round(cost, 4), "by_type": by_type,
             "failures": [r for r in results if r["why"]]}
 
@@ -1083,7 +1058,8 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
 def markdown(rep: Dict[str, Any]) -> str:
     head = "✅" if rep["ok"] else "❌"
     lines = [f"## {head} Golden set FidClic IA — {rep['passed']}/{rep['total']}",
-             f"Modèle : `{rep.get('model')}` · coût : {rep.get('cost_eur', 0):.2f} € · règle : 100 %", "",
+             f"Modèle : `{rep.get('model')}` · coût : {rep.get('cost_eur', 0):.2f} € · règle : 100 %"
+             f" · réponses montées d'un modèle : {rep.get('escalated', 0)}", "",
              "| Type | Réussies |", "|---|---|"]
     for k, v in rep["by_type"].items():
         lines.append(f"| {TYPES.get(k, k)} | {v['passed']}/{v['total']} |")
@@ -1204,7 +1180,8 @@ def run(request: Request, token_data: TokenData = Depends(require_admin("ai"))):
             _db.golden_lock.insert_one({"_id": "run", "at": now})
         except Exception:                            # noqa: BLE001 — someone launched one in the last 10 minutes
             raise HTTPException(status_code=429, detail="Un test vient d'être lancé. Réessayez dans 10 minutes.")
-    st, _ = _gh("POST", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches", json={"ref": "main"})
+    from features import ai_routing            # the run tests the table production is on, not the code's defaults
+    st, _ = _gh("POST", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches", json={"ref": "main", "inputs": {"routes": json.dumps(ai_routing.current())}})
     if st not in (200, 201, 204):
         _db.golden_lock.delete_one({"_id": "run"})
         raise HTTPException(status_code=502, detail=f"GitHub a refusé le lancement ({st}).")

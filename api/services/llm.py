@@ -12,7 +12,8 @@ CONFIG
                    otherwise "groq" — so dropping the key in is enough to put
                    every agent on Claude without touching another variable.
     ANTHROPIC_API_KEY / GROQ_API_KEY / NVIDIA_API_KEY
-    LLM_MODEL      optional override (the first provider's model)
+    LLM_MODEL      the model of a provider other than Claude. Claude's model is
+                   per job (features/ai_routing, Super admin › Routage).
     A provider that fails hands over to the next one with a key, in the
     order groq → nvidia → anthropic (after the chosen one).
 
@@ -38,6 +39,14 @@ _LAST: _cv.ContextVar = _cv.ContextVar("llm_last_call", default=None)
 
 def last_call() -> Optional[dict]:
     return _LAST.get()
+
+
+# Which model this call is for: a forced reply in a test can tell.
+_ASKED: _cv.ContextVar = _cv.ContextVar("llm_asked_model", default=None)
+
+
+def asked_model() -> Optional[str]:
+    return _ASKED.get()
 
 _ENDPOINTS = {
     "anthropic": ("https://api.anthropic.com/v1/messages",
@@ -85,28 +94,64 @@ def is_configured() -> bool:
 
 def complete(system: str, user: str, *, max_tokens: int = 400,
              temperature: float = 0.4, feature: Optional[str] = None,
-             tenant_id: Any = None) -> Optional[str]:
+             tenant_id: Any = None, read: Any = None) -> Optional[str]:
     """Return the model's text, or None if no provider answered (caller falls back).
 
     Every call goes through the AI meter (features/ai_meter): billed to the
     shop of the request (or `tenant_id`, for background jobs), refused when a
     limit is reached — then None, like a provider that did not answer.
-    `tenant_id` left out: the shop of the request."""
+    `tenant_id` left out: the shop of the request.
+
+    The job (`feature`) picks Claude's model; an answer that fails its checks
+    goes once to the next model up, then None (features/ai_routing). `read(raw)`
+    picks the answer to check out of a wrapper; None: nothing to check."""
+    from features import ai_meter as AM, ai_routing as R
+    feature = feature or (AM._ctx.get() or {}).get("feature")   # named by AM.scope(…)
+
+    def faults(txt: Optional[str]) -> list:
+        try:
+            return R.problems(feature, read(txt) if read else txt, system, user)
+        except Exception as exc:               # noqa: BLE001 — a broken check never loses the answer
+            logger.warning("AI checks failed: %s", exc)
+            return []
+
+    model = R.model_for(feature)
+    args = (system, user, max_tokens, temperature, feature, tenant_id)
+    txt = _ask(model, *args)
+    why = faults(txt) if txt else []
+    if not why:
+        return txt
+    up = R.stronger(model)
+    if up and (_force_complete is not None or _has_key("anthropic")):
+        R.note(feature, "escalated", why)
+        txt = _ask(up, *args, climbing=True)
+        if txt and not faults(txt):
+            return txt
+    R.note(feature, "rejected", why)
+    _LAST.set(None)
+    return None
+
+
+def _ask(claude_model: str, system: str, user: str, max_tokens: int, temperature: float,
+         feature: Optional[str], tenant_id: Any, climbing: bool = False) -> Optional[str]:
+    """One answer. A climb goes to that very Claude model or nowhere: a weaker
+    one, or another provider, would be no climb."""
     from features import ai_meter as AM
     tid = AM._UNSET if tenant_id is None else tenant_id
     if _force_complete is not None:
         if not AM.allow_forced(feature, tid):
             return None
+        _ASKED.set(claude_model)
         txt = _force_complete(system, user)
         _LAST.set({"system": system, "user": user, "text": txt, "model": "test", "provider": "test"})
         return txt
     cache_ttl = 600 if temperature <= 0.3 else 0          # a creative call (« Rédiger ») wants a new idea each time
-    for i, name in enumerate(_chain()):
+    for i, name in enumerate(("anthropic",) if climbing else _chain()):
         if not _has_key(name):
             continue
         default = _ENDPOINTS[name][2]
-        chosen = _model_for(name) if i == 0 else default
-        for model in dict.fromkeys((chosen, default)):     # the chosen model, then the default once
+        chosen = claude_model if name == "anthropic" else (_model_for(name) if i == 0 else default)
+        for model in (chosen,) if climbing else dict.fromkeys((chosen, default)):   # the chosen model, then the default once
             txt, err = _call(name, model, system, user, max_tokens, temperature, feature, tid, cache_ttl)
             if txt:
                 _LAST.set({"system": system, "user": user, "text": txt, "model": model, "provider": name})
@@ -119,7 +164,8 @@ def complete(system: str, user: str, *, max_tokens: int = 400,
 
 def _model_for(name: str) -> str:
     """LLM_MODEL, when it belongs to this provider — a Groq model name left in
-    LLM_MODEL must not be sent to Claude (and the other way round)."""
+    LLM_MODEL must not be sent to Claude (and the other way round). Claude's
+    calls take their model from the routing table."""
     m = os.environ.get("LLM_MODEL", "").strip()
     if not m:
         return _ENDPOINTS[name][2]

@@ -4771,6 +4771,12 @@ def _meter_post(url: str, *, feature: str, headers: Optional[dict] = None, json:
     return _MeterResp(200, data, "")
 
 
+def _route(feature: str) -> str:
+    """Claude's model for this job (Super admin › FIDCLIC AI › Routage)."""
+    from features import ai_routing
+    return ai_routing.model_for(feature)
+
+
 def _menu_post(url: str, **kw) -> "_MeterResp":
     return _meter_post(url, feature="menu_import", **kw)
 
@@ -4801,9 +4807,9 @@ def _call_vision_anthropic(image_b64: str, mime: str, prompt: str) -> tuple:
                 "content-type": "application/json",
             },
             json={
-                "model": ANTHROPIC_VISION_MODEL,
+                "model": _route("menu_import"),
                 "max_tokens": 4000,                 # a long menu; no temperature: Claude 4.7+ refuses it
-                **_llm_extras(ANTHROPIC_VISION_MODEL),
+                **_llm_extras(_route("menu_import")),
                 "messages": [{
                     "role": "user",
                     "content": [
@@ -8584,9 +8590,9 @@ def _call_anthropic(prompt: str) -> Optional[list]:
                 "content-type": "application/json",
             },
             json={
-                "model": ANTHROPIC_MODEL,
+                "model": _route("campaign_recap"),
                 "max_tokens": 400,                  # no temperature: Claude 4.7+ refuses it
-                **_llm_extras(ANTHROPIC_MODEL),
+                **_llm_extras(_route("campaign_recap")),
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=30,
@@ -8740,7 +8746,7 @@ def _call_llm(prompt: str) -> tuple:
     nothing, or errored. Skipped providers (no key) cost nothing.
     """
     for fn, label in (
-        (_call_anthropic, f"anthropic/{ANTHROPIC_MODEL}"),
+        (_call_anthropic, f"anthropic/{_route('campaign_recap')}"),
         (_call_nvidia, f"nvidia/{NVIDIA_MODEL}"),
         (_call_groq, f"groq/{GROQ_MODEL}"),
         (_call_openrouter, f"openrouter/{OPENROUTER_MODEL}"),

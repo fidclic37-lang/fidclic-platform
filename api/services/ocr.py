@@ -160,6 +160,8 @@ def _call_vision(image_b64: str, mime: str) -> dict:
     # Anthropic: own auth header, own version header, image as a base64 block
     # rather than a data: URL, and the answer in a content-block array.
     if _provider_name() == "anthropic":
+        from features import ai_routing
+        model = ai_routing.model_for("invoice_ocr")
         media = (mime or "image/jpeg").lower()
         if media not in _ANTHROPIC_MEDIA:
             media = "image/jpeg"

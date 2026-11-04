@@ -9,7 +9,7 @@ endpoints as its account, grades each answer and writes:
     <out>/summary.md           the score per type and every failed question
 
 Exit 0 only at 100 % (user: « Sab 100 % »). The run's own AI meter stops it
-at GOLDEN_MAX_EUR (5 € by default).
+at GOLDEN_MAX_EUR (8 € by default: about 6 € with the Copilote on Opus).
 
 Run (a key in the environment, the same model as production):
     ANTHROPIC_API_KEY=… LLM_MODEL=… python3 scripts/golden_run.py [--only chiffres-01,pieges-03] [--out golden-report]
@@ -51,15 +51,17 @@ def main() -> int:
     from services import llm
 
     if a.fake:
-        llm._force_complete = lambda system, user: (json.dumps({"reponse": GS.fake_reply(system, user)}, ensure_ascii=False)
-                                                    if "Question du commerçant" in user else GS.fake_reply(system, user))
+        llm._force_complete = GS.fake_model
     elif not llm.is_configured():
         print("Aucune clé d'IA (ANTHROPIC_API_KEY, GROQ_API_KEY…) : le golden set a besoin du vrai modèle.")
         return 2
-    cap = float(os.environ.get("GOLDEN_MAX_EUR") or 5)
+    cap = float(os.environ.get("GOLDEN_MAX_EUR") or 8)
     server.db.platform_settings.update_one({"key": "ai_meter"}, {"$set": {
         "global_day_eur": cap, "shop_day_share": 1.0, "user_per_min": 100000,
         "plan_budgets": {"silver": cap, "gold": cap, "vip": cap, "franchise": cap}}}, upsert=True)
+
+    from features import ai_routing
+    ai_routing.apply_routes(os.environ.get("GOLDEN_ROUTES"))    # « Lancer »: the table production is on
 
     loop = asyncio.new_event_loop()
 

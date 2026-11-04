@@ -90,6 +90,8 @@ def main():
         db.platform_settings.delete_many({"key": "ai_meter"})
         # the sections before « Pentest » test one guard at a time: the per-shop day ceiling out of the way
         db.platform_settings.insert_one({"key": "ai_meter", "shop_day_share": 1.0})
+        # the prices below are Sonnet's; which job goes where is test_ai_routing's
+        db.platform_settings.update_one({"key": "ai_routing"}, {"$set": {"routes": {"campaign_ai": "claude-sonnet-5-5", "copilot": "claude-sonnet-5-5"}}}, upsert=True)
         for c in ("ai_blocks", "ai_rate"):
             db[c].delete_many({})
         db.tenants.update_many({}, {"$unset": {"ai_budget_eur": ""}})

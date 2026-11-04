@@ -415,6 +415,30 @@ def _alert_once(key: str, stamp: str, kind: str, text: str, tid: Optional[str]) 
         print(f"ai_meter: alert email failed ({exc})")
 
 
+def _next_first() -> str:
+    nxt = (_paris().replace(day=1) + timedelta(days=32)).replace(day=1)
+    return f"1er {MONTHS[nxt.month - 1]}"
+
+
+def _tell_owner_80(tid: str, name: str, lim_tag: int) -> None:
+    """The shop's owner, once per limit and month (user, 2026-11-04): told, and
+    nothing changes until 100 %. A percentage: the euros are FidClic's cost."""
+    key = key_month(tid)
+    if _db.ai_spend.update_one({"_id": key, f"alerts.owner80_{lim_tag}": {"$exists": False}},
+                               {"$set": {f"alerts.owner80_{lim_tag}": _now()}}).modified_count != 1:
+        return
+    try:
+        from services import mailer
+        for u in _db.users.find({"tenant_id": tid, "role": "business_owner", "active": {"$ne": False}}, {"_id": 0, "email": 1}):
+            if u.get("email"):
+                mailer.send(u["email"], "FidClic IA : 80 % de votre limite du mois",
+                            f"<div style='font-family:Arial,sans-serif;font-size:14px;color:#0B1C3F'><p>Bonjour,</p>"
+                            f"<p>{html.escape(name)} a utilisé 80 % de sa limite FidClic IA ce mois-ci. FidClic IA continue normalement ; "
+                            f"à 100 %, ses réponses seront simplifiées jusqu'au {_next_first()}.</p></div>")
+    except Exception as exc:                 # noqa: BLE001 — the banner says it too
+        print(f"ai_meter: owner email failed ({exc})")
+
+
 def _alerts_after(tid: Optional[str]) -> None:
     s = settings()
     name = None
@@ -427,6 +451,7 @@ def _alerts_after(tid: Optional[str]) -> None:
             if month >= 0.8 * limit:
                 _alert_once(key_month(tid), f"b80_{lim_tag}", "ai_budget_80",
                             f"Budget IA à 80 % : {name} — {month:.2f} € sur {limit:.2f} € ce mois-ci.", tid)
+                _tell_owner_80(tid, name, lim_tag)
             if _full(key_month(tid), limit):
                 _alert_once(key_month(tid), f"b100_{lim_tag}", "ai_budget_100",
                             f"Budget IA atteint : {name} — {month:.2f} € sur {limit:.2f} €. FidClic IA répond avec les modèles simples.", tid)
@@ -617,11 +642,15 @@ def owner_alert(tid: Optional[str]) -> Optional[Dict[str, Any]]:
     if not tid or _db is None:
         return None
     st = state(tid)
-    if st["blocked"] != "budget":
-        return None
-    nxt = (_paris().replace(day=1) + timedelta(days=32)).replace(day=1)
-    return {"key": "ai_budget", "what": "FidClic IA", "pct": 100, "upgrade": None,
-            "message": f"Limite IA du mois atteinte : FidClic IA répond avec des réponses simplifiées jusqu'au 1er {MONTHS[nxt.month - 1]}."}
+    if st["blocked"] == "budget":
+        return {"key": "ai_budget", "what": "FidClic IA", "pct": 100, "upgrade": None,
+                "message": f"Limite IA du mois atteinte : FidClic IA répond avec des réponses simplifiées jusqu'au {_next_first()}."}
+    if st["limit_eur"] and st["month_eur"] >= 0.8 * st["limit_eur"]:
+        pct = min(st["pct"], 99)
+        return {"key": "ai_budget_80", "what": "FidClic IA", "pct": pct, "upgrade": None,
+                "message": f"FidClic IA : {pct} % de votre limite du mois utilisés. FidClic IA continue normalement ; "
+                           f"à 100 %, ses réponses seront simplifiées jusqu'au {_next_first()}."}
+    return None
 
 
 # ---------------------------------------------------------------------------
