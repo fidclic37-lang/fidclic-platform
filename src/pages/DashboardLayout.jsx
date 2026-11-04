@@ -378,6 +378,7 @@ const DashboardLayout = () => {
   const submitSearch = (e) => {
     e?.preventDefault?.();
     const raw = (searchQ || '').trim();
+    setSearchQ('');
     if (!raw) {
       navigate('/dashboard/customers');
       return;
@@ -414,11 +415,15 @@ const DashboardLayout = () => {
   // What the search found, outlined on the page it opened (user, 2026-10-15:
   // « highlight bhi krde taaki pta chale ki sahi hai ki nhi »). The page may
   // still be loading, so it is tried again a few times.
+  // Clients takes ?hl= out of the address once read: what started goes on.
+  const hl = new URLSearchParams(location.search).get('hl');
+  const stopHighlight = React.useRef(null);
+  React.useEffect(() => () => stopHighlight.current?.(), [location.pathname]);
   React.useEffect(() => {
-    const hl = new URLSearchParams(location.search).get('hl');
-    if (!hl) return undefined;
-    return highlightWhenReady(hl);
-  }, [location.pathname, location.search]);
+    if (hl) stopHighlight.current = highlightWhenReady(hl);
+  }, [location.pathname, hl]);
+  // Another section: the search bar starts empty (user, 2026-11-04).
+  React.useEffect(() => { setSearchQ(''); }, [location.pathname]);
 
   const currentPath = location.pathname;
   // Charts on the page that is opening may play their entrance animation;

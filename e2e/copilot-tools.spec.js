@@ -45,6 +45,7 @@ test('the answer says what it read, and each source opens its page', async ({ pa
   await line.scrollIntoViewIfNeeded();
   await line.locator('xpath=../..').screenshot({ path: 'test-results/copilot-sources.png' });
   await line.getByRole('link', { name: 'Clients (« Karim »)' }).click();
-  await expect(page).toHaveURL(/\/dashboard\/customers\?q=Karim$/);
+  await expect(page).toHaveURL(/\/dashboard\/customers/);
+  await expect(page.getByPlaceholder('Rechercher un client (nom, email, téléphone…)')).toHaveValue('Karim');
   expect(errors).toEqual([]);
 });

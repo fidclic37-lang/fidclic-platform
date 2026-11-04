@@ -275,7 +275,8 @@ def _matches_segment(key: str, cust: Dict[str, Any], at: datetime,
     if key == "local":
         return cust.get("id") in local_ids
     if key == "birthday":
-        return str(cust.get("birthday") or "")[:2] == at.strftime("%m")
+        from services import customer_fields as CF
+        return CF.is_birth_month(cust, at)
     if key == "vip":
         return (cust.get("tier") or "").lower() == "vip"
     if key == "at_risk":

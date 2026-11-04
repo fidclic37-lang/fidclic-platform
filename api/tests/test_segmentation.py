@@ -84,11 +84,11 @@ def main():
     print("\nLes critères")
     check("the builder offers the mockup's six, the money one split in two (QA R5 F24)",
           [f["key"] for f in S.FIELDS if not f.get("brain")] ==
-          ["last_visit", "visits", "total_spend", "spend", "distance", "tier", "joined"])
+          ["last_visit", "visits", "total_spend", "spend", "distance", "tier", "joined", "birthday"])
     check("and each names itself plainly",
           [f["label"] for f in S.FIELDS if not f.get("brain")] ==
           ["Dernière visite", "Nombre d'achats", "Total dépensé", "Panier moyen",
-           "Distance du magasin", "Statut fidélité", "Date d'inscription"])
+           "Distance du magasin", "Statut fidélité", "Date d'inscription", "Anniversaire"])
     check("both money criteria say what they count",
           "depuis son inscription" in S.FIELD_BY_KEY["total_spend"]["note"]
           and "moyen par visite" in S.FIELD_BY_KEY["spend"]["note"])

@@ -57,6 +57,7 @@ from pydantic import BaseModel
 
 from auth import require_role
 from models import TokenData
+from services import customer_fields as CF
 from features import store_scope as S
 from features import client_brain as CB
 
@@ -152,6 +153,12 @@ FIELDS: List[Dict[str, Any]] = [
         "ops": [{"key": "gt", "label": "il y a plus de", "short": "il y a plus de"},
                 {"key": "lt", "label": "il y a moins de", "short": "il y a moins de"}],
     },
+    {
+        "key": "birthday", "label": "Anniversaire", "icon": "calendar",
+        "type": "choice", "unit": "",
+        "choices": [{"key": "current", "label": "ce mois-ci"}],
+        "ops": [{"key": "eq", "label": "est", "short": ""}],
+    },
     # What FidClic IA learned from each client's own visits (features/client_brain,
     # user 2026-10-24: rythme, prochaine visite, produit préféré, jour et créneau
     # habituels, « and whatever else is important »). A client with too few
@@ -228,6 +235,10 @@ MODELS: List[Dict[str, Any]] = [
     {"key": "locaux", "name": "Clients locaux", "icon": "pin", "tone": "blue",
      "description": "À moins de 5 km de votre commerce.",
      "rules": [{"field": "distance", "op": "lt", "value": 5}]},
+    # the same clients as the Clients page's « Anniversaires du mois » (user, 2026-11-04)
+    {"key": "anniversaires", "name": "Anniversaires du mois", "icon": "gift", "tone": "violet",
+     "description": "Fêtent leur anniversaire ce mois-ci.",
+     "rules": [{"field": "birthday", "op": "eq", "value": "current"}]},
     # Behind the first five: what takes a model's place once it is in use.
     {"key": "vip", "name": "Palier VIP", "icon": "star", "tone": "amber",
      "description": "Ont atteint le palier VIP de votre carte.",
@@ -265,8 +276,8 @@ def _models(tid: Optional[str]) -> List[Dict[str, Any]]:
     return out
 
 
-# The five the table always shows, as in the design.
-TABLE_MODELS = ("inactifs", "fideles", "nouveaux", "gros_paniers", "locaux")
+# The ones the table always shows: the design's five, and the birthdays.
+TABLE_MODELS = ("inactifs", "fideles", "nouveaux", "gros_paniers", "locaux", "anniversaires")
 SHOWN_MODELS = 5
 
 
@@ -446,6 +457,9 @@ def _matches(cust: Dict[str, Any], rule: Dict[str, Any], at: datetime,
 
     if FIELD_BY_KEY[field].get("brain"):
         return _brain_matches(cust.get("brain"), field, op, value, at, cust)
+
+    if field == "birthday":
+        return CF.is_birth_month(cust, at)
 
     if field == "tier":
         if value == "non_membre":
