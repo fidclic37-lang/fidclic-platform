@@ -81,3 +81,45 @@ test('the scan that fills the card announces it, the next one hands it over', as
   await expect(page.getByTestId('visit-summary')).toContainText(row.title);
   expect(await rowOf(card)).toBeNull();
 });
+
+test('two tills, one reward: the second is told, and only one is given', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const { H, store } = await asOwner(page, request);
+  const s = await (await request.get('/api/owner/card/settings', { headers: H })).json();
+  test.skip(s.programme?.programme && s.programme.programme !== 'stamps', 'the demo store is not a Tampons card');
+
+  const rowOf = async (card) => {
+    const c = await (await request.get(`/api/owner/scan/card?barcode=${card}`, { headers: H })).json();
+    return (c.applicables || []).find((a) => a.kind === 'card') || null;
+  };
+  const list = await (await request.get('/api/owner/clients/list?per_page=50', { headers: H })).json();
+  const c = (list.rows || []).find((x) => x.barcode_id);
+  const card = c.barcode_id;
+  for (let i = 0; i < 80 && !(await rowOf(card))?.available; i += 1) {
+    const r = await request.post('/api/owner/scan', { headers: H, data: { barcode_id: card, amount_paid: 1, branch_id: store || undefined } });
+    expect(r.status(), await r.text()).toBe(200);
+  }
+  const row = await rowOf(card);
+  expect(row.available).toBe(true);
+
+  // this till picks the reward…
+  await openCard(page, card);
+  const pick = page.getByTestId('visit-review').getByRole('button', { name: new RegExp(row.title) });
+  await pick.click();
+  await expect(pick).toHaveAttribute('aria-pressed', 'true');
+
+  // …the other till hands it over first
+  const other = await request.post('/api/owner/scan', { headers: H, data: { barcode_id: card, amount_paid: 1, apply: 'card', branch_id: store || undefined } });
+  expect(other.status(), await other.text()).toBe(200);
+  expect((await other.json()).applied.ok).toBe(true);
+  const before = await (await request.get(`/api/owner/customers/${c.id}/visits`, { headers: H })).json();
+
+  const answer = page.waitForResponse((r) => r.url().endsWith('/api/owner/scan') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+  const body = await (await answer).json();
+  expect(body.applied.ok).toBe(false);
+  await expect(page.getByText(/Offre non appliquée/)).toBeVisible();
+  const after = await (await request.get(`/api/owner/customers/${c.id}/visits`, { headers: H })).json();
+  expect(after.redemptions.length).toBe(before.redemptions.length);
+  expect(after.total_visits).toBe(before.total_visits + 1);
+});

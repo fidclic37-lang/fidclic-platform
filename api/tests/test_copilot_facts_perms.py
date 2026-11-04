@@ -9,6 +9,7 @@ Run: cd api && /usr/local/bin/python3 tests/test_copilot_facts_perms.py
 """
 import asyncio
 import contextlib
+import datetime as dt
 import io
 import json
 import os
@@ -80,6 +81,7 @@ def main():
         m = re.search(r"Données du commerce \(JSON\) :\n(\{.*\})(?: Pour ce qui[^\n]*)?\n\nQuestion", prompts[0], re.S) if prompts else None
         return (json.loads(m.group(1)) if m else None), r
 
+    ACCOUNT = GS.ACCOUNTS["sans_ca"][0]
     OWNER = GS.headers("owner")
     NO_CA = GS.headers("sans_ca")
 
@@ -158,6 +160,66 @@ def main():
     check("nobody: refused", http("POST", "/api/owner/copilot/chat", {}, json={"message": "Mes chiffres ?"}).status_code in (401, 403))
     gare, _ = facts_for(GS.headers("gare"))
     check("the Gare manager sees his store's figures, below the shop's", ANALYTICS <= set(gare) and gare["ca_30j_eur"] < owner_ca, (gare.get("ca_30j_eur"), owner_ca))
+
+    print("Les ruptures de visites (/api/owner/ai/anomaly/recent)")
+    now = dt.datetime.now(dt.timezone.utc)
+    db.visits.delete_many({"tenant_id": GS.SALON})      # the demo's own visits fall inside these two weeks, depending on today's date
+    db.visits.insert_many([{"id": f"an{i}", "tenant_id": GS.SALON, "customer_id": "x", "branch_id": b, "visit_time": now - dt.timedelta(days=d), "amount_paid": 5}
+                           for i, (b, d) in enumerate([("b1", 1), ("b1", 2), ("b1", 3), ("b2", 1), ("b1", 9), ("b2", 9), ("b2", 10)])])
+    db.visits.insert_one({"id": "an-other", "tenant_id": GS.AUTRE, "customer_id": "y", "visit_time": now - dt.timedelta(days=1), "amount_paid": 777})
+    url = "/api/owner/ai/anomaly/recent"
+    r = http("GET", url, NO_CA)
+    check("Analyses off: refused, no counts", r.status_code == 403 and "current" not in r.text, (r.status_code, r.text[:160]))
+    a = http("GET", url, GS.headers("gare")).json()["anomalies"][0]
+    check("the Gare manager: his store only", (a["current"], a["previous"]) == (1, 2), a)
+    a = http("GET", url, {**OWNER, "X-Fidclic-Store": "b1"}).json()["anomalies"][0]
+    check("the owner in one store: that store", (a["current"], a["previous"]) == (3, 1), a)
+    a = http("GET", url, OWNER).json()["anomalies"][0]
+    check("the owner, no store chosen: the whole shop, never another shop", a["current"] >= 4 and a["previous"] >= 3, a)
+    h = manager("a8@gs-salon.test", ["b1", "b2"], ai="none")
+    check("Analyses on, FidClic IA off: this is an Analyses figure", http("GET", url, h).status_code == 200)
+    check("nobody: refused", http("GET", url, {}).status_code in (401, 403))
+    check("staff: refused", http("GET", url, GS.headers("staff")).status_code == 403)
+
+    print("Une seule lecture du compte")
+    real = RP._db.users
+    reads = [0]
+
+    class Spy:
+        def __getattr__(self, a):
+            return getattr(real, a)
+
+        def find_one(self, *a, **k):
+            reads[0] += 1
+            return real.find_one(*a, **k)
+
+    class Db:
+        def __getattr__(self, a):
+            return Spy() if a == "users" else getattr(db, a)
+    pages = ("analytics", "catalogue", "customers", "segmentation", "insights", "campaigns")
+    token = auth.TokenData(email=ACCOUNT, role="manager", tenant_id=GS.SALON)
+    check("open_pages says the same as may, page by page", RP.open_pages(token, pages) == {p for p in pages if RP.may(token, p, "view")})
+    check("…only the pages asked", RP.open_pages(token, ("customers",)) == {"customers"} and RP.open_pages(token, ()) == set())
+    check("…the owner: all, no token: none", RP.open_pages(auth.TokenData(email="o", role="business_owner", tenant_id=GS.SALON), pages) == set(pages)
+          and RP.open_pages(None, pages) == set())
+    check("…another shop's token: none", RP.open_pages(auth.TokenData(email=ACCOUNT, role="manager", tenant_id=GS.AUTRE), pages) == set())
+    RP._db = Db()
+    try:
+        http("GET", "/api/owner/copilot/page", NO_CA)
+        page_reads = reads[0]
+        reads[0] = 0
+        http("GET", "/api/owner/copilot/page", OWNER)
+        owner_reads = reads[0]
+        reads[0] = 0
+        llm._force_complete = model
+        http("POST", "/api/owner/copilot/chat", NO_CA, json={"message": "Bonjour"})
+        llm._force_complete = None
+        chat_reads = reads[0]
+    finally:
+        RP._db = db
+    check("the page, a manager: at most 2 reads (the guard + the figures)", page_reads <= 2, page_reads)
+    check("the page, the owner: none", owner_reads == 0, owner_reads)
+    check("the chat, a manager: at most 3 (the guard, the figures, the tools)", chat_reads <= 3, chat_reads)
 
     print()
     print(f"{passed} passed, {failed} failed")

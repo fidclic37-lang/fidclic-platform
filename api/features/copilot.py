@@ -1339,8 +1339,7 @@ FACT_PAGES = (
 
 def _open_pages(token_data: TokenData, request) -> set:
     from features import role_perms as RP
-    pages = {p for needed, _label, _keys in FACT_PAGES for p in needed}
-    return {p for p in pages if RP.may(token_data, p, "view", request)}
+    return RP.open_pages(token_data, {p for needed, _label, _keys in FACT_PAGES for p in needed}, request)
 
 
 def _limit_facts(facts: Dict[str, Any], pages: set) -> Dict[str, Any]:

@@ -107,6 +107,7 @@ _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/geo", "geolocation"), ("/api/owner/settings/geo", "geolocation"),
     ("/api/owner/catalogue", "catalogue"), ("/api/owner/catalog", "catalogue"),
     ("/api/owner/insights", "insights"),
+    ("/api/owner/ai/anomaly", "analytics"),          # visit counts: Analyses' figures, not FidClic IA's
     ("/api/owner/ai", "ai"), ("/api/owner/ai-query", "ai"), ("/api/owner/copilot", "ai"),
     ("/api/owner/history", "history"),
     ("/api/owner/milestones", "milestones"),
@@ -389,6 +390,26 @@ def may_everywhere(token, page: str, level: str = "edit") -> bool:
     from features import team_access as TA
     all_ids = [s["id"] for s in TA.stores(user.get("tenant_id"))]
     return all(RANKV[(perms.get(sid) or {}).get(page, "none")] >= RANKV.get(level, 2) for sid in all_ids)
+
+
+def open_pages(token, pages, request=None) -> set:
+    """`may(token, page, "view", request)` for several pages, with one read of
+    the account: a page of FidClic IA asks for six."""
+    pages = set(pages)
+    if token is None:
+        return set()
+    if getattr(token, "role", None) in ("business_owner", "super_admin"):
+        return pages
+    if _db is None:
+        return set()
+    user = _db.users.find_one({"email": token.email}, {"_id": 0, "hashed_password": 0}) or {}
+    if user.get("tenant_id") != getattr(token, "tenant_id", None):
+        return set()
+    perms = effective(user)
+    if perms is None:
+        return pages
+    store = _store_of(request)
+    return {p for p in pages if RANKV[level_in(perms, p, store)] >= 1}
 
 
 def may(token, page: str, level: str = "edit", request=None) -> bool:
