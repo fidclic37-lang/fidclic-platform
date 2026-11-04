@@ -130,6 +130,12 @@ def last_contact(cust: Dict[str, Any]) -> Optional[datetime]:
     return max(dates) if dates else None
 
 
+def lapsed(last: Optional[datetime], at: datetime, days: int) -> bool:
+    """« Inactif après N jours », one boundary for the chip and the relance
+    (user, 2026-11-04): N full days are still inside, from N + 1 it has lapsed."""
+    return not last or (at - last).total_seconds() / 86400.0 >= days + 1
+
+
 def is_inactive(cust: Dict[str, Any], at: datetime,
                 rules: Optional[List[Dict[str, Any]]] = None) -> bool:
     """Nothing for the whole "Client actif" window (30 days by default, the
@@ -137,8 +143,7 @@ def is_inactive(cust: Dict[str, Any], at: datetime,
     client who hasn't come yet. A client who signed up today is not inactive
     (user, 2026-10-04: it was, from the first second)."""
     days = R.active_days(rules if rules is not None else R.defaults())
-    last = last_contact(cust)
-    return not last or (at - last).total_seconds() / 86400.0 >= days + 1
+    return lapsed(last_contact(cust), at, days)
 
 
 # « Clients qui décrochent » (the bell, Insights' « Clients à risque », user

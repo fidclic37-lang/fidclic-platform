@@ -312,7 +312,7 @@ def _default_trigger(scenario: str) -> Dict[str, Any]:
         "geo": {"cooldown_days": 7, "weather": [], "stores": []},
         "google_review": {"type": "after_visit", "frequency": "once", "every_days": 30, "stop_after_click": True,
                           "visits": 5, "date": None},
-        "inactive": {"days": 30, "repeat": "once", "every_days": 30},
+        "inactive": {"days": 30, "repeat": "once", "every_days": 30, "respect_rhythm": True},
         "custom": {"type": "after_visit", "visits": 5, "visits_repeat": "once", "cooldown_days": 0,
                    "date_mode": "once", "date": None, "weekday": 0, "monthday": 1},
     }[scenario] | {"delay_value": 0, "delay_unit": "hours"}
@@ -1642,14 +1642,30 @@ def _birthday_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
             and not ((_aware(c.get("created_at")) or fresh) > fresh)]
 
 
+def _on_rhythm(row: Dict[str, Any], cust: Dict[str, Any], at: datetime) -> bool:
+    """« Jo apne rhythm pe hain, unhe mat bhejo » (user, 2026-11-04): the client
+    brain still expects this client back inside their own window, so an offer
+    would cost and bring nothing. Nothing is logged: past the window they are
+    due by themselves. The owner's switch (trigger.respect_rhythm) is on unless
+    said off; a brain that cannot say never holds a message back."""
+    if (row.get("trigger") or {}).get("respect_rhythm") is False:
+        return False
+    try:
+        from features import client_brain as CB
+        return CB.rythme(cust.get("brain"), at).get("key") == "a_l_heure"
+    except Exception as exc:                       # noqa: BLE001
+        print(f"automations: rhythm not read ({exc})")
+        return False
+
+
 def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
     """Clients past the inactivity, not told for this absence yet (or due a
-    relance), not already waiting in today's spread — the most recently
-    lapsed first: they are the likeliest to come back, and a daily limit
-    keeps them."""
+    relance), not already waiting in today's spread, not expected back on
+    their own rhythm — the most recently lapsed first: they are the likeliest
+    to come back, and a daily limit keeps them."""
+    from features import clients_page as CP
     tr = row.get("trigger") or {}
     days = max(1, int(tr.get("days") or 30))
-    cutoff = at - timedelta(days=days)
     waiting = set(_db.automation_queue.distinct("customer_id", {"automation_id": row["id"]}))
     # each client's last relance from this automation, in one read (was one per client)
     told: Dict[str, Any] = {}
@@ -1663,7 +1679,7 @@ def _inactive_due(tid: str, row: Dict[str, Any], at: datetime) -> List[Dict[str,
         if c["id"] in waiting:
             continue
         last = _aware(c.get("last_visit_date")) or _aware(c.get("created_at"))
-        if not last or last > cutoff:
+        if not last or not CP.lapsed(last, at, days) or _on_rhythm(row, c, at):
             continue
         sent = told.get(c["id"])
         if sent:
@@ -1756,8 +1772,9 @@ def _run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, 
             if not CR.rules_ok(row, cust, at, q.get("ctx")):
                 continue                          # the limit / anti-doublon filled up meanwhile
         if row["scenario"] == "inactive":         # came back while waiting: nothing to say
+            from features import clients_page as CP
             last = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
-            if not last or at - last < timedelta(days=max(1, int((row.get("trigger") or {}).get("days") or 30))):
+            if not last or not CP.lapsed(last, at, max(1, int((row.get("trigger") or {}).get("days") or 30))):
                 continue
         try:
             if _deliver(row["tenant_id"], row, cust, q.get("ctx") or {}, at):
@@ -2549,6 +2566,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         tr["days"] = _int(tr_in.get("days", 30), 7, 365, "Jours sans visite")
         tr["repeat"] = "every" if tr_in.get("repeat") == "every" else "once"
         tr["every_days"] = _int(tr_in.get("every_days", 30), 7, 365, "Répéter tous les")
+        tr["respect_rhythm"] = tr_in.get("respect_rhythm") is not False
     elif sc == "referral":
         raw = tr_in.get("sides")
         if raw is None and tr_in.get("side") in SIDES:          # an older client
@@ -3261,6 +3279,7 @@ def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, 
     the filters / exclusions leave out, « Répartition de l'audience » and
     « Estimation de l'impact »."""
     from services import customer_fields as CF
+    from features import clients_page as CP
     days = max(7, min(365, int(((row.get("trigger") or {}).get("days")) or 30)))
     cache: Dict[str, Any] = {}
     own = None
@@ -3269,8 +3288,11 @@ def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, 
     people = [c for c in _db.customers.find({"tenant_id": tid, "deleted_at": None}, {"_id": 0})
               if own is None or c["id"] in own]
     cutoff = at - timedelta(days=days)
-    lapsed = [c for c in people if (_last_seen(c) or at) <= cutoff]
-    targeted = [c for c in lapsed if matches(tid, row, c, at, cache)]
+    lapsed = [c for c in people if _last_seen(c) and CP.lapsed(_last_seen(c), at, days)]
+    # expected back on their own rhythm: no message for now (_on_rhythm)
+    on_rhythm = [c for c in lapsed if _on_rhythm(row, c, at)]
+    held = {c["id"] for c in on_rhythm}
+    targeted = [c for c in lapsed if c["id"] not in held and matches(tid, row, c, at, cache)]
     # a month ago: each client's last visit BEFORE that day, from the visits
     then = at - timedelta(days=30)
     before: Dict[str, datetime] = {}
@@ -3284,7 +3306,7 @@ def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, 
         if not joined or joined > then:
             continue                               # not a client yet
         seen = before.get(c["id"]) or joined
-        if seen <= then - timedelta(days=days) and matches(tid, row, c, then, {}):
+        if CP.lapsed(seen, then, days) and matches(tid, row, c, then, {}):
             was += 1
     count = len(targeted)
     ages: Dict[str, int] = {k: 0 for k, _, _ in AGE_BARS}
@@ -3306,7 +3328,8 @@ def inactive_insights(tid: str, row: Dict[str, Any], at: datetime) -> Dict[str, 
     basket = (paid / visits) if visits and paid else None
     back = round(count * rate["rate"]) if rate else None
     return {
-        "days": days, "count": count, "lapsed": len(lapsed), "excluded": len(lapsed) - count,
+        "days": days, "count": count, "lapsed": len(lapsed), "on_rhythm": len(held),
+        "excluded": len(lapsed) - len(held) - count,
         "month_ago": was, "delta": (round((count - was) / was * 100) if was else None),
         "cutoff": cutoff.date().isoformat(),
         "breakdown": {"age": [{"key": k, "n": n, "pct": pct(n, known_age)} for k, n in ages.items()],
