@@ -1,8 +1,8 @@
 """
-Exporting or erasing a customer's data from a shop login follows the same
-rights as the shop's own « Supprimer le client »: the Clients page right, in
-the account's own stores. A disabled account can't use a card route at all,
-and a look-only account changes nothing.
+Exporting or erasing a customer's data from a shop login follows the rule of
+Paramètres › Données & confidentialité: the owner only. The customer's own
+phone always can. A disabled account or a suspended shop has no access to card
+routes, and a look-only account changes nothing. The audit log names who did it.
 
 « Voir sa carte » stays open to any active login of the shop.
 
@@ -90,26 +90,29 @@ def main():
     disabled = login("staff", active=False, branch_ids=["a1", "a2"], left=True)
     disabled_mgr = login("manager", active=False, branch_ids=["a1", "a2"], left=True)
     look_only = login("business_owner", claims={"view_only": True, "view_by": "team@fidclic.fr"})
+    acting = login("business_owner", claims={"act_by": "admin@fidclic.fr", "view_by": "admin@fidclic.fr"})
 
-    print("1. Staff (Scan only) can look, not export or erase")
-    bc = card()
-    r = http("GET", f"/api/card/{bc}", headers=staff)
-    check(f"active staff still get « Voir sa carte » ({r.status_code})", r.status_code == 200)
-    r = http("GET", f"/api/card/{bc}/my-data", headers=staff)
-    check(f"staff can't export a customer's data ({r.status_code})", r.status_code == 403)
-    check("…and the refusal carries no personal data", "marie" not in r.text.lower())
-    r = forget(bc, staff)
-    check(f"staff can't erase a customer ({r.status_code})", r.status_code == 403)
-    check("…and the customer is untouched", not erased(bc))
+    print("1. Team accounts can look, not export or erase")
+    for name, headers in (("staff", staff), ("a manager", manager), ("an administrateur", administrateur),
+                          ("a store-limited manager", stranger_store)):
+        bc = card("a1")
+        r = http("GET", f"/api/card/{bc}", headers=headers)
+        check(f"{name} still gets « Voir sa carte » ({r.status_code})", r.status_code == 200)
+        r = http("GET", f"/api/card/{bc}/my-data", headers=headers)
+        check(f"{name} can't export ({r.status_code})", r.status_code == 403 and "marie" not in r.text.lower())
+        r = forget(bc, headers)
+        check(f"{name} can't erase ({r.status_code})", r.status_code == 403 and not erased(bc))
 
-    print("\n2. Rights that include the Clients page keep working")
-    for name, headers in (("the owner", owner), ("a FidClic super admin", admin), ("a manager", manager),
-                          ("an administrateur", administrateur)):
+    print("\n2. The owner and FidClic can")
+    for name, headers in (("the owner", owner), ("a FidClic super admin", admin), ("an admin in the account", acting)):
         bc = card()
         r = http("GET", f"/api/card/{bc}/my-data", headers=headers)
         check(f"{name} exports ({r.status_code})", r.status_code == 200 and r.json()["profile"]["email"] == "marie@exemple.fr")
         r = forget(bc, headers)
         check(f"{name} erases ({r.status_code})", r.status_code == 200 and erased(bc))
+    bc = card("a2")
+    r = http("GET", f"/api/card/{bc}/my-data?store=a1", headers=owner)
+    check(f"the owner isn't limited by the store chosen in the menu ({r.status_code})", r.status_code == 200)
 
     print("\n3. The customer's own phone always can")
     bc = card()
@@ -119,15 +122,19 @@ def main():
     r = forget(bc, own)
     check(f"erase with the card's key ({r.status_code})", r.status_code == 200 and erased(bc))
 
-    print("\n4. A store-limited account stays in its stores")
-    bc = card("a2")
-    r = http("GET", f"/api/card/{bc}/my-data", headers=stranger_store)
-    check(f"another store's customer can't be exported ({r.status_code})", r.status_code == 403)
-    r = forget(bc, stranger_store)
-    check(f"another store's customer can't be erased ({r.status_code})", r.status_code == 403 and not erased(bc))
-    bc = card("a1")
-    r = http("GET", f"/api/card/{bc}/my-data", headers=stranger_store)
-    check(f"its own store's customer can ({r.status_code})", r.status_code == 200)
+    print("\n4. The audit log says who did it")
+    bc = card()
+    forget(bc, {"X-Card-Key": CO.key_for(bc)})
+    row = db.audit_logs.find_one({"action": "gdpr.forget_me", "target": db.customers.find_one({"barcode_id": bc})["id"]})
+    check("the customer's own erase is the customer's", row and row["actor_type"] == "customer" and row["actor"] == bc)
+    bc = card()
+    cid = db.customers.find_one({"barcode_id": bc})["id"]
+    http("GET", f"/api/card/{bc}/my-data", headers=owner)
+    row = db.audit_logs.find_one({"action": "gdpr.export", "target": cid})
+    check("an owner's export is the owner's", row and row["actor_type"] == "user" and row["actor"].startswith("business_owner"))
+    forget(bc, owner)
+    row = db.audit_logs.find_one({"action": "gdpr.forget_me", "target": cid})
+    check("an owner's erase is the owner's", row and row["actor_type"] == "user" and row["actor"].startswith("business_owner"))
 
     print("\n5. Another shop gets nothing")
     bc = card()
@@ -154,6 +161,8 @@ def main():
     bc = card()
     r = http("GET", f"/api/card/{bc}", headers=look_only)
     check(f"it can look at the card ({r.status_code})", r.status_code == 200)
+    r = http("GET", f"/api/card/{bc}/my-data", headers=look_only)
+    check(f"it can't export ({r.status_code})", r.status_code == 403)
     r = forget(bc, look_only)
     check(f"it can't erase ({r.status_code})", r.status_code == 403 and not erased(bc))
     r = http("DELETE", f"/api/card/{bc}", headers=look_only)
@@ -173,6 +182,21 @@ def main():
     check(f"erase still asks for confirmation ({r.status_code})", r.status_code == 422)
     r = http("GET", "/api/card/FT-NOPE/my-data", headers=owner)
     check(f"an unknown card is a 404 ({r.status_code})", r.status_code == 404)
+
+    print("\n9. A suspended shop's logins have no card access")
+    was = auth._tenant_check
+    auth.set_tenant_check(lambda tid: "Ce compte est suspendu." if tid == "t1" else None)
+    bc = card()
+    for name, headers in (("the owner", owner), ("staff", staff)):
+        r = http("GET", f"/api/card/{bc}/my-data", headers=headers)
+        check(f"{name}: no export ({r.status_code})", r.status_code == 403)
+        r = forget(bc, headers)
+        check(f"{name}: no erasure ({r.status_code})", r.status_code == 403 and not erased(bc))
+        r = http("DELETE", f"/api/card/{bc}", headers=headers)
+        check(f"{name}: can't delete the card ({r.status_code})", r.status_code == 403)
+    r = http("GET", f"/api/card/{bc}/my-data", headers={"X-Card-Key": CO.key_for(bc)})
+    check(f"the customer's own phone still gets their data ({r.status_code})", r.status_code == 200)
+    auth.set_tenant_check(was)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

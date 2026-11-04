@@ -7798,34 +7798,31 @@ def _log_card_message_view(cust: dict, payload: dict) -> None:
 SHOP_CARD_ROLES = ("business_owner", "administrateur", "manager", "staff")
 
 
-def _shop_login_may_use_card(p: dict, cust: dict, request: Request, customers_right: Optional[str]) -> bool:
-    """A shop or FidClic login on a customer's card. A disabled account has no
-    access and a look-only one changes nothing. `customers_right` (« view » or
-    « edit »): the data itself, exported or erased, follows the Clients page
-    right in the account's own stores, like « Supprimer le client »."""
-    if p.get("view_only") and request.method not in auth.READ_METHODS:
+def _shop_login_may_use_card(p: dict, cust: dict, request: Request, owner_only: bool) -> bool:
+    """A shop or FidClic login on a customer's card. A disabled account or a
+    suspended shop has no access, and a look-only account changes nothing.
+    `owner_only`: the customer's data, exported or erased, follows the rule of
+    Paramètres › Données & confidentialité."""
+    if p.get("view_only") and (owner_only or request.method not in auth.READ_METHODS):
         return False
     role = p.get("role")
     if role == "super_admin":
         return True
     if role not in SHOP_CARD_ROLES or p.get("tenant_id") != cust.get("tenant_id"):
         return False
+    if not p.get("view_by") and auth._tenant_check is not None and auth._tenant_check(p.get("tenant_id")):
+        return False
+    if owner_only:
+        return role == "business_owner"
     if role in auth.TEAM_ROLES and auth._team_status is not None:
         status = auth._team_status(p.get("sub")) or {}
         if not status or status.get("active") is False:
             return False
-    if not customers_right:
-        return True
-    from features import role_perms as RP, store_scope as S
-    token = auth.TokenData(email=p.get("sub"), role=role, tenant_id=p.get("tenant_id"))
-    if not RP.may(token, "customers", customers_right, request):
-        return False
-    mine = S.customer_ids(S.resolve(token, request))
-    return mine is None or cust.get("id") in mine
+    return True
 
 
 def _card_customer(barcode_id: str, request: Optional[Request], with_actor: bool = False,
-                   customers_right: Optional[str] = None):
+                   owner_only: bool = False):
     """The customer behind a card, for whoever may act on it (2026-10-09).
 
     A card's number is printed in its QR — shown at the counter, to friends,
@@ -7862,7 +7859,7 @@ def _card_customer(barcode_id: str, request: Optional[Request], with_actor: bool
             p = jwt.decode(token[7:] if token.startswith("Bearer ") else token, auth._secret(),
                            algorithms=[auth.ALGORITHM])
             ok_session = auth._session_check is None or auth._session_check(p.get("sub"), p.get("sid"))
-            if not p.get("purpose") and ok_session and _shop_login_may_use_card(p, cust, request, customers_right):
+            if not p.get("purpose") and ok_session and _shop_login_may_use_card(p, cust, request, owner_only):
                 return _ret(p.get("view_by") or p.get("sub") or "l'équipe")
         except Exception:
             pass
@@ -7986,6 +7983,14 @@ def _strip_mongo(doc: dict) -> dict:
     return doc
 
 
+def _gdpr_actor(barcode_id: str, who: Optional[str]) -> str:
+    return barcode_id if who in (None, "client") else who
+
+
+def _gdpr_actor_type(who: Optional[str]) -> str:
+    return "customer" if who in (None, "client") else "user"
+
+
 @app.get("/api/card/{barcode_id}/my-data")
 def export_my_data(barcode_id: str, request: Request = None):
     """RGPD Art. 15 (accès) + Art. 20 (portabilité).
@@ -7995,7 +8000,7 @@ def export_my_data(barcode_id: str, request: Request = None):
     rewards redeemed, card prefs, and push-subscription count (endpoints
     themselves are secrets — we expose the count, not the URLs).
     """
-    cust = _card_customer(barcode_id, request, customers_right="view")
+    cust, who = _card_customer(barcode_id, request, with_actor=True, owner_only=True)
     cid, tid = cust["id"], cust["tenant_id"]
     t = db.tenants.find_one({"id": tid}) or {}
 
@@ -8008,7 +8013,7 @@ def export_my_data(barcode_id: str, request: Request = None):
     prefs = _card_prefs_for(cid)
     push_count = db.push_subscriptions.count_documents({"customer_id": cid})
 
-    log_audit("gdpr.export", actor=barcode_id, actor_type="customer",
+    log_audit("gdpr.export", actor=_gdpr_actor(barcode_id, who), actor_type=_gdpr_actor_type(who),
               tenant_id=tid, target=cid, request=request,
               meta={"visits": len(visits), "notifications": len(notifications)})
 
@@ -8052,7 +8057,7 @@ def forget_me(barcode_id: str, req: ForgetMeRequest, request: Request = None):
             "code": "confirmation_required",
             "message": "Confirmation requise pour supprimer vos données.",
         })
-    cust = _card_customer(barcode_id, request, customers_right="edit")
+    cust, who = _card_customer(barcode_id, request, with_actor=True, owner_only=True)
     cid, tid = cust["id"], cust["tenant_id"]
     now = datetime.now(timezone.utc)
 
@@ -8084,7 +8089,7 @@ def forget_me(barcode_id: str, req: ForgetMeRequest, request: Request = None):
     db.card_prefs.delete_many({"customer_id": cid})
     db.customer_card_overrides.delete_many({"customer_id": cid})
 
-    log_audit("gdpr.forget_me", actor=barcode_id, actor_type="customer",
+    log_audit("gdpr.forget_me", actor=_gdpr_actor(barcode_id, who), actor_type=_gdpr_actor_type(who),
               tenant_id=tid, target=cid, request=request,
               meta={"push_deleted": push_deleted,
                     "notifications_deleted": notif_deleted,
