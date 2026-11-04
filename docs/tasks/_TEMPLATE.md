@@ -1,6 +1,7 @@
 # Task: <one line>
 
-This repository is public. No customer data, passwords, keys or merchant details here.
+This repository is public. No customer data, passwords, keys or merchant details here,
+and no details of an unfixed security hole: `new-task` keeps those specs outside the repo.
 
 ## Goal
 <What is true when this is done, from the user's side.>

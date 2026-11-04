@@ -17,6 +17,9 @@ Turn it into a contract a loop can finish without asking for more prompts.
    - Out of scope names what a helpful engineer would be tempted to change.
    - The human test is in plain Hinglish, for a non-developer, on the local server.
    - The repository is public: no customer data, passwords, keys or merchant details.
+   - If it is an unfixed security hole, write the spec to `private-tasks/<short-slug>.md` in
+     the `website_antiG` workspace folder, which is not in git, and point the `/goal` line
+     at that absolute path.
 4. Ask only what the code cannot answer and the user must own: product behaviour,
    wording, money, what customers receive. Use one AskUserQuestion with concrete options.
    If nothing needs asking, do not ask. Record the answers in the spec.

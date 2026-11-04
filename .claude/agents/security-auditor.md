@@ -17,6 +17,6 @@ Try:
 - Logic abuse: getting rewards, points or money the rules forbid.
 
 Prove each finding with a request or a script against the local server. Do not print real
-secrets. Report in plain Hinglish for a non-developer, most severe first:
+secrets. The repository is public, so never write findings into it. Report in plain Hinglish for a non-developer, most severe first:
 
 `HIGH|MEDIUM|LOW  kya toot-ta hai  kaise (exact steps)  kitna bura hai  file:line`

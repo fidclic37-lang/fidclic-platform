@@ -56,6 +56,10 @@ then push and open a pull request against `main`. The body has:
 
 Add the `ai` label if it changes AI prompts, models or answers.
 
+The repository is public. For a security fix, describe what the code now does in commits
+and the pull request, not how to attack it. Give exploit steps and pentest findings to the
+user in chat only, and never put open findings in the repository.
+
 ## 6. CI
 
 Wait for checks without burning turns. In the Claude app, use the PR status tools. In a
