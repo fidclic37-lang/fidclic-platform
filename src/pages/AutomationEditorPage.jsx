@@ -46,7 +46,7 @@ const TRIGGERS = {
   welcome: {}, near_reward: { visits_left: 1 }, referral: { sides: ['parrain', 'filleul'] },
   geo: { cooldown_days: 7, weather: [], stores: [] },
   google_review: { type: 'after_visit', delay_value: 2, delay_unit: 'hours', frequency: 'once', every_days: 30, visits: 5, date: '', stop_after_click: true },
-  inactive: { days: 30, repeat: 'once', every_days: 30 },
+  inactive: { days: 30, repeat: 'once', every_days: 30, respect_rhythm: true },
   custom: { type: 'after_visit', visits: 5, visits_repeat: 'once', cooldown_days: 0, date_mode: 'once', date: '', weekday: 0, monthday: 1 },
 };
 const WEEKDAYS_FR = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
@@ -406,14 +406,14 @@ export default function AutomationEditorPage() {
   const pick = (key) => (v) => { if (v !== '__multi') setF({ [key]: v ? [v] : [] }); };
 
   // ---- the live count (step 4) ---------------------------------------------------
-  const tKey = s ? JSON.stringify([s.scenario, s.targeting, s.scenario === 'inactive' ? s.trigger.days : s.scenario === 'near_reward' ? s.trigger.threshold : 0]) : '';
+  const tKey = s ? JSON.stringify([s.scenario, s.targeting, s.scenario === 'inactive' ? [s.trigger.days, s.trigger.respect_rhythm] : s.scenario === 'near_reward' ? s.trigger.threshold : 0]) : '';
   useEffect(() => {
     if (!s) return undefined;
     let alive = true;
     const t0 = setTimeout(() => {
       if (s.targeting.mode === 'segment' && !s.targeting.segment) { setPreview({ count: 0, sample: preview?.sample }); return; }
       ownerAPI.automationPreview({ scenario: s.scenario, targeting: s.targeting,
-        ...(s.scenario === 'inactive' ? { trigger: { days: Number(s.trigger.days) || 30 } }
+        ...(s.scenario === 'inactive' ? { trigger: { days: Number(s.trigger.days) || 30, respect_rhythm: s.trigger.respect_rhythm !== false } }
           : s.scenario === 'near_reward' ? { trigger: { threshold: Number(s.trigger.threshold) || 10 } } : {}) })
         .then(({ data }) => { if (alive) setPreview(data); }).catch(() => { if (alive) setPreview(null); });
     }, 250);
@@ -2104,6 +2104,23 @@ export default function AutomationEditorPage() {
           {INACTIVE_DAYS.includes(inDays) ? 'Autre durée :' : <b className="text-[#1463FF]">Durée personnalisée :</b>}
           <Num value={tr.days} min={7} max={365} label="Jours sans visite" onChange={(v) => setIn('trigger', { days: v })} /> jours <span className="text-[#94A3B8]">(7 à 365)</span>
         </p>
+      </div>
+      {/* « jo apne rhythm pe hain, unhe mat bhejo » (user, 2026-11-04): features/automations._on_rhythm */}
+      <div className="mt-3 flex items-start justify-between gap-3 rounded-2xl border border-[#E6EEFB] p-4" data-testid="respect-rhythm">
+        <span className="min-w-0">
+          <span className="block text-[13.5px] font-bold text-[#0B1C3F]">Respecter le rythme de chaque client</span>
+          <span className="block text-[12.5px] text-[#475569]">Un client qui vient d'habitude moins souvent et qui est encore dans son délai ne reçoit rien. S'il dépasse son délai, la relance part toute seule.</span>
+          {tr.respect_rhythm !== false && ins?.on_rhythm > 0 && (
+            <span className="mt-1 block text-[12.5px] font-semibold text-[#1463FF]" data-testid="on-rhythm-count">
+              Aujourd'hui : {ins.on_rhythm.toLocaleString('fr-FR')} client{ins.on_rhythm > 1 ? 's' : ''} encore dans {ins.on_rhythm > 1 ? 'leur' : 'son'} rythme, pas de message pour l'instant.
+            </span>
+          )}
+        </span>
+        <button type="button" role="switch" aria-checked={tr.respect_rhythm !== false} aria-label="Respecter le rythme de chaque client"
+                onClick={() => setIn('trigger', { respect_rhythm: tr.respect_rhythm === false })}
+                className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition ${tr.respect_rhythm !== false ? 'bg-[#1463FF]' : 'bg-[#CBD5E1]'}`}>
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${tr.respect_rhythm !== false ? 'left-[22px]' : 'left-0.5'}`} />
+        </button>
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="block"><Label>Date d'envoi</Label>
