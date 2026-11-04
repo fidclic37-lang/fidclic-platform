@@ -17,8 +17,8 @@ ONE CHOICE, NOT SEVERAL
     Offers and rewards come back in a single `applicables` list. The page lets
     exactly one be picked (user, 2026-10-13): « jitne bhi available rewards ho
     woh sab dikhe, lekin choose unme se koi ek hi kar paaye ». Each entry says
-    whether it can be used now or only becomes available once this visit is
-    registered — a customer one stamp short walks out with the reward today.
+    whether it can be used now; a customer one stamp short sees the reward
+    announced for the next visit and cannot pick it (user, 2026-11-04).
 
 WHAT IT DOES NOT DECIDE
     The card reward is earned by the card cycle — visits, through
@@ -111,10 +111,10 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
                  unit: str) -> Optional[Dict[str, Any]]:
     """The loyalty card's own reward: a full card, or one already waiting.
 
-    `after_visit` is the whole point of showing it before the scan: a client
-    one stamp short leaves with the reward today, because the visit is written
-    first and the reward is handed over straight after (features/scan_page is
-    read-only — server.scan does that part)."""
+    `after_visit`: this scan will fill the card, so the reward is for the NEXT
+    visit — shown, not to be picked (user, 2026-11-04). The visit about to be
+    written counts as that next visit for whatever is already full or waiting
+    (features/scan_page is read-only — server.scan does that part)."""
     from features import loyalty_card as LC
     waiting = _db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
     label = next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense"

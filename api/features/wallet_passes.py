@@ -1697,7 +1697,7 @@ def build_pass_json(payload: Dict[str, Any]) -> Dict[str, Any]:
         # A points card counts in points, not in stamps: it used to say
         # « Encore 3 tampons » to someone who has never had a stamp.
         {"key": "next_reward", "label": "Prochaine récompense",
-         "value": "Récompense débloquée : présentez votre carte !"
+         "value": "Récompense débloquée : à récupérer lors de votre prochaine visite !"
          if (remaining <= 0 if stamp_prog else (reward_points and points_left <= 0))
          else (f"Encore {remaining} tampon{'s' if remaining > 1 else ''} avant : {reward}" if stamp_prog
                else (f"Encore {points_left} point{'s' if points_left > 1 else ''} avant : {reward}"
@@ -4232,7 +4232,7 @@ def google_sync(serials: Iterable[str], notify: Any = None, update_class: bool =
             elif kind == "reward":
                 reward = payload["card"].get("reward_description") or "Votre récompense"
                 message = {"id": f"reward-{int(time.time())}", "header": "Récompense débloquée !",
-                           "body": f"{reward} — présentez votre carte en caisse."}
+                           "body": f"{reward} — à récupérer lors de votre prochaine visite."}
             if payload["card"].get("_paused"):
                 message = None                         # paused by the business: no Google message
             st, body = _gw_call("PUT", f"/loyaltyObject/{obj['id']}", obj, token)

@@ -4,8 +4,8 @@ Paper-card stamps moved onto the digital card at a scan (user, 2026-10-10:
 100% accurate and strong, no exceptions »).
 
 Rules decided: optional; 4 paper + today's visit = 5; 0 to a full card
-(9 + today = the reward today, 10 = a full paper card banked « à récupérer »
-and today starts the new card); never above a full card counting the stamps
+(9 + today = full, the reward at the next visit (user, 2026-11-04); 10 = a full
+paper card banked « à récupérer » and today starts the new card); never above a full card counting the stamps
 already there; once per customer; the card's meter only — not visits,
 points or palier.
 
@@ -117,15 +117,17 @@ def main():
     check("a scan without paper stamps still works", scan(bc).status_code == 200
           and card(cid)["customer"]["cycle_visits"] == 6)
 
-    print("\n9 paper stamps: the reward today")
+    print("\n9 paper stamps: the reward at the next visit")
     bc, cid = new_customer()
     d = scan(bc, 9).json()
     check("9 + today = 10/10, reward unlocked", d["stamps_in_cycle"] == 10 and d["reward_unlocked"] is True)
     r = http("POST", "/api/owner/rewards/redeem", headers=H, json={"barcode_id": bc, "reward_name": "Café"})
-    check("the reward can be handed over (1 real visit, a full card)", r.status_code == 200, )
-    check("…and the card starts again from 0", card(cid)["customer"]["cycle_visits"] == 0)
+    check("today's visit completed it: not today", r.status_code == 400)
     d = scan(bc).json()
-    check("next visit = 1/10", d["stamps_in_cycle"] == 1 and not d["reward_unlocked"])
+    check("next visit = 1/10, the full card waiting", d["stamps_in_cycle"] == 1 and d["rewards_pending"] == 1)
+    r = http("POST", "/api/owner/rewards/redeem", headers=H, json={"barcode_id": bc, "reward_name": "Café"})
+    check("the reward can be handed over (2 real visits, a full card)", r.status_code == 200)
+    check("…and the new card keeps its stamp", card(cid)["customer"]["cycle_visits"] == 1)
 
     print("\n10 paper stamps: a full paper card")
     bc, cid = new_customer()
