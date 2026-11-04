@@ -112,7 +112,7 @@ const FieldError = ({ id, children }) => (children ? <p id={id} role="alert" cla
 function Brand() {
   return (
     <p className="mt-3 text-[15px] text-[#64748B]">
-      by <span className="font-bold"><span className="text-[#2F6BFF]">Fid</span><span className="text-[#F59E0B]">Clic</span></span>
+      by <span translate="no" data-testid="brand-wordmark" className="notranslate font-bold"><span className="text-[#2F6BFF]">Fid</span><span className="text-[#F59E0B]">Clic</span></span>
     </p>
   );
 }
