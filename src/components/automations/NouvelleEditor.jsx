@@ -68,7 +68,6 @@ const PICKS = [
 ];
 const LIMITS = [['trigger', 'Pas de limite (1 par déclenchement)'], ['day', '1 fois par jour'], ['week', '1 fois par semaine'],
   ['month', '1 fois par mois'], ['ever', '1 seule fois au total']];
-const GAPS = [1, 3, 7, 14, 15, 30, 60, 90];
 const VARS = ['prénom', 'nom', 'points', 'récompense', 'nom_commerce', 'date', 'montant', 'nombre_visites'];
 const LINKS = [['card', 'La carte du client'], ['rewards', 'Page Récompenses'], ['offer', 'Une de vos offres'], ['google_review', 'Votre fiche Google'], ['url', 'Un lien personnalisé']];
 
@@ -450,6 +449,7 @@ export default function NouvelleEditor({ page, row, ai, onReload }) {
       if (tg.on.last && !(Number(f.last_visit_days) > 0)) out.push('Date de dernière visite : indiquez le nombre de jours.');
     }
     if (n === 5) {
+      if (s.schedule.dedupe && !(Number(s.schedule.min_gap_days) >= 1 && Number(s.schedule.min_gap_days) <= 365)) out.push('Intervalle entre deux envois : entre 1 et 365 jours.');
       if (sc.window && sc.window_to <= sc.window_from) out.push('La fin de la plage horaire doit être après son début.');
       if (sc.window && timed(tr) && !(sc.window_from <= sc.hour && sc.hour < sc.window_to)) out.push(`L'heure d'envoi (${sc.hour}) doit être comprise dans la plage horaire (${sc.window_from} – ${sc.window_to}).`);
       if (!timed(tr) && tr.type !== 'geo' && sc.send_mode === 'at' && !sc.send_at) out.push("Choisissez la date et l'heure d'envoi.");
@@ -485,7 +485,7 @@ export default function NouvelleEditor({ page, row, ai, onReload }) {
     const msg = (m) => ({ title: m.title, body: m.body, image_url: m.image_url || null,
       button: { ...m.button, url: m.button.link_type === 'url' && m.button.url && !/^https?:\/\//i.test(m.button.url) ? `https://${m.button.url}` : m.button.url || null,
         offer_id: m.button.offer_id || null } });
-    const sch = { ...sc, valid_from: sc.period || hasDate(tr) ? sc.valid_from || null : null,
+    const sch = { ...sc, min_gap_days: Number(sc.min_gap_days) || 7, valid_from: sc.period || hasDate(tr) ? sc.valid_from || null : null,
       valid_to: sc.period || sc.expire ? sc.valid_to || null : null, send_at: sc.send_mode === 'at' ? sc.send_at : null };
     delete sch.expire; delete sch.period;
     return { scenario: 'custom', name: s.name.trim(), description: s.description.trim(), status, trigger: t, message: msg(s.message),
@@ -1154,10 +1154,10 @@ export default function NouvelleEditor({ page, row, ai, onReload }) {
         <div className="grid gap-3 border-b border-[#F1F5F9] py-3 sm:grid-cols-2">
           <label className="block"><Label hint="Nombre de notifications maximum envoyées à un même client.">Limite par client</Label>
             <Select label="Limite par client" value={sc.limit.per} onChange={(v) => setSc({ limit: { count: 1, per: v } })} options={LIMITS} /></label>
-          <div><Label hint="Évite d'envoyer plusieurs fois la même notification au même client.">Éviter les doublons</Label>
-            <span className="flex items-center gap-2"><Toggle label="Éviter les doublons" on={sc.dedupe} onChange={(v) => setSc({ dedupe: v })} />
-              <span className="flex-1"><Select label="Ne pas renvoyer dans les" disabled={!sc.dedupe} value={String(sc.min_gap_days)} onChange={(v) => setSc({ min_gap_days: Number(v) })}
-                                               options={GAPS.map((n) => [String(n), `dans les ${n} dernier${n > 1 ? 's' : ''} jour${n > 1 ? 's' : ''}`])} /></span></span></div>
+          {/* the business's own number (user, 2026-11-04), not a list */}
+          <div><Label hint="Une fois envoyée à un client, cette notification ne lui est renvoyée qu'après ce nombre de jours.">Intervalle entre deux envois</Label>
+            <span className="flex items-center gap-2"><Toggle label="Intervalle par client" on={sc.dedupe} onChange={(v) => setSc({ dedupe: v })} />
+              <span className="flex-1"><Num label="Intervalle entre deux envois" disabled={!sc.dedupe} value={sc.min_gap_days} max={365} unit="jours" onChange={(v) => setSc({ min_gap_days: v })} /></span></span></div>
         </div>
         <div className="flex flex-wrap items-start gap-3 border-b border-[#F1F5F9] py-3">
           <Toggle label="Expiration" on={sc.expire} onChange={(v) => setSc(v ? { expire: true, valid_to: sc.valid_to || (tr.type === 'on_date' && tr.date ? tr.date : today) } : { expire: false, valid_to: sc.period ? sc.valid_to : '' })} />
@@ -1200,7 +1200,7 @@ export default function NouvelleEditor({ page, row, ai, onReload }) {
   const rulesBoxes = () => {
     const lim = (LIMITS.find(([k]) => k === sc.limit.per) || [])[1];
     return [["Horaires autorisés", sc.window ? `${sc.window_from} – ${sc.window_to}` : 'Toute la journée'], ['Limite par client', lim === LIMITS[0][1] ? '1 / déclenchement' : lim],
-      ['Anti-doublon', sc.dedupe ? `${sc.min_gap_days} jours` : 'Désactivé']];
+      ['Intervalle', sc.dedupe ? `${sc.min_gap_days} jours` : 'Désactivé']];
   };
   const Step6 = (
     <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">

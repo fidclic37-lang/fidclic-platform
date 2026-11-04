@@ -2565,7 +2565,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     elif sc == "inactive":
         tr["days"] = _int(tr_in.get("days", 30), 7, 365, "Jours sans visite")
         tr["repeat"] = "every" if tr_in.get("repeat") == "every" else "once"
-        tr["every_days"] = _int(tr_in.get("every_days", 30), 7, 365, "Répéter tous les")
+        tr["every_days"] = _int(tr_in.get("every_days", 30), 1, 365, "Répéter tous les")
         tr["respect_rhythm"] = tr_in.get("respect_rhythm") is not False
     elif sc == "referral":
         raw = tr_in.get("sides")
@@ -2578,7 +2578,7 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
         if not tr["sides"] and not draft:
             raise HTTPException(status_code=400, detail="Envoyez au moins un message : au parrain ou au filleul.")
     elif sc == "geo":
-        tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 7), 1, 90, "Délai entre deux messages")
+        tr["cooldown_days"] = _int(tr_in.get("cooldown_days", 7), 1, 365, "Délai entre deux messages")
         weather = tr_in.get("weather") or []
         if not isinstance(weather, list) or any(w not in GEO_WEATHER for w in weather):
             raise HTTPException(status_code=400, detail="Météo : valeur inconnue.")

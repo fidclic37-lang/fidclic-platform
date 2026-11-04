@@ -120,6 +120,10 @@ MONGO_CLIENT_OPTIONS = dict(
 )
 
 
+from services import mongo_pool as _mongo_pool  # noqa: E402
+_mongo_pool.install()
+
+
 def make_client(uri):
     """The one MongoClient of this process, always with MONGO_CLIENT_OPTIONS."""
     if uri:
@@ -5678,7 +5682,15 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # going forward (replacing the DEMO data in analyticsExtra.js).
         if resolved_lines:
             visit_doc["items"] = resolved_lines
-        db.visits.insert_one(visit_doc)
+        # A full pool wrote nothing, so trying again cannot make a second row;
+        # the counters are already up, and a lost row would make the figures lie.
+        for _left in (2, 1, 0):
+            try:
+                db.visits.insert_one(visit_doc)
+                break
+            except _mongo_errors.WaitQueueTimeoutError:
+                if not _left:
+                    raise
     except Exception as _e:
         print(f"scan_visit: visit insert failed (non-fatal): {_e}")
 
@@ -11895,6 +11907,12 @@ def proximity_ping(req: ProximityPingRequest):
 
     if not nearest or nearest["distance_m"] > radius_m:
         if custom_said:
+            # told here (a custom address, away from the shop): the Wallet pass
+            # goes quiet for the same interval at once, not at the next tick
+            try:
+                _GA.refresh_one(db.customers.find_one({"id": cust["id"]}, {"_id": 0}) or cust)
+            except Exception as exc:
+                print(f"proximity: pass not refreshed ({exc})")
             return {"status": "sent", "title": custom_said[0]["title"], "body": custom_said[0]["body"],
                     "button_label": custom_said[0].get("button_label"), "button_url": custom_said[0].get("click_url")}
         return {"status": "out_of_range", "distance_m": (nearest["distance_m"] if nearest else None)}
