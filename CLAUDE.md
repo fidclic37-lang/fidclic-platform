@@ -9,11 +9,13 @@
 1. This is the single source of truth for project state. Trust it over assumptions.
 2. The workspace folder is `website_antiG/`. The live codebase is in `website_antiG/fidelitour-deploy/`.
 3. Copy of this file also lives at `fidelitour-deploy/CLAUDE.md` — keep both in sync when updating.
-4. Work on a feature branch → push → Vercel preview URL → user validates → merge to `main` (production). Never push straight to `main` for product changes.
+4. Work on a feature branch → push → pull request → `merge-gate` skill decides: merge alone or ask the user (`docs/loop/merge-policy.md`). `main` is production. Never push straight to it.
 5. User (yrrx / Akshansh) communicates in Hinglish — respond in Hinglish for discussions, English for code/commits.
 6. User prefers: concise, direct, no unnecessary explanation. Detailed only when he asks "explain".
 7. NEVER take autonomous product decisions — propose, let him decide. He says "don't take autonomous decisions."
 8. He tests on the live Vercel deploy after every push. Cache issues are common — always remind hard-refresh (Cmd+Shift+R) if a change "doesn't show."
+
+9. Platform fixes run as loops: `/new-task`, then the `/goal` line it gives. Start with `docs/loop/README.md`. Test on the local server: **Vercel previews use the production database** (`docs/verification.md`).
 
 ---
 
