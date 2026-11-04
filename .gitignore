@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 .vercel/
 __pycache__/
@@ -17,3 +17,8 @@ deploy.sh
 
 # Golden set run (scripts/golden_run.py)
 /golden-report/
+
+# Claude Code
+.claude/worktrees/
+.claude/.cc-writes/
+.claude/scheduled_tasks.lock

@@ -11604,6 +11604,87 @@ def _reward_earned_before(cust: dict, threshold: int, price: int, points_prog: b
     return on_card - int(cust.get("last_scan_units") or 0) >= threshold
 
 
+def _refuse_reward(cust: dict, threshold: int, price: int, points_prog: bool) -> None:
+    """Why this client has no reward to hand over right now."""
+    if db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"}):
+        raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
+    # What counts is THIS card (and any full card waiting), not lifetime
+    # visits: a card completed with paper stamps (2026-10-10) holds fewer
+    # visits than its size.
+    on_card = int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0)
+    if points_prog and price > 0:
+        balance = int(cust.get("points") or 0)
+        if balance >= price:
+            raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Il manque {price - balance} points avant d'échanger cette récompense.",
+        )
+    if on_card >= threshold:
+        raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
+    raise HTTPException(
+        status_code=400,
+        detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
+    )
+
+
+def _take_reward(cust: dict, threshold: int, price: int, points_prog: bool, when: datetime, by: Optional[str]) -> dict:
+    """Take ONE reward off the client, or refuse. The check and the taking are
+    one write, guarded by what was read: two tills pressing at once, one gets it
+    and the other reads the client again and is told why not. A time between
+    two visits is no protection here (user, 2026-11-04: several visits a day
+    are real)."""
+    sets = {"last_reward_redeemed_at": when, "updated_at": when}
+    for _round in range(10):
+        # A banked reward is claimed first: the customer completed a card earlier
+        # and the counter already rolled over, so the fresh card's stamps must
+        # survive this redemption.
+        banked = db.rewards_earned.find_one_and_update(
+            claimable_query(cust),
+            {"$set": {"status": "redeemed", "redeemed_at": when, "staff_email": by}},
+            sort=[("earned_at", 1)])
+        if banked:
+            db.customers.update_one({"id": cust["id"]}, {"$inc": {"rewards_redeemed_count": 1}, "$set": sets})
+            return {"banked": banked["id"], "points": 0, "card": False}
+        if not _reward_earned_before(cust, threshold, price, points_prog):
+            _refuse_reward(cust, threshold, price, points_prog)
+        if points_prog and price > 0:
+            # The balance pays; `points_lifetime` does not move, so the palier the
+            # client reached stays theirs (features/loyalty_card.tier_of).
+            done = db.customers.update_one(
+                {"id": cust["id"], "points": cust.get("points"), "points_last_earned": cust.get("points_last_earned")},
+                {"$inc": {"points": -price, "rewards_redeemed_count": 1}, "$set": sets})
+            if getattr(done, "modified_count", 0):
+                return {"banked": None, "points": price, "card": False}
+        else:
+            # NO LONGER DECREMENT VISITS. Move the cycle marker forward by exactly
+            # one full card (not to the current visit count) so a customer at 13
+            # visits on a 10-visit card keeps the 3 stamps they have already earned.
+            raw = cust.get("visits_at_last_redemption")
+            done = db.customers.update_one(
+                {"id": cust["id"], "visits_at_last_redemption": raw},
+                {"$inc": {"rewards_redeemed_count": 1},
+                 "$set": {**sets, "visits_at_last_redemption": int(raw or 0) + threshold}})
+            if getattr(done, "modified_count", 0):
+                return {"banked": None, "points": 0, "card": True}
+        cust = db.customers.find_one({"id": cust["id"]}) or cust
+    raise HTTPException(status_code=409, detail="Ce client vient de changer, réessayez.")
+
+
+def _give_back_reward(customer_id: str, taken: dict, threshold: int) -> None:
+    """The history could not be written: the reward was not given, the client
+    keeps it."""
+    inc: Dict[str, int] = {"rewards_redeemed_count": -1}
+    if taken["banked"]:
+        db.rewards_earned.update_one({"id": taken["banked"]}, {"$set": {"status": "pending"},
+                                                               "$unset": {"redeemed_at": "", "staff_email": ""}})
+    if taken["points"]:
+        inc["points"] = taken["points"]
+    if taken["card"]:
+        inc["visits_at_last_redemption"] = -threshold
+    db.customers.update_one({"id": customer_id}, {"$inc": inc})
+
+
 @app.post("/api/owner/rewards/redeem")
 def redeem_reward(
     req: RedeemRewardRequest,
@@ -11645,35 +11726,12 @@ def redeem_reward(
     card_tpl = db.card_templates.find_one({"tenant_id": tid}) or {}
     threshold = max(int(card_tpl.get("reward_threshold_stamps", 10)) *
                     int(card_tpl.get("visits_per_stamp", 1)), 1)
-    current_visits = int(cust.get("visits", 0) or 0)
-    # What counts is THIS card (and any full card waiting), not lifetime
-    # visits: a card completed with paper stamps (2026-10-10) holds fewer
-    # visits than its size.
-    on_card = current_visits - int(cust.get("visits_at_last_redemption") or 0)
-    waiting = db.rewards_earned.count_documents(claimable_query(cust))
     # A points card buys its reward with points — which is what the pass has
     # always promised the customer (« {reward} dès N points »), even though
     # nothing used to charge for it. A stamp card fills a card, as before.
     from features import loyalty_card as _LCR
     points_prog = _LCR._is_points(_LCR._programme(card_tpl))
     price = max(int(card_tpl.get("reward_points") or 0), 0)
-    balance = int(cust.get("points") or 0)
-    if not waiting and not _reward_earned_before(cust, threshold, price, points_prog):
-        if db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"}):
-            raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
-        if points_prog and price > 0:
-            if balance >= price:
-                raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Il manque {price - balance} points avant d'échanger cette récompense.",
-            )
-        if on_card >= threshold:
-            raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
-        )
 
     reward = {
         "id": str(uuid.uuid4()),
@@ -11687,42 +11745,19 @@ def redeem_reward(
         "redeemed_at": datetime.now(timezone.utc),
         "staff_email": getattr(token_data, "email", None),
     }
-    # A banked reward is claimed first: the customer completed a card earlier
-    # and the counter already rolled over, so the fresh card's stamps must
-    # survive this redemption.
-    banked = db.rewards_earned.find_one(claimable_query(cust), sort=[("earned_at", 1)])
+    taken = _take_reward(cust, threshold, price, points_prog, reward["redeemed_at"], reward["staff_email"])
     # What it cost, for Historique (user, 2026-10-15: the points / tampons
     # column stayed empty on a reward): the balance on a points card, one
     # full card of tampons otherwise.
-    if points_prog and price > 0 and not banked:
-        reward["points_spent"] = min(price, balance)
+    if taken["points"]:
+        reward["points_spent"] = taken["points"]
     else:
         reward["stamps_spent"] = max(int(card_tpl.get("reward_threshold_stamps", 10) or 10), 1)
-    db.rewards_redeemed.insert_one(reward)
-
-    if banked:
-        db.rewards_earned.update_one({"id": banked["id"]}, {"$set": {
-            "status": "redeemed", "redeemed_at": reward["redeemed_at"],
-            "staff_email": getattr(token_data, "email", None),
-        }})
-
-    # NO LONGER DECREMENT VISITS. Move the cycle marker forward by exactly one
-    # full card (not to the current visit count) so a customer at 13 visits on
-    # a 10-visit card keeps the 3 stamps they have already earned.
-    last_red = int(cust.get("visits_at_last_redemption") or 0)
-    new_marker = last_red if banked else last_red + threshold
-    inc = {"rewards_redeemed_count": 1}
-    sets = {
-        "last_reward_redeemed_at": reward["redeemed_at"],
-        "updated_at": datetime.now(timezone.utc),
-    }
-    if points_prog and price > 0 and not banked:
-        # The balance pays; `points_lifetime` does not move, so the palier the
-        # client reached stays theirs (features/loyalty_card.tier_of).
-        inc["points"] = -min(price, balance)
-    else:
-        sets["visits_at_last_redemption"] = new_marker
-    db.customers.update_one({"id": cust["id"]}, {"$inc": inc, "$set": sets})
+    try:
+        db.rewards_redeemed.insert_one(reward)
+    except Exception:
+        _give_back_reward(cust["id"], taken, threshold)
+        raise
     refresh_wallet_pass(cust["id"])          # the meter resets — show it now
     reward.pop("_id", None)
     try:                                      # API & Intégrations: reward.redeemed

@@ -622,7 +622,8 @@ const DashboardLayout = () => {
                  style={{ filter: 'drop-shadow(0 8px 14px rgba(20,80,184,.28))' }}
                  title={rail ? 'FidClic' : undefined} />
             {!rail && (
-              <span className="text-[21px] font-extrabold leading-none tracking-[-0.02em]">
+              // translate="no": « Clic » alone is a French word, translators made it « FidClick »
+              <span translate="no" data-testid="brand-wordmark" className="notranslate text-[21px] font-extrabold leading-none tracking-[-0.02em]">
                 <span style={{ color: BRAND_BLUE }}>Fid</span><span style={{ color: BRAND_YELLOW }}>Clic</span>
               </span>
             )}
@@ -854,7 +855,7 @@ const DashboardLayout = () => {
                     className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#E6EEFB] bg-white text-[#334155]">
               <Menu size={18} />
             </button>
-            <span className="text-[15px] font-bold text-[#0B1C3F]">FidClic</span>
+            <span translate="no" data-testid="brand-wordmark" className="notranslate text-[15px] font-bold text-[#0B1C3F]">FidClic</span>
           </div>
         )}
 
