@@ -117,8 +117,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("3rd visit: reward unlocked", last["reward_unlocked"] is True and last["customer"]["reward_unlocked"] is True)
     lst = http("GET", f"/api/v1/visits?customer={c['id']}", key=RO).json()
     check("visits listed, newest first", lst["total"] == 3 and lst["data"][0]["external_id"] == "T-1003")
+    check("…for the next visit", last["customer"]["reward_available"] is False)
+    soon = http("POST", "/api/v1/rewards/redeem", key=KEY, json={"customer": c["id"], "external_id": "R-0"})
+    check("not during the visit that earned it → 409", soon.status_code == 409 and soon.json()["detail"]["code"] == "reward_next_visit")
+    nxt = http("POST", "/api/v1/visits", key=KEY, json={"customer": c["id"], "amount": 4, "external_id": "T-1004"}).json()
+    check("next visit: available", nxt["customer"]["reward_available"] is True and nxt["customer"]["stamps"] == 1)
     rd = http("POST", "/api/v1/rewards/redeem", key=KEY, json={"customer": c["id"], "reward_name": "Café offert", "external_id": "R-1"})
-    check("reward redeemed, card restarts", rd.status_code == 200 and rd.json()["customer"]["stamps"] == 0)
+    check("reward redeemed, the new card keeps its stamp", rd.status_code == 200 and rd.json()["customer"]["stamps"] == 1
+          and rd.json()["customer"]["rewards_pending"] == 0)
     check("no reward left → 409", http("POST", "/api/v1/rewards/redeem", key=KEY, json={"customer": c["id"]}).status_code == 409)
     check("unknown customer → 404", http("POST", "/api/v1/visits", key=KEY, json={"customer": "FT-NOPE", "amount": 1}).status_code == 404)
 
@@ -156,6 +162,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         http("POST", "/api/v1/visits", key=KEY, json={"customer": nc["id"], "amount": 3, "external_id": n})
     kinds = [s["headers"]["X-FidClic-Event"] for s in sent]
     check("visit.created ×3 and reward.unlocked once", kinds.count("visit.created") == 3 and kinds.count("reward.unlocked") == 1)
+    http("POST", "/api/v1/visits", key=KEY, json={"customer": nc["id"], "amount": 3, "external_id": "V4"})
     sent.clear()
     server.redeem_reward(server.RedeemRewardRequest(customer_id=nc["id"]), token_data=TokenData(email="o@cafe.fr", role="business_owner", tenant_id="t1"))
     check("reward.redeemed from the counter too", [s["headers"]["X-FidClic-Event"] for s in sent] == ["reward.redeemed"])

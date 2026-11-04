@@ -119,16 +119,19 @@ def main():
     c = card()
     check(f"the oldest card is handed over first, the full card stays full ({red.status_code})",
           red.status_code == 200 and c["rewards_pending"] == 0 and c["cycle_visits"] == 10)
+    r = http("POST", "/api/owner/rewards/redeem", headers=H, json={"customer_id": cid, "reward_name": "Café"})
+    check("the card filled by the latest visit: at the next visit (user, 2026-11-04)", r.status_code == 400)
+    scan()                                                     # 21
     http("POST", "/api/owner/rewards/redeem", headers=H, json={"customer_id": cid, "reward_name": "Café"})
-    check("then the full card: the meter goes back to 0", card()["cycle_visits"] == 0)
+    check("then it goes, and the new card keeps its stamp", card()["cycle_visits"] == 1 and card()["rewards_pending"] == 0)
 
     print("\n6. Compté dans la limite du jour")
     import features.send_rules as SR
     SR.put_rules(SR.RulesIn(per_client_day=1, per_client_week=0), token_data=type("O", (), {
         "email": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})())
     server.dispatch_to_customer("t1", db.customers.find_one({"id": cid}), "Promo", "…", kind="campaign")
-    for _ in range(8):
-        scan()                                                 # 21 … 28 → 8/10
+    for _ in range(7):
+        scan()                                                 # 22 … 28 → 8/10
     google.clear()
     before = len(pushed)
     r = scan()                                                 # 29 → 9/10

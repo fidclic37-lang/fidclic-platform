@@ -5345,8 +5345,8 @@ def scan_preview(barcode: str,
 def _apply_to_visit(choice: str, token_data: "TokenData", cust: dict,
                     branch_id: Optional[str]) -> Dict[str, Any]:
     """Hand over the one offer or reward the till picked, once the visit is
-    written. Order matters: the visit is counted first, so a card completed by
-    THIS visit can be redeemed on the spot (user, 2026-10-13).
+    written. A card or a balance completed by THIS visit is refused here: its
+    reward is for the next visit (user, 2026-11-04, was on the spot 2026-10-13).
 
     Never raises: the visit happened, and a scan that reported failure because
     a reward could not be handed over would be lying about the visit. The
@@ -5593,6 +5593,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         _filter["paper_stamps"] = {"$exists": False}
         set_now.update({"paper_stamps": paper["stamps"], "paper_stamps_at": now_paper,
                         "paper_stamps_by": getattr(token_data, "email", None)})
+    # What this very scan brought: what it fills or pays for waits for the next
+    # visit (user, 2026-11-04, see _reward_earned_before).
+    set_now.update({"last_scan_units": persons, "points_last_earned": points_to_add})
     from pymongo import ReturnDocument as _RD
     after = db.customers.find_one_and_update(_filter, {"$inc": inc, "$set": set_now}, return_document=_RD.AFTER)
     if after is None:
@@ -5780,6 +5783,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     # Each full card is CLAIMED before it is banked (user, 2026-11-01): the
     # baseline moves only if no other scan moved it since this one read it, so
     # two scans at once never bank the same card twice. Read fresh each round.
+    # A card this scan's own visit completed (« Plusieurs personnes » can) waits
+    # for a later visit: `available_after_visits`. One already full, or full on
+    # paper before today, does not.
     cycles_completed = 0
     card_visits, last_red_visits = new_visits, 0
     for _round in range(500):
@@ -5805,6 +5811,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                 "earned_at": datetime.now(timezone.utc),
                 "status": "pending",          # claimed at the counter → "redeemed"
                 "visits_at_completion": last_red_visits + reward_threshold,
+                **({} if card_visits - last_red_visits - persons >= reward_threshold
+                   else {"available_after_visits": card_visits}),
             })
         except Exception as _e:
             print(f"scan_visit: could not bank the earned reward: {_e}")
@@ -11555,6 +11563,29 @@ class RedeemRewardRequest(BaseModel):
     notes: Optional[str] = None
 
 
+NEXT_VISIT_REFUSAL = "Récompense disponible à la prochaine visite."
+
+
+def claimable_query(cust: dict) -> dict:
+    """The waiting rewards that can be handed over now: not the one a card
+    filled by the client's latest visit, until the next one. Rows from before
+    this rule have no such mark and stay available."""
+    return {"customer_id": cust["id"], "status": "pending",
+            "$or": [{"available_after_visits": {"$exists": False}},
+                    {"available_after_visits": {"$lt": int(cust.get("visits") or 0)}}]}
+
+
+def _reward_earned_before(cust: dict, threshold: int, price: int, points_prog: bool) -> bool:
+    """Was the card full, or the balance enough, BEFORE the latest scan? A
+    reward is claimed at the visit after the one that earned it (user,
+    2026-11-04: « agli visit pr reward claim kr sakega »). Clients not scanned
+    since the rule have nothing marked, so what they hold counts as earned."""
+    if points_prog and price > 0:
+        return int(cust.get("points") or 0) - int(cust.get("points_last_earned") or 0) >= price
+    on_card = int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0)
+    return on_card - int(cust.get("last_scan_units") or 0) >= threshold
+
+
 @app.post("/api/owner/rewards/redeem")
 def redeem_reward(
     req: RedeemRewardRequest,
@@ -11601,7 +11632,7 @@ def redeem_reward(
     # visits: a card completed with paper stamps (2026-10-10) holds fewer
     # visits than its size.
     on_card = current_visits - int(cust.get("visits_at_last_redemption") or 0)
-    waiting = db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
+    waiting = db.rewards_earned.count_documents(claimable_query(cust))
     # A points card buys its reward with points — which is what the pass has
     # always promised the customer (« {reward} dès N points »), even though
     # nothing used to charge for it. A stamp card fills a card, as before.
@@ -11609,13 +11640,18 @@ def redeem_reward(
     points_prog = _LCR._is_points(_LCR._programme(card_tpl))
     price = max(int(card_tpl.get("reward_points") or 0), 0)
     balance = int(cust.get("points") or 0)
-    if points_prog and price > 0:
-        if balance < price and not waiting:
+    if not waiting and not _reward_earned_before(cust, threshold, price, points_prog):
+        if db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"}):
+            raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
+        if points_prog and price > 0:
+            if balance >= price:
+                raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
             raise HTTPException(
                 status_code=400,
                 detail=f"Il manque {price - balance} points avant d'échanger cette récompense.",
             )
-    elif on_card < threshold and not waiting:
+        if on_card >= threshold:
+            raise HTTPException(status_code=400, detail=NEXT_VISIT_REFUSAL)
         raise HTTPException(
             status_code=400,
             detail=f"Customer needs {threshold - on_card} more visit(s) before redeeming.",
@@ -11636,8 +11672,7 @@ def redeem_reward(
     # A banked reward is claimed first: the customer completed a card earlier
     # and the counter already rolled over, so the fresh card's stamps must
     # survive this redemption.
-    banked = db.rewards_earned.find_one({"customer_id": cust["id"], "status": "pending"},
-                                        sort=[("earned_at", 1)])
+    banked = db.rewards_earned.find_one(claimable_query(cust), sort=[("earned_at", 1)])
     # What it cost, for Historique (user, 2026-10-15: the points / tampons
     # column stayed empty on a reward): the balance on a points card, one
     # full card of tampons otherwise.

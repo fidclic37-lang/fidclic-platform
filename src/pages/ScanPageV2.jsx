@@ -1360,9 +1360,9 @@ const ScanPage = () => {
                       // a cagnotte credits euros (QA R7 F39: the receipt said « +100 points »)
                       ? `+${money((recorded.data?.points_earned ?? 0) / 100)} de cagnotte`
                       : `+${recorded.data?.points_earned ?? 0} point${(recorded.data?.points_earned ?? 0) > 1 ? 's' : ''}`}{recorded.data?.persons > 1 ? ` · ${recorded.data.persons} personnes` : ''}</dd></div>
-                {recorded.data?.persons > 1 && recorded.data?.cards_completed > 0 && (
+                {recorded.data?.cards_completed > 0 && (
                   <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2" data-testid="cards-completed"><dt className="text-[#64748B]">Carte</dt>
-                    <dd className="text-right font-semibold text-[#EA580C]">🎉 {recorded.data.cards_completed > 1 ? `${recorded.data.cards_completed} cartes complétées` : 'Carte complétée'} — récompense à remettre</dd></div>
+                    <dd className="text-right font-semibold text-[#EA580C]">🎉 {recorded.data.cards_completed > 1 ? `${recorded.data.cards_completed} cartes complétées` : 'Carte complétée'} — récompense à la prochaine visite</dd></div>
                 )}
                 {recorded.lines.length > 0 && (
                   <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2 sm:col-span-2"><dt className="text-[#64748B]">{words.many.charAt(0).toUpperCase() + words.many.slice(1)}</dt>
@@ -1543,18 +1543,20 @@ const ScanPage = () => {
                   {card.applicables.map((a) => {
                     const on = apply === a.id;
                     const off = a.tone === 'offer';
+                    // this visit fills the card: the reward is for the next one (user, 2026-11-04)
+                    const later = a.after_visit;
                     return (
-                      <button key={a.id} type="button" onClick={() => setApply(on ? '' : a.id)} aria-pressed={on}
-                              className={`flex items-start gap-3 rounded-xl border p-3 text-left transition ${on ? 'border-[#2F6BFF] bg-[#F5F9FF] ring-2 ring-[#2F6BFF]/15' : 'border-[#E6EEFB] bg-white hover:border-[#BFD3FF]'}`}>
+                      <button key={a.id} type="button" onClick={() => setApply(on ? '' : a.id)} aria-pressed={on} disabled={later}
+                              className={`flex items-start gap-3 rounded-xl border p-3 text-left transition ${later ? 'cursor-default border-[#E6EEFB] bg-[#F8FAFF] opacity-80' : on ? 'border-[#2F6BFF] bg-[#F5F9FF] ring-2 ring-[#2F6BFF]/15' : 'border-[#E6EEFB] bg-white hover:border-[#BFD3FF]'}`}>
                         <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${off ? 'bg-[#E7F7EE] text-[#0F7A45]' : 'bg-[#F7EDFF] text-[#7C3AED]'}`}>
                           <Gift size={16} />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-[13.5px] font-semibold text-[#0B1C3F]">{a.title}</span>
                           {a.sub && <span className="block text-[12.5px] text-[#64748B]">{a.sub}</span>}
-                          {a.after_visit && <span className="mt-1 inline-block rounded-md bg-[#FFF4DB] px-2 py-0.5 text-[11.5px] font-semibold text-[#92400E]">Débloquée après cette visite</span>}
+                          {a.after_visit && <span className="mt-1 inline-block rounded-md bg-[#FFF4DB] px-2 py-0.5 text-[11.5px] font-semibold text-[#92400E]">Disponible à la prochaine visite</span>}
                         </span>
-                        <span className={`mt-1 h-4 w-4 shrink-0 rounded-full border-2 ${on ? 'border-[#2F6BFF] bg-[#2F6BFF]' : 'border-[#CBD5E1]'}`} />
+                        {!later && <span className={`mt-1 h-4 w-4 shrink-0 rounded-full border-2 ${on ? 'border-[#2F6BFF] bg-[#2F6BFF]' : 'border-[#CBD5E1]'}`} />}
                       </button>
                     );
                   })}

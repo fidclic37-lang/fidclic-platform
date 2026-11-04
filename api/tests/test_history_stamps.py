@@ -52,7 +52,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
             return AH.activity(None, None, "all", None, None, 1, 50, None, TD(tid))
 
     print("1. A tampons card")
-    for _ in range(3):
+    for _ in range(4):                 # the third fills the card, the reward is for the fourth
         scan("ts")
     server.redeem_reward(server.RedeemRewardRequest(barcode_id="FT-TS000001", reward_name="Un café offert"), TD("ts"))
     f = feed("ts")
@@ -60,21 +60,21 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     reward = next(r for r in f["rows"] if r["action"] == "reward")
     check(f"the column opens on tampons ({f['unit']})", f["unit"] == "stamps" and AH.filters(TD("ts"))["unit"] == "stamps")
     check(f"each scan: +1 tampon, 0 point ({[(r['stamps'], r['points']) for r in scans]})",
-          len(scans) == 3 and all(r["stamps"] == 1 and r["points"] == 0 for r in scans))
+          len(scans) == 4 and all(r["stamps"] == 1 and r["points"] == 0 for r in scans))
     check(f"the reward: -3 tampons, no points ({reward['stamps']}, {reward['points']})", reward["stamps"] == -3 and reward["points"] is None)
     check("signup: 0 tampon", all(r["stamps"] == 0 for r in f["rows"] if r["action"] == "signup"))
 
     print("\n2. A points card")
-    for _ in range(2):
+    for _ in range(3):                 # the second reaches the price, the reward is for the third
         scan("tp")
     server.redeem_reward(server.RedeemRewardRequest(barcode_id="FT-TP000001", reward_name="Un café offert"), TD("tp"))
     f = feed("tp")
     scans = [r for r in f["rows"] if r["action"] == "scan"]
     reward = next(r for r in f["rows"] if r["action"] == "reward")
     check(f"the column opens on points ({f['unit']})", f["unit"] == "points")
-    check(f"each scan: +10 points ({[r['points'] for r in scans]})", [r["points"] for r in scans] == [10, 10])
+    check(f"each scan: +10 points ({[r['points'] for r in scans]})", [r["points"] for r in scans] == [10, 10, 10])
     check(f"the reward: -20 points, as the balance paid ({reward['points']})", reward["points"] == -20 and reward["stamps"] is None)
-    check("…and the balance really went down", db.customers.find_one({"id": "c-tp"})["points"] == 0)
+    check("…and the balance really went down", db.customers.find_one({"id": "c-tp"})["points"] == 10)
 
     print("\n3. Rows from before (no tampons recorded): from the card's rule")
     db.visits.insert_one({"id": "old", "tenant_id": "ts", "customer_id": "c-ts", "points_awarded": 0,

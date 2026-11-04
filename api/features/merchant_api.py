@@ -155,6 +155,12 @@ def _card_url(barcode: str) -> str:
     return CO.owner_url(base, barcode)       # sent to the customer: the owner's link
 
 
+def _reward_available(c: Dict[str, Any], stamps: int, threshold: int) -> bool:
+    import server as core
+    return (stamps - int(c.get("last_scan_units") or 0) >= threshold
+            or _db.rewards_earned.count_documents(core.claimable_query(c)) > 0)
+
+
 def customer_out(c: Dict[str, Any], threshold: Optional[int] = None) -> Dict[str, Any]:
     threshold = threshold or _threshold(c["tenant_id"])
     visits = int(c.get("visits") or 0)
@@ -166,6 +172,8 @@ def customer_out(c: Dict[str, Any], threshold: Optional[int] = None) -> Dict[str
             "birthday": c.get("birthday") or None, "tier": c.get("tier") or "bronze", "points": int(c.get("points") or 0),
             "visits": visits, "stamps": min(stamps, threshold), "reward_threshold": threshold, "reward_unlocked": stamps >= threshold,
             "rewards_pending": _db.rewards_earned.count_documents({"customer_id": c["id"], "status": "pending"}),
+            # false until the visit after the one that earned it (user, 2026-11-04)
+            "reward_available": _reward_available(c, stamps, threshold),
             "total_spent": round(float(c.get("total_amount_paid") or 0), 2),
             "created_at": _iso(c.get("created_at")), "last_visit_at": _iso(c.get("last_visit_date"))}
 
@@ -348,7 +356,12 @@ def redeem(body: RedeemIn, c: ApiCaller = Depends(writer)):
     cust = _find_customer(c.tenant_id, body.customer)
     if customer_out(cust)["rewards_pending"] == 0 and not customer_out(cust)["reward_unlocked"]:
         raise HTTPException(status_code=409, detail={"code": "no_reward", "message": "Ce client n'a pas de récompense disponible."})
-    core.redeem_reward(core.RedeemRewardRequest(customer_id=cust["id"], reward_name=body.reward_name, notes="API"), token_data=_as_owner(c))
+    try:
+        core.redeem_reward(core.RedeemRewardRequest(customer_id=cust["id"], reward_name=body.reward_name, notes="API"), token_data=_as_owner(c))
+    except HTTPException as e:
+        if e.detail != core.NEXT_VISIT_REFUSAL:
+            raise
+        raise HTTPException(status_code=409, detail={"code": "reward_next_visit", "message": e.detail})
     out = {"customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})), "redeemed": True}
     _remember(c.tenant_id, "redeem", body.external_id, out)
     return {**out, "duplicate": False}

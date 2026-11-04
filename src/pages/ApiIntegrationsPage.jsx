@@ -251,7 +251,7 @@ function Docs({ base, events, rate }) {
     ['POST', '/customers', 'Créer une carte (name, phone, email, consent: true). Même téléphone → la carte existante.'],
     ['POST', '/visits', "Enregistrer un passage / achat (customer, amount, external_id). Mêmes règles qu'au comptoir."],
     ['GET', '/visits?customer=&since=', 'Les passages, du plus récent au plus ancien.'],
-    ['POST', '/rewards/redeem', 'Le client utilise sa récompense (customer, reward_name).'],
+    ['POST', '/rewards/redeem', 'Le client utilise sa récompense, à partir de la visite suivante (customer, reward_name).'],
   ];
   return (
     <div className="space-y-4">

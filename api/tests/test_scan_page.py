@@ -71,23 +71,29 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("un prix envoyé par le navigateur est ignoré",
           scan(items=[{"item_id": "s-coupe", "qty": 1}], amount_paid=9999.0)["amount_paid"] == 45.0)
 
-    print("\n— la récompense débloquée AUJOURD'HUI se remet aujourd'hui —")
+    print("\n— la récompense débloquée AUJOURD'HUI se remet à la prochaine visite —")
     # deux visites faites : la carte est à 2/3. La troisième la remplit.
     db.customers.update_one({"id": "c1"}, {"$set": {"visits": 2, "visits_at_last_redemption": 0}})
     c = SP.card(barcode="FT-SAL001", token_data=TD())
     card_row = next((a for a in c["applicables"] if a["kind"] == "card"), None)
-    check("la carte annonce la récompense comme « après cette visite »",
+    check("la carte annonce la récompense pour plus tard, pas à choisir",
           card_row and card_row["available"] is False and card_row["after_visit"] is True)
     out = scan(items=[{"item_id": "s-coupe", "qty": 1}], apply="card")
-    check("elle est remise dans le même scan", out["applied"] == {"kind": "card", "ok": True,
-                                                                 "label": out["applied"].get("label")}
-          or (out["applied"] or {}).get("ok") is True)
+    check("pas dans le scan qui remplit la carte", out["applied"]["ok"] is False
+          and "prochaine visite" in out["applied"]["error"])
+    check("la visite est comptée, la carte reste pleine", out["visits"] == 3
+          and db.customers.find_one({"id": "c1"})["visits_at_last_redemption"] == 0)
+    c = SP.card(barcode="FT-SAL001", token_data=TD())
+    card_row = next((a for a in c["applicables"] if a["kind"] == "card"), None)
+    check("à la visite suivante elle est disponible", card_row["available"] is True and card_row["after_visit"] is False)
+    out = scan(items=[{"item_id": "s-coupe", "qty": 1}], apply="card")
+    check("elle est remise", out["applied"]["ok"] is True)
     check("le cycle de la carte repart", db.customers.find_one({"id": "c1"})["visits_at_last_redemption"] == 3)
-    check("les visites de toujours ne baissent jamais", db.customers.find_one({"id": "c1"})["visits"] == 3)
+    check("les visites de toujours ne baissent jamais", db.customers.find_one({"id": "c1"})["visits"] == 4)
 
     print("\n— une récompense non méritée —")
     bad = scan(apply="card")
-    check("la visite est quand même enregistrée", bad["visits"] == 4)
+    check("la visite est quand même enregistrée", bad["visits"] == 5)
     check("…et le refus est dit, pas caché", bad["applied"]["ok"] is False and bad["applied"]["error"])
 
     print("\n— l'offre enlève sa remise —")
@@ -98,7 +104,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("45,00 € moins 20 % font 36,00 €", o["amount_paid"] == 36.0)
     check("l'offre est marquée utilisée", db.offer_uses.find_one({"campaign_id": "camp1", "customer_id": "c1"}))
     again = scan(items=[{"item_id": "s-coupe", "qty": 1}], apply="offer:camp1")
-    check("deux fois la même offre : refusée, la visite reste", again["applied"]["ok"] is False and again["visits"] == 6)
+    check("deux fois la même offre : refusée, la visite reste", again["applied"]["ok"] is False and again["visits"] == 7)
 
     db.campaigns.insert_one({"id": "camp2", "tenant_id": "t1", "name": "5 € de remise", "status": "sent",
                              "kind": "offre", "recipient_ids": ["c1"],
