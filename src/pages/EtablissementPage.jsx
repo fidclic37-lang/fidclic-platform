@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Store, Save, Pencil, MapPin, Plus, MoreVertical, X, Check, Loader2,
   Clock, Radar, Landmark, LocateFixed, Info, Trash2,
@@ -281,7 +282,7 @@ export default function EtablissementPage() {
                          ...(addr.lat != null ? { lat: addr.lat, lng: addr.lng, pin: addr.pin || 'adresse' } : {}) };
       }
       if (can.legal) body.legal = legal;
-      if (can.geo) body.geo = { enabled: geo.enabled, radius_m: geo.radius_m, cooldown_days: geo.cooldown_days };
+      if (can.geo) body.geo = { enabled: geo.enabled, radius_m: geo.radius_m };
       const { data } = await ownerAPI.saveEtablissement(body);
       if (can.hours) {
         if (dirtyHours.weekly) await ownerAPI.saveWeeklyHours(hours);
@@ -559,12 +560,12 @@ export default function EtablissementPage() {
                        className="w-full accent-[#2F6BFF]" />
                 <div className="flex justify-between text-[11.5px] text-[#94A3B8]"><span>50 m</span><span>2 km</span></div>
               </div>
-              <label className={`block ${geo.enabled ? '' : 'opacity-50'}`}>
-                <Label>Délai avant un nouveau rappel (même client)</Label>
-                <select className={inputCls} value={geo.cooldown_days} onChange={(e) => setGeo({ ...geo, cooldown_days: Number(e.target.value) })}>
-                  {[1, 2, 3, 7, 14, 30].map((n) => <option key={n} value={n}>{n} jour{n > 1 ? 's' : ''}</option>)}
-                </select>
-              </label>
+              {/* the interval is each automation's own (user, 2026-11-04); this field
+                  drove nothing once the Géolocalisation automation existed */}
+              <p data-testid="geo-interval-link" className="rounded-xl bg-[#F8FAFF] px-3 py-2.5 text-[12.5px] text-[#475569]">
+                Le délai entre deux messages à un même client se règle dans chaque automatisation :{' '}
+                <Link to="/dashboard/automations" className="font-semibold text-[#2F6BFF]">Automatisations › Géolocalisation</Link>.
+              </p>
               <p className="text-[11.5px] leading-snug text-[#94A3B8]">Un seul rayon pour tout : la carte web et le pass Apple Wallet l'utilisent, autour de chaque point de vente placé sur la carte.</p>
             </fieldset>
           </Block>
