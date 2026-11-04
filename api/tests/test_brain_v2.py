@@ -116,8 +116,10 @@ def main():
           doc["priors"]["a:boulangerie"]["clients"] == 45 and 3 <= doc["priors"]["a:boulangerie"]["gap"] <= 5)
     check("« boulangerie » gets it", V2.sector_prior("boulangerie")[1] == "reseau"
           and 3 <= V2.sector_prior("boulangerie")[0] <= 5)
-    check("salons: 12 regulars only — the researched figure of « coiffure mixte » (42 days) stays",
-          V2.sector_prior("salon") == (42.0, "secteur"))
+    sal = V2.sector_prior("salon")
+    check(f"salons: 12 clients weigh against the researched 42 days of « coiffure mixte », no wall any more ({sal})",
+          sal[1] == "reseau" and doc["priors"]["s:salon"]["clients"] == 12
+          and abs(sal[0] - (12 * doc["priors"]["s:salon"]["gap"] + V2.NET_WEIGHT * 42) / (12 + V2.NET_WEIGHT)) < 0.1, sal)
     check("a barber chose its activity: 21 days (researched), not the salon's",
           V2.sector_prior({"sector": "salon", "activity_key": "barbier"}) == (21.0, "secteur"))
     check("v1's rows untouched", db.brain_predictions.count_documents({"model": "brain-v1", "source": "backtest"}) == v1_rows)

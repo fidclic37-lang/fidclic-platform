@@ -29,10 +29,11 @@ THE RHYTHM — SMALL DATA, SAID HONESTLY
         rhythm = (n × own_gap + K × usual_gap) / (n + K)        K = 2
 
     own_gap is the median of their last gaps (one odd month does not move
-    it); n is how many gaps they have. usual_gap is the shop's own median
-    rhythm once SHOP_MIN_REGULARS clients have one, the sector's starting
-    figure before that. Two visits on one day count as one day here — a
-    second scan is a visit, not a rhythm of zero days.
+    it); n is how many gaps they have. usual_gap starts from the activity's
+    figure and what the network learned (brain_v2.sector_prior), then from
+    SHOP_MIN_CARDS cards (or SHOP_MIN_REGULARS regulars) the shop's own clients
+    weigh in, more with each one who came back. Two visits on one day count as
+    one day here — a second scan is a visit, not a rhythm of zero days.
 
     The next visit is a window, never a date: rhythm ± spread, the spread
     being how much their gaps usually vary. The confidence grows with the
@@ -65,7 +66,9 @@ PARIS = ZoneInfo("Europe/Paris")
 
 K_PRIOR = 2                  # how many gaps the usual rhythm is worth
 RHYTHM_MIN_VISITS = 3        # under this, « Trop tôt pour savoir »
-SHOP_MIN_REGULARS = 10       # clients with a rhythm before the shop's own figure replaces the sector's
+SHOP_MIN_CARDS = 100         # cards before the shop's own clients count (user, 2026-11-04) …
+SHOP_MIN_REGULARS = 10       # … or this many regulars, for a small shop that already has them
+SHOP_START_WEIGHT = 5        # where it started counts as this many clients who came back
 RECENT_GAPS = 10             # the rhythm reads the last gaps only — people change
 TREND_MIN_GAPS = 6
 TREND_SLOWER = 1.5           # recent gaps 50 % longer than before → « vient moins souvent »
@@ -239,16 +242,8 @@ def current(b: Optional[Dict[str, Any]]) -> bool:
 
 
 def prior_for(tid: str, model: int) -> Tuple[float, str]:
-    """The usual rhythm a client is pulled to: the shop's own once it has
-    enough regulars; before that v1 the sector's fixed figure, v2 what the
-    whole network learned for that sector (features/brain_v2)."""
-    if model == 2:
-        own = usual_gap(tid)
-        if own[1] == "boutique":
-            return own
-        from features import brain_v2 as V2
-        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
-        return V2.sector_prior(tenant)
+    """The usual rhythm a client is pulled to (usual_gap). Both brains start
+    from the same place since 2026-11-04: they differ by their window."""
     return usual_gap(tid)
 
 
@@ -257,24 +252,29 @@ USUAL_TTL_S = 600            # a scan does not re-read every client's rhythm
 
 
 def usual_gap(tid: str, fresh: bool = False) -> Tuple[float, str]:
-    """The shop's median rhythm once enough clients have one, else its
-    sector's starting figure. Returns (days, « boutique » | « secteur »)."""
+    """Where the activity starts (research + network, brain_v2.sector_prior),
+    moved by the shop's own clients once it has SHOP_MIN_CARDS cards or
+    SHOP_MIN_REGULARS regulars: a client who came back once counts (a shop's
+    clients may never fit « regular »), and the more of them, the less the
+    start weighs. Returns (days, « boutique » | « reseau » | « secteur »)."""
     now = datetime.now(timezone.utc).timestamp()
     hit = _usual_cache.get(tid)
     if hit and not fresh and now - hit[0] < USUAL_TTL_S:
         return hit[1]
+    from features import brain_v2 as V2
+    tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
+    out = V2.sector_prior(tenant)
     own: List[float] = []
-    for c in _db.customers.find({"tenant_id": tid, "deleted_at": None,
-                                 "brain.n_gaps": {"$gte": RHYTHM_MIN_VISITS - 1}},
-                                {"_id": 0, "brain.own_gap": 1}).limit(5000):
-        g = (c.get("brain") or {}).get("own_gap")
-        if g:
-            own.append(float(g))
-    if len(own) >= SHOP_MIN_REGULARS:
-        out = (round(median(own), 1), "boutique")
-    else:
-        tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1}) or {}
-        out = (sector_gap(tenant.get("sector")), "secteur")
+    regulars = 0
+    for c in _db.customers.find({"tenant_id": tid, "deleted_at": None, "brain.n_gaps": {"$gte": 1}},
+                                {"_id": 0, "brain.own_gap": 1, "brain.n_gaps": 1}).limit(5000):
+        b = c.get("brain") or {}
+        if b.get("own_gap"):
+            own.append(float(b["own_gap"]))
+            regulars += int(b.get("n_gaps") or 0) >= RHYTHM_MIN_VISITS - 1
+    if own and (regulars >= SHOP_MIN_REGULARS
+                or _db.customers.count_documents({"tenant_id": tid, "deleted_at": None}, limit=SHOP_MIN_CARDS) >= SHOP_MIN_CARDS):
+        out = (round((len(own) * median(own) + SHOP_START_WEIGHT * out[0]) / (len(own) + SHOP_START_WEIGHT), 1), "boutique")
     _usual_cache[tid] = (now, out)
     return out
 
