@@ -65,7 +65,7 @@ for (const [label, viewport] of SIZES) {
     });
 
     test('owner, one store open: the invite form offers it alone; Accès starts there and lists every store', async ({ page, request }) => {
-      const { token, stores } = await setup(request);
+      const { token, H, stores } = await setup(request);
       test.skip(stores.length < 2, 'a one-shop demo');
       const open = stores[1];
       await openTeam(page, token, open.id);
@@ -73,6 +73,18 @@ for (const [label, viewport] of SIZES) {
       const offered = await offeredInInvite(page);
       expect(offered, 'only the open store').toHaveLength(1);
       expect(offered[0]).toContain(open.name);
+
+      // already chosen: only a name and an address to fill in, and it lands there
+      const card = inviteCard(page);
+      await card.getByPlaceholder('Prénom Nom').fill('Eve Test');
+      const email = `own.store.owner.${Date.now()}.${label}@example.test`;
+      created.push(email);
+      await card.getByPlaceholder('exemple@entreprise.fr').fill(email);
+      await card.getByRole('button', { name: "Créer l'accès" }).click();
+      await expect(page.getByRole('dialog', { name: 'Identifiants prêts' })).toBeVisible();
+      await page.getByRole('button', { name: 'Fermer' }).click();
+      const saved = await (await request.get('/api/owner/team-access', { headers: H })).json();
+      expect(saved.users.find((u) => u.email === email).branch_ids).toEqual([open.id]);
 
       const access = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Accès par établissement' }) }).last();
       const pick = access.locator('select');
@@ -108,7 +120,63 @@ for (const [label, viewport] of SIZES) {
       expect(list.users.find((u) => u.email === email).branch_ids).toEqual([mine.id]);
     });
 
-    test('no store left: the page says so and offers no form', async ({ page, request }) => {
+    test('a store taken away while the browser still holds it: the page moves to the store left', async ({ page, request }) => {
+      const { H, stores } = await setup(request);
+      test.skip(stores.length < 2, 'a one-shop demo');
+      const [left, gone] = [stores[0], stores[1]];
+      const admin = await newAdmin(request, H, [gone.id, left.id]);
+      await openTeam(page, admin.token, gone.id);
+      await setup(request);                          // a login's cookie speaks for this context: the owner's again
+      const move = await request.put(`/api/owner/team-access/users/${encodeURIComponent(admin.email)}`, { headers: H,
+        data: { first_name: 'Ada', last_name: 'Test', role: 'administrateur', branch_ids: [left.id] } });
+      expect(move.ok(), await move.text()).toBe(true);
+      await page.getByRole('tab', { name: 'Préférences' }).click();
+      await page.getByRole('tab', { name: 'Équipe & accès' }).click();
+      await expect(page.getByPlaceholder('exemple@entreprise.fr')).toBeVisible();
+      await expect(page.locator('body')).not.toContainText(gone.name);
+      expect(await page.evaluate(() => localStorage.getItem('ft_selected_branch_v1'))).toBe(left.id);
+    });
+
+    test('Sécurité: a new password for someone in the open store comes back', async ({ page, request }) => {
+      const { H, stores } = await setup(request);
+      test.skip(stores.length < 2, 'a one-shop demo');
+      const admin = await newAdmin(request, H, [stores[1].id]);
+      count += 1;
+      const email = `own.store.sec.${Date.now()}.${count}@example.test`;
+      created.push(email);
+      const made = await request.post('/api/owner/team-access/users', { headers: { Authorization: `Bearer ${admin.token}`, 'X-FidClic-Store': stores[1].id },
+        data: { email, first_name: 'Sam', last_name: 'Test', role: 'staff', branch_ids: [stores[1].id] } });
+      expect(made.ok(), await made.text()).toBe(true);
+      await page.goto('/login');
+      await page.evaluate(([t, s]) => {
+        localStorage.setItem('fidelitour_access_token', t);
+        localStorage.setItem('ft_selected_branch_v1', s);
+      }, [admin.token, stores[1].id]);
+      await page.goto('/dashboard/parametres/securite');
+      await page.getByRole('button', { name: 'Actions — Sam Test' }).click();
+      await page.getByRole('button', { name: 'Nouveau mot de passe' }).click();
+      await page.getByRole('button', { name: 'Créer le nouveau mot de passe' }).click();
+      await expect(page.getByText(email).last()).toBeVisible();
+      await expect(page.getByText('Il ne sera plus affiché')).toBeVisible();
+    });
+
+    test('an account with no store at all: the page says so', async ({ page, request }) => {
+      const { H, stores } = await setup(request);
+      test.skip(stores.length < 2, 'a one-shop demo');
+      const admin = await newAdmin(request, H, [stores[1].id]);
+      // what the server says of an account with no store (team_access.identity)
+      await page.route('**/api/auth/me', async (route) => {
+        const res = await route.fetch();
+        await route.fulfill({ response: res, json: { ...(await res.json()), branch_ids: [], page_perms: {} } });
+      });
+      await page.goto('/login');
+      await page.evaluate((t) => localStorage.setItem('fidelitour_access_token', t), admin.token);
+      await page.goto('/dashboard/parametres/equipe');
+      await expect(page.getByText('Aucun établissement ne vous est attribué.')).toBeVisible();
+      await expect(page.getByPlaceholder('exemple@entreprise.fr')).toHaveCount(0);
+    });
+
+    test('no store left while the page loads: it says so and offers no form', async ({ page, request }) => {
       const { H, stores } = await setup(request);
       test.skip(stores.length < 2, 'a one-shop demo');
       const admin = await newAdmin(request, H, [stores[1].id]);

@@ -216,15 +216,23 @@ def _open_store(request: Optional[Request], me: Dict[str, Any], all_ids: List[st
     """The establishment this request names, in the menu's header or ?store=
     ("all" names none and never widens one). This page hands out access, so a
     non-owner naming another establishment is refused rather than sent back to
-    its own (store_scope.resolve), and two at once are refused for anyone."""
+    its own (store_scope.resolve), and two at once are refused. For an owner a
+    leftover id, of a store closed or of another shop, names nothing. "null" and
+    "undefined" are what an old browser can hold for no choice (BranchContext)."""
     if request is None:
         return None
-    named = {v.strip() for v in [*request.headers.getlist(S.HEADER), *request.query_params.getlist("store")]} - {"", S.ALL}
+    named = {v.strip() for v in [*request.headers.getlist(S.HEADER), *request.query_params.getlist("store")]} \
+        - {"", S.ALL, "null", "undefined"}
+    owner = me.get("role") == "business_owner"
+    if owner:
+        named &= set(all_ids)
     if len(named) > 1:
         raise HTTPException(status_code=400, detail="Choisissez un seul établissement.")
     sid = next(iter(named), None)
-    if sid is not None and me.get("role") != "business_owner" and sid not in _covered(me, all_ids):
-        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à cet établissement.")
+    if sid is not None and not owner and sid not in _covered(me, all_ids):
+        # this wording has the browser reload the account (api.js, « fc:perms-stale »):
+        # a store since taken away or closed then leaves the menu by itself
+        raise HTTPException(status_code=403, detail="Accès non autorisé : cet établissement n'est pas le vôtre.")
     return sid if sid in all_ids and len(all_ids) > 1 else None
 
 
@@ -451,9 +459,11 @@ def _system_role(tid: str, role: str):
 
 
 def _perms_for(tid: str, role_k: str, ids: List[str], raw: Optional[Dict[str, Any]],
-               me: Dict[str, Any], keep: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Dict[str, str]]]:
+               me: Dict[str, Any], keep: Optional[Dict[str, Any]] = None,
+               reach: Optional[List[str]] = None) -> Optional[Dict[str, Dict[str, str]]]:
     """The account's permissions per establishment: what was sent, else what it
-    had there, else its role's template. Never more than the creator has."""
+    had there, else its role's template. Never more than the creator has, in
+    the establishments this request may change (`reach`)."""
     from features import role_perms as RP
     tpl = RP.templates(tid).get(role_k) or {}
     if raw is None and keep is None and tpl.get("builtin") and not tpl.get("customized"):
@@ -468,7 +478,7 @@ def _perms_for(tid: str, role_k: str, ids: List[str], raw: Optional[Dict[str, An
             out[sid] = RP.clean_perms(keep[sid])
         else:
             out[sid] = RP.clean_perms(tpl.get("perms") or {})
-    over = RP.within(out, RP.effective(me))
+    over = RP.within(_within(out, reach), RP.effective(me))
     if over:
         raise HTTPException(status_code=403, detail=f"Vous ne pouvez pas donner plus que vos propres droits : « {RP.LABEL[over]} ».")
     return out
@@ -545,24 +555,30 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
     covered = _covered(u, all_ids)
     same_role = (custom or role) == (RP.role_key(u) or u["role"])
     wanted, raw = (body.branch_ids if body.branch_ids is not None else covered), body.perms
-    if sel and me.get("role") != "business_owner":
+    reach = _reach(me, all_ids, sel)
+    limited = bool(sel and reach is not None)
+    if limited:
         # Only the open store is this request's to change. A role goes with the
         # whole account, so it waits for a person who works nowhere else.
         others = [b for b in covered if b != sel]
         if others and not same_role:
             raise HTTPException(status_code=403, detail="Ce compte travaille aussi dans un autre établissement : "
-                                                        "son rôle ne se change pas depuis celui-ci.")
+                                                        "seul le propriétaire peut changer son rôle.")
         if body.branch_ids is not None:
             if any(b and b != sel for b in body.branch_ids):
                 raise HTTPException(status_code=403, detail="Vous ne pouvez attribuer que l'établissement ouvert.")
             wanted = ([sel] if sel in body.branch_ids else []) + others
         if raw is not None:
             raw = {sid: v for sid, v in raw.items() if sid == sel}
-    ids = _check_assignment(role, wanted, me, all_ids)
+    # A list this request leaves as it is needs no check: a manager or employé
+    # from before stores can be several places, and only an owner sorts that out.
+    ids = wanted if limited and set(wanted) == set(covered) else _check_assignment(role, wanted, me, all_ids)
     keep = u.get("perms") if same_role and isinstance(u.get("perms"), dict) else None
-    perms = _perms_for(token.tenant_id, custom or role, ids, raw, me, keep=keep)
+    perms = _perms_for(token.tenant_id, custom or role, ids, raw, me, keep=keep, reach=reach)
     names = _clean_names(UserIn(role=role, first_name=body.first_name, last_name=body.last_name))
     sets = {**names, "role": role, "branch_ids": ids, "updated_at": _now()}
+    if limited and "branch_ids" not in u and set(ids) == set(covered):
+        del sets["branch_ids"]                 # still an account from before stores
     # Only the owner and an administrateur hand out the choice of establishment
     # — and never to themselves beyond what their role already gives.
     if body.can_switch_store is None:
@@ -637,19 +653,21 @@ def store_access(store_id: str, uid: str, body: StoreAccessIn,
     me, all_ids, u, sel = _target(token, request, uid)
     reach = _reach(me, all_ids, sel)
     if reach is not None and store_id not in reach:
-        raise HTTPException(status_code=403, detail="Vous n'avez pas accès à cet établissement.")
+        raise HTTPException(status_code=403, detail="Vous ne pouvez attribuer que l'établissement ouvert.")
     covered = _covered(u, all_ids)
     if u["role"] in ("administrateur", "membre"):
         ids = sorted(set(covered) | {store_id}) if body.enabled else [b for b in covered if b != store_id]
     else:
         if not body.enabled:
             raise HTTPException(status_code=400, detail="Choisissez plutôt son nouvel établissement.")
+        if sel and reach is not None and set(covered) - {store_id}:      # it would take the others away
+            raise HTTPException(status_code=403, detail="Ce compte travaille aussi dans un autre établissement.")
         ids = [store_id]
     ids = _check_assignment(u["role"], ids, me, all_ids)
     sets: Dict[str, Any] = {"branch_ids": ids, "updated_at": _now()}
     if isinstance(u.get("perms"), dict):       # a new establishment starts with the role's template
         from features import role_perms as RP
-        sets["perms"] = _perms_for(token.tenant_id, RP.role_key(u) or u["role"], ids, None, me, keep=u["perms"])
+        sets["perms"] = _perms_for(token.tenant_id, RP.role_key(u) or u["role"], ids, None, me, keep=u["perms"], reach=reach)
     _db.users.update_one({"email": u["email"]}, {"$set": sets})
     return _payload(token, request)
 
@@ -675,14 +693,19 @@ def _role_label(raw: Optional[str], tid: str, skip: Optional[str] = None) -> str
     return label
 
 
-def _apply_to_accounts(tid: str, key: str, perms: Dict[str, str]) -> int:
+def _apply_to_accounts(tid: str, key: str, perms: Dict[str, str], reach: Optional[List[str]] = None) -> int:
+    """« Tous les comptes de ce rôle »: everywhere for an owner; a non-owner
+    changes them only in what it reaches (`reach`)."""
     from features import role_perms as RP
     q = {"tenant_id": tid, **({"role": RP.CUSTOM_ROLE, "custom_role": key} if key not in RP.BUILTIN else {"role": key})}
     all_ids = [s["id"] for s in stores(tid)]
     n = 0
-    for u in _db.users.find(q, {"_id": 0, "email": 1, "branch_ids": 1, "role": 1}):
-        ids = _covered(u, all_ids)
-        _db.users.update_one({"email": u["email"]}, {"$set": {"perms": {sid: dict(perms) for sid in ids},
+    for u in _db.users.find(q, {"_id": 0, "email": 1, "branch_ids": 1, "role": 1, "perms": 1}):
+        ids = [sid for sid in _covered(u, all_ids) if reach is None or sid in reach]
+        if not ids:
+            continue
+        kept = {} if reach is None else u.get("perms") or {}
+        _db.users.update_one({"email": u["email"]}, {"$set": {"perms": {**kept, **{sid: dict(perms) for sid in ids}},
                                                              "updated_at": _now()}})
         n += 1
     return n
@@ -751,7 +774,9 @@ def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(
         raise HTTPException(status_code=404, detail="Rôle introuvable.")
     if body.apply not in ("new", "all"):
         raise HTTPException(status_code=400, detail="Choisissez à qui appliquer.")
-    _role_guard(token, key, RP.clean_perms(body.perms) if body.perms is not None else None)
+    me = _role_guard(token, key, RP.clean_perms(body.perms) if body.perms is not None else None)
+    all_ids = [s["id"] for s in stores(tid)]
+    reach = _reach(me, all_ids, _open_store(request, me, all_ids))
     sets: Dict[str, Any] = {}
     if key in RP.BUILTIN:
         perms = RP.clean_perms(body.perms) if body.perms is not None else dict(RP.DEFAULT_TEMPLATES[key])
@@ -764,12 +789,13 @@ def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(
         perms = RP.clean_perms(body.perms) if body.perms is not None else tpls[key]["perms"]
         sets[f"role_defs.{key}.perms"] = perms
     sets[f"role_defs.{key}.updated_at"] = _now()
-    if body.apply == "new":
+    if body.apply == "new" or reach is not None:
         # « Seulement les nouveaux comptes »: the accounts already in this role
-        # keep what they had (their own permissions, written down now)
+        # keep what they had (their own permissions, written down now). So do
+        # those a non-owner does not reach, whatever it chose.
         _freeze(tid, key, tpls[key]["perms"])
     _db.tenants.update_one({"id": tid}, {"$set": sets})
-    applied = _apply_to_accounts(tid, key, perms) if body.apply == "all" else 0
+    applied = _apply_to_accounts(tid, key, perms, reach) if body.apply == "all" else 0
     _audit("team.role_updated", token, key)
     return {"applied": applied, **_payload(token, request)}
 

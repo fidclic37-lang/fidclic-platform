@@ -521,7 +521,7 @@ export default function SecuritePage() {
             <div className="space-y-3">
               <p className="text-[13.5px] text-[#475569]">Un nouveau mot de passe sera créé pour <strong>{modal.member.email}</strong>. L'ancien ne fonctionnera plus.</p>
               {mErr && <p className="text-[13px] text-[#C0392B]">{mErr}</p>}
-              <button type="button" disabled={busy === 'reset'} onClick={() => run('reset', () => ownerAPI.resetTeamPassword(modal.member.id), null, (data) => setForm({ cred: data.credentials }))}
+              <button type="button" disabled={busy === 'reset'} onClick={() => run('reset', () => ownerAPI.teamPassword(modal.member.id), null, (data) => setForm({ cred: data.credentials }))}
                       className="w-full rounded-xl py-2.5 text-[14px] font-medium text-white" style={{ background: BLUE }}>Créer le nouveau mot de passe</button>
             </div>
           ) : (

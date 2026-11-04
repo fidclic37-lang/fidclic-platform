@@ -41,6 +41,8 @@ that hands out access. A non-owner must never reach another store's team.
 - `api/features/team_access.py`: the `/api/owner/team-access*` endpoints.
 - `api/server.py`: the older `/api/owner/team*` endpoints stay owner-only.
 - `src/pages/EquipeAccesPage.jsx`: the invite form and « Accès par établissement ».
+- `src/pages/SecuritePage.jsx`, `src/lib/api.js`, `src/components/NoPageAccess.jsx`: only what this
+  change's refusals touch (found during the run: the password reset's route, the store-less message).
 - New tests in `api/tests/` and `e2e/`.
 
 ## Out of scope
