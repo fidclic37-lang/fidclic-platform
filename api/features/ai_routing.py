@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from auth import TokenData
 from features.platform_access import require_admin
-from services.ai_checks import _EMAIL, _EN, _FR, _PHONE, _plain, fold, numbers_in, unread_amounts
+from services.ai_checks import _EMAIL, _EN, _FR, _PHONE, _plain, fold, money_in, unread_amounts
 
 router = APIRouter(tags=["ai-routing"])
 _db = None
@@ -56,7 +56,7 @@ CHECKS = {"copilot": ("langue", "contact", "long", "montant"),
           "campaign_ai": WRITERS, "automation_ai": WRITERS, "autopilot": WRITERS,
           "conseiller": ("langue",), "support": ("langue",)}
 LONG_WORDS = 240                     # the prompt asks for far less; only a runaway answer is refused
-MIN_UNREAD_EUR = 20                  # « offrez 5 € » is an idea, « 3 400 € de CA » is a claim
+MIN_UNREAD_EUR = 5                   # a small shop's basket can be 8 €; under 5 € it is a price, not a figure
 
 
 def init(db):
@@ -147,7 +147,7 @@ def problems(feature: Optional[str], text: Optional[str], system: str, user: str
             out.append("contact")
     if "long" in checks and len(a.split()) > LONG_WORDS:
         out.append("trop_long")
-    if "montant" in checks and unread_amounts(a, numbers_in(f"{system}\n{user}"), MIN_UNREAD_EUR):
+    if "montant" in checks and unread_amounts(a, money_in(f"{system}\n{user}"), MIN_UNREAD_EUR):
         out.append("montant")
     return out
 

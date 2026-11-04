@@ -6,6 +6,7 @@ a French sentence or a figure « read somewhere » is.
 """
 from __future__ import annotations
 
+import contextlib
 import re
 import unicodedata
 from typing import Any, List
@@ -59,14 +60,51 @@ def _euros_in(text: str) -> List[float]:
     return out
 
 
+_MONEY_KEY = re.compile(r'"[a-z0-9_]*_eur"\s*:\s*(-?\d+(?:\.\d+)?)')
+_EURO = re.compile(r"(\d{1,3}(?: \d{3})+|\d+)(?:[,.](\d{1,2}))?\s?(k€|€|euros?\b|EUR\b)")
+# Near an amount, these make it an idea to try (« une remise de 20 € »)…
+_IDEA = re.compile(r"remise|reduction|offr|offert|\bbons?\b|cadeau|coupon|promo")
+# …unless it says what that brought in (« vos remises ont rapporté 900 € »).
+_CLAIM = re.compile(r"\bca\b|chiffre|rapport|gener|gagn|recette|vendu|depens|revenu")
+_ROUGHLY = re.compile(r"environ|pres de|presque|autour de")
+ROUGH_SHARE = 0.03
+
+
+def money_in(text: str) -> List[float]:
+    """The amounts of a prompt: JSON fields named *_eur and anything written in
+    euros. Never a count, a date or a percentage."""
+    out = []
+    for m in _MONEY_KEY.finditer(text or ""):
+        with contextlib.suppress(OverflowError, ValueError):
+            out.append(abs(float(m.group(1))))
+    return out + _euros_in(text or "")
+
+
 def unread_amounts(text: str, seen: List[float], min_eur: float = 1) -> List[float]:
-    """The € amounts of `text` that are neither a figure of `seen` nor the sum
-    or difference of two of them."""
+    """The € amounts of `text` that are neither an amount of `seen` nor the sum
+    or difference of two of them. An offer to try is not a claim about the
+    shop; « environ » may round to within 3 %."""
     pool = [s for s in seen if s >= 1]
-    sums = set()
+    known = set(pool)
     for i, x in enumerate(pool[:400]):
         for y in pool[i:400]:
-            sums.add(round(x + y, 2))
-            sums.add(round(abs(x - y), 2))
-    return [x for x in _euros_in(text)
-            if x >= max(min_eur, 1) and not any(abs(x - s) <= 0.5 for s in pool) and not any(abs(x - s) <= 0.5 for s in sums)]
+            known.add(round(x + y, 2))
+            known.add(round(abs(x - y), 2))
+    known_list = list(known)
+    plain = _plain(text or "")
+    out = []
+    for m in _EURO.finditer(plain):
+        try:
+            x = float(f"{int(m.group(1).replace(' ', ''))}.{m.group(2) or 0}") * (1000 if m.group(3) == "k€" else 1)
+        except ValueError:                     # a run of digits too long to be an amount
+            continue
+        if x < max(min_eur, 1) or any(abs(x - k) <= 0.5 for k in known_list):
+            continue
+        before = fold(re.split(r"[.!?;\n]", plain[max(0, m.start() - 30):m.start()])[-1])
+        after = fold(re.split(r"[.!?;\n]", plain[m.end():m.end() + 20])[0])
+        if _ROUGHLY.search(before) and any(abs(x - k) <= ROUGH_SHARE * k for k in known_list):
+            continue
+        if (_IDEA.search(before) or _IDEA.search(after)) and not _CLAIM.search(before):
+            continue
+        out.append(x)
+    return out
