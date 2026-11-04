@@ -16,7 +16,9 @@ import PermsEditor, { PageTable, fromTemplate } from '../components/team/PermsEd
    (and Employés) of its establishments; a Manager → the Employés of its
    establishment. Each hands over the email and the password shown once —
    no invitation e-mail. Everyone sees and manages only the accounts below
-   them, inside their own establishments (enforced by the server). */
+   them, inside their own establishments (enforced by the server).
+   The invite form offers the establishment open in the menu; only an owner
+   reaches the others from this page. */
 
 const ROLE_STYLE = {
   business_owner: { icon: Crown, fg: '#2F6BFF', bg: '#EAF1FF', tint: '#F4F8FF' },
@@ -334,10 +336,10 @@ export default function EquipeAccesPage() {
     if (!d) return;
     setInvite((v) => {
       const role = v.role || d.me.can_create[0] || '';
-      const ids = v.branch_ids.length ? v.branch_ids : (d.stores.length === 1 ? [d.stores[0].id] : []);
+      const ids = v.branch_ids.length ? v.branch_ids : (d.invite_stores.length === 1 ? [d.invite_stores[0].id] : []);
       return { ...v, role, branch_ids: ids, perms: v.perms || fromTemplate(tplOf(d, role), ids) };
     });
-    setStoreSel((v) => v || d.stores[0]?.id || '');
+    setStoreSel((v) => v || d.store_id || d.stores[0]?.id || '');
   }, [d]);
 
   const run = async (fn, msg) => {
@@ -371,7 +373,7 @@ export default function EquipeAccesPage() {
         last_name: rest.join(' '), branch_ids: ids,
         perms: Object.fromEntries(ids.map((id) => [id, invite.perms?.[id] || { ...(tplOf(d, invite.role)?.perms || {}) }])) });
       setD(data); setCreds(data.credentials);
-      const keep = d.stores.length === 1 ? [d.stores[0].id] : [];
+      const keep = d.invite_stores.length === 1 ? [d.invite_stores[0].id] : [];
       setInvite({ name: '', email: '', role: invite.role, branch_ids: keep, perms: fromTemplate(tplOf(d, invite.role), keep) });
     } catch (err) {
       setInviteError(typeof err?.response?.data?.detail === 'string' ? err.response.data.detail : 'Création impossible.');
@@ -387,6 +389,8 @@ export default function EquipeAccesPage() {
   }
 
   const canCreate = d.me.can_create.length > 0;
+  const canInvite = canCreate && d.invite_stores.length > 0;
+  const noStore = 'Aucun établissement ne vous est attribué.';
   const TABS = [
     { key: 'users', label: 'Utilisateurs', icon: Users },
     { key: 'pending', label: 'Invitations en attente', icon: Hourglass, count: d.pending.length },
@@ -404,15 +408,22 @@ export default function EquipeAccesPage() {
 
   const StoreAccess = ({ compact }) => {
     const sid = storeSel || d.stores[0]?.id;
-    const list = d.all_users || d.users;      // every account: this is where a store is given or taken
+    const list = d.all_users || d.users;      // every account the viewer may reach: where a store is given or taken
+    if (!d.stores.length) return <p className="text-[13px] text-[#64748B]">{noStore}</p>;
     return (
       <div>
-        <span className="relative mb-3 block">
-          <select value={sid} onChange={(e) => setStoreSel(e.target.value)} className={`${field} ${compact ? 'h-10' : ''} appearance-none pr-8`}>
-            {d.stores.map((s) => <option key={s.id} value={s.id}>{s.name}{s.city ? ` - ${s.city}` : ''}</option>)}
-          </select>
-          <ChevronDown size={15} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
-        </span>
+        {d.me.role === 'business_owner' || d.stores.length > 1 ? (
+          <span className="relative mb-3 block">
+            <select value={sid} onChange={(e) => setStoreSel(e.target.value)} className={`${field} ${compact ? 'h-10' : ''} appearance-none pr-8`}>
+              {d.stores.map((s) => <option key={s.id} value={s.id}>{s.name}{s.city ? ` - ${s.city}` : ''}</option>)}
+            </select>
+            <ChevronDown size={15} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+          </span>
+        ) : (
+          <p className="mb-3 text-[13.5px] font-semibold text-[#0B1C3F]" translate="no">
+            {d.stores[0].name}{d.stores[0].city ? ` - ${d.stores[0].city}` : ''}
+          </p>
+        )}
         <ul className="space-y-1">
           {list.map((u) => {
             const on = u.role === 'business_owner' || u.branch_ids.includes(sid);
@@ -689,8 +700,9 @@ export default function EquipeAccesPage() {
       {tab === 'users' && (
         <div className="mt-4 grid gap-4 xl:grid-cols-3">
           <section ref={inviteBox} className="rounded-2xl border border-[#E6EEFB] bg-white p-5 xl:row-span-2">
-            {cardHead(UserPlus, 'Inviter un utilisateur', canCreate ? 'Créez son accès et transmettez-lui ses identifiants.' : "Votre rôle ne permet pas de créer d'accès.")}
-            {canCreate && (
+            {cardHead(UserPlus, 'Inviter un utilisateur', !canCreate ? "Votre rôle ne permet pas de créer d'accès."
+              : canInvite ? 'Créez son accès et transmettez-lui ses identifiants.' : noStore)}
+            {canInvite && (
               <form onSubmit={create}>
                 <div className="mb-3 grid gap-3 sm:grid-cols-2">
                   <label className="block"><span className="mb-1.5 block text-[13px] font-semibold text-[#0B1C3F]">Nom</span>
@@ -710,7 +722,7 @@ export default function EquipeAccesPage() {
                       <ChevronDown size={15} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
                     </span></label>
                   <div><span className="mb-1.5 block text-[13px] font-semibold text-[#0B1C3F]">Établissement(s)</span>
-                    <StorePicker compact role={invite.role} stores={d.stores} value={invite.branch_ids}
+                    <StorePicker compact role={invite.role} stores={d.invite_stores} value={invite.branch_ids}
                                  onChange={(ids) => setInvite({ ...invite, branch_ids: ids,
                                    perms: Object.fromEntries(ids.map((id) => [id, invite.perms?.[id] || { ...(tplOf(d, invite.role)?.perms || {}) }])) })} /></div>
                 </div>
