@@ -1126,13 +1126,16 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
     scope = S.resolve(token_data, request)
     shop = E.Shop(token_data.tenant_id, _now(), scope)
     shop.viewer = getattr(token_data, "email", None)      # « Ce que FidClic IA retient »: theirs with the owner's
-    recs = _for(token_data, recommendations(shop))
+    pages = _open_pages(token_data, request)
+    recs = _for(token_data, recommendations(shop)) if "insights" in pages else []
     from features import plan_limits                      # « Analyses de base »: a few recommendations
     cap = plan_limits.ai_recommendation_limit(token_data.tenant_id)
     if cap is not None:
         recs = recs[:cap]
     fc = forecast_week(shop)
-    opps = opportunities(shop, fc)
+    opps = opportunities(shop, fc) if "insights" in pages else []
+    if "analytics" not in pages:             # the figures are the Analyses page's
+        fc = {**fc, "days": [], "mean": 0}
     # the journal of ideas (2026-10-29): shown, and what each brought last time
     from features import reco_journal as RJ
     RJ.shown(shop.tid, "copilote", recs, scope.key, at=shop.at)
@@ -1143,7 +1146,8 @@ def page(horizon: int = 30, days: int = 7, request: Request = None,
         "growth": growth(shop, recs, horizon),
         "recommendations": {"top": [_public(r) for r in recs[:3]],
                             "all": [_public(r) for r in recs], "total": len(recs)},
-        "activity": activity(shop.tid, days, shop.at, scope),
+        "activity": (activity(shop.tid, days, shop.at, scope) if "analytics" in pages
+                     else {"days": days, "cards": [], "locked": True}),
         "opportunities": {"top": opps[:4], "all": opps, "total": len(opps)},
         "forecast": fc,
         "plan": _plan_view(shop, token_data, recs),
@@ -1319,6 +1323,39 @@ def _intents(message: str) -> List[str]:
     return [key for key, words in INTENTS if any(w in m for w in words)]
 
 
+# Each figure opens with the page that shows it, the same pages as the Copilote's
+# tools (features/copilot_tools): a manager without « Analyses » got the revenue
+# through the prompt and the fallback answer (pentest 2026-11-03, #427).
+FACT_PAGES = (
+    (("analytics",), "Analyses", ("visites_30j", "evolution_visites_pct", "ca_30j_eur", "evolution_ca_pct", "panier_moyen_eur",
+                                  "meilleur_jour", "meilleur_jour_ecart_pct", "prevision_affluence", "periode_demandee")),
+    (("catalogue", "analytics"), "Catalogue produits", ("produit_star",)),
+    (("customers", "segmentation"), "Clients", ("clients_total", "clients_inactifs_30j", "clients_a_risque",
+                                                "anniversaires_7j", "nouveaux_une_visite")),
+    (("insights",), "Insights", ("recommandations",)),
+    (("campaigns",), "Campagnes", ("campagnes_recentes",)),
+)
+
+
+def _open_pages(token_data: TokenData, request) -> set:
+    from features import role_perms as RP
+    pages = {p for needed, _label, _keys in FACT_PAGES for p in needed}
+    return {p for p in pages if RP.may(token_data, p, "view", request)}
+
+
+def _limit_facts(facts: Dict[str, Any], pages: set) -> Dict[str, Any]:
+    """The facts this account may read; `acces_limite` names what it may not."""
+    locked = []
+    for needed, label, keys in FACT_PAGES:
+        if not pages & set(needed):
+            locked.append(label)
+            for k in keys:
+                facts.pop(k, None)
+    if locked:
+        facts["acces_limite"] = locked
+    return facts
+
+
 def _facts(shop, recs: List[Dict[str, Any]], fc: Dict[str, Any],
            per: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     E = _engine()
@@ -1380,9 +1417,13 @@ _SYSTEM = (
 def _fallback(intents: List[str], facts: Dict[str, Any], recs_by_key: Dict[str, Any]) -> str:
     """An answer from the facts alone, when the model cannot be reached."""
     parts = []
+    locked = facts.get("acces_limite") or []
     for key in intents:
         r = recs_by_key.get(key)
-        if key == "resultats":
+        if key == "resultats" and "Analyses" in locked:
+            parts.append("Votre accès ne permet pas de voir les chiffres du commerce (page Analyses). "
+                         "Le propriétaire peut vous l'ouvrir.")
+        elif key == "resultats":
             p = facts.get("periode_demandee") or {}
             label = p.get("libelle") or "les 30 derniers jours"
             n = int(p.get("visites", facts.get("visites_30j") or 0))
@@ -1397,14 +1438,18 @@ def _fallback(intents: List[str], facts: Dict[str, Any], recs_by_key: Dict[str, 
     if not parts:
         top = list(recs_by_key.values())[:2]
         parts = ([f"Ma priorité pour vous : {top[0]['title'].lower()}."] if top else
+                 ["Votre accès ne permet pas de voir les recommandations (page Insights). Le propriétaire peut vous l'ouvrir."]
+                 if "Insights" in locked else
                  ["Je n'ai pas encore assez de données sur votre commerce pour vous conseiller précisément."])
     return " ".join(parts)
 
 
-def _actions(intents: List[str], recs_by_key: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _actions(intents: List[str], recs_by_key: Dict[str, Any], locked: Any = ()) -> List[Dict[str, Any]]:
     out = []
     for key in intents:
         if key == "resultats":
+            if "Analyses" in locked:
+                continue
             out.append({"label": "Ouvrir les analyses", "kind": "navigate", "to": "/dashboard/analytics"})
             continue
         r = recs_by_key.get(key)
@@ -1504,11 +1549,12 @@ def chat(body: ChatIn, request: Request = None,
     scope = S.resolve(token_data, request)
     shop = E.Shop(tid, _now(), scope)
     shop.viewer = getattr(token_data, "email", None)
-    recs = _for(token_data, recommendations(shop))
+    pages = _open_pages(token_data, request)
+    recs = _for(token_data, recommendations(shop)) if "insights" in pages else []
     # What the merchant asks for directly is always available — even a
     # recommendation resting after recent use or one they dismissed. The
     # shelves step aside; the chat does not refuse.
-    by_key = {r["key"]: r for r in _for(token_data, _library(shop))}
+    by_key = {r["key"]: r for r in _for(token_data, _library(shop))} if "insights" in pages else {}
     fc = forecast_week(shop)
     per = period_of(message, shop.at)
     facts = _facts(shop, recs, fc, per)
@@ -1517,6 +1563,7 @@ def chat(body: ChatIn, request: Request = None,
         facts["etablissements"] = scope.describe()["label"]
     facts["campagnes_recentes"] = [{"modele": k, "le": v["at"].date().isoformat(), "statut": v["status"]}
                                    for k, v in used.items()]
+    facts = _limit_facts(facts, pages)
     intents = _intents(message)
     # « et aujourd'hui ? » asks for the figures even without « chiffres »
     if per["explicit"] and "resultats" not in intents:
@@ -1537,7 +1584,9 @@ def chat(body: ChatIn, request: Request = None,
                 memory = ""
             base = ((f"{memory}\n\n" if memory else "")
                     + f"Données du commerce (JSON) :\n{json.dumps(facts, ensure_ascii=False)}"
-                      f"\n\nQuestion du commerçant : {CM.scrub(message)}")
+                    + (" Pour ce qui est dans « acces_limite », dis que ce compte n'y a pas accès."
+                       if facts.get("acces_limite") else "")
+                    + f"\n\nQuestion du commerçant : {CM.scrub(message)}")
             reply = _with_tools(token_data, request, scope, base, sources)
         except Exception as exc:
             print(f"copilot: chat model failed ({exc})")
@@ -1548,7 +1597,7 @@ def chat(body: ChatIn, request: Request = None,
             reply = f"C'est noté : « {CM.scrub(remembered)} ». Vous le retrouvez dans « Ce que FidClic IA retient ». {reply}"
     if remembered and view_by:
         reply = f"Accès administrateur : rien n'est retenu pour le commerçant. {reply}"
-    actions = _actions(intents, by_key)
+    actions = _actions(intents, by_key, facts.get("acces_limite") or ())
 
     at = _now()
     who = {"view_by": view_by} if view_by else {}

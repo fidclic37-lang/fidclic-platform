@@ -535,11 +535,18 @@ export default function CopilotPage() {
               <header className="mb-3 flex flex-wrap items-center gap-2">
                 <Send size={17} className="text-[#2F6BFF]" />
                 <h2 className="text-[15px] font-bold text-[#0B1C3F]">Analyse de votre activité</h2>
-                <span className="ml-auto">
-                  <Select small value={days} onChange={setDays}
-                          options={[[7, '7 derniers jours'], [30, '30 derniers jours'], [90, '90 derniers jours']]} />
-                </span>
+                {!d.activity.locked && (
+                  <span className="ml-auto">
+                    <Select small value={days} onChange={setDays}
+                            options={[[7, '7 derniers jours'], [30, '30 derniers jours'], [90, '90 derniers jours']]} />
+                  </span>
+                )}
               </header>
+              {d.activity.locked && (
+                <p className="text-[13px] text-[#64748B]" data-testid="copilot-activity-locked">
+                  Votre accès ne permet pas de voir les chiffres du commerce (page Analyses). Le propriétaire peut vous l&apos;ouvrir.
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                 {d.activity.cards.map((c) => (
                   <div key={c.key} className="rounded-xl border border-[#EEF3FB] p-2.5">
