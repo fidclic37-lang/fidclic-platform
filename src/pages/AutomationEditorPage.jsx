@@ -544,7 +544,7 @@ export default function AutomationEditorPage() {
         if (near.card_goal && Number(tr.threshold) >= near.card_goal) return `Le seuil doit être inférieur à la récompense de la carte (${near.card_goal} ${near.unit}).`;
         return '';
       }
-      if (s.scenario === 'inactive') return num(tr.days, 7, 365, 'Jours sans visite') || (tr.repeat === 'every' ? num(tr.every_days, 7, 365, 'Répéter tous les') : '');
+      if (s.scenario === 'inactive') return num(tr.days, 7, 365, 'Jours sans visite') || (tr.repeat === 'every' ? num(tr.every_days, 1, 365, 'Répéter tous les') : '');
       if (s.scenario === 'geo') {
         if (!(tr.stores || []).length) return 'Cochez au moins un établissement.';
         if (!zoneSpots.length) return "La position de votre établissement est inconnue : placez-le sur la carte dans Paramètres › Établissement.";
@@ -609,7 +609,7 @@ export default function AutomationEditorPage() {
         if (sc.window && !(sc.slots || []).length) return 'Ajoutez au moins une plage horaire, ou choisissez « Toute la journée ».';
         if (sc.window && sc.slots.some((x) => x.from === x.to)) return 'Une plage horaire commence et finit à la même heure.';
         const c = Number(tr.cooldown_days);
-        if (!Number.isInteger(c) || c < 1 || c > 90) return 'Fréquence par client : entre 1 et 90 jours.';
+        if (!Number.isInteger(c) || c < 1 || c > 365) return 'Fréquence par client : entre 1 et 365 jours.';
       } else if (s.scenario === 'inactive') {
         if (sc.window && sc.window_to <= sc.window_from) return 'La fin de la plage horaire doit être après son début.';
         if (sc.window && !sc.smart && !(sc.window_from <= sc.hour && sc.hour < sc.window_to)) return `L'heure d'envoi (${sc.hour}, étape Déclencheur) doit être comprise dans la plage horaire (${sc.window_from} – ${sc.window_to}).`;
@@ -879,7 +879,7 @@ export default function AutomationEditorPage() {
           </div>
           <Option on={tr.repeat !== 'every'} onClick={() => setIn('trigger', { repeat: 'once' })} icon={RefreshCw} title="Une seule fois par absence" sub="Un message, puis plus rien tant que le client ne revient pas." />
           <Option on={tr.repeat === 'every'} onClick={() => setIn('trigger', { repeat: 'every' })} icon={Repeat} title="Relancer régulièrement" sub="Tant que le client ne revient pas.">
-            <span className="flex items-center gap-2 text-[13px]">Tous les <Num value={tr.every_days} min={7} max={365} label="Répéter tous les" onChange={(v) => setIn('trigger', { every_days: v })} /> jours</span>
+            <span className="flex items-center gap-2 text-[13px]">Tous les <Num value={tr.every_days} min={1} max={365} label="Répéter tous les" onChange={(v) => setIn('trigger', { every_days: v })} /> jours</span>
           </Option>
         </div>
       )}
@@ -1249,8 +1249,12 @@ export default function AutomationEditorPage() {
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[#E6EEFB] p-3 text-[13px]">
         <RefreshCw size={18} className="shrink-0 text-[#1463FF]" />
         <span className="font-semibold text-[#0B1C3F]">Fréquence par client :</span> au plus une fois tous les
-        <Num value={tr.cooldown_days} min={1} max={90} label="Délai entre deux messages" onChange={(v) => setIn('trigger', { cooldown_days: v })} /> jours
+        <Num value={tr.cooldown_days} min={1} max={365} label="Délai entre deux messages" onChange={(v) => setIn('trigger', { cooldown_days: v })} /> jours
       </div>
+      {/* user, 2026-11-04: sent = the pass loses the location for X days. The
+          lock screen is the phone's own: nobody is told it was shown. */}
+      <p data-testid="geo-interval-note" className="mt-2 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] text-[#334155]"><Info size={15} className="mt-0.5 shrink-0 text-[#1463FF]" />
+        <span>Dès que FidClic envoie ce message à un client (quand il ouvre sa carte près de chez vous), sa carte Wallet ne signale plus votre établissement pendant ce délai, puis recommence. Le message de l'écran verrouillé, lui, est affiché par le téléphone : Apple et Google ne préviennent pas quand il apparaît, il peut donc se répéter chez un client qui n'ouvre jamais sa carte.</span></p>
       <p className="mt-3 flex items-start gap-2 text-[11.5px] text-[#64748B]"><Info size={13} className="mt-0.5 shrink-0" />
         {page.tick ? 'Les cartes Wallet suivent ces jours, horaires et la météo, mises à jour toutes les 15 minutes.'
           : "Quand la carte est ouverte, tout s'applique à la minute. Sur l'écran verrouillé, les cartes Wallet sont mises à jour une fois par jour ; à la minute près dès l'envoi programmé toutes les 15 minutes."}</p>
@@ -2119,7 +2123,7 @@ export default function AutomationEditorPage() {
           <button type="button" onClick={() => setIn('trigger', { repeat: 'once' })} className="flex items-center gap-2"><Radio on={tr.repeat !== 'every'} /> Une seule fois par absence</button>
           <span className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => setIn('trigger', { repeat: 'every' })} className="flex items-center gap-2"><Radio on={tr.repeat === 'every'} /> Relancer tous les</button>
-            <Num value={tr.every_days} min={7} max={365} label="Relancer tous les" disabled={tr.repeat !== 'every'} onChange={(v) => setIn('trigger', { every_days: v })} /> jours
+            <Num value={tr.every_days} min={1} max={365} label="Relancer tous les" disabled={tr.repeat !== 'every'} onChange={(v) => setIn('trigger', { every_days: v })} /> jours
           </span>
         </div>
       </div>
