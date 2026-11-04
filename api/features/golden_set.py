@@ -42,7 +42,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from auth import TokenData
 from features.platform_access import require_admin
 from services.ai_checks import (MONTHS, _DATE, _EMAIL, _EN, _FR, _HOUR, _NUM, _PHONE, _euros_in, _plain,  # noqa: F401
-                               fold, numbers_in, unread_amounts)
+                               fold, money_in, numbers_in, unread_amounts)
 
 router = APIRouter()
 _db = None
@@ -1032,7 +1032,7 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
             elif status != 200:
                 row["why"] = [f"HTTP {status}"]
             else:
-                seen = list(t["seen"]) + [x for p in prompts for x in numbers_in(p)]
+                seen = [x for p in prompts for x in money_in(p)]
                 row["why"] = grade(q, reply, t["need"], seen=seen, forbidden=t["forbidden"])["why"]
                 if refused and not (reply or "").strip():      # the live checks threw the answer away: say which
                     row["why"] = [f"réponse refusée par les contrôles ({', '.join(refused)})"]
