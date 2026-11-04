@@ -172,7 +172,7 @@ for (const [label, viewport] of SIZES) {
       await page.goto('/login');
       await page.evaluate((t) => localStorage.setItem('fidelitour_access_token', t), admin.token);
       await page.goto('/dashboard/parametres/equipe');
-      await expect(page.getByText('Aucun établissement ne vous est attribué.')).toBeVisible();
+      await expect(page.getByText('Aucun établissement ne vous est attribué. Demandez au propriétaire')).toBeVisible();
       await expect(page.getByPlaceholder('exemple@entreprise.fr')).toHaveCount(0);
     });
 

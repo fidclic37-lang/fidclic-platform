@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
    ki not authorised »). The server refuses its calls too. */
 export default function NoPageAccess({ label }) {
   const { user } = useAuth();
-  const noStore = user?.role !== 'business_owner' && Array.isArray(user?.branch_ids) && !user.branch_ids.length;
+  const noStore = user?.role !== 'business_owner' && user?.branch_ids?.length === 0;
   return (
     <div role="alert" className="mx-auto mt-10 max-w-lg rounded-2xl border border-[#E6EEFB] bg-white p-8 text-center shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
       <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FFF4E5] text-[#B45309]">
@@ -16,9 +16,12 @@ export default function NoPageAccess({ label }) {
       </span>
       <p className="text-[19px] font-bold text-[#0B1C3F]">Accès non autorisé</p>
       <p className="mt-2 text-[14px] leading-relaxed text-[#475569]">
-        {noStore ? 'Aucun établissement ne vous est attribué.'
-          : <>Vous n'avez pas la permission d'ouvrir {label ? <b>« {label} »</b> : 'cette page'}.</>}
-        Demandez-la au propriétaire du commerce (Paramètres › Équipe &amp; accès).
+        {noStore ? 'Aucun établissement ne vous est attribué. Demandez au propriétaire du commerce de vous en donner un.' : (
+          <>
+            Vous n'avez pas la permission d'ouvrir {label ? <b>« {label} »</b> : 'cette page'}.
+            Demandez-la au propriétaire du commerce (Paramètres › Équipe &amp; accès).
+          </>
+        )}
       </p>
     </div>
   );

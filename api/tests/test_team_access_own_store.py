@@ -372,6 +372,14 @@ def main():
     db.users.insert_one(account("sousc", "membre", stores=[C], custom_role="sous", perms={C: {"scan": "edit"}}))
     r = call(OWNER, "PUT", f"{TEAM}/roles/sous", A, json={"perms": {"scan": "view"}, "apply": "all"})
     check(f"an owner's « all » still reaches every account ({r.status_code})", r.status_code == 200 and user("sousc")["perms"][C]["scan"] == "view")
+    for apply in ("all", "new"):
+        seed()
+        db.users.update_one({"id": "adm1"}, {"$set": {"perms": {A: {"roles": "edit", "team": "edit", "scan": "edit"}}}})
+        db.tenants.update_one({"id": "t1"}, {"$set": {"role_defs.sous.parent": "administrateur"}})
+        db.users.update_one({"id": "sousab"}, {"$set": {"perms": {A: {"scan": "edit"}}}})      # rights written before B was given
+        r = call(ADM1, "PUT", f"{TEAM}/roles/sous", A, json={"perms": {"scan": "none"}, "apply": apply})
+        check(f"« {apply} »: rights in B that came from the template stay ({r.status_code})",
+              r.status_code == 200 and user("sousab")["perms"].get(B, {}).get("scan") == "edit")
 
     print("\n5. The older team endpoints: an owner only")
     seed()

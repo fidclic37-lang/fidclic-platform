@@ -50,7 +50,7 @@ that hands out access. A non-owner must never reach another store's team.
   Nothing is widened to show the owner or peers to a non-owner.
 - What counts as covered for accounts created before stores existed (`_covered`).
 - `store_scope.resolve`, which other pages share and which falls back rather than refuses.
-- Other sections and endpoints: Sécurité, `/api/owner/branches`, employee links. Problems
+- Other sections and endpoints: the rest of Sécurité, `/api/owner/branches`, employee links. Problems
   found there go in the report, not in this change.
 - The design, the wording of existing labels, plan limits, role templates.
 

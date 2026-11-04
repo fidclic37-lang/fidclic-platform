@@ -223,17 +223,16 @@ def _open_store(request: Optional[Request], me: Dict[str, Any], all_ids: List[st
         return None
     named = {v.strip() for v in [*request.headers.getlist(S.HEADER), *request.query_params.getlist("store")]} \
         - {"", S.ALL, "null", "undefined"}
-    owner = me.get("role") == "business_owner"
-    if owner:
+    if me.get("role") == "business_owner":
         named &= set(all_ids)
     if len(named) > 1:
         raise HTTPException(status_code=400, detail="Choisissez un seul établissement.")
     sid = next(iter(named), None)
-    if sid is not None and not owner and sid not in _covered(me, all_ids):
+    if sid is not None and sid not in _covered(me, all_ids):
         # this wording has the browser reload the account (api.js, « fc:perms-stale »):
         # a store since taken away or closed then leaves the menu by itself
         raise HTTPException(status_code=403, detail="Accès non autorisé : cet établissement n'est pas le vôtre.")
-    return sid if sid in all_ids and len(all_ids) > 1 else None
+    return sid if len(all_ids) > 1 else None
 
 
 def _reach(me: Dict[str, Any], all_ids: List[str], sel: Optional[str]) -> Optional[List[str]]:
@@ -397,7 +396,6 @@ def _payload(token: TokenData, request: Optional[Request] = None) -> Dict[str, A
         "stores": in_view,
         # the form « Inviter un utilisateur »: the open store, whoever is asking
         "invite_stores": [s for s in in_view if s["id"] == sel] if sel else in_view,
-        "all_stores_count": len(in_view),
         "roles": [{"key": r, **ROLE_META[r], "count": counts[r]} for r in ROLES if r != "membre"]
         + [{"key": k, "label": d["label"], "tone": "slate", "icon": "badge", "custom": True,
             "description": d.get("description") or "Rôle personnalisé.", "count": custom_counts.get(k, 0)}
@@ -568,8 +566,7 @@ def update_user(uid: str, body: UserUpdate, token: TokenData = Depends(require_r
             if any(b and b != sel for b in body.branch_ids):
                 raise HTTPException(status_code=403, detail="Vous ne pouvez attribuer que l'établissement ouvert.")
             wanted = ([sel] if sel in body.branch_ids else []) + others
-        if raw is not None:
-            raw = {sid: v for sid, v in raw.items() if sid == sel}
+        raw = _within(raw, reach)
     # A list this request leaves as it is needs no check: a manager or employé
     # from before stores can be several places, and only an owner sorts that out.
     ids = wanted if limited and set(wanted) == set(covered) else _check_assignment(role, wanted, me, all_ids)
@@ -713,12 +710,16 @@ def _apply_to_accounts(tid: str, key: str, perms: Dict[str, str], reach: Optiona
 
 def _freeze(tid: str, key: str, old_perms: Dict[str, str]) -> None:
     from features import role_perms as RP
-    q = {"tenant_id": tid, "perms": {"$exists": False},
-         **({"role": RP.CUSTOM_ROLE, "custom_role": key} if key not in RP.BUILTIN else {"role": key})}
+    q = {"tenant_id": tid, **({"role": RP.CUSTOM_ROLE, "custom_role": key} if key not in RP.BUILTIN else {"role": key})}
     all_ids = [s["id"] for s in stores(tid)]
-    for u in _db.users.find(q, {"_id": 0, "email": 1, "branch_ids": 1, "role": 1}):
+    for u in _db.users.find(q, {"_id": 0, "email": 1, "branch_ids": 1, "role": 1, "perms": 1}):
+        own = u.get("perms") if isinstance(u.get("perms"), dict) else None
+        ids = _covered(u, all_ids)
+        if own is not None and all(sid in own for sid in ids):
+            continue
+        # a store with no rights written down yet follows the template too
         _db.users.update_one({"email": u["email"]}, {"$set": {
-            "perms": {sid: dict(old_perms) for sid in _covered(u, all_ids)}}})
+            "perms": {**(own or {}), **{sid: dict(old_perms) for sid in ids if sid not in (own or {})}}}})
 
 
 def _role_guard(token: TokenData, key: Optional[str], perms: Optional[Dict[str, str]]) -> Dict[str, Any]:
@@ -768,15 +769,15 @@ def update_role(key: str, body: RoleIn, token: TokenData = Depends(require_role(
                 request: Request = None):
     from features import role_perms as RP
     tid = token.tenant_id
-    _open_store(request, _me(token), [s["id"] for s in stores(tid)])
+    me = _me(token)
+    all_ids = [s["id"] for s in stores(tid)]
+    reach = _reach(me, all_ids, _open_store(request, me, all_ids))
     tpls = RP.templates(tid)
     if key not in tpls:
         raise HTTPException(status_code=404, detail="Rôle introuvable.")
     if body.apply not in ("new", "all"):
         raise HTTPException(status_code=400, detail="Choisissez à qui appliquer.")
-    me = _role_guard(token, key, RP.clean_perms(body.perms) if body.perms is not None else None)
-    all_ids = [s["id"] for s in stores(tid)]
-    reach = _reach(me, all_ids, _open_store(request, me, all_ids))
+    _role_guard(token, key, RP.clean_perms(body.perms) if body.perms is not None else None)
     sets: Dict[str, Any] = {}
     if key in RP.BUILTIN:
         perms = RP.clean_perms(body.perms) if body.perms is not None else dict(RP.DEFAULT_TEMPLATES[key])
