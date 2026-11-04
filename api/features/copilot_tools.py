@@ -516,7 +516,12 @@ def _may(token, tool: Tool, request) -> bool:
 
 def available(token, request=None) -> List[str]:
     """The tools this account may use: those of the pages its role opens."""
-    return [n for n, t in TOOLS.items() if _may(token, t, request)]
+    from features import role_perms as RP
+    try:
+        opened = RP.open_pages(token, {p for t in TOOLS.values() for p in t.pages}, request)
+    except Exception:
+        return []
+    return [n for n, t in TOOLS.items() if opened & set(t.pages)]
 
 
 def _clean(x: Any) -> Any:
