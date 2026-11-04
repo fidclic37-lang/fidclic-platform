@@ -45,7 +45,7 @@ SENSITIVE_PATHS = (
 # Lines that change what a file does to data or money, wherever they appear.
 RISKY_LINES = (
     (r"\.(delete_many|drop|update_many)\(", "a bulk database write"),
-    (r"(?i)password|jwt_|secret|api_key|token_", "a secret or credential"),
+    (r"(?i)password|jwt_|secret|api_key|(access|refresh|auth)_token", "a secret or credential"),
     (r"(?i)stripe|amount_cents|\bprice\b|\bvat\b|\btva\b", "money"),
 )
 

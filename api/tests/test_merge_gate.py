@@ -127,6 +127,11 @@ for line in ("+db.visits.delete_many({})", "-db.customers.drop()", "+ db.rewards
     check(f"« {line} » asks a person", v == REVIEW, (v, why))
 v, _ = run([f("api/server.py", patch="+logger.info('scan')")])
 check("an ordinary line in server.py merges", v == AUTO)
+v, why = run([f("api/features/copilot.py", patch="+token_count = usage.total_tokens")])
+check("counting AI tokens is not a credential", v == AUTO, why)
+for line in ("+access_token = 'x'", "+refresh_token = 'x'"):
+    v, why = run([f("api/features/visits.py", patch=line)])
+    check(f"« {line} » asks a person", v == REVIEW, (v, why))
 
 print("merge gate: size")
 v, _ = run([f("api/features/visits.py", 401, 0)])
