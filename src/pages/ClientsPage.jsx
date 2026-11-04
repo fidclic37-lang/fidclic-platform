@@ -409,16 +409,16 @@ export default function ClientsPage() {
   const urlSearch = () => (urlParams.get('q') || urlParams.get('barcode_id') || '').trim();
   const [typed, setTyped] = useState(urlSearch);
   const [search, setSearch] = useState(urlSearch);
-  const searchOpened = useRef(false);
+  // Read once, then out of the address (user, 2026-11-04): left there, Back and
+  // every later change of the URL brought back a search the owner had removed.
   useEffect(() => {
     const q = urlSearch();
-    const first = !searchOpened.current;
-    searchOpened.current = true;
-    if (q && (q !== search || first)) {
-      setTyped(q); setSearch(q); setPage(1);
-      setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
-    }
+    if (!q) return;
+    setTyped(q); setSearch(q); setPage(1);
+    setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    setUrlParams((p) => { p.delete('q'); p.delete('barcode_id'); p.delete('hl'); return p; }, { replace: true });
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
+  const clearSearch = () => { setTyped(''); setSearch(''); setPage(1); };
   // ?sort=spend / ?sort=visits: the LTV and « Visites par client » figures of
   // Analyses open the list ordered by what they measure.
   const [sort, setSort] = useState(() => (['spend', 'visits'].includes(urlParams.get('sort')) ? urlParams.get('sort') : 'recent'));
@@ -586,18 +586,23 @@ export default function ClientsPage() {
     segment, status, spend, joined, search, source, sort, page, per_page: perPage, ...(card ? { card } : {}), ...extraParams, ...dateParams, ...(store ? { store } : {}),
   }), [segment, status, spend, joined, search, source, card, sort, page, perPage, store, extraParams, dateParams]);
 
+  // Only the last question may answer: on a slow database an older, slower
+  // answer used to replace the list the owner had just asked for.
+  const lastAsk = useRef(0);
   const load = useCallback(() => {
+    const ask = ++lastAsk.current;
     setLoading(true); setError('');
     ownerAPI.clientsList(params)
       .then(({ data }) => {
+        if (ask !== lastAsk.current) return;
         setFeed(data);
         if (scrollToList.current) {
           scrollToList.current = false;
           setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
         }
       })
-      .catch((e) => setError(e?.response?.data?.detail || 'Impossible de charger les clients.'))
-      .finally(() => setLoading(false));
+      .catch((e) => { if (ask === lastAsk.current) setError(e?.response?.data?.detail || 'Impossible de charger les clients.'); })
+      .finally(() => { if (ask === lastAsk.current) setLoading(false); });
   }, [params]);
   useEffect(() => { load(); }, [load]);
 
@@ -720,7 +725,7 @@ export default function ClientsPage() {
             const on = segment === s.key;
             return (
               <button key={s.key} type="button"
-                      onClick={needCrm(() => { setSegment(s.key); setPage(1); setPicked([]); })}
+                      onClick={needCrm(() => { setSegment(s.key); clearSearch(); setPicked([]); })}
                       className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition ${
                         on ? 'border-[#2F6BFF] bg-[#F5F8FF]' : 'border-[#E6EEFB] bg-white hover:border-[#C7DBFF]'}`}>
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
@@ -939,7 +944,12 @@ export default function ClientsPage() {
       <section id="clients-list" className="scroll-mt-24 rounded-2xl border border-[#E6EEFB] bg-white shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
         <header className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <h2 className="text-[17px] font-bold text-[#0B1C3F]">
-            {nf(feed.total)} client{feed.total > 1 ? 's' : ''}
+            <span data-testid="clients-total">{nf(feed.total)} client{feed.total > 1 ? 's' : ''}</span>
+            {loading && feed.rows.length > 0 && (
+              <span data-testid="clients-updating" className="ml-2 inline-flex items-center gap-1 align-middle text-[12px] font-medium text-[#64748B]">
+                <Loader2 size={13} className="animate-spin" /> Mise à jour…
+              </span>
+            )}
             {activeSegment && segment !== 'all' && (
               <span className="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-[#EAF1FF] px-2 py-0.5 align-middle text-[12.5px] font-semibold text-[#2F6BFF]">
                 {activeSegment.label}{storeName ? ` · ${storeName}` : ''}
@@ -1003,12 +1013,23 @@ export default function ClientsPage() {
               )}
               {!loading && feed.rows.length === 0 && (
                 <tr><td colSpan={10} className="px-4 py-14 text-center">
-                  <p className="text-[13.5px] font-semibold text-[#0B1C3F]">Aucun client ici</p>
-                  <p className="mt-1 text-[12.5px] text-[#64748B]">
-                    {search || status || spend || joined || source || segment !== 'all'
-                      ? 'Retirez un filtre pour en voir plus.'
-                      : 'Vos clients apparaîtront dès la première inscription.'}
-                  </p>
+                  <div data-testid="clients-empty">
+                    <p className="text-[13.5px] font-semibold text-[#0B1C3F]">
+                      {search ? `Aucun client pour la recherche « ${search} »` : 'Aucun client ici'}
+                    </p>
+                    {search ? (
+                      <button type="button" onClick={clearSearch}
+                              className="mt-2 rounded-xl border border-[#E6EEFB] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF] transition hover:border-[#2F6BFF]">
+                        Effacer la recherche
+                      </button>
+                    ) : (
+                      <p className="mt-1 text-[12.5px] text-[#64748B]">
+                        {status || spend || joined || source || segment !== 'all'
+                          ? 'Retirez un filtre pour en voir plus.'
+                          : 'Vos clients apparaîtront dès la première inscription.'}
+                      </p>
+                    )}
+                  </div>
                 </td></tr>
               )}
               {feed.rows.map((r) => {

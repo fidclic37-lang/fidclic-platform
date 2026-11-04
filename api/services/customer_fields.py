@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import calendar
 import re
+from datetime import timezone
 from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
+
+PARIS = ZoneInfo("Europe/Paris")
 
 
 def _bad(msg: str) -> HTTPException:
@@ -132,8 +136,27 @@ def birthday(v: Optional[str]) -> str:
 
 def _paris_today():
     from datetime import datetime
-    from zoneinfo import ZoneInfo
-    return datetime.now(ZoneInfo("Europe/Paris")).date()
+    return datetime.now(PARIS).date()
+
+
+def birth_month(cust: Dict) -> Optional[int]:
+    """The month of a client's birthday, 1–12, or None. Dates kept before the
+    form was strict come in any form birth() reads; the full date is the fallback."""
+    for v in (cust.get("birthday"), cust.get("birth_date")):
+        if not isinstance(v, str) or not v.strip():
+            continue
+        try:
+            return int(birth(v, max_age=False)["birthday"][:2])
+        except HTTPException:
+            continue
+    return None
+
+
+def is_birth_month(cust: Dict, at) -> bool:
+    """« Anniversaires du mois », the one definition: the month of the shop's
+    calendar, so the list turns at midnight in Paris (not 1–2 hours later, in UTC)."""
+    aware = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+    return birth_month(cust) == aware.astimezone(PARIS).month
 
 
 def age_of(birth_date: Optional[str], today=None) -> Optional[int]:

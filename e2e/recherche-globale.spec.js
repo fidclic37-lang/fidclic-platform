@@ -61,6 +61,7 @@ test.describe('the search bar at the top', () => {
     await asOwner(page, request);
     await page.goto('/dashboard');
     await search(page, 'Zzz Personne Inconnue');
-    await expect(page).toHaveURL(/\/dashboard\/customers\?q=/);
+    await expect(page).toHaveURL(/\/dashboard\/customers/);
+    await expect(page.getByPlaceholder('Rechercher un client (nom, email, téléphone…)')).toHaveValue('Zzz Personne Inconnue');
   });
 });
