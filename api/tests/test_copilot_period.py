@@ -130,16 +130,16 @@ def main():
         return "ok", None
     llm._call = fake2
     llm.complete("s", "u")
-    check("a Groq model left in LLM_MODEL is not sent to Claude", seen_models == [("anthropic", "claude-sonnet-5-5")])
+    check("a Groq model left in LLM_MODEL is not sent to Claude", seen_models == [("anthropic", "claude-opus-5-5")])
     seen_models.clear()
     os.environ["LLM_MODEL"] = "claude-old-name"
 
     def fake3(name, model, system, user, max_tokens, temperature, *meter):
         seen_models.append(model)
-        return (None, "HTTP 404") if model == "claude-old-name" else ("ok", None)
+        return (None, "HTTP 404") if model == "claude-opus-5-5" else ("ok", None)
     llm._call = fake3
     check("a chosen model that fails is retried once with the default",
-          llm.complete("s", "u") == "ok" and seen_models == ["claude-old-name", "claude-sonnet-5-5"])
+          llm.complete("s", "u") == "ok" and seen_models == ["claude-opus-5-5", "claude-sonnet-5-5"])
     for k in ("ANTHROPIC_API_KEY", "LLM_MODEL"):
         os.environ.pop(k, None)
     llm._call = real

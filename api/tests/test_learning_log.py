@@ -71,6 +71,10 @@ def main():
     tok = lambda e, r, t="t1": {"Authorization": "Bearer " + auth.create_access_token({"sub": e, "role": r, "tenant_id": t})}  # noqa: E731
     OWNER, OTHER, BOSS = tok("o@rt.fr", "business_owner"), tok("o@other.fr", "business_owner", "t2"), tok("boss@fidclic.com", "super_admin", None)
 
+    # The fake Copilote answer carries a phone and an e-mail on purpose: the scrub is
+    # the last line of defence, so the live checks (test_ai_routing) stand aside here.
+    from features import ai_routing
+    ai_routing.CHECKS = {}
     answers = {"campaign": "TITRE: Votre coupe vous attend\nMESSAGE: {prénom}, -10 % sur votre coupe cette semaine chez Royal Test.",
                "copilot": "Sophie Martin (06 12 34 56 00) revient tous les 21 jours ; écrivez-lui à sophie@mail.fr."}
     llm._force_complete = lambda system, user: answers["copilot"] if "Données du commerce" in user else answers["campaign"]

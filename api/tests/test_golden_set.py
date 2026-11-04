@@ -201,8 +201,7 @@ def main():
 
     def fake(system, user):
         asked.append(user)
-        return json.dumps({"reponse": GS.fake_reply(system, user)}, ensure_ascii=False) \
-            if "Question du commerçant" in user else GS.fake_reply(system, user)
+        return GS.fake_model(system, user)
     llm._force_complete = fake
     rep = GS.run_all(http)
     check("every question answered and passed (100 %)", rep["ok"] and rep["passed"] == rep["total"] == len(bank),
@@ -219,7 +218,7 @@ def main():
     llm._force_complete = leaky
     rep = GS.run_all(http, only=[x["id"] for x in bank if "Karim" in x["text"]][:3])
     check("one phone number in one answer → the run fails, and says where",
-          not rep["ok"] and rep["failures"] and all("téléphone" in " ".join(f["why"]) for f in rep["failures"]),
+          not rep["ok"] and rep["failures"] and all("contact" in " ".join(f["why"]) for f in rep["failures"]),
           rep["failures"][:2])
     md = GS.markdown(rep)
     check("the summary names the failed question", rep["failures"][0]["id"] in md and "❌" in md)
@@ -290,7 +289,7 @@ def main():
     runs[1]["conclusion"] = "success"
     r = http("POST", "/api/admin/ai/golden/run", headers=SA)
     check("« Lancer » starts the workflow on main", r.status_code == 200
-          and any(c[0] == "POST" and c[1].endswith("/dispatches") and c[2] == {"ref": "main"} for c in calls), (r.text, calls[-1:]))
+          and any(c[0] == "POST" and c[1].endswith("/dispatches") and c[2]["ref"] == "main" and "routes" in c[2]["inputs"] for c in calls), (r.text, calls[-1:]))
     check("…and it is written in the audit log", db.audit_logs.count_documents({"action": "golden_set.run"}) == 1)
     r = http("POST", "/api/admin/ai/golden/run", headers=SA)
     check("twice in a row → refused (one run at a time, 10 min)", r.status_code == 429, r.text)
