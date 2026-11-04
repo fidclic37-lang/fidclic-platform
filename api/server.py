@@ -10415,9 +10415,18 @@ class TeamMemberRequest(BaseModel):
     password: str
     role: str  # "manager" or "staff"
 
+def _owner_login_only(token_data: TokenData) -> None:
+    """These older endpoints are not limited by establishment, so the page right
+    « Équipe & accès » does not open them: Équipe & accès is the way in for a
+    team account."""
+    if token_data.role != "business_owner":
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+
 @app.get("/api/owner/team")
 def list_team(token_data: TokenData = Depends(require_role(["business_owner"]))):
     """List Manager + Staff users for this tenant."""
+    _owner_login_only(token_data)
     tid = token_data.tenant_id
     members = list(db.users.find(
         {"tenant_id": tid, "role": {"$in": ["manager", "staff"]}},
@@ -10434,6 +10443,7 @@ def add_team_member(
     Manager = stats only (business_owner read endpoints).
     Staff = scan only (/owner/scan).
     """
+    _owner_login_only(token_data)
     if req.role not in ("manager", "staff"):
         raise HTTPException(status_code=400, detail="Role must be 'manager' or 'staff'")
     if db.users.find_one({"email": req.email}):
@@ -10457,6 +10467,7 @@ def remove_team_member(
     token_data: TokenData = Depends(require_role(["business_owner"]))
 ):
     """Remove a team member. Only works for manager/staff in the same tenant."""
+    _owner_login_only(token_data)
     result = db.users.delete_one({
         "email": email,
         "tenant_id": token_data.tenant_id,
@@ -10484,6 +10495,7 @@ def reset_team_member_password(
     Plaintext is never stored — only the hash. There is no way to recover
     the previous password; this endpoint always sets a new one.
     """
+    _owner_login_only(token_data)
     user = db.users.find_one({
         "email": email,
         "tenant_id": token_data.tenant_id,

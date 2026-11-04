@@ -649,7 +649,6 @@ export const ownerAPI = {
   emailCancel: () => api.post('/security/email/cancel'),
   deleteAccount: (password, confirm) => api.post('/security/account/delete', { password, confirm }),
   restoreAccount: () => api.post('/security/account/restore'),
-  resetTeamPassword: (uid) => api.post(`/owner/team-access/users/${uid}/password`),
   // Paramètres › Préférences
   preferences: () => api.get('/me/preferences'),
   savePreferences: (body) => api.put('/me/preferences', body),
