@@ -659,9 +659,12 @@ def put_card_settings(body: CardSettings,
     # nothing has read since 2026-10-11, so off changed nothing — and its seed
     # later switched the old defaults on at the shop's first scan).
     # An old page, still open or cached, sends its old reading with every save:
-    # it must not turn anything on, so only `birthday_switch` counts.
-    payload.pop("birthday_notification", None)
+    # it must not turn anything on, so only `birthday_switch` does. This page
+    # never sends the old field, so an off in it is an old page's owner saying off.
+    old_page = payload.pop("birthday_notification", None)
     birthday = payload.pop("birthday_switch", None)
+    if birthday is None and old_page is False:
+        birthday = False
     if birthday is not None:
         from features import store_cards as SC
         _automations().set_birthday(token_data, bool(birthday), SC.store_for(tid))

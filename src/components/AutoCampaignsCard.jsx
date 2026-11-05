@@ -58,9 +58,10 @@ const AutoCampaignsCard = () => {
       // the boxes pause or start real automations: sent only when flipped
       const flips = {};
       ['birthday', 'inactive', 'almost_there'].forEach((k) => {
-        if (cfg[`${k}_enabled`] !== loaded?.[`${k}_enabled`]) flips[`${k}_switch`] = cfg[`${k}_enabled`];
+        if (cfg[`${k}_enabled`] !== loaded[`${k}_enabled`]) flips[`${k}_switch`] = cfg[`${k}_enabled`];
       });
-      const res = await api.put('/owner/auto-campaigns/config', { ...cfg, ...flips });
+      const { birthday_enabled, inactive_enabled, almost_there_enabled, ...text } = cfg;
+      const res = await api.put('/owner/auto-campaigns/config', { ...text, ...flips });
       setCfg(res.data);
       setLoaded(res.data);
       setSavedAt(new Date());
@@ -251,7 +252,7 @@ const AutoCampaignsCard = () => {
       </Section>
 
       <div className="flex items-center gap-3 mt-6">
-        <button type="button" onClick={save} disabled={saving}
+        <button type="button" onClick={save} disabled={saving || !loaded}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
           style={{ background: C_PS.terracotta }}>
           <Save size={14} /> {saving ? 'Saving…' : 'Save configuration'}

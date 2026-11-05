@@ -82,4 +82,35 @@ test.describe('the Carte switch stops the birthday automation', () => {
     // leave the demo shop as it should be: off
     await request.post(`/api/owner/automations/${row.id}/status`, { headers: SH, data: { status: 'paused' } });
   });
+
+  test('Paramètres: « Birthday wishes » is the same switch, and a save that flips nothing leaves it', async ({ page, request }) => {
+    const SH = await setup(page, request);
+    const row = await birthdayRow(request, SH);
+    await request.post(`/api/owner/automations/${row.id}/status`, { headers: SH, data: { status: 'active' } });
+    const putBody = async () => {
+      const put = page.waitForResponse((r) => r.url().includes('/owner/auto-campaigns/config') && r.request().method() === 'PUT' && r.ok());
+      await card.getByRole('button', { name: 'Save configuration' }).click();
+      return JSON.parse((await put).request().postData() || '{}');
+    };
+    await page.goto('/dashboard/settings');
+    const card = page.locator('#settings-auto');
+    const box = card.getByRole('checkbox').first();
+    await expect(box).toBeChecked({ timeout: 20_000 });
+
+    // a save with nothing flipped sends no switch at all
+    await expect(card.getByRole('button', { name: 'Save configuration' })).toBeEnabled();
+    const plain = await putBody();
+    expect(Object.keys(plain).filter((k) => /_switch$|_enabled$/.test(k))).toEqual([]);
+    expect((await birthdayRow(request, SH)).status).toBe('active');
+
+    // unticked: the automation that really sends is paused
+    await box.uncheck();
+    const off = await putBody();
+    expect(off.birthday_switch).toBe(false);
+    await expect.poll(async () => (await birthdayRow(request, SH)).status, { timeout: 15_000 }).toBe('paused');
+
+    // it reads off after a reload
+    await page.reload();
+    await expect(page.locator('#settings-auto').getByRole('checkbox').first()).not.toBeChecked({ timeout: 20_000 });
+  });
 });

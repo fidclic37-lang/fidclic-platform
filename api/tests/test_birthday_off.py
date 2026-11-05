@@ -130,6 +130,9 @@ def main():
     db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "paused"}})
     http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": True})
     check("the old page's field turns nothing on", bday_rows("cafe")[0]["status"] == "paused")
+    db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": False})
+    check("but its off is the owner's off", bday_rows("cafe")[0]["status"] == "paused")
     check("and is not written on the card", "birthday_notification" not in db.card_templates.find_one({"tenant_id": "cafe"}))
 
     print("\n2. Several birthday automations, and a « Personnalisée » on the birthday")
@@ -469,6 +472,7 @@ def main():
     check("and no copy of it appears", len(bday_rows("closing")) == 3)
     person("closing", "cz", branch_id="c-a", home_store_id="c-a")
     check("a closed store's automation has no switch left to reach: it sends nothing", "cz" not in run())
+    check("and the switch does not read on because of it", AU.scenario_on("closing", "birthday") is False)
     db.tenants.update_one({"id": "closing", "branches.id": "c-a"}, {"$set": {"branches.$.status": "active"}})
     check("the store open again: it runs again", "cz" in run())
 
@@ -490,6 +494,9 @@ def main():
     http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_enabled": True, "inactive_enabled": True, "birthday_title": "Titre"})
     check("an old page's reading turns nothing on", st_of("sett", "birthday") == ["paused"] and st_of("sett", "inactive") == ["paused"])
     check("its text is still saved", http("GET", "/api/owner/auto-campaigns/config", HS).json()["birthday_title"] == "Titre")
+    db.automations.update_many({"tenant_id": "sett", "scenario": "inactive"}, {"$set": {"status": "active"}})
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"inactive_enabled": False})
+    check("but an old page's off is the owner's off", st_of("sett", "inactive") == ["paused"])
     http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_switch": True})
     check("ticked again: birthday alone comes back", st_of("sett", "birthday") == ["active"] and st_of("sett", "inactive") == ["paused"])
 
@@ -531,6 +538,52 @@ def main():
     r = http("POST", "/api/owner/push-wallet/pending/pl/approve", HR)
     check("and its lots", r.status_code == 409 and pushed == [])
 
+    # several stores: the button reaches only the clients of a store whose automation is on
+    HM = shop("mbtn", branches=[{"id": "b-a", "name": "A", "status": "active"}, {"id": "b-b", "name": "B", "status": "active"}])
+    person("mbtn", "ba", branch_id="b-a", home_store_id="b-a", last_visit_date=now - dt.timedelta(days=90))
+    person("mbtn", "bb", branch_id="b-b", home_store_id="b-b", last_visit_date=now - dt.timedelta(days=90))
+    AU.migrate("mbtn")
+    AU.split_per_store("mbtn")
+    db.automations.update_many({"tenant_id": "mbtn"}, {"$set": {"status": "paused"}})
+    db.automations.update_many({"tenant_id": "mbtn", "scenario": {"$in": ["birthday", "inactive"]}, "store_ids": ["b-a"]}, {"$set": {"status": "active"}})
+    HMA = {**HM, "X-FidClic-Store": "b-a"}
+    told = lambda: sorted(x["customer_id"] for x in db.auto_campaign_log.find({"tenant_id": "mbtn"}))     # noqa: E731
+    http("POST", "/api/owner/auto-campaigns/run-birthdays", HMA)
+    check("« Send now » from store A: only A's client", told() == ["ba"])
+    check("B's client gets no points either", db.customers.find_one({"id": "bb"})["points"] == 0)
+    http("POST", "/api/owner/auto-campaigns/run-inactive", HMA)
+    check("the relance's button too", told() in (["ba"], ["ba", "ba"]))
+    db.auto_campaign_log.delete_many({"tenant_id": "mbtn"})
+    db.pending_auto_runs.insert_one({"id": "lot2", "tenant_id": "mbtn", "kind": "birthday", "title": "t", "body_template": "b", "status": "pending",
+                                     "recipients": [{"customer_id": "ba", "name": "A", "first_name": "A"}, {"customer_id": "bb", "name": "B", "first_name": "B"}]})
+    http("POST", "/api/owner/auto-campaigns/pending/lot2/approve", HMA)
+    check("an old lot too", told() == ["ba"])
+    db.customers.update_one({"id": "ba"}, {"$set": {"paused_at": now}})
+    db.auto_campaign_log.delete_many({"tenant_id": "mbtn"})
+    http("POST", "/api/owner/auto-campaigns/run-birthdays", HMA)
+    check("a client the business paused is not reached by the button", told() == [])
+    db.customers.update_one({"id": "ba"}, {"$unset": {"paused_at": ""}})
+    # already greeted today by the automation: the button does not say it again, nor give the points twice
+    shop("twice")
+    tw = person("twice", "tw")
+    AU.migrate("twice")
+    H_tw = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@twice.fr", "role": "business_owner", "tenant_id": "twice"})}
+    db.automations.update_many({"tenant_id": "twice", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    AU._deliver("twice", bday_rows("twice")[0], tw, {"event": "date"}, now)
+    r = http("POST", "/api/owner/auto-campaigns/run-birthdays", H_tw).json()
+    check("greeted today by the automation: the button sends nothing more", r.get("sent") == 0
+          and db.customers.find_one({"id": "tw"})["points"] == 0)
+
+    db.push_scenarios.delete_many({"tenant_id": "unmig"})
+    HU = shop("unmig")
+    person("unmig", "um")
+    PWL._seed("unmig")
+    old_row = db.push_scenarios.find_one({"tenant_id": "unmig", "builtin": "birthday"}, {"_id": 0})
+    db.push_scenarios.update_one({"id": old_row["id"]}, {"$set": {"enabled": False}})
+    pushed.clear()
+    r = http("POST", f"/api/owner/push-wallet/scenarios/{old_row['id']}/run", HU)
+    check("a shop not moved on yet: an old scenario that is off can't be fired", r.status_code == 409 and pushed == [])
+
     print("\n15. Saving the paliers does not announce with « palier » off")
     from features import loyalty_card as LC
     shop("tiers", branches=[{"id": "t-a", "name": "A", "status": "active"}, {"id": "t-b", "name": "B", "status": "active"}])
@@ -554,13 +607,29 @@ def main():
     AU.migrate("wel")
     db.automations.update_many({"tenant_id": "wel", "scenario": "welcome"}, {"$set": {"status": "active"}})
     r = http("GET", "/api/owner/earn-rules", HW).json()
-    check("the automation sends: the box says so", r["enabled"] is True)
+    check("the automation sends: the box can say so", r["automation_on"] is True)
+    check("the bonus itself is another thing, still off", r["enabled"] is False)
     r = http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False})
+    check("a save that flips nothing leaves the automation", r.status_code == 200 and st_of("wel", "welcome") == ["active"])
+    r = http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False, "welcome_switch": False})
     check("unticked: the automation stops", r.status_code == 200 and st_of("wel", "welcome") == ["paused"])
-    check("and the box reads off", http("GET", "/api/owner/earn-rules", HW).json()["enabled"] is False)
+    check("and the box reads off", http("GET", "/api/owner/earn-rules", HW).json()["automation_on"] is False)
     check("and the card added says nothing", not AU.wallet_added("wel", c, "apple"))
-    http("PUT", "/api/owner/earn-rules", HW, json={"enabled": True, "welcome_bonus_message": "Bonjour"})
-    check("ticked: the sign-up message, and the automation stays as the owner left it", st_of("wel", "welcome") == ["paused"])
+    http("PUT", "/api/owner/earn-rules", HW, json={"enabled": True, "welcome_bonus_message": "Bonjour", "welcome_switch": True})
+    check("ticked: it comes back, like every other box", st_of("wel", "welcome") == ["active"])
+    # an old page knows no `welcome_switch`: going from on to off is still the owner's off
+    http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False})
+    check("an old page's real untick still stops it", st_of("wel", "welcome") == ["paused"])
+    # the owner switched the bonus off, the Bienvenue automation goes on later: a plain save must not give the points back
+    HW2 = shop("wel2")
+    AU.migrate("wel2")
+    db.earn_rules.insert_one({"tenant_id": "wel2", "enabled": False, "welcome_bonus_points": 50})
+    db.automations.update_many({"tenant_id": "wel2", "scenario": "welcome"}, {"$set": {"status": "active"}})
+    body = http("GET", "/api/owner/earn-rules", HW2).json()
+    http("PUT", "/api/owner/earn-rules", HW2, json=body)
+    from features.welcome_bonus import welcome_state
+    check("saving unchanged does not give back a bonus the owner switched off", welcome_state("wel2")["active"] is False)
+    check("nor stop the automation", st_of("wel2", "welcome") == ["active"])
 
     print("\n17. The start-up step reads every old switch, and finishes what it started")
     t1 = dt.datetime(2026, 10, 20, tzinfo=UTC)
@@ -580,6 +649,12 @@ def main():
     check("Paramètres off: birthday and récompense proche paused, the relance left on",
           st_of("old-a", "birthday") == ["paused"] and st_of("old-a", "near_reward") == ["paused"] and st_of("old-a", "inactive") == ["active"])
     check("an owner's later choice in Automatisations stays", st_of("old-b", "birthday") == ["active"])
+    db.automation_meta.delete_one({"_id": AU.BIRTHDAY_FIX_MARK})
+    db.automations.insert_one({**AU.new_doc("old-a", "custom"), "id": "old-cust", "status": "active", "updated_at": t1,
+                               "trigger": {"type": "date", "date_kind": "birthday"}})
+    AU.honour_old_birthday_off()
+    check("a « Personnalisée » on the birthday goes with it, as with the switch",
+          db.automations.find_one({"id": "old-cust"})["status"] == "paused")
     check("the welcome box off: paused", st_of("old-c", "welcome") == ["paused"])
     check("the welcome box on: untouched", st_of("old-d", "welcome") == ["active"])
 

@@ -3056,7 +3056,7 @@ def _switch_rows(tid: str, scenario: str, store: Optional[str] = None) -> List[D
 
 def scenario_on(tid: str, scenario: str, store: Optional[str] = None) -> bool:
     """Does this message go out here? Nothing set up reads off."""
-    return any(r.get("status") == "active" and not ended(r) for r in _switch_rows(tid, scenario, store))
+    return any(running(r) for r in _switch_rows(tid, scenario, store))
 
 
 def birthday_on(tid: str, store: Optional[str] = None) -> bool:
@@ -3065,7 +3065,7 @@ def birthday_on(tid: str, store: Optional[str] = None) -> bool:
 
 def birthday_view(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
     rows = [r for r in _switch_rows(tid, "birthday", store) if r["scenario"] == "birthday"]
-    row = next((r for r in rows if r.get("status") == "active" and not ended(r)), rows[0] if rows else {})
+    row = next((r for r in rows if running(r)), rows[0] if rows else {})
     msg = row.get("message") or {}
     return {"id": row.get("id"), "enabled": birthday_on(tid, store), "title": msg.get("title") or "", "body": msg.get("body") or ""}
 
@@ -3144,8 +3144,9 @@ def honour_old_birthday_off() -> Dict[str, Any]:
     olds += [(x, "welcome") for x in _db.earn_rules.find({"enabled": False}, {"_id": 0, "tenant_id": 1, "updated_at": 1})]
     for old, scenario in olds:
         off = _aware(old.get("updated_at")) or _aware(old.get("created_at"))
-        for r in list(_db.automations.find({"tenant_id": old.get("tenant_id"), "scenario": scenario, "status": "active"},
-                                           {"_id": 0})):
+        for r in _switch_rows(old.get("tenant_id"), scenario):
+            if r.get("status") != "active":
+                continue
             changed = _aware(r.get("updated_at"))
             if off and changed and changed > off:
                 continue
@@ -3158,6 +3159,15 @@ def honour_old_birthday_off() -> Dict[str, Any]:
     if tenants:
         print(f"automations: paused for {len(tenants)} shops whose old switch was off", flush=True)
     return {"tenants": tenants}
+
+
+def reach_test(tid: str, scenario: str, at: Optional[datetime] = None):
+    """Would one of this scenario's running automations speak to this client?
+    Its store, its ciblage, a client the business paused. For what sends by
+    another door (« Send now », an old lot)."""
+    rows = [r for r in _db.automations.find({"tenant_id": tid, "scenario": scenario}, {"_id": 0}) if running(r, at)]
+    cache: Dict[str, Any] = {}
+    return lambda c: any(matches(tid, r, c, at, cache) for r in rows)
 
 
 def audience_of(tid: str, scenarios: List[str], at: Optional[datetime] = None) -> Optional[set]:

@@ -873,6 +873,8 @@ def run_now(scenario_id: str,
     row = _db.push_scenarios.find_one({"id": scenario_id, "tenant_id": tid})
     if not row:
         raise HTTPException(status_code=404, detail="Scénario introuvable")
+    if not row.get("enabled"):
+        raise HTTPException(status_code=409, detail="Ce scénario est désactivé : rien n'a été envoyé.")
     row.pop("_id", None)
     return run_scenario(tid, row)
 

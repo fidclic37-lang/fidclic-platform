@@ -102,6 +102,12 @@ def _may_send(token_data, scenario: str, dry_run: bool = False) -> bool:
     return AU.scenario_on(token_data.tenant_id, scenario, _store(token_data.tenant_id))
 
 
+def _heard(tid: str, cid: str, since: datetime) -> bool:
+    """Greeted by the automation itself: the button does not say it again."""
+    return bool(_db.automation_log.find_one({"tenant_id": tid, "customer_id": cid, "scenario": "birthday",
+                                             "status": {"$ne": "holdout"}, "sent_at": {"$gte": since}}, {"_id": 1}))
+
+
 def _substitute(template: str, ctx: Dict[str, Any]) -> str:
     """Lightweight {placeholder} substitution — no f-string, no LLM."""
     out = template or ""
@@ -233,6 +239,8 @@ def put_config(
     cfg.updated_at = datetime.now(timezone.utc)
     for key, scenario in SWITCHES:
         flip = getattr(cfg, f"{key}_switch")
+        if flip is None and getattr(cfg, f"{key}_enabled") is False:
+            flip = False                           # an old page (this one sends flips only): its off is an off
         if flip is not None:
             AU.set_switch(token_data, scenario, flip, _store(tid))
     payload = cfg.model_dump(exclude={f"{k}_{x}" for k, _ in SWITCHES for x in ("enabled", "switch")})
@@ -312,10 +320,11 @@ def run_birthdays(
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     today_mmdd = datetime.now(timezone.utc).strftime("%m-%d")
 
-    customers = list(_db.customers.find({
+    from features import automations as AU
+    customers = list(filter(AU.reach_test(token_data.tenant_id, "birthday"), _db.customers.find({
         "tenant_id": token_data.tenant_id,
         "birthday": today_mmdd,
-    }).limit(2000))
+    }, {"_id": 0}).limit(2000)))
 
     eligible = []
     previews = []
@@ -326,7 +335,7 @@ def run_birthdays(
             "kind": "birthday",
             "sent_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=20)},
         })
-        if already:
+        if already or _heard(token_data.tenant_id, c["id"], datetime.now(timezone.utc) - timedelta(hours=20)):
             continue
         eligible.append(c)
         ctx = _build_ctx(c, tenant)
@@ -382,6 +391,8 @@ def run_inactive(
 
     eligible = []
     previews = []
+    from features import automations as AU
+    candidates = list(filter(AU.reach_test(token_data.tenant_id, "inactive"), candidates))
     for c in candidates:
         recent_log = _db.auto_campaign_log.find_one({
             "tenant_id": token_data.tenant_id,
@@ -450,6 +461,8 @@ def run_almost_there(
 
     eligible = []
     previews = []
+    from features import automations as AU
+    candidates = list(filter(AU.reach_test(token_data.tenant_id, "near_reward"), candidates))
     for c in candidates:
         v = int(c.get("visits", 0) or 0)
         remaining = cycle - (v % cycle) if (v % cycle) else cycle
@@ -556,10 +569,12 @@ def approve_pending_auto_run(
     title_tpl = run.get("title", "")
     body_tpl = run.get("body_template", "")
     sent = 0
+    from features import automations as AU
+    reaches = AU.reach_test(token_data.tenant_id, scenario) if scenario else (lambda c: True)
     for r in run.get("recipients", []):
         # Re-load the customer at send time so we have fresh points/visits
         c = _db.customers.find_one({"id": r.get("customer_id"), "tenant_id": token_data.tenant_id})
-        if not c:
+        if not c or not reaches(c):
             continue
         ctx = _build_ctx(c, tenant)
         title = _substitute(title_tpl, ctx)
