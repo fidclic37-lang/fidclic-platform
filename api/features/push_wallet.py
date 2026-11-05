@@ -856,6 +856,12 @@ def delete_scenario(scenario_id: str,
     return {"deleted": True}
 
 
+def _old_engine_closed(tid: str) -> None:
+    """A shop on the Automatisations engine: nothing old sends past its switches."""
+    if _db.automation_meta.find_one({"tenant_id": tid, "migrated": True}):
+        raise HTTPException(status_code=409, detail="Ce scénario a été remplacé : utilisez la page Automatisations.")
+
+
 @router.post("/api/owner/push-wallet/scenarios/{scenario_id}/run")
 def run_now(scenario_id: str,
             token_data: TokenData = Depends(require_role(["business_owner"]))):
@@ -863,6 +869,7 @@ def run_now(scenario_id: str,
     think. The cooldown still applies, so this cannot be used to spam."""
     _shop_wide_or_403(token_data)
     tid = token_data.tenant_id
+    _old_engine_closed(tid)
     row = _db.push_scenarios.find_one({"id": scenario_id, "tenant_id": tid})
     if not row:
         raise HTTPException(status_code=404, detail="Scénario introuvable")
@@ -969,6 +976,7 @@ def approve_pending(lot_id: str, token_data: TokenData = Depends(require_role(AP
     """Validated: sent now, to the clients of the batch who still have not heard
     this scenario inside its delay."""
     tid = token_data.tenant_id
+    _old_engine_closed(tid)
     lot = _lot_for(lot_id, token_data, request)
     row = _db.push_scenarios.find_one({"id": lot["scenario_id"], "tenant_id": tid}, {"_id": 0})
     if not row:

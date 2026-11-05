@@ -258,6 +258,9 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
     out = {"up": 0, "down": 0, "same": 0}
     quiet: List[str] = []                      # cards to refresh without a word
     live = {"tenant_id": tenant_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    # « Nouveau palier » is the Atteinte d'un palier automation's message: off, the
+    # client moves up in silence (user, 2026-11-05)
+    hears = _automations().audience_of(tenant_id, ["tier_up"]) if announce else None
     for c in _db.customers.find(live, {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "points": 1,
                                         "total_amount_paid": 1}):
         old = (c.get("tier") or "bronze").lower()
@@ -271,7 +274,7 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
         _db.customers.update_one({"id": c["id"]}, {"$set": {"tier": new, "previous_tier": old,
                                                             "tier_best": new,
                                                             "tier_recomputed_at": _now(), "updated_at": _now()}})
-        if not (up and announce):
+        if not (up and announce) or (hears is not None and c["id"] not in hears):
             quiet.append(c["id"])
             continue
         if up and announce:

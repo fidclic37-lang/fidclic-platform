@@ -36,11 +36,13 @@ const AutoCampaignsCard = () => {
   // PushNotificationPreviewModal state — confirm-before-send for every auto run
   const [confirmFor, setConfirmFor] = useState(null);  // { which, count, title, body }
   const [businessName, setBusinessName] = useState('Votre commerce');
+  const [loaded, setLoaded] = useState(null);          // the boxes as the server read them
 
   const load = async () => {
     try {
       const res = await api.get('/owner/auto-campaigns/config');
       setCfg(res.data);
+      setLoaded(res.data);
     } catch (e) { console.error('auto-campaigns load failed', e); }
     // Get business name for the preview modal
     try {
@@ -53,7 +55,14 @@ const AutoCampaignsCard = () => {
   const save = async () => {
     setSaving(true);
     try {
-      await api.put('/owner/auto-campaigns/config', cfg);
+      // the boxes pause or start real automations: sent only when flipped
+      const flips = {};
+      ['birthday', 'inactive', 'almost_there'].forEach((k) => {
+        if (cfg[`${k}_enabled`] !== loaded?.[`${k}_enabled`]) flips[`${k}_switch`] = cfg[`${k}_enabled`];
+      });
+      const res = await api.put('/owner/auto-campaigns/config', { ...cfg, ...flips });
+      setCfg(res.data);
+      setLoaded(res.data);
       setSavedAt(new Date());
     } catch (e) {
       alert('Failed to save: ' + (e?.response?.data?.detail || e.message));

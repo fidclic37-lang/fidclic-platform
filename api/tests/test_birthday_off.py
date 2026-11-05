@@ -224,7 +224,7 @@ def main():
 
     print("\n6. Switched off while something was on its way")
     shop("race")
-    for i in range(3):
+    for i in range(25):
         person("race", f"r{i}")
     AU.migrate("race")
     row = bday_rows("race")[0]
@@ -243,7 +243,8 @@ def main():
     pushed.clear()
     AU.run_due(now, source="daily")
     server.dispatch_to_customer = fake_dispatch
-    check("off in the middle of a round: the rest get nothing", len([p for p in pushed if p["tid"] == "race"]) == 1)
+    check("off in the middle of a round: it stops at the next look, the rest get nothing",
+          len([p for p in pushed if p["tid"] == "race"]) == AU.STILL_ON_EVERY < 25)
 
     shop("queue")
     c = person("queue", "q1")
@@ -470,6 +471,151 @@ def main():
     check("a closed store's automation has no switch left to reach: it sends nothing", "cz" not in run())
     db.tenants.update_one({"id": "closing", "branches.id": "c-a"}, {"$set": {"branches.$.status": "active"}})
     check("the store open again: it runs again", "cz" in run())
+
+    print("\n13. The Paramètres page's switches are real too")
+    HS = shop("sett", branches=[])
+    person("sett", "w1", last_visit_date=now - dt.timedelta(days=90))
+    AU.migrate("sett")
+    def st_of(tid, sc):
+        return [x["status"] for x in db.automations.find({"tenant_id": tid, "scenario": sc}, {"_id": 0})]
+    db.automations.update_many({"tenant_id": "sett", "scenario": {"$in": ["birthday", "inactive", "near_reward"]}}, {"$set": {"status": "active"}})
+    cfg = http("GET", "/api/owner/auto-campaigns/config", HS).json()
+    check("on: the three boxes read on", cfg["birthday_enabled"] and cfg["inactive_enabled"] and cfg["almost_there_enabled"])
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_switch": False, "inactive_switch": False, "almost_there_switch": False})
+    check("unticked: birthday, relance and récompense proche are paused",
+          st_of("sett", "birthday") == ["paused"] and st_of("sett", "inactive") == ["paused"] and st_of("sett", "near_reward") == ["paused"])
+    cfg = http("GET", "/api/owner/auto-campaigns/config", HS).json()
+    check("and the boxes read off", not (cfg["birthday_enabled"] or cfg["inactive_enabled"] or cfg["almost_there_enabled"]))
+    check("and nobody hears", "w1" not in run())
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_enabled": True, "inactive_enabled": True, "birthday_title": "Titre"})
+    check("an old page's reading turns nothing on", st_of("sett", "birthday") == ["paused"] and st_of("sett", "inactive") == ["paused"])
+    check("its text is still saved", http("GET", "/api/owner/auto-campaigns/config", HS).json()["birthday_title"] == "Titre")
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_switch": True})
+    check("ticked again: birthday alone comes back", st_of("sett", "birthday") == ["active"] and st_of("sett", "inactive") == ["paused"])
+
+    print("\n14. « Send now » and the old lots obey the same switch")
+    HR = shop("runs")
+    c = person("runs", "x1", last_visit_date=now - dt.timedelta(days=90))
+    AU.migrate("runs")
+    MR = {"Authorization": "Bearer " + auth.create_access_token({"sub": "m@runs.fr", "role": "manager", "tenant_id": "runs"})}
+    db.users.insert_one({"email": "m@runs.fr", "role": "manager", "tenant_id": "runs"})
+    db.automations.update_many({"tenant_id": "runs"}, {"$set": {"status": "paused"}})     # (récompense proche starts on)
+    said = lambda: db.auto_campaign_log.count_documents({"tenant_id": "runs"})     # noqa: E731
+    r = http("POST", "/api/owner/auto-campaigns/run-birthdays", HR).json()
+    check("automation off: « Send now » sends nothing", r.get("reason") == "disabled" and said() == 0)
+    check("and credits no points", db.customers.find_one({"id": "x1"})["points"] == 0)
+    r = http("POST", "/api/owner/auto-campaigns/run-inactive", HR).json()
+    check("the relance's button too", r.get("reason") == "disabled" and said() == 0)
+    r = http("POST", "/api/owner/auto-campaigns/run-almost-there", HR).json()
+    check("the récompense proche's too", r.get("reason") == "disabled" and said() == 0)
+    db.pending_auto_runs.insert_one({"id": "lot1", "tenant_id": "runs", "kind": "birthday", "title": "t", "body_template": "b",
+                                     "recipients": [{"customer_id": "x1", "name": "X", "first_name": "X"}], "status": "pending"})
+    r = http("POST", "/api/owner/auto-campaigns/pending/lot1/approve", HR)
+    check("an old lot can't be approved while it is off", r.status_code == 409 and said() == 0
+          and db.pending_auto_runs.find_one({"id": "lot1"})["status"] == "pending")
+    db.automations.update_many({"tenant_id": "runs", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    check("a manager can't send", http("POST", "/api/owner/auto-campaigns/run-birthdays", MR).status_code == 403 and said() == 0)
+    r = http("POST", "/api/owner/auto-campaigns/run-birthdays", HR).json()
+    check("on: the owner's button works", r.get("sent") == 1 and said() == 1)
+    r = http("POST", "/api/owner/auto-campaigns/pending/lot1/approve", HR)
+    check("and the lot too", r.status_code == 200)
+
+    from features import push_wallet as PWL
+    PWL._seed("runs")
+    legacy = db.push_scenarios.find_one({"tenant_id": "runs", "builtin": "birthday"}, {"_id": 0})
+    pushed.clear()
+    r = http("POST", f"/api/owner/push-wallet/scenarios/{legacy['id']}/run", HR)
+    check("the old engine's « run » is closed once a shop moved on", r.status_code == 409 and pushed == [])
+    db.push_wallet_pending.insert_one({"id": "pl", "tenant_id": "runs", "scenario_id": legacy["id"], "status": "pending", "store_id": None,
+                                       "customer_ids": ["x1"]})
+    r = http("POST", "/api/owner/push-wallet/pending/pl/approve", HR)
+    check("and its lots", r.status_code == 409 and pushed == [])
+
+    print("\n15. Saving the paliers does not announce with « palier » off")
+    from features import loyalty_card as LC
+    shop("tiers", branches=[{"id": "t-a", "name": "A", "status": "active"}, {"id": "t-b", "name": "B", "status": "active"}])
+    person("tiers", "ta", visits=60, tier="bronze", branch_id="t-a", home_store_id="t-a")
+    person("tiers", "tb", visits=60, tier="bronze", branch_id="t-b", home_store_id="t-b")
+    AU.migrate("tiers")
+    AU.split_per_store("tiers")
+    pushed.clear()
+    moved = LC.recompute_tiers("tiers")
+    check("off: the clients still move up", moved["up"] == 2 and db.customers.find_one({"id": "ta"})["tier"] != "bronze")
+    check("but hear nothing", pushed == [])
+    db.customers.update_many({"tenant_id": "tiers"}, {"$set": {"tier": "bronze", "tier_best": "bronze"}})
+    db.automations.update_one({"tenant_id": "tiers", "scenario": "tier_up", "store_ids": ["t-a"]}, {"$set": {"status": "active"}})
+    pushed.clear()
+    LC.recompute_tiers("tiers")
+    check("on in store A only: A's client hears, B's does not", [p["cid"] for p in pushed] == ["ta"])
+
+    print("\n16. The welcome box in Paramètres")
+    HW = shop("wel")
+    c = person("wel", "wl", wallet_added_at=now)
+    AU.migrate("wel")
+    db.automations.update_many({"tenant_id": "wel", "scenario": "welcome"}, {"$set": {"status": "active"}})
+    r = http("GET", "/api/owner/earn-rules", HW).json()
+    check("the automation sends: the box says so", r["enabled"] is True)
+    r = http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False})
+    check("unticked: the automation stops", r.status_code == 200 and st_of("wel", "welcome") == ["paused"])
+    check("and the box reads off", http("GET", "/api/owner/earn-rules", HW).json()["enabled"] is False)
+    check("and the card added says nothing", not AU.wallet_added("wel", c, "apple"))
+    http("PUT", "/api/owner/earn-rules", HW, json={"enabled": True, "welcome_bonus_message": "Bonjour"})
+    check("ticked: the sign-up message, and the automation stays as the owner left it", st_of("wel", "welcome") == ["paused"])
+
+    print("\n17. The start-up step reads every old switch, and finishes what it started")
+    t1 = dt.datetime(2026, 10, 20, tzinfo=UTC)
+    for tid in ("old-a", "old-b", "old-c", "old-d"):
+        shop(tid)
+        AU.migrate(tid)
+        db.automations.update_many({"tenant_id": tid, "scenario": {"$in": ["birthday", "inactive", "near_reward", "welcome"]}},
+                                   {"$set": {"status": "active", "updated_at": t1}})
+    later_off = t1 + dt.timedelta(days=2)
+    db.auto_campaign_config.insert_one({"tenant_id": "old-a", "birthday_enabled": False, "inactive_enabled": True,
+                                        "almost_there_enabled": False, "updated_at": later_off})
+    db.auto_campaign_config.insert_one({"tenant_id": "old-b", "birthday_enabled": False, "updated_at": t1 - dt.timedelta(days=2)})
+    db.earn_rules.insert_one({"tenant_id": "old-c", "enabled": False, "updated_at": later_off})
+    db.earn_rules.insert_one({"tenant_id": "old-d", "enabled": True, "updated_at": later_off})
+    db.automation_meta.delete_one({"_id": AU.BIRTHDAY_FIX_MARK})
+    AU.honour_old_birthday_off()
+    check("Paramètres off: birthday and récompense proche paused, the relance left on",
+          st_of("old-a", "birthday") == ["paused"] and st_of("old-a", "near_reward") == ["paused"] and st_of("old-a", "inactive") == ["active"])
+    check("an owner's later choice in Automatisations stays", st_of("old-b", "birthday") == ["active"])
+    check("the welcome box off: paused", st_of("old-c", "welcome") == ["paused"])
+    check("the welcome box on: untouched", st_of("old-d", "welcome") == ["active"])
+
+    db.automation_meta.delete_one({"_id": AU.BIRTHDAY_FIX_MARK})
+    db.push_scenarios.delete_many({"enabled": False})
+    db.auto_campaign_config.delete_many({})
+    db.earn_rules.delete_many({"enabled": False})
+    for i in range(2):
+        shop(f"crash{i}")
+        AU.migrate(f"crash{i}")
+        db.automations.update_many({"tenant_id": f"crash{i}", "scenario": "birthday"}, {"$set": {"status": "active", "updated_at": t1}})
+    db.push_scenarios.insert_many([{"id": f"cr{i}", "tenant_id": f"crash{i}", "builtin": "birthday", "enabled": False, "updated_at": later_off} for i in range(2)])
+    real_cancel = AU._cancel_waiting
+    def boom(aid):
+        real_cancel(aid)
+        raise RuntimeError("killed")
+    AU._cancel_waiting = boom
+    AU.honour_at_start()
+    AU._cancel_waiting = real_cancel
+    check("interrupted half way: one done", sorted(st_of("crash0", "birthday") + st_of("crash1", "birthday")) == ["active", "paused"])
+    AU.honour_at_start()
+    check("the next start finishes it", st_of("crash0", "birthday") == ["paused"] and st_of("crash1", "birthday") == ["paused"])
+    check("and the list has both", {"crash0", "crash1"} <= set(db.automation_meta.find_one({"_id": AU.BIRTHDAY_FIX_MARK})["tenants"]))
+
+    print("\n18. A message held before this fix, in a shop with several stores")
+    H18 = shop("hold2", branches=[{"id": "h-a", "name": "A", "status": "active"}, {"id": "h-b", "name": "B", "status": "active"}])
+    person("hold2", "ha", branch_id="h-a", home_store_id="h-a")
+    person("hold2", "hb", branch_id="h-b", home_store_id="h-b")
+    AU.migrate("hold2")
+    AU.split_per_store("hold2")
+    db.automations.update_one({"tenant_id": "hold2", "scenario": "birthday", "store_ids": ["h-b"]}, {"$set": {"status": "active"}})
+    waiting("q-a", "hold2", "ha", "birthday")
+    waiting("q-b", "hold2", "hb", "birthday")
+    pushed.clear()
+    SR.drain(now)
+    check("A off, B on: only B's client hears", [p["cid"] for p in pushed] == ["hb"])
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

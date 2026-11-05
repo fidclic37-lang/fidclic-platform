@@ -264,7 +264,12 @@ def main():
     check("a café still reads « produit »", any("produit" in x["body"] for x in dc if x["key"] == "promote"))
     check("never more than three", len(DH._recommendations({"inactive": 5}, {"sent": 0}, prod, {"is_set": False},
                                                            PB.of({"activity_key": "barbier"}))) <= 3)
+    # the ranking that learns draws a different order each day, and may leave this
+    # advice out of the three: here, the page's own wiring (ranking: test_reco_ranking)
+    from features import reco_ranking as RR
+    real_rank, RR.rank = RR.rank, lambda tid, items, score, at=None, by=None: items
     r = http("GET", "/api/owner/home/overview", headers=H("barb"))
+    RR.rank = real_rank
     check(f"GET /home/overview answers ({r.status_code})", r.status_code == 200)
     check("… with the barbier's advice in it", r.status_code == 200 and any(
         x["key"].startswith("pb_") or "prestation" in x["body"] for x in r.json()["recommendations"]))

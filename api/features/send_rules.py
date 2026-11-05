@@ -188,7 +188,7 @@ def _switched_off(m: Dict[str, Any], at: datetime) -> bool:
     if aid:
         row = _db.automations.find_one({"id": aid}, {"_id": 0})
         return not (row and AU.running(row, at))
-    return AU.kind_off(m["tenant_id"], m.get("kind"), at)
+    return AU.kind_off(m["tenant_id"], m.get("kind"), m.get("customer_id"), at)
 
 
 def drain(at: Optional[datetime] = None) -> Dict[str, int]:
