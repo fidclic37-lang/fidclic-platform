@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextvars
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
@@ -54,6 +55,7 @@ MAX_WAIT_DAYS = 7
 # Set while the daily run re-sends a held message: it has already been
 # checked and counted, so the gate lets it through as is.
 _released = contextvars.ContextVar("send_rules_released", default=False)
+_automation = contextvars.ContextVar("send_rules_automation", default=None)
 
 
 def init(db):
@@ -129,14 +131,27 @@ def record(tid: str, cid: str, kind: str, at: Optional[datetime] = None) -> None
         _db.send_counter.insert_one(row)
 
 
+@contextmanager
+def from_automation(aid: str):
+    """The message being sent is this automation's: held back, it remembers it."""
+    token = _automation.set(aid)
+    try:
+        yield
+    finally:
+        _automation.reset(token)
+
+
 def defer(tid: str, customer: Dict[str, Any], title: str, body: str, kind: str,
-          url: Optional[str], reason: str, at: Optional[datetime] = None, first: Optional[datetime] = None) -> None:
+          url: Optional[str], reason: str, at: Optional[datetime] = None, first: Optional[datetime] = None,
+          automation_id: Optional[str] = None) -> None:
     at = at or _now()
+    aid = automation_id or _automation.get()
     _db.deferred_messages.insert_one({
         "id": str(uuid.uuid4()), "tenant_id": tid, "customer_id": customer.get("id"),
         "title": title, "body": body, "kind": kind, "url": url, "reason": reason,
         "priority": PRIORITY.get(kind, 3), "status": "waiting",
-        "first_at": first or at, "due": _day_start(at) + timedelta(days=1), "created_at": at})
+        "first_at": first or at, "due": _day_start(at) + timedelta(days=1), "created_at": at,
+        **({"automation_id": aid} if aid else {})})
 
 
 def gate(tid: str, customer: Dict[str, Any], title: str, body: str, kind: str,
@@ -166,6 +181,16 @@ def gate(tid: str, customer: Dict[str, Any], title: str, body: str, kind: str,
     return None
 
 
+def _switched_off(m: Dict[str, Any], at: datetime) -> bool:
+    """The business switched off the automation this message came from."""
+    from features import automations as AU
+    aid = m.get("automation_id")
+    if aid:
+        row = _db.automations.find_one({"id": aid}, {"_id": 0})
+        return not (row and AU.running(row, at))
+    return AU.kind_off(m["tenant_id"], m.get("kind"), at)
+
+
 def drain(at: Optional[datetime] = None) -> Dict[str, int]:
     """Daily: the messages that waited go first, most important first."""
     at = at or _now()
@@ -181,11 +206,16 @@ def drain(at: Optional[datetime] = None) -> Dict[str, int]:
             _db.deferred_messages.update_one({"id": m["id"]}, {"$set": {"status": "dropped"}})
             out["dropped"] += 1
             continue
+        if _switched_off(m, at):
+            _db.deferred_messages.update_one({"id": m["id"]}, {"$set": {"status": "dropped", "dropped_why": "automation_off"}})
+            out["dropped"] += 1
+            continue
         cust = _db.customers.find_one({"id": m["customer_id"], "tenant_id": m["tenant_id"]}, {"_id": 0})
         if not cust:
             continue
         if over_limit(m["tenant_id"], cust["id"], at):
-            defer(m["tenant_id"], cust, m["title"], m["body"], m["kind"], m.get("url"), "still_over", at, first)
+            defer(m["tenant_id"], cust, m["title"], m["body"], m["kind"], m.get("url"), "still_over", at, first,
+                  automation_id=m.get("automation_id"))
             out["waiting"] += 1
             continue
         record(m["tenant_id"], cust["id"], m["kind"], at)

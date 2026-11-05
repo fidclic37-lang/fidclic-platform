@@ -58,6 +58,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     db.deferred_messages.delete_many({"kind": "near_reward"})
 
     print("\nThe next day, most important first")
+    # the shop's birthday automation is on: an automation switched off is dropped (test_birthday_off)
+    db.automations.insert_one({"id": "bd", "tenant_id": "t1", "scenario": "birthday", "status": "active", "schedule": {}})
     server.dispatch_to_customer("t1", c1, "IA", "…", kind="copilot")
     server.dispatch_to_customer("t1", c1, "Anniversaire", "…", kind="birthday")
     out.clear()

@@ -414,6 +414,13 @@ def _multi_person(tenant: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]
     return MP.settings(tenant, tpl)
 
 
+def _automations():
+    from features import automations as AU
+    if AU._db is None:
+        AU.init(_db)
+    return AU
+
+
 @router.get("/api/owner/card/settings")
 def get_card_settings(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
@@ -456,8 +463,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "wallet_enabled": tpl.get("wallet_enabled") is not False,
             # The birthday message is the Automatisations page's "Anniversaire"
             # scenario — the one the daily run actually sends.
-            "birthday_notification": bool((_db.push_scenarios.find_one({"tenant_id": tid, "builtin": "birthday"})
-                                           or {"enabled": True}).get("enabled")),
+            "birthday_notification": _automations().birthday_on(tid, SC.store_for(tid)),
         },
         "advanced": {
             "code_type": tpl.get("code_type") or "qr",
@@ -645,18 +651,13 @@ def put_card_settings(body: CardSettings,
         payload["tagline"] = (payload["welcome_text"] or "").strip()
 
     # The toggle switches the Automatisations page's "Anniversaire" scenario
-    # (it used to write a collection nothing read).
+    # of this establishment (user, 2026-11-05: it wrote `push_scenarios`, which
+    # nothing has read since 2026-10-11, so off changed nothing — and its seed
+    # later switched the old defaults on at the shop's first scan).
     birthday = payload.pop("birthday_notification", None)
     if birthday is not None:
-        try:
-            from features import push_wallet as _PW
-            if _PW._db is None:
-                _PW.init(_db)
-            _PW._seed(tid)
-        except Exception:
-            pass
-        _db.push_scenarios.update_one({"tenant_id": tid, "builtin": "birthday"},
-                                      {"$set": {"enabled": bool(birthday), "updated_at": _now()}})
+        from features import store_cards as SC
+        _automations().set_birthday(tid, bool(birthday), SC.store_for(tid))
 
     if (payload.get("reward_description") or "").strip():
         # Saved from this page, where the merchant sees it: the reward is now

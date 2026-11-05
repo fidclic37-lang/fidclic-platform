@@ -229,7 +229,7 @@ def main():
     check("the birthday offer is not done yet", act["anniversaire"]["done"] is False)
     res = I.activate("birthday", token_data=T("cafe"))
     check("'Activer' switches the birthday scenario on", res["enabled"] is True
-          and db.push_scenarios.find_one({"tenant_id": "cafe", "builtin": "birthday"})["enabled"])
+          and db.automations.find_one({"tenant_id": "cafe", "scenario": "birthday"})["status"] == "active")
     after = I._payload("cafe", now)["actions"]
     check("and once on, it leaves the shelf", "anniversaire" not in {x["key"] for x in after["shown"]})
     check("but stays in 'Voir toutes', marked done",
