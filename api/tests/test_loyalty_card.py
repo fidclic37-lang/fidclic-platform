@@ -49,14 +49,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         card_name="Carte Fidélité – Le Petit Café", surface_color="#8B5E3C", brand_color="#F5E9D7",
         welcome_text="Savourez chaque visite, collectez des points !", card_message="Merci de faire partie de notre communauté !",
         programme="points_euro", points_per_euro=10, reward_points=100,
-        reward_description="1 boisson offerte", show_qr=True, birthday_notification=False), TD())
+        reward_description="1 boisson offerte", show_qr=True, birthday_switch=False), TD())
     tpl = db.card_templates.find_one({"tenant_id": "t1"})
     check("design saved", tpl["surface_color"] == "#8B5E3C" and tpl["brand_color"] == "#F5E9D7")
     check("programme is a rule, not a label (points → per_euro)",
           tpl["programme"] == "points_euro" and tpl["points_mode"] == "per_euro")
     check("message reaches the card face too", tpl["offer_box_text"] == "Merci de faire partie de notre communauté !")
     check("birthday toggle lands on the Automatisations' birthday scenario, not the card",
-          db.push_scenarios.find_one({"tenant_id": "t1", "builtin": "birthday"})["enabled"] is False
+          db.automations.find_one({"tenant_id": "t1", "scenario": "birthday"})["status"] == "paused"
           and LC.get_card_settings(TD())["toggles"]["birthday_notification"] is False)
 
     s2 = LC.get_card_settings(TD())

@@ -308,7 +308,7 @@ class AutoMessagesIn(BaseModel):
 
 def _view(tid: str) -> Dict[str, Any]:
     tenant = _db.tenants.find_one({"id": tid}) or {}
-    birthday = _db.push_scenarios.find_one({"tenant_id": tid, "builtin": "birthday"}, {"_id": 0}) or {}
+    from features import automations as AU, store_cards as SC
     from features.welcome_bonus import welcome_state
     w = welcome_state(tid)
     return {
@@ -318,8 +318,7 @@ def _view(tid: str) -> Dict[str, Any]:
         "welcome": {"enabled": w["enabled"], "message": w["message"], "points": w["points"],
                     "only_first_visit": w["only_first_visit"], "active": w["active"],
                     "default_message": w["default_message"]},
-        "birthday": {"id": birthday.get("id"), "enabled": bool(birthday.get("enabled")),
-                     "title": birthday.get("title") or "", "body": birthday.get("body") or ""},
+        "birthday": AU.birthday_view(tid, SC.store_for(tid)),
     }
 
 

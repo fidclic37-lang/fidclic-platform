@@ -534,9 +534,16 @@ def _subscribed_pct(shop: Shop) -> Optional[int]:
 # ---------------------------------------------------------------------------
 # What is already done
 # ---------------------------------------------------------------------------
+def _automations():
+    from features import automations as AU
+    if AU._db is None:
+        AU.init(_db)
+    return AU
+
+
 def _birthday_on(tid: str) -> bool:
-    return bool(_db.push_scenarios.find_one({"tenant_id": tid, "builtin": "birthday",
-                                             "enabled": True}))
+    from features import store_cards as SC
+    return _automations().birthday_on(tid, SC.store_for(tid))
 
 
 def _google_on(tenant: Dict[str, Any]) -> bool:
@@ -1297,16 +1304,8 @@ def activate(action: str, token_data: TokenData = Depends(require_role(["busines
     tid = token_data.tenant_id
     if action != "birthday":
         raise HTTPException(status_code=404, detail="Action inconnue")
-    try:
-        from features import push_wallet as pw
-        pw._seed(tid)
-    except Exception as exc:
-        print(f"insights: push wallet seed unavailable (non-fatal): {exc}")
-    res = _db.push_scenarios.update_one({"tenant_id": tid, "builtin": "birthday"},
-                                        {"$set": {"enabled": True}})
-    if not getattr(res, "matched_count", 0):
-        raise HTTPException(status_code=409,
-                            detail="Le scénario anniversaire est introuvable. Ouvrez Automatisations.")
+    from features import store_cards as SC
+    _automations().set_birthday(token_data, True, SC.store_for(tid))
     return {"action": "birthday", "enabled": True}
 
 

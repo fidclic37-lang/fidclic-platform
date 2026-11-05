@@ -51,6 +51,7 @@ class EarnRules(BaseModel):
     max_redemption_pct: float = 100.0       # 0..100 — cap on % of bill payable with points
     accrual_delay_minutes: int = 0          # points unlock after N minutes
     enabled: bool = True
+    welcome_switch: Optional[bool] = None   # the box flipped: the Bienvenue automation follows
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -94,8 +95,12 @@ def get_earn_rules(token_data: TokenData = Depends(require_role(["business_owner
     doc = _db.earn_rules.find_one({"tenant_id": token_data.tenant_id}) or {}
     doc.pop("_id", None)
     state = welcome_state(token_data.tenant_id)
+    from features import automations as AU
     return {**EarnRules(tenant_id=token_data.tenant_id).model_dump(), **doc,
             "enabled": state["enabled"], "welcome_bonus_message": state["message"],
+            # the Bienvenue automation speaks too: the box says when it does. Apart
+            # from `enabled`, or a plain save would give back a bonus switched off.
+            "automation_on": AU.scenario_on(token_data.tenant_id, "welcome"),
             "welcome_bonus_points": state["points"],
             "welcome_bonus_only_first_visit": state["only_first_visit"],
             "active": state["active"], "default_message": DEFAULT_MESSAGE}
@@ -113,7 +118,13 @@ def update_earn_rules(
     if rules.enabled and not rules.welcome_bonus_message and not rules.welcome_bonus_points:
         raise HTTPException(status_code=400, detail=(
             "Écrivez un message de bienvenue ou offrez des points, sinon rien ne sera envoyé."))
-    payload = rules.model_dump()
+    flip = rules.welcome_switch
+    if flip is None and not rules.enabled and welcome_state(token_data.tenant_id)["enabled"]:
+        flip = False                          # an old page's untick: « new joiners receive nothing extra »
+    if flip is not None:
+        from features import automations as AU
+        AU.set_switch(token_data, "welcome", flip)
+    payload = rules.model_dump(exclude={"welcome_switch"})
     _db.earn_rules.update_one(
         {"tenant_id": token_data.tenant_id},
         {"$set": payload},

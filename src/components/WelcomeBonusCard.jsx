@@ -23,12 +23,14 @@ const WelcomeBonusCard = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+  const [loaded, setLoaded] = useState(null);          // as the server read it
+  const boxOn = Boolean(cfg.enabled || cfg.automation_on);
 
   useEffect(() => {
     (async () => {
       try {
         const r = await api.get('/owner/earn-rules');
-        if (r.data) setCfg((c) => ({ ...c, ...r.data }));
+        if (r.data) { setCfg((c) => ({ ...c, ...r.data })); setLoaded(r.data); }
       } catch (_e) { /* fall back to defaults */ }
       finally { setLoading(false); }
     })();
@@ -37,7 +39,11 @@ const WelcomeBonusCard = () => {
   const save = async () => {
     setSaving(true);
     try {
-      await api.put('/owner/earn-rules', cfg);
+      // the box also starts or stops the Bienvenue automation: sent only when flipped
+      const { automation_on, ...body } = cfg;
+      const flip = boxOn !== Boolean(loaded.enabled || loaded.automation_on);
+      await api.put('/owner/earn-rules', { ...body, ...(flip ? { welcome_switch: boxOn } : {}) });
+      setLoaded(cfg);
       setSavedAt(new Date());
     } catch (e) {
       alert('Failed to save: ' + (e?.response?.data?.detail || e.message));
@@ -69,16 +75,17 @@ const WelcomeBonusCard = () => {
           <label className="flex items-center gap-2 mb-4 cursor-pointer">
             <input
               type="checkbox"
-              checked={!!cfg.enabled}
-              onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
+              checked={boxOn}
+              onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked,
+                                        automation_on: e.target.checked ? cfg.automation_on : false })}
               className="w-4 h-4"
             />
             <span className="text-sm font-semibold" style={{ color: C_PS.inkDeep }}>
-              {cfg.enabled ? 'Enabled — every new joiner receives this' : 'Disabled — new joiners receive nothing extra'}
+              {boxOn ? 'Enabled — every new joiner receives this' : 'Disabled — new joiners receive nothing extra'}
             </span>
           </label>
 
-          <div className={`space-y-4 ${cfg.enabled ? '' : 'opacity-50 pointer-events-none'}`}>
+          <div className={`space-y-4 ${boxOn ? '' : 'opacity-50 pointer-events-none'}`}>
             <div>
               <label className="text-xs font-bold uppercase tracking-widest mb-1 block" style={{ color: C_PS.inkMute }}>
                 Welcome message
@@ -133,7 +140,7 @@ const WelcomeBonusCard = () => {
           </div>
 
           <div className="flex items-center gap-3 mt-6">
-            <button type="button" onClick={save} disabled={saving}
+            <button type="button" onClick={save} disabled={saving || !loaded}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
               style={{ background: C_PS.terracotta }}>
               <Save size={14} /> {saving ? 'Saving…' : 'Save welcome rule'}

@@ -80,6 +80,7 @@ def init(db):
         _db.automations.create_index([("tenant_id", 1), ("scenario", 1)])
     except Exception:
         pass
+    honour_at_start()
 
 
 def _now() -> datetime:
@@ -373,6 +374,19 @@ def _french(text: str) -> str:
     return text
 
 
+# The old engine stopped sending on this day. A scenario seeded after it is a
+# default a card save left behind (it seeded all eight, most of them on), not
+# the business's choice: it must not turn anything on (user, 2026-11-05).
+OLD_ENGINE_END = datetime(2026, 10, 11, tzinfo=timezone.utc)
+
+
+def _old_switch_on(r: Dict[str, Any]) -> bool:
+    if not r.get("enabled"):
+        return False
+    made = _aware(r.get("created_at"))
+    return not made or made < OLD_ENGINE_END
+
+
 def migrate(tid: str) -> None:
     """Once per shop: the old automations become the new ones, keeping their
     words and their switch; the removed scenarios go, data included; nothing
@@ -397,7 +411,7 @@ def migrate(tid: str) -> None:
             msg["title"] = _french(r["title"])[:TITLE_MAX]
         if r.get("body"):
             msg["body"] = _french(r["body"])[:BODY_MAX]
-        return made(scenario, status="active" if r.get("enabled") else "paused",
+        return made(scenario, status="active" if _old_switch_on(r) else "paused",
                        **({"message": msg} if msg else {}), **over)
 
     docs.append(carried("birthday", "birthday"))
@@ -498,6 +512,8 @@ def split_per_store(tid: str) -> int:
         ids = [x for x in (row.get("store_ids") or []) if x in stores]
         if row.get("store_ids") and len(ids) == 1 and len(row["store_ids"]) == 1:
             continue
+        if row.get("store_ids") and not ids:
+            continue                               # a closed store's: its switch is nobody else's
         targets = ids or stores
         _db.automations.update_one({"id": row["id"]}, {"$set": {"store_ids": [targets[0]]}})
         for sid in targets[1:]:
@@ -862,9 +878,18 @@ def ended(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
         return False
 
 
+def _stores_closed(row: Dict[str, Any]) -> bool:
+    ids = set(row.get("store_ids") or [])
+    if not ids:
+        return False
+    t = _db.tenants.find_one({"id": row.get("tenant_id")}, {"_id": 0, "branches": 1}) or {}
+    return ids <= {b.get("id") for b in t.get("branches") or [] if b.get("status") == "closed"}
+
+
 def running(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
-    """Active and inside its period (not « Terminée », already started)."""
-    if row.get("status") != "active" or ended(row, at):
+    """Active and inside its period (not « Terminée », already started), and
+    not a closed establishment's: its page and its switch can't be reached."""
+    if row.get("status") != "active" or ended(row, at) or _stores_closed(row):
         return False
     return _valid_on(row.get("schedule") or {}, _loc(at or _now(), row.get("schedule")).date())
 
@@ -1098,8 +1123,10 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
         # as the notification's own button where the phone can (Android)
         from urllib.parse import quote
         push_url = f"{click}?b={quote(label or '')}" if click else None
-        res = core.dispatch_to_customer(tid, {**cust, "tenant_id": tid}, title, body,
-                                        kind=meta["push_kind"], url=push_url) or {}
+        from features import send_rules as SR
+        with SR.from_automation(row["id"]):        # held back by a limit: it stays this automation's
+            res = core.dispatch_to_customer(tid, {**cust, "tenant_id": tid}, title, body,
+                                            kind=meta["push_kind"], url=push_url) or {}
         held = bool(res.get("deferred")) or res.get("reason") == "marketing_off"
     except Exception as exc:
         print(f"automations: web push not sent ({exc})")
@@ -1720,8 +1747,19 @@ def _claim(row: Dict[str, Any], at: datetime) -> bool:
     the first to take the lease sends, the other skips (audit 2026-10-26:
     780 of 1 560 inactive clients got the relance twice). « last_run_at »
     unchanged since read: a run that already finished today is not redone."""
-    q = {"id": row["id"], "last_run_at": row.get("last_run_at"), **_lease_free("running_at", at)}
+    q = {"id": row["id"], "status": "active", "last_run_at": row.get("last_run_at"), **_lease_free("running_at", at)}
     return _db.automations.update_one(q, {"$set": {"running_at": at}}).modified_count == 1
+
+
+STILL_ON_EVERY = 10                # sends between two looks: a read per send was 2 round trips a message on M0
+
+
+def _still_on(row: Dict[str, Any], i: int = 0) -> bool:
+    """Read again during a round: switched off in the middle of one, the clients
+    not reached yet hear nothing (at most STILL_ON_EVERY more go)."""
+    if i % STILL_ON_EVERY:
+        return True
+    return bool(_db.automations.find_one({"id": row["id"], "status": "active"}, {"_id": 1}))
 
 
 def _release(row: Dict[str, Any], at: datetime, done: bool) -> None:
@@ -1828,7 +1866,9 @@ def _run_due(at: Optional[datetime] = None, source: str = "daily") -> Dict[str, 
             from services import send_batch as _SB
             with _SB.batch(_db, tid, [c["id"] for (c, _), when in zip(chosen, times)
                                       if when <= at + timedelta(seconds=30)]):
-                for (c, ctx), when in zip(chosen, times):
+                for i, ((c, ctx), when) in enumerate(zip(chosen, times)):
+                    if not _still_on(row, i):
+                        break
                     if when <= at + timedelta(seconds=30):
                         if _deliver(tid, row, c, ctx, at):
                             summary["time_sent"] += 1
@@ -1864,8 +1904,8 @@ def _birthday_catch_up(tid: str, row: Dict[str, Any], at: datetime, today: date)
         return 0
     sent, cache = 0, {}
     try:
-        for c in _birthday_due(tid, row, at):
-            if room is not None and sent >= room:
+        for i, c in enumerate(_birthday_due(tid, row, at)):
+            if (room is not None and sent >= room) or not _still_on(row, i):
                 break
             if not matches(tid, row, c, at, cache):
                 continue
@@ -1902,7 +1942,9 @@ def run_custom(at: datetime, strict: bool, summary: Dict[str, Any]) -> None:
                 continue                           # another run is sending it
             claimed = True
             cache: Dict[str, Any] = {}
-            for c, ctx in CR.due_people(tid, row, at):
+            for i, (c, ctx) in enumerate(CR.due_people(tid, row, at)):
+                if not _still_on(row, i):
+                    break
                 if not matches(tid, row, c, at, cache) or not CR.rules_ok(row, c, at, ctx):
                     continue
                 if _deliver(tid, row, c, ctx, at):
@@ -2978,6 +3020,177 @@ def _guard(token: TokenData, row: Optional[Dict[str, Any]] = None) -> None:
             raise HTTPException(status_code=403, detail="Cette automatisation concerne d'autres établissements.")
 
 
+def _cancel_waiting(aid: str) -> None:
+    """Off means off: what this automation had on its way does not go, neither
+    what waits for its window nor what a sending limit held back."""
+    _db.automation_queue.delete_many({"automation_id": aid})
+    held = _db.deferred_messages.distinct("customer_id", {"automation_id": aid, "status": "waiting"})
+    if held:
+        _db.deferred_messages.update_many({"automation_id": aid, "status": "waiting"},
+                                          {"$set": {"status": "dropped", "dropped_why": "automation_off"}})
+        forget_held(aid, held)
+
+
+def forget_held(aid: str, customer_ids: List[str]) -> None:
+    """A held message that will never go is not on record as said: on again,
+    these clients are still due it, and their card doesn't show it."""
+    q = {"automation_id": aid, "customer_id": {"$in": customer_ids}}
+    logs = _db.automation_log.distinct("id", {**q, "status": "deferred"})
+    if logs:
+        _db.automation_log.delete_many({"id": {"$in": logs}})
+        _db.push_notifications.delete_many({**q, "log_id": {"$in": logs}})
+
+
+# ---------------------------------------------------------------------------
+# « Notification anniversaire » (the Carte), « Activer » (Insights, Copilote):
+# one more switch on the automations that send (user, 2026-11-05). They used
+# to write `push_scenarios`, which nothing has read since the 2026-10-11 engine.
+# ---------------------------------------------------------------------------
+def _switch_rows(tid: str, scenario: str, store: Optional[str] = None) -> List[Dict[str, Any]]:
+    q: Dict[str, Any] = {"scenario": scenario}
+    if scenario == "birthday":                     # a « Personnalisée » on the client's birthday says the same
+        q = {"$or": [q, {"scenario": "custom", "trigger.date_kind": "birthday"}]}
+    rows = _db.automations.find({"tenant_id": tid, **q}, {"_id": 0})
+    return [r for r in rows if not store or not r.get("store_ids") or store in r["store_ids"]]
+
+
+def scenario_on(tid: str, scenario: str, store: Optional[str] = None) -> bool:
+    """Does this message go out here? Nothing set up reads off."""
+    return any(running(r) for r in _switch_rows(tid, scenario, store))
+
+
+def birthday_on(tid: str, store: Optional[str] = None) -> bool:
+    return scenario_on(tid, "birthday", store)
+
+
+def birthday_view(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
+    rows = [r for r in _switch_rows(tid, "birthday", store) if r["scenario"] == "birthday"]
+    row = next((r for r in rows if running(r)), rows[0] if rows else {})
+    msg = row.get("message") or {}
+    return {"id": row.get("id"), "enabled": birthday_on(tid, store), "title": msg.get("title") or "", "body": msg.get("body") or ""}
+
+
+def set_birthday(token: TokenData, on: bool, store: Optional[str] = None) -> bool:
+    return set_switch(token, "birthday", on, store)
+
+
+def set_switch(token: TokenData, scenario: str, on: bool, store: Optional[str] = None) -> bool:
+    """Off: every automation of this scenario here stops, what waits with it.
+    On: one goes back on (none set up: one is made). Already so: nothing is
+    touched. The doors differ (the Carte, Insights, Paramètres); the right is
+    the Automatisations'."""
+    tid = token.tenant_id
+    own = _own_stores(token)                       # None: every establishment
+    if not _may(token, "automations") or (own is not None and store not in own):
+        raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
+    migrate(tid)
+    split_per_store(tid)
+    rows = _switch_rows(tid, scenario, store)
+    at = _now()
+    if not on:
+        for r in rows:
+            if r.get("status") == "active":
+                _db.automations.update_one({"id": r["id"]}, {"$set": {"status": "paused", "updated_at": at}})
+                _cancel_waiting(r["id"])
+        return False
+    if scenario_on(tid, scenario, store):
+        return True
+    mine = sorted((r for r in rows if r["scenario"] == scenario and not ended(r)),
+                  key=lambda r: r.get("status") != "paused")   # a draft may be unfinished
+    if mine:
+        clean(AutomationIn(**{**mine[0], "status": "active", "google_links": current_links(tid)}), tid)
+        _db.automations.update_one({"id": mine[0]["id"]}, {"$set": {"status": "active", "updated_at": at}})
+        return True
+    trade = trade_meta(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}))
+    _db.automations.insert_one(new_doc(tid, scenario, meta_of=trade, status="active",
+                                       store_ids=[store] if store else None,
+                                       order=_db.automations.count_documents({"tenant_id": tid})))
+    return True
+
+
+def honour_at_start() -> None:
+    """Never fatal: a start that fails here must not lose this module's routes."""
+    try:
+        honour_old_birthday_off()
+    except Exception as exc:                       # noqa: BLE001
+        print(f"automations: old birthday switches not read ({exc})", flush=True)
+
+
+BIRTHDAY_FIX_MARK = "birthday_card_off_v1"
+
+
+def honour_old_birthday_off() -> Dict[str, Any]:
+    """Once: a shop whose Carte switch reads off while its automation kept
+    sending. Off wins unless the automation was changed after it (a later
+    choice on the Automatisations page). Only ever stops messages; the shops
+    are kept in the mark and `paused_by` on the row, for an undo. The old
+    switch's date is its last save, so a shop that switched it on in
+    Automatisations and then saved that page with the old box still off is
+    paused too: the box said off, and off is the error that costs nothing.
+    Marked done only at the end: an interrupted start is finished by the next,
+    and what was paused is not read again (two at once: same result)."""
+    key = BIRTHDAY_FIX_MARK
+    if os.environ.get("VERCEL_ENV") == "preview":  # a preview reads the live database: looking only
+        return {"skipped": True, "tenants": []}
+    mark = _db.automation_meta.find_one({"_id": key}) or {}
+    if mark.get("done"):
+        return {"already": True, "tenants": mark.get("tenants") or []}
+    at, tenants = _now(), []
+    _db.automation_meta.update_one({"_id": key}, {"$setOnInsert": {"at": at, "tenants": []}}, upsert=True)
+    olds = [(x, "birthday") for x in _db.push_scenarios.find({"builtin": "birthday", "enabled": False}, {"_id": 0})]
+    for field, scenario in (("birthday_enabled", "birthday"), ("inactive_enabled", "inactive"),
+                            ("almost_there_enabled", "near_reward")):
+        olds += [(x, scenario) for x in _db.auto_campaign_config.find({field: False}, {"_id": 0, "tenant_id": 1, "updated_at": 1})]
+    olds += [(x, "welcome") for x in _db.earn_rules.find({"enabled": False}, {"_id": 0, "tenant_id": 1, "updated_at": 1})]
+    for old, scenario in olds:
+        off = _aware(old.get("updated_at")) or _aware(old.get("created_at"))
+        for r in _switch_rows(old.get("tenant_id"), scenario):
+            if r.get("status") != "active":
+                continue
+            changed = _aware(r.get("updated_at"))
+            if off and changed and changed > off:
+                continue
+            _db.automations.update_one({"id": r["id"]}, {"$set": {"status": "paused", "updated_at": at, "paused_by": key}})
+            _db.automation_meta.update_one({"_id": key}, {"$addToSet": {"tenants": r["tenant_id"]}})
+            if r["tenant_id"] not in tenants:
+                tenants.append(r["tenant_id"])
+            _cancel_waiting(r["id"])
+    _db.automation_meta.update_one({"_id": key}, {"$set": {"done": True, "done_at": at}})
+    if tenants:
+        print(f"automations: paused for {len(tenants)} shops whose old switch was off", flush=True)
+    return {"tenants": tenants}
+
+
+def reach_test(tid: str, scenario: str, at: Optional[datetime] = None):
+    """Would one of this scenario's running automations speak to this client?
+    Its store, its ciblage, a client the business paused. For what sends by
+    another door (« Send now », an old lot)."""
+    rows = [r for r in _db.automations.find({"tenant_id": tid, "scenario": scenario}, {"_id": 0}) if running(r, at)]
+    cache: Dict[str, Any] = {}
+    return lambda c: any(matches(tid, r, c, at, cache) for r in rows)
+
+
+def audience_of(tid: str, scenarios: List[str], at: Optional[datetime] = None) -> Optional[set]:
+    """Who these scenarios' running automations reach: None = everyone, empty = nobody."""
+    people: set = set()
+    for r in _db.automations.find({"tenant_id": tid, "scenario": {"$in": scenarios}}, {"_id": 0}):
+        if running(r, at):
+            if not r.get("store_ids"):
+                return None
+            people |= _store_people(tid, r["store_ids"]) or set()
+    return people
+
+
+def kind_off(tid: str, kind: Optional[str], cid: Optional[str], at: Optional[datetime] = None) -> bool:
+    """A held message that names no automation (held before they did): is
+    every automation that speaks this way to this client off?"""
+    scenarios = [k for k, v in SCENARIOS.items() if v["push_kind"] == kind]
+    if not scenarios:
+        return False                               # not an automation's: a campaign…
+    who = audience_of(tid, scenarios, at)
+    return who is not None and cid not in who
+
+
 def _geo_saved(tid: str, data: Optional[Dict[str, Any]]) -> None:
     """A géolocalisation saved: the shop's one radius follows step 2
     (Paramètres › Établissement shows the same), and the passes follow."""
@@ -3045,7 +3258,7 @@ def update_automation(aid: str, body: AutomationIn,
     _db.automations.update_one({"id": aid}, {"$set": data})
     _learned(tid, body, aid)
     if data["status"] != "active":
-        _db.automation_queue.delete_many({"automation_id": aid})
+        _cancel_waiting(aid)
     if data["scenario"] == "geo":
         _wake_geo(tid)
     return _row_view(_own(tid, aid), tid)
@@ -3069,7 +3282,7 @@ def set_status(aid: str, body: StatusIn, token_data: TokenData = Depends(require
         clean(AutomationIn(**{**row, "status": "active", "google_links": current_links(tid)}), tid)
     _db.automations.update_one({"id": aid}, {"$set": {"status": body.status, "updated_at": _now()}})
     if body.status != "active":
-        _db.automation_queue.delete_many({"automation_id": aid})
+        _cancel_waiting(aid)
     if row["scenario"] == "geo":
         _wake_geo(tid)
     return _row_view(_own(tid, aid), tid)
@@ -3093,7 +3306,7 @@ def delete_automation(aid: str, token_data: TokenData = Depends(require_role(EDI
     row = _own(tid, aid)
     _guard(token_data, row)
     _db.automations.delete_one({"id": aid})
-    _db.automation_queue.delete_many({"automation_id": aid})
+    _cancel_waiting(aid)
     if row["scenario"] == "geo":
         _wake_geo(tid)
     return {"deleted": aid}

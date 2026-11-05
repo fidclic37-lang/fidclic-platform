@@ -60,6 +60,11 @@ class AutoCampaignConfig(BaseModel):
     almost_there_message: str = "{first_name}, vous êtes à 1 visite d'une récompense chez {business_name} ! ☕"
     almost_there_visits_left: int = 1
     almost_there_cooldown_days: int = 7
+    # The boxes: `*_enabled` is what the page reads (the real automations); an
+    # old page sends it with every save, so only a flip, `*_switch`, changes them.
+    birthday_switch: Optional[bool] = None
+    inactive_switch: Optional[bool] = None
+    almost_there_switch: Optional[bool] = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -67,6 +72,40 @@ def _config(tenant_id: str) -> AutoCampaignConfig:
     doc = _db.auto_campaign_config.find_one({"tenant_id": tenant_id}) or {}
     payload = {**AutoCampaignConfig().model_dump(), **{k: v for k, v in doc.items() if k != "_id"}}
     return AutoCampaignConfig(**payload)
+
+
+# The Paramètres boxes switch the automations that send (user, 2026-11-05).
+SWITCHES = (("birthday", "birthday"), ("inactive", "inactive"), ("almost_there", "near_reward"))
+LOT_SCENARIO = {"birthday": "birthday", "inactive": "inactive", "inactive_rescue": "inactive",
+                "almost_there": "near_reward"}
+
+
+def _store(tid: str) -> Optional[str]:
+    from features import store_cards as SC
+    return SC.store_for(tid)
+
+
+def _view(cfg: AutoCampaignConfig, tid: str) -> Dict[str, Any]:
+    from features import automations as AU
+    out = cfg.model_dump(exclude={f"{k}_switch" for k, _ in SWITCHES})
+    for key, scenario in SWITCHES:
+        out[f"{key}_enabled"] = AU.scenario_on(tid, scenario, _store(tid))
+    return out
+
+
+def _may_send(token_data, scenario: str, dry_run: bool = False) -> bool:
+    """The button and the old lots obey the automation's own switch; sending
+    takes the Automatisations right, as the switch does."""
+    from features import automations as AU
+    if not dry_run and not AU._may(token_data, "automations"):
+        raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
+    return AU.scenario_on(token_data.tenant_id, scenario, _store(token_data.tenant_id))
+
+
+def _heard(tid: str, cid: str, since: datetime) -> bool:
+    """Greeted by the automation itself: the button does not say it again."""
+    return bool(_db.automation_log.find_one({"tenant_id": tid, "customer_id": cid, "scenario": "birthday",
+                                             "status": {"$ne": "holdout"}, "sent_at": {"$gte": since}}, {"_id": 1}))
 
 
 def _substitute(template: str, ctx: Dict[str, Any]) -> str:
@@ -186,7 +225,7 @@ def _dispatch_message(tenant_id: str, customer: dict, kind: str, title: str, bod
 # ---------- Config endpoints ----------
 @router.get("/api/owner/auto-campaigns/config")
 def get_config(token_data=Depends(require_role(["business_owner", "manager"]))):
-    return _config(token_data.tenant_id).model_dump()
+    return _view(_config(token_data.tenant_id), token_data.tenant_id)
 
 
 @router.put("/api/owner/auto-campaigns/config")
@@ -194,15 +233,19 @@ def put_config(
     cfg: AutoCampaignConfig,
     token_data=Depends(require_role(["business_owner"])),
 ):
-    cfg.tenant_id = token_data.tenant_id
+    from features import automations as AU
+    tid = token_data.tenant_id
+    cfg.tenant_id = tid
     cfg.updated_at = datetime.now(timezone.utc)
-    payload = cfg.model_dump()
-    _db.auto_campaign_config.update_one(
-        {"tenant_id": token_data.tenant_id},
-        {"$set": payload},
-        upsert=True,
-    )
-    return payload
+    for key, scenario in SWITCHES:
+        flip = getattr(cfg, f"{key}_switch")
+        if flip is None and getattr(cfg, f"{key}_enabled") is False:
+            flip = False                           # an old page (this one sends flips only): its off is an off
+        if flip is not None:
+            AU.set_switch(token_data, scenario, flip, _store(tid))
+    payload = cfg.model_dump(exclude={f"{k}_{x}" for k, _ in SWITCHES for x in ("enabled", "switch")})
+    _db.auto_campaign_config.update_one({"tenant_id": tid}, {"$set": payload}, upsert=True)
+    return _view(_config(tid), tid)
 
 
 # ----------------------------------------------------------------------
@@ -272,15 +315,16 @@ def run_birthdays(
        Otherwise      → send immediately (legacy path; cron now uses prepare=True).
     """
     cfg = _config(token_data.tenant_id)
-    if not cfg.birthday_enabled:
+    if not _may_send(token_data, "birthday", dry_run):
         return {"sent": 0, "reason": "disabled"}
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     today_mmdd = datetime.now(timezone.utc).strftime("%m-%d")
 
-    customers = list(_db.customers.find({
+    from features import automations as AU
+    customers = list(filter(AU.reach_test(token_data.tenant_id, "birthday"), _db.customers.find({
         "tenant_id": token_data.tenant_id,
         "birthday": today_mmdd,
-    }).limit(2000))
+    }, {"_id": 0}).limit(2000)))
 
     eligible = []
     previews = []
@@ -291,7 +335,7 @@ def run_birthdays(
             "kind": "birthday",
             "sent_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=20)},
         })
-        if already:
+        if already or _heard(token_data.tenant_id, c["id"], datetime.now(timezone.utc) - timedelta(hours=20)):
             continue
         eligible.append(c)
         ctx = _build_ctx(c, tenant)
@@ -330,7 +374,7 @@ def run_inactive(
     token_data=Depends(require_role(["business_owner", "manager"])),
 ):
     cfg = _config(token_data.tenant_id)
-    if not cfg.inactive_enabled:
+    if not _may_send(token_data, "inactive", dry_run):
         return {"sent": 0, "reason": "disabled"}
     trigger_days = cfg.inactive_trigger_days
     if trigger_days <= 0:
@@ -347,6 +391,8 @@ def run_inactive(
 
     eligible = []
     previews = []
+    from features import automations as AU
+    candidates = list(filter(AU.reach_test(token_data.tenant_id, "inactive"), candidates))
     for c in candidates:
         recent_log = _db.auto_campaign_log.find_one({
             "tenant_id": token_data.tenant_id,
@@ -395,7 +441,7 @@ def run_almost_there(
     is read from card_templates: every (visits_per_stamp * reward_threshold_stamps)
     visits unlocks the next reward."""
     cfg = _config(token_data.tenant_id)
-    if not cfg.almost_there_enabled:
+    if not _may_send(token_data, "near_reward", dry_run):
         return {"sent": 0, "reason": "disabled"}
 
     tpl = _db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
@@ -415,6 +461,8 @@ def run_almost_there(
 
     eligible = []
     previews = []
+    from features import automations as AU
+    candidates = list(filter(AU.reach_test(token_data.tenant_id, "near_reward"), candidates))
     for c in candidates:
         v = int(c.get("visits", 0) or 0)
         remaining = cycle - (v % cycle) if (v % cycle) else cycle
@@ -513,15 +561,20 @@ def approve_pending_auto_run(
     })
     if not run:
         raise HTTPException(status_code=404, detail="Pending run not found or already processed")
+    scenario = LOT_SCENARIO.get(run.get("kind"))
+    if scenario and not _may_send(token_data, scenario):
+        raise HTTPException(status_code=409, detail="Cette automatisation est désactivée : rien n'a été envoyé.")
 
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
     title_tpl = run.get("title", "")
     body_tpl = run.get("body_template", "")
     sent = 0
+    from features import automations as AU
+    reaches = AU.reach_test(token_data.tenant_id, scenario) if scenario else (lambda c: True)
     for r in run.get("recipients", []):
         # Re-load the customer at send time so we have fresh points/visits
         c = _db.customers.find_one({"id": r.get("customer_id"), "tenant_id": token_data.tenant_id})
-        if not c:
+        if not c or not reaches(c):
             continue
         ctx = _build_ctx(c, tenant)
         title = _substitute(title_tpl, ctx)

@@ -730,6 +730,11 @@ export default function LoyaltyCardPage() {
         ...(programme.multi_person ? { multi_person: !!programme.multi_person.enabled,
                                        multi_person_max: Number(programme.multi_person.max) } : {}),
         ...toggles,
+        // sent only when the owner flipped it: it pauses or starts real automations,
+        // so another page's save must never put it back
+        birthday_notification: undefined,
+        birthday_switch: toggles.birthday_notification === data?.toggles?.birthday_notification
+          ? undefined : toggles.birthday_notification,
         show_qr: true, wallet_enabled: true,
         ...(advanced || {}),
       });

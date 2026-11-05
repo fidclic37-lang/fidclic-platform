@@ -1,0 +1,700 @@
+"""
+« Business ne off kr rakha hai, fir bhi jaa rha hai » (user, 2026-11-05): an
+automation the business switched off, or never switched on, sends nothing,
+from any path: the Carte's « Notification anniversaire » switch, the old
+defaults at the first scan, the daily run and its catch-up, a run under way,
+the queue, the messages a limit held back.
+
+Run: cd api && python3 tests/test_birthday_off.py
+"""
+import asyncio
+import datetime as dt
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import mongomock
+import pymongo
+
+pymongo.MongoClient = mongomock.MongoClient
+os.environ.setdefault("JWT_SECRET", "test-secret-birthday-off")
+os.environ.setdefault("DISABLE_SEED", "1")
+passed = failed = 0
+
+
+def check(label, cond):
+    global passed, failed
+    cond = bool(cond)
+    passed += cond
+    failed += (not cond)
+    print(("  ✓ " if cond else "  ✗ ") + label)
+
+
+def main():
+    import server
+    from features import temoin as _T
+    _T.enabled = lambda tid: False
+    import auth
+    import httpx
+    import features.wallet_passes as WP
+    import features.push_subscriptions as PS
+    from features import automations as AU, send_rules as SR, insights_page as IP, auto_messages as AM
+
+    db = server.db
+    pushed = []
+    real_dispatch = server.dispatch_to_customer
+
+    def fake_dispatch(tid, cust, title, body, kind="campaign", url=None):
+        pushed.append({"cid": cust.get("id"), "tid": tid, "kind": kind})
+        return {"sent": True, "channel": "push"}
+    server.dispatch_to_customer = fake_dispatch
+    WP.notify_customer = lambda cid, message=None, google_notify=None: {}
+    WP.notify_passes = lambda *a, **k: {"sent": 0}
+    PS.fan_out_to_customer = lambda *a, **k: {"sent": 0}
+
+    def http(method, url, headers, **kw):
+        async def run():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as ac:
+                return await ac.request(method, url, headers=headers, **kw)
+        return asyncio.get_event_loop().run_until_complete(run())
+
+    UTC = dt.timezone.utc
+    now = dt.datetime.now(UTC)
+    mmdd = AU._paris(now).strftime("%m-%d")
+
+    def shop(tid, **kw):
+        db.tenants.insert_one({"id": tid, "slug": tid, "name": tid.title(), "plan": "vip", "subscription_status": "active",
+                               "is_active": True, **kw})
+        db.users.insert_one({"email": f"o@{tid}.fr", "role": "business_owner", "tenant_id": tid})
+        db.card_templates.insert_one({"tenant_id": tid, "reward_threshold_stamps": 10, "reward_description": "Un café"})
+        return {"Authorization": "Bearer " + auth.create_access_token(
+            {"sub": f"o@{tid}.fr", "role": "business_owner", "tenant_id": tid})}
+
+    def person(tid, cid, **kw):
+        doc = {"id": cid, "tenant_id": tid, "name": f"Client {cid}", "barcode_id": f"FT-{cid.upper()}", "points": 0,
+               "visits": 3, "birthday": mmdd, "created_at": now - dt.timedelta(days=200),
+               "last_visit_date": now - dt.timedelta(days=2), **kw}
+        db.customers.insert_one(doc)
+        return doc
+
+    def bday_rows(tid):
+        return list(db.automations.find({"tenant_id": tid, "scenario": "birthday"}, {"_id": 0}))
+
+    def run():
+        """Today's run, with the day's mark wiped: the rule is tested, not the once-a-day."""
+        db.automations.update_many({}, {"$set": {"last_run_at": None, "running_at": None}})
+        pushed.clear()
+        AU.run_due(now, source="daily")
+        return [p["cid"] for p in pushed]
+
+    def forget_sent():
+        db.automation_log.delete_many({})
+        db.send_counter.delete_many({})
+
+    print("\n1. The Carte's switch is the real switch")
+    H = shop("cafe")
+    person("cafe", "a1")
+    person("cafe", "a2")
+    AU.migrate("cafe")
+    db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    check("before: the switch reads on when the automation is on",
+          http("GET", "/api/owner/card/settings", H).json()["toggles"]["birthday_notification"] is True)
+    r = http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": False})
+    check("the owner's save goes through", r.status_code == 200)
+    check("off on the Carte pauses the automation itself",
+          [x["status"] for x in bday_rows("cafe")] == ["paused"])
+    check("and the page says off", http("GET", "/api/owner/card/settings", H).json()["toggles"]["birthday_notification"] is False)
+    check("the Automatisations page says paused too",
+          next(x for x in http("GET", "/api/owner/automations", H).json()["rows"] if x["scenario"] == "birthday")["status"] == "paused")
+    check("and NOBODY gets the birthday message", run() == [])
+    check("nothing logged either", db.automation_log.count_documents({"tenant_id": "cafe"}) == 0)
+    r = http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": True})
+    check("on again: the automation runs", [x["status"] for x in bday_rows("cafe")] == ["active"])
+    check("everyone with a birthday gets it", sorted(run()) == ["a1", "a2"])
+    check("never twice", run() == [])
+    stamp = dt.datetime(2026, 1, 1, tzinfo=UTC)
+    db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"updated_at": stamp}})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": True})
+    check("a save that does not change it touches nothing",
+          AU._aware(bday_rows("cafe")[0]["updated_at"]) == stamp)
+    http("PUT", "/api/owner/card/settings", H, json={"card_name": "Ma carte"})
+    check("a save without the field leaves it alone", bday_rows("cafe")[0]["status"] == "active")
+    aid = bday_rows("cafe")[0]["id"]
+    http("POST", f"/api/owner/automations/{aid}/status", H, json={"status": "paused"})
+    check("paused on the Automatisations page: the Carte reads off",
+          http("GET", "/api/owner/card/settings", H).json()["toggles"]["birthday_notification"] is False)
+    forget_sent()
+    check("and it sends nothing", run() == [])
+    check("the switch never writes to the old collection", db.push_scenarios.count_documents({"tenant_id": "cafe"}) == 0)
+    # a tab or a phone still on the old page sends its old reading with every save
+    db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "paused"}})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": True})
+    check("the old page's field turns nothing on", bday_rows("cafe")[0]["status"] == "paused")
+    db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": False})
+    check("but its off is the owner's off", bday_rows("cafe")[0]["status"] == "paused")
+    check("and is not written on the card", "birthday_notification" not in db.card_templates.find_one({"tenant_id": "cafe"}))
+
+    print("\n2. Several birthday automations, and a « Personnalisée » on the birthday")
+    H2 = shop("multi")
+    person("multi", "m1")
+    AU.migrate("multi")
+    first = bday_rows("multi")[0]
+    db.automations.update_one({"id": first["id"]}, {"$set": {"status": "active"}})
+    db.automations.insert_one({**first, "id": "bday-2", "status": "active", "name": "Deuxième"})
+    db.automations.insert_one({**first, "id": "bday-cust", "scenario": "custom", "status": "active", "name": "Perso",
+                               "trigger": {"type": "date", "date_kind": "birthday", "repeat": "yearly"}})
+    db.automations.insert_one({**first, "id": "other-cust", "scenario": "custom", "status": "active", "name": "Soldes",
+                               "trigger": {"type": "date", "date_kind": "fixed", "date": "2026-12-25"}})
+    http("PUT", "/api/owner/card/settings", H2, json={"birthday_switch": False})
+    st = {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "multi"}, {"_id": 0})}
+    check("off pauses every birthday automation", st[first["id"]] == "paused" and st["bday-2"] == "paused")
+    check("the « Personnalisée » on the birthday too", st["bday-cust"] == "paused")
+    check("a « Personnalisée » on another date stays on", st["other-cust"] == "active")
+    http("PUT", "/api/owner/card/settings", H2, json={"birthday_switch": True})
+    st = {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "multi", "scenario": "birthday"}, {"_id": 0})}
+    check("on switches ONE back on, not all of them", sorted(st.values()) == ["active", "paused"])
+
+    H3 = shop("deleted")
+    AU.migrate("deleted")
+    db.automations.delete_many({"tenant_id": "deleted", "scenario": "birthday"})
+    check("no birthday automation at all: the switch reads off",
+          http("GET", "/api/owner/card/settings", H3).json()["toggles"]["birthday_notification"] is False)
+    http("PUT", "/api/owner/card/settings", H3, json={"birthday_switch": False})
+    check("off changes nothing and makes no row", bday_rows("deleted") == [])
+    http("PUT", "/api/owner/card/settings", H3, json={"birthday_switch": True})
+    check("on makes one, active", [x["status"] for x in bday_rows("deleted")] == ["active"])
+
+    print("\n3. Each establishment has its own switch")
+    H4 = shop("group", branches=[{"id": "s-a", "name": "A", "status": "active"}, {"id": "s-b", "name": "B", "status": "active"}])
+    person("group", "ga", branch_id="s-a", home_store_id="s-a")
+    person("group", "gb", branch_id="s-b", home_store_id="s-b")
+    AU.migrate("group")
+    AU.split_per_store("group")
+    db.automations.update_many({"tenant_id": "group", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    HA = {**H4, "X-FidClic-Store": "s-a"}
+    HB = {**H4, "X-FidClic-Store": "s-b"}
+    http("PUT", "/api/owner/card/settings", HA, json={"birthday_switch": False})
+    st = {x["store_ids"][0]: x["status"] for x in bday_rows("group")}
+    check("off in A pauses A's automation only", st == {"s-a": "paused", "s-b": "active"})
+    check("A reads off, B reads on",
+          http("GET", "/api/owner/card/settings", HA).json()["toggles"]["birthday_notification"] is False
+          and http("GET", "/api/owner/card/settings", HB).json()["toggles"]["birthday_notification"] is True)
+
+    print("\n4. Nobody's defaults turn themselves on")
+    H5 = shop("fresh")
+    person("fresh", "f1")
+    http("GET", "/api/owner/card/settings", H5)
+    http("PUT", "/api/owner/card/settings", H5, json={"card_name": "Nouvelle carte"})
+    check("a new shop's card save writes no old scenario", db.push_scenarios.count_documents({"tenant_id": "fresh"}) == 0)
+    AU.fire("tier_up", "fresh", db.customers.find_one({"id": "f1"}, {"_id": 0}), {"event": "visit"})
+    check("first scan: birthday is NOT switched on", [x["status"] for x in bday_rows("fresh")] == ["paused"])
+    check("a new shop's birthday sends nothing", "f1" not in run())
+
+    # what a card save left behind before this fix: the old defaults, seeded just now
+    shop("seeded")
+    person("seeded", "s1", last_visit_date=now - dt.timedelta(days=90))
+    from features import push_wallet as PW
+    PW._seed("seeded")
+    AU.fire("tier_up", "seeded", db.customers.find_one({"id": "s1"}, {"_id": 0}), {"event": "visit"})
+    st = {x["scenario"]: x["status"] for x in db.automations.find({"tenant_id": "seeded"}, {"_id": 0})}
+    check("old defaults seeded after the old engine ended turn NOTHING on",
+          st["birthday"] == "paused" and st["inactive"] == "paused" and st["tier_up"] == "paused")
+    check("that shop's clients hear nothing from them", "s1" not in run())
+
+    # a real choice from the old engine's days is kept
+    shop("oldtimer")
+    db.push_scenarios.insert_many([
+        {"id": "ot1", "tenant_id": "oldtimer", "builtin": "birthday", "enabled": True, "created_at": dt.datetime(2026, 9, 1, tzinfo=UTC)},
+        {"id": "ot2", "tenant_id": "oldtimer", "builtin": "inactive", "enabled": False, "created_at": dt.datetime(2026, 9, 1, tzinfo=UTC)}])
+    AU.migrate("oldtimer")
+    st = {x["scenario"]: x["status"] for x in db.automations.find({"tenant_id": "oldtimer"}, {"_id": 0})}
+    check("a switch from the old engine's days is kept, on and off", st["birthday"] == "active" and st["inactive"] == "paused")
+
+    print("\n5. Every state that is not « active » sends nothing")
+    shop("states")
+    person("states", "st1")
+    AU.migrate("states")
+    row = bday_rows("states")[0]
+    for status in ("paused", "draft"):
+        db.automations.update_one({"id": row["id"]}, {"$set": {"status": status}})
+        check(f"{status}: nobody", "st1" not in run())
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active", "schedule.valid_to": "2020-01-01"}})
+    check("ended (date de fin passée): nobody", "st1" not in run())
+    db.automations.delete_one({"id": row["id"]})
+    check("deleted: nobody", "st1" not in run())
+    check("deleted stays deleted: no run brings it back", bday_rows("states") == [])
+
+    print("\n6. Switched off while something was on its way")
+    shop("race")
+    for i in range(25):
+        person("race", f"r{i}")
+    AU.migrate("race")
+    row = bday_rows("race")[0]
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active"}})
+    stale = {**bday_rows("race")[0]}
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "paused"}})
+    check("a run holding an old copy cannot claim a paused automation", AU._claim(stale, now) is False)
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active", "running_at": None}})
+
+    def pause_on_first(tid, cust, title, body, kind="campaign", url=None):
+        fake_dispatch(tid, cust, title, body, kind, url)
+        db.automations.update_one({"id": row["id"]}, {"$set": {"status": "paused"}})
+        return {"sent": True, "channel": "push"}
+    server.dispatch_to_customer = pause_on_first
+    db.automations.update_many({"tenant_id": "race"}, {"$set": {"last_run_at": None, "running_at": None}})
+    pushed.clear()
+    AU.run_due(now, source="daily")
+    server.dispatch_to_customer = fake_dispatch
+    check("off in the middle of a round: it stops at the next look, the rest get nothing",
+          len([p for p in pushed if p["tid"] == "race"]) == AU.STILL_ON_EVERY < 25)
+
+    shop("queue")
+    c = person("queue", "q1")
+    AU.migrate("queue")
+    row = bday_rows("queue")[0]
+    H6 = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@queue.fr", "role": "business_owner", "tenant_id": "queue"})}
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active"}})
+    db.automation_queue.insert_one({"id": "qq", "tenant_id": "queue", "automation_id": row["id"], "customer_id": "q1",
+                                    "due_at": now - dt.timedelta(minutes=1), "ctx": {"event": "date"}, "created_at": now})
+    http("PUT", "/api/owner/card/settings", H6, json={"birthday_switch": False})
+    check("the Carte's off empties its queue", db.automation_queue.count_documents({"automation_id": row["id"]}) == 0)
+
+    print("\n7. A message a limit held back does not go after the off")
+    shop("held")
+    c = person("held", "h1")
+    person("held", "h2")
+    AU.migrate("held")
+    row = bday_rows("held")[0]
+    H7 = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@held.fr", "role": "business_owner", "tenant_id": "held"})}
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active"}})
+    row = bday_rows("held")[0]
+    real_over = SR.over_limit
+    SR.over_limit = lambda *a, **k: "shop_day"
+    server.dispatch_to_customer = real_dispatch
+    AU._deliver("held", row, c, {"event": "date"}, now)
+    server.dispatch_to_customer = fake_dispatch
+    SR.over_limit = real_over
+    held = db.deferred_messages.find_one({"tenant_id": "held", "customer_id": "h1"}, {"_id": 0})
+    check("held back, and it remembers which automation", held and held.get("automation_id") == row["id"])
+    later = now + dt.timedelta(days=2)
+    http("POST", f"/api/owner/automations/{row['id']}/status", H7, json={"status": "paused"})
+    check("the off drops what waits", db.deferred_messages.find_one({"id": held["id"]})["status"] == "dropped")
+    pushed.clear()
+    SR.drain(later)
+    check("the next day's run does not send it", pushed == [])
+    check("what never went is not on record as sent", db.automation_log.count_documents({"tenant_id": "held", "customer_id": "h1"}) == 0
+          and db.push_notifications.count_documents({"tenant_id": "held", "customer_id": "h1"}) == 0)
+    http("POST", f"/api/owner/automations/{row['id']}/status", H7, json={"status": "active"})
+    check("on again: the client whose message was cancelled still gets it", "h1" in run())
+    db.automation_log.delete_many({"tenant_id": "held"})
+    db.send_counter.delete_many({"tenant_id": "held"})
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "paused"}})
+
+    def waiting(mid, tid, cid, kind, **kw):
+        db.deferred_messages.insert_one({"id": mid, "tenant_id": tid, "customer_id": cid, "title": "t", "body": "b", "kind": kind,
+                                         "url": None, "reason": "shop_day", "priority": 1, "status": "waiting",
+                                         "first_at": now, "due": now - dt.timedelta(hours=1), "created_at": now, **kw})
+    waiting("w-aid", "held", "h1", "birthday", automation_id=row["id"])
+    pushed.clear()
+    SR.drain(now)
+    check("paused without being told: dropped at the send", pushed == []
+          and db.deferred_messages.find_one({"id": "w-aid"})["status"] == "dropped")
+    waiting("w-old", "held", "h1", "birthday")
+    pushed.clear()
+    SR.drain(now)
+    check("waiting since before this fix (no automation named): dropped when none is on", pushed == []
+          and db.deferred_messages.find_one({"id": "w-old"})["status"] == "dropped")
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active"}})
+    waiting("w-on", "held", "h1", "birthday", automation_id=row["id"])
+    waiting("w-old2", "held", "h2", "birthday")
+    pushed.clear()
+    SR.drain(now)
+    check("still on: what waited goes", sorted(p["cid"] for p in pushed) == ["h1", "h2"])
+    db.send_counter.delete_many({})
+    waiting("w-camp", "held", "h1", "campaign")
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "paused"}})
+    pushed.clear()
+    SR.drain(now)
+    check("a campaign that waited is not touched by an automation's switch", [p["kind"] for p in pushed] == ["campaign"])
+    db.send_counter.delete_many({})
+    SR.over_limit = lambda *a, **k: "shop_day"
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active"}})
+    waiting("w-again", "held", "h1", "birthday", automation_id=row["id"])
+    SR.drain(now)
+    SR.over_limit = real_over
+    again = db.deferred_messages.find_one({"tenant_id": "held", "status": "waiting"}, {"_id": 0})
+    check("waiting another day: it still names its automation", again and again.get("automation_id") == row["id"])
+
+    print("\n8. Not only the birthday: every automation off stays silent")
+    shop("all", google_review_url="https://g.page/r/x/review", google_reviews_enabled=True)
+    pcust = person("all", "z1", last_visit_date=now - dt.timedelta(days=90), wallet_added_at=now)
+    AU.migrate("all")
+    db.automations.update_many({"tenant_id": "all"}, {"$set": {"status": "paused"}})
+    pushed.clear()
+    for sc, ctx in (("tier_up", {"event": "visit"}), ("near_reward", {"event": "visit"}), ("google_review", {"event": "visit"}),
+                    ("welcome", {"event": "wallet"}), ("referral", {"event": "reward", "side": "parrain"}),
+                    ("geo", {"store": "x"}), ("custom", {"event": "visit"})):
+        said = AU.fire(sc, "all", pcust, ctx)
+        check(f"{sc} off: says nothing", not said)
+    check("the daily run says nothing either", "z1" not in run())
+    check("not one line in the log", db.automation_log.count_documents({"tenant_id": "all", "status": "sent"}) == 0)
+    # the same client and clock, switched on: the silence above was the switch, not the test
+    db.automations.update_many({"tenant_id": "all", "scenario": {"$in": ["birthday", "inactive"]}}, {"$set": {"status": "active"}})
+    check("switched on, the same client does hear", run().count("z1") >= 1)
+
+    print("\n9. Insights, the Copilote and the settings read the real switch")
+    H8 = shop("ins")
+    person("ins", "i1")
+    AU.migrate("ins")
+    check("off: Insights says not done", IP._birthday_on("ins") is False)
+    IP.activate("birthday", token_data=auth.TokenData(sub="o@ins.fr", email="o@ins.fr", role="business_owner", tenant_id="ins"))
+    check("« Activer » turns on the automation that really sends", [x["status"] for x in bday_rows("ins")] == ["active"])
+    check("Insights then says done", IP._birthday_on("ins") is True)
+    check("no old row written", db.push_scenarios.count_documents({"tenant_id": "ins"}) == 0)
+    view = http("GET", "/api/owner/auto-messages", H8).json()["birthday"]
+    check("the settings view reads it too", view["enabled"] is True and view["id"] == bday_rows("ins")[0]["id"])
+    http("PUT", "/api/owner/card/settings", H8, json={"birthday_switch": False})
+    check("off: Insights goes back to not done", IP._birthday_on("ins") is False)
+    check("and the settings view too", http("GET", "/api/owner/auto-messages", H8).json()["birthday"]["enabled"] is False)
+
+    print("\n10. Who may touch it")
+    H9 = shop("rival")
+    AU.migrate("rival")
+    db.automations.update_many({"tenant_id": "rival", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    MGR = {"Authorization": "Bearer " + auth.create_access_token({"sub": "m@rival.fr", "role": "manager", "tenant_id": "rival"})}
+    db.users.insert_one({"email": "m@rival.fr", "role": "manager", "tenant_id": "rival"})
+    check("no token: refused", http("PUT", "/api/owner/card/settings", {}, json={"birthday_switch": False}).status_code == 401)
+    check("a manager: refused", http("PUT", "/api/owner/card/settings", MGR, json={"birthday_switch": False}).status_code == 403)
+    check("and nothing changed", bday_rows("rival")[0]["status"] == "active")
+    before = {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "rival"}, {"_id": 0})}
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": False})
+    http("PUT", "/api/owner/card/settings", {**H, "X-FidClic-Store": "s-b"}, json={"birthday_switch": False})
+    check("another shop's owner, even naming another shop's store, changes nothing here",
+          before == {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "rival"}, {"_id": 0})})
+    check("nor in the shop whose store was named", {x["store_ids"][0]: x["status"] for x in bday_rows("group")}["s-b"] == "active")
+    check("an unknown value is refused", http("PUT", "/api/owner/card/settings", H9, json={"birthday_switch": "maybe"}).status_code == 422)
+    check("a Mongo operator is refused", http("PUT", "/api/owner/card/settings", H9, json={"birthday_switch": {"$ne": 1}}).status_code == 422)
+    check("still on after those", bday_rows("rival")[0]["status"] == "active")
+    def team(tid, email, role, **kw):
+        db.users.insert_one({"email": email, "role": role, "tenant_id": tid, **kw})
+        return {"Authorization": "Bearer " + auth.create_access_token({"sub": email, "role": role, "tenant_id": tid})}
+    tk = team("rival", "staff@rival.fr", "staff")
+    check("staff: refused on the Carte", http("PUT", "/api/owner/card/settings", tk, json={"birthday_switch": False}).status_code == 403)
+    tk = team("rival", "admin@rival.fr", "administrateur")
+    real_may = AU._may
+    AU._may = lambda token, page, level="edit": False if page == "automations" else real_may(token, page, level)
+    r = http("PUT", "/api/owner/card/settings", tk, json={"birthday_switch": False})
+    AU._may = real_may
+    check("may edit the Carte but not the Automatisations: refused", r.status_code == 403 and bday_rows("rival")[0]["status"] == "active")
+    check("with that right, an administrateur may", http("PUT", "/api/owner/card/settings", tk, json={"birthday_switch": False}).status_code == 200
+          and bday_rows("rival")[0]["status"] == "paused")
+    db.automations.update_many({"tenant_id": "rival", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    for sid in ("s-a", "s-b"):
+        db.automations.update_many({"tenant_id": "group", "scenario": "birthday", "store_ids": [sid]}, {"$set": {"status": "active"}})
+    part = team("group", "part@group.fr", "administrateur", branch_ids=["s-a"])
+    r = http("PUT", "/api/owner/card/settings", {**part, "X-FidClic-Store": "s-b"}, json={"birthday_switch": False})
+    check("an administrateur of store A cannot switch store B", r.status_code == 403
+          and {x["store_ids"][0]: x["status"] for x in bday_rows("group")}["s-b"] == "active")
+    r = http("PUT", "/api/owner/card/settings", part, json={"birthday_switch": False})
+    check("nor every store by naming none", r.status_code == 403
+          and {x["store_ids"][0]: x["status"] for x in bday_rows("group")} == {"s-a": "active", "s-b": "active"})
+    check("« Activer » as a manager: refused", http("POST", "/api/owner/insights/actions/birthday/activate", MGR).status_code == 403)
+    check("an unknown store in the header stays inside this shop",
+          http("PUT", "/api/owner/card/settings", {**H9, "X-FidClic-Store": "no-such"}, json={"card_name": "x"}).status_code == 200
+          and bday_rows("rival")[0]["status"] == "active")
+
+    print("\n11. Shops whose Carte switch was already off get it honoured, once")
+    t0 = dt.datetime(2026, 10, 20, tzinfo=UTC)
+    for tid in ("fix-off", "fix-later", "fix-on", "fix-unmigrated"):
+        shop(tid)
+    for tid in ("fix-off", "fix-later", "fix-on"):
+        AU.migrate(tid)
+        db.automations.update_many({"tenant_id": tid, "scenario": "birthday"}, {"$set": {"status": "active", "updated_at": t0}})
+    db.push_scenarios.insert_many([
+        {"id": "p1", "tenant_id": "fix-off", "builtin": "birthday", "enabled": False, "updated_at": t0 + dt.timedelta(days=3)},
+        {"id": "p2", "tenant_id": "fix-later", "builtin": "birthday", "enabled": False, "updated_at": t0 - dt.timedelta(days=3)},
+        {"id": "p3", "tenant_id": "fix-on", "builtin": "birthday", "enabled": True, "updated_at": t0 + dt.timedelta(days=3)},
+        {"id": "p4", "tenant_id": "fix-unmigrated", "builtin": "birthday", "enabled": False, "updated_at": t0}])
+    fix_row = bday_rows("fix-off")[0]
+    db.automation_queue.insert_one({"id": "fq", "tenant_id": "fix-off", "automation_id": fix_row["id"], "customer_id": "x",
+                                    "due_at": now, "ctx": {}, "created_at": now})
+    check("it runs at start-up (the mark is already there)", db.automation_meta.find_one({"_id": "birthday_card_off_v1"}))
+    db.automation_meta.delete_one({"_id": "birthday_card_off_v1"})
+    res = AU.honour_old_birthday_off()
+    check("off on the Carte after the last change: paused", bday_rows("fix-off")[0]["status"] == "paused")
+    check("its queue goes with it", db.automation_queue.count_documents({"id": "fq"}) == 0)
+    check("switched on in Automatisations AFTER the Carte's off: the later choice stays", bday_rows("fix-later")[0]["status"] == "active")
+    check("the Carte on: untouched", bday_rows("fix-on")[0]["status"] == "active")
+    check("not migrated yet: no row made", bday_rows("fix-unmigrated") == [])
+    check("it names the shops it paused, for an undo", res["tenants"] == ["fix-off"])
+    check("the row says who paused it, for an undo", bday_rows("fix-off")[0].get("paused_by") == "birthday_card_off_v1")
+    check("the mark keeps the list", db.automation_meta.find_one({"_id": "birthday_card_off_v1"})["tenants"] == ["fix-off"])
+    db.automations.update_many({"tenant_id": "fix-off", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    res = AU.honour_old_birthday_off()
+    check("once only: the owner's switching back on later stays", bday_rows("fix-off")[0]["status"] == "active"
+          and res.get("already") is True)
+    check("a second start does not wipe the list", db.automation_meta.find_one({"_id": "birthday_card_off_v1"})["tenants"] == ["fix-off"])
+    db.automation_meta.delete_one({"_id": "birthday_card_off_v1"})
+    os.environ["VERCEL_ENV"] = "preview"
+    db.automations.update_many({"tenant_id": "fix-off", "scenario": "birthday"}, {"$set": {"status": "active", "updated_at": t0}})
+    res = AU.honour_old_birthday_off()
+    check("a Vercel preview (it reads the live database) writes nothing", res.get("skipped") is True
+          and bday_rows("fix-off")[0]["status"] == "active"
+          and not db.automation_meta.find_one({"_id": "birthday_card_off_v1"}))
+    del os.environ["VERCEL_ENV"]
+
+    class Down:
+        def __getattr__(self, name):
+            raise pymongo.errors.ServerSelectionTimeoutError("down")
+    keep = AU._db
+    AU._db = Down()
+    try:
+        AU.honour_at_start()
+        check("Mongo down at start-up: the module still loads", True)
+    except Exception:
+        check("Mongo down at start-up: the module still loads", False)
+    AU._db = keep
+
+    print("\n12. A closed establishment hands its switch to nobody")
+    shop("closing", branches=[{"id": "c-a", "name": "A", "status": "closed"}, {"id": "c-b", "name": "B", "status": "active"},
+                              {"id": "c-c", "name": "C", "status": "active"}])
+    base = AU.new_doc("closing", "birthday")
+    db.automations.insert_many([
+        {**base, "id": "cl-a", "status": "active", "store_ids": ["c-a"]},
+        {**base, "id": "cl-b", "status": "paused", "store_ids": ["c-b"]},
+        {**base, "id": "cl-c", "status": "paused", "store_ids": ["c-c"]},
+        {**AU.new_doc("closing", "inactive"), "id": "cl-new", "status": "paused", "store_ids": None}])
+    db.automation_meta.update_one({"tenant_id": "closing"}, {"$set": {"migrated": True}}, upsert=True)
+    AU.split_per_store("closing")
+    on = [x for x in bday_rows("closing") if x["status"] == "active"]
+    check("the closed store's active row is not copied onto the stores that said off", [x["id"] for x in on] == ["cl-a"])
+    check("and no copy of it appears", len(bday_rows("closing")) == 3)
+    person("closing", "cz", branch_id="c-a", home_store_id="c-a")
+    check("a closed store's automation has no switch left to reach: it sends nothing", "cz" not in run())
+    check("and the switch does not read on because of it", AU.scenario_on("closing", "birthday") is False)
+    db.tenants.update_one({"id": "closing", "branches.id": "c-a"}, {"$set": {"branches.$.status": "active"}})
+    check("the store open again: it runs again", "cz" in run())
+
+    print("\n13. The Paramètres page's switches are real too")
+    HS = shop("sett", branches=[])
+    person("sett", "w1", last_visit_date=now - dt.timedelta(days=90))
+    AU.migrate("sett")
+    def st_of(tid, sc):
+        return [x["status"] for x in db.automations.find({"tenant_id": tid, "scenario": sc}, {"_id": 0})]
+    db.automations.update_many({"tenant_id": "sett", "scenario": {"$in": ["birthday", "inactive", "near_reward"]}}, {"$set": {"status": "active"}})
+    cfg = http("GET", "/api/owner/auto-campaigns/config", HS).json()
+    check("on: the three boxes read on", cfg["birthday_enabled"] and cfg["inactive_enabled"] and cfg["almost_there_enabled"])
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_switch": False, "inactive_switch": False, "almost_there_switch": False})
+    check("unticked: birthday, relance and récompense proche are paused",
+          st_of("sett", "birthday") == ["paused"] and st_of("sett", "inactive") == ["paused"] and st_of("sett", "near_reward") == ["paused"])
+    cfg = http("GET", "/api/owner/auto-campaigns/config", HS).json()
+    check("and the boxes read off", not (cfg["birthday_enabled"] or cfg["inactive_enabled"] or cfg["almost_there_enabled"]))
+    check("and nobody hears", "w1" not in run())
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_enabled": True, "inactive_enabled": True, "birthday_title": "Titre"})
+    check("an old page's reading turns nothing on", st_of("sett", "birthday") == ["paused"] and st_of("sett", "inactive") == ["paused"])
+    check("its text is still saved", http("GET", "/api/owner/auto-campaigns/config", HS).json()["birthday_title"] == "Titre")
+    db.automations.update_many({"tenant_id": "sett", "scenario": "inactive"}, {"$set": {"status": "active"}})
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"inactive_enabled": False})
+    check("but an old page's off is the owner's off", st_of("sett", "inactive") == ["paused"])
+    http("PUT", "/api/owner/auto-campaigns/config", HS, json={"birthday_switch": True})
+    check("ticked again: birthday alone comes back", st_of("sett", "birthday") == ["active"] and st_of("sett", "inactive") == ["paused"])
+
+    print("\n14. « Send now » and the old lots obey the same switch")
+    HR = shop("runs")
+    c = person("runs", "x1", last_visit_date=now - dt.timedelta(days=90))
+    AU.migrate("runs")
+    MR = {"Authorization": "Bearer " + auth.create_access_token({"sub": "m@runs.fr", "role": "manager", "tenant_id": "runs"})}
+    db.users.insert_one({"email": "m@runs.fr", "role": "manager", "tenant_id": "runs"})
+    db.automations.update_many({"tenant_id": "runs"}, {"$set": {"status": "paused"}})     # (récompense proche starts on)
+    said = lambda: db.auto_campaign_log.count_documents({"tenant_id": "runs"})     # noqa: E731
+    r = http("POST", "/api/owner/auto-campaigns/run-birthdays", HR).json()
+    check("automation off: « Send now » sends nothing", r.get("reason") == "disabled" and said() == 0)
+    check("and credits no points", db.customers.find_one({"id": "x1"})["points"] == 0)
+    r = http("POST", "/api/owner/auto-campaigns/run-inactive", HR).json()
+    check("the relance's button too", r.get("reason") == "disabled" and said() == 0)
+    r = http("POST", "/api/owner/auto-campaigns/run-almost-there", HR).json()
+    check("the récompense proche's too", r.get("reason") == "disabled" and said() == 0)
+    db.pending_auto_runs.insert_one({"id": "lot1", "tenant_id": "runs", "kind": "birthday", "title": "t", "body_template": "b",
+                                     "recipients": [{"customer_id": "x1", "name": "X", "first_name": "X"}], "status": "pending"})
+    r = http("POST", "/api/owner/auto-campaigns/pending/lot1/approve", HR)
+    check("an old lot can't be approved while it is off", r.status_code == 409 and said() == 0
+          and db.pending_auto_runs.find_one({"id": "lot1"})["status"] == "pending")
+    db.automations.update_many({"tenant_id": "runs", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    check("a manager can't send", http("POST", "/api/owner/auto-campaigns/run-birthdays", MR).status_code == 403 and said() == 0)
+    r = http("POST", "/api/owner/auto-campaigns/run-birthdays", HR).json()
+    check("on: the owner's button works", r.get("sent") == 1 and said() == 1)
+    r = http("POST", "/api/owner/auto-campaigns/pending/lot1/approve", HR)
+    check("and the lot too", r.status_code == 200)
+
+    from features import push_wallet as PWL
+    PWL._seed("runs")
+    legacy = db.push_scenarios.find_one({"tenant_id": "runs", "builtin": "birthday"}, {"_id": 0})
+    pushed.clear()
+    r = http("POST", f"/api/owner/push-wallet/scenarios/{legacy['id']}/run", HR)
+    check("the old engine's « run » is closed once a shop moved on", r.status_code == 409 and pushed == [])
+    db.push_wallet_pending.insert_one({"id": "pl", "tenant_id": "runs", "scenario_id": legacy["id"], "status": "pending", "store_id": None,
+                                       "customer_ids": ["x1"]})
+    r = http("POST", "/api/owner/push-wallet/pending/pl/approve", HR)
+    check("and its lots", r.status_code == 409 and pushed == [])
+
+    # several stores: the button reaches only the clients of a store whose automation is on
+    HM = shop("mbtn", branches=[{"id": "b-a", "name": "A", "status": "active"}, {"id": "b-b", "name": "B", "status": "active"}])
+    person("mbtn", "ba", branch_id="b-a", home_store_id="b-a", last_visit_date=now - dt.timedelta(days=90))
+    person("mbtn", "bb", branch_id="b-b", home_store_id="b-b", last_visit_date=now - dt.timedelta(days=90))
+    AU.migrate("mbtn")
+    AU.split_per_store("mbtn")
+    db.automations.update_many({"tenant_id": "mbtn"}, {"$set": {"status": "paused"}})
+    db.automations.update_many({"tenant_id": "mbtn", "scenario": {"$in": ["birthday", "inactive"]}, "store_ids": ["b-a"]}, {"$set": {"status": "active"}})
+    HMA = {**HM, "X-FidClic-Store": "b-a"}
+    told = lambda: sorted(x["customer_id"] for x in db.auto_campaign_log.find({"tenant_id": "mbtn"}))     # noqa: E731
+    http("POST", "/api/owner/auto-campaigns/run-birthdays", HMA)
+    check("« Send now » from store A: only A's client", told() == ["ba"])
+    check("B's client gets no points either", db.customers.find_one({"id": "bb"})["points"] == 0)
+    http("POST", "/api/owner/auto-campaigns/run-inactive", HMA)
+    check("the relance's button too", told() in (["ba"], ["ba", "ba"]))
+    db.auto_campaign_log.delete_many({"tenant_id": "mbtn"})
+    db.pending_auto_runs.insert_one({"id": "lot2", "tenant_id": "mbtn", "kind": "birthday", "title": "t", "body_template": "b", "status": "pending",
+                                     "recipients": [{"customer_id": "ba", "name": "A", "first_name": "A"}, {"customer_id": "bb", "name": "B", "first_name": "B"}]})
+    http("POST", "/api/owner/auto-campaigns/pending/lot2/approve", HMA)
+    check("an old lot too", told() == ["ba"])
+    db.customers.update_one({"id": "ba"}, {"$set": {"paused_at": now}})
+    db.auto_campaign_log.delete_many({"tenant_id": "mbtn"})
+    http("POST", "/api/owner/auto-campaigns/run-birthdays", HMA)
+    check("a client the business paused is not reached by the button", told() == [])
+    db.customers.update_one({"id": "ba"}, {"$unset": {"paused_at": ""}})
+    # already greeted today by the automation: the button does not say it again, nor give the points twice
+    shop("twice")
+    tw = person("twice", "tw")
+    AU.migrate("twice")
+    H_tw = {"Authorization": "Bearer " + auth.create_access_token({"sub": "o@twice.fr", "role": "business_owner", "tenant_id": "twice"})}
+    db.automations.update_many({"tenant_id": "twice", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    AU._deliver("twice", bday_rows("twice")[0], tw, {"event": "date"}, now)
+    r = http("POST", "/api/owner/auto-campaigns/run-birthdays", H_tw).json()
+    check("greeted today by the automation: the button sends nothing more", r.get("sent") == 0
+          and db.customers.find_one({"id": "tw"})["points"] == 0)
+
+    db.push_scenarios.delete_many({"tenant_id": "unmig"})
+    HU = shop("unmig")
+    person("unmig", "um")
+    PWL._seed("unmig")
+    old_row = db.push_scenarios.find_one({"tenant_id": "unmig", "builtin": "birthday"}, {"_id": 0})
+    db.push_scenarios.update_one({"id": old_row["id"]}, {"$set": {"enabled": False}})
+    pushed.clear()
+    r = http("POST", f"/api/owner/push-wallet/scenarios/{old_row['id']}/run", HU)
+    check("a shop not moved on yet: an old scenario that is off can't be fired", r.status_code == 409 and pushed == [])
+
+    print("\n15. Saving the paliers does not announce with « palier » off")
+    from features import loyalty_card as LC
+    shop("tiers", branches=[{"id": "t-a", "name": "A", "status": "active"}, {"id": "t-b", "name": "B", "status": "active"}])
+    person("tiers", "ta", visits=60, tier="bronze", branch_id="t-a", home_store_id="t-a")
+    person("tiers", "tb", visits=60, tier="bronze", branch_id="t-b", home_store_id="t-b")
+    AU.migrate("tiers")
+    AU.split_per_store("tiers")
+    pushed.clear()
+    moved = LC.recompute_tiers("tiers")
+    check("off: the clients still move up", moved["up"] == 2 and db.customers.find_one({"id": "ta"})["tier"] != "bronze")
+    check("but hear nothing", pushed == [])
+    db.customers.update_many({"tenant_id": "tiers"}, {"$set": {"tier": "bronze", "tier_best": "bronze"}})
+    db.automations.update_one({"tenant_id": "tiers", "scenario": "tier_up", "store_ids": ["t-a"]}, {"$set": {"status": "active"}})
+    pushed.clear()
+    LC.recompute_tiers("tiers")
+    check("on in store A only: A's client hears, B's does not", [p["cid"] for p in pushed] == ["ta"])
+
+    print("\n16. The welcome box in Paramètres")
+    HW = shop("wel")
+    c = person("wel", "wl", wallet_added_at=now)
+    AU.migrate("wel")
+    db.automations.update_many({"tenant_id": "wel", "scenario": "welcome"}, {"$set": {"status": "active"}})
+    r = http("GET", "/api/owner/earn-rules", HW).json()
+    check("the automation sends: the box can say so", r["automation_on"] is True)
+    check("the bonus itself is another thing, still off", r["enabled"] is False)
+    r = http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False})
+    check("a save that flips nothing leaves the automation", r.status_code == 200 and st_of("wel", "welcome") == ["active"])
+    r = http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False, "welcome_switch": False})
+    check("unticked: the automation stops", r.status_code == 200 and st_of("wel", "welcome") == ["paused"])
+    check("and the box reads off", http("GET", "/api/owner/earn-rules", HW).json()["automation_on"] is False)
+    check("and the card added says nothing", not AU.wallet_added("wel", c, "apple"))
+    http("PUT", "/api/owner/earn-rules", HW, json={"enabled": True, "welcome_bonus_message": "Bonjour", "welcome_switch": True})
+    check("ticked: it comes back, like every other box", st_of("wel", "welcome") == ["active"])
+    # an old page knows no `welcome_switch`: going from on to off is still the owner's off
+    http("PUT", "/api/owner/earn-rules", HW, json={"enabled": False})
+    check("an old page's real untick still stops it", st_of("wel", "welcome") == ["paused"])
+    # the owner switched the bonus off, the Bienvenue automation goes on later: a plain save must not give the points back
+    HW2 = shop("wel2")
+    AU.migrate("wel2")
+    db.earn_rules.insert_one({"tenant_id": "wel2", "enabled": False, "welcome_bonus_points": 50})
+    db.automations.update_many({"tenant_id": "wel2", "scenario": "welcome"}, {"$set": {"status": "active"}})
+    body = http("GET", "/api/owner/earn-rules", HW2).json()
+    http("PUT", "/api/owner/earn-rules", HW2, json=body)
+    from features.welcome_bonus import welcome_state
+    check("saving unchanged does not give back a bonus the owner switched off", welcome_state("wel2")["active"] is False)
+    check("nor stop the automation", st_of("wel2", "welcome") == ["active"])
+
+    print("\n17. The start-up step reads every old switch, and finishes what it started")
+    t1 = dt.datetime(2026, 10, 20, tzinfo=UTC)
+    for tid in ("old-a", "old-b", "old-c", "old-d"):
+        shop(tid)
+        AU.migrate(tid)
+        db.automations.update_many({"tenant_id": tid, "scenario": {"$in": ["birthday", "inactive", "near_reward", "welcome"]}},
+                                   {"$set": {"status": "active", "updated_at": t1}})
+    later_off = t1 + dt.timedelta(days=2)
+    db.auto_campaign_config.insert_one({"tenant_id": "old-a", "birthday_enabled": False, "inactive_enabled": True,
+                                        "almost_there_enabled": False, "updated_at": later_off})
+    db.auto_campaign_config.insert_one({"tenant_id": "old-b", "birthday_enabled": False, "updated_at": t1 - dt.timedelta(days=2)})
+    db.earn_rules.insert_one({"tenant_id": "old-c", "enabled": False, "updated_at": later_off})
+    db.earn_rules.insert_one({"tenant_id": "old-d", "enabled": True, "updated_at": later_off})
+    db.automation_meta.delete_one({"_id": AU.BIRTHDAY_FIX_MARK})
+    AU.honour_old_birthday_off()
+    check("Paramètres off: birthday and récompense proche paused, the relance left on",
+          st_of("old-a", "birthday") == ["paused"] and st_of("old-a", "near_reward") == ["paused"] and st_of("old-a", "inactive") == ["active"])
+    check("an owner's later choice in Automatisations stays", st_of("old-b", "birthday") == ["active"])
+    db.automation_meta.delete_one({"_id": AU.BIRTHDAY_FIX_MARK})
+    db.automations.insert_one({**AU.new_doc("old-a", "custom"), "id": "old-cust", "status": "active", "updated_at": t1,
+                               "trigger": {"type": "date", "date_kind": "birthday"}})
+    AU.honour_old_birthday_off()
+    check("a « Personnalisée » on the birthday goes with it, as with the switch",
+          db.automations.find_one({"id": "old-cust"})["status"] == "paused")
+    check("the welcome box off: paused", st_of("old-c", "welcome") == ["paused"])
+    check("the welcome box on: untouched", st_of("old-d", "welcome") == ["active"])
+
+    db.automation_meta.delete_one({"_id": AU.BIRTHDAY_FIX_MARK})
+    db.push_scenarios.delete_many({"enabled": False})
+    db.auto_campaign_config.delete_many({})
+    db.earn_rules.delete_many({"enabled": False})
+    for i in range(2):
+        shop(f"crash{i}")
+        AU.migrate(f"crash{i}")
+        db.automations.update_many({"tenant_id": f"crash{i}", "scenario": "birthday"}, {"$set": {"status": "active", "updated_at": t1}})
+    db.push_scenarios.insert_many([{"id": f"cr{i}", "tenant_id": f"crash{i}", "builtin": "birthday", "enabled": False, "updated_at": later_off} for i in range(2)])
+    real_cancel = AU._cancel_waiting
+    def boom(aid):
+        real_cancel(aid)
+        raise RuntimeError("killed")
+    AU._cancel_waiting = boom
+    AU.honour_at_start()
+    AU._cancel_waiting = real_cancel
+    check("interrupted half way: one done", sorted(st_of("crash0", "birthday") + st_of("crash1", "birthday")) == ["active", "paused"])
+    AU.honour_at_start()
+    check("the next start finishes it", st_of("crash0", "birthday") == ["paused"] and st_of("crash1", "birthday") == ["paused"])
+    check("and the list has both", {"crash0", "crash1"} <= set(db.automation_meta.find_one({"_id": AU.BIRTHDAY_FIX_MARK})["tenants"]))
+
+    print("\n18. A message held before this fix, in a shop with several stores")
+    H18 = shop("hold2", branches=[{"id": "h-a", "name": "A", "status": "active"}, {"id": "h-b", "name": "B", "status": "active"}])
+    person("hold2", "ha", branch_id="h-a", home_store_id="h-a")
+    person("hold2", "hb", branch_id="h-b", home_store_id="h-b")
+    AU.migrate("hold2")
+    AU.split_per_store("hold2")
+    db.automations.update_one({"tenant_id": "hold2", "scenario": "birthday", "store_ids": ["h-b"]}, {"$set": {"status": "active"}})
+    waiting("q-a", "hold2", "ha", "birthday")
+    waiting("q-b", "hold2", "hb", "birthday")
+    pushed.clear()
+    SR.drain(now)
+    check("A off, B on: only B's client hears", [p["cid"] for p in pushed] == ["hb"])
+
+    print(f"\n{passed} passed, {failed} failed")
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

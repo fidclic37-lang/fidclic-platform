@@ -258,6 +258,9 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
     out = {"up": 0, "down": 0, "same": 0}
     quiet: List[str] = []                      # cards to refresh without a word
     live = {"tenant_id": tenant_id, "$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+    # « Nouveau palier » is the Atteinte d'un palier automation's message: off, the
+    # client moves up in silence (user, 2026-11-05)
+    hears = _automations().audience_of(tenant_id, ["tier_up"]) if announce else None
     for c in _db.customers.find(live, {"_id": 0, "id": 1, "name": 1, "tier": 1, "visits": 1, "points": 1,
                                         "total_amount_paid": 1}):
         old = (c.get("tier") or "bronze").lower()
@@ -271,7 +274,7 @@ def recompute_tiers(tenant_id: str, announce: bool = True) -> Dict[str, int]:
         _db.customers.update_one({"id": c["id"]}, {"$set": {"tier": new, "previous_tier": old,
                                                             "tier_best": new,
                                                             "tier_recomputed_at": _now(), "updated_at": _now()}})
-        if not (up and announce):
+        if not (up and announce) or (hears is not None and c["id"] not in hears):
             quiet.append(c["id"])
             continue
         if up and announce:
@@ -327,7 +330,8 @@ class CardSettings(BaseModel):
     show_qr: Optional[bool] = None
     show_message: Optional[bool] = None
     wallet_enabled: Optional[bool] = None
-    birthday_notification: Optional[bool] = None
+    birthday_notification: Optional[bool] = None   # an old page's reading: ignored
+    birthday_switch: Optional[bool] = None         # the owner flipped « Notification anniversaire »
     # ── advanced: the knobs Apple and Google actually expose ──────────────
     code_type: Optional[str] = None              # qr | barcode | pdf417 | aztec | any PKBarcodeFormat…
     code_fallback: Optional[str] = None          # the format iOS 26 and earlier read
@@ -414,6 +418,13 @@ def _multi_person(tenant: Dict[str, Any], tpl: Dict[str, Any]) -> Dict[str, Any]
     return MP.settings(tenant, tpl)
 
 
+def _automations():
+    from features import automations as AU
+    if AU._db is None:
+        AU.init(_db)
+    return AU
+
+
 @router.get("/api/owner/card/settings")
 def get_card_settings(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
     tid = token_data.tenant_id
@@ -456,8 +467,7 @@ def get_card_settings(token_data: TokenData = Depends(require_role(READERS, part
             "wallet_enabled": tpl.get("wallet_enabled") is not False,
             # The birthday message is the Automatisations page's "Anniversaire"
             # scenario — the one the daily run actually sends.
-            "birthday_notification": bool((_db.push_scenarios.find_one({"tenant_id": tid, "builtin": "birthday"})
-                                           or {"enabled": True}).get("enabled")),
+            "birthday_notification": _automations().birthday_on(tid, SC.store_for(tid)),
         },
         "advanced": {
             "code_type": tpl.get("code_type") or "qr",
@@ -645,18 +655,19 @@ def put_card_settings(body: CardSettings,
         payload["tagline"] = (payload["welcome_text"] or "").strip()
 
     # The toggle switches the Automatisations page's "Anniversaire" scenario
-    # (it used to write a collection nothing read).
-    birthday = payload.pop("birthday_notification", None)
+    # of this establishment (user, 2026-11-05: it wrote `push_scenarios`, which
+    # nothing has read since 2026-10-11, so off changed nothing — and its seed
+    # later switched the old defaults on at the shop's first scan).
+    # An old page, still open or cached, sends its old reading with every save:
+    # it must not turn anything on, so only `birthday_switch` does. This page
+    # never sends the old field, so an off in it is an old page's owner saying off.
+    old_page = payload.pop("birthday_notification", None)
+    birthday = payload.pop("birthday_switch", None)
+    if birthday is None and old_page is False:
+        birthday = False
     if birthday is not None:
-        try:
-            from features import push_wallet as _PW
-            if _PW._db is None:
-                _PW.init(_db)
-            _PW._seed(tid)
-        except Exception:
-            pass
-        _db.push_scenarios.update_one({"tenant_id": tid, "builtin": "birthday"},
-                                      {"$set": {"enabled": bool(birthday), "updated_at": _now()}})
+        from features import store_cards as SC
+        _automations().set_birthday(token_data, bool(birthday), SC.store_for(tid))
 
     if (payload.get("reward_description") or "").strip():
         # Saved from this page, where the merchant sees it: the reward is now

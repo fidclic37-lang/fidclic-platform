@@ -36,11 +36,13 @@ const AutoCampaignsCard = () => {
   // PushNotificationPreviewModal state — confirm-before-send for every auto run
   const [confirmFor, setConfirmFor] = useState(null);  // { which, count, title, body }
   const [businessName, setBusinessName] = useState('Votre commerce');
+  const [loaded, setLoaded] = useState(null);          // the boxes as the server read them
 
   const load = async () => {
     try {
       const res = await api.get('/owner/auto-campaigns/config');
       setCfg(res.data);
+      setLoaded(res.data);
     } catch (e) { console.error('auto-campaigns load failed', e); }
     // Get business name for the preview modal
     try {
@@ -53,7 +55,15 @@ const AutoCampaignsCard = () => {
   const save = async () => {
     setSaving(true);
     try {
-      await api.put('/owner/auto-campaigns/config', cfg);
+      // the boxes pause or start real automations: sent only when flipped
+      const flips = {};
+      ['birthday', 'inactive', 'almost_there'].forEach((k) => {
+        if (cfg[`${k}_enabled`] !== loaded[`${k}_enabled`]) flips[`${k}_switch`] = cfg[`${k}_enabled`];
+      });
+      const { birthday_enabled, inactive_enabled, almost_there_enabled, ...text } = cfg;
+      const res = await api.put('/owner/auto-campaigns/config', { ...text, ...flips });
+      setCfg(res.data);
+      setLoaded(res.data);
       setSavedAt(new Date());
     } catch (e) {
       alert('Failed to save: ' + (e?.response?.data?.detail || e.message));
@@ -242,7 +252,7 @@ const AutoCampaignsCard = () => {
       </Section>
 
       <div className="flex items-center gap-3 mt-6">
-        <button type="button" onClick={save} disabled={saving}
+        <button type="button" onClick={save} disabled={saving || !loaded}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white font-semibold disabled:opacity-50"
           style={{ background: C_PS.terracotta }}>
           <Save size={14} /> {saving ? 'Saving…' : 'Save configuration'}
