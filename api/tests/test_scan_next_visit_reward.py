@@ -177,6 +177,24 @@ def main():
     out = MA.create_visit(MA.VisitIn(customer=c["id"], amount=5, external_id="ext-1"), caller)
     check("POST /api/v1/visits names it", out["next_visit_reward"]["count"] == 1)
 
+    print("\n7b. Several stores: the client's own card, whichever till reads it")
+    Hg = shop("grp", programme="stamps", reward_threshold_stamps=5, visits_per_stamp=1,
+              )
+    db.tenants.update_one({"id": "grp"}, {"$set": {"branches": [{"id": "g-a", "name": "A", "status": "active"}, {"id": "g-b", "name": "B", "status": "active"}]}})
+    db["card_templates"].insert_one({"tenant_id": "grp", "store_id": "g-b", "programme": "stamps", "reward_threshold_stamps": 2,
+                                     "visits_per_stamp": 1, "reward_description": "Thé offert"})
+    c = client("grp", branch_id="g-b", home_store_id="g-b", visits=1)
+    HgA = {**Hg, "X-FidClic-Store": "g-a"}
+    r = http("GET", f"/api/owner/scan/card?barcode={c['barcode_id']}", HgA).json()
+    check("read at store A's till: its own store's reward, how many short", r["reward_ahead"] and r["reward_ahead"]["title"] == "Thé offert" and r["reward_ahead"]["need_visits"] == 1)
+    d = http("POST", "/api/owner/scan", HgA, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "g-a"}).json()
+    check("scanned at store A: its own store's card fills, and says so", d["next_visit_reward"] and d["next_visit_reward"]["title"] == "Thé offert")
+    r = http("GET", f"/api/owner/scan/card?barcode={c['barcode_id']}", HgA).json()
+    row = next((a for a in r["applicables"] if a["kind"] == "card"), None)
+    check("the next visit at A: that very reward is on the list", row and row["title"] == "Thé offert" and row["available"])
+    d = http("POST", "/api/owner/scan", HgA, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "g-a", "apply": "card"}).json()
+    check("and it is handed over", d["applied"]["ok"] is True)
+
     print("\n8. Said = the next scan hands it over; not said = it refuses. A long walk on every card")
     cards = {
         "w1": dict(programme="stamps", reward_threshold_stamps=1, visits_per_stamp=1),

@@ -274,6 +274,10 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
         # said as soon as the card is read, not after the whole visit is typed
         # (QA R7: the till identified a deleted client, the final save refused)
         raise HTTPException(status_code=410, detail=core.DELETED_CARD_MSG)
+    # the client's own store's card, as the scan reads it: at another store's till
+    # the list named that till's reward, and the scan then counted the client's own
+    from features import store_cards as SC
+    SC.set_for_customer(cust)
     tpl = _db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
 
