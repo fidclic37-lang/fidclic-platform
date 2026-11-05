@@ -327,7 +327,8 @@ class CardSettings(BaseModel):
     show_qr: Optional[bool] = None
     show_message: Optional[bool] = None
     wallet_enabled: Optional[bool] = None
-    birthday_notification: Optional[bool] = None
+    birthday_notification: Optional[bool] = None   # an old page's reading: ignored
+    birthday_switch: Optional[bool] = None         # the owner flipped « Notification anniversaire »
     # ── advanced: the knobs Apple and Google actually expose ──────────────
     code_type: Optional[str] = None              # qr | barcode | pdf417 | aztec | any PKBarcodeFormat…
     code_fallback: Optional[str] = None          # the format iOS 26 and earlier read
@@ -654,10 +655,13 @@ def put_card_settings(body: CardSettings,
     # of this establishment (user, 2026-11-05: it wrote `push_scenarios`, which
     # nothing has read since 2026-10-11, so off changed nothing — and its seed
     # later switched the old defaults on at the shop's first scan).
-    birthday = payload.pop("birthday_notification", None)
+    # An old page, still open or cached, sends its old reading with every save:
+    # it must not turn anything on, so only `birthday_switch` counts.
+    payload.pop("birthday_notification", None)
+    birthday = payload.pop("birthday_switch", None)
     if birthday is not None:
         from features import store_cards as SC
-        _automations().set_birthday(tid, bool(birthday), SC.store_for(tid))
+        _automations().set_birthday(token_data, bool(birthday), SC.store_for(tid))
 
     if (payload.get("reward_description") or "").strip():
         # Saved from this page, where the merchant sees it: the reward is now

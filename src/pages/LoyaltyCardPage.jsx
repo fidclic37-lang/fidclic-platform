@@ -732,7 +732,8 @@ export default function LoyaltyCardPage() {
         ...toggles,
         // sent only when the owner flipped it: it pauses or starts real automations,
         // so another page's save must never put it back
-        birthday_notification: toggles.birthday_notification === data?.toggles?.birthday_notification
+        birthday_notification: undefined,
+        birthday_switch: toggles.birthday_notification === data?.toggles?.birthday_notification
           ? undefined : toggles.birthday_notification,
         show_qr: true, wallet_enabled: true,
         ...(advanced || {}),

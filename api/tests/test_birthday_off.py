@@ -99,7 +99,7 @@ def main():
     db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "active"}})
     check("before: the switch reads on when the automation is on",
           http("GET", "/api/owner/card/settings", H).json()["toggles"]["birthday_notification"] is True)
-    r = http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": False})
+    r = http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": False})
     check("the owner's save goes through", r.status_code == 200)
     check("off on the Carte pauses the automation itself",
           [x["status"] for x in bday_rows("cafe")] == ["paused"])
@@ -108,13 +108,13 @@ def main():
           next(x for x in http("GET", "/api/owner/automations", H).json()["rows"] if x["scenario"] == "birthday")["status"] == "paused")
     check("and NOBODY gets the birthday message", run() == [])
     check("nothing logged either", db.automation_log.count_documents({"tenant_id": "cafe"}) == 0)
-    r = http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": True})
+    r = http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": True})
     check("on again: the automation runs", [x["status"] for x in bday_rows("cafe")] == ["active"])
     check("everyone with a birthday gets it", sorted(run()) == ["a1", "a2"])
     check("never twice", run() == [])
     stamp = dt.datetime(2026, 1, 1, tzinfo=UTC)
     db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"updated_at": stamp}})
-    http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": True})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": True})
     check("a save that does not change it touches nothing",
           AU._aware(bday_rows("cafe")[0]["updated_at"]) == stamp)
     http("PUT", "/api/owner/card/settings", H, json={"card_name": "Ma carte"})
@@ -126,6 +126,11 @@ def main():
     forget_sent()
     check("and it sends nothing", run() == [])
     check("the switch never writes to the old collection", db.push_scenarios.count_documents({"tenant_id": "cafe"}) == 0)
+    # a tab or a phone still on the old page sends its old reading with every save
+    db.automations.update_many({"tenant_id": "cafe", "scenario": "birthday"}, {"$set": {"status": "paused"}})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": True})
+    check("the old page's field turns nothing on", bday_rows("cafe")[0]["status"] == "paused")
+    check("and is not written on the card", "birthday_notification" not in db.card_templates.find_one({"tenant_id": "cafe"}))
 
     print("\n2. Several birthday automations, and a « Personnalisée » on the birthday")
     H2 = shop("multi")
@@ -138,12 +143,12 @@ def main():
                                "trigger": {"type": "date", "date_kind": "birthday", "repeat": "yearly"}})
     db.automations.insert_one({**first, "id": "other-cust", "scenario": "custom", "status": "active", "name": "Soldes",
                                "trigger": {"type": "date", "date_kind": "fixed", "date": "2026-12-25"}})
-    http("PUT", "/api/owner/card/settings", H2, json={"birthday_notification": False})
+    http("PUT", "/api/owner/card/settings", H2, json={"birthday_switch": False})
     st = {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "multi"}, {"_id": 0})}
     check("off pauses every birthday automation", st[first["id"]] == "paused" and st["bday-2"] == "paused")
     check("the « Personnalisée » on the birthday too", st["bday-cust"] == "paused")
     check("a « Personnalisée » on another date stays on", st["other-cust"] == "active")
-    http("PUT", "/api/owner/card/settings", H2, json={"birthday_notification": True})
+    http("PUT", "/api/owner/card/settings", H2, json={"birthday_switch": True})
     st = {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "multi", "scenario": "birthday"}, {"_id": 0})}
     check("on switches ONE back on, not all of them", sorted(st.values()) == ["active", "paused"])
 
@@ -152,9 +157,9 @@ def main():
     db.automations.delete_many({"tenant_id": "deleted", "scenario": "birthday"})
     check("no birthday automation at all: the switch reads off",
           http("GET", "/api/owner/card/settings", H3).json()["toggles"]["birthday_notification"] is False)
-    http("PUT", "/api/owner/card/settings", H3, json={"birthday_notification": False})
+    http("PUT", "/api/owner/card/settings", H3, json={"birthday_switch": False})
     check("off changes nothing and makes no row", bday_rows("deleted") == [])
-    http("PUT", "/api/owner/card/settings", H3, json={"birthday_notification": True})
+    http("PUT", "/api/owner/card/settings", H3, json={"birthday_switch": True})
     check("on makes one, active", [x["status"] for x in bday_rows("deleted")] == ["active"])
 
     print("\n3. Each establishment has its own switch")
@@ -166,7 +171,7 @@ def main():
     db.automations.update_many({"tenant_id": "group", "scenario": "birthday"}, {"$set": {"status": "active"}})
     HA = {**H4, "X-FidClic-Store": "s-a"}
     HB = {**H4, "X-FidClic-Store": "s-b"}
-    http("PUT", "/api/owner/card/settings", HA, json={"birthday_notification": False})
+    http("PUT", "/api/owner/card/settings", HA, json={"birthday_switch": False})
     st = {x["store_ids"][0]: x["status"] for x in bday_rows("group")}
     check("off in A pauses A's automation only", st == {"s-a": "paused", "s-b": "active"})
     check("A reads off, B reads on",
@@ -248,7 +253,7 @@ def main():
     db.automations.update_one({"id": row["id"]}, {"$set": {"status": "active"}})
     db.automation_queue.insert_one({"id": "qq", "tenant_id": "queue", "automation_id": row["id"], "customer_id": "q1",
                                     "due_at": now - dt.timedelta(minutes=1), "ctx": {"event": "date"}, "created_at": now})
-    http("PUT", "/api/owner/card/settings", H6, json={"birthday_notification": False})
+    http("PUT", "/api/owner/card/settings", H6, json={"birthday_switch": False})
     check("the Carte's off empties its queue", db.automation_queue.count_documents({"automation_id": row["id"]}) == 0)
 
     print("\n7. A message a limit held back does not go after the off")
@@ -274,6 +279,13 @@ def main():
     pushed.clear()
     SR.drain(later)
     check("the next day's run does not send it", pushed == [])
+    check("what never went is not on record as sent", db.automation_log.count_documents({"tenant_id": "held", "customer_id": "h1"}) == 0
+          and db.push_notifications.count_documents({"tenant_id": "held", "customer_id": "h1"}) == 0)
+    http("POST", f"/api/owner/automations/{row['id']}/status", H7, json={"status": "active"})
+    check("on again: the client whose message was cancelled still gets it", "h1" in run())
+    db.automation_log.delete_many({"tenant_id": "held"})
+    db.send_counter.delete_many({"tenant_id": "held"})
+    db.automations.update_one({"id": row["id"]}, {"$set": {"status": "paused"}})
 
     def waiting(mid, tid, cid, kind, **kw):
         db.deferred_messages.insert_one({"id": mid, "tenant_id": tid, "customer_id": cid, "title": "t", "body": "b", "kind": kind,
@@ -338,7 +350,7 @@ def main():
     check("no old row written", db.push_scenarios.count_documents({"tenant_id": "ins"}) == 0)
     view = http("GET", "/api/owner/auto-messages", H8).json()["birthday"]
     check("the settings view reads it too", view["enabled"] is True and view["id"] == bday_rows("ins")[0]["id"])
-    http("PUT", "/api/owner/card/settings", H8, json={"birthday_notification": False})
+    http("PUT", "/api/owner/card/settings", H8, json={"birthday_switch": False})
     check("off: Insights goes back to not done", IP._birthday_on("ins") is False)
     check("and the settings view too", http("GET", "/api/owner/auto-messages", H8).json()["birthday"]["enabled"] is False)
 
@@ -348,16 +360,45 @@ def main():
     db.automations.update_many({"tenant_id": "rival", "scenario": "birthday"}, {"$set": {"status": "active"}})
     MGR = {"Authorization": "Bearer " + auth.create_access_token({"sub": "m@rival.fr", "role": "manager", "tenant_id": "rival"})}
     db.users.insert_one({"email": "m@rival.fr", "role": "manager", "tenant_id": "rival"})
-    check("no token: refused", http("PUT", "/api/owner/card/settings", {}, json={"birthday_notification": False}).status_code == 401)
-    check("a manager: refused", http("PUT", "/api/owner/card/settings", MGR, json={"birthday_notification": False}).status_code == 403)
+    check("no token: refused", http("PUT", "/api/owner/card/settings", {}, json={"birthday_switch": False}).status_code == 401)
+    check("a manager: refused", http("PUT", "/api/owner/card/settings", MGR, json={"birthday_switch": False}).status_code == 403)
     check("and nothing changed", bday_rows("rival")[0]["status"] == "active")
     before = {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "rival"}, {"_id": 0})}
-    http("PUT", "/api/owner/card/settings", H, json={"birthday_notification": False})
-    http("PUT", "/api/owner/card/settings", {**H, "X-FidClic-Store": "s-b"}, json={"birthday_notification": False})
+    http("PUT", "/api/owner/card/settings", H, json={"birthday_switch": False})
+    http("PUT", "/api/owner/card/settings", {**H, "X-FidClic-Store": "s-b"}, json={"birthday_switch": False})
     check("another shop's owner, even naming another shop's store, changes nothing here",
           before == {x["id"]: x["status"] for x in db.automations.find({"tenant_id": "rival"}, {"_id": 0})})
     check("nor in the shop whose store was named", {x["store_ids"][0]: x["status"] for x in bday_rows("group")}["s-b"] == "active")
-    check("an unknown value is refused", http("PUT", "/api/owner/card/settings", H9, json={"birthday_notification": "maybe"}).status_code == 422)
+    check("an unknown value is refused", http("PUT", "/api/owner/card/settings", H9, json={"birthday_switch": "maybe"}).status_code == 422)
+    check("a Mongo operator is refused", http("PUT", "/api/owner/card/settings", H9, json={"birthday_switch": {"$ne": 1}}).status_code == 422)
+    check("still on after those", bday_rows("rival")[0]["status"] == "active")
+    def team(tid, email, role, **kw):
+        db.users.insert_one({"email": email, "role": role, "tenant_id": tid, **kw})
+        return {"Authorization": "Bearer " + auth.create_access_token({"sub": email, "role": role, "tenant_id": tid})}
+    tk = team("rival", "staff@rival.fr", "staff")
+    check("staff: refused on the Carte", http("PUT", "/api/owner/card/settings", tk, json={"birthday_switch": False}).status_code == 403)
+    tk = team("rival", "admin@rival.fr", "administrateur")
+    real_may = AU._may
+    AU._may = lambda token, page, level="edit": False if page == "automations" else real_may(token, page, level)
+    r = http("PUT", "/api/owner/card/settings", tk, json={"birthday_switch": False})
+    AU._may = real_may
+    check("may edit the Carte but not the Automatisations: refused", r.status_code == 403 and bday_rows("rival")[0]["status"] == "active")
+    check("with that right, an administrateur may", http("PUT", "/api/owner/card/settings", tk, json={"birthday_switch": False}).status_code == 200
+          and bday_rows("rival")[0]["status"] == "paused")
+    db.automations.update_many({"tenant_id": "rival", "scenario": "birthday"}, {"$set": {"status": "active"}})
+    for sid in ("s-a", "s-b"):
+        db.automations.update_many({"tenant_id": "group", "scenario": "birthday", "store_ids": [sid]}, {"$set": {"status": "active"}})
+    part = team("group", "part@group.fr", "administrateur", branch_ids=["s-a"])
+    r = http("PUT", "/api/owner/card/settings", {**part, "X-FidClic-Store": "s-b"}, json={"birthday_switch": False})
+    check("an administrateur of store A cannot switch store B", r.status_code == 403
+          and {x["store_ids"][0]: x["status"] for x in bday_rows("group")}["s-b"] == "active")
+    r = http("PUT", "/api/owner/card/settings", part, json={"birthday_switch": False})
+    check("nor every store by naming none", r.status_code == 403
+          and {x["store_ids"][0]: x["status"] for x in bday_rows("group")} == {"s-a": "active", "s-b": "active"})
+    check("« Activer » as a manager: refused", http("POST", "/api/owner/insights/actions/birthday/activate", MGR).status_code == 403)
+    check("an unknown store in the header stays inside this shop",
+          http("PUT", "/api/owner/card/settings", {**H9, "X-FidClic-Store": "no-such"}, json={"card_name": "x"}).status_code == 200
+          and bday_rows("rival")[0]["status"] == "active")
 
     print("\n11. Shops whose Carte switch was already off get it honoured, once")
     t0 = dt.datetime(2026, 10, 20, tzinfo=UTC)
@@ -383,10 +424,33 @@ def main():
     check("the Carte on: untouched", bday_rows("fix-on")[0]["status"] == "active")
     check("not migrated yet: no row made", bday_rows("fix-unmigrated") == [])
     check("it names the shops it paused, for an undo", res["tenants"] == ["fix-off"])
+    check("the row says who paused it, for an undo", bday_rows("fix-off")[0].get("paused_by") == "birthday_card_off_v1")
+    check("the mark keeps the list", db.automation_meta.find_one({"_id": "birthday_card_off_v1"})["tenants"] == ["fix-off"])
     db.automations.update_many({"tenant_id": "fix-off", "scenario": "birthday"}, {"$set": {"status": "active"}})
     res = AU.honour_old_birthday_off()
     check("once only: the owner's switching back on later stays", bday_rows("fix-off")[0]["status"] == "active"
           and res.get("already") is True)
+    check("a second start does not wipe the list", db.automation_meta.find_one({"_id": "birthday_card_off_v1"})["tenants"] == ["fix-off"])
+    db.automation_meta.delete_one({"_id": "birthday_card_off_v1"})
+    os.environ["VERCEL_ENV"] = "preview"
+    db.automations.update_many({"tenant_id": "fix-off", "scenario": "birthday"}, {"$set": {"status": "active", "updated_at": t0}})
+    res = AU.honour_old_birthday_off()
+    check("a Vercel preview (it reads the live database) writes nothing", res.get("skipped") is True
+          and bday_rows("fix-off")[0]["status"] == "active"
+          and not db.automation_meta.find_one({"_id": "birthday_card_off_v1"}))
+    del os.environ["VERCEL_ENV"]
+
+    class Down:
+        def __getattr__(self, name):
+            raise pymongo.errors.ServerSelectionTimeoutError("down")
+    keep = AU._db
+    AU._db = Down()
+    try:
+        AU.honour_at_start()
+        check("Mongo down at start-up: the module still loads", True)
+    except Exception:
+        check("Mongo down at start-up: the module still loads", False)
+    AU._db = keep
 
     print("\n12. A closed establishment hands its switch to nobody")
     shop("closing", branches=[{"id": "c-a", "name": "A", "status": "closed"}, {"id": "c-b", "name": "B", "status": "active"},
@@ -402,6 +466,10 @@ def main():
     on = [x for x in bday_rows("closing") if x["status"] == "active"]
     check("the closed store's active row is not copied onto the stores that said off", [x["id"] for x in on] == ["cl-a"])
     check("and no copy of it appears", len(bday_rows("closing")) == 3)
+    person("closing", "cz", branch_id="c-a", home_store_id="c-a")
+    check("a closed store's automation has no switch left to reach: it sends nothing", "cz" not in run())
+    db.tenants.update_one({"id": "closing", "branches.id": "c-a"}, {"$set": {"branches.$.status": "active"}})
+    check("the store open again: it runs again", "cz" in run())
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

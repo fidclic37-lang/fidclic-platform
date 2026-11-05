@@ -54,7 +54,7 @@ test.describe('the Carte switch stops the birthday automation', () => {
     await expect(isOn(sw)).toHaveClass(/bg-\[#2F6BFF\]/, { timeout: 20_000 });
     await sw.click();
     const off = await save(page);
-    expect(off.birthday_notification).toBe(false);
+    expect(off.birthday_switch).toBe(false);
     await expect.poll(async () => (await birthdayRow(request, SH)).status, { timeout: 15_000 }).toBe('paused');
 
     // the Automatisations page shows the same switch, off
@@ -66,7 +66,7 @@ test.describe('the Carte switch stops the birthday automation', () => {
     await expect(isOn(sw)).toHaveClass(/bg-\[#CBD5E1\]/, { timeout: 20_000 });
     await page.getByRole('button', { name: /Afficher le message sur la carte/ }).click();
     const other = await save(page);
-    expect('birthday_notification' in other).toBe(false);
+    expect('birthday_switch' in other).toBe(false);
     expect((await birthdayRow(request, SH)).status).toBe('paused');
     await page.waitForLoadState('networkidle');
     await page.getByRole('button', { name: /Afficher le message sur la carte/ }).click();
@@ -76,7 +76,7 @@ test.describe('the Carte switch stops the birthday automation', () => {
     await page.waitForLoadState('networkidle');
     await sw.click();
     const back = await save(page);
-    expect(back.birthday_notification).toBe(true);
+    expect(back.birthday_switch).toBe(true);
     await expect.poll(async () => (await birthdayRow(request, SH)).status, { timeout: 15_000 }).toBe('active');
 
     // leave the demo shop as it should be: off

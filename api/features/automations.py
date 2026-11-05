@@ -80,7 +80,7 @@ def init(db):
         _db.automations.create_index([("tenant_id", 1), ("scenario", 1)])
     except Exception:
         pass
-    honour_old_birthday_off()
+    honour_at_start()
 
 
 def _now() -> datetime:
@@ -878,9 +878,18 @@ def ended(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
         return False
 
 
+def _stores_closed(row: Dict[str, Any]) -> bool:
+    ids = set(row.get("store_ids") or [])
+    if not ids:
+        return False
+    t = _db.tenants.find_one({"id": row.get("tenant_id")}, {"_id": 0, "branches": 1}) or {}
+    return ids <= {b.get("id") for b in t.get("branches") or [] if b.get("status") == "closed"}
+
+
 def running(row: Dict[str, Any], at: Optional[datetime] = None) -> bool:
-    """Active and inside its period (not « Terminée », already started)."""
-    if row.get("status") != "active" or ended(row, at):
+    """Active and inside its period (not « Terminée », already started), and
+    not a closed establishment's: its page and its switch can't be reached."""
+    if row.get("status") != "active" or ended(row, at) or _stores_closed(row):
         return False
     return _valid_on(row.get("schedule") or {}, _loc(at or _now(), row.get("schedule")).date())
 
@@ -3010,8 +3019,21 @@ def _cancel_waiting(aid: str) -> None:
     """Off means off: what this automation had on its way does not go, neither
     what waits for its window nor what a sending limit held back."""
     _db.automation_queue.delete_many({"automation_id": aid})
-    _db.deferred_messages.update_many({"automation_id": aid, "status": "waiting"},
-                                      {"$set": {"status": "dropped", "dropped_why": "automation_off"}})
+    held = _db.deferred_messages.distinct("customer_id", {"automation_id": aid, "status": "waiting"})
+    if held:
+        _db.deferred_messages.update_many({"automation_id": aid, "status": "waiting"},
+                                          {"$set": {"status": "dropped", "dropped_why": "automation_off"}})
+        forget_held(aid, held)
+
+
+def forget_held(aid: str, customer_ids: List[str]) -> None:
+    """A held message that will never go is not on record as said: on again,
+    these clients are still due it, and their card doesn't show it."""
+    q = {"automation_id": aid, "customer_id": {"$in": customer_ids}}
+    logs = _db.automation_log.distinct("id", {**q, "status": "deferred"})
+    if logs:
+        _db.automation_log.delete_many({"id": {"$in": logs}})
+        _db.push_notifications.delete_many({**q, "log_id": {"$in": logs}})
 
 
 # ---------------------------------------------------------------------------
@@ -3038,9 +3060,14 @@ def birthday_view(tid: str, store: Optional[str] = None) -> Dict[str, Any]:
     return {"id": row.get("id"), "enabled": birthday_on(tid, store), "title": msg.get("title") or "", "body": msg.get("body") or ""}
 
 
-def set_birthday(tid: str, on: bool, store: Optional[str] = None) -> bool:
+def set_birthday(token: TokenData, on: bool, store: Optional[str] = None) -> bool:
     """Off: every birthday automation here stops, what waits with it. On: one
-    goes back on (none set up: one is made). Already so: nothing is touched."""
+    goes back on (none set up: one is made). Already so: nothing is touched.
+    The doors differ (the Carte, Insights); the right is the Automatisations'."""
+    tid = token.tenant_id
+    own = _own_stores(token)                       # None: every establishment
+    if not _may(token, "automations") or (own is not None and store not in own):
+        raise HTTPException(status_code=403, detail="Seuls le propriétaire et les administrateurs modifient les automatisations.")
     migrate(tid)
     split_per_store(tid)
     rows = _birthday_rows(tid, store)
@@ -3066,16 +3093,32 @@ def set_birthday(tid: str, on: bool, store: Optional[str] = None) -> bool:
     return True
 
 
+def honour_at_start() -> None:
+    """Never fatal: a start that fails here must not lose this module's routes."""
+    try:
+        honour_old_birthday_off()
+    except Exception as exc:                       # noqa: BLE001
+        print(f"automations: old birthday switches not read ({exc})", flush=True)
+
+
+BIRTHDAY_FIX_MARK = "birthday_card_off_v1"
+
+
 def honour_old_birthday_off() -> Dict[str, Any]:
     """Once: a shop whose Carte switch reads off while its automation kept
     sending. Off wins unless the automation was changed after it (a later
     choice on the Automatisations page). Only ever stops messages; the shops
-    are kept in the mark, for an undo."""
-    key = "birthday_card_off_v1"
-    done = _db.automation_meta.find_one({"_id": key})
-    if done:
-        return {"already": True, "tenants": done.get("tenants") or []}
+    are kept in the mark and `paused_by` on the row, for an undo. The old
+    switch's date is its last card save, so a shop that switched it on in
+    Automatisations and then saved its card with the Carte still off is paused
+    too: the Carte said off, and off is the error that costs nothing."""
+    key = BIRTHDAY_FIX_MARK
+    if os.environ.get("VERCEL_ENV") == "preview":  # a preview reads the live database: looking only
+        return {"skipped": True, "tenants": []}
     at, tenants = _now(), []
+    claim = _db.automation_meta.update_one({"_id": key}, {"$setOnInsert": {"at": at, "tenants": []}}, upsert=True)
+    if claim.upserted_id is None:                  # done, or another start is doing it
+        return {"already": True, "tenants": (_db.automation_meta.find_one({"_id": key}) or {}).get("tenants") or []}
     for old in list(_db.push_scenarios.find({"builtin": "birthday", "enabled": False}, {"_id": 0})):
         off = _aware(old.get("updated_at")) or _aware(old.get("created_at"))
         for r in list(_db.automations.find({"tenant_id": old.get("tenant_id"), "scenario": "birthday", "status": "active"},
@@ -3083,11 +3126,11 @@ def honour_old_birthday_off() -> Dict[str, Any]:
             changed = _aware(r.get("updated_at"))
             if off and changed and changed > off:
                 continue
-            _db.automations.update_one({"id": r["id"]}, {"$set": {"status": "paused", "updated_at": at}})
+            _db.automations.update_one({"id": r["id"]}, {"$set": {"status": "paused", "updated_at": at, "paused_by": key}})
             _cancel_waiting(r["id"])
+            _db.automation_meta.update_one({"_id": key}, {"$addToSet": {"tenants": r["tenant_id"]}})
             if r["tenant_id"] not in tenants:
                 tenants.append(r["tenant_id"])
-    _db.automation_meta.update_one({"_id": key}, {"$set": {"at": at, "tenants": tenants}}, upsert=True)
     if tenants:
         print(f"automations: birthday paused for {len(tenants)} shops whose Carte switch was off", flush=True)
     return {"tenants": tenants}

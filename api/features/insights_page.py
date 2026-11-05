@@ -1305,7 +1305,7 @@ def activate(action: str, token_data: TokenData = Depends(require_role(["busines
     if action != "birthday":
         raise HTTPException(status_code=404, detail="Action inconnue")
     from features import store_cards as SC
-    _automations().set_birthday(tid, True, SC.store_for(tid))
+    _automations().set_birthday(token_data, True, SC.store_for(tid))
     return {"action": "birthday", "enabled": True}
 
 

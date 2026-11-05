@@ -208,6 +208,9 @@ def drain(at: Optional[datetime] = None) -> Dict[str, int]:
             continue
         if _switched_off(m, at):
             _db.deferred_messages.update_one({"id": m["id"]}, {"$set": {"status": "dropped", "dropped_why": "automation_off"}})
+            if m.get("automation_id"):
+                from features import automations as AU
+                AU.forget_held(m["automation_id"], [m["customer_id"]])
             out["dropped"] += 1
             continue
         cust = _db.customers.find_one({"id": m["customer_id"], "tenant_id": m["tenant_id"]}, {"_id": 0})
