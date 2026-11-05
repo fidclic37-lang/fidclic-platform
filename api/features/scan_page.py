@@ -189,7 +189,7 @@ def _next_visit_reward(tenant_id: str, cust: Dict[str, Any]) -> Optional[Dict[st
     else:
         need = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1) * max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
         on_card = max(0, visits - int(cust.get("visits_at_last_redemption") or 0))
-        full = 1 if on_card >= need else 0
+        full = on_card // need                     # (a scan under another store's card can leave several on the meter)
         today = today or (full > 0 and on_card - int(cust.get("last_scan_units") or 0) < need)
     return {"title": row["title"], "count": len(rows) + full, "programme": programme, "earned_today": bool(today)}
 

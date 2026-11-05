@@ -244,6 +244,13 @@ def main():
     d = http("POST", "/api/owner/scan", Hb, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "f-b", "apply": "card"}).json()
     check("and the next scan hands it over", d["applied"]["ok"] is True)
 
+    c = client("first")
+    d = http("POST", "/api/owner/scan", Hb, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "f-b", "persons": 3}).json()
+    check("no store yet, 3 people at B whose card is 1 tampon: three, not one", d["next_visit_reward"]["count"] == 3)
+    got = [http("POST", "/api/owner/scan", Hb, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "f-b", "apply": "card"}).json()["applied"]["ok"]
+           for _ in range(3)]
+    check("and the next three visits each hand one over", got == [True, True, True])
+
     Hd = shop("nodesc", programme="stamps", reward_threshold_stamps=1, visits_per_stamp=1, reward_description="")
     c = client("nodesc")
     check("a card that names no reward: not the ladder's top rung", scan(Hd, c)["next_visit_reward"]["title"] == "Récompense fidélité")
