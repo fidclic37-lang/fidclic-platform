@@ -59,6 +59,9 @@ def main():
     WP.notify_customer = lambda cid, message=None, google_notify=None: woken.append((cid, google_notify)) or {}
     WP.notify_tenant = lambda tid, customer_ids=None: woken.extend((c, "quiet") for c in (customer_ids or [])) or {}
 
+    # « Atteinte d'un palier » is on: off, the client moves up in silence (test_birthday_off)
+    db.automations.insert_one({"id": "tu", "tenant_id": "t1", "scenario": "tier_up", "status": "active", "schedule": {},
+                               "trigger": {"condition": "status"}, "store_ids": None})
     db.tenants.insert_one({"id": "t1", "slug": "cafe", "name": "Le Café", "is_active": True,
                            "plan": "vip", "subscription_status": "active"})
     db.users.insert_one({"email": "o@x.fr", "role": "business_owner", "tenant_id": "t1"})
