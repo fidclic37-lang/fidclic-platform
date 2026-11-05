@@ -130,13 +130,11 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
         # visit is about to earn is not known here, so « after_visit » is left
         # to the stamp card, where one visit is always one step.
         price = max(int(tpl.get("reward_points") or 0), 0)
-        if not price:
-            return None
         balance = int(cust.get("points") or 0)
-        if balance < price and waiting == 0:
-            return None
+        if waiting == 0 and (not price or balance < price):
+            return None                            # (a reward already earned is never lost, price or none)
         return {"id": "card", "kind": "card", "tone": "reward", "title": label,
-                "sub": f"{price} points", "discount_type": None, "discount_value": None,
+                "sub": f"{price} points" if price else None, "discount_type": None, "discount_value": None,
                 "available": True, "after_visit": False}
     per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
     size = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1)
@@ -156,8 +154,9 @@ def next_visit_reward(tenant_id: str, customer_id: str) -> Optional[Dict[str, An
     """« Next visit pr reward » (user, 2026-11-05): the card reward the till can
     hand over at this client's next visit, read after today's visit is written.
     The same reading the till's list makes (`_card_reward`), so what is said here
-    is what is offered there. `count`: full cards or balance waiting, of which
-    one goes per visit. `earned_today`: this visit is the one that got there."""
+    is what is offered there; a cagnotte's balance alone is not announced. `count`:
+    full cards or balance waiting, of which one goes per visit. `earned_today`:
+    this visit is the one that got there."""
     from features import store_cards as SC
     cust = _db.customers.find_one({"id": customer_id, "tenant_id": tenant_id}, {"_id": 0})
     if not cust:
@@ -172,20 +171,20 @@ def _next_visit_reward(tenant_id: str, cust: Dict[str, Any]) -> Optional[Dict[st
     customer_id = cust["id"]
     tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
     programme = LC._programme(tpl)
-    if programme == "cashback":                    # a cagnotte: euros to spend, no reward to announce
-        return None
     points = LC._is_points(programme)
     row = _card_reward(cust, tpl, LC.tiers_for(tenant_id), "points" if points else "tampons")
     if not row or not row["available"]:
         return None
     rows = list(_db.rewards_earned.find({"customer_id": customer_id, "status": "pending"},
                                         {"_id": 0, "available_after_visits": 1}))
+    if programme == "cashback" and not rows:       # a cagnotte: euros to spend, no reward to announce
+        return None
     visits = int(cust.get("visits") or 0)
     today = any(r.get("available_after_visits") is not None and int(r["available_after_visits"]) >= visits for r in rows)
     if points:
         price = max(int(tpl.get("reward_points") or 0), 0)
         balance = int(cust.get("points") or 0)
-        full = balance // price if price else 0
+        full = balance // price if price and programme != "cashback" else 0
         today = today or (full > 0 and balance - int(cust.get("points_last_earned") or 0) < price)
     else:
         need = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1) * max(int(tpl.get("visits_per_stamp", 1) or 1), 1)

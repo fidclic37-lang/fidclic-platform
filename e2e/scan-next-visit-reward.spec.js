@@ -22,12 +22,13 @@ async function asOwner(page, request) {
   return { H: { ...H, 'X-FidClic-Store': store || 'all' }, store };
 }
 
-const newClient = (request, H, store) => async () => {
+// a client of THIS store's card: the demo has two stores, and each client reads its own
+const newClient = (request, H, store, programme) => async () => {
   const list = await (await request.get('/api/owner/clients/list?per_page=50', { headers: H })).json();
   for (const c of list.rows || []) {
     if (!c.barcode_id) continue;
     const card = await (await request.get(`/api/owner/scan/card?barcode=${c.barcode_id}`, { headers: H })).json();
-    if (card.reward_ahead) return { card: c.barcode_id, ahead: card.reward_ahead };
+    if (card.reward_ahead?.programme === programme) return { card: c.barcode_id, ahead: card.reward_ahead };
   }
   throw new Error(`no client short of a reward in ${store}`);
 };
@@ -73,7 +74,7 @@ for (const [label, viewport] of [['desktop', { width: 1536, height: 960 }], ['ph
       const { H, store } = await asOwner(page, request);
       const s = await (await request.get('/api/owner/card/settings', { headers: H })).json();
       test.skip((s.programme?.type || 'stamps') !== 'stamps', 'the demo store is not a Tampons card');
-      const { card, ahead } = await newClient(request, H, store)();
+      const { card, ahead } = await newClient(request, H, store, 'stamps')();
       const perStamp = ahead.per_stamp || 1;
       await bringShort(request, H, store, card, 2 * perStamp);
 
@@ -116,7 +117,7 @@ test('points: the till warns before the visit, the receipt says it after', async
   try {
     const r = await put({ programme: 'points_visit', points_per_visit: 10, reward_points: 100000, reward_description: 'Dessert offert' });
     expect(r.status(), await r.text()).toBe(200);
-    const { card } = await newClient(request, H, store)();
+    const { card } = await newClient(request, H, store, 'points_visit')();
     const now = await (await request.get(`/api/owner/scan/card?barcode=${card}`, { headers: H })).json();
     const balance = now.balance.value;
 

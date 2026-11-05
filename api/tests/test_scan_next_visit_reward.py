@@ -141,6 +141,21 @@ def main():
     check("nor with the price the Carte page leaves behind", scan(Hc2, c, amount=124)["next_visit_reward"] is None)
     check("nor before the visit", http("GET", f"/api/owner/scan/card?barcode={c['barcode_id']}", Hc2).json()["reward_ahead"] is None)
 
+    c = client("cb2", visits=3)
+    db.rewards_earned.insert_one({"id": "cb-old", "tenant_id": "cb2", "customer_id": c["id"], "status": "pending", "reward_description": "Café offert",
+                                  "earned_at": server.datetime.now(server.timezone.utc)})
+    d = scan(Hc2, c, amount=1)
+    check("a reward earned before the shop moved to a cagnotte is still said", d["next_visit_reward"] and d["next_visit_reward"]["count"] == 1)
+    check("and handed over", scan(Hc2, c, amount=1, apply="card")["applied"]["ok"] is True)
+
+    c = client("noprice", visits=3)
+    db.rewards_earned.insert_one({"id": "np-old", "tenant_id": "noprice", "customer_id": c["id"], "status": "pending", "reward_description": "Café offert",
+                                  "earned_at": server.datetime.now(server.timezone.utc)})
+    r = http("GET", f"/api/owner/scan/card?barcode={c['barcode_id']}", Hn).json()
+    check("a points card with no price and a reward waiting: on the till's list, never lost", any(a["kind"] == "card" and a["available"] for a in r["applicables"]))
+    d = scan(Hn, c)
+    check("and said", d["next_visit_reward"] and d["next_visit_reward"]["count"] == 1)
+
     print("\n5. A reward waiting from before, several, a paused client, roles, other shops")
     c = client("st", visits=1)
     db.rewards_earned.insert_many([{"id": "old1", "tenant_id": "st", "customer_id": c["id"], "status": "pending", "earned_at": server.datetime.now(server.timezone.utc)},
@@ -181,6 +196,24 @@ def main():
     caller = MA.ApiCaller(tenant_id="st", key_id="k1", key_name="Caisse", scopes=["visits:write"])
     out = MA.create_visit(MA.VisitIn(customer=c["id"], amount=5, external_id="ext-1"), caller)
     check("POST /api/v1/visits names it", out["next_visit_reward"]["count"] == 1)
+    caller_p = MA.ApiCaller(tenant_id="pv", key_id="k2", key_name="Caisse", scopes=["visits:write"])
+    c = client("pv", points=40)
+    out = MA.create_visit(MA.VisitIn(customer=c["id"], amount=5, external_id="ext-2"), caller_p)
+    check("a points card: named, not available yet", out["next_visit_reward"]["count"] == 1 and out["customer"]["reward_available"] is False)
+    try:
+        MA.redeem(MA.RedeemIn(customer=c["id"]), caller_p)
+        check("the same visit can't take it", False)
+    except server.HTTPException as e:
+        check("the same visit can't take it", e.status_code == 409 and e.detail["code"] == "reward_next_visit")
+    out = MA.create_visit(MA.VisitIn(customer=c["id"], amount=5, external_id="ext-3"), caller_p)
+    check("the next visit: available", out["customer"]["reward_available"] is True)
+    check("and the API's redeem hands it over", MA.redeem(MA.RedeemIn(customer=c["id"]), caller_p)["redeemed"] is True)
+    c = client("pv")
+    try:
+        MA.redeem(MA.RedeemIn(customer=c["id"]), caller_p)
+        check("nothing there: refused", False)
+    except server.HTTPException as e:
+        check("nothing there: refused", e.status_code == 409 and e.detail["code"] == "no_reward")
 
     print("\n7b. Several stores: the client's own card, whichever till reads it")
     Hg = shop("grp", programme="stamps", reward_threshold_stamps=5, visits_per_stamp=1,
@@ -224,6 +257,9 @@ def main():
         "w5": dict(programme="points_visit", points_per_visit=10, reward_points=30),
         "w6": dict(programme="points_euro", points_mode="per_euro", points_per_euro=10, reward_points=100),
         "w7": dict(programme="points_visit", points_per_visit=50, reward_points=50),
+        # a cagnotte announces nothing: the till's own offer on it is the user's to decide (F39),
+        # but what IS said must still be true
+        "w8": dict(programme="cashback", cashback_rate=10, reward_points=200),
     }
     rnd = random.Random(20261105)
     wrong, steps, said_n, not_said_n = [], 0, 0, 0
@@ -251,7 +287,7 @@ def main():
                     got = d["applied"]["ok"]
                     if promise is not None and not got:
                         wrong.append((tid, c["id"], _s, "promised, refused", d["applied"]))
-                    if promise is None and got and "paper_stamps" not in body:
+                    if promise is None and got and "paper_stamps" not in body and spec["programme"] != "cashback":
                         wrong.append((tid, c["id"], _s, "not promised, handed over"))
                     said_n += promise is not None
                     not_said_n += promise is None
