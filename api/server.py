@@ -5925,6 +5925,9 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # it filled (one person: 0 or 1)
         "persons": persons,
         "cards_completed": cards_completed,
+        # the reward the next visit can hand over, once this visit and what it
+        # applied are written (user, 2026-11-05)
+        "next_visit_reward": _next_visit_reward_of(token_data.tenant_id, cid),
         "stamps_on_card": stamps_capped // per_stamp_scan,
         "stamps_target": reward_threshold // per_stamp_scan,
         # the filleul's parrainage reward, when this visit validated it
@@ -5940,6 +5943,16 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # customer's own phone: it carries the owner key (services/card_owner)
         "card_key": _card_owner.key_for(cust.get("barcode_id", "")),
     }
+
+
+def _next_visit_reward_of(tenant_id: str, customer_id: str) -> Optional[Dict[str, Any]]:
+    """Never fatal: the visit is written, a line on the receipt must not undo that."""
+    try:
+        from features import scan_page as _SP
+        return _SP.next_visit_reward(tenant_id, customer_id)
+    except Exception as _e:
+        print(f"scan_visit: next visit's reward not read (non-fatal): {_e}")
+        return None
 
 
 def _card_state_of(customer_id: str) -> Dict[str, Any]:

@@ -107,6 +107,13 @@ def _balance(cust: Dict[str, Any], tpl: Dict[str, Any], tenant_id: str) -> Dict[
     }
 
 
+def _reward_label(tpl: Dict[str, Any], tiers: List[Dict[str, Any]]) -> str:
+    """What a full card gives: the card's own reward, as the card and the pass
+    say it, and as a banked one is named. Never the ladder's top rung: a palier's
+    advantage is not what filling the card gives."""
+    return (tpl.get("reward_description") or "").strip() or "Récompense fidélité"
+
+
 def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str, Any]],
                  unit: str) -> Optional[Dict[str, Any]]:
     """The loyalty card's own reward: a full card, or one already waiting.
@@ -117,19 +124,17 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
     (features/scan_page is read-only — server.scan does that part)."""
     from features import loyalty_card as LC
     waiting = _db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
-    label = next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense"
+    label = _reward_label(tpl, tiers)
     if LC._is_points(LC._programme(tpl)):
         # A points card buys its reward with points (2026-10-14). What this
         # visit is about to earn is not known here, so « after_visit » is left
         # to the stamp card, where one visit is always one step.
         price = max(int(tpl.get("reward_points") or 0), 0)
-        if not price:
-            return None
         balance = int(cust.get("points") or 0)
-        if balance < price and waiting == 0:
-            return None
+        if waiting == 0 and (not price or balance < price):
+            return None                            # (a reward already earned is never lost, price or none)
         return {"id": "card", "kind": "card", "tone": "reward", "title": label,
-                "sub": f"{price} points", "discount_type": None, "discount_value": None,
+                "sub": f"{price} points" if price else None, "discount_type": None, "discount_value": None,
                 "available": True, "after_visit": False}
     per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
     size = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1)
@@ -143,6 +148,76 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
             "sub": f"{size} {unit}" if unit != "€" else None,
             "discount_type": None, "discount_value": None,
             "available": bool(now_ok), "after_visit": bool(after_ok)}
+
+
+def next_visit_reward(tenant_id: str, customer_id: str) -> Optional[Dict[str, Any]]:
+    """« Next visit pr reward » (user, 2026-11-05): the card reward the till can
+    hand over at this client's next visit, read after today's visit is written.
+    The same reading the till's list makes (`_card_reward`), so what is said here
+    is what is offered there; a cagnotte's balance alone is not announced. `count`:
+    full cards or balance waiting, of which one goes per visit. `earned_today`:
+    this visit is the one that got there."""
+    from features import store_cards as SC
+    cust = _db.customers.find_one({"id": customer_id, "tenant_id": tenant_id}, {"_id": 0})
+    if not cust:
+        return None
+    # the store this visit may just have given a client who had none
+    with SC.store(tenant_id, cust.get("branch_id") or SC.store_for(tenant_id)):
+        return _next_visit_reward(tenant_id, cust)
+
+
+def _next_visit_reward(tenant_id: str, cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    from features import loyalty_card as LC
+    customer_id = cust["id"]
+    tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+    programme = LC._programme(tpl)
+    points = LC._is_points(programme)
+    row = _card_reward(cust, tpl, LC.tiers_for(tenant_id), "points" if points else "tampons")
+    if not row or not row["available"]:
+        return None
+    rows = list(_db.rewards_earned.find({"customer_id": customer_id, "status": "pending"},
+                                        {"_id": 0, "available_after_visits": 1}))
+    if programme == "cashback" and not rows:       # a cagnotte: euros to spend, no reward to announce
+        return None
+    visits = int(cust.get("visits") or 0)
+    today = any(r.get("available_after_visits") is not None and int(r["available_after_visits"]) >= visits for r in rows)
+    if points:
+        price = max(int(tpl.get("reward_points") or 0), 0)
+        balance = int(cust.get("points") or 0)
+        full = balance // price if price and programme != "cashback" else 0
+        today = today or (full > 0 and balance - int(cust.get("points_last_earned") or 0) < price)
+    else:
+        need = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1) * max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
+        on_card = max(0, visits - int(cust.get("visits_at_last_redemption") or 0))
+        full = on_card // need                     # (a scan under another store's card can leave several on the meter)
+        today = today or (full > 0 and on_card - int(cust.get("last_scan_units") or 0) < need)
+    return {"title": row["title"], "count": len(rows) + full, "programme": programme, "earned_today": bool(today)}
+
+
+def reward_ahead(tenant_id: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """How far this client is from the card's reward, for the till to warn before
+    the visit is written: « Plusieurs personnes », the amount and paper stamps are
+    typed there. None when a reward is already there, or the card has none."""
+    from features import loyalty_card as LC
+    programme = LC._programme(tpl)
+    points = LC._is_points(programme)
+    tiers = LC.tiers_for(tenant_id)
+    row = _card_reward(cust, tpl, tiers, "points" if points else "tampons")
+    if row and row["available"]:
+        return None
+    title = _reward_label(tpl, tiers)
+    if programme == "stamps":
+        per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
+        need = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1) * per
+        on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
+        return {"title": title, "programme": programme, "need_visits": max(0, need - on_card), "per_stamp": per}
+    price = max(int(tpl.get("reward_points") or 0), 0)
+    if programme == "cashback" or not price:
+        return None
+    short = max(0, price - int(cust.get("points") or 0))
+    if programme == "points_euro" or ((tpl.get("points_mode") or "").lower() == "per_euro" and programme != "points_visit"):
+        return {"title": title, "programme": programme, "need_points": short, "per_euro": float(tpl.get("points_per_euro") or 10)}
+    return {"title": title, "programme": programme, "need_points": short, "per_visit": int(tpl.get("points_per_visit", 10) or 10)}
 
 
 def applicables(tenant_id: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -208,6 +283,10 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
         # said as soon as the card is read, not after the whole visit is typed
         # (QA R7: the till identified a deleted client, the final save refused)
         raise HTTPException(status_code=410, detail=core.DELETED_CARD_MSG)
+    # the client's own store's card, as the scan reads it: at another store's till
+    # the list named that till's reward, and the scan then counted the client's own
+    from features import store_cards as SC
+    SC.set_for_customer(cust)
     tpl = _db.card_templates.find_one({"tenant_id": token_data.tenant_id}) or {}
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}, {"_id": 0, "sector": 1, "activity_key": 1}) or {}
 
@@ -225,6 +304,7 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
         },
         "balance": _balance(cust, tpl, token_data.tenant_id),
         "applicables": applicables(token_data.tenant_id, cust, tpl),
+        "reward_ahead": reward_ahead(token_data.tenant_id, cust, tpl),
         "paper": {
             # Room left on the card in hand, and only ever once per client.
             "max": 0 if paper_done else max(0, rule["visits"] - on_card) // rule["per_stamp"],

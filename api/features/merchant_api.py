@@ -157,8 +157,13 @@ def _card_url(barcode: str) -> str:
 
 def _reward_available(c: Dict[str, Any], stamps: int, threshold: int) -> bool:
     import server as core
-    return (stamps - int(c.get("last_scan_units") or 0) >= threshold
-            or _db.rewards_earned.count_documents(core.claimable_query(c)) > 0)
+    from features import loyalty_card as LC
+    tpl = _db.card_templates.find_one({"tenant_id": c["tenant_id"]}) or {}
+    points_prog = LC._is_points(LC._programme(tpl))
+    price = max(int(tpl.get("reward_points") or 0), 0)
+    earned = (core._reward_earned_before(c, threshold, price, True) if points_prog and price
+              else not points_prog and stamps - int(c.get("last_scan_units") or 0) >= threshold)
+    return earned or _db.rewards_earned.count_documents(core.claimable_query(c)) > 0
 
 
 def customer_out(c: Dict[str, Any], threshold: Optional[int] = None) -> Dict[str, Any]:
@@ -319,7 +324,8 @@ def create_visit(body: VisitIn, c: ApiCaller = Depends(writer)):
         _db.visits.update_one({"id": v["id"]}, {"$set": {"source": "api", "external_id": body.external_id, "api_key_id": c.key_id}})
         v.update(source="api", external_id=body.external_id)
     out = {"visit": visit_out(v), "customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})),
-           "tier_upgraded": bool(res.get("tier_upgraded")), "reward_unlocked": bool(res.get("reward_unlocked"))}
+           "tier_upgraded": bool(res.get("tier_upgraded")), "reward_unlocked": bool(res.get("reward_unlocked")),
+           "next_visit_reward": res.get("next_visit_reward")}
     _remember(c.tenant_id, "visit", body.external_id, out)
     return {**out, "duplicate": False}
 
@@ -354,14 +360,13 @@ def redeem(body: RedeemIn, c: ApiCaller = Depends(writer)):
     if hit:
         return {**hit["response"], "duplicate": True}
     cust = _find_customer(c.tenant_id, body.customer)
-    if customer_out(cust)["rewards_pending"] == 0 and not customer_out(cust)["reward_unlocked"]:
-        raise HTTPException(status_code=409, detail={"code": "no_reward", "message": "Ce client n'a pas de récompense disponible."})
+    # server.redeem_reward decides, on any programme (a points card has no `reward_unlocked`)
     try:
         core.redeem_reward(core.RedeemRewardRequest(customer_id=cust["id"], reward_name=body.reward_name, notes="API"), token_data=_as_owner(c))
     except HTTPException as e:
         if e.detail == core.NEXT_VISIT_REFUSAL:
             raise HTTPException(status_code=409, detail={"code": "reward_next_visit", "message": e.detail})
-        if e.status_code == 400:             # another till took it since the check above
+        if e.status_code == 400:             # nothing to hand over, or another till just took it
             raise HTTPException(status_code=409, detail={"code": "no_reward", "message": "Ce client n'a pas de récompense disponible."})
         raise
     out = {"customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})), "redeemed": True}
