@@ -107,6 +107,13 @@ def _balance(cust: Dict[str, Any], tpl: Dict[str, Any], tenant_id: str) -> Dict[
     }
 
 
+def _reward_label(tpl: Dict[str, Any], tiers: List[Dict[str, Any]]) -> str:
+    """What a full card gives: the card's own reward, as the card and the pass
+    say it; the ladder's only for a card that names none."""
+    return ((tpl.get("reward_description") or "").strip()
+            or next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense")
+
+
 def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str, Any]],
                  unit: str) -> Optional[Dict[str, Any]]:
     """The loyalty card's own reward: a full card, or one already waiting.
@@ -117,7 +124,7 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
     (features/scan_page is read-only — server.scan does that part)."""
     from features import loyalty_card as LC
     waiting = _db.rewards_earned.count_documents({"customer_id": cust["id"], "status": "pending"})
-    label = next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense"
+    label = _reward_label(tpl, tiers)
     if LC._is_points(LC._programme(tpl)):
         # A points card buys its reward with points (2026-10-14). What this
         # visit is about to earn is not known here, so « after_visit » is left
@@ -143,6 +150,65 @@ def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str
             "sub": f"{size} {unit}" if unit != "€" else None,
             "discount_type": None, "discount_value": None,
             "available": bool(now_ok), "after_visit": bool(after_ok)}
+
+
+def next_visit_reward(tenant_id: str, customer_id: str) -> Optional[Dict[str, Any]]:
+    """« Next visit pr reward » (user, 2026-11-05): the card reward the till can
+    hand over at this client's next visit, read after today's visit is written.
+    The same reading the till's list makes (`_card_reward`), so what is said here
+    is what is offered there. `count`: full cards or balance waiting, of which
+    one goes per visit. `earned_today`: this visit is the one that got there."""
+    from features import loyalty_card as LC
+    cust = _db.customers.find_one({"id": customer_id, "tenant_id": tenant_id}, {"_id": 0})
+    if not cust:
+        return None
+    tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
+    programme = LC._programme(tpl)
+    points = LC._is_points(programme)
+    row = _card_reward(cust, tpl, LC.tiers_for(tenant_id), "points" if points else "tampons")
+    if not row or not row["available"]:
+        return None
+    rows = list(_db.rewards_earned.find({"customer_id": customer_id, "status": "pending"},
+                                        {"_id": 0, "available_after_visits": 1}))
+    visits = int(cust.get("visits") or 0)
+    today = any(r.get("available_after_visits") is not None and int(r["available_after_visits"]) >= visits for r in rows)
+    if points:
+        price = max(int(tpl.get("reward_points") or 0), 0)
+        balance = int(cust.get("points") or 0)
+        full = balance // price if price else 0
+        today = today or (full > 0 and balance - int(cust.get("points_last_earned") or 0) < price)
+    else:
+        need = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1) * max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
+        on_card = max(0, visits - int(cust.get("visits_at_last_redemption") or 0))
+        full = 1 if on_card >= need else 0
+        today = today or (full > 0 and on_card - int(cust.get("last_scan_units") or 0) < need)
+    return {"title": row["title"], "count": len(rows) + full, "programme": programme, "earned_today": bool(today)}
+
+
+def reward_ahead(tenant_id: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """How far this client is from the card's reward, for the till to warn before
+    the visit is written: « Plusieurs personnes », the amount and paper stamps are
+    typed there. None when a reward is already there, or the card has none."""
+    from features import loyalty_card as LC
+    programme = LC._programme(tpl)
+    points = LC._is_points(programme)
+    tiers = LC.tiers_for(tenant_id)
+    row = _card_reward(cust, tpl, tiers, "points" if points else "tampons")
+    if row and row["available"]:
+        return None
+    title = _reward_label(tpl, tiers)
+    if programme == "stamps":
+        per = max(int(tpl.get("visits_per_stamp", 1) or 1), 1)
+        need = max(int(tpl.get("reward_threshold_stamps", 10) or 10), 1) * per
+        on_card = max(0, int(cust.get("visits") or 0) - int(cust.get("visits_at_last_redemption") or 0))
+        return {"title": title, "programme": programme, "need_visits": max(0, need - on_card), "per_stamp": per}
+    price = max(int(tpl.get("reward_points") or 0), 0)
+    if programme == "cashback" or not price:
+        return None
+    short = max(0, price - int(cust.get("points") or 0))
+    if programme == "points_euro" or ((tpl.get("points_mode") or "").lower() == "per_euro" and programme != "points_visit"):
+        return {"title": title, "programme": programme, "need_points": short, "per_euro": float(tpl.get("points_per_euro") or 10)}
+    return {"title": title, "programme": programme, "need_points": short, "per_visit": int(tpl.get("points_per_visit", 10) or 10)}
 
 
 def applicables(tenant_id: str, cust: Dict[str, Any], tpl: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -225,6 +291,7 @@ def card(barcode: str = Query(..., min_length=2, max_length=64),
         },
         "balance": _balance(cust, tpl, token_data.tenant_id),
         "applicables": applicables(token_data.tenant_id, cust, tpl),
+        "reward_ahead": reward_ahead(token_data.tenant_id, cust, tpl),
         "paper": {
             # Room left on the card in hand, and only ever once per client.
             "max": 0 if paper_done else max(0, rule["visits"] - on_card) // rule["per_stamp"],

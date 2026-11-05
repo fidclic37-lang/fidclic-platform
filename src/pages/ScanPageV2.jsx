@@ -224,6 +224,20 @@ function MultiPerson({ persons, setPersons, max, programme }) {
   );
 }
 
+/* Does the visit typed so far reach the card's reward? The server's numbers (scan/card
+   `reward_ahead`), and the same sums as the scan. A full paper card alone is available
+   at once, so it is not « for the next visit ». */
+function fillsCard(ahead, { persons = 1, paper = 0, amount = 0 } = {}) {
+  if (!ahead) return false;
+  if (ahead.need_visits != null) {
+    const onPaper = paper * (ahead.per_stamp || 1);
+    return onPaper < ahead.need_visits && onPaper + persons >= ahead.need_visits;
+  }
+  if (ahead.per_euro != null) return amount > 0 && Math.round(ahead.per_euro * amount) >= ahead.need_points;
+  if (ahead.per_visit != null) return ahead.per_visit * persons >= ahead.need_points;
+  return false;
+}
+
 function TillReminders({ offers = [], rewards = [], onRedeemed, customerId, branchId }) {
   const [busy, setBusy] = useState('');
   const [done, setDone] = useState({});
@@ -1121,6 +1135,12 @@ const ScanPage = () => {
     return () => { window.removeEventListener('keydown', onKey, true); clearTimeout(timer); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const paperTooMany = paperOn && parseInt(paperStamps || '0', 10) > (card?.paper?.max ?? 0);
+  // this visit, as typed, reaches the reward: for the next visit (user, 2026-11-05)
+  const fillsToday = fillsCard(card?.reward_ahead, {
+    persons,
+    paper: paperOn ? parseInt(paperStamps || '0', 10) || 0 : 0,
+    amount: manual ? parseFloat(amountPaid || '0') || 0 : autoAmount,
+  });
 
   const registerVisit = async () => {
     if (!card) return;
@@ -1351,6 +1371,13 @@ const ScanPage = () => {
               <p className="flex items-center gap-2 text-[16px] font-bold text-[#0B1C3F]">
                 <CheckCircle2 size={18} className="text-[#10B981]" /> Visite enregistrée
               </p>
+              {recorded.data?.next_visit_reward && (
+                <p className="mt-3 flex items-start gap-2 rounded-xl border border-[#FBD38D] bg-[#FFF7E8] px-3.5 py-3 text-[14px] font-semibold text-[#92400E]"
+                   data-testid="next-visit-reward">
+                  <Gift size={17} className="mt-0.5 shrink-0" />
+                  <span className="min-w-0 break-words">À la prochaine visite : {recorded.data.next_visit_reward.title}{recorded.data.next_visit_reward.count > 1 ? ` (${recorded.data.next_visit_reward.count} récompenses, une par visite)` : ''}</span>
+                </p>
+              )}
               <dl className="mt-3 grid gap-x-6 gap-y-2 text-[13.5px] sm:grid-cols-2">
                 <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Montant payé</dt><dd className="font-semibold text-[#0B1C3F]">{money(recorded.amount)}</dd></div>
                 <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Cette visite</dt><dd className="font-semibold text-[#0F7A45]">{
@@ -1535,6 +1562,13 @@ const ScanPage = () => {
               )}
             </dl>
 
+            {fillsToday && !card.applicables.some((a) => a.after_visit) && (
+              <p className="mt-4 flex items-start gap-2 rounded-xl border border-[#FBD38D] bg-[#FFF7E8] px-3.5 py-3 text-[13.5px] font-semibold text-[#92400E]"
+                 data-testid="reward-after-this-visit">
+                <Gift size={16} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 break-words">Cette visite débloque : {card.reward_ahead.title} — disponible à la prochaine visite</span>
+              </p>
+            )}
             <p className="mt-5 text-[14px] font-bold text-[#0B1C3F]">Offre / Récompense</p>
             {card.applicables.length > 0 ? (
               <>
