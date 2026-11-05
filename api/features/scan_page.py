@@ -109,9 +109,9 @@ def _balance(cust: Dict[str, Any], tpl: Dict[str, Any], tenant_id: str) -> Dict[
 
 def _reward_label(tpl: Dict[str, Any], tiers: List[Dict[str, Any]]) -> str:
     """What a full card gives: the card's own reward, as the card and the pass
-    say it; the ladder's only for a card that names none."""
-    return ((tpl.get("reward_description") or "").strip()
-            or next((t["reward"] for t in reversed(tiers) if t.get("reward")), "") or "Récompense")
+    say it, and as a banked one is named. Never the ladder's top rung: a palier's
+    advantage is not what filling the card gives."""
+    return (tpl.get("reward_description") or "").strip() or "Récompense fidélité"
 
 
 def _card_reward(cust: Dict[str, Any], tpl: Dict[str, Any], tiers: List[Dict[str, Any]],
@@ -158,12 +158,22 @@ def next_visit_reward(tenant_id: str, customer_id: str) -> Optional[Dict[str, An
     The same reading the till's list makes (`_card_reward`), so what is said here
     is what is offered there. `count`: full cards or balance waiting, of which
     one goes per visit. `earned_today`: this visit is the one that got there."""
-    from features import loyalty_card as LC
+    from features import store_cards as SC
     cust = _db.customers.find_one({"id": customer_id, "tenant_id": tenant_id}, {"_id": 0})
     if not cust:
         return None
+    # the store this visit may just have given a client who had none
+    with SC.store(tenant_id, cust.get("branch_id") or SC.store_for(tenant_id)):
+        return _next_visit_reward(tenant_id, cust)
+
+
+def _next_visit_reward(tenant_id: str, cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    from features import loyalty_card as LC
+    customer_id = cust["id"]
     tpl = _db.card_templates.find_one({"tenant_id": tenant_id}) or {}
     programme = LC._programme(tpl)
+    if programme == "cashback":                    # a cagnotte: euros to spend, no reward to announce
+        return None
     points = LC._is_points(programme)
     row = _card_reward(cust, tpl, LC.tiers_for(tenant_id), "points" if points else "tampons")
     if not row or not row["available"]:

@@ -135,6 +135,11 @@ def main():
     Hc = shop("cb", programme="cashback", cashback_rate=5)
     c = client("cb")
     check("a cagnotte has no reward to announce", scan(Hc, c, amount=500)["next_visit_reward"] is None)
+    # the Carte page saves a price of 100 on every programme: on a cagnotte that is 1 €, not a reward
+    Hc2 = shop("cb2", programme="cashback", cashback_rate=10, reward_points=100)
+    c = client("cb2")
+    check("nor with the price the Carte page leaves behind", scan(Hc2, c, amount=124)["next_visit_reward"] is None)
+    check("nor before the visit", http("GET", f"/api/owner/scan/card?barcode={c['barcode_id']}", Hc2).json()["reward_ahead"] is None)
 
     print("\n5. A reward waiting from before, several, a paused client, roles, other shops")
     c = client("st", visits=1)
@@ -195,6 +200,21 @@ def main():
     d = http("POST", "/api/owner/scan", HgA, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "g-a", "apply": "card"}).json()
     check("and it is handed over", d["applied"]["ok"] is True)
 
+    # a client with no store yet, first scanned at store B: B's card from now on
+    Hb = shop("first", programme="stamps", reward_threshold_stamps=10, visits_per_stamp=1)
+    db.tenants.update_one({"id": "first"}, {"$set": {"branches": [{"id": "f-a", "name": "A", "status": "active", "is_main": True}, {"id": "f-b", "name": "B", "status": "active"}]}})
+    db["card_templates"].insert_one({"tenant_id": "first", "store_id": "f-b", "programme": "stamps", "reward_threshold_stamps": 1,
+                                     "visits_per_stamp": 1, "reward_description": "Thé offert"})
+    c = client("first")
+    d = http("POST", "/api/owner/scan", Hb, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "f-b"}).json()
+    check("no store yet, first scan at B: B's card is what is said", d["next_visit_reward"] and d["next_visit_reward"]["title"] == "Thé offert")
+    d = http("POST", "/api/owner/scan", Hb, json={"barcode_id": c["barcode_id"], "amount_paid": 5, "branch_id": "f-b", "apply": "card"}).json()
+    check("and the next scan hands it over", d["applied"]["ok"] is True)
+
+    Hd = shop("nodesc", programme="stamps", reward_threshold_stamps=1, visits_per_stamp=1, reward_description="")
+    c = client("nodesc")
+    check("a card that names no reward: not the ladder's top rung", scan(Hd, c)["next_visit_reward"]["title"] == "Récompense fidélité")
+
     print("\n8. Said = the next scan hands it over; not said = it refuses. A long walk on every card")
     cards = {
         "w1": dict(programme="stamps", reward_threshold_stamps=1, visits_per_stamp=1),
@@ -204,7 +224,6 @@ def main():
         "w5": dict(programme="points_visit", points_per_visit=10, reward_points=30),
         "w6": dict(programme="points_euro", points_mode="per_euro", points_per_euro=10, reward_points=100),
         "w7": dict(programme="points_visit", points_per_visit=50, reward_points=50),
-        "w8": dict(programme="cashback", cashback_rate=10, reward_points=200),
     }
     rnd = random.Random(20261105)
     wrong, steps, said_n, not_said_n = [], 0, 0, 0

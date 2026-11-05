@@ -233,7 +233,11 @@ function fillsCard(ahead, { persons = 1, paper = 0, amount = 0 } = {}) {
     const onPaper = paper * (ahead.per_stamp || 1);
     return onPaper < ahead.need_visits && onPaper + persons >= ahead.need_visits;
   }
-  if (ahead.per_euro != null) return amount > 0 && Math.round(ahead.per_euro * amount) >= ahead.need_points;
+  if (ahead.per_euro != null) {
+    const raw = ahead.per_euro * amount;           // the scan's round(): a tie goes to the even number
+    const earned = Math.abs(raw % 1) === 0.5 ? 2 * Math.round(raw / 2) : Math.round(raw);
+    return amount > 0 && earned >= ahead.need_points;
+  }
   if (ahead.per_visit != null) return ahead.per_visit * persons >= ahead.need_points;
   return false;
 }
