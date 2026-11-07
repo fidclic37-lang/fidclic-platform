@@ -43,14 +43,19 @@ test('Coûts IA: the figures, a shop budget raised and given back, the limits', 
   after = await (await request.get('/api/admin/ai/costs', { headers: H })).json();
   expect(after.shops.find((s) => s.tenant_id === shop.tenant_id).custom_limit).toBe(false);
 
-  // the limits: the platform's daily cap
+  // the limits: the platform's daily cap grows with the shops, or is fixed by hand
+  await expect(page.getByTestId('cost-set-cap_mode')).toHaveValue('auto');
+  await expect(page.getByTestId('cost-set-per_shop_eur')).toHaveValue('2');
+  await expect(page.getByTestId('cost-today')).toContainText(/commerces? actifs?/);
+  await page.getByTestId('cost-set-cap_mode').selectOption('fixed');
   await page.getByTestId('cost-set-global_day_eur').fill('30');
   await page.getByTestId('cost-settings-save').click();
   await expect(page.getByText('Limites enregistrées.')).toBeVisible();
   after = await (await request.get('/api/admin/ai/costs', { headers: H })).json();
-  expect(after.settings.global_day_eur).toBe(30);
+  expect(after.settings.cap_mode).toBe('fixed');
+  expect(after.summary.global_day_eur).toBe(30);
   await page.screenshot({ path: 'test-results/ai-costs.png', fullPage: true });
-  await request.put('/api/admin/ai/costs/settings', { headers: H, data: { global_day_eur: before.global_day_eur } });
+  await request.put('/api/admin/ai/costs/settings', { headers: H, data: { cap_mode: 'auto', global_day_eur: before.global_day_eur } });
   expect(errors).toEqual([]);
 });
 

@@ -89,7 +89,8 @@ def main():
             db[c].delete_many({})
         db.platform_settings.delete_many({"key": "ai_meter"})
         # the sections before « Pentest » test one guard at a time: the per-shop day ceiling out of the way
-        db.platform_settings.insert_one({"key": "ai_meter", "shop_day_share": 1.0})
+        # the cap fixed by hand: how it grows with the shops is test_ai_cap's
+        db.platform_settings.insert_one({"key": "ai_meter", "shop_day_eur": 1000.0, "cap_mode": "fixed"})
         # the prices below are Sonnet's; which job goes where is test_ai_routing's
         db.platform_settings.update_one({"key": "ai_routing"}, {"$set": {"routes": {"campaign_ai": "claude-sonnet-5-5", "copilot": "claude-sonnet-5-5"}}}, upsert=True)
         for c in ("ai_blocks", "ai_rate"):
@@ -196,7 +197,7 @@ def main():
     check("raised by the super admin: no longer at its limit", AM.state("t1")["blocked"] is None and ask() == "Bonjour")
     http("PUT", "/api/admin/ai/costs/shops/t1", headers=BOSS, json={"budget_eur": None})
     reset()
-    db.platform_settings.update_one({"key": "ai_meter"}, {"$set": {"key": "ai_meter", "global_day_eur": 1.0}}, upsert=True)
+    db.platform_settings.update_one({"key": "ai_meter"}, {"$set": {"key": "ai_meter", "global_day_eur": 1.0, "cap_mode": "fixed"}}, upsert=True)
     db.ai_spend.update_one({"_id": AM.key_day(None)}, {"$set": {"eur": 0.999}}, upsert=True)
     check("the platform's last call that does not fit: refused", ask("t3") is None)
     check("…the platform counts as paused, one alert", AM.state("t3")["blocked"] == "global"
