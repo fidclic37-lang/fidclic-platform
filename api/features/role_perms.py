@@ -108,6 +108,10 @@ _PREFIX: List[Tuple[str, str]] = [
     ("/api/owner/catalogue", "catalogue"), ("/api/owner/catalog", "catalogue"),
     ("/api/owner/insights", "insights"),
     ("/api/owner/ai/anomaly", "analytics"),          # visit counts: Analyses' figures, not FidClic IA's
+    # the old AI stubs belong to the page whose data they show (pentest #447)
+    ("/api/owner/ai/birthday", "customers"), ("/api/owner/ai/tier-optimizer", "customers"),
+    ("/api/owner/ai/translate/customer-locales", "customers"), ("/api/owner/ai/newsletter", "analytics"),
+    ("/api/owner/ai/suggestions", "insights"),
     ("/api/owner/ai", "ai"), ("/api/owner/ai-query", "ai"), ("/api/owner/copilot", "ai"),
     ("/api/owner/history", "history"),
     ("/api/owner/milestones", "milestones"),
