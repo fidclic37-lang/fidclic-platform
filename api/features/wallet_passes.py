@@ -239,6 +239,46 @@ def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str])
         print(f"wallet: catch-up push not sent ({exc})")
 
 
+# Google tells us about a save only since its callbacks were set (2026-10-10,
+# features/google_wallet_callbacks). A link the card page made is not a save.
+GOOGLE_SAVES_TOLD_SINCE = datetime(2026, 10, 11, tzinfo=timezone.utc)
+
+
+def google_saved(c: Dict[str, Any], obj: Optional[Dict[str, Any]]) -> bool:
+    """Is this card in a Google Wallet? Google confirmed the save (and no removal
+    since); an object made before Google told us counts, as it always did."""
+    added, removed = _aware_dt((c or {}).get("google_added_at")), _aware_dt((c or {}).get("google_removed_at"))
+    if added:
+        return not (removed and removed > added)
+    if removed or not obj:
+        return False
+    made = _aware_dt(obj.get("created_at"))
+    return not made or made < GOOGLE_SAVES_TOLD_SINCE
+
+
+def wallet_link(customer_id: str) -> Dict[str, Any]:
+    """Can a change reach this client's Wallet card? Only through an iPhone that
+    registered, or a card Google saved (user, 2026-11-07: Nathan's card was
+    downloaded, never registered, and stayed at 0 while the till said 6).
+    `reason` when not: removed, downloaded_not_registered, never_added."""
+    c = _db.customers.find_one({"id": customer_id}, {"_id": 0, "barcode_id": 1, "apple_downloaded_at": 1,
+                                                     "wallet_removed_at": 1, "wallet_added_at": 1,
+                                                     "google_added_at": 1, "google_removed_at": 1}) or {}
+    serial = c.get("barcode_id")
+    if serial and _db.pass_registrations.find_one({"serial": serial}, {"_id": 1}):
+        return {"linked": True, "where": "apple", "reason": None}
+    obj = _db.google_wallet_objects.find_one({"serial": serial}, {"_id": 0, "created_at": 1}) if serial else None
+    if google_saved(c, obj):
+        return {"linked": True, "where": "google", "reason": None}
+    if c.get("wallet_removed_at") or c.get("google_removed_at"):
+        reason = "removed"
+    elif c.get("apple_downloaded_at"):
+        reason = "downloaded_not_registered"
+    else:
+        reason = "never_added"
+    return {"linked": False, "where": None, "reason": reason}
+
+
 def apple_state(c: Dict[str, Any], registered: set, google: set, now: Optional[datetime] = None) -> Dict[str, str]:
     """Where this client's card is, in the merchant's words. `registered` /
     `google`: the card numbers registered on an iPhone / held by Google."""
@@ -3149,7 +3189,8 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
     people = [c for c in _db.customers.find({"tenant_id": tid, "barcode_id": {"$exists": True}},
                                              {"_id": 0, "barcode_id": 1, "name": 1, "created_at": 1,
                                               "wallet_removed_at": 1, "apple_downloaded_at": 1,
-                                              "apple_unregistered_fetch_at": 1})
+                                              "apple_unregistered_fetch_at": 1,
+                                              "google_added_at": 1, "google_removed_at": 1})
               if c.get("barcode_id")]
     serials = [c["barcode_id"] for c in people]
     regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
@@ -3164,7 +3205,9 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
             history[key].append(row)
     names = {c["barcode_id"]: c.get("name") for c in people}
     with_pass = {r.get("serial") for r in regs}
-    in_google = {g.get("serial") for g in _db.google_wallet_objects.find({"serial": {"$in": serials}}, {"serial": 1})}
+    objs = {g.get("serial"): g for g in _db.google_wallet_objects.find({"serial": {"$in": serials}},
+                                                                      {"_id": 0, "serial": 1, "created_at": 1})}
+    in_google = {c["barcode_id"] for c in people if google_saved(c, objs.get(c["barcode_id"]))}
     apple_states = {k: 0 for k in APPLE_STATES}
     for c in people:
         apple_states[apple_state(c, with_pass, in_google, now)["key"]] += 1
@@ -3251,7 +3294,8 @@ def client_wallet(customer_id: str, request: Request = None,
     now = datetime.now(timezone.utc)
     regs = list(_db.pass_registrations.find({"serial": serial})) if serial else []
     g = _db.google_wallet_objects.find_one({"serial": serial}, {"_id": 0}) if serial else None
-    state = apple_state(c, {serial} if regs else set(), {serial} if g else set(), now)
+    saved = google_saved(c, g)
+    state = apple_state(c, {serial} if regs else set(), {serial} if saved else set(), now)
     pushes = list(_db.pass_push_log.find({"serial": serial}, {"_id": 0}).sort("sent_at", -1).limit(10)) if serial else []
     events = list(_db.pass_registration_log.find({"serial": serial, "tenant_id": c.get("tenant_id")})
                   .sort([("at", -1), ("_id", -1)]).limit(20)) if serial else []
@@ -3275,7 +3319,8 @@ def client_wallet(customer_id: str, request: Request = None,
             "downloaded_at": _iso_or_none(c.get("apple_downloaded_at")),
             "removed_at": _iso_or_none(c.get("wallet_removed_at")),
         },
-        "google": {"card": bool(g), "last_sync_at": _iso_or_none((g or {}).get("last_sync_at")),
+        # `card`: Google holds the object (a link was made); `saved`: it is in a Google Wallet
+        "google": {"card": bool(g), "saved": saved, "last_sync_at": _iso_or_none((g or {}).get("last_sync_at")),
                    "last_sync_result": (g or {}).get("last_sync_result")},
     }
 
