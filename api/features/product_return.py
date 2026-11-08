@@ -71,6 +71,7 @@ from pydantic import BaseModel
 from auth import require_role, TokenData
 from features import product_actions as PA
 from features import store_scope as S
+from features import warehouse as WH
 
 router = APIRouter(tags=["product_return"])
 _db = None
@@ -258,9 +259,10 @@ def _occasions(tid: str, now: datetime, cat: _Catalog):
     per: Dict[str, Dict[date, Dict[str, Any]]] = defaultdict(dict)
     cov: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
     cov_from = now - timedelta(days=COVERAGE_DAYS)
-    for v in _db.visits.find({"tenant_id": tid, "visit_time": {"$gte": start, "$lte": now}},
-                             {"_id": 0, "customer_id": 1, "visit_time": 1, "amount_paid": 1,
-                              "items": 1, "branch_id": 1}):
+    # the warehouse's copy first, the cluster for what came after it (features/warehouse)
+    for v in WH.find("visits", tid, "visit_time", {"$gte": start, "$lte": now},
+                     {"_id": 0, "customer_id": 1, "visit_time": 1, "amount_paid": 1,
+                      "items": 1, "branch_id": 1}, now=now):
         at = _aware(v.get("visit_time"))
         cid = v.get("customer_id")
         if not at or not cid:
@@ -287,11 +289,12 @@ def _occasions(tid: str, now: datetime, cat: _Catalog):
             occ["amount"] += float(v.get("amount_paid") or 0)
     promo: Set[Tuple[str, date]] = set()
     for coll, field in (("offer_uses", "used_at"), ("rewards_redeemed", "redeemed_at")):
-        for r in _db[coll].find({"tenant_id": tid, field: {"$gte": start}}, {"_id": 0, "customer_id": 1, field: 1}):
+        for r in WH.find(coll, tid, field, {"$gte": start}, {"_id": 0, "customer_id": 1, field: 1}, now=now):
             at = _aware(r.get(field))
             if at and r.get("customer_id"):
                 promo.add((r["customer_id"], paris_day(at)))
-    timelines = {cid: [days[d] for d in sorted(days)] for cid, days in per.items()}
+    # by client id: the same order whichever source handed the rows
+    timelines = {cid: [per[cid][d] for d in sorted(per[cid])] for cid in sorted(per)}
     return timelines, promo, cov
 
 

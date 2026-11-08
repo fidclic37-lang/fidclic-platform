@@ -81,6 +81,7 @@ MODULES = [
     "features.golden_set",             # ~250 known questions on demo shops, graded at 100 % (2026-11-03)           # every IA text and what the owner did with it (2026-11-02)               # every model call billed + the limits (2026-11-01)
     "features.product_actions",        # what to do with it: One-shot → Aimant, new clients (no router)
     "features.product_return",
+    "features.warehouse",              # each shop's history copied at night to the private Blob (2026-11-08)
     # Tableau de bord — the home page's eleven panels, read off one month of
     # visits in a single pass, plus the merchant's monthly revenue goal.
     "features.dashboard_home",
