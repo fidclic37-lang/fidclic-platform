@@ -350,5 +350,8 @@ def apply_retention(at: Optional[datetime] = None) -> Dict[str, int]:
         res = _db.visits.update_many({"tenant_id": tid, "visit_time": {"$lt": vcut}, "customer_id": {"$ne": None}},
                                      {"$set": {"customer_id": None, "anonymised_at": at}})
         out["visits_unlinked"] += res.modified_count
+        if res.modified_count:              # the warehouse's copy still has them linked: rebuilt before any read
+            from features import warehouse as WH
+            WH.mark_dirty(tid, "retention")
         out["tenants"] += 1
     return out

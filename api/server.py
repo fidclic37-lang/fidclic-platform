@@ -6556,13 +6556,17 @@ def _backfill_visits_from_customers(tid: str, branch_ids: list) -> None:
             seen[cid] = bid
     # only the untagged / stale visits — a visit tagged with the store where it
     # was scanned keeps it (multi-store, 2026-10-12)
+    tagged = 0
     for cid, bid in seen.items():
-        db.visits.update_many(
+        tagged += db.visits.update_many(
             {"tenant_id": tid, "customer_id": cid, "$or": [
                 {"branch_id": None}, {"branch_id": {"$exists": False}}, {"branch_id": ""},
                 {"branch_id": {"$nin": list(valid)}}]},
             {"$set": {"branch_id": bid}},
-        )
+        ).modified_count
+    if tagged:                   # old visits changed store: the warehouse's copy is rebuilt before any read
+        from features import warehouse as _WH
+        _WH.mark_dirty(tid, "store_tagging")
 
 
 @app.get("/api/owner/analytics")
@@ -12601,6 +12605,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["client_brain"] = _CB.ensure_all()
     except Exception as e:
         out["failures"].append({"step": "client_brain", "error": str(e)[:120]})
+    try:                         # the warehouse: each shop's history copied at night to the private Blob,
+        from features import warehouse as _WH          # read first by the weekly figures below
+        out["warehouse"] = _WH.due(now)
+    except Exception as e:
+        out["failures"].append({"step": "warehouse", "error": str(e)[:120]})
     try:                         # « Produits qui font revenir »: each shop's figures once a week
         # (queued here, worked by ai_jobs in the brain_journal step below)
         from features import product_return as _PRR
