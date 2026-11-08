@@ -57,7 +57,7 @@ def main() -> int:
         return 2
     cap = float(os.environ.get("GOLDEN_MAX_EUR") or 8)
     server.db.platform_settings.update_one({"key": "ai_meter"}, {"$set": {
-        "global_day_eur": cap, "shop_day_share": 1.0, "user_per_min": 100000,
+        "cap_mode": "fixed", "global_day_eur": cap, "shop_day_eur": cap, "user_per_min": 100000,
         "plan_budgets": {"silver": cap, "gold": cap, "vip": cap, "franchise": cap}}}, upsert=True)
 
     from features import ai_routing
