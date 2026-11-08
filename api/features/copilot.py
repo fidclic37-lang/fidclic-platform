@@ -1464,7 +1464,8 @@ def _with_tools(token_data: TokenData, request, scope, base: str, sources: List[
     (the facts answer instead)."""
     from services import llm
     names = CT.available(token_data, request)
-    system = _SYSTEM + CT.rules_text(names)
+    from features import app_guide as G
+    system = _SYSTEM + "\n" + G.guide_text() + CT.rules_text(names)
     results: List[Dict[str, Any]] = []
 
     def answer_in(raw):                     # a round of tools is not an answer to check
@@ -1590,13 +1591,20 @@ def chat(body: ChatIn, request: Request = None,
         except Exception as exc:
             print(f"copilot: chat model failed ({exc})")
             reply = None
+    how = None
     if not (reply or "").strip():
+        from features import app_guide as G, role_perms as RP
+        hp = G.page_for(message)
+        how = G.how_to(message, RP.may(token_data, hp["key"], "view", request)) if hp else None
+    if how:                                      # « comment… ? / où… ? »: the page, not the figures
+        reply, source = how["reply"], "facts"
+    elif not (reply or "").strip():
         reply, source = _fallback(intents, facts, by_key), "facts"
         if remembered and not view_by:
             reply = f"C'est noté : « {CM.scrub(remembered)} ». Vous le retrouvez dans « Ce que FidClic IA retient ». {reply}"
     if remembered and view_by:
         reply = f"Accès administrateur : rien n'est retenu pour le commerçant. {reply}"
-    actions = _actions(intents, by_key, facts.get("acces_limite") or ())
+    actions = ([how["action"]] if how["action"] else []) if how else _actions(intents, by_key, facts.get("acces_limite") or ())
 
     at = _now()
     who = {"view_by": view_by} if view_by else {}
