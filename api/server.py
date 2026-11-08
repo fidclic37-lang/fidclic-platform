@@ -5912,6 +5912,8 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         # the card still on the phone? (features/card_status) — the receipt
         # offers to give it back when it is not
         "card_state": _card_state_of(cid),
+        # can this scan reach the card in the client's Wallet? (user, 2026-11-07)
+        "wallet_link": _wallet_link_of(cid),
         "cycle_restarted": cycles_completed > 0,
         # stamps moved from a paper card at this scan (0 when none)
         "paper_stamps": paper["stamps"] if paper else 0,
@@ -5952,6 +5954,16 @@ def _next_visit_reward_of(tenant_id: str, customer_id: str) -> Optional[Dict[str
         return _SP.next_visit_reward(tenant_id, customer_id)
     except Exception as _e:
         print(f"scan_visit: next visit's reward not read (non-fatal): {_e}")
+        return None
+
+
+def _wallet_link_of(customer_id: str) -> Optional[Dict[str, Any]]:
+    """Never fatal: the visit is written; a warning on the receipt must not undo that."""
+    try:
+        from features import wallet_passes as _WP
+        return _WP.wallet_link(customer_id)
+    except Exception as _e:
+        print(f"scan_visit: wallet link not read (non-fatal): {_e}")
         return None
 
 

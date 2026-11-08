@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ownerAPI } from '../lib/api';
-import { ScanLine, CheckCircle2, AlertCircle, Euro, Camera, Building2, Gift, BellRing, X, Info, Zap, SwitchCamera, Package, ChevronDown, ChevronLeft, ArrowRight, Stamp, Keyboard, Link2, ImageUp } from 'lucide-react';
+import { ScanLine, CheckCircle2, AlertCircle, Euro, Camera, Building2, Gift, BellRing, X, Info, Zap, SwitchCamera, Package, ChevronDown, ChevronLeft, ArrowRight, Stamp, Keyboard, Link2, ImageUp, QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 // The dashboard's blue palette — every account (owner, manager, employé)
 // works in the same colours.
@@ -79,6 +79,15 @@ export const codeFromBurst = (typed, physical) => {
   }
   const bc = barcodeFrom(typed);
   return bc && bc.length >= 4 ? bc : '';
+};
+
+/* The scan reached the server, not the card in the client's Wallet (user,
+   2026-11-07, Nathan: downloaded, never registered, stuck at 0 while the till said
+   6). Why, in the counter's words — `wallet_link.reason` from the scan. */
+const WALLET_NOT_LINKED = {
+  downloaded_not_registered: "La carte de ce client n'est reliée à aucun téléphone : son Wallet ne se mettra pas à jour.",
+  never_added: "Ce client n'a pas encore ajouté sa carte à un Wallet.",
+  removed: "Ce client a retiré sa carte de son Wallet : elle ne se met plus à jour.",
 };
 
 function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
@@ -1139,6 +1148,7 @@ const ScanPage = () => {
     return () => { window.removeEventListener('keydown', onKey, true); clearTimeout(timer); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const paperTooMany = paperOn && parseInt(paperStamps || '0', 10) > (card?.paper?.max ?? 0);
+  const [readdFor, setReaddFor] = useState(null);   // « Afficher le QR » under a card no phone holds
   // this visit, as typed, reaches the reward: for the next visit (user, 2026-11-05)
   const fillsToday = fillsCard(card?.reward_ahead, {
     persons,
@@ -1381,6 +1391,20 @@ const ScanPage = () => {
                   <Gift size={17} className="mt-0.5 shrink-0" />
                   <span className="min-w-0 break-words">À la prochaine visite : {recorded.data.next_visit_reward.title}{recorded.data.next_visit_reward.count > 1 ? ` (${recorded.data.next_visit_reward.count} récompenses, une par visite)` : ''}</span>
                 </p>
+              )}
+              {recorded.data?.wallet_link && recorded.data.wallet_link.linked === false && (
+                <div className="mt-3 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-3 text-[13.5px] text-[#991B1B]"
+                     data-testid="wallet-not-linked" data-reason={recorded.data.wallet_link.reason}>
+                  <p className="flex items-start gap-2 font-semibold">
+                    <AlertCircle size={17} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 break-words">{WALLET_NOT_LINKED[recorded.data.wallet_link.reason] || WALLET_NOT_LINKED.downloaded_not_registered}</span>
+                  </p>
+                  <p className="mt-1 pl-[25px] text-[12.5px] text-[#B42318]">La visite est bien enregistrée : sa carte est à jour sur sa page, pas dans son Wallet.</p>
+                  <button type="button" onClick={() => setReaddFor(recorded.data.id)}
+                          className="ml-[25px] mt-2.5 inline-flex h-10 items-center gap-2 rounded-xl bg-[#B42318] px-4 text-[13px] font-semibold text-white">
+                    <QrCode size={15} /> Afficher le QR à scanner
+                  </button>
+                </div>
               )}
               <dl className="mt-3 grid gap-x-6 gap-y-2 text-[13.5px] sm:grid-cols-2">
                 <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Montant payé</dt><dd className="font-semibold text-[#0B1C3F]">{money(recorded.amount)}</dd></div>
@@ -1719,6 +1743,7 @@ const ScanPage = () => {
       </details>
       )}
 
+      {readdFor && <CardReaddModal customerId={readdFor} onClose={() => setReaddFor(null)} />}
       {locked && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#0B1C3F]/60 p-4" role="dialog" aria-modal="true">
           <div className="w-full max-w-[320px] rounded-2xl bg-white p-5 text-center">

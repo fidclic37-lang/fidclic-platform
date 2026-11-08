@@ -51,8 +51,11 @@ export default function ClientWallet({ clientId }) {
       <div>
         <span className="inline-flex rounded-md px-2.5 py-1 text-[12.5px] font-semibold" style={{ background: tone.bg, color: tone.fg }}
               data-testid="wallet-state" data-state={a.state.key}>{a.state.label}</span>
-        {d.google.card && a.state.key !== 'google' && (
+        {d.google.saved && a.state.key !== 'google' && (
           <span className="ml-2 inline-flex rounded-md bg-[#EEF4FF] px-2.5 py-1 text-[12.5px] font-semibold text-[#2F6BFF]">Aussi dans Google Wallet</span>
+        )}
+        {d.google.card && !d.google.saved && (
+          <span className="ml-2 inline-flex rounded-md bg-[#F1F5F9] px-2.5 py-1 text-[12.5px] font-semibold text-[#475569]" data-testid="google-link-only">Lien Google Wallet créé, jamais enregistré</span>
         )}
       </div>
 
