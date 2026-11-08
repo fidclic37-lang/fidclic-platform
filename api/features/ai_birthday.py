@@ -17,7 +17,9 @@ Production implementation (estimated 6 hours):
 """
 from __future__ import annotations
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, Request
 from auth import require_role
 
 router = APIRouter(tags=["ai-birthday"])
@@ -30,11 +32,11 @@ def init(db):
 
 
 @router.get("/api/owner/ai/birthday/today")
-def todays_birthdays(token_data=Depends(require_role(["business_owner", "manager"]))):
-    today = datetime.now(timezone.utc)
-    mmdd = today.strftime("%m-%d")
+def todays_birthdays(request: Request, token_data=Depends(require_role(["business_owner", "manager"], partial_ok=True))):
+    from features import store_scope as S
+    mmdd = datetime.now(ZoneInfo("Europe/Paris")).strftime("%m-%d")      # the shop's day, not UTC's
     customers = list(_db.customers.find({
-        "tenant_id": token_data.tenant_id,
+        **S.customer_filter(S.resolve(token_data, request)),             # this store's clients, never a deleted one
         "birthday": mmdd,
     }).limit(200))
     out = []
