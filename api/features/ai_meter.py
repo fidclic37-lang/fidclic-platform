@@ -42,7 +42,7 @@ import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -148,7 +148,22 @@ def _send(url: str, headers: Dict[str, str], body: Dict[str, Any], timeout: floa
 # ---------------------------------------------------------------------------
 # settings, keys, prices
 
-def settings() -> Dict[str, Any]:
+# What one call has already read: within a call each of these is read once
+# (the settings were read 12 times a call, load probe of #447); between two
+# calls nothing is kept, so a change counts on the very next call.
+_MEMO: contextvars.ContextVar = contextvars.ContextVar("ai_meter_memo", default=None)
+
+
+def _memo(key: Any, make):
+    m = _MEMO.get()
+    if m is None:
+        return make()
+    if key not in m:
+        m[key] = make()
+    return m[key]
+
+
+def _load_settings() -> Dict[str, Any]:
     s = {**DEFAULTS, "plan_budgets": dict(DEFAULTS["plan_budgets"])}
     if _db is not None:
         doc = _db.platform_settings.find_one({"key": "ai_meter"}, {"_id": 0}) or {}
@@ -156,6 +171,10 @@ def settings() -> Dict[str, Any]:
             if k in doc and doc[k] is not None:
                 s[k] = {**s[k], **doc[k]} if isinstance(DEFAULTS[k], dict) else doc[k]
     return s
+
+
+def settings() -> Dict[str, Any]:
+    return _memo("settings", _load_settings)
 
 
 def _paris(at: Optional[datetime] = None) -> datetime:
@@ -208,10 +227,15 @@ def out_cap(feature: Optional[str]) -> int:
     return OUT_CAPS.get(feature or "", OUT_CAP)
 
 
+def _tenant(tid: str) -> Dict[str, Any]:
+    return _memo(("tenant", tid), lambda: _db.tenants.find_one(
+        {"id": tid}, {"_id": 0, "plan": 1, "ai_budget_eur": 1, "subscription_status": 1, "name": 1}) or {})
+
+
 def limit_for(tid: Optional[str]) -> float:
     if not tid or _db is None:
         return math.inf
-    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "plan": 1, "ai_budget_eur": 1, "subscription_status": 1}) or {}
+    t = _tenant(tid)
     if t.get("ai_budget_eur") is not None:
         return float(t["ai_budget_eur"])
     s = settings()
@@ -295,8 +319,18 @@ def limit_message(reason: Optional[str] = None) -> str:
 # ---------------------------------------------------------------------------
 # money: reserve, settle, state
 
+def _spend_doc(key: str, fields: Dict[str, int]) -> Dict[str, Any]:
+    """One ai_spend row: from the Coûts IA page's single read when it made one,
+    else the database (a call always reads fresh: it has just written)."""
+    m = _MEMO.get()
+    pre = m.get("spend") if m else None
+    if pre is not None and key in pre:
+        return pre[key]
+    return _db.ai_spend.find_one({"_id": key}, fields) or {}
+
+
 def _spent(key: str) -> float:
-    return float(((_db.ai_spend.find_one({"_id": key}, {"eur": 1}) or {}).get("eur")) or 0.0)
+    return float((_spend_doc(key, {"eur": 1}).get("eur")) or 0.0)
 
 
 def _tag(limit: float) -> int:
@@ -306,7 +340,7 @@ def _tag(limit: float) -> int:
 def _full(key: str, limit: float) -> bool:
     """At its limit: spent it all, or the last call refused no longer fits in
     what is left (small calls stop a hair under the limit — 4,996 € of 5 €)."""
-    doc = _db.ai_spend.find_one({"_id": key}, {"eur": 1, "full": 1}) or {}
+    doc = _spend_doc(key, {"eur": 1, "full": 1})
     spent = float(doc.get("eur") or 0)
     need = (doc.get("full") or {}).get(str(_tag(limit)))
     return spent >= limit or (need is not None and spent + float(need) > limit)
@@ -334,13 +368,15 @@ def _add(key: str, eur: float) -> None:
 def _spike_line(tid: str, limit: float) -> float:
     now = _now()
     days = [key_day(tid, now - timedelta(days=d)) for d in range(1, 15)]
-    past = sum(float(r.get("eur") or 0) for r in _db.ai_spend.find({"_id": {"$in": days}}, {"eur": 1}))
+    pre = (_MEMO.get() or {}).get("spend")
+    past = (sum(float((pre.get(k) or {}).get("eur") or 0) for k in days) if pre is not None and all(k in pre for k in days) else
+            _memo(("past14", tid), lambda: sum(float(r.get("eur") or 0) for r in _db.ai_spend.find({"_id": {"$in": days}}, {"eur": 1}))))
     s = settings()
     return max(float(s["spike_factor"]) * past / 14, float(s["spike_min_share"]) * (limit if limit != math.inf else 0))
 
 
 def _spiking(tid: str, limit: float) -> bool:
-    doc = _db.ai_spend.find_one({"_id": key_day(tid)}, {"eur": 1, "released": 1}) or {}
+    doc = _spend_doc(key_day(tid), {"eur": 1, "released": 1})
     line = _spike_line(tid, limit)
     return not doc.get("released") and line > 0 and float(doc.get("eur") or 0) >= line
 
@@ -481,7 +517,7 @@ def _alerts_after(tid: Optional[str]) -> None:
     if tid:
         limit = limit_for(tid)
         month = _spent(key_month(tid))
-        name = ((_db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1}) or {}).get("name")) or tid
+        name = _tenant(tid).get("name") or tid
         if limit not in (0, math.inf):
             lim_tag = int(round(limit * 100))
             if month >= 0.8 * limit:
@@ -618,9 +654,20 @@ def allow_forced(feature: Optional[str] = None, tenant_id: Any = _UNSET) -> bool
     return True
 
 
-def call(provider: str, model: str, url: str, headers: Dict[str, str], body: Dict[str, Any], *,
-         feature: Optional[str] = None, tenant_id: Any = _UNSET, timeout: float = 45,
-         cache_ttl: int = 0, out_text=None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def call(provider: str, model: str, url: str, headers: Dict[str, str], body: Dict[str, Any], **kw
+         ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Send one model request through the gate (see _call); within it, each
+    setting, the shop and its last 14 days are read once."""
+    tok = _MEMO.set({})
+    try:
+        return _call(provider, model, url, headers, body, **kw)
+    finally:
+        _MEMO.reset(tok)
+
+
+def _call(provider: str, model: str, url: str, headers: Dict[str, str], body: Dict[str, Any], *,
+          feature: Optional[str] = None, tenant_id: Any = _UNSET, timeout: float = 45,
+          cache_ttl: int = 0, out_text=None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Send one model request through the gate. (json, None), or (None, error);
     error == "blocked" when a guard refused it (nothing was sent).
     `out_text(json) -> str` reads the answer, for the estimate when the
@@ -737,6 +784,27 @@ def _round(v: float) -> float:
 
 @router.get("/api/admin/ai/costs")
 def costs(token_data: TokenData = Depends(require_admin("ai"))):
+    """The page reads every shop's spending in one go (it read each shop's rows
+    one by one: 12 database calls a shop, 3 600 for 300 shops)."""
+    tenants = list(_db.tenants.find({"is_active": {"$ne": False}},
+                                    {"_id": 0, "id": 1, "name": 1, "plan": 1, "ai_budget_eur": 1, "subscription_status": 1}))
+    now = _now()
+    keys = [key_day(None)]
+    for t in tenants:
+        keys += [key_month(t["id"]), key_day(t["id"])] + [key_day(t["id"], now - timedelta(days=d)) for d in range(1, 15)]
+    spend: Dict[str, Dict[str, Any]] = {k: {} for k in keys}
+    for i in range(0, len(keys), 5000):
+        for r in _db.ai_spend.find({"_id": {"$in": keys[i:i + 5000]}}, {"eur": 1, "full": 1, "released": 1}):
+            spend[r["_id"]] = r
+    memo: Dict[Any, Any] = {"spend": spend, **{("tenant", t["id"]): t for t in tenants}}
+    tok = _MEMO.set(memo)
+    try:
+        return _costs(tenants)
+    finally:
+        _MEMO.reset(tok)
+
+
+def _costs(tenants: List[Dict[str, Any]]) -> Dict[str, Any]:
     import server as core
     s = settings()
     now = _now()
@@ -762,9 +830,12 @@ def costs(token_data: TokenData = Depends(require_admin("ai"))):
     by_feature = sorted(({**f, "eur": _round(f["eur"])} for f in feats.values()), key=lambda f: -f["eur"])
 
     shops = []
-    for t in _db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0, "id": 1, "name": 1, "plan": 1, "ai_budget_eur": 1}):
+    prices: Dict[Any, float] = {}
+    for t in tenants:
         st = state(t["id"])
-        price = float(core.features_for(t).get("price") or 0)
+        if t.get("plan") not in prices:          # the plan's price, read once per plan, not once per shop
+            prices[t.get("plan")] = float(core.features_for(t).get("price") or 0)
+        price = prices[t.get("plan")]
         month = st["month_eur"]
         shops.append({"tenant_id": t["id"], "name": t.get("name") or t["id"], "plan": t.get("plan"),
                       "month_eur": _round(month), "today_eur": _round(st["today_eur"]),
