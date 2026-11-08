@@ -19,7 +19,7 @@ Production implementation (estimated 6 hours, no LLM needed):
   tier-update step (one of the few places that may want a config read).
 """
 from __future__ import annotations
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from auth import require_role
 
 router = APIRouter(tags=["ai-tier-optimizer"])
@@ -32,28 +32,31 @@ def init(db):
 
 
 @router.get("/api/owner/ai/tier-optimizer/suggestion")
-def suggestion(token_data=Depends(require_role(["business_owner", "manager"]))):
+def suggestion(request: Request, token_data=Depends(require_role(["business_owner", "manager"], partial_ok=True))):
     # TODO: replace with histogram-based percentile binning. Logic outlined
     # in the module docstring.
-    customers = list(_db.customers.find({"tenant_id": token_data.tenant_id}).limit(5000))
+    from features import store_scope as S
+    customers = list(_db.customers.find(S.customer_filter(S.resolve(token_data, request)),
+                                        {"_id": 0, "tier": 1, "visits": 1}).limit(5000))
     total = len(customers)
     counts = {"bronze": 0, "silver": 0, "gold": 0, "vip": 0}
     for c in customers:
-        counts[c.get("tier", "bronze")] = counts.get(c.get("tier", "bronze"), 0) + 1
+        counts[c.get("tier") or "bronze"] = counts.get(c.get("tier") or "bronze", 0) + 1
 
     # Simple stub heuristic: if > 70% are bronze, suggest lowering thresholds.
+    # Only what the shop's own clients say: who the lower thresholds would promote.
     bronze_pct = (counts["bronze"] / total * 100) if total else 0
     suggest = bronze_pct > 70
+    promoted = sum(1 for c in customers if (c.get("tier") or "bronze") == "bronze" and 8 <= int(c.get("visits") or 0) < 10)
     return {
         "stub": True,
         "current_distribution": counts,
         "current_thresholds": {"silver": 10, "gold": 20, "vip": 40},
         "suggested_thresholds": {"silver": 8, "gold": 15, "vip": 35} if suggest else None,
-        "estimated_promotions": 142 if suggest else 0,
-        "estimated_visit_lift_pct": 19 if suggest else 0,
+        "estimated_promotions": promoted if suggest else 0,
+        "estimated_visit_lift_pct": None,
         "headline": (
-            "Lower silver to 8 and gold to 15 — would promote 142 customers and "
-            "lift visit frequency by ~19% based on similar cafés."
-            if suggest else "Your tier distribution is balanced — no change recommended."
+            f"Baisser le palier Silver à 8 visites ferait monter {promoted} client{'s' if promoted > 1 else ''}."
+            if suggest else "La répartition de vos paliers est équilibrée : aucun changement conseillé."
         ),
     }

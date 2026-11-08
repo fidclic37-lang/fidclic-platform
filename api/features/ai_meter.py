@@ -35,13 +35,14 @@ import contextvars
 import hashlib
 import html
 import json
+import re
 import math
 import time
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -58,7 +59,14 @@ _UNSET = object()
 DEFAULTS: Dict[str, Any] = {
     "plan_budgets": {"silver": 5.0, "gold": 10.0, "vip": 25.0, "franchise": 25.0},
     "default_budget": 5.0,          # a plan not in the list
-    "global_day_eur": 20.0,         # 0 = every AI call stopped (the emergency switch)
+    # The platform's day (user, 2026-11-04): grows with the shops — active shops
+    # × per_shop_eur, between cap_min_eur and cap_max_eur. « fixed »: global_day_eur
+    # by hand (0 = every AI call stopped, the emergency switch).
+    "cap_mode": "auto",
+    "per_shop_eur": 2.0,
+    "cap_min_eur": 20.0,
+    "cap_max_eur": 200.0,
+    "global_day_eur": 20.0,
     "usd_eur": 0.92,
     "user_per_min": 30,             # model calls per user per minute
     "request_calls": 12,            # model calls in one HTTP request (a tool loop stops)
@@ -67,7 +75,8 @@ DEFAULTS: Dict[str, Any] = {
     "spike_min_share": 0.2,         # …and at least this share of the month's budget
     "prices": {},                   # overrides: {model: [in, out, cache_read, cache_write]} $/M
     # pentest 2026-11-02: no handful of shops (free trials…) may eat the platform's day
-    "shop_day_share": 0.1,          # one shop: at most 10 % of the daily cap a day
+    "shop_day_share": 0.1,          # (before 2026-11-04; no longer read)
+    "shop_day_eur": 2.0,            # one shop: at most this a day, whatever the platform's cap
     "trial_budget": 5.0,            # a free trial's month, whatever plan it tries
     "per_user_day": {"support": 20},   # a till account cannot burn the shop's month through the support chat
 }
@@ -383,21 +392,48 @@ def state(tid: Optional[str]) -> Dict[str, Any]:
         blocked = "shop_day"
     elif tid and _spiking(tid, limit):
         blocked = "spike"
-    elif _full(key_day(None), float(settings()["global_day_eur"])):
+    elif _full(key_day(None), global_cap()):
         blocked = "global"
     return {"month_eur": month, "today_eur": today, "limit_eur": limit if limit != math.inf else None,
             "pct": round(100 * month / limit) if tid and limit not in (0, math.inf) else (100 if tid and limit == 0 else 0),
             "blocked": blocked}
 
 
+_ACTIVE: Dict[str, Any] = {}
+ACTIVE_TTL_S = 600
+
+
+def active_shops() -> int:
+    """Paying shops and shops on a running trial, counted every 10 minutes."""
+    now = _now()
+    if _ACTIVE.get("at") and (now - _ACTIVE["at"]).total_seconds() < ACTIVE_TTL_S:
+        return _ACTIVE["n"]
+    from features.admin_commerces import standing_of
+    rows = _db.tenants.find({"is_active": {"$ne": False}},
+                            {"_id": 0, "resiliated_at": 1, "subscription_status": 1, "suspended_at": 1, "trial_ends_at": 1})
+    n = sum(1 for t in rows if standing_of(t, now) in ("abonne", "essai"))
+    _ACTIVE.update(at=now, n=n)
+    return n
+
+
+def global_cap(s: Optional[Dict[str, Any]] = None) -> float:
+    s = s or settings()
+    if s.get("cap_mode") == "fixed" or _db is None:
+        return float(s["global_day_eur"])
+    return float(min(max(active_shops() * float(s["per_shop_eur"]), float(s["cap_min_eur"])), float(s["cap_max_eur"])))
+
+
 def _shop_day_cap() -> float:
     s = settings()
-    return float(s["global_day_eur"]) * float(s["shop_day_share"])
+    return min(float(s["shop_day_eur"]), global_cap(s))
 
 
 def _reserve(tid: Optional[str], est: float) -> Optional[str]:
     g = key_day(None)
-    cap = float(settings()["global_day_eur"])
+    cap = global_cap()
+    if cap <= 0:                             # the emergency switch: said as such, not as a shop's day
+        _alerts_after(None)
+        return "global"
     if tid:
         limit = limit_for(tid)
         if not _take(key_month(tid), est, limit):
@@ -495,10 +531,38 @@ def _alerts_after(tid: Optional[str]) -> None:
             _alert_once(key_day(tid), "spike", "ai_spike",
                         f"Pic IA : {name} — {_spent(key_day(tid)):.2f} € aujourd'hui, bien au-dessus de ses jours habituels. FidClic IA est en pause pour lui jusqu'à demain.", tid)
     g = _spent(key_day(None))
-    cap = float(s["global_day_eur"])
+    cap = global_cap()
     if _full(key_day(None), cap):
         _alert_once(key_day(None), f"cap_{int(round(cap * 100))}", "ai_global",
                     f"Plafond IA du jour atteint : {g:.2f} € sur {cap:.2f} €. Toute l'IA est en pause jusqu'à minuit.", None)
+
+
+# ---------------------------------------------------------------------------
+# refusal fallback: a model that declines on safety grounds hands the same
+# request to another inside the same call (Anthropic, fallbacks « default »).
+# Untried against the real API when written (no key): an API that refuses the
+# field gets the call again without it, and the field rests an hour.
+
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_FALLBACK_MODELS = re.compile(r"^claude-(?:opus-5|fable-5|mythos-5|sonnet-5-5)")
+FALLBACK_REST_S = 3600
+_NO_FALLBACK: Dict[str, Any] = {}
+
+
+def with_fallback(provider: str, model: str, headers: Dict[str, str], body: Dict[str, Any]) -> Tuple[Dict[str, str], Dict[str, Any]]:
+    """New headers and body asking for the fallback, when this model has it."""
+    if provider != "anthropic" or not _FALLBACK_MODELS.match((model or "").lower()):
+        return headers, body
+    until = _NO_FALLBACK.get("until")
+    if until and _now() < until:
+        return headers, body
+    h = dict(headers)
+    h["anthropic-beta"] = f"{h['anthropic-beta']},{FALLBACK_BETA}" if h.get("anthropic-beta") else FALLBACK_BETA
+    return h, {**body, "fallbacks": "default"}
+
+
+def _refused_field(status: int, data: Any) -> bool:
+    return status == 400 and "fallback" in json.dumps(data, default=str).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +600,7 @@ def _system_chars(body: Dict[str, Any]) -> int:
     return 0
 
 
-def _record(tid, user, feature, provider, model, status, reason=None, u=None, eur=0.0, ms=0) -> None:
+def _record(tid, user, feature, provider, model, status, reason=None, u=None, eur=0.0, ms=0, served_by=None) -> None:
     u = u or {}
     as_tenant = (_ctx.get() or {}).get("as_tenant")
     _db.ai_calls.insert_one({
@@ -545,7 +609,8 @@ def _record(tid, user, feature, provider, model, status, reason=None, u=None, eu
         "provider": provider, "model": model, "status": status, "reason": reason,
         "in": int(u.get("in") or 0), "out": int(u.get("out") or 0),
         "cache_read": int(u.get("cache_read") or 0), "cache_write": int(u.get("cache_write") or 0),
-        "estimated": bool(u.get("estimated")), "eur": round(float(eur), 6), "ms": int(ms)})
+        "estimated": bool(u.get("estimated")), "eur": round(float(eur), 6), "ms": int(ms),
+        **({"served_by": served_by} if served_by else {})})
 
 
 def _block(ctx, tid, user, feature, provider, model, reason) -> Tuple[None, str]:
@@ -627,6 +692,9 @@ def _call(provider: str, model: str, url: str, headers: Dict[str, str], body: Di
     if provider == "anthropic" and feature in CACHE_FEATURES and _system_chars(body) >= CACHE_MIN_CHARS:
         body["cache_control"] = {"type": "ephemeral"}
 
+    plain_headers, plain_body = headers, body
+    headers, body = with_fallback(provider, model, headers, body)
+
     ckey = None
     if cache_ttl:
         ckey = hashlib.sha256(json.dumps([tid, provider, model, body], sort_keys=True, default=str).encode()).hexdigest()
@@ -652,6 +720,9 @@ def _call(provider: str, model: str, url: str, headers: Dict[str, str], body: Di
     t0 = time.monotonic()
     try:
         status, data = _send(url, headers, body, timeout)
+        if body is not plain_body and _refused_field(status, data):
+            _NO_FALLBACK["until"] = _now() + timedelta(seconds=FALLBACK_REST_S)
+            status, data = _send(url, plain_headers, plain_body, timeout)
     except Exception as exc:                 # noqa: BLE001 — a dead provider is an error row, not a crash
         status, data = 0, {"error": str(exc)}
     ms = (time.monotonic() - t0) * 1000
@@ -668,8 +739,12 @@ def _call(provider: str, model: str, url: str, headers: Dict[str, str], body: Di
     u = usage_of(provider, data, chars + images * IMAGE_TOKENS * 4, txt)
     eur = cost_eur(provider, model, u)
     _settle(tid, eur - est)
-    _record(tid, user, feature, provider, model, "ok", u=u, eur=eur, ms=ms)
-    if ckey:
+    refused = provider == "anthropic" and data.get("stop_reason") == "refusal"
+    served = data.get("model") if provider == "anthropic" and data.get("model") not in (None, model) else None
+    _record(tid, user, feature, provider, model, "refused" if refused else "ok",
+            ((data.get("stop_details") or {}).get("category") or "refus") if refused else None,
+            u=u, eur=eur, ms=ms, served_by=served)
+    if ckey and not refused:                 # a refusal is asked again next time, never replayed
         _db.ai_cache.update_one({"_id": ckey}, {"$set": {"data": data, "exp": _now() + timedelta(seconds=cache_ttl)}}, upsert=True)
     try:
         _alerts_after(tid)
@@ -769,14 +844,16 @@ def _costs(tenants: List[Dict[str, Any]]) -> Dict[str, Any]:
                       "plan_price": price, "margin_pct": round(100 * (price - month) / price) if price else None})
     shops.sort(key=lambda x: -x["month_eur"])
     today = _spent(key_day(None))
-    paused = _full(key_day(None), float(s["global_day_eur"]))
+    cap = global_cap()
+    paused = _full(key_day(None), cap)
     alerts = list(_db.platform_alerts.find({"kind": {"$in": sorted(ALERT_KINDS)}}, {"_id": 0}).sort("at", -1).limit(20))
     return {"summary": {"today_eur": _round(today), "month_eur": _round(sum(f["eur"] for f in feats.values())),
-                        "global_day_eur": float(s["global_day_eur"]), "paused": paused,
+                        "global_day_eur": cap, "active_shops": active_shops(), "paused": paused,
                         "calls_today": calls_today, "blocked_today": blocked_today},
             "by_day": by_day, "by_feature": by_feature, "shops": shops, "alerts": alerts,
             "settings": {k: s[k] for k in ("plan_budgets", "global_day_eur", "usd_eur", "user_per_min", "request_calls", "input_chars",
-                                           "shop_day_share", "trial_budget")}}
+                                           "trial_budget", "cap_mode", "per_shop_eur", "cap_min_eur", "cap_max_eur",
+                                           "shop_day_eur")}}
 
 
 class ShopBudgetIn(BaseModel):
@@ -791,6 +868,11 @@ class SettingsIn(BaseModel):
     request_calls: Optional[int] = Field(None, ge=1, le=50)
     input_chars: Optional[int] = Field(None, ge=1000, le=400000)
     shop_day_share: Optional[float] = Field(None, ge=0.01, le=1)
+    cap_mode: Optional[Literal["auto", "fixed"]] = None
+    per_shop_eur: Optional[float] = Field(None, ge=0, le=100)
+    cap_min_eur: Optional[float] = Field(None, ge=0, le=1000)
+    cap_max_eur: Optional[float] = Field(None, ge=0, le=1000)
+    shop_day_eur: Optional[float] = Field(None, ge=0, le=1000)
     trial_budget: Optional[float] = Field(None, ge=0, le=1000)
 
     @field_validator("plan_budgets")
@@ -837,6 +919,9 @@ def release_spike(tenant_id: str, request: Request, token_data: TokenData = Depe
 @router.put("/api/admin/ai/costs/settings")
 def set_settings(body: SettingsIn, request: Request, token_data: TokenData = Depends(require_admin("ai"))):
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    after = {**settings(), **upd}
+    if float(after["cap_min_eur"]) > float(after["cap_max_eur"]):
+        raise HTTPException(status_code=422, detail="Le plancher du plafond dépasse son maximum.")
     if "plan_budgets" in upd:
         upd["plan_budgets"] = {**settings()["plan_budgets"], **{k: float(x) for k, x in upd["plan_budgets"].items()}}
     if upd:

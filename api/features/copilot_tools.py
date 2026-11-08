@@ -462,6 +462,18 @@ def t_conversation(c: Ctx, args: Dict[str, Any]):
     return {"recherche": args.get("mots"), "extraits": out}, {"label": "Vos conversations passées", "to": "/dashboard/ai-assistant"}
 
 
+def t_aide(c: Ctx, args: Dict[str, Any]):
+    q = str(args.get("question") or args.get("mots") or "").strip()[:300]
+    if len(q) < 3:
+        raise ToolError("Posez la question à chercher dans l'aide.")
+    from features import app_guide as G, support_assistant as SA
+    p = G.page_for(q, force=True)
+    arts = [{"titre": a["title"], "texte": SA._plain(a["body"])[:600], "lien": (a.get("link") or {}).get("to")}
+            for a in SA.search_kb(q, 2)]
+    page = {"nom": G.name(p), "chemin": p["to"], "utilite": G.PURPOSE[p["key"]]} if p else None
+    return {"question": q, "page": page, "articles": arts}, {"label": "Aide FidClic", "to": (p or {}).get("to") or "/dashboard"}
+
+
 @dataclass
 class Tool:
     fn: Callable[[Ctx, Dict[str, Any]], Tuple[Dict[str, Any], Dict[str, str]]]
@@ -498,6 +510,8 @@ TOOLS: Dict[str, Tool] = {
                        f"parrainages et meilleurs parrains ; {_P}"),
     "recompenses": Tool(t_recompenses, ("analytics",), "Analyses",
                         f"récompenses utilisées, par récompense ; {_P}"),
+    "aide": Tool(t_aide, ("ai",), "FidClic IA",
+                 "comment faire quelque chose dans FidClic, où se trouve une page (args : « question ») : la page du menu et l'article d'aide"),
     "conversation": Tool(t_conversation, ("ai",), "FidClic IA",
                          "chercher dans vos conversations passées avec FidClic IA (args : « mots »)"),
 }

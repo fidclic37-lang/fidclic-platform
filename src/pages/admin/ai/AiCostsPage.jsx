@@ -62,7 +62,7 @@ function ShopRow({ s, onSave, onRelease }) {
 }
 
 function Settings({ s, onSave }) {
-  const [f, setF] = useState(() => ({ ...s, plan_budgets: { ...s.plan_budgets }, shop_day_share_pct: Math.round((s.shop_day_share ?? 0.1) * 100) }));
+  const [f, setF] = useState(() => ({ ...s, plan_budgets: { ...s.plan_budgets }, cap_mode: s.cap_mode || 'auto' }));
   const num = (k, label, step = '1') => (
     <label className="text-[12.5px] text-[#475569]">{label}
       <input type="number" step={step} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}
@@ -72,7 +72,8 @@ function Settings({ s, onSave }) {
   const save = () => onSave({
     global_day_eur: Number(f.global_day_eur), usd_eur: Number(f.usd_eur), user_per_min: Number(f.user_per_min),
     request_calls: Number(f.request_calls), trial_budget: Number(f.trial_budget),
-    shop_day_share: Number(f.shop_day_share_pct) / 100,
+    cap_mode: f.cap_mode, per_shop_eur: Number(f.per_shop_eur), cap_min_eur: Number(f.cap_min_eur),
+    cap_max_eur: Number(f.cap_max_eur), shop_day_eur: Number(f.shop_day_eur),
     plan_budgets: Object.fromEntries(Object.entries(f.plan_budgets).map(([k, x]) => [k, Number(x)])),
   });
   return (
@@ -87,12 +88,25 @@ function Settings({ s, onSave }) {
                    className="mt-1 block w-24 rounded-md border border-[#DCE3EE] px-2 py-1 text-[13px]" data-testid={`cost-plan-${k}`} />
           </label>
         ))}
-        {num('global_day_eur', 'Plafond plateforme (€/jour, 0 = tout arrêter)', '0.5')}
+        <label className="text-[12.5px] text-[#475569]">Plafond plateforme
+          <select value={f.cap_mode} onChange={(e) => setF({ ...f, cap_mode: e.target.value })} data-testid="cost-set-cap_mode"
+                  className="mt-1 block rounded-md border border-[#DCE3EE] bg-white px-2 py-1 text-[13px]">
+            <option value="auto">Automatique (selon les commerces)</option>
+            <option value="fixed">Fixe</option>
+          </select>
+        </label>
+        {f.cap_mode === 'fixed' ? num('global_day_eur', 'Plafond fixe (€/jour, 0 = tout arrêter)', '0.5') : (
+          <>
+            {num('per_shop_eur', '€ par commerce actif', '0.5')}
+            {num('cap_min_eur', 'Plafond minimum (€/jour)')}
+            {num('cap_max_eur', 'Plafond maximum (€/jour)')}
+          </>
+        )}
+        {num('shop_day_eur', 'Un commerce par jour (€)', '0.5')}
         {num('usd_eur', '1 $ = … €', '0.01')}
         {num('user_per_min', 'Appels par personne et par minute')}
         {num('request_calls', 'Appels par requête')}
         {num('trial_budget', 'Essai gratuit (€/mois)')}
-        {num('shop_day_share_pct', 'Un commerce par jour (% du plafond)')}
       </div>
       <button type="button" onClick={save} className="mt-3 rounded-lg bg-[#2F6BFF] px-3.5 py-2 text-[13px] font-semibold text-white" data-testid="cost-settings-save">Enregistrer les limites</button>
     </section>
@@ -139,7 +153,7 @@ export default function AiCostsPage() {
         </p>
       )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Card label="Aujourd'hui" value={euro(s.today_eur)} sub={`plafond ${euro(s.global_day_eur, 0)}`} testid="cost-today" tone={s.paused ? '#B91C1C' : '#0B1C3F'} />
+        <Card label="Aujourd'hui" value={euro(s.today_eur)} sub={`plafond ${euro(s.global_day_eur, 0)}${s.active_shops != null ? ` · ${s.active_shops} commerce${s.active_shops > 1 ? 's' : ''} actif${s.active_shops > 1 ? 's' : ''}` : ''}`} testid="cost-today" tone={s.paused ? '#B91C1C' : '#0B1C3F'} />
         <Card label="Ce mois-ci" value={euro(s.month_eur)} testid="cost-month" />
         <Card label="Appels aujourd'hui" value={s.calls_today.toLocaleString('fr-FR')} testid="cost-calls" />
         <Card label="Refusés aujourd'hui" value={s.blocked_today.toLocaleString('fr-FR')} sub="limite, vitesse, taille" testid="cost-blocked" tone={s.blocked_today ? '#B45309' : '#0B1C3F'} />
