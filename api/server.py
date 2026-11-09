@@ -176,6 +176,10 @@ app.add_middleware(_AM.Middleware)
 from services import media as _MEDIA  # noqa: E402
 _MEDIA.install(db)
 app.add_middleware(_ST.TimingMiddleware)
+# 1e309, NaN, Infinity in a JSON body: a 422 before any route, and a
+# validation error that can always be written (services/finite_json, #454).
+from services import finite_json as _FJ  # noqa: E402
+_FJ.install(app)
 
 # ─────────────────────────────────────────────────────────────────────
 # RGPD / GDPR — Audit trail (Sprint 1)
@@ -8046,6 +8050,9 @@ def export_my_data(barcode_id: str, request: Request = None):
                      db.notifications.find({"customer_id": cid}).sort("created_at", -1).limit(500)]
     reviews = [_strip_mongo(r) for r in db.reviews.find({"customer_id": cid})]
     redemptions = [_strip_mongo(r) for r in db.rewards_redeemed.find({"customer_id": cid})]
+    # visits refunded through the API (features/merchant_api): no longer counted, still held
+    cancelled = [_strip_mongo(v) for v in
+                 db.visits_cancelled.find({"customer_id": cid}).sort("cancelled_at", -1)]
     prefs = _card_prefs_for(cid)
     push_count = db.push_subscriptions.count_documents({"customer_id": cid})
 
@@ -8060,6 +8067,7 @@ def export_my_data(barcode_id: str, request: Request = None):
         "profile": _strip_mongo(cust),
         "consent": _strip_mongo(cust.get("consent") or {}),
         "visits": visits,
+        "visits_cancelled": cancelled,
         "notifications_received": notifications,
         "reviews": reviews,
         "rewards_redeemed": redemptions,
@@ -8124,6 +8132,8 @@ def forget_me(barcode_id: str, req: ForgetMeRequest, request: Request = None):
     # 5) Card prefs + overrides cleanup.
     db.card_prefs.delete_many({"customer_id": cid})
     db.customer_card_overrides.delete_many({"customer_id": cid})
+    # refunds sent by an API keep their figures; the free text a caisse wrote may name the client
+    db.visits_cancelled.update_many({"customer_id": cid}, {"$unset": {"cancel_reason": ""}})
 
     log_audit("gdpr.forget_me", actor=_gdpr_actor(barcode_id, who), actor_type=_gdpr_actor_type(who),
               tenant_id=tid, target=cid, request=request,

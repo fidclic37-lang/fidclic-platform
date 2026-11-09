@@ -41,8 +41,8 @@ WEBHOOKS
     reward.redeemed — POST JSON to the business's URL, signed:
     X-FidClic-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>
     Never to an internal address (checked at creation AND on every send, after
-    DNS), never following a redirect; endpoints are called side by side and the
-    caller waits DELIVERY_DEADLINE_S at most. Every delivery is logged; failed
+    DNS), never following a redirect; sent from a shared pool in the background,
+    so the caller (the till) never waits for them. Every delivery is logged; failed
     ones are retried by the 15-minute tick and the daily cron (3 tries) and can
     be re-sent by hand. A delivery may arrive twice: dedupe on X-FidClic-Delivery.
 """
@@ -58,6 +58,7 @@ import secrets
 import socket
 import time
 import uuid
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait as _wait_all
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -81,12 +82,15 @@ RATE_PER_MINUTE = 120
 MAX_KEYS = 10
 MAX_HOOKS = 10
 TIMEOUT_S = 3                 # one webhook endpoint
-DELIVERY_DEADLINE_S = 3.0     # what the caller waits for all of them, side by side
+WEBHOOK_WORKERS = 8           # threads sending webhooks, shared by the instance; the caller never waits
+WEBHOOK_QUEUE_MAX = 500       # deliveries held in memory at most; beyond, they wait (written down) for the tick
 RETRIES = 3
 IN_PROGRESS_S = 60            # an idempotent call older than this died: taken over
 IDEMPOTENCY_DAYS = 30
 CANCEL_MAX_DAYS = 90          # a refund later than this is a manual adjustment, not an API cancel
 HOLD_MIN_S, HOLD_MAX_S, HOLD_DEFAULT_S = 30, 900, 300
+HOLDS_PER_HOUR = 3            # holds per client per hour that did not end in a used reward
+PHONE_TAIL_MIGRATION = "phone_tail_v1"
 VERIFY_TTL_S = 600            # an SMS code
 VERIFY_TOKEN_TTL_S = 900      # the token it gives
 VERIFY_MAX_ATTEMPTS = 5
@@ -116,12 +120,50 @@ def init(db):
             ("visits_cancelled", [("tenant_id", 1), ("id", 1)], {}),
             ("visits_cancelled", [("tenant_id", 1), ("external_id", 1)], {}),
             ("visits", [("tenant_id", 1), ("external_id", 1)], {"sparse": True}),
+            ("customers", [("tenant_id", 1), ("phone_tail", 1)], {}),
+            # a client is read by id on every scan, and by card number at the till and the API:
+            # nothing indexed either before (#454 load lab: a scan of the whole collection each time)
+            ("customers", "id", {}),
+            ("customers", [("tenant_id", 1), ("barcode_id", 1)], {}),
             ("webhook_deliveries", [("tenant_id", 1), ("at", -1)], {}),
             ("webhook_deliveries", [("ok", 1), ("at", -1)], {})):
         try:                                  # one index failing (an old one of the same name) never stops the rest
             db[coll].create_index(keys, **kw)
         except Exception as e:
             print(f"merchant_api: index {coll} {keys} skipped: {e}")
+    # every write of a client's phone also writes its 9 last digits (services/phone_tail)
+    from services import doc_cache, phone_tail
+    doc_cache.on_write("customers", phone_tail.hear)
+    backfill_phone_tails()
+
+
+def backfill_phone_tails(batch: int = 2000, cap: int = 50000) -> int:
+    """Once: the clients written before the tail existed get theirs. Marked
+    done in platform_settings only when none is left, so a start cut short
+    goes on at the next. Never fatal."""
+    from services import phone_tail
+    try:
+        if (_db.platform_settings.find_one({"key": PHONE_TAIL_MIGRATION}, {"_id": 0, "value": 1}) or {}).get("value") == "done":
+            return 0
+        n = 0
+        while n < cap:
+            rows = list(_db.customers.find({"phone_tail": {"$exists": False}}, {"_id": 1, "phone": 1}).limit(batch))
+            if not rows:
+                break
+            from pymongo import UpdateOne
+            _db.customers.bulk_write([UpdateOne({"_id": r["_id"], "phone_tail": {"$exists": False}},
+                                                {"$set": {"phone_tail": phone_tail.tail(r.get("phone"))}}) for r in rows],
+                                     ordered=False)
+            n += len(rows)
+        if not _db.customers.find_one({"phone_tail": {"$exists": False}}, {"_id": 1}):
+            _db.platform_settings.update_one({"key": PHONE_TAIL_MIGRATION}, {"$set": {
+                "key": PHONE_TAIL_MIGRATION, "value": "done", "at": _now(), "customers": n}}, upsert=True)
+        if n:
+            print(f"clients: phone tail written for {n} customers", flush=True)
+        return n
+    except Exception as e:  # noqa: BLE001 — a start must never fail on it
+        print(f"clients: phone tail not written yet ({e})", flush=True)
+        return 0
 
 
 def _now() -> datetime:
@@ -287,11 +329,14 @@ def _find_customer(tenant_id: str, ref: str) -> Dict[str, Any]:
             digits = re.sub(r"\D", "", ref)
             if 9 <= len(digits) <= 15:
                 tail = digits[-9:]              # « 06 12… », « +33 6 12… », « 0033612… » are one number
-                # the database keeps the numbers as typed: match the 9 last digits, whatever sits between them
+                # by the indexed tail (services/phone_tail); a client written before
+                # it existed and not back-filled yet: the 9 digits, whatever sits between them
+                rows = list(_db.customers.find({**LIVE, "tenant_id": tenant_id, "phone_tail": tail},
+                                               {"_id": 0, "id": 1, "phone": 1}).limit(20))
                 pattern = r"\D*".join(tail) + r"\D*$"
-                rows = [r for r in _db.customers.find({**LIVE, "tenant_id": tenant_id, "phone": {"$regex": pattern}},
-                                                      {"_id": 0, "id": 1, "phone": 1}).limit(20)
-                        if re.sub(r"\D", "", r.get("phone") or "").endswith(tail)]
+                rows += [r for r in _db.customers.find({**LIVE, "tenant_id": tenant_id, "phone_tail": {"$exists": False},
+                                                        "phone": {"$regex": pattern}}, {"_id": 0, "id": 1, "phone": 1}).limit(20)
+                         if re.sub(r"\D", "", r.get("phone") or "").endswith(tail)]
                 c = _one(rows, "numéro de téléphone")
     if not c:
         raise _err(404, "customer_not_found", "Client introuvable (id, numéro de carte, téléphone ou e-mail).")
@@ -681,6 +726,12 @@ def hold_reward(body: HoldIn, c: ApiCaller = Depends(writer)):
     cust = _find_customer(c.tenant_id, body.customer)
     _refuse_no_reward(cust)
     now = _now()
+    # a reward held again and again would never reach the till (#454 pentest):
+    # holds that did not end in a used reward are counted, per client, per hour
+    if _db.api_reward_holds.count_documents({"tenant_id": c.tenant_id, "customer_id": cust["id"], "state": {"$ne": "used"},
+                                             "at": {"$gte": now - timedelta(hours=1)}}) >= HOLDS_PER_HOUR:
+        raise _err(429, "too_many_holds", f"{HOLDS_PER_HOUR} réservations par heure au maximum pour ce client : "
+                                          "la récompense reste disponible à la caisse.")
     hold = {"id": "hold_" + secrets.token_hex(12), "until": now + timedelta(seconds=body.ttl_seconds),
             "key_id": c.key_id, "key_name": c.key_name, "at": now}
     took = _db.customers.update_one(
@@ -928,23 +979,44 @@ def _deliver(hook: Dict[str, Any], event: Dict[str, Any], attempt: int = 1, deli
     return row
 
 
+_POOL: Optional[ThreadPoolExecutor] = None
+_POOL_LOCK = threading.Lock()
+_INFLIGHT: set = set()
+
+
+def _submit(fn, *args):
+    """Hand a delivery to the instance's shared pool (tests replace this)."""
+    global _POOL
+    with _POOL_LOCK:
+        if _POOL is None:
+            _POOL = ThreadPoolExecutor(max_workers=WEBHOOK_WORKERS, thread_name_prefix="fidclic-webhook")
+        fut = _POOL.submit(fn, *args)
+        _INFLIGHT.add(fut)
+    fut.add_done_callback(_INFLIGHT.discard)
+    return fut
+
+
+def drain_webhooks(timeout: float = 10.0) -> None:
+    """Wait for the deliveries this instance has in hand (tests, shutdown)."""
+    _wait_all(list(_INFLIGHT), timeout=timeout)
+
+
 def _deliver_all(hooks: List[Dict[str, Any]], event: Dict[str, Any]) -> None:
-    """Every endpoint at once; the caller (a scan at the till) waits
-    DELIVERY_DEADLINE_S at most. Each delivery is written down BEFORE it is
-    sent, so one still running when the function stops is retried, not lost."""
-    jobs = []
+    """Every endpoint, in the background: the caller (a scan at the till)
+    never waits for a merchant's server. Each delivery is written down BEFORE
+    it is handed over, so one the instance never finishes (frozen after the
+    answer, recycled) stays « pending » and the 15-minute tick sends it."""
     for h in hooks:
         row = {"id": uuid.uuid4().hex, "tenant_id": h["tenant_id"], "hook_id": h["id"], "event_id": event["id"],
                "type": event["type"], "payload": event, "status": None, "ok": False, "error": "pending", "ms": 0,
                "attempts": 1, "at": _now()}
         _db.webhook_deliveries.insert_one(dict(row))
-        jobs.append((h, row["id"]))
-    pool = ThreadPoolExecutor(max_workers=max(1, min(len(jobs), MAX_HOOKS)), thread_name_prefix="fidclic-webhook")
-    try:
-        futures = [pool.submit(_deliver, h, event, 1, rid) for h, rid in jobs]
-        _wait_all(futures, timeout=DELIVERY_DEADLINE_S)
-    finally:
-        pool.shutdown(wait=False)
+        if len(_INFLIGHT) >= WEBHOOK_QUEUE_MAX:   # an endpoint down for long: memory stays flat, the tick sends it
+            continue
+        try:
+            _submit(_deliver, h, event, 1, row["id"])
+        except Exception as e:                 # no thread to be had: the tick will send it
+            print(f"webhooks: {event['type']} queued for the tick ({e})")
 
 
 def emit(tenant_id: Optional[str], kind: str, data: Dict[str, Any]) -> int:

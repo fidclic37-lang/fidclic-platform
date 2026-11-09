@@ -34,6 +34,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         passed += bool(cond); failed += (not cond)
         print(("  ✓ " if cond else "  ✗ ") + label)
 
+    drain = {"on": True}
+
     def http(method, url, key=None, bearer=None, **kw):
         headers = kw.pop("headers", {})
         if key:
@@ -44,7 +46,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         async def run():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as ac:
                 return await ac.request(method, url, headers=headers, **kw)
-        return asyncio.get_event_loop().run_until_complete(run())
+        out = asyncio.get_event_loop().run_until_complete(run())
+        if drain["on"]:
+            M.drain_webhooks(10)       # webhooks leave in the background: let them land before checking
+        return out
 
     now = dt.datetime.now(dt.timezone.utc)
     db.tenants.insert_many([
@@ -166,10 +171,12 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     http("POST", "/api/v1/visits", key=KEY, json={"customer": nc["id"], "amount": 3, "external_id": "V4"})
     sent.clear()
     server.redeem_reward(server.RedeemRewardRequest(customer_id=nc["id"]), token_data=TokenData(email="o@cafe.fr", role="business_owner", tenant_id="t1"))
+    M.drain_webhooks(10)
     check("reward.redeemed from the counter too", [s["headers"]["X-FidClic-Event"] for s in sent] == ["reward.redeemed"])
     fail["on"] = True
     sent.clear()
     server.scan_visit(server.ScanRequest(barcode_id=nc["card_number"]), token_data=TokenData(email="o@cafe.fr", role="business_owner", tenant_id="t1"))
+    M.drain_webhooks(10)
     bad = db.webhook_deliveries.find_one({"ok": False, "type": "visit.created"})
     check("a failed delivery is logged", bad and bad["status"] == 500 and bad["attempts"] == 1)
     fail["on"] = False

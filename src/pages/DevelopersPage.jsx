@@ -476,7 +476,9 @@ const ERRORS = [
   ['409', 'no_phone', 'Le client n’a pas de téléphone.'],
   ['409', 'request_in_progress', 'Même external_id encore en cours : réessayez dans quelques secondes.'],
   ['422', 'idempotency_conflict', 'Même external_id avec un corps différent.'],
+  ['422', 'finite_number', 'Un nombre infini ou NaN dans le corps JSON (1e309, NaN, Infinity) : refusé avant tout traitement.'],
   ['429', 'rate_limited', 'Plus de 120 requêtes par minute avec cette clé.'],
+  ['429', 'too_many_holds', 'Plus de 3 réservations non utilisées pour ce client dans l\'heure.'],
   ['429', 'too_many_codes', 'Trop de codes SMS (3 par heure et par client, 200 par jour et par commerce).'],
   ['429', 'too_many_attempts', '5 codes faux : demandez un nouveau code.'],
   ['502', 'sms_failed', "L'envoi du SMS a échoué."],
@@ -729,7 +731,7 @@ export default function DevelopersPage() {
               ['ttl_seconds', 'Durée de la réservation, de 30 à 900 secondes (300 par défaut).'],
             ]}
             />
-            <p>Réponse <C>201</C> : <C>hold_id</C> (<C>hold_…</C>), <C>expires_at</C>, <C>customer</C>. Pendant la réservation, la caisse et les autres clés reçoivent <C>409 reward_held</C>. Rien à réserver : <C>409 no_reward</C> ou <C>409 reward_next_visit</C>.</p>
+            <p>Réponse <C>201</C> : <C>hold_id</C> (<C>hold_…</C>), <C>expires_at</C>, <C>customer</C>. Pendant la réservation, la caisse et les autres clés reçoivent <C>409 reward_held</C>. Rien à réserver : <C>409 no_reward</C> ou <C>409 reward_next_visit</C>. Au plus 3 réservations par client et par heure qui ne finissent pas en récompense utilisée : au-delà, <C>429 too_many_holds</C> (la récompense reste disponible à la caisse).</p>
             <CodeBlock label="curl" code={CURL_HOLD} />
             <Endpoint method="DELETE" path="/rewards/hold/{hold_id}" />
             <p>Libère la réservation : <C>{'{ "released": true | false }'}</C>. Réservation inconnue : <C>404 hold_not_found</C>.</p>
@@ -810,6 +812,7 @@ export default function DevelopersPage() {
             <Bullets items={[
               'Adresse en https uniquement, et publique : les adresses internes sont refusées, y compris après résolution DNS.',
               'Les redirections ne sont pas suivies.',
+              'Les envois partent en arrière-plan : la caisse n\'attend jamais votre serveur.',
               'Répondez 2xx en moins de 3 secondes (traitez le reste ensuite).',
               "En cas d'échec : nouvel essai toutes les 15 minutes, puis chaque jour ; 3 essais au total sur 3 jours.",
               "Un envoi peut être renvoyé à la main depuis l'onglet Webhooks.",
@@ -876,7 +879,8 @@ export default function DevelopersPage() {
               <p className="mb-1 text-[13px] font-bold text-[#0B1C3F]" translate="no">{API_VERSION}</p>
               <p className="text-[13px]">
                 Recherche par e-mail, <C>409 ambiguous_customer</C>, annulation de passage, réservation de récompense, vérification SMS,
-                idempotence renforcée, <C>visit.cancelled</C>, webhooks en parallèle et protégés.
+                idempotence renforcée, <C>visit.cancelled</C>, webhooks en arrière-plan et protégés, recherche par téléphone indexée,
+                <C>429 too_many_holds</C>, <C>422 finite_number</C>.
               </p>
             </div>
             <p className="text-[12.5px] text-[#64748B]">La version de l'API est envoyée dans l'en-tête <C>X-FidClic-Api-Version</C> des webhooks et dans le champ <C>api_version</C> des événements.</p>

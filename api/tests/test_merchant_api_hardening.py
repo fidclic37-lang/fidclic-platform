@@ -47,6 +47,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         passed += bool(cond); failed += (not cond)
         print(("  ✓ " if cond else "  ✗ ") + label)
 
+    drain = {"on": True}
+
     def http(method, url, key=None, bearer=None, **kw):
         headers = kw.pop("headers", {})
         if key:
@@ -57,7 +59,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         async def run():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as ac:
                 return await ac.request(method, url, headers=headers, **kw)
-        return asyncio.get_event_loop().run_until_complete(run())
+        out = asyncio.get_event_loop().run_until_complete(run())
+        if drain["on"]:
+            M.drain_webhooks(10)       # webhooks leave in the background: let them land before checking
+        return out
 
     def code_of(r):
         try:
@@ -411,21 +416,24 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     http("DELETE", f"/api/owner/integrations/webhooks/{evil['id']}", bearer=OWN)
     for i in range(3):
         http("POST", "/api/owner/integrations/webhooks", bearer=OWN, json={"url": f"https://slow{i}.example.com/x", "events": ["visit.created"]})
+    drain["on"] = False
     slow["s"] = 1.0
     t0 = time.time()
     visit(KEY, SARAH, 1, ext="SLOW-1")
     took = time.time() - t0
+    t1 = time.time()
+    M.drain_webhooks(10)
+    both = time.time() - t1
     slow["s"] = 0.0
-    check(f"4 endpoints of 1 s each are called side by side (took {took:.1f} s)", took < 2.5)
-    M.DELIVERY_DEADLINE_S, keep = 0.3, M.DELIVERY_DEADLINE_S
+    check(f"4 endpoints of 1 s each are called side by side ({both:.1f} s for all)", both < 2.5)
     slow["s"] = 1.0
     t0 = time.time()
     visit(KEY, SARAH, 1, ext="SLOW-2")
     took = time.time() - t0
+    M.drain_webhooks(10)
     slow["s"] = 0.0
-    M.DELIVERY_DEADLINE_S = keep
-    time.sleep(1.2)
-    check(f"the call never waits more than the deadline for slow ones (took {took:.1f} s)", took < 1.0)
+    drain["on"] = True
+    check(f"the call never waits for slow endpoints (took {took:.2f} s)", took < 0.8)
     check("…and those are written down for the retry, not lost",
           db.webhook_deliveries.count_documents({"event_id": {"$exists": True}, "type": "visit.created"}) > 0)
     tick = server.tick_pass()
