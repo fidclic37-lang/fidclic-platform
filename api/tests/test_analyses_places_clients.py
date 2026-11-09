@@ -33,6 +33,15 @@ def main():
     import server
     import auth
     import httpx
+    from services import communes
+    from features import analyses as AN
+
+    # The commune name comes from the Base Adresse Nationale. A test must not
+    # depend on the network: on a laptop the call fails, on the CI it answers —
+    # or times out once and answers the next time (2026-11-09, PR #454: the bar
+    # said « 37540 », the list a moment later looked for « Saint-Cyr-sur-Loire »).
+    BAN = {"37540": "Saint-Cyr-sur-Loire"}            # postal code → commune; anything else: unreachable
+    communes._fetch = lambda postal: BAN.get(postal, "")
 
     db = server.db
     now = dt.datetime.now(dt.timezone.utc)
@@ -63,6 +72,19 @@ def main():
         total += len(rows)
         check(f"« {p['name']} »: the list has the bar's {p['count']} client(s) ({len(rows)})", len(rows) == p["count"])
     check(f"no client in two areas, none lost ({total} / {len(cast)})", total == len(cast))
+    check("37540 is named by its commune", "Saint-Cyr-sur-Loire" in [p["name"] for p in places])
+
+    # The address service is down while the bar is drawn, and back by the click:
+    # the bar says the bare code, the list must still find its clients.
+    late = {"id": "z", "tenant_id": "t1", "postal_code": "37230", "city": ""}
+    bar = AN._place_of(late)[0]
+    check(f"service down: the bar is the bare code ({bar})", bar == "37230")
+    BAN["37230"] = "Fondettes"
+    check("service back: the client now reads « Fondettes »", AN._place_of(late)[0] == "Fondettes")
+    check("…and the « 37230 » bar still lists them", AN.place_matches(late, "37230"))
+    check("…and the « Fondettes » bar too", AN.place_matches(late, "Fondettes"))
+    check("a bare code never pulls in another code's client",
+          not AN.place_matches({"postal_code": "37100", "city": ""}, "37230"))
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
