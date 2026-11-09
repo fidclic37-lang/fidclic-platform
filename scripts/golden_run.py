@@ -42,6 +42,8 @@ def main() -> int:
     ap.add_argument("--only", default="", help="question ids, comma separated")
     ap.add_argument("--out", default="golden-report")
     ap.add_argument("--fake", action="store_true", help="a fake model giving the right answers: checks the runner, costs nothing")
+    ap.add_argument("--real", action="store_true",
+                    help="also the shops' own data, anonymized (GOLDEN_SNAPSHOT_KEY; reported without a figure)")
     a = ap.parse_args()
 
     with contextlib.redirect_stdout(io.StringIO()):
@@ -74,14 +76,45 @@ def main() -> int:
 
     only = [x.strip() for x in a.only.split(",") if x.strip()] or None
     rep = GS.run_all(http, only=only)
+    real_md, real_ok = "", True
+    if a.real and not only:
+        real_md, real_ok, rep["real"] = _real(server, http)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "golden-report.json"), "w", encoding="utf-8") as f:
         json.dump(rep, f, ensure_ascii=False, indent=1)
-    md = GS.markdown(rep)
+    md = GS.markdown(rep) + ("\n" + real_md if real_md else "")
     with open(os.path.join(a.out, "summary.md"), "w", encoding="utf-8") as f:
         f.write(md)
     print(md)
-    return 0 if rep["ok"] else 1
+    return 0 if rep["ok"] and real_ok else 1
+
+
+def _real(server, http):
+    """The shops' own data (features/golden_real): downloaded with GitHub's key,
+    loaded in this in-memory database, never written to disk, reported without
+    a figure — this repository and its Actions are public."""
+    import gzip
+    import urllib.request
+    from features import golden_real as GR
+    key = (os.environ.get("GOLDEN_SNAPSHOT_KEY") or "").strip()
+    base = (os.environ.get("GOLDEN_SNAPSHOT_URL") or "https://app.fidclic.com").rstrip("/")
+    if not key:
+        return "_Données réelles : pas de clé GOLDEN_SNAPSHOT_KEY, non testées._\n", True, None
+
+    def get(path):
+        req = urllib.request.Request(base + path, headers={"X-Golden-Key": key, "User-Agent": "fidclic-golden-set"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+    try:
+        shops = json.loads(get("/api/golden/real"))["shops"]
+        loaded = [GR.load(server.db, json.loads(gzip.decompress(get(f"/api/golden/real/{s['sid']}"))), i + 1)
+                  for i, s in enumerate(shops)]
+    except Exception as exc:                      # noqa: BLE001 — said, and the run fails: a real test that did not happen
+        return f"❌ Données réelles : téléchargement impossible ({type(exc).__name__}).\n", False, None
+    if not loaded:
+        return "_Données réelles : aucun commerce prêt (le fichier se fait la nuit)._\n", True, None
+    rep = GR.run(http, server.db, loaded)
+    return GR.markdown(rep), rep["ok"], GR.public(rep)
 
 
 if __name__ == "__main__":

@@ -976,13 +976,16 @@ def _model_name() -> str:
 
 
 def run_all(http: Callable, only: Optional[List[str]] = None,
-            answer: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None) -> Dict[str, Any]:
+            answer: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
+            bank: Optional[List[Dict[str, Any]]] = None, tenants: Optional[List[str]] = None,
+            prepare: Optional[Callable[[], Any]] = None) -> Dict[str, Any]:
     """Ask every question (or `only` these ids) as its account; grade each.
-    `answer(q)` stands in for the endpoint (tests). One fail = not ok."""
+    `answer(q)` stands in for the endpoint (tests). One fail = not ok.
+    `bank`, `tenants`, `prepare`: another set of shops (features/golden_real)."""
     from features import copilot as K
     from features import copilot_tools as CT
     from services import llm
-    seed()
+    (prepare or seed)()
     started = datetime.now(UTC)
     old_now, old_ct = K._now, CT.NOW
     K._now = lambda: DEMO_NOW
@@ -1001,7 +1004,7 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
     llm.complete = spy
     results = []
     try:
-        for q in _BANK():
+        for q in (bank if bank is not None else _BANK()):
             if only is not None and q["id"] not in only:
                 continue
             t = truth(q) if not q.get("status") else {"ok": True, "need": [], "seen": [], "forbidden": []}
@@ -1011,7 +1014,7 @@ def run_all(http: Callable, only: Optional[List[str]] = None,
                 row["why"] = [f"données de la question : {t['why']}"]
                 results.append(row)
                 continue
-            _db.copilot_chats.delete_many({"tenant_id": {"$in": list(DEMO_TENANTS)}})   # each question on its own
+            _db.copilot_chats.delete_many({"tenant_id": {"$in": list(tenants or DEMO_TENANTS)}})   # each question on its own
             prompts.clear()
             refused.clear()
             _CURRENT["q"] = q
@@ -1149,6 +1152,7 @@ def _runs() -> List[Dict[str, Any]]:
                 row.update({k: rep.get(k) for k in ("total", "passed", "ok", "cost_eur", "model", "by_type")})
                 row["failures"] = [{k: f.get(k) for k in ("id", "type", "text", "account", "answer", "why")}
                                    for f in (rep.get("failures") or [])[:300]]
+                row["real"] = rep.get("real")        # the shops' own data, anonymized: counts and ids only
         out.append(row)
     return out
 

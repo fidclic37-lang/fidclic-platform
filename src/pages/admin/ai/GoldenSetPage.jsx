@@ -18,6 +18,39 @@ function state(r) {
   return r.ok ? ['100 %', 'bg-[#ECFDF5] text-[#047857]'] : [`${r.passed}/${r.total}`, 'bg-[#FEF2F2] text-[#B91C1C]'];
 }
 
+/* The shops' own data in the golden set (user 2026-11-09: every shop by default):
+   an anonymized copy each night, read by the GitHub run. One switch per shop. */
+function RealShops() {
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState('');
+  const load = () => adminAPI.aiGoldenReal().then(({ data }) => setRows(data.shops)).catch(() => setRows([]));
+  useEffect(() => { load(); }, []);
+  const flip = async (r) => {
+    setBusy(r.id);
+    try { await adminAPI.aiGoldenRealSet(r.id, !r.on); await load(); } finally { setBusy(''); }
+  };
+  if (!rows) return null;
+  return (
+    <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="golden-real-shops">
+      <h2 className="text-[15px] font-bold text-[#0B1C3F]">Données réelles des commerces</h2>
+      <p className="mt-1 text-[12.5px] text-[#64748B]">Chaque nuit, une copie anonymisée de chaque commerce (sans nom, téléphone ni e-mail de client) sert aussi au test. Le rapport public n&apos;affiche aucun chiffre.</p>
+      <ul className="mt-2 divide-y divide-[#F1F5FB] text-[13px]">
+        {rows.map((r) => (
+          <li key={r.id} className="flex items-center justify-between gap-3 py-2">
+            <span className="min-w-0">
+              <span className="font-semibold text-[#0B1C3F]" translate="no">{r.name || r.id}</span>
+              <span className="ml-2 text-[#94A3B8]">{r.built_at ? `copie du ${when(r.built_at)}` : 'pas encore copié'}</span>
+            </span>
+            <button type="button" role="switch" aria-checked={r.on} aria-label={`Données réelles de ${r.name || r.id}`} disabled={busy === r.id}
+                    onClick={() => flip(r)} className={`relative h-6 w-11 shrink-0 rounded-full transition ${r.on ? 'bg-[#1463FF]' : 'bg-[#D6DEEA]'}`}>
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${r.on ? 'left-[22px]' : 'left-0.5'}`} />
+            </button>
+          </li>))}
+      </ul>
+    </section>
+  );
+}
+
 export default function GoldenSetPage() {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(null);
@@ -100,6 +133,19 @@ export default function GoldenSetPage() {
           )}
         </section>
       )}
+
+      {run && run.real && (
+        <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="golden-real-result">
+          <h2 className="text-[15px] font-bold text-[#0B1C3F]">Données réelles anonymisées — {run.real.passed}/{run.real.total} ({run.real.shops} commerce{run.real.shops > 1 ? 's' : ''})</h2>
+          {run.real.failures?.length > 0 && (
+            <ul className="mt-2 space-y-1 text-[13px] text-[#B91C1C]">
+              {run.real.failures.map((f) => <li key={f.id}><span translate="no">{f.id}</span> — {f.why.join(' ; ')}</li>)}
+            </ul>
+          )}
+        </section>
+      )}
+
+      <RealShops />
 
       <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="golden-bank">
         <h2 className="text-[15px] font-bold text-[#0B1C3F]">Les questions</h2>

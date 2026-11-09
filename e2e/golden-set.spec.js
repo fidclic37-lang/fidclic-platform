@@ -35,3 +35,27 @@ test('Golden set: the questions by type, GitHub not linked said plainly', async 
   await page.screenshot({ path: 'test-results/golden-set.png', fullPage: true });
   expect(errors).toEqual([]);
 });
+
+test('Golden set: each shop in the real-data test by default, a switch takes one out', async ({ page, request }) => {
+  const login = await (await request.post('/api/auth/login', { data: ADMIN })).json();
+  const H = { Authorization: `Bearer ${login.access_token}` };
+  const shops = (await (await request.get('/api/admin/ai/golden-real', { headers: H })).json()).shops;
+  expect(shops.length).toBeGreaterThan(0);
+  expect(shops.every((s) => s.on)).toBe(true);                 // on by default (user, 2026-11-09)
+  const first = shops[0];
+
+  await page.goto('/login');
+  await page.evaluate((t) => localStorage.setItem('fidelitour_access_token', t), login.access_token);
+  await page.goto('/admin/ai/golden-set');
+  const box = page.getByTestId('golden-real-shops');
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  await expect(box).toContainText('aucun chiffre');
+  const sw = box.getByRole('switch', { name: `Données réelles de ${first.name || first.id}` });
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-checked', 'false');
+  const after = (await (await request.get('/api/admin/ai/golden-real', { headers: H })).json()).shops;
+  expect(after.find((s) => s.id === first.id).on).toBe(false);
+  await sw.click();                                             // back as it was
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+});
