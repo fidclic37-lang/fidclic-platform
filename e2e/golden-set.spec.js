@@ -59,3 +59,28 @@ test('Golden set: each shop in the real-data test by default, a switch takes one
   await sw.click();                                             // back as it was
   await expect(sw).toHaveAttribute('aria-checked', 'true');
 });
+
+test('Golden set: the owners\' real questions asked again, nothing kept', async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const OWNER = { email: 'demo.owner@fidelitour.com', password: 'Owner!Demo2026' };   // local seed only
+  const owner = await (await request.post('/api/auth/login', { data: OWNER })).json();
+  const OH = { Authorization: `Bearer ${owner.access_token}` };
+  const asked = await request.post('/api/owner/copilot/chat', { headers: OH, data: { message: 'Combien de visites ce mois-ci ?' } });
+  expect(asked.ok(), await asked.text()).toBeTruthy();
+
+  const login = await (await request.post('/api/auth/login', { data: ADMIN })).json();
+  await page.goto('/login');
+  await page.evaluate((t) => localStorage.setItem('fidelitour_access_token', t), login.access_token);
+  await page.goto('/admin/ai/golden-set');
+  const box = page.getByTestId('golden-shadow');
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  await box.getByLabel('Nombre de questions').selectOption('10');
+  const before = (await (await request.get('/api/owner/copilot/chat', { headers: OH })).json());
+  await box.getByTestId('shadow-run').click();
+  const items = page.getByTestId('shadow-items');
+  await expect(items).toBeVisible({ timeout: 90_000 });
+  await expect(items).toContainText('Combien de visites ce mois-ci ?');
+  await expect(items.getByText('Avant :').first()).toBeVisible();
+  const after = (await (await request.get('/api/owner/copilot/chat', { headers: OH })).json());
+  expect(JSON.stringify(after)).toEqual(JSON.stringify(before));              // the owner's chat is untouched
+});

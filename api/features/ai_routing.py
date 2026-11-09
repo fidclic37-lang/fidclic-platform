@@ -18,6 +18,7 @@ keeps its own model, and the page says the table is asleep.
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import re
@@ -81,9 +82,27 @@ def _default(feature: str) -> str:
     return DEFAULTS.get(feature, OTHERS)
 
 
+# A table tried for one run only (the Golden set's replay of real questions,
+# features/golden_shadow): this request's calls, never the live table.
+_TRYING: contextvars.ContextVar = contextvars.ContextVar("ai_routing_trying", default=None)
+
+
+@contextlib.contextmanager
+def trying(routes: Optional[Dict[str, str]]):
+    good = {j: m for j, m in (routes or {}).items() if j in JOBS and m in LADDER}
+    tok = _TRYING.set(good or None)
+    try:
+        yield
+    finally:
+        _TRYING.reset(tok)
+
+
 def model_for(feature: Optional[str]) -> str:
-    routes = _saved().get("routes") or {}
     job = feature if feature in DEFAULTS else "autre"
+    tried = _TRYING.get()
+    if tried and job in tried:
+        return tried[job]
+    routes = _saved().get("routes") or {}
     chosen = routes.get(job)
     return chosen if chosen in LADDER else _default(job)
 
