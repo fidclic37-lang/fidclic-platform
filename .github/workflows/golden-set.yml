@@ -50,7 +50,10 @@ jobs:
           LLM_MODEL: ${{ vars.LLM_MODEL }}
           GOLDEN_MAX_EUR: ${{ vars.GOLDEN_MAX_EUR || '8' }}
           GOLDEN_ROUTES: ${{ inputs.routes }}
-        run: python3 scripts/golden_run.py --out golden-report
+          # the shops' own data, anonymized (features/golden_real) — reported without a figure
+          GOLDEN_SNAPSHOT_KEY: ${{ secrets.GOLDEN_SNAPSHOT_KEY }}
+          GOLDEN_SNAPSHOT_URL: ${{ vars.GOLDEN_SNAPSHOT_URL }}
+        run: python3 scripts/golden_run.py --real --out golden-report
       - name: Summary
         if: always()
         run: cat golden-report/summary.md >> "$GITHUB_STEP_SUMMARY" || true

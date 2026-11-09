@@ -12610,6 +12610,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["warehouse"] = _WH.due(now)
     except Exception as e:
         out["failures"].append({"step": "warehouse", "error": str(e)[:120]})
+    try:                         # the golden set's real data: one anonymized file per shop, at night
+        from features import golden_real as _GR
+        out["golden_real"] = _GR.build_due(now)
+    except Exception as e:
+        out["failures"].append({"step": "golden_real", "error": str(e)[:120]})
     try:                         # « Produits qui font revenir »: each shop's figures once a week
         # (queued here, worked by ai_jobs in the brain_journal step below)
         from features import product_return as _PRR
