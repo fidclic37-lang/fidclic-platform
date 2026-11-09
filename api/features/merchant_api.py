@@ -13,35 +13,57 @@ API KEYS (Paramètres › API & Intégrations)
 PUBLIC API  /api/v1 — header « Authorization: Bearer fc_live_… » (or X-API-Key)
     GET  /api/v1/me                      the business and its card rules
     GET  /api/v1/customers               list (search, updated_since, page)
-    GET  /api/v1/customers/{ref}         by id, card number (FT-…) or phone
+    GET  /api/v1/customers/{ref}         by id, card number (FT-…), phone (any
+                                         format) or e-mail; two clients on one
+                                         phone / e-mail → 409, never a guess
     POST /api/v1/customers               create a card (consent required)
     POST /api/v1/visits                  record a visit / sale — the same
                                          rules as a scan at the counter
                                          (stamps, points, tiers, rewards);
                                          external_id makes it idempotent
     GET  /api/v1/visits                  list (customer, since, page)
+    POST /api/v1/visits/{ref}/cancel     a refund: by visit id or external_id;
+                                         takes back what the visit gave
+    POST /api/v1/rewards/hold            a borne locks a reward while the client
+    DELETE /api/v1/rewards/hold/{id}     pays (30 s – 15 min), or lets it go
     POST /api/v1/rewards/redeem          the customer uses a reward
+    POST /api/v1/customers/{ref}/verification         SMS code to the client,
+    POST /api/v1/customers/{ref}/verification/check   then a one-use token;
+                                         an « online » key redeems only with it
+
+IDEMPOTENCY (2026-11-09)
+    external_id is reserved BEFORE the work (a unique row), so the same ticket
+    sent twice at once is written once; the same id with another body → 422;
+    a call that failed frees its id; one that died is taken over after 60 s.
 
 WEBHOOKS
-    customer.created, visit.created, reward.unlocked, reward.redeemed —
-    POST JSON to the business's URL, signed:
+    customer.created, visit.created, visit.cancelled, reward.unlocked,
+    reward.redeemed — POST JSON to the business's URL, signed:
     X-FidClic-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>
-    Every delivery is logged; failed ones are retried by the daily cron
-    (3 tries) and can be re-sent by hand.
+    Never to an internal address (checked at creation AND on every send, after
+    DNS), never following a redirect; endpoints are called side by side and the
+    caller waits DELIVERY_DEADLINE_S at most. Every delivery is logged; failed
+    ones are retried by the 15-minute tick and the daily cron (3 tries) and can
+    be re-sent by hand. A delivery may arrive twice: dedupe on X-FidClic-Delivery.
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import secrets
+import socket
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, wait as _wait_all
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from auth import TokenData, require_role
@@ -52,27 +74,68 @@ _db = None
 OWNER = ["business_owner"]
 READERS = ["business_owner", "administrateur"]
 EVENTS = {"customer.created": "Nouveau client (carte créée)", "visit.created": "Nouveau passage / achat",
+          "visit.cancelled": "Passage annulé (remboursement)",
           "reward.unlocked": "Récompense débloquée", "reward.redeemed": "Récompense utilisée"}
+API_VERSION = "2026-11-09"
 RATE_PER_MINUTE = 120
 MAX_KEYS = 10
 MAX_HOOKS = 10
-TIMEOUT_S = 4
+TIMEOUT_S = 3                 # one webhook endpoint
+DELIVERY_DEADLINE_S = 3.0     # what the caller waits for all of them, side by side
 RETRIES = 3
+IN_PROGRESS_S = 60            # an idempotent call older than this died: taken over
+IDEMPOTENCY_DAYS = 30
+CANCEL_MAX_DAYS = 90          # a refund later than this is a manual adjustment, not an API cancel
+HOLD_MIN_S, HOLD_MAX_S, HOLD_DEFAULT_S = 30, 900, 300
+VERIFY_TTL_S = 600            # an SMS code
+VERIFY_TOKEN_TTL_S = 900      # the token it gives
+VERIFY_MAX_ATTEMPTS = 5
+VERIFY_PER_HOUR = 3           # codes per client per hour
+VERIFY_PER_DAY = 200          # codes per shop per day (SMS cost, SMS pumping)
+BLOCKED_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home.arpa", ".corp", ".intranet")
+
+# While the API runs the counter's scan, the scan's own webhook would describe
+# the visit before it is tagged (external_id, source): the API sends it itself.
+_EMIT_SUSPENDED: contextvars.ContextVar = contextvars.ContextVar("fidclic_api_emit_suspended", default=False)
 
 
 def init(db):
     global _db
     _db = db
-    try:
-        db.api_keys.create_index("hash", unique=True)
-        db.api_idempotency.create_index([("tenant_id", 1), ("key", 1)], unique=True)
-        db.webhook_deliveries.create_index([("tenant_id", 1), ("at", -1)])
-    except Exception:
-        pass
+    for coll, keys, kw in (
+            ("api_keys", "hash", {"unique": True}),
+            ("api_idempotency", [("tenant_id", 1), ("key", 1)], {"unique": True}),
+            ("api_idempotency", "at", {"expireAfterSeconds": IDEMPOTENCY_DAYS * 86400, "name": "at_ttl"}),
+            ("api_rate", [("key_id", 1), ("minute", 1)], {}),
+            ("api_rate", "at", {"expireAfterSeconds": 2 * 3600, "name": "at_ttl"}),
+            ("api_verifications", [("tenant_id", 1), ("customer_id", 1), ("at", -1)], {}),
+            ("api_verifications", "token_hash", {"sparse": True}),
+            ("api_verifications", "at", {"expireAfterSeconds": 86400, "name": "at_ttl"}),
+            ("api_reward_holds", "id", {"unique": True}),
+            ("api_reward_holds", "at", {"expireAfterSeconds": 7 * 86400, "name": "at_ttl"}),
+            ("visits_cancelled", [("tenant_id", 1), ("id", 1)], {}),
+            ("visits_cancelled", [("tenant_id", 1), ("external_id", 1)], {}),
+            ("visits", [("tenant_id", 1), ("external_id", 1)], {"sparse": True}),
+            ("webhook_deliveries", [("tenant_id", 1), ("at", -1)], {}),
+            ("webhook_deliveries", [("ok", 1), ("at", -1)], {})):
+        try:                                  # one index failing (an old one of the same name) never stops the rest
+            db[coll].create_index(keys, **kw)
+        except Exception as e:
+            print(f"merchant_api: index {coll} {keys} skipped: {e}")
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _aware(v: Any) -> Optional[datetime]:
+    if not isinstance(v, datetime):
+        return None
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+def _err(status: int, code: str, message: str, **extra) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
 
 
 def _iso(v: Any) -> Optional[str]:
@@ -103,6 +166,7 @@ class ApiCaller(BaseModel):
     key_id: str
     key_name: str
     scopes: List[str]
+    online: bool = False           # a website's key: a reward is used only after an SMS code
 
 
 def api_caller(request: Request) -> ApiCaller:
@@ -126,7 +190,8 @@ def api_caller(request: Request) -> ApiCaller:
         raise HTTPException(status_code=429, detail={"code": "rate_limited",
                                                      "message": f"Limite de {RATE_PER_MINUTE} requêtes par minute atteinte. Réessayez dans un instant."})
     _db.api_keys.update_one({"id": k["id"]}, {"$set": {"last_used_at": _now()}, "$inc": {"calls": 1}})
-    return ApiCaller(tenant_id=k["tenant_id"], key_id=k["id"], key_name=k.get("name") or "", scopes=k.get("scopes") or ["read"])
+    return ApiCaller(tenant_id=k["tenant_id"], key_id=k["id"], key_name=k.get("name") or "", scopes=k.get("scopes") or ["read"],
+                     online=bool(k.get("online")))
 
 
 def writer(c: ApiCaller = Depends(api_caller)) -> ApiCaller:
@@ -192,7 +257,20 @@ def visit_out(v: Dict[str, Any]) -> Dict[str, Any]:
 LIVE = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}], "card_deleted_at": {"$exists": False}}
 
 
+def _one(rows: List[Dict[str, Any]], what: str) -> Optional[Dict[str, Any]]:
+    """One client, or none — two (a family on one phone, an old duplicate) is
+    never settled by picking one: the caller asks with the card number."""
+    ids = list(dict.fromkeys(r["id"] for r in rows if r.get("id")))
+    if len(ids) > 1:
+        raise _err(409, "ambiguous_customer", f"Plusieurs clients ont ce {what} : utilisez le numéro de carte (FT-…).",
+                   matches=len(ids))
+    return _db.customers.find_one({"id": ids[0]}, {"_id": 0}) if ids else None
+
+
 def _find_customer(tenant_id: str, ref: str) -> Dict[str, Any]:
+    """By id, card number, e-mail or phone — always inside this shop, never a
+    deleted card. The text is plain text: no pattern a caller sends reaches
+    the database as one."""
     import server as core
     ref = (ref or "").strip()
     c = None
@@ -200,33 +278,89 @@ def _find_customer(tenant_id: str, ref: str) -> Dict[str, Any]:
         c = _db.customers.find_one({**LIVE, "tenant_id": tenant_id, "id": ref}, {"_id": 0})
         if not c:
             c = _db.customers.find_one({**LIVE, "tenant_id": tenant_id, "barcode_id": core.barcode_from(ref)}, {"_id": 0})
-        if not c:
+        if not c and "@" in ref:
+            rows = list(_db.customers.find({**LIVE, "tenant_id": tenant_id,
+                                            "email": {"$regex": "^" + re.escape(ref) + "$", "$options": "i"}},
+                                           {"_id": 0, "id": 1}).limit(5))
+            c = _one(rows, "e-mail")
+        elif not c:
             digits = re.sub(r"\D", "", ref)
-            if len(digits) >= 9:
+            if 9 <= len(digits) <= 15:
                 tail = digits[-9:]              # « 06 12… », « +33 6 12… », « 0033612… » are one number
-                for cand in _db.customers.find({**LIVE, "tenant_id": tenant_id, "phone": {"$nin": [None, ""]}},
-                                               {"_id": 0, "id": 1, "phone": 1}):
-                    if re.sub(r"\D", "", cand.get("phone") or "").endswith(tail):
-                        c = _db.customers.find_one({"id": cand["id"]}, {"_id": 0})
-                        break
+                # the database keeps the numbers as typed: match the 9 last digits, whatever sits between them
+                pattern = r"\D*".join(tail) + r"\D*$"
+                rows = [r for r in _db.customers.find({**LIVE, "tenant_id": tenant_id, "phone": {"$regex": pattern}},
+                                                      {"_id": 0, "id": 1, "phone": 1}).limit(20)
+                        if re.sub(r"\D", "", r.get("phone") or "").endswith(tail)]
+                c = _one(rows, "numéro de téléphone")
     if not c:
-        raise HTTPException(status_code=404, detail={"code": "customer_not_found", "message": "Client introuvable (id, numéro de carte ou téléphone)."})
+        raise _err(404, "customer_not_found", "Client introuvable (id, numéro de carte, téléphone ou e-mail).")
     return c
 
 
-def _idempotent(tenant_id: str, kind: str, external_id: Optional[str]):
-    if not external_id:
-        return None
-    return _db.api_idempotency.find_one({"tenant_id": tenant_id, "key": f"{kind}:{external_id}"}, {"_id": 0})
+# ---------------------------------------------------------------------------
+# Idempotency: the external_id is reserved before the work, not after it
+# ---------------------------------------------------------------------------
+def _fingerprint(obj: Any) -> str:
+    return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False).encode()).hexdigest()[:32]
 
 
-def _remember(tenant_id: str, kind: str, external_id: Optional[str], response: Dict[str, Any]) -> None:
-    if not external_id:
-        return
+def _is_duplicate(e: Exception) -> bool:
     try:
-        _db.api_idempotency.insert_one({"tenant_id": tenant_id, "key": f"{kind}:{external_id}", "response": response, "at": _now()})
+        from pymongo.errors import DuplicateKeyError
+        if isinstance(e, DuplicateKeyError):
+            return True
     except Exception:
         pass
+    return "duplicate" in type(e).__name__.lower() or "E11000" in str(e)
+
+
+def _idem_begin(tenant_id: str, kind: str, external_id: Optional[str], fp: str) -> Optional[Dict[str, Any]]:
+    """None: go ahead, the id is ours until _idem_done / _idem_abort. A dict:
+    the answer already given for this id — send it again."""
+    if not external_id:
+        return None
+    key = f"{kind}:{external_id}"
+    for _round in range(3):
+        try:
+            _db.api_idempotency.insert_one({"tenant_id": tenant_id, "key": key, "state": "pending", "fp": fp, "at": _now()})
+            return None
+        except Exception as e:
+            if not _is_duplicate(e):
+                raise
+        row = _db.api_idempotency.find_one({"tenant_id": tenant_id, "key": key}, {"_id": 0})
+        if row is None:                       # freed between the two reads: try again
+            continue
+        if (row.get("state") or "done") == "done":      # rows from before 2026-11-09 have no state: they are done
+            if row.get("fp") and row["fp"] != fp:
+                raise _err(422, "idempotency_conflict",
+                           f"external_id « {external_id} » a déjà servi pour une autre requête (autre client, montant ou articles).")
+            return row.get("response") or {}
+        # still pending: running elsewhere, or dead (then whatever it carried was never written)
+        started = _aware(row.get("at")) or _now()
+        if started > _now() - timedelta(seconds=IN_PROGRESS_S):
+            raise _err(409, "request_in_progress",
+                       f"Une requête avec external_id « {external_id} » est en cours : réessayez dans quelques secondes.")
+        took = _db.api_idempotency.update_one({"tenant_id": tenant_id, "key": key, "state": "pending", "at": row.get("at")},
+                                              {"$set": {"at": _now(), "fp": fp}})
+        if getattr(took, "modified_count", 0):
+            return None                       # the call that held it died: ours now
+    raise _err(409, "request_in_progress", f"Une requête avec external_id « {external_id} » est en cours : réessayez.")
+
+
+def _idem_done(tenant_id: str, kind: str, external_id: Optional[str], response: Dict[str, Any]) -> None:
+    if external_id:
+        _db.api_idempotency.update_one({"tenant_id": tenant_id, "key": f"{kind}:{external_id}"},
+                                       {"$set": {"state": "done", "response": response, "at": _now()}})
+
+
+def _idem_abort(tenant_id: str, kind: str, external_id: Optional[str]) -> None:
+    """A call that failed gives its id back, so the corrected call can use it."""
+    if external_id:
+        try:
+            _db.api_idempotency.delete_one({"tenant_id": tenant_id, "key": f"{kind}:{external_id}", "state": "pending"})
+        except Exception as e:
+            print(f"merchant_api: idempotency row not freed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -303,30 +437,49 @@ def create_customer(body: CustomerIn, c: ApiCaller = Depends(writer)):
 
 
 class VisitIn(BaseModel):
-    customer: str = Field(..., description="id, card number (FT-…) or phone")
+    customer: str = Field(..., description="id, card number (FT-…), phone or e-mail")
     amount: float = Field(0, ge=0, le=100000)
     items: Optional[List[Dict[str, Any]]] = None      # [{item_id, qty}] from the business's catalogue
     branch_id: Optional[str] = None
     external_id: Optional[str] = Field(None, max_length=120)   # the ticket number: sent twice, counted once
 
 
+def _reward_unlocked_by(res: Dict[str, Any]) -> bool:
+    """The rule the counter's scan uses for its own reward.unlocked."""
+    return bool(res.get("reward_unlocked") and res.get("stamps_in_cycle") == res.get("reward_threshold"))
+
+
 @router.post("/api/v1/visits", status_code=201)
 def create_visit(body: VisitIn, c: ApiCaller = Depends(writer)):
     import server as core
-    hit = _idempotent(c.tenant_id, "visit", body.external_id)
-    if hit:
-        return {**hit["response"], "duplicate": True}
-    cust = _find_customer(c.tenant_id, body.customer)
-    res = core.scan_visit(core.ScanRequest(barcode_id=cust["barcode_id"], amount_paid=body.amount, items=body.items,
-                                           branch_id=body.branch_id), token_data=_as_owner(c))
-    v = _db.visits.find_one({"tenant_id": c.tenant_id, "customer_id": cust["id"]}, {"_id": 0}, sort=[("visit_time", -1)]) or {}
-    if v.get("id"):
-        _db.visits.update_one({"id": v["id"]}, {"$set": {"source": "api", "external_id": body.external_id, "api_key_id": c.key_id}})
-        v.update(source="api", external_id=body.external_id)
-    out = {"visit": visit_out(v), "customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})),
-           "tier_upgraded": bool(res.get("tier_upgraded")), "reward_unlocked": bool(res.get("reward_unlocked")),
-           "next_visit_reward": res.get("next_visit_reward")}
-    _remember(c.tenant_id, "visit", body.external_id, out)
+    fp = _fingerprint({"customer": body.customer.strip(), "amount": round(float(body.amount or 0), 2),
+                       "items": body.items or [], "branch_id": body.branch_id or ""})
+    hit = _idem_begin(c.tenant_id, "visit", body.external_id, fp)
+    if hit is not None:
+        return {**hit, "duplicate": True}
+    try:
+        cust = _find_customer(c.tenant_id, body.customer)
+        token = _EMIT_SUSPENDED.set(True)
+        try:
+            res = core.scan_visit(core.ScanRequest(barcode_id=cust["barcode_id"], amount_paid=body.amount, items=body.items,
+                                                   branch_id=body.branch_id), token_data=_as_owner(c))
+        finally:
+            _EMIT_SUSPENDED.reset(token)
+        vid = res.get("visit_id")
+        v = (_db.visits.find_one({"id": vid}, {"_id": 0}) if vid else None) or {}
+        if v.get("id"):
+            _db.visits.update_one({"id": v["id"]}, {"$set": {"source": "api", "external_id": body.external_id, "api_key_id": c.key_id}})
+            v.update(source="api", external_id=body.external_id)
+        out = {"visit": visit_out(v), "customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})),
+               "tier_upgraded": bool(res.get("tier_upgraded")), "reward_unlocked": bool(res.get("reward_unlocked"))}
+        _idem_done(c.tenant_id, "visit", body.external_id, out)
+    except BaseException:
+        _idem_abort(c.tenant_id, "visit", body.external_id)
+        raise
+    # sent now that the visit carries its external_id (the scan's own was held back)
+    emit_customer("visit.created", c.tenant_id, cust["id"], visit_id=v.get("id"))
+    if _reward_unlocked_by(res):
+        emit_customer("reward.unlocked", c.tenant_id, cust["id"])
     return {**out, "duplicate": False}
 
 
@@ -347,30 +500,330 @@ def list_visits(customer: Optional[str] = None, since: Optional[str] = None, pag
     return {"data": [visit_out(v) for v in rows], "page": page, "per_page": per_page, "total": total, "has_more": page * per_page < total}
 
 
+# ---------------------------------------------------------------------------
+# Cancel a visit (refund)
+# ---------------------------------------------------------------------------
+class CancelIn(BaseModel):
+    reason: Optional[str] = Field(None, max_length=200)
+    external_id: Optional[str] = Field(None, max_length=120)
+
+
+def _cancel_answer(v: Dict[str, Any], duplicate: bool) -> Dict[str, Any]:
+    cust = _db.customers.find_one({"id": v.get("customer_id")}, {"_id": 0})
+    return {"cancelled": True, "duplicate": duplicate, "visit": {**visit_out(v), "cancelled_at": _iso(v.get("cancelled_at"))},
+            "customer": customer_out(cust) if cust else None,
+            "reversed": v.get("reversed") or {}, "not_reversed": v.get("not_reversed") or []}
+
+
+def _undo_on_card(v: Dict[str, Any], c: ApiCaller) -> Dict[str, Any]:
+    """Take back what this visit gave: one visit, its points, its spend, the
+    meter's move and any reward it banked — never below zero. What was handed
+    out since (points spent, a reward used, messages) stays, and is named."""
+    import server as core
+    from features import loyalty_card as LC
+    cid, tid = v["customer_id"], c.tenant_id
+    tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
+    programme = v.get("programme") or LC._programme(tpl)
+    stamp_card = programme == "stamps"
+    pts = max(int(v.get("points_awarded") or 0), 0)
+    amount = round(max(float(v.get("amount_paid") or 0), 0.0), 2)
+    persons = max(int(v.get("persons") or 1), 1)
+    inc: Dict[str, Any] = {"visits": -1, "points": -pts, "points_lifetime": -pts, "total_amount_paid": -amount}
+    # the scan moved the meter's baseline by (0 if tampons else 1) − (persons − 1): move it back
+    base = (persons - 1) if stamp_card else -1
+    not_reversed: List[str] = []
+    rewards_cancelled = 0
+    banked = list(_db.rewards_earned.find({"tenant_id": tid, "customer_id": cid, "visit_id": v["id"]}, {"_id": 0}))
+    if not banked and stamp_card and isinstance(v.get("visit_time"), datetime):
+        t0 = _aware(v["visit_time"])           # rows banked before rewards carried their visit
+        banked = [r for r in _db.rewards_earned.find({"tenant_id": tid, "customer_id": cid, "visit_id": {"$exists": False},
+                                                       "earned_at": {"$gte": t0 - timedelta(seconds=1), "$lte": t0 + timedelta(seconds=120)}},
+                                                      {"_id": 0})]
+    for r in banked:
+        if r.get("status") == "pending":
+            done = _db.rewards_earned.update_one({"id": r["id"], "status": "pending"},
+                                                 {"$set": {"status": "cancelled", "cancelled_at": _now(), "cancelled_visit_id": v["id"]}})
+            if getattr(done, "modified_count", 0):
+                base -= int(r.get("threshold") or _threshold(tid))
+                rewards_cancelled += 1
+                continue
+        if r.get("status") != "cancelled":
+            not_reversed.append("reward_already_used")
+    if base:
+        inc["visits_at_last_redemption"] = base
+    later = _db.visits.find_one({"tenant_id": tid, "customer_id": cid}, {"_id": 0, "visit_time": 1}, sort=[("visit_time", -1)])
+    sets: Dict[str, Any] = {"updated_at": _now()}
+    unsets: Dict[str, Any] = {}
+    if later and later.get("visit_time"):
+        sets["last_visit_date"] = later["visit_time"]
+    else:
+        unsets["last_visit_date"] = ""
+    vt = _aware(v.get("visit_time"))
+    if not later or not vt or (_aware(later.get("visit_time")) or vt) < vt:
+        # it was the latest visit: what « the latest scan brought » is nothing now
+        sets.update({"last_scan_units": 0, "points_last_earned": 0})
+    upd: Dict[str, Any] = {"$inc": inc, "$set": sets}
+    if unsets:
+        upd["$unset"] = unsets
+    _db.customers.update_one({"id": cid, "tenant_id": tid}, upd)
+    after = _db.customers.find_one({"id": cid}, {"_id": 0}) or {}
+    fixes: Dict[str, Any] = {}
+    recovered_points = pts
+    if int(after.get("points") or 0) < 0:
+        recovered_points = pts + int(after["points"])
+        fixes["points"] = 0
+        not_reversed.append("points_already_spent")
+    for f in ("points_lifetime", "visits"):
+        if int(after.get(f) or 0) < 0:
+            fixes[f] = 0
+    if float(after.get("total_amount_paid") or 0) < 0:
+        fixes["total_amount_paid"] = 0.0
+    if fixes:
+        _db.customers.update_one({"id": cid}, {"$set": fixes})
+    try:
+        _db.customer_changes.insert_one({
+            "id": str(uuid.uuid4()), "tenant_id": tid, "customer_id": cid, "customer_name": after.get("name"),
+            "kind": "visit_cancelled", "visits_delta": -1, "points_delta": -recovered_points,
+            "text": f"Passage annulé ({c.key_name or 'API'}) : {amount:.2f} €".replace(".", ","),
+            "reason": v.get("cancel_reason") or "Remboursement", "by": f"api:{c.key_name or c.key_id}", "at": _now(),
+        })
+    except Exception as e:
+        print(f"cancel: history not written (non-fatal): {e}")
+    try:
+        from features import client_brain as CB
+        CB.refresh(tid, cid)
+    except Exception as e:
+        print(f"cancel: client brain not refreshed (non-fatal): {e}")
+    try:
+        core.refresh_wallet_pass(cid)
+    except Exception as e:
+        print(f"cancel: wallet pass not refreshed (non-fatal): {e}")
+    return {"reversed": {"visits": 1, "points": recovered_points, "amount": amount,
+                         "stamps": int(v.get("stamps_awarded") or 0), "rewards_cancelled": rewards_cancelled},
+            "not_reversed": list(dict.fromkeys(not_reversed))}
+
+
+@router.post("/api/v1/visits/{ref}/cancel")
+def cancel_visit(ref: str, body: Optional[CancelIn] = Body(None), c: ApiCaller = Depends(writer)):
+    import server as core
+    body = body or CancelIn()
+    ref = (ref or "").strip()
+    where = {"tenant_id": c.tenant_id, "$or": [{"id": ref}, {"external_id": ref}]}
+    hit = _idem_begin(c.tenant_id, "cancel", body.external_id, _fingerprint({"visit": ref}))
+    if hit is not None:
+        return {**hit, "duplicate": True}
+    try:
+        # an external_id reused after its 30 days: the latest visit is the one meant
+        v = _db.visits.find_one(where, {"_id": 0}, sort=[("visit_time", -1)]) if ref else None
+        if not v:
+            gone = _db.visits_cancelled.find_one(where, {"_id": 0}, sort=[("cancelled_at", -1)]) if ref else None
+            if not gone:
+                raise _err(404, "visit_not_found", "Passage introuvable (id ou external_id).")
+            out = _cancel_answer(gone, duplicate=True)
+            _idem_done(c.tenant_id, "cancel", body.external_id, out)
+            return out
+        vt = _aware(v.get("visit_time"))
+        if vt and vt < _now() - timedelta(days=CANCEL_MAX_DAYS):
+            raise _err(409, "visit_too_old", f"Ce passage a plus de {CANCEL_MAX_DAYS} jours : corrigez-le dans Clients › Ajuster.")
+        if v.get("paper_stamps"):
+            raise _err(409, "visit_not_cancellable",
+                       "Ce passage a transféré une carte papier : corrigez-le dans Clients › Ajuster.")
+        claimed = _db.visits.find_one_and_delete({"id": v["id"], "tenant_id": c.tenant_id})
+        if not claimed:                        # another call cancelled it a moment ago
+            gone = _db.visits_cancelled.find_one({"tenant_id": c.tenant_id, "id": v["id"]}, {"_id": 0})
+            if not gone:
+                raise _err(409, "request_in_progress", "Ce passage est en cours d'annulation : réessayez.")
+            out = _cancel_answer(gone, duplicate=True)
+            _idem_done(c.tenant_id, "cancel", body.external_id, out)
+            return out
+        claimed.pop("_id", None)
+        kept = {**claimed, "cancelled_at": _now(), "cancel_reason": (body.reason or "").strip() or None,
+                "cancelled_by": f"api:{c.key_name or c.key_id}", "cancel_key_id": c.key_id}
+        _db.visits_cancelled.insert_one(dict(kept))      # kept apart at once: a visit is never just lost
+        undone = _undo_on_card(kept, c)
+        _db.visits_cancelled.update_one({"tenant_id": c.tenant_id, "id": kept["id"]}, {"$set": undone})
+        kept.update(undone)
+        out = _cancel_answer(kept, duplicate=False)
+        _idem_done(c.tenant_id, "cancel", body.external_id, out)
+    except BaseException:
+        _idem_abort(c.tenant_id, "cancel", body.external_id)
+        raise
+    try:
+        core.log_audit("api.visit_cancel", actor=f"api:{c.key_name or c.key_id}", actor_type="api", tenant_id=c.tenant_id,
+                       target=kept["id"], meta={"customer_id": kept.get("customer_id"), "amount": kept.get("amount_paid")})
+    except Exception as e:
+        print(f"cancel: audit not written (non-fatal): {e}")
+    emit(c.tenant_id, "visit.cancelled", {"visit": out["visit"], "customer": out["customer"],
+                                          "reversed": out["reversed"], "not_reversed": out["not_reversed"]})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Rewards: hold (borne), verification (website), redeem
+# ---------------------------------------------------------------------------
+class HoldIn(BaseModel):
+    customer: str
+    ttl_seconds: int = Field(HOLD_DEFAULT_S, ge=HOLD_MIN_S, le=HOLD_MAX_S)
+
+
+def _refuse_no_reward(cust: Dict[str, Any]) -> None:
+    out = customer_out(cust)
+    if out["reward_available"]:
+        return
+    if out["rewards_pending"] or out["reward_unlocked"]:
+        raise _err(409, "reward_next_visit", "Récompense disponible à la prochaine visite.")
+    raise _err(409, "no_reward", "Ce client n'a pas de récompense disponible.")
+
+
+@router.post("/api/v1/rewards/hold", status_code=201)
+def hold_reward(body: HoldIn, c: ApiCaller = Depends(writer)):
+    cust = _find_customer(c.tenant_id, body.customer)
+    _refuse_no_reward(cust)
+    now = _now()
+    hold = {"id": "hold_" + secrets.token_hex(12), "until": now + timedelta(seconds=body.ttl_seconds),
+            "key_id": c.key_id, "key_name": c.key_name, "at": now}
+    took = _db.customers.update_one(
+        {"id": cust["id"], "tenant_id": c.tenant_id,
+         "$or": [{"reward_hold": {"$exists": False}}, {"reward_hold": None}, {"reward_hold.until": {"$lte": now}}]},
+        {"$set": {"reward_hold": hold}})
+    if not getattr(took, "modified_count", 0):
+        cur = (_db.customers.find_one({"id": cust["id"]}, {"_id": 0, "reward_hold": 1}) or {}).get("reward_hold") or {}
+        raise _err(409, "reward_held", "Cette récompense est déjà réservée par une autre caisse.",
+                   expires_at=_iso(cur.get("until")))
+    _db.api_reward_holds.insert_one({**hold, "tenant_id": c.tenant_id, "customer_id": cust["id"], "state": "active"})
+    return {"hold_id": hold["id"], "expires_at": _iso(hold["until"]), "customer": customer_out(cust)}
+
+
+@router.delete("/api/v1/rewards/hold/{hold_id}")
+def release_hold(hold_id: str, c: ApiCaller = Depends(writer)):
+    h = _db.api_reward_holds.find_one({"id": hold_id, "tenant_id": c.tenant_id}, {"_id": 0})
+    if not h:
+        raise _err(404, "hold_not_found", "Réservation introuvable.")
+    freed = _db.customers.update_one({"id": h["customer_id"], "tenant_id": c.tenant_id, "reward_hold.id": hold_id},
+                                     {"$unset": {"reward_hold": ""}})
+    _db.api_reward_holds.update_one({"id": hold_id, "state": "active"}, {"$set": {"state": "released", "released_at": _now()}})
+    return {"released": bool(getattr(freed, "modified_count", 0))}
+
+
+class VerifyCheckIn(BaseModel):
+    code: str = Field(..., min_length=4, max_length=12)
+
+
+def _masked(phone: str) -> str:
+    d = re.sub(r"\D", "", phone or "")
+    return "•• •• •• " + (f"{d[-4:-2]} {d[-2:]}" if len(d) >= 4 else d)
+
+
+@router.post("/api/v1/customers/{ref}/verification")
+def send_verification(ref: str, c: ApiCaller = Depends(writer)):
+    """An SMS code to the client's own phone: proof, for a website, that the
+    person typing the number is the client before a reward is used."""
+    from services import sms as SMS
+    cust = _find_customer(c.tenant_id, ref)
+    phone = (cust.get("phone") or "").strip()
+    if len(re.sub(r"\D", "", phone)) < 9:
+        raise _err(409, "no_phone", "Aucun numéro de téléphone sur cette carte.")
+    if not SMS.is_configured():
+        raise _err(503, "sms_unavailable", "L'envoi de SMS n'est pas disponible pour le moment.")
+    now = _now()
+    if _db.api_verifications.count_documents({"tenant_id": c.tenant_id, "customer_id": cust["id"],
+                                              "at": {"$gte": now - timedelta(hours=1)}}) >= VERIFY_PER_HOUR:
+        raise _err(429, "too_many_codes", f"{VERIFY_PER_HOUR} codes par heure au maximum pour ce client.")
+    if _db.api_verifications.count_documents({"tenant_id": c.tenant_id, "at": {"$gte": now - timedelta(days=1)}}) >= VERIFY_PER_DAY:
+        raise _err(429, "too_many_codes", f"{VERIFY_PER_DAY} codes par jour au maximum pour ce commerce.")
+    code = f"{secrets.randbelow(10 ** 6):06d}"
+    row = {"id": "ver_" + secrets.token_hex(10), "tenant_id": c.tenant_id, "customer_id": cust["id"], "key_id": c.key_id,
+           "attempts": 0, "state": "sent", "at": now, "expires_at": now + timedelta(seconds=VERIFY_TTL_S)}
+    row["code_hash"] = _hash(f"{row['id']}:{code}")
+    _db.api_verifications.insert_one(dict(row))
+    shop = (_db.tenants.find_one({"id": c.tenant_id}, {"_id": 0, "name": 1}) or {}).get("name") or "FidClic"
+    res = SMS.send_sms(phone, f"{shop[:30]} : votre code est {code}. Il expire dans {VERIFY_TTL_S // 60} min. Ne le partagez pas.")
+    if not (res or {}).get("sent"):
+        _db.api_verifications.update_one({"id": row["id"]}, {"$set": {"state": "failed", "error": str((res or {}).get("error"))[:80]}})
+        raise _err(502, "sms_failed", "Le SMS n'a pas pu être envoyé : vérifiez le numéro du client.")
+    return {"sent": True, "channel": "sms", "to": _masked(phone), "verification_id": row["id"], "expires_at": _iso(row["expires_at"])}
+
+
+@router.post("/api/v1/customers/{ref}/verification/check")
+def check_verification(ref: str, body: VerifyCheckIn, c: ApiCaller = Depends(writer)):
+    cust = _find_customer(c.tenant_id, ref)
+    now = _now()
+    row = _db.api_verifications.find_one({"tenant_id": c.tenant_id, "customer_id": cust["id"], "state": {"$in": ["sent", "locked"]}},
+                                         {"_id": 0}, sort=[("at", -1)])
+    if not row or (_aware(row.get("expires_at")) or now) <= now:
+        raise _err(400, "wrong_code", "Code incorrect ou expiré : demandez-en un nouveau.")
+    if row.get("state") == "locked" or int(row.get("attempts") or 0) >= VERIFY_MAX_ATTEMPTS:
+        raise _err(429, "too_many_attempts", "Trop d'essais : demandez un nouveau code.")
+    code = re.sub(r"\D", "", body.code)
+    if not hmac.compare_digest(_hash(f"{row['id']}:{code}"), row.get("code_hash") or ""):
+        n = int(row.get("attempts") or 0) + 1
+        _db.api_verifications.update_one({"id": row["id"]}, {"$set": {"attempts": n, **({"state": "locked"} if n >= VERIFY_MAX_ATTEMPTS else {})}})
+        raise _err(400, "wrong_code", "Code incorrect.", attempts_left=max(0, VERIFY_MAX_ATTEMPTS - n))
+    token = "vt_" + secrets.token_urlsafe(24)
+    took = _db.api_verifications.update_one({"id": row["id"], "state": "sent"},
+                                            {"$set": {"state": "verified", "verified_at": now, "token_hash": _hash(token),
+                                                      "token_until": now + timedelta(seconds=VERIFY_TOKEN_TTL_S), "token_used": False}})
+    if not getattr(took, "modified_count", 0):
+        raise _err(400, "wrong_code", "Code déjà utilisé : demandez-en un nouveau.")
+    return {"verified": True, "verification_token": token, "expires_at": _iso(now + timedelta(seconds=VERIFY_TOKEN_TTL_S))}
+
+
+def _use_token(c: ApiCaller, customer_id: str, token: Optional[str]) -> Optional[str]:
+    """Spend a verification token once; returns its row id (to give it back
+    if the reward then fails), or refuses."""
+    now = _now()
+    row = _db.api_verifications.find_one_and_update(
+        {"tenant_id": c.tenant_id, "customer_id": customer_id, "token_hash": _hash(token or "-"), "token_used": False,
+         "token_until": {"$gt": now}},
+        {"$set": {"token_used": True, "token_used_at": now}}) if token else None
+    if not row:
+        raise _err(403, "verification_required",
+                   "Clé « site en ligne » : vérifiez d'abord le client par SMS (POST /customers/{ref}/verification).")
+    return row["id"]
+
+
 class RedeemIn(BaseModel):
     customer: str
     reward_name: Optional[str] = Field(None, max_length=120)
     external_id: Optional[str] = Field(None, max_length=120)
+    hold_id: Optional[str] = Field(None, max_length=60)
+    verification_token: Optional[str] = Field(None, max_length=80)
 
 
 @router.post("/api/v1/rewards/redeem")
 def redeem(body: RedeemIn, c: ApiCaller = Depends(writer)):
     import server as core
-    hit = _idempotent(c.tenant_id, "redeem", body.external_id)
-    if hit:
-        return {**hit["response"], "duplicate": True}
-    cust = _find_customer(c.tenant_id, body.customer)
-    # server.redeem_reward decides, on any programme (a points card has no `reward_unlocked`)
+    fp = _fingerprint({"customer": body.customer.strip(), "reward_name": body.reward_name or "", "hold_id": body.hold_id or ""})
+    hit = _idem_begin(c.tenant_id, "redeem", body.external_id, fp)
+    if hit is not None:
+        return {**hit, "duplicate": True}
+    token_row = None
     try:
-        core.redeem_reward(core.RedeemRewardRequest(customer_id=cust["id"], reward_name=body.reward_name, notes="API"), token_data=_as_owner(c))
-    except HTTPException as e:
-        if e.detail == core.NEXT_VISIT_REFUSAL:
-            raise HTTPException(status_code=409, detail={"code": "reward_next_visit", "message": e.detail})
-        if e.status_code == 400:             # nothing to hand over, or another till just took it
-            raise HTTPException(status_code=409, detail={"code": "no_reward", "message": "Ce client n'a pas de récompense disponible."})
+        cust = _find_customer(c.tenant_id, body.customer)
+        if c.online:
+            token_row = _use_token(c, cust["id"], body.verification_token)
+        # server.redeem_reward decides, on any programme (a points card has no `reward_unlocked`)
+        try:
+            core.redeem_reward(core.RedeemRewardRequest(customer_id=cust["id"], reward_name=body.reward_name, notes="API",
+                                                        hold_id=body.hold_id), token_data=_as_owner(c))
+        except HTTPException as e:
+            if e.detail == core.NEXT_VISIT_REFUSAL:
+                raise _err(409, "reward_next_visit", e.detail)
+            if e.status_code == 409 and str(e.detail).startswith(core.HELD_REFUSAL):
+                raise _err(409, "reward_held", str(e.detail))
+            if e.status_code == 400:             # nothing to hand over, or another till just took it
+                raise _err(409, "no_reward", "Ce client n'a pas de récompense disponible.")
+            raise
+        if body.hold_id:
+            _db.api_reward_holds.update_one({"id": body.hold_id, "tenant_id": c.tenant_id, "state": "active"},
+                                            {"$set": {"state": "used", "used_at": _now()}})
+        out = {"customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})), "redeemed": True}
+        _idem_done(c.tenant_id, "redeem", body.external_id, out)
+    except BaseException:
+        if token_row:                         # the reward failed: the client's proof is not spent
+            _db.api_verifications.update_one({"id": token_row}, {"$set": {"token_used": False}})
+        _idem_abort(c.tenant_id, "redeem", body.external_id)
         raise
-    out = {"customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})), "redeemed": True}
-    _remember(c.tenant_id, "redeem", body.external_id, out)
     return {**out, "duplicate": False}
 
 
@@ -383,18 +836,81 @@ def sign(secret: str, body: bytes, ts: Optional[int] = None) -> str:
     return f"t={ts},v1={mac}"
 
 
+def _resolve(host: str) -> List[str]:
+    """Every address a name points to (tests replace this)."""
+    return list(dict.fromkeys(i[4][0] for i in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)))
+
+
+def _literal_ip(host: str) -> Optional[ipaddress._BaseAddress]:
+    """The address a host written as one stands for — also the short and the
+    decimal forms (« 127.1 », « 2130706433 », « 0x7f.1 ») a resolver accepts."""
+    h = (host or "").strip("[]")
+    try:
+        return ipaddress.ip_address(h)
+    except ValueError:
+        pass
+    if re.fullmatch(r"[0-9a-fA-FxX.]+", h) and re.search(r"\d", h):
+        try:
+            return ipaddress.ip_address(socket.inet_aton(h))
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _inside(ip: ipaddress._BaseAddress) -> bool:
+    mapped = getattr(ip, "ipv4_mapped", None)
+    ip = mapped or ip
+    return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
+                or ip.is_unspecified or not ip.is_global)
+
+
+def _blocked_host(host: str) -> bool:
+    h = (host or "").lower().strip(".")
+    if not h or h == "localhost" or h.endswith(BLOCKED_SUFFIXES) or "." not in h.strip("[]") and not _literal_ip(h):
+        return True
+    ip = _literal_ip(h)
+    return bool(ip and _inside(ip))
+
+
+def _target_refusal(url: str) -> Optional[str]:
+    """Why this URL must not be called now (after DNS), or None."""
+    host = (urlsplit(url).hostname or "").lower()
+    if _blocked_host(host):
+        return f"blocked_address: {host}"
+    if _literal_ip(host):
+        return None
+    try:
+        ips = _resolve(host)
+    except Exception as e:
+        return f"dns_error: {type(e).__name__}"
+    for a in ips:
+        try:
+            if _inside(ipaddress.ip_address(a.split("%")[0])):
+                return f"blocked_address: {host} → {a}"
+        except ValueError:
+            return f"blocked_address: {host} → {a}"
+    return None if ips else "dns_error: no address"
+
+
 def _deliver(hook: Dict[str, Any], event: Dict[str, Any], attempt: int = 1, delivery_id: Optional[str] = None) -> Dict[str, Any]:
     import requests
     body = json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode()
     started = time.time()
     status, err = None, None
-    try:
-        r = requests.post(hook["url"], data=body, timeout=TIMEOUT_S, headers={
-            "Content-Type": "application/json", "User-Agent": "FidClic-Webhooks/1.0", "X-FidClic-Event": event["type"],
-            "X-FidClic-Delivery": event["id"], "X-FidClic-Signature": sign(hook["secret"], body)})
-        status = r.status_code
-    except Exception as e:                       # network, timeout, DNS
-        err = f"{type(e).__name__}: {str(e)[:160]}"
+    refusal = _target_refusal(hook["url"])
+    if refusal:
+        err = refusal
+    else:
+        try:
+            r = requests.post(hook["url"], data=body, timeout=TIMEOUT_S, allow_redirects=False, headers={
+                "Content-Type": "application/json", "User-Agent": "FidClic-Webhooks/1.0", "X-FidClic-Event": event["type"],
+                "X-FidClic-Delivery": event["id"], "X-FidClic-Api-Version": API_VERSION,
+                "X-FidClic-Signature": sign(hook["secret"], body)})
+            status = r.status_code
+            if 300 <= status < 400:
+                err = "redirect_not_followed"
+        except Exception as e:                   # network, timeout, DNS
+            err = f"{type(e).__name__}: {str(e)[:160]}"
     ok = status is not None and 200 <= status < 300
     row = {"tenant_id": hook["tenant_id"], "hook_id": hook["id"], "event_id": event["id"], "type": event["type"], "payload": event,
            "status": status, "ok": ok, "error": err, "ms": int((time.time() - started) * 1000), "attempts": attempt, "at": _now()}
@@ -411,6 +927,25 @@ def _deliver(hook: Dict[str, Any], event: Dict[str, Any], attempt: int = 1, deli
     return row
 
 
+def _deliver_all(hooks: List[Dict[str, Any]], event: Dict[str, Any]) -> None:
+    """Every endpoint at once; the caller (a scan at the till) waits
+    DELIVERY_DEADLINE_S at most. Each delivery is written down BEFORE it is
+    sent, so one still running when the function stops is retried, not lost."""
+    jobs = []
+    for h in hooks:
+        row = {"id": uuid.uuid4().hex, "tenant_id": h["tenant_id"], "hook_id": h["id"], "event_id": event["id"],
+               "type": event["type"], "payload": event, "status": None, "ok": False, "error": "pending", "ms": 0,
+               "attempts": 1, "at": _now()}
+        _db.webhook_deliveries.insert_one(dict(row))
+        jobs.append((h, row["id"]))
+    pool = ThreadPoolExecutor(max_workers=max(1, min(len(jobs), MAX_HOOKS)), thread_name_prefix="fidclic-webhook")
+    try:
+        futures = [pool.submit(_deliver, h, event, 1, rid) for h, rid in jobs]
+        _wait_all(futures, timeout=DELIVERY_DEADLINE_S)
+    finally:
+        pool.shutdown(wait=False)
+
+
 def emit(tenant_id: Optional[str], kind: str, data: Dict[str, Any]) -> int:
     """Send `kind` to the business's webhooks. Never raises; returns how many
     endpoints were called."""
@@ -420,9 +955,9 @@ def emit(tenant_id: Optional[str], kind: str, data: Dict[str, Any]) -> int:
         hooks = list(_db.webhooks.find({"tenant_id": tenant_id, "active": True, "events": kind}, {"_id": 0}))
         if not hooks or not _plan_ok(tenant_id):
             return 0
-        event = {"id": "evt_" + uuid.uuid4().hex[:24], "type": kind, "created_at": _now().isoformat(), "data": data}
-        for h in hooks:
-            _deliver(h, event)
+        event = {"id": "evt_" + uuid.uuid4().hex[:24], "type": kind, "api_version": API_VERSION,
+                 "created_at": _now().isoformat(), "data": data}
+        _deliver_all(hooks, event)
         return len(hooks)
     except Exception as e:
         print(f"webhooks: {kind} for {tenant_id} failed: {e}")
@@ -430,15 +965,21 @@ def emit(tenant_id: Optional[str], kind: str, data: Dict[str, Any]) -> int:
 
 
 def emit_customer(kind: str, tenant_id: Optional[str], customer_id: Optional[str], extra: Optional[Dict[str, Any]] = None,
-                  with_visit: bool = False) -> None:
-    """Hook for the core flows (join, scan, redeem)."""
+                  with_visit: bool = False, visit_id: Optional[str] = None) -> None:
+    """Hook for the core flows (join, scan, redeem). `visit_id` names the
+    visit; `with_visit` alone means the client's latest."""
+    if _EMIT_SUSPENDED.get():
+        return
     try:
         if not tenant_id or not _db.webhooks.find_one({"tenant_id": tenant_id, "active": True, "events": kind}, {"_id": 1}):
             return
         c = _db.customers.find_one({"id": customer_id}, {"_id": 0})
         if c:
             extra = dict(extra or {})
-            if with_visit:
+            if visit_id:
+                v = _db.visits.find_one({"tenant_id": tenant_id, "id": visit_id}, {"_id": 0})
+                extra["visit"] = visit_out(v) if v else None
+            elif with_visit:
                 v = _db.visits.find_one({"tenant_id": tenant_id, "customer_id": customer_id}, {"_id": 0}, sort=[("visit_time", -1)])
                 extra["visit"] = visit_out(v) if v else None
             emit(tenant_id, kind, {"customer": customer_out(c), **extra})
@@ -447,10 +988,14 @@ def emit_customer(kind: str, tenant_id: Optional[str], customer_id: Optional[str
 
 
 def retry_failed(now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Daily cron: failed deliveries of the last 3 days, up to RETRIES tries."""
+    """The 15-minute tick and the daily cron: failed deliveries of the last 3
+    days, up to RETRIES tries — not one sent under 2 minutes ago, which may
+    still be on its way."""
     now = now or _now()
     n = ok = 0
-    for d in list(_db.webhook_deliveries.find({"ok": False, "attempts": {"$lt": RETRIES}, "at": {"$gte": now - timedelta(days=3)}}, {"_id": 0}).limit(500)):
+    for d in list(_db.webhook_deliveries.find({"ok": False, "attempts": {"$lt": RETRIES},
+                                               "at": {"$gte": now - timedelta(days=3), "$lte": now - timedelta(minutes=2)}},
+                                              {"_id": 0}).limit(500)):
         h = _db.webhooks.find_one({"id": d["hook_id"], "active": True}, {"_id": 0})
         if not h or not _plan_ok(h["tenant_id"]):
             continue
@@ -471,7 +1016,7 @@ def _need_plan(token_data: TokenData) -> None:
 def _key_out(k: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": k["id"], "name": k.get("name"), "prefix": k.get("prefix"), "scopes": k.get("scopes") or ["read"],
             "created_at": _iso(k.get("created_at")), "created_by": k.get("created_by"), "last_used_at": _iso(k.get("last_used_at")),
-            "calls": int(k.get("calls") or 0), "revoked": bool(k.get("revoked_at"))}
+            "calls": int(k.get("calls") or 0), "revoked": bool(k.get("revoked_at")), "online": bool(k.get("online"))}
 
 
 def _hook_out(h: Dict[str, Any]) -> Dict[str, Any]:
@@ -498,6 +1043,7 @@ def page(token_data: TokenData = Depends(require_role(READERS))):
 class KeyIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=60)
     write: bool = False
+    online: bool = False      # « Site en ligne »: rewards only after the client's SMS code
 
 
 @router.post("/api/owner/integrations/keys", status_code=201)
@@ -509,7 +1055,7 @@ def create_key(body: KeyIn, token_data: TokenData = Depends(require_role(OWNER))
     raw = "fc_live_" + secrets.token_urlsafe(30).replace("-", "").replace("_", "")[:40]
     k = {"id": uuid.uuid4().hex, "tenant_id": token_data.tenant_id, "name": body.name.strip(), "prefix": raw[:14],
          "hash": _hash(raw), "scopes": ["read", "write"] if body.write else ["read"], "created_at": _now(),
-         "created_by": token_data.email, "revoked_at": None, "calls": 0}
+         "created_by": token_data.email, "revoked_at": None, "calls": 0, "online": bool(body.online)}
     _db.api_keys.insert_one(dict(k))
     core.log_audit("api.key_create", actor=token_data.email, actor_type="user", tenant_id=token_data.tenant_id, target=k["id"],
                    meta={"name": k["name"], "scopes": k["scopes"]})
@@ -533,11 +1079,18 @@ class HookIn(BaseModel):
 
 
 def _check_url(url: str) -> str:
+    """At creation: https, a public name or address. Where a name points is
+    checked again on every send (_target_refusal), because DNS can change."""
     url = (url or "").strip()
-    if not re.match(r"^https://[^\s/]+\.[^\s]+", url):
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        parts.port                            # a malformed port raises
+    except ValueError:
+        parts, host = None, ""
+    if not parts or parts.scheme != "https" or not host or re.search(r"\s", url) or parts.username or parts.password:
         raise HTTPException(status_code=400, detail="L'adresse doit commencer par https:// (ex. https://votre-outil.fr/fidclic).")
-    host = re.sub(r"^https://([^/:?#]+).*$", r"\1", url).lower()
-    if host in ("localhost",) or host.endswith(".local") or re.match(r"^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)", host):
+    if _blocked_host(host):
         raise HTTPException(status_code=400, detail="Adresse interne refusée : utilisez une adresse publique.")
     return url
 

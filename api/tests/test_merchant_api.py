@@ -66,10 +66,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     fail = {"on": False}
 
-    def fake_post(url, data=None, timeout=None, headers=None):
+    def fake_post(url, data=None, timeout=None, headers=None, **kw):
         sent.append({"url": url, "body": data, "headers": headers})
         return _R(500 if fail["on"] else 200)
     requests.post = fake_post
+    M._resolve = lambda host: ["93.184.216.34"]       # webhook hosts resolve to a public address
 
     print("\nKeys")
     r = http("POST", "/api/owner/integrations/keys", bearer=OWN, json={"name": "Caisse", "write": True})
@@ -172,7 +173,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     bad = db.webhook_deliveries.find_one({"ok": False, "type": "visit.created"})
     check("a failed delivery is logged", bad and bad["status"] == 500 and bad["attempts"] == 1)
     fail["on"] = False
-    res = M.retry_failed()
+    res = M.retry_failed(M._now() + dt.timedelta(minutes=3))   # not one still on its way
     check("the daily retry re-sends it", res["ok"] >= 1 and db.webhook_deliveries.find_one({"id": bad["id"]})["ok"] is True)
     check("nothing sent for a business without webhooks", M.emit("t2", "visit.created", {}) == 0)
     pg = http("GET", "/api/owner/integrations", bearer=OWN).json()
