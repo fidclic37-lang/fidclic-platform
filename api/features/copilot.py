@@ -1538,13 +1538,11 @@ def chat_history(before: Optional[str] = None,
             "has_more": more, "before": oldest.isoformat() if isinstance(oldest, datetime) else None}
 
 
-@router.post("/api/owner/copilot/chat")
-def chat(body: ChatIn, request: Request = None,
-         token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def answer(token_data: TokenData, request, message: str, record: bool = True) -> Dict[str, Any]:
+    """The Copilote's answer to one question, as this account. `record=False`:
+    nothing is kept — no « Retiens que… », the same as reading (the Golden set's
+    replay of real questions, features/golden_shadow)."""
     E = _engine()
-    message = re.sub(r"\s+", " ", (body.message or "").strip())[:500]
-    if not message:
-        raise HTTPException(status_code=400, detail="Posez votre question.")
     tid = token_data.tenant_id
     scope = S.resolve(token_data, request)
     shop = E.Shop(tid, _now(), scope)
@@ -1571,7 +1569,7 @@ def chat(body: ChatIn, request: Request = None,
 
     email = getattr(token_data, "email", None)
     view_by = getattr(token_data, "view_by", None)   # a super admin in « Accéder au compte »
-    remembered = CM.explicit(message)            # « Retiens que… »: kept at once — never from a super admin
+    remembered = CM.explicit(message) if record else None   # « Retiens que… »: kept at once — never from a super admin
     kept = CM.add(tid, email, remembered, "chat") if remembered and not view_by else None
 
     reply, source, sources = None, "model", []
@@ -1605,6 +1603,20 @@ def chat(body: ChatIn, request: Request = None,
     if remembered and view_by:
         reply = f"Accès administrateur : rien n'est retenu pour le commerçant. {reply}"
     actions = ([how["action"]] if how["action"] else []) if how else _actions(intents, by_key, facts.get("acces_limite") or ())
+    return {"reply": reply, "source": source, "sources": sources, "actions": actions,
+            "remembered": remembered, "kept": kept, "email": email, "view_by": view_by}
+
+
+@router.post("/api/owner/copilot/chat")
+def chat(body: ChatIn, request: Request = None,
+         token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+    message = re.sub(r"\s+", " ", (body.message or "").strip())[:500]
+    if not message:
+        raise HTTPException(status_code=400, detail="Posez votre question.")
+    tid = token_data.tenant_id
+    a = answer(token_data, request, message)
+    reply, source, sources, actions = a["reply"], a["source"], a["sources"], a["actions"]
+    email, view_by, remembered = a["email"], a["view_by"], a["remembered"]
 
     at = _now()
     who = {"view_by": view_by} if view_by else {}
@@ -1618,6 +1630,6 @@ def chat(body: ChatIn, request: Request = None,
         {"id": mid, "tenant_id": tid, "by": email, "role": "assistant", "text": reply.strip(), **who,
          "actions": actions, "source": source, "sources": sources, "at": at + timedelta(milliseconds=1)},
     ])
-    CM.link(kept, at)                            # deleting the fact forgets this message
+    CM.link(a["kept"], at)                       # deleting the fact forgets this message
     return {"id": mid, "reply": reply.strip(), "actions": actions, "source": source, "sources": sources,
             "can_vote": source == "model" and not view_by}

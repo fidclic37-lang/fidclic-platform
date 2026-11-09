@@ -12654,6 +12654,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["golden_real"] = _GR.build_due(now)
     except Exception as e:
         out["failures"].append({"step": "golden_real", "error": str(e)[:120]})
+    try:                         # the Golden set's replay of real questions: a run left open goes on
+        from features import golden_shadow as _GSH
+        out["golden_shadow"] = _GSH.due()
+    except Exception as e:
+        out["failures"].append({"step": "golden_shadow", "error": str(e)[:120]})
     try:                         # « Produits qui font revenir »: each shop's figures once a week
         # (queued here, worked by ai_jobs in the brain_journal step below)
         from features import product_return as _PRR

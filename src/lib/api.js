@@ -441,6 +441,10 @@ export const adminAPI = {
   aiGolden: () => api.get('/admin/ai/golden'),
   aiGoldenRun: () => api.post('/admin/ai/golden/run', {}),
   aiGoldenReal: () => api.get('/admin/ai/golden-real'),
+  aiShadowRuns: () => api.get('/admin/ai/shadow'),
+  aiShadowStart: (body) => api.post('/admin/ai/shadow', body),
+  aiShadowStep: (id) => api.post(`/admin/ai/shadow/${id}/step`, {}),
+  aiShadowRun: (id) => api.get(`/admin/ai/shadow/${id}`),
   aiGoldenRealSet: (id, on) => api.put(`/admin/ai/golden-real/${id}`, { on }),
   aiLearningExport: (label) => api.get('/admin/ai/learning/export.jsonl', { params: { label }, responseType: 'blob' }),
   // Super admin › FIDCLIC AI › Recommandations (journal of ideas, 2026-10-29)

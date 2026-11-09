@@ -51,6 +51,92 @@ function RealShops() {
   );
 }
 
+/* The owners' real Copilote questions asked again with the model being tried
+   (user 2026-11-09, part C): nothing kept, billed to the platform, each answer
+   read by the live checks beside the one the owner got. */
+const VERDICT = {
+  ok: ['Aussi bien', 'bg-[#ECFDF5] text-[#047857]'], regression: ['Moins bien', 'bg-[#FEF2F2] text-[#B91C1C]'],
+  fixed: ['Mieux', 'bg-[#EEF3FF] text-[#2F6BFF]'], both_bad: ['Problème avant et après', 'bg-[#FFF7ED] text-[#9A3412]'],
+  fallback: ['Réponse modèle (pas de modèle)', 'bg-[#F1F5F9] text-[#475569]'],
+};
+const PROBLEM = { anglais: 'pas en français', contact: 'donne un téléphone ou un e-mail', trop_long: 'trop long', montant: 'montant jamais lu' };
+const MODELS = [['', 'Le modèle actuel'], ['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-opus-5-5', 'Opus 5.5'], ['claude-fable-5-1', 'Fable 5.1']];
+const STOP = { budget: 'arrêté : son budget est atteint', global: 'arrêté : la limite IA du jour est proche', 'aucune question': 'aucune vraie question à rejouer' };
+
+function ShadowReplay() {
+  const [runs, setRuns] = useState(null);
+  const [open, setOpen] = useState(null);
+  const [model, setModel] = useState('');
+  const [count, setCount] = useState(30);
+  const [busy, setBusy] = useState(false);
+  const loadRuns = () => adminAPI.aiShadowRuns().then(({ data }) => setRuns(data.runs)).catch(() => setRuns([]));
+  useEffect(() => { loadRuns(); }, []);
+  const work = async (id) => {
+    let st = null;
+    for (let i = 0; i < 200; i += 1) {
+      st = (await adminAPI.aiShadowStep(id)).data;
+      if (st.status !== 'running') break;
+    }
+    setOpen((await adminAPI.aiShadowRun(id)).data);
+    loadRuns();
+  };
+  const launch = async () => {
+    setBusy(true);
+    try {
+      const { data } = await adminAPI.aiShadowStart({ count, routes: model ? { copilot: model } : {} });
+      await loadRuns();
+      await work(data.id);
+    } finally { setBusy(false); }
+  };
+  const show = async (id) => setOpen((await adminAPI.aiShadowRun(id)).data);
+  if (!runs) return null;
+  return (
+    <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="golden-shadow">
+      <h2 className="text-[15px] font-bold text-[#0B1C3F]">Rejouer les vraies questions</h2>
+      <p className="mt-1 text-[12.5px] text-[#64748B]">Les questions posées au Copilote ces 14 derniers jours, reposées avec le modèle choisi, ici même. Rien n&apos;est gardé, rien n&apos;est facturé au commerce : chaque réponse est relue par les contrôles et mise à côté de celle que le commerçant a reçue.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <select aria-label="Modèle à essayer" value={model} onChange={(e) => setModel(e.target.value)} className="h-9 rounded-lg border border-[#E6EEFB] px-2 text-[13px]">
+          {MODELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <select aria-label="Nombre de questions" value={count} onChange={(e) => setCount(Number(e.target.value))} className="h-9 rounded-lg border border-[#E6EEFB] px-2 text-[13px]">
+          {[10, 30, 50].map((n) => <option key={n} value={n}>{n} questions</option>)}
+        </select>
+        <button type="button" onClick={launch} disabled={busy} data-testid="shadow-run"
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#1463FF] px-3 text-[13px] font-semibold text-white disabled:opacity-60">
+          <Play size={14} /> {busy ? 'En cours…' : 'Rejouer'}
+        </button>
+      </div>
+      {runs.length > 0 && (
+        <ul className="mt-3 divide-y divide-[#F1F5FB] text-[13px]">
+          {runs.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <button type="button" onClick={() => show(r.id)} className="text-left font-semibold text-[#1463FF]">
+                {when(r.at)} — {r.done}/{r.total} · {r.summary.regression} moins bien · {r.summary.fixed} mieux
+              </button>
+              <span className="text-[#94A3B8]">{r.status === 'stopped' ? STOP[r.why] || 'arrêté' : r.status === 'running' ? 'en cours' : ''} · {Number(r.cost_eur || 0).toFixed(2)} €</span>
+            </li>))}
+        </ul>
+      )}
+      {open && open.items && (
+        <ul className="mt-3 space-y-2 text-[13px]" data-testid="shadow-items">
+          {open.items.map((it) => {
+            const [label, cls] = VERDICT[it.verdict] || VERDICT.fallback;
+            return (
+              <li key={it.i} className="rounded-xl border border-[#EEF3FB] p-3">
+                <p className="flex flex-wrap items-center gap-2"><span className={`rounded-md px-2 py-0.5 text-[11.5px] font-semibold ${cls}`}>{label}</span>
+                  <span className="text-[#94A3B8]" translate="no">{it.tenant}</span></p>
+                <p className="mt-1 font-semibold text-[#0B1C3F]">{it.question}</p>
+                <p className="mt-1 text-[#475569]"><b>Avant :</b> {it.old?.text}{it.old?.problems?.length ? ` — ${it.old.problems.map((p) => PROBLEM[p] || p).join(', ')}` : ''}</p>
+                <p className="mt-0.5 text-[#475569]"><b>Maintenant :</b> {it.new?.text}{it.new?.problems?.length ? ` — ${it.new.problems.map((p) => PROBLEM[p] || p).join(', ')}` : ''}</p>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function GoldenSetPage() {
   const [d, setD] = useState(null);
   const [open, setOpen] = useState(null);
@@ -146,6 +232,7 @@ export default function GoldenSetPage() {
       )}
 
       <RealShops />
+      <ShadowReplay />
 
       <section className="mt-4 rounded-2xl border border-[#EDF1F7] bg-white p-4" data-testid="golden-bank">
         <h2 className="text-[15px] font-bold text-[#0B1C3F]">Les questions</h2>
