@@ -414,7 +414,8 @@ def _one_timers(shop: Shop) -> List[Dict[str, Any]]:
 
 
 def _birthdays(shop: Shop, days: int = 30) -> List[Dict[str, Any]]:
-    window = {(shop.at + timedelta(days=i)).strftime("%m-%d") for i in range(days)}
+    from features import automations as AU
+    window = {AU.paris_mmdd(shop.at, i) for i in range(days)}          # Paris days (PR #454)
     return [c for c in shop.people if str(c.get("birthday") or "")[-5:] in window]
 
 

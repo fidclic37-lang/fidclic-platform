@@ -126,8 +126,9 @@ SEGMENT_LABELS = {s["key"]: s["label"] for s in SEGMENTS}
 
 
 def _birthday_window(at: datetime) -> List[str]:
-    """The MM-DD strings covered by "cette semaine", today included."""
-    return [(at + timedelta(days=i)).strftime("%m-%d") for i in range(BIRTHDAY_DAYS)]
+    """The MM-DD strings covered by "cette semaine", today (Paris) included."""
+    from features import automations as AU
+    return [AU.paris_mmdd(at, i) for i in range(BIRTHDAY_DAYS)]
 
 
 def audience(tid: str, segment: str, at: Optional[datetime] = None,

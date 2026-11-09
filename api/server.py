@@ -12497,9 +12497,9 @@ def delete_scheduled(sched_id: str, token_data: TokenData = Depends(require_role
     return {"status": "ok"}
 
 
-def _resolve_segment(tid: str, segment: dict) -> list:
+def _resolve_segment(tid: str, segment: dict, now: Optional[datetime] = None) -> list:
     """Shared segment → customer-list resolver. Returns list of customer dicts."""
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     if not segment:
         return list(db.customers.find({"tenant_id": tid}))
     stype = (segment.get("type") or "").lower()
@@ -12513,7 +12513,8 @@ def _resolve_segment(tid: str, segment: dict) -> list:
         mm = str(segment["value"]).zfill(2)
         q["birthday"] = {"$regex": f"^{mm}"}
     elif stype == "birthday_today":
-        today_mmdd = now.strftime("%m-%d")
+        from features import automations as _AU
+        today_mmdd = _AU.paris_mmdd(now)        # the shop's day, not UTC's (PR #454)
         q["birthday"] = today_mmdd
     elif stype == "acquisition" and segment.get("value"):
         q["acquisition_source"] = segment["value"]
@@ -12720,7 +12721,8 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
     vercel.json lost this route's own entry on 2026-08-02 (ace16c0), and with
     it every scheduled campaign, Push Wallet run and birthday preparation."""
     now = now or datetime.now(timezone.utc)
-    today_mmdd = now.strftime("%m-%d")
+    from features import automations as _AU
+    today_mmdd = _AU.paris_mmdd(now)            # the shop's day, not UTC's (PR #454)
     cutoff_inactive = now - timedelta(days=30)
     cooldown_cutoff = now - timedelta(days=14)
 
@@ -12869,7 +12871,7 @@ def daily_triggers_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
             q = _filters_to_customer_query(sc["tenant_id"], sc["filters"])
             recipients = list(db.customers.find(q))
         else:
-            recipients = _resolve_segment(sc["tenant_id"], sc.get("segment") or {"type": "all"})
+            recipients = _resolve_segment(sc["tenant_id"], sc.get("segment") or {"type": "all"}, now=now)
         dispatched = _dispatch_campaign_to_customers(
             tenant,
             name=sc["name"],

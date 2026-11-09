@@ -82,7 +82,13 @@ def main():
     OWNER, MANAGER, BOSS = tok("o@a.fr", "business_owner", "t1"), tok("m@a.fr", "manager", "t1"), tok("boss@fidclic.com", "super_admin")
     READER, EDITOR = tok("read@fidclic.com", "fidclic_team"), tok("edit@fidclic.com", "fidclic_team")
 
-    clock = [dt.datetime(2026, 11, 10, 9, 0, tzinfo=UTC)]
+    # The meter's clock, always ahead of the real one: rate rows carry an `exp`
+    # from this clock and mongomock's TTL deletes them by the REAL clock — a
+    # fixed 10 Nov 2026 09:00 blocked every call as « rate » from that morning
+    # on (found 2026-11-09, PR #454). 09:00 UTC is the same day in Paris.
+    BASE = (dt.datetime.now(UTC) + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    NEXT_MONTH = (BASE.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
+    clock = [BASE]
     AM._now = lambda: clock[0]
     mails = []
     mailer.send = lambda to, subject, html, **kw: mails.append((to, subject, html)) or {"sent": True}
@@ -395,10 +401,10 @@ def main():
     mails.clear()
     llm.complete("s5", "u", feature="copilot", tenant_id="t1")
     check("a raised limit, 80 % again: told again", len([m for m in mails if m[0] == "o@a.fr"]) == 1, mails)
-    clock[0] = dt.datetime(2026, 12, 1, 9, 0, tzinfo=UTC)
+    clock[0] = NEXT_MONTH
     alert = next((a for a in http("GET", "/api/owner/limit-alerts", OWNER).json()["alerts"] if a.get("what") == "FidClic IA"), None)
     check("a new month: no banner", alert is None, alert)
-    clock[0] = dt.datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
+    clock[0] = BASE
     reset()
     db.tenants.update_one({"id": "t1"}, {"$set": {"ai_budget_eur": 10.0}})
     db.ai_spend.insert_one({"_id": AM.key_month("t1"), "eur": 8.5})

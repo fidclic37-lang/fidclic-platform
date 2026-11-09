@@ -303,6 +303,10 @@ def _prepare_run(tenant_id: str, kind: str, title: str, body_template: str,
 
 
 # ---------- Run endpoints ----------
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 @router.post("/api/owner/auto-campaigns/run-birthdays")
 def run_birthdays(
     dry_run: bool = False,
@@ -318,9 +322,9 @@ def run_birthdays(
     if not _may_send(token_data, "birthday", dry_run):
         return {"sent": 0, "reason": "disabled"}
     tenant = _db.tenants.find_one({"id": token_data.tenant_id}) or {}
-    today_mmdd = datetime.now(timezone.utc).strftime("%m-%d")
-
     from features import automations as AU
+    now = _now()
+    today_mmdd = AU.paris_mmdd(now)          # the shop's day, not UTC's (PR #454)
     customers = list(filter(AU.reach_test(token_data.tenant_id, "birthday"), _db.customers.find({
         "tenant_id": token_data.tenant_id,
         "birthday": today_mmdd,
@@ -333,9 +337,9 @@ def run_birthdays(
             "tenant_id": token_data.tenant_id,
             "customer_id": c["id"],
             "kind": "birthday",
-            "sent_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=20)},
+            "sent_at": {"$gte": now - timedelta(hours=20)},
         })
-        if already or _heard(token_data.tenant_id, c["id"], datetime.now(timezone.utc) - timedelta(hours=20)):
+        if already or _heard(token_data.tenant_id, c["id"], now - timedelta(hours=20)):
             continue
         eligible.append(c)
         ctx = _build_ctx(c, tenant)
