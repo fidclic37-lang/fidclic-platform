@@ -259,7 +259,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = ov["definitions"]
     check("the thresholds travel with the payload",
           d["loyal_visits"] == 5 and d["inactive_days"] == 30 and d["local_km"] == 5.0)
-    check("so does the sort vocabulary", len(ov["sorts"]) == 6)
+    check("so does the sort vocabulary (+ « Anniversaire », 2026-11-09)", len(ov["sorts"]) == 7)
 
     # ---- « inactif » counts from the last visit, or the sign-up (user, 2026-10-04) ----------
     print("\nInactif : depuis la dernière visite, ou l'inscription")

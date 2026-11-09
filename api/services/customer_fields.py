@@ -139,17 +139,23 @@ def _paris_today():
     return datetime.now(PARIS).date()
 
 
-def birth_month(cust: Dict) -> Optional[int]:
-    """The month of a client's birthday, 1–12, or None. Dates kept before the
-    form was strict come in any form birth() reads; the full date is the fallback."""
+def birthday_of(cust: Dict) -> Optional[str]:
+    """A client's birthday as MM-DD, or None. Dates kept before the form was
+    strict come in any form birth() reads; the full date is the fallback."""
     for v in (cust.get("birthday"), cust.get("birth_date")):
         if not isinstance(v, str) or not v.strip():
             continue
         try:
-            return int(birth(v, max_age=False)["birthday"][:2])
+            return birth(v, max_age=False)["birthday"]
         except HTTPException:
             continue
     return None
+
+
+def birth_month(cust: Dict) -> Optional[int]:
+    """The month of a client's birthday, 1–12, or None."""
+    b = birthday_of(cust)
+    return int(b[:2]) if b else None
 
 
 def is_birth_month(cust: Dict, at) -> bool:
