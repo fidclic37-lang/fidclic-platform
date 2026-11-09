@@ -435,12 +435,14 @@ def main():
     sent_today = bool(db.automation_log.find_one({"automation_id": bday["id"]}))
     check("…started, it goes (unless today is a public holiday and holidays are off)",
           sent_today != GA.is_holiday(paris.date()))
+    # a period around today, not a fixed Nov–Dec 2026 that was over by 2027 (PR #454)
+    vf, vt = paris.date() - dt.timedelta(days=8), paris.date() + dt.timedelta(days=52)
     r = http("PUT", f"/api/owner/automations/{bday['id']}", json={
         "scenario": "birthday", "name": "Anniversaire", "status": "active", "trigger": {"offset_days": 0},
         "message": {"title": "Joyeux anniversaire", "body": "Bonne fête {prénom} !"},
-        "schedule": {"days": "all", "hour": "10:00", "valid_from": "2026-11-01", "valid_to": "2026-12-31"}})
+        "schedule": {"days": "all", "hour": "10:00", "valid_from": vf.isoformat(), "valid_to": vt.isoformat()}})
     check("Période de validité on any automation: saved and shown", r.status_code == 200
-          and "du 01/11/2026 au 31/12/2026" in r.json()["schedule_text"])
+          and f"du {vf:%d/%m/%Y} au {vt:%d/%m/%Y}" in r.json()["schedule_text"])
     check("another shop can't read this shop's zone points", all(p["lat"] != 47.39 for p in http(
         "GET", "/api/owner/automations/geo/zone", headers=H2).json()["points"]))
     del log, s1

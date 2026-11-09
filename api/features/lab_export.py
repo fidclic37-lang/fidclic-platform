@@ -117,13 +117,17 @@ def _text(v: Any, limit: int = 500) -> Optional[str]:
 
 
 def _age(c: Dict[str, Any], at: datetime) -> Optional[int]:
-    """Age in years from a full birthday (YYYY-MM-DD); « 07-14 » says nothing."""
+    """Age in years from a full birthday (YYYY-MM-DD); « 07-14 » says nothing.
+    Counted on the Paris calendar, as everywhere else (customer_fields.age_of):
+    at 00:30 in Paris on the birthday, UTC is still the day before (PR #454)."""
+    from features import period as P
+    today = P.local(at).date()
     for f in ("birth_date", "birthday"):
         m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(c.get(f) or ""))
         if m:
             y, mo, d = (int(x) for x in m.groups())
             try:
-                return at.year - y - ((at.month, at.day) < (mo, d))
+                return today.year - y - ((today.month, today.day) < (mo, d))
             except Exception:
                 return None
     return None

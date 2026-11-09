@@ -265,6 +265,11 @@ def main():
         "message": {"title": "Bientôt votre anniversaire {prénom} !", "body": "Une surprise vous attend chez {nom_commerce}.",
                     "button": {"enabled": False}},
         "targeting": {"mode": "all"}, "schedule": {"days": "all", "hour": "10:00"}})
+    # This section plays mid-October 2026: its clients' cards must be older than
+    # that, not « 200 days before the real today » — from May 2027 Bruno's card
+    # looked newer than the run and the « card added within the hour » rule
+    # held his birthday back (PR #454).
+    db.customers.update_many({"tenant_id": "t1"}, {"$set": {"created_at": dt.datetime(2026, 3, 1, tzinfo=UTC)}})
     db.customers.update_one({"id": "c2"}, {"$set": {"birthday": "10-18"}})    # 3 days after the 15th
     pushed.clear()
     db.automation_meta.update_one({"_id": "tick"}, {"$set": {"at": dt.datetime(2026, 10, 15, 6, 0, tzinfo=UTC)}}, upsert=True)
