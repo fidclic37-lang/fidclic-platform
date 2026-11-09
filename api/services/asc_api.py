@@ -22,7 +22,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -98,9 +100,32 @@ def find_pass_type(identifier: str) -> Tuple[bool, Any]:
     return True, None
 
 
+NAME_MAX = 50
+_LETTERS = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE", "ø": "o", "Ø": "O", "ß": "ss",
+                         "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "þ": "th", "Þ": "TH"})
+
+
+def apple_name(name: Optional[str], identifier: str) -> str:
+    """The label Apple keeps for a Pass Type ID: plain letters, digits and
+    spaces only. Apple refused « ROYAL TRIM Liberté » (409, invalid 'name',
+    2026-11-09): accents, apostrophes, « & », « - », « . » are not taken.
+    Customers never see it — it only names the id in the developer account.
+    Accents fold (é → e), the rest becomes a space; nothing left → the
+    identifier's last part (« FidClic royal trim »)."""
+    def plain(text: str) -> str:
+        text = str(text or "").translate(_LETTERS)          # œ → oe before accents drop (« Bœuf », not « Buf »)
+        text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+        return " ".join(re.sub(r"[^A-Za-z0-9]+", " ", text).split())
+
+    out = plain(name)
+    if not out:
+        out = " ".join(["FidClic", plain(str(identifier or "").rsplit(".", 1)[-1])]).strip()
+    return out[:NAME_MAX].rstrip()
+
+
 def create_pass_type(identifier: str, name: str) -> Tuple[bool, Any]:
     status, data = _call("POST", "/v1/passTypeIds", {"data": {"type": "passTypeIds", "attributes": {
-        "identifier": identifier, "name": (name or identifier)[:60]}}})
+        "identifier": identifier, "name": apple_name(name, identifier)}}})
     if status in (200, 201):
         return True, data.get("data")
     if status == 409:                              # made by an earlier, interrupted try
