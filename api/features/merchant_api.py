@@ -471,7 +471,8 @@ def create_visit(body: VisitIn, c: ApiCaller = Depends(writer)):
             _db.visits.update_one({"id": v["id"]}, {"$set": {"source": "api", "external_id": body.external_id, "api_key_id": c.key_id}})
             v.update(source="api", external_id=body.external_id)
         out = {"visit": visit_out(v), "customer": customer_out(_db.customers.find_one({"id": cust["id"]}, {"_id": 0})),
-               "tier_upgraded": bool(res.get("tier_upgraded")), "reward_unlocked": bool(res.get("reward_unlocked"))}
+               "tier_upgraded": bool(res.get("tier_upgraded")), "reward_unlocked": bool(res.get("reward_unlocked")),
+               "next_visit_reward": res.get("next_visit_reward")}
         _idem_done(c.tenant_id, "visit", body.external_id, out)
     except BaseException:
         _idem_abort(c.tenant_id, "visit", body.external_id)
