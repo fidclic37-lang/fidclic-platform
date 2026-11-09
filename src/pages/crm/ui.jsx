@@ -105,7 +105,7 @@ export function Kpi({ icon: Icon, tone, bg, value, label, delta, series, compact
   );
 }
 
-export function Donut({ rows = [], center, sub, colors, counts }) {
+export function Donut({ rows = [], center, sub, colors, counts, onPick, pickTitle }) {
   const data = rows.filter((r) => r.count > 0);
   // Fixed colours per row (colors[i] for rows[i]) or the chart palette in order.
   const colorOf = (r) => (colors ? colors[rows.indexOf(r) % colors.length] : CHART[data.indexOf(r) % CHART.length]);
@@ -125,10 +125,19 @@ export function Donut({ rows = [], center, sub, colors, counts }) {
       </div>
       <ul className="min-w-[160px] flex-1 space-y-2">
         {rows.map((r, i) => (
-          <li key={r.key || r.label} className="flex items-center gap-2 text-[12.5px]">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.count ? colorOf(r) : '#CBD5E1' }} />
-            <span className="flex-1 truncate text-[#334155]">{r.label}</span>
-            <span className="font-medium text-[#0B1C3F]">{counts ? `${nf(r.count)} (${r.pct}%)` : `${r.pct}%`}</span>
+          <li key={r.key || r.label} className="text-[12.5px]">
+            {/* onPick (optional): each row opens what it counts — a button, so the keyboard reaches it too */}
+            {(() => {
+              const inner = (<>
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.count ? colorOf(r) : '#CBD5E1' }} />
+                <span className="flex-1 truncate text-left text-[#334155]">{r.label}</span>
+                <span className="font-medium text-[#0B1C3F]">{counts ? `${nf(r.count)} (${r.pct}%)` : `${r.pct}%`}</span>
+              </>);
+              return onPick && r.count ? (
+                <button type="button" onClick={() => onPick(r)} title={pickTitle ? pickTitle(r) : undefined}
+                  className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded px-1 py-0.5 hover:bg-[#F1F5F9]">{inner}</button>
+              ) : <div className="flex items-center gap-2">{inner}</div>;
+            })()}
           </li>
         ))}
         {!rows.length && <li className="text-[12.5px] text-[#94A3B8]">Aucune donnée pour le moment.</li>}

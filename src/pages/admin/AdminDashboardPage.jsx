@@ -5,6 +5,10 @@ import {
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Head, Kpi, Donut, Loading, Modal, nf, BLUE } from '../crm/ui';
+
+// Standing colours: the tile's « en essai » violet and « abonnés » green, then
+// the ones that left — red (unpaid), amber (trial over), slate (résilié).
+const STANDING_COLORS = { essai: '#8B5CF6', abonne: '#10B981', impaye: '#E11D48', non_converti: '#F59E0B', resilie: '#64748B' };
 import { PlanPill, CommerceLogo } from './CommercesPage';
 import { CitiesSection, RevenueSection, SourcesSection } from './analytics/sections';
 import CommerceListModal from './CommerceListModal';
@@ -64,6 +68,11 @@ export default function AdminDashboardPage() {
       <p className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-[#475569]">
         <button type="button" onClick={stop(() => setList('essai'))} title="Voir les commerces en essai" className="inline-flex items-center gap-1 rounded hover:text-[#7C3AED]"><i className="h-2 w-2 rounded-full bg-[#8B5CF6]" />{nf(split.essai)} en essai</button>
         <button type="button" onClick={stop(() => setList('abonne'))} title="Voir les commerces abonnés" className="inline-flex items-center gap-1 rounded hover:text-[#0F8B58]"><i className="h-2 w-2 rounded-full bg-[#10B981]" />{nf(split.abonne)} abonnés</button>
+        {/* « sur M inscrits » (user, 2026-11-09): the tile counts trial + paying,
+            the donut below every registered business — said, not guessed. */}
+        {K.commerces.registered != null && (
+          <button type="button" data-testid="commerces-registered" onClick={stop(() => setList('inscrits'))} title="Voir tous les commerces inscrits" className="inline-flex items-center gap-1 rounded text-[#64748B] hover:text-[#2F6BFF]">sur {nf(K.commerces.registered)} inscrits</button>
+        )}
       </p>
     ),
     impaye: (
@@ -126,7 +135,15 @@ export default function AdminDashboardPage() {
           de la plateforme » and the sector donut moved to Analytics. */}
       <div className="mt-4 grid gap-4 xl:grid-cols-2 min-[1700px]:grid-cols-[1.3fr_1fr_1fr_1fr]">
         <SourcesSection rows={d.sources} Card={Card} Head={Head} />
-        <Card><Head icon={PieIcon} title="Répartition par plan" /><Donut rows={d.plans} center={nf(d.total)} sub="commerces" /></Card>
+        {/* Where each registered business stands (user, 2026-11-09, option 3) —
+            « Répartition par plan » said « Essai gratuit 100 % » for trials long over. */}
+        <Card><Head icon={PieIcon} title="Répartition par statut" />
+          <div data-testid="status-donut">
+            <Donut rows={d.statuses || []} center={nf(d.total)} sub="inscrits" counts
+              colors={(d.statuses || []).map((r) => STANDING_COLORS[r.key] || '#94A3B8')}
+              onPick={(r) => setList(r.list)} pickTitle={(r) => `Voir les commerces : ${r.label}`} />
+          </div>
+        </Card>
         <RevenueSection revenue={d.revenue} Card={Card} Head={Head} />
         <CitiesSection rows={d.cities} Card={Card} Head={Head} />
       </div>

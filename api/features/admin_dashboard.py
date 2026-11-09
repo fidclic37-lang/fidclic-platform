@@ -170,7 +170,10 @@ def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
     if series and live:
         series[-1] = value
     out.append({"key": "commerces", "value": value, "delta": _delta(value if live else then(end), then(start)),
-                "series": series, "breakdown": {"essai": essai, "abonne": abonne}})
+                "series": series, "breakdown": {"essai": essai, "abonne": abonne},
+                # « N actifs sur M inscrits » (user, 2026-11-09): M = every
+                # registered business, the donut's total.
+                "registered": len(tenants)})
 
     impayes = [t for t in tenants if stand[t["id"]] == "impaye"]
     out.append({"key": "impaye", "value": len(impayes), "delta": None, "series": [],
@@ -465,6 +468,24 @@ def _status_cards(tenants, rows, hist, start, end, now, new_now, new_prev) -> Li
     ]
 
 
+# Where each registered business stands, in the order of its life with FidClic
+# (user, 2026-11-09, option 3): the « Répartition » donut sums to the same total
+# as the tile's « sur M inscrits », and each slice opens its businesses.
+STANDINGS = [("essai", "Essai en cours", "essai"), ("abonne", "Abonné", "abonne"), ("impaye", "Impayé", "impaye"),
+             ("non_converti", "Non converti", "tous_non_converti"), ("resilie", "Résilié", "tous_resilie")]
+
+
+def _statuses(tenants, rows, now: datetime) -> List[Dict[str, Any]]:
+    ids = {r["id"] for r in rows}
+    count = defaultdict(int)
+    for t in tenants:
+        if t["id"] in ids:
+            count[AC.standing_of(t, now)] += 1
+    total = sum(count.values())
+    return [{"key": k, "label": label, "count": count[k], "pct": round(count[k] / total * 100) if total else 0, "list": lst}
+            for k, label, lst in STANDINGS if count.get(k)]
+
+
 def _build(start: datetime, end: datetime, months: int, now: datetime) -> Dict[str, Any]:
     import server as core
     import models
@@ -491,7 +512,7 @@ def _build(start: datetime, end: datetime, months: int, now: datetime) -> Dict[s
         "kpis": _kpis(tenants, start, end),
         # « Évolution de la plateforme » and the sector donut moved to Analytics;
         # three of Analytics' sections are shown here too (user, 2026-10-01).
-        "total": total, "plans": plan_rows,
+        "total": total, "plans": plan_rows, "statuses": _statuses(tenants, rows, now),
         "cities": AN.cities(tenants), "revenue": AN.revenue_by_plan(tenants, start, end), "sources": AN.sources(start, end),
         "status_cards": _status_cards(tenants, rows, hist, start, end, now, new_now, new_prev),
         "opportunities": _opportunities(tenants, rows),
@@ -512,6 +533,10 @@ LISTS = {
     "non_converti": "Essais non convertis", "clients": "Clients finaux par commerce", "cartes": "Cartes actives par commerce",
     "ca": "Chiffre d'affaires par commerce", "mrr": "MRR par commerce",
     "essai_7j": "Essais qui se terminent sous 7 jours", "limite": "Commerces à 90 % de leur limite",
+    # the tile's « sur M inscrits » and the standing donut's slices (2026-11-09):
+    # every business today, whenever its trial ended or it left
+    "inscrits": "Tous les commerces inscrits", "tous_non_converti": "Essais non convertis (tous)",
+    "tous_resilie": "Commerces résiliés (tous)",
 }
 
 
@@ -534,6 +559,10 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
     metric_label = None
     if key == "commerces":
         ids = [i for i, v in stand.items() if v in ("essai", "abonne")]
+    elif key == "inscrits":
+        ids = [i for i in tenants if i in snap]
+    elif key in ("tous_non_converti", "tous_resilie"):
+        ids = [i for i, v in stand.items() if v == key[5:] and i in snap]
     elif key in ("essai", "abonne", "impaye"):
         ids = [i for i, v in stand.items() if v == key]
     elif key == "essai_7j":
