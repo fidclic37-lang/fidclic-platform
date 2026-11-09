@@ -426,6 +426,8 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         # from the full date of birth (user, 2026-10-09); None for clients who
         # gave day and month only
         "age": _age(cust),
+        # MM-DD, shown in the « Anniversaire » column (user, 2026-11-09)
+        "birthday": _birthday(cust),
         "source": _source_key(cust), "source_label": _source_label(cust),
         # who brought them, and when (Clients › les 3 points, 2026-10-16)
         "brought_by": _brought_by(cust),
@@ -434,6 +436,17 @@ def _public(cust: Dict[str, Any], at: datetime, shop_avg: float, local_ids: set,
         # paused by the business (Clients › Mettre en pause): no message of any kind
         "paused": bool(cust.get("paused_at")),
     }
+
+
+def _birthday(cust: Dict[str, Any]) -> Optional[str]:
+    from services import customer_fields as CF
+    return CF.birthday_of(cust)
+
+
+def _birthday_order(cust: Dict[str, Any]) -> Tuple[bool, str]:
+    """January → December; the clients without a birthday last."""
+    b = _birthday(cust)
+    return (b is None, b or "")
 
 
 def _age(cust: Dict[str, Any]) -> Optional[int]:
@@ -473,6 +486,8 @@ SORTS: Dict[str, Tuple[Callable[[Dict[str, Any]], Any], bool]] = {
     "spend":   (lambda c: float(c.get("total_amount_paid") or 0), True),
     "visits":  (lambda c: int(c.get("visits") or 0), True),
     "last":    (lambda c: _aware(c.get("last_visit_date")) or datetime.min.replace(tzinfo=timezone.utc), True),
+    # « Anniversaires du mois » runs 1 → 31 (user, 2026-11-09); no birthday last
+    "birthday": (lambda c: _birthday_order(c), False),
 }
 SORT_LABELS = [
     {"key": "recent", "label": "Date d'inscription (plus récent)"},
@@ -481,6 +496,7 @@ SORT_LABELS = [
     {"key": "spend",  "label": "Total dépensé (plus élevé)"},
     {"key": "visits", "label": "Visites (plus nombreuses)"},
     {"key": "last",   "label": "Dernière visite (plus récente)"},
+    {"key": "birthday", "label": "Anniversaire (1er → 31)"},
 ]
 
 SPEND_BANDS = {

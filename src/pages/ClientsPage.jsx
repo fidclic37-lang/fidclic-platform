@@ -244,6 +244,13 @@ const NumberBox = ({ label, value, onChange, placeholder, suffix, digitsOnly, ma
 const EXTRA_EMPTY = { tier: '', visits_min: '', visits_max: '', spent_min: '', spent_max: '', basket_min: '', postal: '', notif: '',
   age_band: '', age_min: '', age_max: '' };
 // the ready-made slices, « de … à … » beside them (user, 2026-10-20)
+// MM-DD → « 14 nov. », the shop's own words for a day (fr-FR)
+function birthdayLabel(mmdd) {
+  const m = /^(\d{2})-(\d{2})$/.exec(mmdd || '');
+  if (!m) return '—';
+  return new Date(2000, Number(m[1]) - 1, Number(m[2])).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
+
 const AGE_BANDS = [{ key: '', label: 'Tous les âges' }, { key: '18_24', label: '18 – 24 ans' },
   { key: '25_34', label: '25 – 34 ans' }, { key: '35_49', label: '35 – 49 ans' }, { key: '50p', label: '50 ans et plus' }];
 const DATES_EMPTY = { joined_from: '', joined_to: '', last_from: '', last_to: '', sales_from: '', sales_to: '' };
@@ -359,8 +366,12 @@ export default function ClientsPage() {
   // establishment's, whatever the menu shows, until the filter is removed.
   const [store, setStore] = useState(() => urlParams.get('store') || '');
   const { branches } = useBranch();
+  const showBirthday = segment === 'birthday';
   const setSegment = (k) => {
     setSegmentState(k);
+    // « Anniversaires du mois » runs in birthday order, 1 → 31 (user, 2026-11-09)
+    if (k === 'birthday') setSort('birthday');
+    else setSort((cur) => (cur === 'birthday' ? 'recent' : cur));
     setStore('');
     if (urlParams.get('segment') || urlParams.get('store')) {
       setUrlParams((p) => { p.delete('segment'); p.delete('store'); return p; }, { replace: true });
@@ -368,7 +379,7 @@ export default function ClientsPage() {
   };
   useEffect(() => {
     const k = urlParams.get('segment');
-    if (k && k !== segment) { setSegmentState(k); setPage(1); }
+    if (k && k !== segment) { setSegmentState(k); setPage(1); if (k === 'birthday') setSort('birthday'); }
     if (k) setStore(urlParams.get('store') || '');
     // Opened from an alert: straight to its clients.
     if (k && (ALERT_SEGMENTS[k] || k.startsWith('client:') || k.startsWith('place:'))) {
@@ -421,7 +432,8 @@ export default function ClientsPage() {
   const clearSearch = () => { setTyped(''); setSearch(''); setPage(1); };
   // ?sort=spend / ?sort=visits: the LTV and « Visites par client » figures of
   // Analyses open the list ordered by what they measure.
-  const [sort, setSort] = useState(() => (['spend', 'visits'].includes(urlParams.get('sort')) ? urlParams.get('sort') : 'recent'));
+  const [sort, setSort] = useState(() => (['spend', 'visits'].includes(urlParams.get('sort')) ? urlParams.get('sort')
+    : urlParams.get('segment') === 'birthday' ? 'birthday' : 'recent'));
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(() => prefPerPage());
   const [more, setMore] = useState(false);
@@ -994,7 +1006,7 @@ export default function ClientsPage() {
                          onChange={togglePage}
                          className="h-4 w-4 accent-[#2F6BFF]" />
                 </th>
-                {['Client', 'Âge', 'Carte', 'Statut', 'Segment',
+                {['Client', 'Âge', ...(showBirthday ? ['Anniversaire'] : []), 'Carte', 'Statut', 'Segment',
                   feed.period ? 'Visites sur la période' : 'Visites',
                   'Dernière visite',
                   feed.period ? 'Dépensé sur la période' : 'Total dépensé',
@@ -1007,12 +1019,12 @@ export default function ClientsPage() {
             </thead>
             <tbody>
               {loading && feed.rows.length === 0 && (
-                <tr key="loading"><td colSpan={10} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
+                <tr key="loading"><td colSpan={showBirthday ? 11 : 10} className="px-4 py-14 text-center text-[13px] text-[#64748B]">
                   <Loader2 size={16} className="mr-2 inline animate-spin" /> Chargement des clients…
                 </td></tr>
               )}
               {!loading && feed.rows.length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-14 text-center">
+                <tr><td colSpan={showBirthday ? 11 : 10} className="px-4 py-14 text-center">
                   <div data-testid="clients-empty">
                     <p className="text-[13.5px] font-semibold text-[#0B1C3F]">
                       {search ? `Aucun client pour la recherche « ${search} »` : 'Aucun client ici'}
@@ -1066,6 +1078,13 @@ export default function ClientsPage() {
                     <td className="whitespace-nowrap px-4 py-3 text-[12.5px] tabular-nums text-[#475569]">
                       {r.age != null ? `${r.age} ans` : '—'}
                     </td>
+                    {/* « Anniversaires du mois »: the day itself (user, 2026-11-09) —
+                        the date further right is the LAST VISIT, not the birthday */}
+                    {showBirthday && (
+                      <td className="whitespace-nowrap px-4 py-3 text-[12.5px] font-medium tabular-nums text-[#0B1C3F]">
+                        {birthdayLabel(r.birthday)}
+                      </td>
+                    )}
                     {/* « Carte » (user, 2026-10-10): still on the phone, deleted
                         from the card page, or removed from Apple Wallet — with the date */}
                     <td className="whitespace-nowrap px-4 py-3"><CardStateBadge card={r.card} /></td>
