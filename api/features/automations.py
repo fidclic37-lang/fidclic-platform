@@ -104,6 +104,14 @@ def _paris(at: datetime) -> datetime:
     return P.local(at)
 
 
+def paris_mmdd(at: Optional[datetime] = None, days: int = 0) -> str:
+    """« MM-DD » of the shop's day (Paris), `days` later. A birthday is a date in
+    France: from 00:00 to 01:00 in Paris (02:00 in summer) UTC is still
+    yesterday, and every « whose birthday is it? » that read UTC missed
+    today's (PR #454). Every birthday window reads its day here."""
+    return (_paris(at or datetime.now(timezone.utc)) + timedelta(days=days)).strftime("%m-%d")
+
+
 def _loc(at: datetime, sched: Optional[Dict[str, Any]]) -> datetime:
     """Wall clock in the automation's « Fuseau horaire » (Paris unless chosen)."""
     if not (sched or {}).get("tz"):

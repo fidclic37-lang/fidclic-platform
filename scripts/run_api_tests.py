@@ -8,6 +8,11 @@ and on a laptop:
     python3 scripts/run_api_tests.py            # everything
     python3 scripts/run_api_tests.py security   # only files whose name matches
 
+Every file runs OFFLINE (api/tests/_offline, PR #454): a lookup of any host but
+this machine is refused at once, so the CI — which has the internet — reads
+the same as a laptop that may not. A file that tried is named at the end with
+the host; give that test a stub (it still runs, with « unreachable »).
+
 KNOWN_RED is the list of tests already failing on main the day this started.
 They are tolerated so the check can go in without a week of unrelated repair,
 and the list is the debt: a test on it that starts passing fails the run too,
@@ -18,15 +23,38 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import time
+from typing import Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(HERE, "api", "tests")
+OFFLINE = os.path.join(TESTS, "_offline")
 
 # Failing on main since before this check existed. Remove a name when its test
 # is fixed — the run tells you to.
 # empty since 2026-10-28 (#387): the three first ones are fixed — keep it so
 KNOWN_RED: set = set()
+
+
+def offline_env(log: str, base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """The environment a test file runs in: the offline guard first on the
+    path (its sitecustomize refuses any host but this machine) and where it
+    writes the hosts it refused."""
+    env = dict(os.environ if base is None else base)
+    env["PYTHONPATH"] = os.pathsep.join([OFFLINE] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p])
+    env["FIDCLIC_OFFLINE_LOG"] = log
+    return env
+
+
+def net_hits(log: str) -> List[Tuple[str, str]]:
+    """(file, host) each test tried to reach, once each, sorted."""
+    try:
+        with open(log) as f:
+            rows = {tuple(line.rstrip("\n").split("\t", 1)) for line in f if "\t" in line}
+    except OSError:
+        return []
+    return sorted(rows)
 
 
 def _why(r: subprocess.CompletedProcess) -> str:
@@ -52,10 +80,12 @@ def main() -> int:
         return 1
 
     broke, fixed = [], []
+    log = os.path.join(tempfile.mkdtemp(prefix="fidclic-offline-"), "net.tsv")
+    env = offline_env(log)
     t0 = time.time()
     for name in names:
         r = subprocess.run([sys.executable, os.path.join("tests", name)],
-                           cwd=os.path.join(HERE, "api"),
+                           cwd=os.path.join(HERE, "api"), env=env,
                            capture_output=True, text=True)
         ok = r.returncode == 0
         known = name in KNOWN_RED
@@ -69,6 +99,11 @@ def main() -> int:
         print(f"  {mark}  {name}")
 
     print(f"\n{len(names)} files in {time.time() - t0:.0f}s")
+    hits = net_hits(log)
+    if hits:
+        print("\nThese tried the internet (refused — the run is offline). Give each a stub:")
+        for name, host in hits:
+            print(f"    {name} → {host}")
     for name, why in broke:
         print(f"\n✗ {name}\n    {why[:300]}")
     if fixed:

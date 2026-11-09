@@ -51,6 +51,12 @@ def main():
 
     db = server.db
     GS.seed(db)
+    # The demo shop lives on 28 Oct 2026 (GS.DEMO_NOW): read its 30 days from
+    # there, as the golden run does — on the real clock its revenue left the
+    # window by late November and the file proved nothing (found 2026-11-09, PR #454).
+    from features import copilot as K, copilot_tools as CT
+    K._now = lambda: GS.DEMO_NOW
+    CT.NOW = lambda: GS.DEMO_NOW
     db.platform_settings.update_one({"key": "ai_meter"}, {"$set": {"user_per_min": 100000, "shop_day_share": 1.0}}, upsert=True)
 
     def http(method, url, headers=None, **kw):

@@ -144,7 +144,15 @@ def main():
     check("a push and an automation message point to exported clients",
           data["push"][0]["c"] in cs and data["automation_log"][0]["c"] in cs and data["push"][0]["campaign"] == camp["id"])
     ages = sorted(c["age"] for c in data["customers"] if c.get("age") is not None)
-    check("age in years from a full birthday only (1990-05-12 → 36)", ages == [36], ages)
+    # today's age, not a fixed 36: that one turned 37 on 12 May 2027 (PR #454)
+    from zoneinfo import ZoneInfo
+    today = dt.datetime.now(ZoneInfo("Europe/Paris")).date()
+    age = today.year - 1990 - ((today.month, today.day) < (5, 12))
+    check(f"age in years from a full birthday only (1990-05-12 → {age})", ages == [age], ages)
+    from features import lab_export as LE
+    night = dt.datetime(2027, 5, 11, 22, 30, tzinfo=UTC)          # 12 May 00:30 in Paris
+    check("the birthday counts from midnight in Paris, not UTC (37 at 00:30)",
+          LE._age({"birthday": "1990-05-12"}, night) == 37, LE._age({"birthday": "1990-05-12"}, night))
     check("postal code kept to its département (37)", {c.get("postal") for c in data["customers"]} == {"37"})
     check("source kept as its kind (« employee », « qr »)", {c.get("source") for c in data["customers"]} == {"employee", "qr"})
     check("genre kept", {c.get("gender") for c in data["customers"]} == {"homme", "femme"})

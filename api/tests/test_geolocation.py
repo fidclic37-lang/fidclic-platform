@@ -19,6 +19,15 @@ import mongomock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DISABLE_SEED"] = "1"
 
+# Commune names and positions come from the Base Adresse Nationale. A test
+# must not depend on the network (PR #454: the CI answered, or timed out
+# once and answered the next call): the stubs say « unreachable », as on a
+# laptop with no network, so every run reads the same.
+from services import communes as _communes  # noqa: E402
+
+_communes._fetch = lambda postal: ""
+_communes._fetch_position = lambda *a, **k: None
+
 with mongomock.patch(servers=(("localhost", 27017),)):
     import server                      # noqa: F401 — boots the app + db
     from features import geolocation as GEO

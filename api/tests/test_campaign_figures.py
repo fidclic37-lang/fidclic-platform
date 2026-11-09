@@ -51,9 +51,16 @@ def main():
         db.customers.insert_one({"id": cid, "tenant_id": "t1", "name": cid.upper(), "barcode_id": f"FT-{cid.upper()}0000000"})
 
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-    # within this calendar month (the Campagnes page's period) and the last 30 days (Analyses)
-    first = max(now - dt.timedelta(days=4), now.replace(day=1, hour=0, minute=0, second=1))
-    t = lambda h: first + dt.timedelta(hours=h)         # noqa: E731
+    # within this calendar month (the Campagnes page's period — a Paris month)
+    # and the last 30 days (Analyses), and never in the future. At 00:30 Paris
+    # on the 1st the month is half an hour old: the « hours » between the sends
+    # and the visits shrink to fit it (the order is what the checks read).
+    from zoneinfo import ZoneInfo
+    paris = now.astimezone(ZoneInfo("Europe/Paris"))
+    month_start = paris.replace(day=1, hour=0, minute=0, second=0).astimezone(dt.timezone.utc)
+    first = max(now - dt.timedelta(days=4), month_start + dt.timedelta(seconds=1))
+    step = min(dt.timedelta(hours=1), (now - first) / 20)
+    t = lambda h: first + step * h                      # noqa: E731
     db.campaigns.insert_many([
         {"id": "k1", "tenant_id": "t1", "name": "Petit-déjeuner", "status": "sent", "sent_at": t(0),
          "recipient_ids": ["a", "b"], "offer_clicks": 3, "clicks": 0},

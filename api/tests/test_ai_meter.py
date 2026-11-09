@@ -70,7 +70,13 @@ def main():
     OWNER, MANAGER, BOSS = tok("o@a.fr", "business_owner"), tok("m@a.fr", "manager"), tok("boss@fidclic.com", "super_admin", None)
     OWNER_AI = tok("o@c.fr", "business_owner", "t3")          # Pro AI: « Rédiger avec l'IA » is in its plan
 
-    clock = [dt.datetime(2026, 11, 10, 9, 0, tzinfo=UTC)]
+    # The meter's clock, always ahead of the real one: the rate rows carry an
+    # `exp` from this clock and mongomock's TTL deletes them by the REAL clock.
+    # A fixed 10 Nov 2026 09:00 made every call « rate »-blocked from that
+    # morning on (found 2026-11-09, PR #454). Tomorrow 09:00 UTC = 10:00/11:00
+    # in Paris, the same calendar day in both.
+    BASE = (dt.datetime.now(UTC) + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    clock = [BASE]
     AM._now = lambda: clock[0]
     mails = []
     htmls = []
@@ -212,7 +218,7 @@ def main():
     check("past the cap: every shop is paused", ask("t2") is None and ask("t3") is None)
     check("the super admin's own assistant too", ask(None, feature="admin_ai", user="boss@fidclic.com") is None)
     check("one alert for the day", db.platform_alerts.count_documents({"kind": "ai_global"}) == 1)
-    clock[0] = dt.datetime(2026, 11, 11, 9, 0, tzinfo=UTC)
+    clock[0] = BASE + dt.timedelta(days=1)
     usage["output_tokens"] = 500
     check("the next day it starts again", ask("t2") == "Bonjour")
     check("settings refused when absurd (422)",
@@ -226,7 +232,7 @@ def main():
     clock[0] = dt.datetime(2026, 10, 31, 23, 30, tzinfo=UTC)     # 1 Nov 00:30 in Paris
     check("31 Oct 23:30 UTC is November in Paris", AM.key_month("t1").endswith("2026-11"))
     check("…and the 1st for the daily cap", AM.key_day(None).endswith("2026-11-01"))
-    clock[0] = dt.datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
+    clock[0] = BASE
 
     print("Pic soudain")
     reset()
@@ -241,7 +247,7 @@ def main():
     r = http("POST", "/api/admin/ai/costs/shops/t3/release", headers=BOSS)
     usage["output_tokens"] = 500
     check("« Débloquer » lets it go on today", r.status_code == 200 and ask("t3") == "Bonjour")
-    clock[0] = dt.datetime(2026, 11, 10, 9, 5, tzinfo=UTC)
+    clock[0] = BASE + dt.timedelta(minutes=5)
     check("…and stays released for the day", AM.state("t3")["blocked"] is None)
     reset()
     usage["output_tokens"] = 100_000                          # a new shop, first day, ≈ 0,9 €: under 20 % of its budget

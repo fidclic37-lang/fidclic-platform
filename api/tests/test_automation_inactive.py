@@ -85,12 +85,15 @@ def main():
                "tier": "bronze", "created_at": ago(400), "last_visit_date": ago(2), **kw}
         db.customers.insert_one(doc)
         return doc
+    # Born so many years ago, mid-way through that age: the buckets below stay
+    # true every year (a fixed 2001-01-01 left « 18-25 » on 1 Jan 2027, PR #454).
+    born = lambda age: (dt.date.today() - dt.timedelta(days=int(365.25 * (age + 0.5)))).isoformat()  # noqa: E731
     # inactive since 100 / 95 / 70 / 40 days; active; a never-came client signed 200 days ago
-    person("a", "Alice Martin", gender="F", birth_date="1995-03-03", visits=12, total_amount_paid=240, tier="gold",
+    person("a", "Alice Martin", gender="F", birth_date=born(31), visits=12, total_amount_paid=240, tier="gold",
            acquisition_source="instagram", last_visit_date=ago(100), created_at=ago(220))
-    person("b", "Bruno Roy", gender="M", birth_date="1970-05-05", visits=2, total_amount_paid=20, tier="bronze",
+    person("b", "Bruno Roy", gender="M", birth_date=born(56), visits=2, total_amount_paid=20, tier="bronze",
            acquisition_source="qr_store", last_visit_date=ago(95))
-    person("c", "Chloé Dubois", gender="F", birth_date="2001-01-01", visits=6, total_amount_paid=90, tier="silver",
+    person("c", "Chloé Dubois", gender="F", birth_date=born(22), visits=6, total_amount_paid=90, tier="silver",
            acquisition_source="insta", last_visit_date=ago(70))         # an alias: read as instagram
     person("d", "Driss Kader", visits=1, total_amount_paid=0, acquisition_source=None, last_visit_date=ago(40))
     person("e", "Emma Petit", visits=8, last_visit_date=ago(3))

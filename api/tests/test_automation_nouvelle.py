@@ -28,6 +28,18 @@ import pymongo
 pymongo.MongoClient = mongomock.MongoClient
 os.environ.setdefault("JWT_SECRET", "test-secret-automation-nouvelle")
 os.environ.setdefault("DISABLE_SEED", "1")
+
+# Address search asks the Base Adresse Nationale and Photon. A test must not
+# depend on the network (PR #454): the stub is « unreachable », as on a
+# laptop with no network.
+from services import addresses as _addresses  # noqa: E402
+
+
+def _offline(*a, **k):
+    raise OSError("offline (test)")
+
+
+_addresses._get = _offline
 passed = failed = 0
 
 
@@ -234,7 +246,8 @@ def main():
     check("2 fois par mois = the 1st and the 16th (31 days)", CR.per_month_days(dt.date(2027, 3, 1), 2) == [1, 16]
           and CR.date_due(row, dt.date(2027, 3, 16)))
     nd = CR.next_dates({"trigger": {"type": "recurring", "period": "weekly", "every_weeks": 1, "weekdays": [0, 2, 4]},
-                        "schedule": {}, "created_at": now}, dt.date(2027, 3, 1))
+                        # made before the 1 March it is read from — not « now », which is after it from March 2027 (PR #454)
+                        "schedule": {}, "created_at": dt.datetime(2027, 2, 20, tzinfo=dt.timezone.utc)}, dt.date(2027, 3, 1))
     check("« Prochaines dates »: lun., mer., ven. …", nd[:3] == ["2027-03-01", "2027-03-03", "2027-03-05"] and len(nd) == 5)
 
     print("\n   Annuelle: date fixe, anniversaire, inscription, rappel")

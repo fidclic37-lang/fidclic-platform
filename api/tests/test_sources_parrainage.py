@@ -23,6 +23,15 @@ pymongo.MongoClient = mongomock.MongoClient
 os.environ.setdefault("JWT_SECRET", "test-secret-sources")
 os.environ.setdefault("DISABLE_SEED", "1")
 
+# Commune names and positions come from the Base Adresse Nationale. A test
+# must not depend on the network (PR #454: the CI answered, or timed out
+# once and answered the next call): the stubs say « unreachable », as on a
+# laptop with no network, so every run reads the same.
+from services import communes as _communes  # noqa: E402
+
+_communes._fetch = lambda postal: ""
+_communes._fetch_position = lambda *a, **k: None
+
 passed = failed = 0
 
 
