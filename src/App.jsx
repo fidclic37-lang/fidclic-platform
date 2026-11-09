@@ -97,6 +97,8 @@ const SettingsPage = lazyPage(() => import('./pages/SettingsPage'));
 const ParametresPage = lazyPage(() => import('./pages/ParametresPage'));
 const CataloguePage = lazyPage(() => import('./pages/CataloguePage'));
 const JoinPage = lazyPage(() => import('./pages/JoinPage'));
+// API documentation for a shop's developer / POS provider: public, no account (2026-11-09)
+const DevelopersPage = lazyPage(() => import('./pages/DevelopersPage'));
 const MyWalletCardPage = lazyPage(() => import('./pages/MyWalletCardPage'));
 const ReaddCardPage = lazyPage(() => import('./pages/ReaddCardPage'));
 const CardOffersPage = lazyPage(() => import('./pages/CardOffersPage'));
@@ -355,6 +357,7 @@ function App() {
             </ProtectedRoute>
           } />
           <Route path="/voir-compte" element={<ViewAsEntry />} />
+          <Route path="/developers" element={<DevelopersPage />} />
           <Route path="/join/:slug" element={<JoinPage />} />
           {/* one link per channel (Paramètres › Lien d'inscription): /join/<slug>/insta, /wa… */}
           <Route path="/join/:slug/:channel" element={<JoinPage />} />

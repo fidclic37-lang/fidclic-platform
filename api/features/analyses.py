@@ -575,9 +575,13 @@ def place_matches(cust: Dict[str, Any], name: str) -> bool:
     """Is this client in « Données géographiques »' bar `name`? The bar is
     « Commune » or, where a commune has several codes, « Commune (code) »
     (_by_place) — both spellings are read the same way here, so a click on a
-    bar lists exactly its clients (user, 2026-10-21)."""
+    bar lists exactly its clients (user, 2026-10-21).
+
+    A bar named by the bare code is one drawn while the commune's name could
+    not be fetched; by the click the name may have arrived, so the code itself
+    is matched too — else that bar's list comes back empty (CI, 2026-11-09)."""
     label, code = _place_of(cust)
-    return name in (label, f"{label} ({code})" if code else label)
+    return name in (label, f"{label} ({code})" if code else label) or (bool(code) and name == code)
 
 
 def _by_place(people) -> Dict[str, int]:

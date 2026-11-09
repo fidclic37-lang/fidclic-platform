@@ -101,7 +101,8 @@ export default function ApiIntegrationsPage() {
                   <tr key={k.id} className={`border-b border-[#F4F7FC] ${k.revoked ? 'opacity-50' : ''}`}>
                     <td className="px-2 py-2.5 font-semibold text-[#0B1C3F]">{k.name}</td>
                     <td className="px-2 py-2.5 font-mono text-[#475569]">{k.prefix}…</td>
-                    <td className="px-2 py-2.5"><span className={`rounded-md px-2 py-0.5 text-[11.5px] font-medium ${k.scopes.includes('write') ? 'bg-[#EAF1FF] text-[#2F6BFF]' : 'bg-[#F1F5F9] text-[#475569]'}`}>{k.scopes.includes('write') ? 'Lecture + écriture' : 'Lecture'}</span></td>
+                    <td className="px-2 py-2.5"><span className={`rounded-md px-2 py-0.5 text-[11.5px] font-medium ${k.scopes.includes('write') ? 'bg-[#EAF1FF] text-[#2F6BFF]' : 'bg-[#F1F5F9] text-[#475569]'}`}>{k.scopes.includes('write') ? 'Lecture + écriture' : 'Lecture'}</span>
+                      {k.online && <span className="ml-1 rounded-md bg-[#FFF7E6] px-2 py-0.5 text-[11.5px] font-medium text-[#B45309]">Site en ligne · SMS</span>}</td>
                     <td className="px-2 py-2.5 text-[#475569]">{when(k.created_at)}</td>
                     <td className="px-2 py-2.5 text-[#475569]">{k.last_used_at ? when(k.last_used_at) : 'Jamais'}</td>
                     <td className="px-2 py-2.5 text-[#475569]">{k.calls}</td>
@@ -191,7 +192,7 @@ function HookRow({ h, events, onEdit, onTest, onDelete }) {
 }
 
 function KeyModal({ onClose, onDone }) {
-  const [f, setF] = useState({ name: '', write: true });
+  const [f, setF] = useState({ name: '', write: true, online: false });
   const [key, setKey] = useState(null);
   const [err, setErr] = useState('');
   const save = async () => {
@@ -212,6 +213,8 @@ function KeyModal({ onClose, onDone }) {
             <input className={input} value={f.name} maxLength={60} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ex. Caisse du comptoir" /></label>
           <label className="flex items-start gap-2"><input type="checkbox" checked={f.write} onChange={(e) => setF({ ...f, write: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[#2F6BFF]" />
             <span><strong>Lecture + écriture</strong> — créer des clients, enregistrer des passages, utiliser des récompenses. Sans : lecture seule.</span></label>
+          <label className="flex items-start gap-2"><input type="checkbox" data-testid="key-online" checked={f.online} disabled={!f.write} onChange={(e) => setF({ ...f, online: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[#2F6BFF]" />
+            <span><strong>Site en ligne</strong> — une récompense n'est utilisée qu'après le code reçu par SMS par le client. À cocher pour un site e-commerce, où n'importe qui peut taper un numéro.</span></label>
           {err && <p className="text-[13px] text-[#C0392B]">{err}</p>}
           <button type="button" disabled={!f.name.trim()} onClick={save} className="w-full rounded-lg py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-50" style={{ background: BLUE }}>Créer la clé</button>
         </div>
@@ -247,17 +250,21 @@ function Docs({ base, events, rate }) {
   const ep = [
     ['GET', '/me', 'Votre commerce et les règles de la carte (nombre de passages pour la récompense).'],
     ['GET', '/customers?search=&updated_since=&page=&per_page=', 'Vos clients (100 par page au plus).'],
-    ['GET', '/customers/{id | FT-… | téléphone}', 'Un client : points, tampons, récompense disponible, lien de sa carte.'],
+    ['GET', '/customers/{id | FT-… | téléphone | e-mail}', 'Un client : points, tampons, récompense disponible, lien de sa carte. Deux clients sur le même numéro → 409 ambiguous_customer.'],
     ['POST', '/customers', 'Créer une carte (name, phone, email, consent: true). Même téléphone → la carte existante.'],
     ['POST', '/visits', "Enregistrer un passage / achat (customer, amount, external_id). Mêmes règles qu'au comptoir."],
     ['GET', '/visits?customer=&since=', 'Les passages, du plus récent au plus ancien.'],
-    ['POST', '/rewards/redeem', 'Le client utilise sa récompense, à partir de la visite suivante (customer, reward_name).'],
+    ['POST', '/visits/{id | external_id}/cancel', 'Un remboursement : retire le passage, ses tampons, ses points et sa dépense.'],
+    ['POST', '/rewards/hold', 'Borne : réserver la récompense pendant le paiement (30 s à 15 min).'],
+    ['POST', '/rewards/redeem', 'Le client utilise sa récompense, à partir de la visite suivante (customer, reward_name, hold_id).'],
+    ['POST', '/customers/{ref}/verification', 'Site en ligne : un code SMS au client, puis /verification/check → un jeton.'],
   ];
   return (
     <div className="space-y-4">
       <Card>
         <h2 className="mb-1 text-[16px] font-bold text-[#0B1C3F]">Démarrer</h2>
-        <p className="mb-3 text-[13px] text-[#475569]">Chaque appel porte votre clé dans l'en-tête <code>Authorization</code>. Réponses en JSON ; {rate} requêtes par minute et par clé.</p>
+        <p className="mb-3 text-[13px] text-[#475569]">Chaque appel porte votre clé dans l'en-tête <code>Authorization</code>. Réponses en JSON ; {rate} requêtes par minute et par clé.
+          {' '}Documentation complète, à transmettre à votre prestataire : <a href="/developers" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#2F6BFF] underline">app.fidclic.com/developers</a>.</p>
         <Code>{`curl ${base}/me \\\n  -H "Authorization: Bearer fc_live_VOTRE_CLE"`}</Code>
       </Card>
       <Card>
@@ -285,7 +292,7 @@ function Docs({ base, events, rate }) {
         <Code>{`const [t, v1] = req.headers['x-fidclic-signature'].split(',').map((p) => p.split('=')[1]);\nconst attendu = crypto.createHmac('sha256', process.env.FIDCLIC_WHSEC)\n  .update(\`\${t}.\${corpsBrut}\`).digest('hex');\nif (!crypto.timingSafeEqual(Buffer.from(v1), Buffer.from(attendu))) return res.status(401).end();`}</Code>
         <p className="mb-2 mt-3 text-[13px] text-[#475569]">En Python :</p>
         <Code>{`t, v1 = [p.split("=")[1] for p in signature.split(",")]\nattendu = hmac.new(WHSEC.encode(), f"{t}.".encode() + corps_brut, hashlib.sha256).hexdigest()\nassert hmac.compare_digest(v1, attendu)`}</Code>
-        <p className="mt-2 text-[12.5px] text-[#64748B]">Répondez 2xx en moins de 4 secondes. Un échec est retenté chaque jour (3 essais) et peut être renvoyé depuis l'onglet Webhooks.</p>
+        <p className="mt-2 text-[12.5px] text-[#64748B]">Répondez 2xx en moins de 3 secondes. Un échec est retenté toutes les 15 minutes (3 essais en tout) et peut être renvoyé depuis l'onglet Webhooks. Un envoi peut arriver deux fois : dédoublonnez sur l'en-tête <code>X-FidClic-Delivery</code>.</p>
       </Card>
       <Card>
         <h2 className="mb-1 text-[16px] font-bold text-[#0B1C3F]">Zapier, Make, n8n</h2>
@@ -295,7 +302,7 @@ function Docs({ base, events, rate }) {
         <h2 className="mb-1 text-[16px] font-bold text-[#0B1C3F]">Erreurs</h2>
         <ul className="space-y-1 text-[12.5px] text-[#475569]">
           <li><code>401</code> clé manquante, invalide ou révoquée · <code>403</code> clé en lecture seule, ou API non incluse dans votre offre</li>
-          <li><code>404</code> client introuvable · <code>409</code> pas de récompense disponible · <code>429</code> trop de requêtes (réessayez dans une minute)</li>
+          <li><code>404</code> client introuvable · <code>409</code> pas de récompense, récompense réservée, client ambigu ou requête en cours · <code>422</code> external_id déjà utilisé pour une autre requête · <code>429</code> trop de requêtes (réessayez dans une minute)</li>
           <li>Le corps d'erreur contient <code>detail.code</code> et <code>detail.message</code>.</li>
         </ul>
       </Card>

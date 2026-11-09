@@ -176,6 +176,10 @@ app.add_middleware(_AM.Middleware)
 from services import media as _MEDIA  # noqa: E402
 _MEDIA.install(db)
 app.add_middleware(_ST.TimingMiddleware)
+# 1e309, NaN, Infinity in a JSON body: a 422 before any route, and a
+# validation error that can always be written (services/finite_json, #454).
+from services import finite_json as _FJ  # noqa: E402
+_FJ.install(app)
 
 # ─────────────────────────────────────────────────────────────────────
 # RGPD / GDPR — Audit trail (Sprint 1)
@@ -5658,6 +5662,10 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
     db.customers.update_one({"id": cid}, {"$set": tier_set})
 
     # Insert visit row — must succeed for analytics.
+    # Its id goes back to the caller (the merchant API names THIS visit, not
+    # « the client's latest », which a scan beside it may be) and onto any
+    # reward it banks, so a refund can take that reward back.
+    _visit_id = None
     try:
         visit_doc = {
             "id": str(uuid.uuid4()),
@@ -5687,6 +5695,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
         for _left in (2, 1, 0):
             try:
                 db.visits.insert_one(visit_doc)
+                _visit_id = visit_doc["id"]
                 break
             except _mongo_errors.WaitQueueTimeoutError:
                 if not _left:
@@ -5829,6 +5838,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
                 "earned_at": datetime.now(timezone.utc),
                 "status": "pending",          # claimed at the counter → "redeemed"
                 "visits_at_completion": last_red_visits + reward_threshold,
+                **({"visit_id": _visit_id} if _visit_id else {}),
                 **({} if card_visits - last_red_visits - persons >= reward_threshold
                    else {"available_after_visits": card_visits}),
             })
@@ -5881,6 +5891,7 @@ def _scan_visit_impl(req: "ScanRequest", token_data: "TokenData"):
 
     return {
         "id": cid,
+        "visit_id": _visit_id,
         "barcode_id": cust.get("barcode_id"),
         "name": cust.get("name", ""),
         "email": cust.get("email", ""),
@@ -8039,6 +8050,9 @@ def export_my_data(barcode_id: str, request: Request = None):
                      db.notifications.find({"customer_id": cid}).sort("created_at", -1).limit(500)]
     reviews = [_strip_mongo(r) for r in db.reviews.find({"customer_id": cid})]
     redemptions = [_strip_mongo(r) for r in db.rewards_redeemed.find({"customer_id": cid})]
+    # visits refunded through the API (features/merchant_api): no longer counted, still held
+    cancelled = [_strip_mongo(v) for v in
+                 db.visits_cancelled.find({"customer_id": cid}).sort("cancelled_at", -1)]
     prefs = _card_prefs_for(cid)
     push_count = db.push_subscriptions.count_documents({"customer_id": cid})
 
@@ -8053,6 +8067,7 @@ def export_my_data(barcode_id: str, request: Request = None):
         "profile": _strip_mongo(cust),
         "consent": _strip_mongo(cust.get("consent") or {}),
         "visits": visits,
+        "visits_cancelled": cancelled,
         "notifications_received": notifications,
         "reviews": reviews,
         "rewards_redeemed": redemptions,
@@ -8117,6 +8132,8 @@ def forget_me(barcode_id: str, req: ForgetMeRequest, request: Request = None):
     # 5) Card prefs + overrides cleanup.
     db.card_prefs.delete_many({"customer_id": cid})
     db.customer_card_overrides.delete_many({"customer_id": cid})
+    # refunds sent by an API keep their figures; the free text a caisse wrote may name the client
+    db.visits_cancelled.update_many({"customer_id": cid}, {"$unset": {"cancel_reason": ""}})
 
     log_audit("gdpr.forget_me", actor=_gdpr_actor(barcode_id, who), actor_type=_gdpr_actor_type(who),
               tenant_id=tid, target=cid, request=request,
@@ -11651,9 +11668,28 @@ class RedeemRewardRequest(BaseModel):
     reward_value_eur: Optional[float] = None
     branch_id: Optional[str] = None
     notes: Optional[str] = None
+    # A borne / website that locked the reward while the client pays (merchant
+    # API « hold »); anyone else is refused until it is used, released or over.
+    hold_id: Optional[str] = None
 
 
 NEXT_VISIT_REFUSAL = "Récompense disponible à la prochaine visite."
+HELD_REFUSAL = "Récompense réservée par une autre caisse (borne ou site)"
+
+
+def _refuse_if_held(customer_id: str, hold_id: Optional[str]) -> None:
+    """A reward held by someone else cannot be taken. The hold is a courtesy
+    lock for the screen; what makes a reward usable once is the guarded write
+    in _take_reward."""
+    cur = (db.customers.find_one({"id": customer_id}, {"_id": 0, "reward_hold": 1}) or {}).get("reward_hold") or {}
+    until = cur.get("until")
+    if until is not None and until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    if not cur.get("id") or not until or until <= datetime.now(timezone.utc) or cur.get("id") == hold_id:
+        return
+    left = max(1, int((until - datetime.now(timezone.utc)).total_seconds()))
+    wait = f"{left} s" if left < 120 else f"{left // 60} min"
+    raise HTTPException(status_code=409, detail=f"{HELD_REFUSAL} — réessayez dans {wait}.")
 
 
 def claimable_query(cust: dict) -> dict:
@@ -11817,7 +11853,10 @@ def redeem_reward(
         "redeemed_at": datetime.now(timezone.utc),
         "staff_email": getattr(token_data, "email", None),
     }
+    _refuse_if_held(cust["id"], req.hold_id)
     taken = _take_reward(cust, threshold, price, points_prog, reward["redeemed_at"], reward["staff_email"])
+    if req.hold_id:                          # the hold did its job: gone with the reward
+        db.customers.update_one({"id": cust["id"], "reward_hold.id": req.hold_id}, {"$unset": {"reward_hold": ""}})
     # What it cost, for Historique (user, 2026-10-15: the points / tampons
     # column stayed empty on a reward): the balance on a points card, one
     # full card of tampons otherwise.
@@ -12641,6 +12680,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["copilot_memory"] = _CM.learn_due(now)
     except Exception as e:
         out["failures"].append({"step": "copilot_memory", "error": str(e)[:120]})
+    try:                         # API & Intégrations: a webhook that failed gets its next try within 15 min
+        from features.merchant_api import retry_failed as _retry_hooks
+        out["webhooks"] = _retry_hooks(now)
+    except Exception as e:
+        out["failures"].append({"step": "webhooks", "error": str(e)[:120]})
     try:                         # the learning log: the témoin's answer 15 days on, drafts never sent (2026-11-02)
         from features import learning_log as _LLOG
         out["learning_log"] = _LLOG.due(now)

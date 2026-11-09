@@ -34,6 +34,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         passed += bool(cond); failed += (not cond)
         print(("  ✓ " if cond else "  ✗ ") + label)
 
+    drain = {"on": True}
+
     def http(method, url, key=None, bearer=None, **kw):
         headers = kw.pop("headers", {})
         if key:
@@ -44,7 +46,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
         async def run():
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as ac:
                 return await ac.request(method, url, headers=headers, **kw)
-        return asyncio.get_event_loop().run_until_complete(run())
+        out = asyncio.get_event_loop().run_until_complete(run())
+        if drain["on"]:
+            M.drain_webhooks(10)       # webhooks leave in the background: let them land before checking
+        return out
 
     now = dt.datetime.now(dt.timezone.utc)
     db.tenants.insert_many([
@@ -66,10 +71,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
 
     fail = {"on": False}
 
-    def fake_post(url, data=None, timeout=None, headers=None):
+    def fake_post(url, data=None, timeout=None, headers=None, **kw):
         sent.append({"url": url, "body": data, "headers": headers})
         return _R(500 if fail["on"] else 200)
     requests.post = fake_post
+    M._resolve = lambda host: ["93.184.216.34"]       # webhook hosts resolve to a public address
 
     print("\nKeys")
     r = http("POST", "/api/owner/integrations/keys", bearer=OWN, json={"name": "Caisse", "write": True})
@@ -165,14 +171,16 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     http("POST", "/api/v1/visits", key=KEY, json={"customer": nc["id"], "amount": 3, "external_id": "V4"})
     sent.clear()
     server.redeem_reward(server.RedeemRewardRequest(customer_id=nc["id"]), token_data=TokenData(email="o@cafe.fr", role="business_owner", tenant_id="t1"))
+    M.drain_webhooks(10)
     check("reward.redeemed from the counter too", [s["headers"]["X-FidClic-Event"] for s in sent] == ["reward.redeemed"])
     fail["on"] = True
     sent.clear()
     server.scan_visit(server.ScanRequest(barcode_id=nc["card_number"]), token_data=TokenData(email="o@cafe.fr", role="business_owner", tenant_id="t1"))
+    M.drain_webhooks(10)
     bad = db.webhook_deliveries.find_one({"ok": False, "type": "visit.created"})
     check("a failed delivery is logged", bad and bad["status"] == 500 and bad["attempts"] == 1)
     fail["on"] = False
-    res = M.retry_failed()
+    res = M.retry_failed(M._now() + dt.timedelta(minutes=3))   # not one still on its way
     check("the daily retry re-sends it", res["ok"] >= 1 and db.webhook_deliveries.find_one({"id": bad["id"]})["ok"] is True)
     check("nothing sent for a business without webhooks", M.emit("t2", "visit.created", {}) == 0)
     pg = http("GET", "/api/owner/integrations", bearer=OWN).json()
