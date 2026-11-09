@@ -32,6 +32,14 @@ import mongomock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DISABLE_SEED"] = "1"
 
+# The e-mail check asks DNS whether the domain receives mail (services/
+# email_check). A test must not depend on the network: the stub answers
+# « unreachable », which the module treats as « accept » — the same on a
+# laptop and on the CI (PR #454: x.fr has no MX, the CI said so).
+import services.email_check as EC  # noqa: E402
+
+EC.domain_receives_mail = lambda d: None
+
 with mongomock.patch(servers=(("localhost", 27017),)):
     import server
     import auth

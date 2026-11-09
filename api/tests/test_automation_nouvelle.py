@@ -28,6 +28,18 @@ import pymongo
 pymongo.MongoClient = mongomock.MongoClient
 os.environ.setdefault("JWT_SECRET", "test-secret-automation-nouvelle")
 os.environ.setdefault("DISABLE_SEED", "1")
+
+# Address search asks the Base Adresse Nationale and Photon. A test must not
+# depend on the network (PR #454): the stub is « unreachable », as on a
+# laptop with no network.
+from services import addresses as _addresses  # noqa: E402
+
+
+def _offline(*a, **k):
+    raise OSError("offline (test)")
+
+
+_addresses._get = _offline
 passed = failed = 0
 
 
