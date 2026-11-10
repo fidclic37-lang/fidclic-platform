@@ -535,11 +535,15 @@ def closed_programs() -> Dict[str, Any]:
 
 
 @router.post("/api/admin/commerces/{tid}/view-as")
-def view_as(tid: str, request: Request = None, token_data: TokenData = Depends(require_admin("commerces", write=False))):
+def view_as(tid: str, request: Request = None, store: Optional[str] = None,
+            token_data: TokenData = Depends(require_admin("commerces", write=False))):
+    """?store=: the account opens in that establishment (the tab keeps it,
+    no store picker — user, 2026-11-10)."""
     import server as core
     t = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1})
     if not t:
         raise HTTPException(status_code=404, detail="Commerce introuvable")
+    where = _store_label(tid, _scope(tid, store))
     owner = _db.users.find_one({"tenant_id": tid, "role": "business_owner"}, {"_id": 0, "email": 1})
     if not owner:
         raise HTTPException(status_code=409, detail="Ce commerce n'a pas de compte propriétaire.")
@@ -551,8 +555,9 @@ def view_as(tid: str, request: Request = None, token_data: TokenData = Depends(r
     claims.update({"act_by": token_data.email} if full else {"view_only": True})
     token = create_access_token(claims, timedelta(minutes=VIEW_MINUTES))
     core.log_audit("admin.view_as", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid, request=request,
-                   meta={"as": owner["email"], "minutes": VIEW_MINUTES, "full_access": full})
-    return {"token": token, "minutes": VIEW_MINUTES, "name": t.get("name"), "full_access": full}
+                   meta={"as": owner["email"], "minutes": VIEW_MINUTES, "full_access": full,
+                         **({"store": where["id"]} if where else {})})
+    return {"token": token, "minutes": VIEW_MINUTES, "name": t.get("name"), "full_access": full, "store": where}
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +568,97 @@ def _tenant(tid: str) -> Dict[str, Any]:
     if not t:
         raise HTTPException(status_code=404, detail="Commerce introuvable")
     return t
+
+
+# ---------------------------------------------------------------------------
+# One establishment of a business (user, 2026-11-10: « royal trim franchise
+# hai and i cannot see the other shops in the super admin »). ?store=<id> on
+# the business's pages limits every figure to that store, counted exactly as
+# the owner's own pages count it (features/store_scope.py): its visits are
+# those scanned there, its clients those who signed up or came there.
+# ---------------------------------------------------------------------------
+def _stores(tid: str) -> List[Dict[str, Any]]:
+    from features import team_access as T
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "branches": 1}) or {}
+    mains = {b.get("id") for b in t.get("branches") or [] if b.get("is_main")}
+    rows = T.stores(tid)
+    if not mains and rows:
+        mains = {"main"} if any(s["id"] == "main" for s in rows) else {rows[0]["id"]}
+    return [{**s, "is_main": s["id"] in mains} for s in rows]
+
+
+def _scope(tid: str, store: Optional[str]):
+    """The store asked for, or None for the whole business. A store the
+    business does not have (or has closed) is a 404 — never the whole
+    business in its place."""
+    from features import store_scope as S
+    if not store:
+        return None
+    if store not in {s["id"] for s in _stores(tid)}:
+        raise HTTPException(status_code=404, detail="Établissement introuvable")
+    scope = S.resolve(TokenData(role="business_owner", tenant_id=tid), requested=store)
+    return None if scope.is_all else scope
+
+
+def _cmatch(tid: str, scope) -> Dict[str, Any]:
+    """Live clients of the business, or of the store."""
+    from features import store_scope as S
+    m: Dict[str, Any] = {"tenant_id": tid, **LIVE}
+    ids = S.customer_ids(scope) if scope else None
+    if ids is not None:
+        m["id"] = {"$in": sorted(ids)}
+    return m
+
+
+def _vmatch(tid: str, scope) -> Dict[str, Any]:
+    """Visits (and rewards) scanned in the store — a row without a store is the main one's."""
+    from features import store_scope as S
+    return {"tenant_id": tid, **(S.visit_filter(scope) if scope else {})}
+
+
+def _store_label(tid: str, scope) -> Optional[Dict[str, Any]]:
+    if not scope:
+        return None
+    sid = scope.single
+    s = next((x for x in _stores(tid) if x["id"] == sid), None)
+    return {"id": sid, "name": (s or {}).get("name") or sid, "is_main": bool((s or {}).get("is_main"))}
+
+
+def _week_figures(tid: str, scope, now: datetime) -> Dict[str, Any]:
+    """Cards of the week (clients who joined at this store) and scans of the week."""
+    from features import store_scope as S
+    week = now - timedelta(days=7)
+    scans = _db.visits.count_documents({**_vmatch(tid, scope), "visit_time": {"$gte": week}})
+    home = S.home_customer_ids(scope) if scope else None
+    cm: Dict[str, Any] = {"tenant_id": tid, **LIVE, "created_at": {"$gte": week}}
+    if home is not None:
+        cm["id"] = {"$in": sorted(home)}
+    return {"scans_week": scans, "cards_week": _db.customers.count_documents(cm)}
+
+
+@router.get("/api/admin/commerces/{tid}/stores")
+def commerce_stores(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
+    """« Boutiques »: each open establishment of the business and its figures."""
+    _tenant(tid)
+    now = _now()
+    m30 = now - timedelta(days=30)
+    stores = _stores(tid)
+    multi = len(stores) > 1
+    out = []
+    from features import store_scope as S
+    ids = [s["id"] for s in stores]
+    for s in stores:
+        # the list is already the business's open stores: no need to check each one again
+        scope = S.Scope(tenant_id=tid, ids=[s["id"]], allowed=ids, all_ids=ids,
+                        names={x["id"]: x.get("name") for x in stores}) if multi else None
+        vm = _vmatch(tid, scope)
+        last = next(iter(_db.visits.find(vm, {"_id": 0, "visit_time": 1}).sort("visit_time", -1).limit(1)), None)
+        out.append({"id": s["id"], "name": s.get("name"), "city": s.get("city") or "", "is_main": s["is_main"],
+                    "clients": _db.customers.count_documents(_cmatch(tid, scope)),
+                    "visits_30d": _db.visits.count_documents({**vm, "visit_time": {"$gte": m30}}),
+                    **_week_figures(tid, scope, now),
+                    "last_activity": _iso(last.get("visit_time")) if last else None})
+    return {"stores": out, "multi": multi}
 
 
 def _series_counts(coll: str, match: Dict[str, Any], field: str, now: datetime, days: int = 30, n: int = 8):
@@ -577,15 +673,22 @@ def _owner(tid: str) -> Dict[str, Any]:
 
 
 @router.get("/api/admin/commerces/{tid}")
-def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
+def get_commerce(tid: str, store: Optional[str] = None, token_data: TokenData = Depends(require_admin("commerces"))):
+    """One business — or, with ?store=, one of its establishments."""
     import server as core
     from features import customer_status as CS
+    from features import store_scope as S
+    from features import campaigns_page as CP
     t = _tenant(tid)
+    scope = _scope(tid, store)
+    cm, vm = _cmatch(tid, scope), _vmatch(tid, scope)
     now = _now()
     row = next((r for r in snapshot(now) if r["id"] == tid), None) or {}
+    if scope:
+        row = {**row, **_week_figures(tid, scope, now)}
     m30, m60 = now - timedelta(days=30), now - timedelta(days=60)
-    cust = list(_db.customers.find({"tenant_id": tid, **LIVE}, {"_id": 0, "id": 1, "created_at": 1, "last_visit_date": 1,
-                                                                 "visits": 1, "pass_issued": 1, "tier": 1}))
+    cust = list(_db.customers.find(cm, {"_id": 0, "id": 1, "created_at": 1, "last_visit_date": 1,
+                                        "visits": 1, "pass_issued": 1, "tier": 1}))
     cfg = CS._resolve_config(tid)
     total = len(cust)
 
@@ -598,18 +701,18 @@ def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commer
     act_now = sum(1 for c in cust if active(c, now))
     act_prev = sum(1 for c in cust if active(c, m30) and (_aware(c.get("created_at")) or now) <= m30)
     total_prev = sum(1 for c in cust if (_aware(c.get("created_at")) or now) <= m30)
-    visits30 = _db.visits.count_documents({"tenant_id": tid, "visit_time": {"$gte": m30}})
-    visits60 = _db.visits.count_documents({"tenant_id": tid, "visit_time": {"$gte": m60, "$lt": m30}})
+    visits30 = _db.visits.count_documents({**vm, "visit_time": {"$gte": m30}})
+    visits60 = _db.visits.count_documents({**vm, "visit_time": {"$gte": m60, "$lt": m30}})
     pts = lambda a, b: sum(v.get("points_awarded") or 0 for v in _db.visits.find(          # noqa: E731
-        {"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}}, {"points_awarded": 1}))
-    rew = lambda a, b: _db.rewards_redeemed.count_documents({"tenant_id": tid, "redeemed_at": {"$gte": a, "$lt": b}})  # noqa: E731
+        {**vm, "visit_time": {"$gte": a, "$lt": b}}, {"points_awarded": 1}))
+    rew = lambda a, b: _db.rewards_redeemed.count_documents({**vm, "redeemed_at": {"$gte": a, "$lt": b}})  # noqa: E731
     returning = sum(1 for c in cust if int(c.get("visits") or 0) >= 2)
     ret_prev = sum(1 for c in cust if int(c.get("visits") or 0) >= 2 and (_aware(c.get("created_at")) or now) <= m30)
     kpis = [
-        {"key": "clients", "value": total, "delta": _delta(total, total_prev), "series": _series_counts("customers", {"tenant_id": tid, **LIVE}, "created_at", now)},
+        {"key": "clients", "value": total, "delta": _delta(total, total_prev), "series": _series_counts("customers", cm, "created_at", now)},
         {"key": "actifs", "value": act_now, "delta": _delta(act_now, act_prev)},
         {"key": "dormants", "value": total - act_now, "delta": _delta(total - act_now, total_prev - act_prev)},
-        {"key": "visites", "value": visits30, "delta": _delta(visits30, visits60), "series": _series_counts("visits", {"tenant_id": tid}, "visit_time", now)},
+        {"key": "visites", "value": visits30, "delta": _delta(visits30, visits60), "series": _series_counts("visits", vm, "visit_time", now)},
         {"key": "points", "value": pts(m30, now), "delta": _delta(pts(m30, now), pts(m60, m30))},
         {"key": "recompenses", "value": rew(m30, now), "delta": _delta(rew(m30, now), rew(m60, m30))},
         {"key": "retour", "value": round(returning / total * 100) if total else 0,
@@ -619,9 +722,9 @@ def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commer
     months = []
     for a, b in month_windows(now):
         months.append({"month": a.strftime("%Y-%m"),
-                       "nouveaux": _db.customers.count_documents({"tenant_id": tid, **LIVE, "created_at": {"$gte": a, "$lt": b}}),
-                       "actifs": len(_db.visits.distinct("customer_id", {"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}})),
-                       "visites": _db.visits.count_documents({"tenant_id": tid, "visit_time": {"$gte": a, "$lt": b}})})
+                       "nouveaux": _db.customers.count_documents({**cm, "created_at": {"$gte": a, "$lt": b}}),
+                       "actifs": len(_db.visits.distinct("customer_id", {**vm, "visit_time": {"$gte": a, "$lt": b}})),
+                       "visites": _db.visits.count_documents({**vm, "visit_time": {"$gte": a, "$lt": b}})})
     split = {"actifs": 0, "bientot_perdus": 0, "nouveaux": 0, "dormants": 0}
     for c in cust:
         created, lv = _aware(c.get("created_at")), last(c)
@@ -635,7 +738,7 @@ def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commer
             split["dormants"] += 1
     labels = {"actifs": "Actifs", "dormants": "Dormants", "nouveaux": "Nouveaux (30 j)", "bientot_perdus": "Bientôt perdus"}
     repartition = [{"key": k, "label": labels[k], "count": v, "pct": round(v / total * 100) if total else 0} for k, v in split.items()]
-    per = _visits_per_customer(tid, m30)
+    per = _visits_per_customer(tid, m30, vm)
     share = lambda n: round(n / total * 100) if total else 0            # noqa: E731
     # Cartes actives: the card is on the phone. Fidèles: 5 visits or more.
     # Réguliers: 2 visits or more in the last 30 days. Attrition: no visit for 90 days.
@@ -644,6 +747,8 @@ def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commer
            "reguliers": share(sum(1 for n in per.values() if n >= 2)),
            "attrition": share(sum(1 for c in cust if last(c) and (now - last(c)).days > 90))}
     camps = list(_db.campaigns.find({"tenant_id": tid, "sent_at": {"$ne": None}}, {"_id": 0}).sort("sent_at", -1).limit(50))
+    if scope:
+        camps = CP._limit(camps, S.customer_ids(scope), scope)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     this_month = [c for c in camps if _aware(c.get("sent_at")) and _aware(c["sent_at"]) >= month_start]
     delivered = sum(int(c.get("delivered_count") or c.get("targeted_count") or 0) for c in camps[:20])
@@ -671,6 +776,7 @@ def get_commerce(tid: str, token_data: TokenData = Depends(require_admin("commer
         "usage": usage, "plan_label": f.get("label"), "price": f.get("price") or None, "on_quote": bool(f.get("on_quote")),
         "franchise_terms": t.get("franchise_terms") or {},
         "payment_method": _pm(t), "stores": len([b for b in t.get("branches") or [] if b.get("status") != "closed"]) or 1,
+        "store": _store_label(tid, scope), "store_list": [{"id": s["id"], "name": s.get("name"), "is_main": s["is_main"]} for s in _stores(tid)],
     }
 
 
@@ -687,8 +793,8 @@ def month_windows(now: datetime, n: int = 6) -> List[tuple]:
     return out[::-1]
 
 
-def _visits_per_customer(tid: str, since: datetime) -> Dict[str, int]:
-    return {r["_id"]: r["n"] for r in _db.visits.aggregate([{"$match": {"tenant_id": tid, "visit_time": {"$gte": since}}},
+def _visits_per_customer(tid: str, since: datetime, match: Optional[Dict[str, Any]] = None) -> Dict[str, int]:
+    return {r["_id"]: r["n"] for r in _db.visits.aggregate([{"$match": {**(match or {"tenant_id": tid}), "visit_time": {"$gte": since}}},
                                                            {"$group": {"_id": "$customer_id", "n": {"$sum": 1}}}])}
 
 
@@ -729,12 +835,13 @@ def _usage(t: Dict[str, Any], f: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 @router.get("/api/admin/commerces/{tid}/clients")
-def commerce_clients(tid: str, q: str = "", page: int = 1, per_page: int = 20, token_data: TokenData = Depends(require_admin("commerces"))):
+def commerce_clients(tid: str, q: str = "", page: int = 1, per_page: int = 20, store: Optional[str] = None,
+                     token_data: TokenData = Depends(require_admin("commerces"))):
     """No contact details here: the super admin sees how the programme works,
-    not who the business's customers are."""
+    not who the business's customers are. ?store= keeps one establishment's."""
     _tenant(tid)
     page, per_page = max(1, int(page)), max(1, min(100, int(per_page)))
-    f: Dict[str, Any] = {"tenant_id": tid, **LIVE}
+    f: Dict[str, Any] = _cmatch(tid, _scope(tid, store))
     if q:
         f["name"] = {"$regex": re.escape(q.strip()), "$options": "i"}
     total = _db.customers.count_documents(f)
@@ -749,28 +856,39 @@ def commerce_clients(tid: str, q: str = "", page: int = 1, per_page: int = 20, t
 
 
 @router.get("/api/admin/commerces/{tid}/details")
-def commerce_details(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
-    """The other tabs: Fidélité, Campagnes, Notifications, Abonnement, Paramètres."""
+def commerce_details(tid: str, store: Optional[str] = None, token_data: TokenData = Depends(require_admin("commerces"))):
+    """The other tabs: Fidélité, Campagnes, Notifications, Abonnement,
+    Paramètres — with ?store=, Fidélité / Campagnes / Notifications are that
+    establishment's (the subscription and the settings are the business's)."""
     import server as core
+    from features import store_scope as S
+    from features import campaigns_page as CP
     t = _tenant(tid)
+    scope = _scope(tid, store)
+    cm, vm = _cmatch(tid, scope), _vmatch(tid, scope)
+    mine = S.customer_ids(scope) if scope else None
     now = _now()
-    tiers = {r["_id"] or "bronze": r["n"] for r in _db.customers.aggregate([{"$match": {"tenant_id": tid, **LIVE}},
+    tiers = {r["_id"] or "bronze": r["n"] for r in _db.customers.aggregate([{"$match": cm},
                                                                              {"$group": {"_id": "$tier", "n": {"$sum": 1}}}])}
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     rewards = []
     for a, b in month_windows(now):
-        rewards.append({"month": a.strftime("%Y-%m"), "count": _db.rewards_redeemed.count_documents({"tenant_id": tid, "redeemed_at": {"$gte": a, "$lt": b}})})
-    camps = [_camp(c) for c in _db.campaigns.find({"tenant_id": tid}, {"_id": 0}).sort("sent_at", -1).limit(100)]
+        rewards.append({"month": a.strftime("%Y-%m"), "count": _db.rewards_redeemed.count_documents({**vm, "redeemed_at": {"$gte": a, "$lt": b}})})
+    raw = list(_db.campaigns.find({"tenant_id": tid}, {"_id": 0}).sort("sent_at", -1).limit(100))
+    camps = [_camp(c) for c in (CP._limit(raw, mine, scope) if scope else raw)]
     m30 = now - timedelta(days=30)
     kinds = {}
     # delivery_log: one row per message dispatched (server.dispatch_to_customer),
     # {kind, channel, result: {sent: <devices reached | bool>}, timestamp}.
-    for d in _db.delivery_log.find({"tenant_id": tid, "timestamp": {"$gte": m30}}, {"_id": 0, "kind": 1, "result": 1}):
+    for d in _db.delivery_log.find({"tenant_id": tid, "timestamp": {"$gte": m30}}, {"_id": 0, "kind": 1, "result": 1, "customer_id": 1}):
+        if mine is not None and d.get("customer_id") not in mine:
+            continue
         k = d.get("kind") or "autre"
         e = kinds.setdefault(k, {"kind": k, "sent": 0, "failed": 0})
         e["sent" if (d.get("result") or {}).get("sent") else "failed"] += 1
-    subs = len(_db.push_subscriptions.distinct("customer_id", {"tenant_id": tid}))
-    total = _db.customers.count_documents({"tenant_id": tid, **LIVE})
+    subs = set(_db.push_subscriptions.distinct("customer_id", {"tenant_id": tid}))
+    subs = len(subs if mine is None else subs & mine)
+    total = _db.customers.count_documents(cm)
     invoices = [{"number": i.get("number"), "paid_at": _iso(i.get("paid_at")), "amount": i.get("amount_paid") or i.get("total"),
                  "status": i.get("status")} for i in _db.fidclic_invoices.find({"tenant_id": tid}, {"_id": 0}).sort("paid_at", -1).limit(24)]
     team = [{"email": u["email"], "role": u.get("role"), "name": " ".join(x for x in (u.get("first_name"), u.get("last_name")) if x),
@@ -800,10 +918,11 @@ def commerce_details(tid: str, token_data: TokenData = Depends(require_admin("co
 
 
 @router.get("/api/admin/commerces/{tid}/zone")
-def commerce_zone(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
+def commerce_zone(tid: str, store: Optional[str] = None, token_data: TokenData = Depends(require_admin("commerces"))):
     from features import geolocation as G
     _tenant(tid)
+    scope = _scope(tid, store)
     now = _now()
-    d = G.compute(tid, now - timedelta(days=365), now, "car", "local")
+    d = G.compute(tid, now - timedelta(days=365), now, "car", "local", store_scope=scope)
     return {"shop": d.get("shop"), "bands": (d.get("isochrones") or {}).get("bands", []), "total": (d.get("isochrones") or {}).get("total", 0),
             "points": (d.get("points") or [])[:400]}

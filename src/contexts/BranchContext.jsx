@@ -15,8 +15,8 @@
  *   const { branchId, setBranchId, branches, setBranches } = useBranch();
  */
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { getStoreChoice, setStoreChoice } from '../lib/storeChoice';
 
-const STORAGE_KEY = 'ft_selected_branch_v1';
 export const PICK_KEY = 'ft_pick_store';          // set at login: choose the establishment first
 
 /** The establishments this account works in: the owner all the open ones, an
@@ -39,7 +39,7 @@ export const BranchProvider = ({ children }) => {
   // Read once on mount; ignore if storage is unavailable (e.g. private mode)
   const [branchId, _setBranchId] = useState(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = getStoreChoice();
       if (!raw || raw === 'null' || raw === 'undefined') return null;
       return raw;
     } catch { return null; }
@@ -50,10 +50,7 @@ export const BranchProvider = ({ children }) => {
 
   const setBranchId = (id) => {
     _setBranchId(id);
-    try {
-      if (id == null) localStorage.removeItem(STORAGE_KEY);
-      else localStorage.setItem(STORAGE_KEY, id);
-    } catch { /* ignore */ }
+    setStoreChoice(id);
   };
 
   // If the selected branch disappears from the latest branch list, reset.

@@ -19,7 +19,7 @@ import { StatusPill, PlanPill, CommerceLogo, SuspendModal, ResilierModal, openVi
 /* Super admin › Commerces › one business — built to the approved « Café
    Lumière » mockup. Every figure is counted from the business's own data. */
 
-const TABS = [['apercu', "Vue d'ensemble", LayoutDashboard], ['clients', 'Clients', Users], ['fidelite', 'Fidélité', Heart],
+const TABS = [['apercu', "Vue d'ensemble", LayoutDashboard], ['boutiques', 'Boutiques', Store], ['clients', 'Clients', Users], ['fidelite', 'Fidélité', Heart],
   ['campagnes', 'Campagnes', Megaphone], ['notifications', 'Notifications', Bell], ['utilisation', 'Utilisation', Gauge],
   ['abonnement', 'Abonnement', CreditCard], ['parametres', 'Paramètres', Settings]];
 const MONTHS = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
@@ -48,13 +48,25 @@ export default function CommerceDetailPage() {
     adminAPI.planLimits().then(({ data }) => setModal((m) => (m?.type === 'plan' ? { ...m, custom: data.plans.filter((p) => p.custom && p.active) } : m))).catch(() => {});
   }, [modal]);
   const [say, toast] = useToast();
+  const [params, setParams] = useSearchParams();
+  // One establishment of a franchise (user, 2026-11-10): ?store=<id> keeps
+  // every figure to that store; without it, the whole business.
+  const store = params.get('store') || '';
+  const pickStore = (s, toTab) => {
+    const p = new URLSearchParams(params);
+    if (s) p.set('store', s); else p.delete('store');
+    setParams(p);
+    if (toTab) setTab(toTab);
+  };
   const load = useCallback(() => {
-    adminAPI.commerce(id).then(({ data }) => { protectNames([data?.name]); setD(data); }).catch((e) => setErr(e?.response?.data?.detail || 'Commerce introuvable.'));
-    adminAPI.commerceDetails(id).then(({ data }) => setX(data)).catch(() => {});
-  }, [id]);
+    const q = store ? { store } : undefined;
+    setX(null);
+    adminAPI.commerce(id, q).then(({ data }) => { protectNames([data?.name, ...(data?.store_list || []).map((s) => s.name)]); setD(data); setErr(''); })
+      .catch((e) => setErr(e?.response?.data?.detail || 'Commerce introuvable.'));
+    adminAPI.commerceDetails(id, q).then(({ data }) => setX(data)).catch(() => {});
+  }, [id, store]);
   useEffect(() => { load(); }, [load]);
   // FIDCLIC AI › « Contacter » / « Relancer » open this page with ?contact=…
-  const [params, setParams] = useSearchParams();
   const ask = params.get('contact');
   useEffect(() => {
     if (!ask || !d) return;
@@ -72,18 +84,20 @@ export default function CommerceDetailPage() {
     } catch (e) { say(e?.response?.data?.detail || "L'export n'a pas pu être fait."); }
   };
 
-  if (!d) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
+  if (!d || err) return err ? <p className="rounded-xl bg-[#FEF2F2] px-4 py-3 text-[13.5px] text-[#B91C1C]">{err}</p> : <Loading />;
+  const multi = (d.store_list || []).length > 1;
   const contact = (preset) => {
     if (d.crm_prospect_id) setModal({ type: 'email', preset });
     else if (d.owner.email) window.location.href = `mailto:${d.owner.email}${preset ? `?subject=${encodeURIComponent(preset.subject)}&body=${encodeURIComponent(preset.body)}` : ''}`;
   };
   return (
     <div className="crm" onClick={() => setMenu(false)}>
-      <Breadcrumb items={[['Commerces', '/admin/commerces'], [d.name]]} />
+      <Breadcrumb items={d.store ? [['Commerces', '/admin/commerces'], [d.name, `/admin/commerces/${d.id}`], [d.store.name]] : [['Commerces', '/admin/commerces'], [d.name]]} />
       <header className="mb-4 mt-2 flex flex-wrap items-start gap-4">
         <CommerceLogo c={d} size={84} />
         <div className="min-w-0 flex-1">
           <h1 className="flex flex-wrap items-center gap-3 text-[28px] font-bold leading-tight text-[#0B1C3F]"><span translate="no">{d.name}</span> <StatusPill s={d.status} label={d.status_label} /></h1>
+          {multi && <StorePicker d={d} store={store} onPick={(s) => pickStore(s)} />}
           <p className="mt-1 text-[14px] text-[#64748B]">{[d.sector, d.city && `${d.city}${d.postal_code ? ` (${d.postal_code})` : ''}`].filter(Boolean).join(' • ') || '—'}</p>
           <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[#475569]">
             <span className="flex items-center gap-1.5"><CreditCard size={14} /> Plan : <strong className="text-[#2F6BFF]">{d.plan?.label}</strong></span>
@@ -101,7 +115,7 @@ export default function CommerceDetailPage() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => openViewAs(d.id, say)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#2F6BFF] bg-white px-4 text-[13.5px] font-medium text-[#2F6BFF]"><ExternalLink size={15} /> Accéder au compte</button>
+          <button type="button" onClick={() => openViewAs(d.id, say, store)} title={d.store ? `Ouvre le compte dans ${d.store.name}` : undefined} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#2F6BFF] bg-white px-4 text-[13.5px] font-medium text-[#2F6BFF]"><ExternalLink size={15} /> Accéder au compte</button>
           <button type="button" onClick={() => contact()} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#DCE3EE] bg-white px-4 text-[13.5px] font-medium text-[#0B1C3F]"><Mail size={15} /> Contacter</button>
           <button type="button" onClick={() => setModal({ type: 'edit' })} className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#DCE3EE] bg-white px-4 text-[13.5px] font-medium text-[#0B1C3F]"><Pencil size={15} /> Modifier</button>
           <span className="relative" onClick={(e) => e.stopPropagation()}>
@@ -125,14 +139,18 @@ export default function CommerceDetailPage() {
       </header>
 
       <nav className="mb-4 flex gap-1 overflow-x-auto rounded-2xl border border-[#EDF1F7] bg-white px-3">
-        {TABS.map(([k, l, I]) => (
+        {TABS.filter(([k]) => k !== 'boutiques' || multi).map(([k, l, I]) => (
           <button key={k} type="button" onClick={() => setTab(k)} className={`flex shrink-0 items-center gap-2 border-b-2 px-3 py-3 text-[13.5px] ${tab === k ? 'border-[#2F6BFF] font-medium text-[#2F6BFF]' : 'border-transparent text-[#0B1C3F]'}`}><I size={15} /> {l}</button>
         ))}
       </nav>
+      {d.store && ['utilisation', 'abonnement', 'parametres'].includes(tab) && (
+        <p className="mb-3 rounded-xl bg-[#F4F7FC] px-3 py-2 text-[12.5px] text-[#475569]">Cet onglet concerne tout le commerce (toutes les boutiques), pas seulement {d.store.name}.</p>
+      )}
 
       {tab === 'apercu' && <Overview d={d} setTab={setTab} setModal={setModal} />}
-      {tab === 'clients' && <ClientsTab id={id} />}
-      {tab !== 'apercu' && tab !== 'clients' && !x && <Loading />}
+      {tab === 'boutiques' && multi && <BoutiquesTab id={id} current={store} onOpen={(s) => pickStore(s, 'apercu')} onView={(s) => openViewAs(d.id, say, s)} />}
+      {tab === 'clients' && <ClientsTab id={id} store={store} />}
+      {!['apercu', 'clients', 'boutiques', 'utilisation'].includes(tab) && !x && <Loading />}
       {tab === 'fidelite' && x && <FideliteTab d={d} x={x.fidelite} />}
       {tab === 'campagnes' && x && <CampagnesTab rows={x.campagnes} />}
       {tab === 'notifications' && x && <NotificationsTab n={x.notifications} />}
@@ -159,6 +177,65 @@ export default function CommerceDetailPage() {
         </Modal>
       )}
     </div>
+  );
+}
+
+/* « Toutes les boutiques / Libérté / PL-Monstre… » — the store this page shows. */
+function StorePicker({ d, store, onPick }) {
+  return (
+    <label className="mt-2 inline-flex items-center gap-2 rounded-xl border border-[#DCE3EE] bg-white px-3 py-1.5 text-[13px] text-[#0B1C3F]">
+      <Store size={15} className="text-[#2F6BFF]" />
+      <span className="text-[#64748B]">Boutique :</span>
+      <select data-testid="store-picker" value={store} onChange={(e) => onPick(e.target.value)} translate="no"
+              className="bg-transparent font-semibold text-[#0B1C3F] outline-none">
+        <option value="">Toutes les boutiques ({d.store_list.length})</option>
+        {d.store_list.map((s) => <option key={s.id} value={s.id}>{s.name}{s.is_main ? ' (principale)' : ''}</option>)}
+      </select>
+    </label>
+  );
+}
+
+/* « Boutiques » (user, 2026-11-10): every establishment of the business, its
+   own figures, and a way into each — its page here, or its account. */
+function BoutiquesTab({ id, current, onOpen, onView }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    adminAPI.commerceStores(id).then(({ data }) => { protectNames((data?.stores || []).map((s) => s.name)); setRows(data?.stores || []); })
+      .catch(() => setRows([]));
+  }, [id]);
+  if (!rows) return <Loading />;
+  const ago = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Jamais');
+  return (
+    <Card>
+      <Head icon={Store} title={`Boutiques (${rows.length})`} sub="Chaque boutique avec ses propres chiffres. « Voir » ouvre cette page pour elle seule." />
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-[13px]" data-testid="stores-table">
+          <thead><tr className="border-b border-[#EDF1F7] text-left text-[#64748B]">
+            {['Boutique', 'Clients', 'Visites (30 j)', 'Cartes / semaine', 'Scans / semaine', 'Dernière activité', ''].map((h) => <th key={h} className="px-2 py-2 font-medium">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.id} data-store={s.id} className={`border-b border-[#F4F7FC] ${current === s.id ? 'bg-[#F4F8FF]' : ''}`}>
+                <td className="px-2 py-2.5">
+                  <span translate="no" className="font-semibold text-[#0B1C3F]">{s.name}</span>
+                  {s.is_main && <span className="ml-2 rounded-md bg-[#EEF4FF] px-1.5 py-0.5 text-[11px] text-[#2F6BFF]">Principale</span>}
+                  {s.city && <span className="block text-[12px] text-[#64748B]">{s.city}</span>}
+                </td>
+                <td className="px-2 py-2.5">{nf(s.clients)}</td>
+                <td className="px-2 py-2.5">{nf(s.visits_30d)}</td>
+                <td className="px-2 py-2.5">{nf(s.cards_week)}</td>
+                <td className="px-2 py-2.5">{nf(s.scans_week)}</td>
+                <td className="whitespace-nowrap px-2 py-2.5 text-[#475569]">{ago(s.last_activity)}</td>
+                <td className="whitespace-nowrap px-2 py-2.5 text-right">
+                  <button type="button" onClick={() => onOpen(s.id)} className="mr-2 inline-flex h-8 items-center gap-1 rounded-lg border border-[#DCE3EE] px-2.5 text-[12.5px] text-[#0B1C3F] hover:border-[#2F6BFF]"><Eye size={13} /> Voir</button>
+                  <button type="button" onClick={() => onView(s.id)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#2F6BFF] px-2.5 text-[12.5px] text-[#2F6BFF]"><ExternalLink size={13} /> Accéder au compte</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
@@ -197,7 +274,7 @@ function Overview({ d, setTab, setModal }) {
           </div>
         </Card>
         <Card><Head icon={PieIcon} title="Répartition des clients" /><Donut rows={d.repartition} center={nf(d.total_clients)} sub="clients" /></Card>
-        <Card><Head icon={MapPinned} title="Zone de chalandise" sub="clients des 12 derniers mois" /><Zone id={d.id} /></Card>
+        <Card><Head icon={MapPinned} title="Zone de chalandise" sub="clients des 12 derniers mois" /><Zone id={d.id} store={d.store?.id} /></Card>
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card>
@@ -266,11 +343,11 @@ function UsageCard({ d, onMore, big }) {
 }
 
 /* The same Leaflet copy as Établissement: rings of travel time, a dot per client. */
-function Zone({ id }) {
+function Zone({ id, store }) {
   const [z, setZ] = useState(null);
   const box = useRef(null);
   const map = useRef(null);
-  useEffect(() => { adminAPI.commerceZone(id).then(({ data }) => setZ(data)).catch(() => setZ({ bands: [], points: [] })); }, [id]);
+  useEffect(() => { setZ(null); adminAPI.commerceZone(id, store ? { store } : undefined).then(({ data }) => setZ(data)).catch(() => setZ({ bands: [], points: [] })); }, [id, store]);
   useEffect(() => {
     const L = window.L;
     if (!z || !L || !box.current || map.current || z.shop?.lat == null) return undefined;
@@ -320,11 +397,15 @@ function CampTable({ rows }) {
   );
 }
 
-function ClientsTab({ id }) {
+function ClientsTab({ id, store }) {
   const [d, setD] = useState(null);
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
-  useEffect(() => { adminAPI.commerceClients(id, { q, page, per_page: 20 }).then(({ data }) => setD(data)).catch(() => setD({ rows: [], total: 0, pages: 1 })); }, [id, q, page]);
+  useEffect(() => { setPage(1); }, [store]);
+  useEffect(() => {
+    adminAPI.commerceClients(id, { q, page, per_page: 20, ...(store ? { store } : {}) }).then(({ data }) => setD(data))
+      .catch(() => setD({ rows: [], total: 0, pages: 1 }));
+  }, [id, q, page, store]);
   if (!d) return <Loading />;
   return (
     <Card>
