@@ -982,9 +982,10 @@ export default function ClientsPage() {
               </button>
             )}
             <div className="relative">
-              <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}
+              <select aria-label="Trier par" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}
                       className="appearance-none rounded-xl border border-[#E6EEFB] bg-white py-2 pl-3 pr-8 text-[12.5px] font-medium text-[#334155] outline-none focus:border-[#2F6BFF]">
-                {(meta?.sorts || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                {(meta?.sorts || []).filter((s) => s.key !== 'birthday' || showBirthday)   /* only with the chip (2026-11-10) */
+                  .map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
               <ChevronDown size={14} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
             </div>

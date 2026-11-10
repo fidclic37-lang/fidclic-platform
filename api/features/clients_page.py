@@ -496,7 +496,8 @@ SORT_LABELS = [
     {"key": "spend",  "label": "Total dépensé (plus élevé)"},
     {"key": "visits", "label": "Visites (plus nombreuses)"},
     {"key": "last",   "label": "Dernière visite (plus récente)"},
-    {"key": "birthday", "label": "Anniversaire (1er → 31)"},
+    # not « 1er → 31 »: a month has 28 to 31 days (user, 2026-11-10)
+    {"key": "birthday", "label": "Anniversaires du mois"},
 ]
 
 SPEND_BANDS = {
