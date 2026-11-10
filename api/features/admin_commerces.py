@@ -243,7 +243,15 @@ SORTS = {"name": lambda r: (r["name"] or "").lower(), "clients": lambda r: r["cl
          "last_activity": lambda r: r["last_activity"] or "", "status": lambda r: r["status"], "created_at": lambda r: r["created_at"] or ""}
 
 
-def _filtered(rows, tab="", q="", sector="", city="", plan="", status=""):
+def _open_stores_by_tenant() -> Dict[str, List[Dict[str, Any]]]:
+    """Every business's open stores (one read), for the list and its search."""
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for t in _db.tenants.find({"branches.1": {"$exists": True}}, {"_id": 0, "id": 1, "branches": 1}):
+        out[t["id"]] = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
+    return out
+
+
+def _filtered(rows, tab="", q="", sector="", city="", plan="", status="", shops=None):
     out = rows
     if tab == "nouveaux":
         out = [r for r in out if r["new_this_month"]]
@@ -251,7 +259,8 @@ def _filtered(rows, tab="", q="", sector="", city="", plan="", status=""):
         out = [r for r in out if r["status"] == tab]
     if q:
         f = q.strip().lower()
-        out = [r for r in out if f in r["name"].lower() or f in r["city"].lower() or f in r["sector"].lower()]
+        out = [r for r in out if f in r["name"].lower() or f in r["city"].lower() or f in r["sector"].lower()
+               or any(f in (b.get("name") or "").lower() for b in (shops or {}).get(r["id"]) or [])]
     if sector:
         out = [r for r in out if r["sector"] == sector]
     if city:
@@ -292,13 +301,24 @@ def list_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "",
     now = _now()
     rows = snapshot(now)
     page, per_page = max(1, int(page)), max(1, min(100, int(per_page)))
-    base = _filtered(rows, "", q, sector, city, plan, status)
+    # a franchise's stores (user, 2026-11-10: « businesses ki jo list h shops
+    # section mein, usme bhi dikhne chahiye »): a store's name finds its business
+    shops = _open_stores_by_tenant()
+    base = _filtered(rows, "", q, sector, city, plan, status, shops)
     counts = {"all": len(base), **{k: len(_filtered(base, k)) for k in TABS}}
     out = _filtered(base, tab)
     key = sort.lstrip("-")
     out.sort(key=SORTS.get(key, SORTS["clients"]), reverse=sort.startswith("-"))
     total = len(out)
-    return {"rows": out[(page - 1) * per_page: page * per_page], "total": total, "page": page, "per_page": per_page,
+    shown = []
+    for r in out[(page - 1) * per_page: page * per_page]:
+        mine = shops.get(r["id"]) or []
+        if len(mine) > 1:
+            f = (q or "").strip().lower()
+            r = {**r, "stores": _store_rows(r["id"])["stores"],
+                 "match_stores": [b["id"] for b in mine if f and f in (b.get("name") or "").lower()]}
+        shown.append(r)
+    return {"rows": shown, "total": total, "page": page, "per_page": per_page,
             "pages": max(1, -(-total // per_page)), "counts": counts, "cards": _cards(rows, now), "rules": rules(),
             "options": {"sectors": sorted({r["sector"] for r in rows if r["sector"]}),
                         "cities": sorted({r["city"] for r in rows if r["city"]}),
@@ -309,7 +329,7 @@ def list_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "",
 @router.get("/api/admin/commerces/export")
 def export_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "", plan: str = "", status: str = "",
                      token_data: TokenData = Depends(require_admin("commerces"))):
-    rows = _filtered(snapshot(), tab, q, sector, city, plan, status)
+    rows = _filtered(snapshot(), tab, q, sector, city, plan, status, _open_stores_by_tenant())
     buf = io.StringIO()
     w = safe_csv.writer(buf)
     w.writerow(["Commerce", "Secteur", "Ville", "Code postal", "Plan", "Clients", "Visites", "Cartes / semaine", "Scans / semaine",
@@ -640,6 +660,10 @@ def _week_figures(tid: str, scope, now: datetime) -> Dict[str, Any]:
 def commerce_stores(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
     """« Boutiques »: each open establishment of the business and its figures."""
     _tenant(tid)
+    return _store_rows(tid)
+
+
+def _store_rows(tid: str) -> Dict[str, Any]:
     now = _now()
     m30 = now - timedelta(days=30)
     stores = _stores(tid)
