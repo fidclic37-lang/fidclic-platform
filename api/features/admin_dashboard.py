@@ -16,7 +16,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import require_role, TokenData
 from features.platform_access import require_admin
@@ -33,7 +33,9 @@ def init(db):
     # The dashboard counts the whole platform by date: without these, every
     # figure would scan the collection (the existing indexes start with tenant_id).
     for coll, field in (("visits", "visit_time"), ("customers", "created_at"), ("campaigns", "sent_at"),
-                        ("delivery_log", "timestamp"), ("tenants", "created_at"), ("audit_logs", "ts")):
+                        ("delivery_log", "timestamp"), ("tenants", "created_at"), ("audit_logs", "ts"),
+                        # « Activité du jour » reads one day of these, all businesses at once
+                        ("automation_log", "sent_at"), ("referral_redemptions", "created_at")):
         try:
             db[coll].create_index([(field, -1)])
         except Exception:
@@ -753,3 +755,172 @@ def dashboard_today(token_data: TokenData = Depends(require_admin("dashboard")))
             "encaissements": _encaissements(now, tenants) if _can(token_data, "facturation") else None,
             "support": _support_health(now) if _can(token_data, "support") else None,
             "crm": _crm_summary(now) if _can(token_data, "crm") else None}
+
+
+# ---------------------------------------------------------------------------
+# « Activité du jour » (user, 2026-11-10: the old « Activité récente » was
+# « ekdm ghatiya »). Three sections — Parrainage, Campagnes + automatisations,
+# Nouveaux clients — with every business's activity of ONE Paris day, live
+# today, any past day on request. One line per business, per store for a
+# franchise. A client is « Prénom N. »: never a phone or an e-mail.
+# ---------------------------------------------------------------------------
+ACTIVITY_SECTIONS = [("parrainage", "Parrainage"), ("campagnes", "Campagnes + automatisations"),
+                     ("nouveaux_clients", "Nouveaux clients")]
+ITEMS_PER_LINE = 50
+
+
+def _short(name: Optional[str]) -> str:
+    parts = (name or "").split()
+    if not parts:
+        return "—"
+    return parts[0] + (f" {parts[1][0].upper()}." if len(parts) > 1 and parts[1] else "")
+
+
+def _day_bounds(day: Optional[str], now: datetime):
+    """The Paris day asked for (default: today) as [start, end) UTC, its date,
+    and whether it is today. A future day or a wrong date is a 400."""
+    from datetime import date as _date
+    today_start, _ = _paris_day(now)
+    from zoneinfo import ZoneInfo
+    today = now.astimezone(ZoneInfo("Europe/Paris")).date()
+    if day:
+        try:
+            d = _date.fromisoformat(str(day).strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Date invalide (AAAA-MM-JJ).")
+        if d > today:
+            raise HTTPException(status_code=400, detail="Ce jour n'est pas encore arrivé.")
+    else:
+        d = today
+    paris = ZoneInfo("Europe/Paris")
+    noon = datetime(d.year, d.month, d.day, 12, tzinfo=paris)
+    start, end = _paris_day(noon)
+    return start, end, d, d == today
+
+
+def _store_maps(tids) -> Dict[str, Dict[str, Any]]:
+    """Per business: its name, whether it has several stores, the store
+    names and its main store — closed stores still named (a past day)."""
+    out = {}
+    for t in _db.tenants.find({"id": {"$in": list(tids)}}, {"_id": 0, "id": 1, "name": 1, "branches": 1}):
+        br = [b for b in t.get("branches") or [] if b.get("id")]
+        open_ = [b for b in br if b.get("status") != "closed"]
+        main = next((b["id"] for b in br if b.get("is_main")), None) or \
+            ("main" if any(b["id"] == "main" for b in br) else (open_[0]["id"] if open_ else None))
+        out[t["id"]] = {"name": t.get("name") or "—", "multi": len(open_) > 1, "main": main,
+                        "names": {b["id"]: b.get("name") or b["id"] for b in br}}
+    return out
+
+
+def _activity_day(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    from services.sources import SOURCES as SRC, UNKNOWN_LABEL
+    from features import automations as AU
+    rng = {"$gte": start, "$lt": end}
+    src_labels = dict(SRC)
+    lines: Dict[str, Dict[Any, Dict[str, Any]]] = {k: {} for k, _ in ACTIVITY_SECTIONS}
+    items: Dict[str, Dict[Any, List[Dict[str, Any]]]] = {k: {} for k, _ in ACTIVITY_SECTIONS}
+
+    new = list(_db.customers.find({**LIVE, "created_at": rng}, {"_id": 0, "id": 1, "tenant_id": 1, "name": 1, "branch_id": 1,
+                                                                 "created_at": 1, "acquisition_source": 1}))
+    refs = list(_db.referral_redemptions.find({"created_at": rng}, {"_id": 0}))
+    camps = [c for c in _db.campaigns.find({"sent_at": rng}, {"_id": 0, "id": 1, "tenant_id": 1, "name": 1, "sent_at": 1, "status": 1,
+                                                              "store_ids": 1, "targeted_count": 1, "delivered_count": 1,
+                                                              "recipient_ids": 1})
+             if c.get("status") in (None, "sent")]
+    logs = list(_db.automation_log.find({"sent_at": rng, "status": "sent"},
+                                        {"_id": 0, "tenant_id": 1, "customer_id": 1, "scenario": 1, "sent_at": 1}))
+    # who is who: the clients these rows name (their name and home store)
+    ids = {r.get("referrer_customer_id") for r in refs} | {r.get("referee_customer_id") for r in refs} | {l.get("customer_id") for l in logs}
+    ids.discard(None)
+    people = {c["id"]: c for c in _db.customers.find({"id": {"$in": sorted(ids)}}, {"_id": 0, "id": 1, "name": 1, "branch_id": 1})} if ids else {}
+    for c in new:
+        people.setdefault(c["id"], c)
+    tids = {c.get("tenant_id") for c in new} | {r.get("tenant_id") for r in refs} | {c.get("tenant_id") for c in camps} | {l.get("tenant_id") for l in logs}
+    tids.discard(None)
+    shops = _store_maps(tids)
+
+    def store_of(tid, branch):
+        s = shops.get(tid)
+        if not s or not s["multi"]:
+            return None
+        return branch if branch and branch in s["names"] else s["main"]
+
+    def add(sec, tid, store, at, item, **inc):
+        s = shops.get(tid)
+        if not s:
+            return
+        key = (tid, store)
+        ln = lines[sec].setdefault(key, {"tenant_id": tid, "tenant_name": s["name"], "store_id": store,
+                                         "store_name": s["names"].get(store) if store else None,
+                                         "count": 0, "last_at": None})
+        for k, v in inc.items():
+            ln[k] = ln.get(k, 0) + v
+        t = _aware(at)
+        if t and (ln["last_at"] is None or t > ln["last_at"]):
+            ln["last_at"] = t
+        if item is not None:
+            items[sec].setdefault(key, []).append(item)
+
+    for c in new:
+        tid = c.get("tenant_id")
+        src = c.get("acquisition_source")
+        add("nouveaux_clients", tid, store_of(tid, c.get("branch_id")), c.get("created_at"),
+            {"at": _aware(c.get("created_at")), "name": _short(c.get("name")),
+             "source": src_labels.get(src, UNKNOWN_LABEL) if src else UNKNOWN_LABEL}, count=1)
+    for r in refs:
+        tid = r.get("tenant_id")
+        fil = people.get(r.get("referee_customer_id")) or {}
+        par = people.get(r.get("referrer_customer_id")) or {}
+        add("parrainage", tid, store_of(tid, fil.get("branch_id")), r.get("created_at"),
+            {"at": _aware(r.get("created_at")), "parrain": _short(par.get("name")), "filleul": _short(fil.get("name")),
+             "status": "En attente" if r.get("referrer_pending") else "Validé"}, count=1)
+    for c in camps:
+        tid = c.get("tenant_id")
+        sids = c.get("store_ids") or []
+        store = store_of(tid, sids[0]) if len(sids) == 1 else None
+        n = int(c.get("targeted_count") or c.get("delivered_count") or len(c.get("recipient_ids") or []))
+        add("campagnes", tid, store, c.get("sent_at"),
+            {"at": _aware(c.get("sent_at")), "kind": "campagne", "name": c.get("name") or "Campagne", "messages": n},
+            count=1, campaigns=1, messages=n)
+    autos: Dict[tuple, Dict[str, Any]] = {}
+    for l in logs:
+        tid = l.get("tenant_id")
+        store = store_of(tid, (people.get(l.get("customer_id")) or {}).get("branch_id"))
+        scen = l.get("scenario") or "custom"
+        label = (AU.SCENARIOS.get(scen) or {}).get("label") or scen
+        g = autos.setdefault((tid, store, label), {"at": None, "kind": "automatisation", "name": label, "messages": 0})
+        g["messages"] += 1
+        t = _aware(l.get("sent_at"))
+        g["at"] = max(g["at"], t) if g["at"] and t else (t or g["at"])
+        add("campagnes", tid, store, l.get("sent_at"), None, count=1, automations=1, messages=1)
+    for (tid, store, _), g in autos.items():
+        items["campagnes"].setdefault((tid, store), []).append(g)
+
+    out = []
+    for key, title in ACTIVITY_SECTIONS:
+        rows = []
+        for k, ln in lines[key].items():
+            its = sorted(items[key].get(k) or [], key=lambda i: i.get("at") or start, reverse=True)
+            row = {**ln, "last_at": _iso(ln["last_at"]), "items": [{**i, "at": _iso(i.get("at"))} for i in its[:ITEMS_PER_LINE]],
+                   "more": max(0, len(its) - ITEMS_PER_LINE)}
+            if key == "campagnes":
+                row.setdefault("campaigns", 0)
+                row.setdefault("automations", 0)
+                row.setdefault("messages", 0)
+            rows.append(row)
+        rows.sort(key=lambda r: (-r["count"], r["tenant_name"] or "", r.get("store_name") or ""))
+        out.append({"key": key, "title": title, "total": sum(r["count"] for r in rows), "rows": rows})
+    return out
+
+
+@router.get("/api/admin/dashboard/activity")
+def dashboard_activity(day: Optional[str] = None, token_data: TokenData = Depends(require_admin("dashboard"))):
+    now = _now()
+    start, end, d, today = _day_bounds(day, now)
+    from datetime import timedelta as _td
+    prev = (d - _td(days=1)).isoformat()
+    nxt = None if today else (d + _td(days=1)).isoformat()
+    _, _, today_d, _ = _day_bounds(None, now)
+    return {"day": d.isoformat(), "today": today, "today_day": today_d.isoformat(), "from": _iso(start), "to": _iso(end),
+            "prev": prev, "next": nxt,
+            "sections": _activity_day(start, end)}

@@ -383,6 +383,7 @@ export const adminAPI = {
   annulerResiliation: (id) => api.post(`/admin/commerces/${id}/annuler-resiliation`),
   dashboardList: (key, params) => api.get(`/admin/dashboard/list/${key}`, { params }),
   dashboardToday: () => api.get('/admin/dashboard/today'),
+  dashboardActivity: (params) => api.get('/admin/dashboard/activity', { params }),
   deepCohorts: (params) => api.get('/admin/analytics/deep/cohorts', { params }),
   deepBenchmarks: () => api.get('/admin/analytics/deep/benchmarks'),
   deepAdoption: () => api.get('/admin/analytics/deep/adoption'),
