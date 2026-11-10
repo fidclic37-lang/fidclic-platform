@@ -4,11 +4,9 @@
 The card said « + 230 € » and nothing else: not when, not which clients, not
 which message brought them. Clicked, it now opens on the same page:
 
-    Par action   each campagne / automatisation / offre / géoloc / parrain:
-                 its name, when it went out, clients back, visits, CA
-    Par visite   each visit FidClic counted: when, who, how much, where,
-                 which message and how many days after it
-    Par jour     the CA FidClic of each day, by source
+    the visits FidClic counted, and only them (user, 2026-11-10 — « par
+    action, par visite, par jour hata do… Délai et Établissement aussi »):
+    when, who, how much, which source and message
     Export CSV   the visits, one line each
 
 « Attendus de toute façon » are listed too, flagged, never in the total. The
@@ -101,7 +99,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     scope = S.resolve(TD())
     d = ID.detail("t1", scope, span, at=now)
     vis = {v["id"]: v for v in d["visits"]}
-    acts = {a["key"]: a for a in d["actions"]}
 
     print("\nThe detail's total is the card's")
     a_imp = A.analyses(tab="vue", days=30, token_data=TD())["data"]["impact"]
@@ -121,51 +118,24 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("each counted visit says who", vis["vA"]["client"] == "Alice Martin" and vis["vA"]["client_id"] == "A")
     check("… how much", vis["vA"]["amount"] == 20.0)
     check("… which message", vis["vA"]["action_name"] == "Promo Noël" and vis["vA"]["source"] == "campagnes")
-    check("… how many days after it (sent 5 days ago, came 2 days ago → 3)", vis["vA"]["days_after"] == 3)
-    check("… when the message went out", vis["vA"]["sent_at"][:10] == ago(5).isoformat()[:10])
-    check("… and where", vis["vA"]["store"] == "Le Petit Café")
-    check("a visit the same day as the message is « 0 jour après »", vis["vE"]["days_after"] == 0)
+    check("no « Délai », no « Établissement » (the store is the one chosen)",
+          not any(k in vis["vA"] for k in ("days_after", "store", "sent_at")))
     check("an automation is named by its own name", vis["vD"]["action_name"] == "Relance 30 jours")
     check("a filleul's visit names the parrain", "Paul Parrain" in vis["vF1"]["action_name"]
-          and vis["vF1"]["source"] == "parrainage" and vis["vF1"]["days_after"] is None)
+          and vis["vF1"]["source"] == "parrainage")
     check("an « attendu » is listed, flagged", vis["vG"]["attendu"] is True)
     check("… and every counted visit is not", not any(v["attendu"] for k, v in vis.items() if k != "vG"))
     check("a deleted client keeps the visit, not the name", vis["vZ"]["client"] == "Client supprimé")
     check("newest first", [v["at"] for v in d["visits"]] == sorted((v["at"] for v in d["visits"]), reverse=True))
 
-    print("\nPar action")
-    camp = acts.get("c:camp1") or {}
-    check("the campaign by its name", camp.get("name") == "Promo Noël" and camp.get("source") == "campagnes")
-    check("… with its clients back, visits and CA",
-          camp.get("clients") == 2 and camp.get("visits") == 2 and camp.get("revenue") == 50.0)
-    check("… and when it went out", (camp.get("first_sent") or "")[:10] == ago(5).isoformat()[:10])
-    auto = acts.get("a:auto1") or {}
-    check("the automation by its name", auto.get("name") == "Relance 30 jours" and auto.get("revenue") == 15.0)
-    par = acts.get("p:P") or {}
-    check("one line per parrain, all the filleuls' visits",
-          "Paul Parrain" in (par.get("name") or "") and par.get("visits") == 2 and par.get("revenue") == 20.0)
-    offer = [a for a in d["actions"] if a["source"] == "offres"]
-    check("the « attendu » offer counts nothing, says what it set apart",
-          offer and offer[0]["revenue"] == 0 and offer[0]["attendus"] == {"visits": 1, "revenue": 50.0})
-    check("biggest CA first", [a["revenue"] for a in d["actions"]] == sorted((a["revenue"] for a in d["actions"]), reverse=True))
-    check("the actions add up to the total", round(sum(a["revenue"] for a in d["actions"]), 2) == d["totals"]["revenue"])
-    check("each visit points at its action", all(v["action"] in acts for v in d["visits"]))
-
-    print("\nPar jour")
-    days = {x["date"]: x for x in d["days"]}
-    check("the days add up to the total", round(sum(x["total"] for x in d["days"]), 2) == d["totals"]["revenue"])
-    day_a = ago(2).astimezone(PARIS).date().isoformat()
-    check("a day says each source", days.get(day_a, {}).get("campagnes") == 20.0
-          and days.get(day_a, {}).get("parrainage") == 8.0)
-    day_g = ago(1).astimezone(PARIS).date().isoformat()
-    check("the « attendus » of a day are apart", days.get(day_g, {}).get("attendus") == 50.0)
+    print("\nOnly the visits")
+    check("no « Par action », no « Par jour » sent any more", "actions" not in d and "days" not in d)
 
     print("\nOne establishment")
     db.visits.update_one({"id": "vB"}, {"$set": {"branch_id": "b2"}})
     one = ID.detail("t1", S.Scope(tenant_id="t1", ids=["b2"], allowed=["main", "b2"], all_ids=["main", "b2"],
                                   names={"main": "Le Petit Café", "b2": "Plumereau"}), span, at=now)
     check("only its visits", [v["id"] for v in one["visits"]] == ["vB"])
-    check("named by its establishment", one["visits"][0]["store"] == "Plumereau")
     check("its total is its own", one["totals"]["revenue"] == 30.0)
     db.visits.update_one({"id": "vB"}, {"$unset": {"branch_id": ""}})
 
@@ -175,7 +145,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("one day: that day's visits only", sorted(v["id"] for v in narrow["visits"]) == ["vA", "vF2"])
     empty = ID.detail("t1", scope, P.span(30, ago(200).astimezone(PARIS).date().isoformat(), ago(190).astimezone(PARIS).date().isoformat(), now), at=now)
     check("a period without visits: empty, no error",
-          empty["visits"] == [] and empty["actions"] == [] and empty["totals"]["revenue"] == 0)
+          empty["visits"] == [] and empty["totals"]["revenue"] == 0)
 
     print("\nA long list")
     old_cap = ID.MAX_VISITS
@@ -191,7 +161,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     text = resp.body.decode("utf-8").lstrip("﻿")
     rows = list(csv.reader(io.StringIO(text), delimiter=";" if text.count(";") > text.count(",") else ","))
     check("a header, then one line per listed visit", len(rows) == 1 + len(d["visits"]))
-    check("the header names the columns", "Client" in rows[0] and "Message" in rows[0])
+    check("the header names the columns", rows[0] == ["Date", "Heure", "Client", "Montant (€)", "Source",
+                                                       "Message", "Compté dans le CA FidClic"])
     flat = "\n".join(";".join(r) for r in rows)
     check("a formula in a client's name is not run by the spreadsheet", "\n=HYPERLINK" not in flat
           and not any(c.startswith("=") for r in rows for c in r))
@@ -228,8 +199,6 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("no client's amount", all(v["amount"] is None for v in hid["visits"]))
     check("the source and the message stay", hv["vA"]["source"] == "campagnes" and hv["vA"]["action_name"] == "Promo Noël")
     check("a filleul's line does not name the parrain", hv["vF1"]["action_name"] == "Parrainage")
-    check("… nor does Par action (one « Parrainage » line)",
-          [a["name"] for a in hid["actions"] if a["source"] == "parrainage"] == ["Parrainage"])
     check("no name anywhere in the answer",
           not any(n in str(hid) for n in ("Alice Martin", "Bruno Petit", "Paul Parrain", "Fanny Filleule")))
     check("the totals are the same", hid["totals"] == d["totals"])
