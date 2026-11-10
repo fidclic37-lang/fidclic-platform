@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Store, Users, CreditCard, Megaphone, Euro, CalendarDays, ChevronDown, PieChart as PieIcon, Sparkles, ChevronRight, TrendingDown, Rocket, Clock, Building2, Trophy, Activity, Send, UserPlus, PauseCircle, PlayCircle, Inbox, ArrowUp, ArrowDown, CircleAlert,
+  Store, Users, CreditCard, Megaphone, Euro, CalendarDays, ChevronDown, PieChart as PieIcon, Sparkles, ChevronRight, TrendingDown, Rocket, Clock, Building2, Trophy, ArrowUp, ArrowDown, CircleAlert,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Head, Kpi, Donut, Loading, Modal, nf, BLUE } from '../crm/ui';
@@ -13,6 +13,7 @@ import { PlanPill, CommerceLogo } from './CommercesPage';
 import { CitiesSection, RevenueSection, SourcesSection } from './analytics/sections';
 import CommerceListModal from './CommerceListModal';
 import DashboardToday from './DashboardToday';
+import DailyActivity from './DailyActivity';
 
 /* Super admin › Dashboard — built to the approved mockup. */
 
@@ -21,15 +22,6 @@ const iso = (d) => d.toISOString().slice(0, 10);
 const frDate = (s) => new Date(`${s}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 const OPP_ICON = { limit: [CreditCard, '#F59E0B', '#FFF4DB'], campaign: [Megaphone, '#F97316', '#FFEDD5'], falling: [TrendingDown, '#8B5CF6', '#F3EEFF'],
   upgrade: [Rocket, '#10B981', '#E7F7EE'], trial: [Clock, '#2F6BFF', '#EAF1FF'], franchise: [Building2, '#7C3AED', '#F3EEFF'] };
-const ACT_ICON = { signup: [UserPlus, '#10B981', '#E7F7EE'], campaign: [Send, '#2F6BFF', '#EAF1FF'], plan: [Sparkles, '#8B5CF6', '#F3EEFF'],
-  clients: [Users, '#10B981', '#E7F7EE'], suspend: [PauseCircle, '#E11D48', '#FDECEF'], reactivate: [PlayCircle, '#10B981', '#E7F7EE'], request: [Inbox, '#7C3AED', '#F3EEFF'] };
-const ago = (s) => {
-  const m = Math.round((Date.now() - new Date(s).getTime()) / 60000);
-  if (m < 60) return `il y a ${Math.max(1, m)} min`;
-  if (m < 1440) return `il y a ${Math.round(m / 60)} h`;
-  const d = Math.round(m / 1440);
-  return `il y a ${d} jour${d > 1 ? 's' : ''}`;
-};
 
 export default function AdminDashboardPage() {
   const navigate = useNavigate();
@@ -173,7 +165,7 @@ export default function AdminDashboardPage() {
 
       <DashboardToday openList={setList} />
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+      <div className="mt-4 grid gap-4">
         <Card>
           <Head icon={Trophy} title="Top 5 commerces par nombre de clients" right={<Link to="/admin/commerces" className="text-[12.5px] text-[#2F6BFF]">Voir tous</Link>} />
           <div className="overflow-x-auto">
@@ -191,12 +183,9 @@ export default function AdminDashboardPage() {
             </table>
           </div>
         </Card>
-        <Card>
-          <Head icon={Activity} title="Activité récente" right={d.activity.length > 5 && <button type="button" onClick={() => setModal({ type: 'activity' })} className="text-[12.5px] text-[#2F6BFF]">Voir tout</button>} />
-          <ActivityList rows={d.activity.slice(0, 5)} navigate={navigate} />
-          {!d.activity.length && <p className="py-8 text-center text-[13px] text-[#94A3B8]">Rien sur les 30 derniers jours.</p>}
-        </Card>
       </div>
+      {/* « Activité du jour » replaces « Activité récente » (user, 2026-11-10) */}
+      <DailyActivity />
 
       {list && <CommerceListModal listKey={list} range={listRange} onClose={() => setList(null)} />}
       {modal?.type === 'opp' && (
@@ -207,22 +196,6 @@ export default function AdminDashboardPage() {
           {modal.o.count > modal.o.tenants.length && <p className="mt-2 text-[12px] text-[#64748B]">Et {modal.o.count - modal.o.tenants.length} autres.</p>}
         </Modal>
       )}
-      {modal?.type === 'activity' && <Modal title="Activité récente — 30 jours" onClose={() => setModal(null)}><ActivityList rows={d.activity} navigate={navigate} /></Modal>}
     </div>
-  );
-}
-
-function ActivityList({ rows, navigate }) {
-  return (
-    <ul className="space-y-1.5">
-      {rows.map((e, i) => { const [I, c, bg] = ACT_ICON[e.kind] || ACT_ICON.signup; return (
-        <li key={`${e.kind}-${e.at}-${i}`}>
-          <button type="button" onClick={() => e.tenant_id && navigate(`/admin/commerces/${e.tenant_id}`)} className="flex w-full items-center gap-3 rounded-xl border border-[#F1F5F9] px-3 py-2 text-left hover:bg-[#FAFCFF]">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full" style={{ background: bg, color: c }}><I size={15} /></span>
-            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium text-[#0B1C3F]">{e.title}</span><span className="block truncate text-[12px] text-[#64748B]">{e.sub}{e.detail ? ` — ${e.detail}` : ''}</span></span>
-            <span className="shrink-0 text-[11.5px] text-[#94A3B8]">{ago(e.at)}</span>
-          </button>
-        </li>); })}
-    </ul>
   );
 }
