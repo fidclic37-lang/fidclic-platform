@@ -110,7 +110,8 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("a campaign known only by its recipients → Campagnes", by["oldcamp"] == "campagnes")
     check("after a proximity push → Géolocalisation", by["geo"] == "geolocalisation")
     check("after a promotion → Offres", by["promo"] == "offres")
-    check("after a Push Wallet offer → Offres", by["wallet"] == "offres")
+    # a Push Wallet scenario is an automation (user, 2026-11-10 — tests/test_impact_genuine.py)
+    check("after a Push Wallet message → Automatisations", by["wallet"] == "automatisations")
     check("after a personal card offer → Offres", by["perso"] == "offres")
     check("after the birthday message → Automatisations", by["bday"] == "automatisations")
     check("after the relance des inactifs → Automatisations", by["rescue"] == "automatisations")
@@ -127,7 +128,7 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("CA FidClic adds up the counted visits only", imp["revenue"] == expected)
     check("and counts them", imp["visits"] == 10)
     check("Parrainage is the filleul's money", imp["sources"]["parrainage"]["revenue"] == 37.0)
-    check("Offres adds its three", imp["sources"]["offres"]["revenue"] == 41.0)
+    check("Offres adds its two", imp["sources"]["offres"]["revenue"] == 28.0)
 
     a = A.analyses(tab="vue", days=30, token_data=TD())["data"]
     strip = {s["key"]: s for s in a["strip"]}

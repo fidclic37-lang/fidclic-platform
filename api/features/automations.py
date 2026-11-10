@@ -1120,6 +1120,10 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     _db.push_notifications.insert_one({"tenant_id": tid, "customer_id": cust["id"], "type": meta["push_kind"],
                                        "title": title, "body": body, "sent_at": at, "automatic": True,
                                        "automation_id": row["id"], "log_id": log_id,
+                                       # what it was when it went out (fidclic_impact: a reaction to a
+                                       # visit / signup is never CA FidClic, an edit later changes nothing)
+                                       "scenario": scenario, "trigger": (row.get("trigger") or {}).get("type"),
+                                       "timed": is_timed(scenario, row.get("trigger")),
                                        # a relance a groupe témoin measures (fidclic_impact: never « attendu »)
                                        "temoin": scenario in T.AUTOMATION_SCENARIOS and T.enabled(tid)})
     if scenario == "geo":                 # the card asked: it shows the message itself
