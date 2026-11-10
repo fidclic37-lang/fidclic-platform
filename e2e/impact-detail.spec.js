@@ -1,7 +1,8 @@
 /**
  * « Impact FidClic » clicked (user, 2026-11-10): the detail opens on the page
- * the card sits on — the Tableau de bord, or Analyses — by action, by visit,
- * by day, and its total is the card's. Local server and demo data only.
+ * the card sits on — the Tableau de bord, or Analyses — as the list of the
+ * visits FidClic counted (no Par action / Par jour, no Établissement / Délai,
+ * user 2026-11-10), and its total is the card's. Local server and demo data only.
  */
 import { test, expect } from '@playwright/test';
 
@@ -28,9 +29,8 @@ const digits = (s) => (s || '').replace(/[^\d,]/g, '');
 
 test.use({ viewport: { width: 1536, height: 1000 } });
 
-test('Tableau de bord: the card opens its detail right there, by action, visit and day', async ({ page, request }) => {
-  const SH = await asOwner(page, request);
-  const api = await (await request.get('/api/owner/home/impact?days=30', { headers: SH })).json();
+test('Tableau de bord: the card opens the visits right there', async ({ page, request }) => {
+  await asOwner(page, request);
 
   await page.goto('/dashboard');
   await expect(card(page)).toBeVisible(SETTLE);
@@ -39,28 +39,19 @@ test('Tableau de bord: the card opens its detail right there, by action, visit a
   await card(page).getByRole('button', { name: /Voir le détail/ }).click();
   await expect(detail(page)).toBeVisible(SETTLE);
   await expect(page).toHaveURL(/\/dashboard\/?$/);                       // same page
-  await expect(detail(page).getByRole('tab', { name: 'Par action' })).toHaveAttribute('aria-selected', 'true');
+
+  // only the visits: no views, no Établissement / Délai
+  await expect(detail(page).getByText('Chargement du détail…')).toHaveCount(0, SETTLE);
+  await expect(detail(page).getByRole('tab')).toHaveCount(0);
+  for (const gone of ['Par action', 'Par visite', 'Par jour', 'Établissement', 'Délai']) {
+    await expect(detail(page).getByText(gone, { exact: true })).toHaveCount(0);
+  }
 
   // the total is the card's
   const cardValue = digits(await card(page).locator('span.rounded-full').first().innerText());
   await expect.poll(async () => digits(await detail(page).locator('p b').first().innerText()), SETTLE).toBe(cardValue);
 
-  if (api.actions.length) {
-    // an action → its visits
-    const first = api.actions[0];
-    await detail(page).getByRole('button', { name: first.name }).first().click();
-    await expect(detail(page).getByRole('tab', { name: 'Par visite' })).toHaveAttribute('aria-selected', 'true');
-    await expect(detail(page).locator('tbody tr').first()).toContainText(first.name);
-  }
-
-  await detail(page).getByRole('tab', { name: 'Par jour' }).click();
-  if (api.days.length) {
-    await expect(detail(page).getByLabel('CA FidClic par jour')).toBeVisible();
-    await detail(page).getByLabel('CA FidClic par jour').locator('button').last().click();
-    await expect(detail(page).getByRole('tab', { name: 'Par visite' })).toHaveAttribute('aria-selected', 'true');
-  }
-
-  // the Parrainage tile opens the detail on the parrains
+  // the Parrainage tile opens it on the filleuls
   await card(page).getByRole('button', { name: 'Parrainage' }).click();
   await expect(detail(page).getByRole('button', { name: /^Parrainage/, pressed: true })).toBeVisible();
 
@@ -72,14 +63,14 @@ test('Tableau de bord: the card opens its detail right there, by action, visit a
   await expect(detail(page)).toHaveCount(0);
 });
 
-test('Analyses: the same card opens its detail inside Analyses', async ({ page, request }) => {
+test('Analyses: the same card opens the visits inside Analyses', async ({ page, request }) => {
   await asOwner(page, request);
   await page.goto('/dashboard/analytics');
   await expect(card(page)).toBeVisible(SETTLE);
   await card(page).getByRole('button', { name: 'Visites générées' }).click();
   await expect(detail(page)).toBeVisible(SETTLE);
   await expect(page).toHaveURL(/\/dashboard\/analytics/);
-  await expect(detail(page).getByRole('tab', { name: 'Par visite' })).toHaveAttribute('aria-selected', 'true');
+  await expect(detail(page).getByRole('button', { name: /^Toutes/, pressed: true })).toBeVisible();
   const cardValue = digits(await card(page).locator('span.rounded-full').first().innerText());
   await expect.poll(async () => digits(await detail(page).locator('p b').first().innerText()), SETTLE).toBe(cardValue);
 });
