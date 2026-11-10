@@ -74,9 +74,10 @@ def _names(coll: str, tid: str, ids: set, field: str = "name") -> Dict[str, str]
     return {d["id"]: (d.get(field) or "").strip() for d in _db[coll].find(q, {"_id": 0, "id": 1, field: 1})}
 
 
-def _action_key(src: str, ref: Dict[str, Any]) -> str:
+def _action_key(src: str, ref: Dict[str, Any], hide_clients: bool = False) -> str:
     if src == "parrainage":
-        return f"p:{ref.get('parrain_id') or '?'}"
+        # without the Clients page, one « Parrainage » line: a line per parrain names a client
+        return "p:*" if hide_clients else f"p:{ref.get('parrain_id') or '?'}"
     if ref.get("campaign_id"):
         return f"c:{ref['campaign_id']}"
     if ref.get("automation_id"):
@@ -86,9 +87,11 @@ def _action_key(src: str, ref: Dict[str, Any]) -> str:
 
 
 def detail(tid: str, scope: Optional["S.Scope"], span: "P.Span", at: Optional[datetime] = None,
-           limit: Optional[int] = -1) -> Dict[str, Any]:
+           limit: Optional[int] = -1, hide_clients: bool = False) -> Dict[str, Any]:
     """The detail of [span]. `limit` caps the visits listed (-1: MAX_VISITS,
-    None: all of them — the CSV)."""
+    None: all of them — the CSV). `hide_clients`: a team member without the
+    Clients page sees « Client » and the source, never a name or an amount
+    (user, 2026-11-10)."""
     at = at or _now()
     cap = MAX_VISITS if limit == -1 else limit
     vfilter = S.visit_filter(scope) if scope is not None else {}
@@ -115,7 +118,7 @@ def detail(tid: str, scope: Optional["S.Scope"], span: "P.Span", at: Optional[da
 
     def action_name(src: str, ref: Dict[str, Any]) -> str:
         if src == "parrainage":
-            p = parrains.get(ref.get("parrain_id"))
+            p = None if hide_clients else parrains.get(ref.get("parrain_id"))
             return f"Parrainage · {p}" if p else "Parrainage"
         if ref.get("campaign_id") and camps.get(ref["campaign_id"]):
             return camps[ref["campaign_id"]]
@@ -132,7 +135,7 @@ def detail(tid: str, scope: Optional["S.Scope"], span: "P.Span", at: Optional[da
         ref = ref or {}
         t = FI._aware(v["visit_time"])
         amount = round(float(v.get("amount_paid") or 0), 2)
-        key = _action_key(src, ref)
+        key = _action_key(src, ref, hide_clients)
         name = action_name(src, ref)
         sent = ref.get("sent_at")
         a = actions.setdefault(key, {"key": key, "source": src, "kind": KIND_LABELS.get(src, ""), "name": name,
@@ -152,8 +155,10 @@ def detail(tid: str, scope: Optional["S.Scope"], span: "P.Span", at: Optional[da
             days[day][src] += amount
         cid = v.get("customer_id")
         visits.append({
-            "id": v.get("id"), "at": t.isoformat(), "client_id": cid if cid in clients else None,
-            "client": clients.get(cid) or DELETED, "amount": amount, "store": store_name(v.get("branch_id")),
+            "id": v.get("id"), "at": t.isoformat(),
+            "client_id": None if hide_clients else (cid if cid in clients else None),
+            "client": "Client" if hide_clients else (clients.get(cid) or DELETED),
+            "amount": None if hide_clients else amount, "store": store_name(v.get("branch_id")),
             "source": src, "action": key, "action_name": name,
             "sent_at": sent.isoformat() if sent else None,
             "days_after": (_day(t) - _day(sent)).days if sent else None,
@@ -186,19 +191,28 @@ def detail(tid: str, scope: Optional["S.Scope"], span: "P.Span", at: Optional[da
         "days": out_days,
         "visits": visits if cap is None else visits[:cap],
         "truncated": cap is not None and len(visits) > cap,
+        "clients_hidden": bool(hide_clients),
     }
+
+
+def _hide(token_data, request) -> bool:
+    """No « Voir » on the Clients page: no client's name or amount here either."""
+    from features import role_perms as RP
+    return not RP.may(token_data, "customers", "view", request)
 
 
 def _for(request, days, date_from, date_to, token_data) -> Dict[str, Any]:
     at = _now()
     span = P.span(P.clamp_days(days), date_from, date_to, at)
-    return detail(token_data.tenant_id, S.resolve(token_data, request), span, at)
+    return detail(token_data.tenant_id, S.resolve(token_data, request), span, at,
+                  hide_clients=_hide(token_data, request))
 
 
 def _csv(request, days, date_from, date_to, token_data) -> Response:
     at = _now()
     span = P.span(P.clamp_days(days), date_from, date_to, at)
-    d = detail(token_data.tenant_id, S.resolve(token_data, request), span, at, limit=None)
+    d = detail(token_data.tenant_id, S.resolve(token_data, request), span, at, limit=None,
+               hide_clients=_hide(token_data, request))
     buf = io.StringIO()
     w = safe_csv.writer(buf)
     labels = {s["key"]: s["label"] for s in d["sources"]}
@@ -207,7 +221,7 @@ def _csv(request, days, date_from, date_to, token_data) -> Response:
     for v in d["visits"]:
         t = datetime.fromisoformat(v["at"]).astimezone(_PARIS)
         sent = datetime.fromisoformat(v["sent_at"]).astimezone(_PARIS).strftime("%d/%m/%Y") if v["sent_at"] else ""
-        w.writerow([t.strftime("%d/%m/%Y"), t.strftime("%H:%M"), v["client"], f"{v['amount']:.2f}".replace(".", ","),
+        w.writerow([t.strftime("%d/%m/%Y"), t.strftime("%H:%M"), v["client"], "" if v["amount"] is None else f"{v['amount']:.2f}".replace(".", ","),
                     v["store"], labels.get(v["source"], v["source"]), v["action_name"], sent,
                     "" if v["days_after"] is None else v["days_after"],
                     "Non (attendu de toute façon)" if v["attendu"] else "Oui"])

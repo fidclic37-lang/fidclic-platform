@@ -206,5 +206,40 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     h = ID.home_impact(days=30, token_data=TD())
     check("the route answers the same detail", h["totals"] == d["totals"] and len(h["visits"]) == len(d["visits"]))
 
+    print("\nA team member without the Clients page (user, 2026-11-10)")
+    # « keval client dikhe and source of impact dikhe »: no name, no amount
+    db.users.insert_many([
+        {"email": "noclients@x.fr", "role": "manager", "tenant_id": "t1",
+         "perms": {"main": {"dashboard": "view", "analytics": "view", "customers": "none"}}},
+        {"email": "clients@x.fr", "role": "manager", "tenant_id": "t1",
+         "perms": {"main": {"dashboard": "view", "analytics": "view", "customers": "view"}}},
+    ])
+
+    class NoClients:
+        email, role, tenant_id = "noclients@x.fr", "manager", "t1"
+
+    class WithClients:
+        email, role, tenant_id = "clients@x.fr", "manager", "t1"
+
+    hid = ID.home_impact(days=30, token_data=NoClients())
+    hv = {v["id"]: v for v in hid["visits"]}
+    check("it is told the clients are hidden", hid["clients_hidden"] is True)
+    check("no client's name, only « Client »", all(v["client"] == "Client" and v["client_id"] is None for v in hid["visits"]))
+    check("no client's amount", all(v["amount"] is None for v in hid["visits"]))
+    check("the source and the message stay", hv["vA"]["source"] == "campagnes" and hv["vA"]["action_name"] == "Promo Noël")
+    check("a filleul's line does not name the parrain", hv["vF1"]["action_name"] == "Parrainage")
+    check("… nor does Par action (one « Parrainage » line)",
+          [a["name"] for a in hid["actions"] if a["source"] == "parrainage"] == ["Parrainage"])
+    check("no name anywhere in the answer",
+          not any(n in str(hid) for n in ("Alice Martin", "Bruno Petit", "Paul Parrain", "Fanny Filleule")))
+    check("the totals are the same", hid["totals"] == d["totals"])
+    csv_hidden = ID.home_export(days=30, token_data=NoClients()).body.decode("utf-8")
+    check("the CSV hides them too", "Alice Martin" not in csv_hidden and "Paul Parrain" not in csv_hidden
+          and "20,00" not in csv_hidden)
+    seen = ID.home_impact(days=30, token_data=WithClients())
+    check("a team member WITH the Clients page sees the names",
+          seen["clients_hidden"] is False and {v["id"]: v for v in seen["visits"]}["vA"]["client"] == "Alice Martin")
+    check("the owner sees the names", h["clients_hidden"] is False)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)

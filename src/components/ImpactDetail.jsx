@@ -203,7 +203,7 @@ export default function ImpactDetail({ from = 'home', params, initial = {}, onCl
               <table className="w-full text-left text-[12.5px]">
                 <thead className="text-[11.5px] uppercase tracking-wide text-[#94A3B8]">
                   <tr><th className="py-2 pr-3 font-semibold">Quand</th><th className="py-2 pr-3 font-semibold">Client</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Montant</th><th className="py-2 pr-3 font-semibold">Établissement</th>
+                    {!d.clients_hidden && <th className="py-2 pr-3 text-right font-semibold">Montant</th>}<th className="py-2 pr-3 font-semibold">Établissement</th>
                     <th className="py-2 pr-3 font-semibold">Grâce à</th><th className="py-2 font-semibold">Délai</th></tr>
                 </thead>
                 <tbody>
@@ -214,9 +214,9 @@ export default function ImpactDetail({ from = 'home', params, initial = {}, onCl
                       <td className="py-2.5 pr-3">
                         {v.client_id
                           ? <Link to={`/dashboard/customers?q=${encodeURIComponent(v.client)}`} className={`font-medium hover:underline ${v.attendu ? '' : 'text-[#0B1C3F]'}`}>{v.client}</Link>
-                          : <span className="italic">{v.client}</span>}
+                          : <span className={d.clients_hidden ? '' : 'italic'}>{v.client}</span>}
                       </td>
-                      <td className={`py-2.5 pr-3 text-right tabular-nums ${v.attendu ? '' : 'font-semibold text-[#0B1C3F]'}`}>{eur(v.amount)}</td>
+                      {!d.clients_hidden && <td className={`py-2.5 pr-3 text-right tabular-nums ${v.attendu ? '' : 'font-semibold text-[#0B1C3F]'}`}>{eur(v.amount)}</td>}
                       <td className="py-2.5 pr-3">{v.store}</td>
                       <td className="py-2.5 pr-3">
                         <div className={v.attendu ? '' : 'text-[#0B1C3F]'}>{v.action_name}</div>
@@ -228,6 +228,11 @@ export default function ImpactDetail({ from = 'home', params, initial = {}, onCl
                   ))}
                 </tbody>
               </table>
+              {d.clients_hidden && (
+                <p data-testid="clients-hidden" className="mt-2 flex items-center gap-1.5 text-[12px] text-[#64748B]">
+                  <Info size={13} /> Noms et montants des clients masqués : votre accès ne comprend pas la page Clients.
+                </p>
+              )}
               {d.truncated && (
                 <p className="mt-2 flex items-center gap-1.5 text-[12px] text-[#64748B]">
                   <Info size={13} /> Les {nf(d.visits.length)} visites les plus récentes sont affichées. L'export CSV les contient toutes.
