@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAnchoredMenu } from '../lib/anchoredMenu';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Zap, Plus, Send, Users, Mail, ArrowUp, ArrowDown, Bot, Check, Search, MoreHorizontal, MessageSquare,
@@ -169,7 +170,8 @@ export default function AutomationsPage() {
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState('recent');
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rowMenu = useAnchoredMenu();
   const [busyRow, setBusyRow] = useState('');
   const [autopilot, setAutopilot] = useState(false);
 
@@ -208,12 +210,12 @@ export default function AutomationsPage() {
     } finally { setBusyRow(''); }
   };
   const duplicate = async (row) => {
-    setMenu(null);
+    rowMenu.close();
     try { await ownerAPI.duplicateAutomation(row.id); setFlash(`Copie de « ${row.name} » créée en brouillon.`); load(); }
     catch (e) { setError(e?.response?.data?.detail || "La copie n'a pas pu être créée."); }
   };
   const remove = async (row) => {
-    setMenu(null);
+    rowMenu.close();
     if (!confirmImportant(`Supprimer l'automatisation « ${row.name} » ? Elle ne partira plus.`)) return;
     try { await ownerAPI.deleteAutomation(row.id); setFlash('Automatisation supprimée.'); load(); }
     catch (e) { setError(e?.response?.data?.detail || "L'automatisation n'a pas pu être supprimée."); }
@@ -222,7 +224,7 @@ export default function AutomationsPage() {
   const st = d?.stats;
 
   return (
-    <div className="pb-10" onClick={() => setMenu(null)}>
+    <div className="pb-10" onClick={() => rowMenu.close()}>
       {autopilot && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B1C3F]/45 p-3 sm:p-8" onClick={() => setAutopilot(false)}>
           <div className="w-full max-w-4xl rounded-3xl bg-white p-4 shadow-2xl sm:p-6" onClick={(e) => e.stopPropagation()}>
@@ -352,13 +354,13 @@ export default function AutomationsPage() {
                         <td className="px-2 py-3 text-[13px] font-semibold tabular-nums text-[#0B1C3F]">{nf(r.reach)}</td>
                         <td className="px-2 py-3 text-[13px] font-semibold tabular-nums text-[#0B1C3F]">{r.open_rate == null ? <span className="text-[#94A3B8]">—</span> : `${r.open_rate}%`}</td>
                         <td className="relative px-1 py-3" onClick={(e) => e.stopPropagation()}>
-                          <button type="button" aria-label="Plus d'actions" onClick={() => setMenu(menu === r.id ? null : r.id)}
+                          <button type="button" aria-label="Plus d'actions" aria-haspopup="menu" aria-expanded={rowMenu.openId === r.id} onClick={(e) => rowMenu.toggle(e, r.id)}
                                   className="rounded-lg p-1.5 text-[#1463FF] hover:bg-[#F1F5F9]"><MoreHorizontal size={20} /></button>
-                          {menu === r.id && (
-                            <div className="absolute right-2 top-11 z-20 w-48 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
-                              <button type="button" onClick={() => navigate(`/dashboard/automations/${r.id}`)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]">{can ? 'Modifier' : 'Voir'}</button>
-                              {can && <button type="button" onClick={() => duplicate(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]">Dupliquer</button>}
-                              {can && <button type="button" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}
+                          {rowMenu.openId === r.id && (
+                            <div {...rowMenu.menuProps} className="z-50 w-48 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
+                              <button type="button" role="menuitem" onClick={() => navigate(`/dashboard/automations/${r.id}`)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]">{can ? 'Modifier' : 'Voir'}</button>
+                              {can && <button type="button" role="menuitem" onClick={() => duplicate(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] hover:bg-[#F8FAFC]">Dupliquer</button>}
+                              {can && <button type="button" role="menuitem" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[13px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}
                             </div>
                           )}
                         </td>
