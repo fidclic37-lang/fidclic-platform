@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../lib/anchoredMenu';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Send, Users, Mail, BarChart3, Euro, ArrowRight, Search, Filter, ChevronLeft, ChevronRight, MoreVertical, Loader2,
@@ -89,7 +90,8 @@ export default function CampagnesPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(5);
   const [listBusy, setListBusy] = useState(false);
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rowMenu = useAnchoredMenu();
   const [resultOf, setResultOf] = useState(null);
   const [detailOf, setDetailOf] = useState(null);       // a row opened
   const [wizard, setWizard] = useState(null);          // { initial, step }
@@ -158,7 +160,7 @@ export default function CampagnesPage() {
 
   // « Modifier » a draft, a planned or a cancelled campaign
   const edit = async (row) => {
-    setMenu(null); setError(''); setDetailOf(null);
+    rowMenu.close(); setError(''); setDetailOf(null);
     try {
       const { data: d } = await ownerAPI.campaignDraft(row.id);
       const kind = d.kind || 'offre';
@@ -188,14 +190,14 @@ export default function CampagnesPage() {
     }
   };
   const cancel = async (row) => {
-    setMenu(null);
+    rowMenu.close();
     if (!confirmImportant(`Annuler l'envoi programmé de « ${row.name} » ?`)) return;
     setDetailOf(null);
     try { await ownerAPI.cancelCampaignSchedule(row.id); setFlash('Envoi annulé : la campagne est dans « Annulées ».'); loadList(); }
     catch (e) { setError(e?.response?.data?.detail || "L'envoi n'a pas pu être annulé."); loadList(); }
   };
   const remove = async (row) => {
-    setMenu(null);
+    rowMenu.close();
     if (!confirmImportant(`Supprimer « ${row.name} » ?`)) return;
     setDetailOf(null);
     try { await ownerAPI.deleteCampaignDraft(row.id); setFlash('Campagne supprimée.'); loadList(); }
@@ -363,13 +365,13 @@ export default function CampagnesPage() {
                       ) : null}
                     </td>
                     <td className="relative px-2 py-3" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" aria-label="Plus d'actions" onClick={() => setMenu(menu === r.id ? null : r.id)} className="rounded-lg p-1.5 text-[#0B1C3F] hover:bg-[#F1F5F9]"><MoreVertical size={18} /></button>
-                      {menu === r.id && (
-                        <div className="absolute right-2 top-11 z-20 w-52 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
-                          {r.sent_at && <button type="button" onClick={() => { setMenu(null); setDetailOf(r.id); }} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Voir les résultats</button>}
-                          {editable && <button type="button" onClick={() => edit(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Modifier</button>}
-                          {r.status === 'scheduled' && <button type="button" onClick={() => cancel(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#B45309] hover:bg-[#FFF7ED]">Annuler l'envoi</button>}
-                          {['draft', 'cancelled'].includes(r.status) && <button type="button" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}
+                      <button type="button" aria-label="Plus d'actions" aria-haspopup="menu" aria-expanded={rowMenu.openId === r.id} onClick={(e) => rowMenu.toggle(e, r.id)} className="rounded-lg p-1.5 text-[#0B1C3F] hover:bg-[#F1F5F9]"><MoreVertical size={18} /></button>
+                      {rowMenu.openId === r.id && (
+                        <div {...rowMenu.menuProps} className="z-50 w-52 rounded-xl border border-[#E2E8F0] bg-white p-1.5 shadow-xl">
+                          {r.sent_at && <button type="button" role="menuitem" onClick={() => { rowMenu.close(); setDetailOf(r.id); }} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Voir les résultats</button>}
+                          {editable && <button type="button" role="menuitem" onClick={() => edit(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] hover:bg-[#F8FAFC]">Modifier</button>}
+                          {r.status === 'scheduled' && <button type="button" role="menuitem" onClick={() => cancel(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#B45309] hover:bg-[#FFF7ED]">Annuler l'envoi</button>}
+                          {['draft', 'cancelled'].includes(r.status) && <button type="button" role="menuitem" onClick={() => remove(r)} className="block w-full rounded-lg px-3 py-2 text-left text-[14px] text-[#DC2626] hover:bg-[#FEF2F2]">Supprimer</button>}
                           {!r.sent_at && !editable && <span className="block px-3 py-2 text-[13px] text-[#94A3B8]">Aucune action</span>}
                         </div>
                       )}

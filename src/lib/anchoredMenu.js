@@ -4,7 +4,7 @@
 // Drawn `position: fixed` — never inside a table's scroll box, which cut the
 // menus of the last rows — below its button, or above it when there is no
 // room below; its real height is measured once drawn, so a new line in it can
-// never cut it again. Scrolling, resizing or Échap closes it. The same rules
+// never cut it again. Scrolling, resizing, Échap or a click elsewhere closes it. The same rules
 // as the Clients page's menu (2026-10-16), in one place for any page.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { fitRect, viewW, viewH } from './fit';
@@ -40,13 +40,17 @@ export function useAnchoredMenu() {
     if (openId === null) return undefined;
     const shut = () => setOpenId(null);                  // it stays by its button: scrolling closes it
     const key = (e) => { if (e.key === 'Escape') shut(); };
+    // a click elsewhere (its own button stops its click, so it toggles instead)
+    const away = (e) => { if (!ref.current || !ref.current.contains(e.target)) shut(); };
     window.addEventListener('scroll', shut, true);
     window.addEventListener('resize', shut);
     window.addEventListener('keydown', key);
+    window.addEventListener('click', away);
     return () => {
       window.removeEventListener('scroll', shut, true);
       window.removeEventListener('resize', shut);
       window.removeEventListener('keydown', key);
+      window.removeEventListener('click', away);
     };
   }, [openId]);
 
