@@ -6,14 +6,17 @@ import { eur } from '../lib/money';
 /**
  * « Impact FidClic » — the revenue FidClic's own actions brought back, drawn
  * from the user's mockup (2026-10-10), the same on the Tableau de bord and in
- * Analyses. The three tiles only SAY what brings it (campaigns, the visits
- * they generate, parrainage): they are not buttons, and the card is not a
- * link. What is counted is explained by the (i).
+ * Analyses. What is counted is explained by the (i).
+ *
+ * Clickable since 2026-11-10 (user): with `onOpen`, the card opens the detail
+ * on the page it sits on — « Voir le détail » by action, and each tile its
+ * own view: Campagnes → the campaigns, Visites générées → the visits,
+ * Parrainage → the parrains. Without `onOpen` it stays a plain card.
  */
 const TILES = [
-  { icon: Send, label: 'Campagnes' },
-  { icon: Users, label: 'Visites générées' },
-  { icon: Gift, label: 'Parrainage' },
+  { icon: Send, label: 'Campagnes', open: { view: 'action', source: 'campagnes' } },
+  { icon: Users, label: 'Visites générées', open: { view: 'visite', source: '' } },
+  { icon: Gift, label: 'Parrainage', open: { view: 'action', source: 'parrainage' } },
 ];
 
 // the rising bars of the mockup — decoration only
@@ -47,7 +50,7 @@ function Growth() {
   );
 }
 
-export default function ImpactFidClicCard({ value, className = '' }) {
+export default function ImpactFidClicCard({ value, className = '', onOpen = null }) {
   const n = Number(value) || 0;
   return (
     <section aria-label="Impact FidClic"
@@ -61,6 +64,12 @@ export default function ImpactFidClicCard({ value, className = '' }) {
             Impact FidClic <InfoTip k="impact" size={15} />
           </h2>
           <p className="mt-1 text-[13.5px] text-[#64748B]">Chiffre d'affaires attribué aux actions FidClic</p>
+          {onOpen && (
+            <button type="button" onClick={() => onOpen({ view: 'action', source: '' })}
+                    className="mt-1.5 text-[13px] font-semibold text-[#2F6BFF] hover:underline">
+              Voir le détail →
+            </button>
+          )}
         </div>
         <span className="shrink-0 rounded-full bg-[#DFF6EA] px-4 py-1.5 text-[22px] font-extrabold leading-none tabular-nums text-[#0F8B58]">
           + {eur(n)}
@@ -68,13 +77,22 @@ export default function ImpactFidClicCard({ value, className = '' }) {
       </div>
       <div className="relative mt-5 flex items-end gap-3">
         <ul className="relative z-10 grid flex-1 grid-cols-3 gap-2.5 sm:max-w-[420px]">
-          {TILES.map(({ icon: Icon, label }) => (
-            <li key={label}
-                className="flex cursor-default select-none flex-col items-center justify-center gap-2 rounded-xl bg-white/95 px-2 py-3.5 text-center shadow-[0_6px_18px_-12px_rgba(15,23,42,.35)]">
-              <Icon size={22} className="text-[#2F6BFF]" aria-hidden="true" />
-              <span className="text-[12.5px] font-medium leading-tight text-[#334155]">{label}</span>
-            </li>
-          ))}
+          {TILES.map(({ icon: Icon, label, open }) => {
+            const body = (
+              <>
+                <Icon size={22} className="text-[#2F6BFF]" aria-hidden="true" />
+                <span className="text-[12.5px] font-medium leading-tight text-[#334155]">{label}</span>
+              </>
+            );
+            const look = 'flex w-full flex-col items-center justify-center gap-2 rounded-xl bg-white/95 px-2 py-3.5 text-center shadow-[0_6px_18px_-12px_rgba(15,23,42,.35)]';
+            return (
+              <li key={label}>
+                {onOpen
+                  ? <button type="button" onClick={() => onOpen(open)} className={`${look} transition hover:ring-2 hover:ring-[#C9D5FB]`}>{body}</button>
+                  : <div className={`${look} cursor-default select-none`}>{body}</div>}
+              </li>
+            );
+          })}
         </ul>
         <div className="pointer-events-none hidden h-[104px] w-[130px] shrink-0 sm:block">
           <Growth />

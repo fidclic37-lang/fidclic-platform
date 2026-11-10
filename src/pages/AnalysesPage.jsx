@@ -11,6 +11,7 @@ import PeriodMenu, { periodParams, readPeriod, savePeriod, validPeriod } from '.
 import { flash } from '../lib/flash';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
+import ImpactDetail from '../components/ImpactDetail';
 import { Uplift, HowItWorks } from '../components/TemoinResult';
 import TrendChart from '../components/TrendChart';
 import ProductReturnBlock from '../components/ProductReturnBlock';
@@ -310,9 +311,13 @@ const Donut = ({ mix, unit = 'Clients' }) => {
 
 /* « Impact FidClic »: the card from the mockup (2026-10-10, the same as the
    Tableau de bord's), and beside it what brought the revenue, source by source. */
-const ImpactPanel = ({ imp }) => (
+const ImpactPanel = ({ imp, params }) => {
+  // clicked, the detail opens right below, here in Analyses (user, 2026-11-10)
+  const [open, setOpen] = useState(null);
+  return (
+  <>
   <div id="impact" className="mb-4 grid scroll-mt-24 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-    <ImpactFidClicCard value={imp.revenue} />
+    <ImpactFidClicCard value={imp.revenue} onOpen={params ? (o) => setOpen({ ...o, at: Date.now() }) : null} />
     <section className="rounded-2xl border border-[#E6EEFB] bg-white p-5 shadow-[0_18px_40px_-34px_rgba(11,28,63,.45)]">
       <h3 className="text-[15px] font-bold text-[#0B1C3F]">Détail par source</h3>
       <p className="mt-1 text-[12.5px] text-[#475569]">
@@ -369,7 +374,10 @@ const ImpactPanel = ({ imp }) => (
       </p>
     </section>
   </div>
-);
+  {open && <ImpactDetail from="analyses" params={params} initial={open} onClose={() => setOpen(null)} />}
+  </>
+  );
+};
 
 /* « Ce que FidClic vous rapporte vraiment » (user, 2026-10-25): the groupe
    témoin's answer for the period — the messaged clients against the 15 %
@@ -418,10 +426,10 @@ const UpliftPanel = ({ u }) => {
 };
 
 /* ── tabs ─────────────────────────────────────────────────────────────── */
-const TabVue = ({ d }) => (
+const TabVue = ({ d, params }) => (
   <>
     <Strip items={d.strip} />
-    {d.impact && <ImpactPanel imp={d.impact} />}
+    {d.impact && <ImpactPanel imp={d.impact} params={params} />}
     {d.impact?.uplift && <UpliftPanel u={d.impact.uplift} />}
     <div className="mb-4 grid gap-4 lg:grid-cols-2">
       <Panel title="Évolution du chiffre d'affaires">
@@ -822,7 +830,7 @@ export default function AnalysesPage() {
         <div key="data" className={loading ? 'opacity-60 transition-opacity' : 'transition-opacity'}>
           <OpenCtx.Provider value={open}>
             <TabCtx.Provider value={payload.tab}>
-              <Renderer d={payload.data} />
+              <Renderer d={payload.data} params={params} />
             </TabCtx.Provider>
           </OpenCtx.Provider>
         </div>

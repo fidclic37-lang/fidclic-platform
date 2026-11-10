@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import PeriodMenu, { periodParams, readPeriod, savePeriod, validPeriod } from '../components/PeriodMenu';
 import InfoTip from '../components/InfoTip';
 import ImpactFidClicCard from '../components/ImpactFidClicCard';
+import ImpactDetail from '../components/ImpactDetail';
 import TrendChart from '../components/TrendChart';
 import DecimalInput from '../components/DecimalInput';
 import { eur } from '../lib/money';
@@ -240,6 +241,8 @@ export default function DashboardHomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [goalOpen, setGoalOpen] = useState(false);
+  // « Impact FidClic » opened here, on the Tableau de bord (user, 2026-11-10)
+  const [impactOpen, setImpactOpen] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true); setError('');
@@ -415,10 +418,13 @@ export default function DashboardHomePage() {
           </div>
         </Panel>
 
-        {/* « Impact FidClic » from the mockup (2026-10-10): not a link; its
-            tiles only say what brings the revenue back */}
-        <ImpactFidClicCard value={d?.impact?.value} />
+        {/* « Impact FidClic » from the mockup (2026-10-10); clicked, its
+            detail opens right below (2026-11-10) */}
+        <ImpactFidClicCard value={d?.impact?.value} onOpen={(o) => setImpactOpen({ ...o, at: Date.now() })} />
       </div>
+      {impactOpen && (
+        <ImpactDetail from="home" params={params} initial={impactOpen} onClose={() => setImpactOpen(null)} />
+      )}
 
       {/* the two charts */}
       <div className="mb-4 grid gap-4 lg:grid-cols-2">

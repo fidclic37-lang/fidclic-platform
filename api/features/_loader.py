@@ -87,6 +87,8 @@ MODULES = [
     # Tableau de bord — the home page's eleven panels, read off one month of
     # visits in a single pass, plus the merchant's monthly revenue goal.
     "features.dashboard_home",
+    # « Impact FidClic » clicked: by action, by visit, by day, CSV (2026-11-10)
+    "features.impact_detail",
     # Clients — the page's four figures, its eight quick segments and its
     # paginated table. Sits beside /api/owner/customers, which is untouched.
     "features.clients_page",
