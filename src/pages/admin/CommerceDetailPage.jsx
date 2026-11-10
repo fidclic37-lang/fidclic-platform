@@ -96,7 +96,9 @@ export default function CommerceDetailPage() {
       <header className="mb-4 mt-2 flex flex-wrap items-start gap-4">
         <CommerceLogo c={d} size={84} />
         <div className="min-w-0 flex-1">
-          <h1 className="flex flex-wrap items-center gap-3 text-[28px] font-bold leading-tight text-[#0B1C3F]"><span translate="no">{d.name}</span> <StatusPill s={d.status} label={d.status_label} /></h1>
+          {/* a boutique chosen: its own name on top (user, 2026-11-10: Palissy's figures under « Libérté ») */}
+          <h1 data-testid="commerce-title" className="flex flex-wrap items-center gap-3 text-[28px] font-bold leading-tight text-[#0B1C3F]"><span translate="no">{d.store ? d.store.name : d.name}</span> <StatusPill s={d.status} label={d.status_label} /></h1>
+          {d.store && <p className="mt-0.5 text-[13px] text-[#475569]">Boutique de la franchise <strong translate="no" className="text-[#0B1C3F]">{d.name}</strong> · {d.store_list.length} boutiques</p>}
           {multi && <StorePicker d={d} store={store} onPick={(s) => pickStore(s)} />}
           <p className="mt-1 text-[14px] text-[#64748B]">{[d.sector, d.city && `${d.city}${d.postal_code ? ` (${d.postal_code})` : ''}`].filter(Boolean).join(' • ') || '—'}</p>
           <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[#475569]">
@@ -204,7 +206,8 @@ function BoutiquesTab({ id, current, onOpen, onView }) {
       .catch(() => setRows([]));
   }, [id]);
   if (!rows) return <Loading />;
-  const ago = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Jamais');
+  // 24 h, Paris (never « 8:56 PM »)
+  const ago = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Paris' }) : 'Jamais');
   return (
     <Card>
       <Head icon={Store} title={`Boutiques (${rows.length})`} sub="Chaque boutique avec ses propres chiffres. « Voir » ouvre cette page pour elle seule." />
@@ -225,7 +228,7 @@ function BoutiquesTab({ id, current, onOpen, onView }) {
                 <td className="px-2 py-2.5">{nf(s.visits_30d)}</td>
                 <td className="px-2 py-2.5">{nf(s.cards_week)}</td>
                 <td className="px-2 py-2.5">{nf(s.scans_week)}</td>
-                <td className="whitespace-nowrap px-2 py-2.5 text-[#475569]">{ago(s.last_activity)}</td>
+                <td className="whitespace-nowrap px-2 py-2.5 text-[#475569]" translate="no">{ago(s.last_activity)}</td>
                 <td className="whitespace-nowrap px-2 py-2.5 text-right">
                   <button type="button" onClick={() => onOpen(s.id)} className="mr-2 inline-flex h-8 items-center gap-1 rounded-lg border border-[#DCE3EE] px-2.5 text-[12.5px] text-[#0B1C3F] hover:border-[#2F6BFF]"><Eye size={13} /> Voir</button>
                   <button type="button" onClick={() => onView(s.id)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#2F6BFF] px-2.5 text-[12.5px] text-[#2F6BFF]"><ExternalLink size={13} /> Accéder au compte</button>

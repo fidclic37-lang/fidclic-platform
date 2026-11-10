@@ -9,6 +9,8 @@ import { test, expect } from '@playwright/test';
 
 const ADMIN = { email: 'admin@fidelitour.com', password: 'Fidelit0ur!Adm' };   // local seed only
 test.use({ viewport: { width: 1536, height: 960 } });
+// the local mongomock server answers a business's page in ~15 s on the demo seed
+test.setTimeout(240_000);
 
 test('the super admin sees each boutique of a franchise and opens one', async ({ page, request, context }) => {
   const errors = [];
@@ -23,7 +25,7 @@ test('the super admin sees each boutique of a franchise and opens one', async ({
   await page.goto('/login');
   await page.evaluate((t) => localStorage.setItem('fidelitour_access_token', t), login.access_token);
   await page.goto('/admin/commerces/tenant-2');
-  await page.getByRole('button', { name: 'Boutiques', exact: true }).click({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Boutiques', exact: true }).click({ timeout: 60_000 });
   const table = page.getByTestId('stores-table');
   await expect(table.locator('tbody tr')).toHaveCount(api.stores.length);
   await expect(table.locator(`tr[data-store="${second.id}"]`)).toContainText(second.name);
@@ -34,7 +36,8 @@ test('the super admin sees each boutique of a franchise and opens one', async ({
   await table.locator(`tr[data-store="${second.id}"]`).getByRole('button', { name: 'Voir' }).click();
   await asked;
   await expect(page).toHaveURL(new RegExp(`store=${second.id}`));
-  await expect(page.getByTestId('store-picker')).toHaveValue(second.id);
+  await expect(page.getByTestId('store-picker')).toHaveValue(second.id, { timeout: 60_000 });
+  await expect(page.getByTestId('commerce-title')).toContainText(second.name, { timeout: 60_000 });
   const one = await (await request.get(`/api/admin/commerces/tenant-2?store=${second.id}`, { headers: A })).json();
   expect(one.store.id).toBe(second.id);
   expect(one.kpis.find((k) => k.key === 'clients').value).toBe(second.clients);
@@ -60,12 +63,25 @@ test('the super admin sees each boutique of a franchise and opens one', async ({
   await ownerCall;
   expect(await view.evaluate(() => sessionStorage.getItem('ft_selected_branch_v1'))).toBe(second.id);
   // the menu under the logo names that store
-  await expect(view.getByText(second.name).first()).toBeVisible({ timeout: 20_000 });
+  await expect(view.getByText(second.name).first()).toBeVisible({ timeout: 60_000 });
   // the store picker never asks: the dashboard is already in that store
   await expect(view.getByText('Choisissez votre établissement')).toHaveCount(0);
   await view.screenshot({ path: 'test-results/admin-stores-view-as.png' });
   // the super admin's own tab keeps no store
   expect(await page.evaluate(() => localStorage.getItem('ft_selected_branch_v1'))).toBeNull();
+
+  // « Commerces » list: each boutique of the franchise on its own line
+  await page.goto('/admin/commerces');
+  const sub = page.locator('tr[data-store-row]');
+  await expect(sub.first()).toBeVisible({ timeout: 60_000 });
+  for (const s of api.stores) await expect(page.locator(`tr[data-store-row="${s.id}"]`)).toContainText(s.name);
+  await page.screenshot({ path: 'test-results/admin-stores-in-list.png' });
+  await page.locator(`tr[data-store-row="${second.id}"]`).click();
+  await expect(page).toHaveURL(new RegExp(`/admin/commerces/tenant-2\\?store=${second.id}`));
+  // the boutique's own name on top, not the franchise's
+  await expect(page.getByTestId('commerce-title')).toContainText(second.name, { timeout: 60_000 });
+  await expect(page.getByText('Boutique de la franchise')).toBeVisible();
+  await page.screenshot({ path: 'test-results/admin-stores-title.png' });
 
   // a one-shop business has no « Boutiques » tab
   const all = await (await request.get('/api/admin/commerces?per_page=50', { headers: A })).json();
@@ -76,7 +92,7 @@ test('the super admin sees each boutique of a franchise and opens one', async ({
   }
   expect(solo).toBeTruthy();
   await page.goto(`/admin/commerces/${solo}`);
-  await expect(page.getByRole('button', { name: "Vue d'ensemble" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('button', { name: "Vue d'ensemble" })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('button', { name: 'Boutiques', exact: true })).toHaveCount(0);
   expect(errors).toEqual([]);
 });

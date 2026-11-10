@@ -124,6 +124,22 @@ def main():
     check("a one-shop business: one row, not multi", len(s.get("stores") or []) == 1 and s.get("multi") is False, s)
     check("unknown business → 404", http("GET", "/api/admin/commerces/nope/stores", headers=A).status_code == 404)
 
+    print("1b. La liste des commerces montre les boutiques d'une franchise")
+    lst = http("GET", "/api/admin/commerces?per_page=50", headers=A).json()
+    row = next((r for r in lst.get("rows") or [] if r["id"] == "rt"), {})
+    solo_row = next((r for r in lst.get("rows") or [] if r["id"] == "solo"), {})
+    check("Royal Trim's row lists its three open stores, main first",
+          [x["id"] for x in row.get("stores") or []] == ["main", "b2", "b3"], row.get("stores"))
+    st = {x["id"]: x for x in row.get("stores") or []}
+    check("each with its own name and figures (as the Boutiques tab)",
+          st.get("b2", {}).get("name") == "ROYAL TRIM PL-MONSTRE" and st.get("b2", {}).get("clients") == 2
+          and st.get("main", {}).get("visits_30d") == 4 and st.get("b3", {}).get("clients") == 0, st)
+    check("a one-store business has no store rows", not solo_row.get("stores"), solo_row.get("stores"))
+    found = http("GET", "/api/admin/commerces?q=monstre", headers=A).json()
+    check("searching a store's name finds its business, the store pointed out",
+          [r["id"] for r in found.get("rows") or []] == ["rt"] and found["rows"][0].get("match_stores") == ["b2"], found.get("rows"))
+    check("…a closed store's name does not", http("GET", "/api/admin/commerces?q=Fermée", headers=A).json().get("total") == 0)
+
     print("2. Une boutique : la même page, ses chiffres seulement")
     whole = http("GET", "/api/admin/commerces/rt", headers=A).json()
     k = lambda body, key: next((x["value"] for x in body.get("kpis") or [] if x["key"] == key), None)   # noqa: E731

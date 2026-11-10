@@ -160,7 +160,8 @@ export default function CommercesPage() {
               </tr></thead>
               <tbody>
                 {d.rows.map((c) => (
-                  <tr key={c.id} onClick={() => navigate(`/admin/commerces/${c.id}`)} className="cursor-pointer border-b border-[#F4F7FC] hover:bg-[#FAFCFF]">
+                  <React.Fragment key={c.id}>
+                  <tr onClick={() => navigate(`/admin/commerces/${c.id}`)} className={`cursor-pointer hover:bg-[#FAFCFF] ${c.stores?.length ? '' : 'border-b border-[#F4F7FC]'}`}>
                     <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Choisir ${c.name}`} checked={picked.includes(c.id)} onChange={(e) => setPicked(e.target.checked ? [...picked, c.id] : picked.filter((x) => x !== c.id))} className="accent-[#2F6BFF]" /></td>
                     <td className="px-2 py-2"><span className="flex items-center gap-2.5"><CommerceLogo c={c} /><span translate="no" className="max-w-[200px] truncate font-medium text-[#0B1C3F]">{c.name}</span></span></td>
                     <td className="px-2 py-2 text-[#475569]">{c.sector ? <span className="flex items-center gap-1.5"><Store size={13} className="text-[#94A3B8]" />{c.sector}</span> : '—'}</td>
@@ -175,6 +176,23 @@ export default function CommercesPage() {
                       {menu === c.id && rowMenu(c)}
                     </td>
                   </tr>
+                  {/* a franchise's boutiques, each on its own line (user, 2026-11-10) */}
+                  {(c.stores || []).map((s, i) => (
+                    <tr key={`${c.id}:${s.id}`} data-store-row={s.id} onClick={() => navigate(`/admin/commerces/${c.id}?store=${encodeURIComponent(s.id)}`)}
+                        className={`cursor-pointer bg-[#FAFCFF] hover:bg-[#F1F6FF] ${i === c.stores.length - 1 ? 'border-b border-[#EDF1F7]' : ''} ${(c.match_stores || []).includes(s.id) ? 'ring-1 ring-inset ring-[#BFD3FF]' : ''}`}>
+                      <td className="px-2 py-1.5" />
+                      <td className="py-1.5 pl-9 pr-2"><span className="flex items-center gap-2"><span className="text-[#CBD5E1]">└</span><Store size={13} className="text-[#2F6BFF]" /><span translate="no" className="max-w-[190px] truncate text-[12.5px] font-medium text-[#0B1C3F]">{s.name}</span>{s.is_main && <span className="rounded bg-[#EEF4FF] px-1.5 text-[10.5px] text-[#2F6BFF]">Principale</span>}</span></td>
+                      <td className="px-2 py-1.5 text-[12px] text-[#94A3B8]">Boutique</td>
+                      <td className="px-2 py-1.5 text-[12px] text-[#475569]">{s.city || '—'}</td>
+                      <td className="px-2 py-1.5" />
+                      <td className="px-2 py-1.5 text-[12.5px] tabular-nums text-[#0B1C3F]">{nf(s.clients)}</td>
+                      <td className="px-2 py-1.5 text-[12.5px] tabular-nums text-[#0B1C3F]" title="Visites des 30 derniers jours">{nf(s.visits_30d)}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-[12px] text-[#475569]">{s.last_activity ? ago(s.last_activity) : 'Jamais'}</td>
+                      <td className="px-2 py-1.5 text-[12px] text-[#64748B]" title="Cartes / scans de la semaine">{nf(s.cards_week)} cartes · {nf(s.scans_week)} scans</td>
+                      <td className="px-2 py-1.5" />
+                    </tr>
+                  ))}
+                  </React.Fragment>
                 ))}
                 {!d.rows.length && <tr><td colSpan={10} className="py-12 text-center text-[#64748B]">Aucun commerce ici.</td></tr>}
               </tbody>
@@ -191,6 +209,14 @@ export default function CommercesPage() {
                   <span title={weekly(c) || ''}><strong className="block text-[15px] text-[#0B1C3F]">{c.cards_week ?? '—'}</strong>cartes/sem.</span>
                 </p>
                 <p className="mt-3 flex items-center justify-between"><PlanPill p={c.plan} /><span className="text-[11.5px] text-[#94A3B8]">{ago(c.last_activity)}</span></p>
+                {!!c.stores?.length && (
+                  <span className="mt-3 flex flex-wrap gap-1.5">
+                    {c.stores.map((s) => (
+                      <span key={s.id} role="link" tabIndex={0} onClick={(e) => { e.stopPropagation(); navigate(`/admin/commerces/${c.id}?store=${encodeURIComponent(s.id)}`); }}
+                            className="inline-flex items-center gap-1 rounded-lg bg-[#F4F7FC] px-2 py-1 text-[11.5px] text-[#0B1C3F] hover:bg-[#EAF1FF]"><Store size={11} className="text-[#2F6BFF]" /><span translate="no">{s.name}</span> · {nf(s.clients)}</span>
+                    ))}
+                  </span>
+                )}
               </button>
             ))}
           </div>
