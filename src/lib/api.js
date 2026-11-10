@@ -673,6 +673,9 @@ export const ownerAPI = {
   recalculerProduits: () => api.post('/owner/analyses/produits-retour/recalculer'),
   // Tableau de bord — the home page's eleven panels, and the monthly goal.
   homeOverview: (params) => api.get('/owner/home/overview', { params }),
+  // « Impact FidClic » opened: from the Tableau de bord ('home') or Analyses ('analyses')
+  impactDetail: (from, params) => api.get(`/owner/${from === 'analyses' ? 'analyses' : 'home'}/impact`, { params }),
+  impactDetailExport: (from, params) => api.get(`/owner/${from === 'analyses' ? 'analyses' : 'home'}/impact/export`, { params, responseType: 'blob' }),
   homeCampaigns: (params) => api.get('/owner/home/campaigns', { params }),
   planAccess: () => api.get('/owner/plan-access'),
   integrations: () => api.get('/owner/integrations'),
