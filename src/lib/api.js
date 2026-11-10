@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { keyOf } from './myCards';
+import { getStoreChoice } from './storeChoice';
 
 const api = axios.create({
   baseURL: '/api',
@@ -35,7 +36,7 @@ api.interceptors.request.use((config) => {
     // The establishment chosen under the logo (BranchContext). The server
     // decides what the caller may actually see — see features/store_scope.py.
     config.headers = config.headers || {};
-    config.headers['X-FidClic-Store'] = localStorage.getItem('ft_selected_branch_v1') || 'all';
+    config.headers['X-FidClic-Store'] = getStoreChoice() || 'all';
     // A card's own phone proves it with the card's owner key (lib/myCards):
     // the server answers card data, prefs, delete, RGPD and Wallet passes
     // only to that phone or to the shop (2026-10-09 — the card number alone
@@ -369,11 +370,12 @@ export const adminAPI = {
   commercesExport: (params) => api.get('/admin/commerces/export', { params, responseType: 'blob' }),
   commercesRules: (body) => api.put('/admin/commerces/rules', body),
   addCommerce: (body) => api.post('/admin/commerces', body),
-  commerce: (id) => api.get(`/admin/commerces/${id}`),
+  commerce: (id, params) => api.get(`/admin/commerces/${id}`, { params }),
+  commerceStores: (id) => api.get(`/admin/commerces/${id}/stores`),
   editCommerce: (id, body) => api.put(`/admin/commerces/${id}`, body),
   commerceClients: (id, params) => api.get(`/admin/commerces/${id}/clients`, { params }),
-  commerceDetails: (id) => api.get(`/admin/commerces/${id}/details`),
-  commerceZone: (id) => api.get(`/admin/commerces/${id}/zone`),
+  commerceDetails: (id, params) => api.get(`/admin/commerces/${id}/details`, { params }),
+  commerceZone: (id, params) => api.get(`/admin/commerces/${id}/zone`, { params }),
   commercePlan: (id, plan) => api.post(`/admin/commerces/${id}/plan`, { plan }),
   suspendCommerce: (id, reason) => api.post(`/admin/commerces/${id}/suspend`, { reason }),
   reactivateCommerce: (id) => api.post(`/admin/commerces/${id}/reactivate`),
@@ -387,7 +389,7 @@ export const adminAPI = {
   deepPlanMoves: (params) => api.get('/admin/analytics/deep/plan-moves', { params }),
   deepGrowth: (params) => api.get('/admin/analytics/deep/growth', { params }),
   deepMap: () => api.get('/admin/analytics/deep/map'),
-  viewAs: (id) => api.post(`/admin/commerces/${id}/view-as`),
+  viewAs: (id, store) => api.post(`/admin/commerces/${id}/view-as`, null, { params: store ? { store } : undefined }),
   setFranchise: (id, body) => api.put(`/admin/tenants/${id}/franchise`, body),
   invoicingIssuer: () => api.get('/admin/invoicing/issuer'),
   saveInvoicingIssuer: (body) => api.put('/admin/invoicing/issuer', body),

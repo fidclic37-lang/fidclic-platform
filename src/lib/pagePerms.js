@@ -1,6 +1,8 @@
 /* Rôles et permissions par page (Équipe & accès, 2026-10-13): which page a
    /dashboard address is, and whether an account with its own permissions
    may open it. Mirrors api/features/role_perms.PAGES. */
+import { getStoreChoice } from './storeChoice';
+
 export const PAGE_ROUTES = [
   ['/dashboard/scan', 'scan'], ['/dashboard/analytics', 'analytics'], ['/dashboard/analyses', 'analytics'],
   ['/dashboard/customers', 'customers'], ['/dashboard/clients', 'customers'], ['/dashboard/campaigns', 'campaigns'],
@@ -51,7 +53,7 @@ export function levelOf(user, key) {
   const perms = user.page_perms;
   if (!perms || typeof perms !== 'object') return 'none';
   let store = null;
-  try { store = window.localStorage.getItem('ft_selected_branch_v1'); } catch { store = null; }
+  store = getStoreChoice();
   if (store && perms[store]) return perms[store][key] || 'none';
   const all = Object.values(perms);
   if (!all.length) return 'none';

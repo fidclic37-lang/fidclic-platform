@@ -39,11 +39,13 @@ const TABS = [['', 'Tous', 'all', ['#2F6BFF', '#fff', '#EAF1FF']], ['actif', 'Ac
   ['a_risque', 'À risque', 'a_risque', ['#FFF4DB', '#D97706', '#fff']], ['nouveaux', 'Nouveaux', 'nouveaux', ['#F3EEFF', '#7C3AED', '#fff']],
   ['resilie', 'Résiliés', 'resilie', ['#F1F5F9', '#0B1C3F', '#fff']], ['non_converti', 'Essais non convertis', 'non_converti', ['#F3EEFF', '#7C3AED', '#fff']]];
 
-export async function openViewAs(id, say) {
+export async function openViewAs(id, say, store) {
   const w = window.open('about:blank', '_blank');
   try {
-    const { data } = await adminAPI.viewAs(id);
-    if (w) w.location.href = `/voir-compte#t=${encodeURIComponent(data.token)}`;
+    const { data } = await adminAPI.viewAs(id, store || undefined);
+    // ?store: the account opens in that establishment, kept for this tab only
+    const s = data.store?.id ? `&s=${encodeURIComponent(data.store.id)}` : '';
+    if (w) w.location.href = `/voir-compte#t=${encodeURIComponent(data.token)}${s}`;
   } catch (e) { if (w) w.close(); say?.(e?.response?.data?.detail || 'Ouverture impossible.'); }
 }
 
