@@ -9,14 +9,14 @@ import { eur } from '../lib/money';
  * Analyses. What is counted is explained by the (i).
  *
  * Clickable since 2026-11-10 (user): with `onOpen`, the card opens the detail
- * on the page it sits on — « Voir le détail » by action, and each tile its
- * own view: Campagnes → the campaigns, Visites générées → the visits,
- * Parrainage → the parrains. Without `onOpen` it stays a plain card.
+ * on the page it sits on — the visits FidClic counted; each tile opens it on
+ * its own source: Campagnes → the campaigns', Visites générées → all of
+ * them, Parrainage → the filleuls'. Without `onOpen` it stays a plain card.
  */
 const TILES = [
-  { icon: Send, label: 'Campagnes', open: { view: 'action', source: 'campagnes' } },
-  { icon: Users, label: 'Visites générées', open: { view: 'visite', source: '' } },
-  { icon: Gift, label: 'Parrainage', open: { view: 'action', source: 'parrainage' } },
+  { icon: Send, label: 'Campagnes', open: { source: 'campagnes' } },
+  { icon: Users, label: 'Visites générées', open: { source: '' } },
+  { icon: Gift, label: 'Parrainage', open: { source: 'parrainage' } },
 ];
 
 // the rising bars of the mockup — decoration only
@@ -65,7 +65,7 @@ export default function ImpactFidClicCard({ value, className = '', onOpen = null
           </h2>
           <p className="mt-1 text-[13.5px] text-[#64748B]">Chiffre d'affaires attribué aux actions FidClic</p>
           {onOpen && (
-            <button type="button" onClick={() => onOpen({ view: 'action', source: '' })}
+            <button type="button" onClick={() => onOpen({ source: '' })}
                     className="mt-1.5 text-[13px] font-semibold text-[#2F6BFF] hover:underline">
               Voir le détail →
             </button>
