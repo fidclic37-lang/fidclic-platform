@@ -40,10 +40,15 @@ test('the chip shows each birthday, in birthday order, and takes the column away
   await page.goto('/dashboard/customers');
   const table = page.locator('#clients-list table');
   await expect(table.getByRole('columnheader', { name: 'Anniversaire' })).toHaveCount(0, SETTLE);
+  // without the chip the menu does not offer the birthday order (2026-11-10)
+  const sortMenu = page.getByLabel('Trier par');
+  await expect(sortMenu.locator('option[value="birthday"]')).toHaveCount(0);
 
   await page.getByRole('button', { name: /Anniversaires du mois/ }).first().click();
   await expect(table.getByRole('columnheader', { name: 'Anniversaire' })).toBeVisible(SETTLE);
-  await expect(page.locator('select').filter({ hasText: 'Anniversaire (1er → 31)' })).toHaveValue('birthday');
+  // « Anniversaires du mois », never « 1er → 31 »: months have 28 to 31 days
+  await expect(sortMenu).toHaveValue('birthday');
+  await expect(sortMenu.locator('option[value="birthday"]')).toHaveText('Anniversaires du mois');
 
   // 1 → 31: the 2nd comes before the 28th, whatever their sign-up order
   // (the header turns at once; the rows follow when the new list arrives)
@@ -62,5 +67,6 @@ test('the chip shows each birthday, in birthday order, and takes the column away
   // the chip off: the column and the birthday order go with it
   await page.getByRole('button', { name: 'Retirer ce filtre' }).first().click();
   await expect(table.getByRole('columnheader', { name: 'Anniversaire' })).toHaveCount(0, SETTLE);
-  await expect(page.locator('select').filter({ hasText: 'Anniversaire (1er → 31)' })).toHaveValue('recent');
+  await expect(sortMenu).toHaveValue('recent');
+  await expect(sortMenu.locator('option[value="birthday"]')).toHaveCount(0);
 });

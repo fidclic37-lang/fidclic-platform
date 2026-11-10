@@ -82,13 +82,17 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the other sorts are unchanged",
           CP.list_page(segment="birthday", per_page=50, token_data=TD())["rows"][0]["id"] == "c28")
     labels = {s["key"]: s["label"] for s in CP.SORT_LABELS}
-    check("the sort menu offers it", labels.get("birthday") == "Anniversaire (1er → 31)")
+    # « 1er → 31 » is not every month (30 days, février 28/29): the menu says
+    # what it is (user, 2026-11-10)
+    check("the sort menu names it « Anniversaires du mois »", labels.get("birthday") == "Anniversaires du mois")
+    check("… and never « 1er → 31 »", not any("31" in l for l in labels.values()))
 
     print("\nThe screen")
     src = open(os.path.join(os.path.dirname(__file__), "..", "..",
                             "src", "pages", "ClientsPage.jsx")).read()
     check("the column « Anniversaire » appears with the chip", "showBirthday ? ['Anniversaire']" in src)
     check("the chip turns the birthday order on", "setSort('birthday')" in src)
+    check("the menu offers it only with the chip", "s.key !== 'birthday' || showBirthday" in src)
 
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
