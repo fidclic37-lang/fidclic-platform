@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAnchoredMenu } from '../lib/anchoredMenu';
 import { canEdit } from '../lib/pagePerms';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -419,7 +420,10 @@ export default function SegmentationPage() {
   const [flash, setFlash] = useState('');
   const [typed, setTyped] = useState('');
   const [builder, setBuilder] = useState(false);
-  const [menuFor, setMenuFor] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const menu = useAnchoredMenu();
+  const menuFor = menu.openId;
+  const setMenuFor = () => menu.close();          // only ever asked to close
   const [viewing, setViewing] = useState(null);
 
   const load = useCallback(() => {
@@ -609,26 +613,26 @@ export default function SegmentationPage() {
                         </button>
                         <span className="relative">
                           <button type="button"
-                                  onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === s.id ? null : s.id); }}
+                                  onClick={(e) => menu.toggle(e, s.id)}
                                   aria-label={`Actions pour le segment « ${s.name} »`} aria-haspopup="menu" aria-expanded={menuFor === s.id}
                                   title="Actions"
                                   className="rounded-lg p-1.5 text-[#94A3B8] transition hover:bg-[#F4F7FC]">
                             <MoreVertical size={15} />
                           </button>
                           {menuFor === s.id && (
-                            <span onClick={(e) => e.stopPropagation()}
-                                  className="absolute right-0 top-8 z-20 w-52 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.4)]">
-                              <button type="button" onClick={() => { setMenuFor(null); toCampaign(s); }}
+                            <span {...menu.menuProps}
+                                  className="z-50 w-52 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.4)]">
+                              <button type="button" role="menuitem" onClick={() => { setMenuFor(null); toCampaign(s); }}
                                       className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F6F9FF]">
                                 <Send size={13} /> Créer une campagne
                               </button>
                               {s.builtin ? (
-                                <button type="button" onClick={() => { setMenuFor(null); useModel({ key: s.id.split(':')[1] }); }}
+                                <button type="button" role="menuitem" onClick={() => { setMenuFor(null); useModel({ key: s.id.split(':')[1] }); }}
                                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F6F9FF]">
                                   <Plus size={13} /> Enregistrer dans mes segments
                                 </button>
                               ) : (canEdit(user, 'segmentation') || s.created_by === user?.email) && (
-                                <button type="button" onClick={() => remove(s)}
+                                <button type="button" role="menuitem" onClick={() => remove(s)}
                                         className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-[#C0392B] hover:bg-[#FEECEC]">
                                   <Trash2 size={13} /> Supprimer
                                 </button>
