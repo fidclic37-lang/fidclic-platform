@@ -56,7 +56,8 @@ from features import period as P
 
 _db = None
 ENABLED = True                 # False: every figure from the visits (the tests' reference)
-SCHEMA = 2                     # a row summed by another layout is summed again (2: iv, iq)
+SCHEMA = 3                     # a row summed by another layout is summed again (2: iv, iq; 3: each
+                               # message in its own box, reactions not counted — 2026-11-10)
 MICRO = 1_000_000
 NONE = "~none"                 # the establishment of a visit with no branch_id
 COLL, STAMPS = "visit_days", "visit_days_stamps"

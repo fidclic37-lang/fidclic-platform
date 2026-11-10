@@ -448,6 +448,8 @@ def _deliver(tid: str, row: Dict[str, Any], items, at: datetime, result: Dict[st
                 "id": log_id, "tenant_id": tid, "scenario_id": row["id"],
                 "customer_id": cust["id"], "sent_at": at,
                 "title": title, "body": body, "clicked_at": None,
+                # what fired it (fidclic_impact: a palier one answers a visit, never CA FidClic)
+                "trigger": row.get("trigger"),
             })
             # 1. the wallet card itself — the offer is written onto the pass
             #    and the device is asked to come and fetch it.

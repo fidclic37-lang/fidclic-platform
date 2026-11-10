@@ -60,6 +60,17 @@ GEO = {"proximity"}
 OFFERS = {"offer", "flash_sale", "voucher_expiry", "promotion_update", "card_override", "push_wallet"}
 AUTOMATIONS = {"birthday", "inactive", "inactive_rescue", "almost_there", "reactivation"}
 
+# EACH MESSAGE IN ITS OWN BOX, ONLY GENUINE REASONS (user, 2026-11-10)
+#   « automation ko automation mein rakho, campaign ko campaign mein » — and a
+#   message sent BECAUSE of a visit, a signup or a palier gives the client no
+#   reason to come back: never counted, whatever its delay.
+# An automation's scenarios that answer a visit, a signup or a palier:
+REACTION_SCENARIOS = {"welcome", "tier_up", "near_reward", "referral", "google_review"}
+# Push Wallet triggers that answer a visit:
+WALLET_REACTIONS = {"tier_up"}
+# kinds that only an automation sends (its row may be gone since)
+AUTOMATION_KINDS = AUTOMATIONS | {"automation", "push_wallet"}
+
 
 def init(db):
     global _db
@@ -77,6 +88,73 @@ def source_of(kind: Optional[str]) -> Optional[str]:
     if k in AUTOMATIONS:
         return "automatisations"
     return "campagnes"          # campaign, scheduled, manual, news, event, custom…
+
+
+def credit_of(kind: Optional[str]) -> Optional[str]:
+    """The box of a message known by its kind alone. Unlike source_of (the
+    « déjà contacté » guard's reading, kept as it was), a message only an
+    automation sends is Automatisations, and the « Merci pour votre
+    parrainage » is no reason to come."""
+    k = (kind or "").strip()
+    if k in NOT_COUNTED or k == "parrainage":
+        return None
+    if k in GEO:
+        return "geolocalisation"
+    if k in AUTOMATION_KINDS:
+        return "automatisations"
+    if k in OFFERS:
+        return "offres"
+    return "campagnes"
+
+
+def automation_source(scenario: Optional[str], trigger: Optional[str], timed: Optional[bool]) -> Optional[str]:
+    """The box of an automation's message: none for a reaction to a visit, a
+    signup or a palier; Géolocalisation for a proximity one; else
+    Automatisations. A « Personnalisée » counts only when it went out at its
+    hour (a date, a recurrence, « inactif depuis N jours »), not on an event."""
+    if scenario in REACTION_SCENARIOS:
+        return None
+    if scenario == "geo" or trigger == "geo":
+        return "geolocalisation"
+    if scenario == "custom":
+        return "automatisations" if timed else None
+    return "automatisations"
+
+
+def _automations(tid: str, ids: set) -> Dict[str, Dict[str, Any]]:
+    """{automation id: {"scenario", "trigger", "timed"}} as the automation is now —
+    for the messages that went out before they kept their own."""
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    try:
+        from features import automations as AU
+        out = {}
+        for r in _db.automations.find({"tenant_id": tid, "id": {"$in": sorted(ids)}},
+                                      {"_id": 0, "id": 1, "scenario": 1, "trigger": 1}):
+            tr = r.get("trigger") or {}
+            try:
+                timed = AU.is_timed(r.get("scenario"), tr)
+            except Exception:
+                timed = False
+            out[r["id"]] = {"scenario": r.get("scenario"), "trigger": tr.get("type"), "timed": timed}
+        return out
+    except Exception:
+        return {}
+
+
+def _note_source(m: Dict[str, Any], autos: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    aid = m.get("automation_id")
+    if aid:
+        now = autos.get(aid)
+        if now is None and not m.get("scenario"):
+            return credit_of(m.get("type"))            # its automation is gone: by its kind
+        now = now or {}
+        # what the message was when it went out wins over what the automation is now
+        trigger = m["trigger"] if "trigger" in m else now.get("trigger")
+        timed = m["timed"] if "timed" in m else now.get("timed")
+        return automation_source(m.get("scenario") or now.get("scenario"), trigger, timed)
+    return credit_of(m.get("type"))
 
 
 def _aware(value: Any) -> Optional[datetime]:
@@ -106,7 +184,8 @@ def _messages(tid: str, ids: set, since: datetime, until: datetime) -> Dict[str,
     try:
         notes = list(_db.push_notifications.find({"tenant_id": tid, "sent_at": rng},
                                                  {"_id": 0, "customer_id": 1, "type": 1, "sent_at": 1,
-                                                  "campaign_id": 1, "temoin": 1, "automation_id": 1, "title": 1}))
+                                                  "campaign_id": 1, "temoin": 1, "automation_id": 1, "title": 1,
+                                                  "scenario": 1, "trigger": 1, "timed": 1}))
     except Exception:
         notes = []
     # The campaigns a témoin measured, found by the ids the messages name —
@@ -118,15 +197,24 @@ def _messages(tid: str, ids: set, since: datetime, until: datetime) -> Dict[str,
                                                           "holdout_ids.0": {"$exists": True}})) if named else set()
     except Exception:
         measured_camps = set()
+    autos = _automations(tid, {m.get("automation_id") for m in notes})
     for m in notes:
-        add(m.get("customer_id"), m.get("sent_at"), source_of(m.get("type")),
+        add(m.get("customer_id"), m.get("sent_at"), _note_source(m, autos),
             m.get("temoin") or (m.get("campaign_id") in measured_camps),
             {"kind": m.get("type"), "campaign_id": m.get("campaign_id"),
              "automation_id": m.get("automation_id"), "title": m.get("title")})
     try:
-        for m in _db.push_wallet_log.find({"tenant_id": tid, "sent_at": rng},
-                                          {"_id": 0, "customer_id": 1, "sent_at": 1, "title": 1}):
-            add(m.get("customer_id"), m.get("sent_at"), "offres", ref={"kind": "push_wallet", "title": m.get("title")})
+        # Push Wallet: automations too — a palier one answers a visit
+        logs = list(_db.push_wallet_log.find({"tenant_id": tid, "sent_at": rng},
+                                             {"_id": 0, "customer_id": 1, "sent_at": 1, "title": 1,
+                                              "scenario_id": 1, "trigger": 1}))
+        need = sorted({m.get("scenario_id") for m in logs if m.get("scenario_id") and "trigger" not in m})
+        scen = {r["id"]: r.get("trigger") for r in _db.push_scenarios.find(
+            {"tenant_id": tid, "id": {"$in": need}}, {"_id": 0, "id": 1, "trigger": 1})} if need else {}
+        for m in logs:
+            trig = m["trigger"] if "trigger" in m else scen.get(m.get("scenario_id"))
+            add(m.get("customer_id"), m.get("sent_at"), None if trig in WALLET_REACTIONS else "automatisations",
+                ref={"kind": "push_wallet", "title": m.get("title")})
     except Exception:
         pass
     try:
