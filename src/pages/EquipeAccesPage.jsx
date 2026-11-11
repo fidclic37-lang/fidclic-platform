@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAnchoredMenu } from '../lib/anchoredMenu';
 import { FREE_ROLES as DEFAULT_SWITCH } from '../lib/storeSwitch';
 import {
   Users, UserPlus, Crown, ShieldCheck, User, Search, ChevronDown, SlidersHorizontal, Pencil,
@@ -271,25 +272,21 @@ function EditModal({ user, d, onClose, onSaved }) {
 }
 
 function RowMenu({ u, onAction }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const away = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', away);
-    return () => document.removeEventListener('mousedown', away);
-  }, [open]);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const m = useAnchoredMenu();
+  const open = m.openId !== null;
   if (!u.manageable) return <span className="inline-block h-9 w-9" />;
   const item = (icon, label, key, danger) => (
-    <button key={key} type="button" onClick={() => { setOpen(false); onAction(key, u); }}
+    <button key={key} type="button" role="menuitem" onClick={() => { m.close(); onAction(key, u); }}
             className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] hover:bg-[#F6F9FF] ${danger ? 'text-[#E11D48]' : 'text-[#0B1C3F]'}`}>{icon}{label}</button>
   );
   return (
-    <div ref={box} className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-label={`Actions — ${u.name}`}
+    <div className="relative">
+      <button type="button" onClick={(e) => m.toggle(e, u.id || u.email || 'row')} aria-label={`Actions — ${u.name}`}
+              aria-haspopup="menu" aria-expanded={open}
               className="flex h-9 w-9 items-center justify-center rounded-lg text-[#0B1C3F] hover:bg-[#F4F7FC]"><MoreVertical size={18} /></button>
       {open && (
-        <div className="absolute right-0 top-10 z-30 w-60 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.45)]">
+        <div {...m.menuProps} className="z-50 w-60 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.45)]">
           {item(<KeyRound size={15} />, 'Nouveau mot de passe', 'password')}
           {item(<Power size={15} />, u.active ? 'Désactiver le compte' : 'Réactiver le compte', 'toggle')}
           {item(<Trash2 size={15} />, 'Supprimer le compte', 'delete', true)}
