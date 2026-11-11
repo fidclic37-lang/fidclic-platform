@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAnchoredMenu } from '../lib/anchoredMenu';
 import { useNavigate } from 'react-router-dom';
 import {
   History as HistoryIcon, Download, ChevronDown, ChevronLeft, ChevronRight,
@@ -241,7 +242,10 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [drawer, setDrawer] = useState(null);
-  const [menuFor, setMenuFor] = useState(null);
+  // ⋯ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rowMenu = useAnchoredMenu();
+  const menuFor = rowMenu.openId;
+  const setMenuFor = () => rowMenu.close();          // only ever asked to close
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
@@ -501,28 +505,29 @@ export default function HistoryPage() {
                         <span className="relative">
                           <button
                             type="button" aria-label="Plus d'actions"
-                            onClick={(e) => { e.stopPropagation(); setMenuFor(menuFor === r.id ? null : r.id); }}
+                            aria-haspopup="menu" aria-expanded={menuFor === r.id}
+                            onClick={(e) => rowMenu.toggle(e, r.id)}
                             className="rounded-lg px-1.5 py-1.5 text-[#94A3B8] transition hover:bg-[#F4F7FC] hover:text-[#0B1C3F]"
                           >
                             <MoreHorizontal size={16} />
                           </button>
                           {menuFor === r.id && (
                             <span
-                              className="absolute right-0 top-full z-20 mt-1 flex w-[190px] flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]"
-                              onClick={(e) => e.stopPropagation()}
+                              {...rowMenu.menuProps}
+                              className="z-50 flex w-[190px] flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]"
                             >
-                              <button type="button" onClick={() => { setDrawer(r); setMenuFor(null); }}
+                              <button type="button" role="menuitem" onClick={() => { setDrawer(r); setMenuFor(null); }}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Voir le détail
                               </button>
                               {r.customer_id && (
-                                <button type="button"
+                                <button type="button" role="menuitem"
                                         onClick={() => navigate(`/dashboard/customers?q=${encodeURIComponent(r.customer_barcode || r.customer_name)}`)}
                                         className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                   Voir la fiche client
                                 </button>
                               )}
-                              <button type="button"
+                              <button type="button" role="menuitem"
                                       onClick={() => { setAction(r.action); setPage(1); setMenuFor(null); }}
                                       className="px-3 py-2 text-left text-[12.5px] text-[#334155] hover:bg-[#F4F7FC]">
                                 Filtrer sur « {r.label} »
