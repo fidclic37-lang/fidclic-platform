@@ -2166,6 +2166,15 @@ def health_check():
 SUPPORT_RECIPIENT_EMAIL = os.getenv("SUPPORT_RECIPIENT_EMAIL", "shuklaakshansh38@gmail.com")
 
 
+def _support_to() -> str:
+    """The support inbox — Super admin › Paramètres › Plateforme first (2026-11-11)."""
+    try:
+        from features import platform_config as _PC
+        return _PC.support_recipient()
+    except Exception:                                    # noqa: BLE001
+        return SUPPORT_RECIPIENT_EMAIL
+
+
 def _support_email_html(subject: str, message: str, ticket: dict) -> str:
     """Render the support ticket as a branded HTML email body."""
     safe_msg = (message or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
@@ -2219,7 +2228,7 @@ def _support_send_smtp(subject: str, message: str, ticket: dict) -> tuple[bool, 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"[FidClic Support] {subject}"
         msg["From"]    = formataddr(("FidClic Support", smtp_from))
-        msg["To"]      = SUPPORT_RECIPIENT_EMAIL
+        msg["To"]      = _support_to()
         # Set Reply-To to the business's email so support can hit reply.
         reply_to = ticket.get("from_email") or smtp_from
         msg["Reply-To"] = reply_to
@@ -2260,7 +2269,7 @@ def _support_send_resend(subject: str, message: str, ticket: dict) -> tuple[bool
         reply_to = ticket.get("from_email") or None
         body = {
             "from":     from_addr,
-            "to":       [SUPPORT_RECIPIENT_EMAIL],
+            "to":       [_support_to()],
             "subject":  f"[FidClic Support] {subject}",
             "html":     _support_email_html(subject, message, ticket),
         }
@@ -2299,7 +2308,7 @@ def _support_send_formsubmit(subject: str, message: str, ticket: dict) -> tuple[
             "submitted_at": ticket["created_at"].isoformat(),
         }
         r = _req.post(
-            f"https://formsubmit.co/ajax/{SUPPORT_RECIPIENT_EMAIL}",
+            f"https://formsubmit.co/ajax/{_support_to()}",
             json=fs_payload,
             timeout=10,
         )
@@ -2642,6 +2651,10 @@ def register(payload: Dict[str, Any], response: Response, request: Request = Non
     # Only customers and business_owners can self-register.
     if role not in ("customer", "business_owner"):
         raise HTTPException(status_code=403, detail="This role cannot self-register")
+    if role == "business_owner":
+        # Super admin › Paramètres › Plateforme: sign-ups can be closed (2026-11-11)
+        from features import platform_config as _PC
+        _PC.assert_signups_open()
 
     first_name = (payload.get("first_name") or "").strip()
     last_name = (payload.get("last_name") or "").strip()

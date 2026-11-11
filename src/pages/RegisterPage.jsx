@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -8,7 +8,7 @@ import OnboardingShell from '../components/OnboardingShell';
 import SocialAuthButtons from '../components/SocialAuthButtons';
 import { LEGAL_LINKS } from '../lib/legal';
 import { onboardingPath } from '../lib/onboarding';
-import { authAPI } from '../lib/api';
+import { authAPI, platformAPI } from '../lib/api';
 import { OWNER_HOME } from '../lib/modules';
 import PhoneField, { phoneValueError } from '../components/PhoneField';
 
@@ -52,6 +52,13 @@ const RegisterPage = () => {
     try { const r = await authAPI.checkEmail(v); setMailCheck(r.data); return r.data; } catch { return null; }
   };
 
+  // Super admin › Paramètres › Plateforme can close sign-ups (2026-11-11);
+  // the server refuses anyway, this only says it before the form is filled
+  const [closed, setClosed] = useState(null);
+  useEffect(() => {
+    platformAPI.status().then(({ data }) => { if (data && data.signups_open === false) setClosed(data.signups_message || ''); }).catch(() => {});
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setError('');
     if (!form.last_name.trim())  return setError(t('auth.last_name_required'));
@@ -84,8 +91,11 @@ const RegisterPage = () => {
         <p className="mt-2 text-[16px] text-[#4B5C7A]">{t('signup.subtitle')}</p>
       </div>
       {error && <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">⚠ {error}</div>}
+      {closed !== null && (
+        <div data-testid="signups-closed" className="mt-6 rounded-2xl border border-[#FDE68A] bg-[#FFFBEB] px-5 py-4 text-center text-[15px] text-[#92400E]">{closed}</div>
+      )}
 
-      <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-7 space-y-4" hidden={closed !== null}>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div><Label>{t('auth.last_name')}</Label>
             <Field icon={User}><input required type="text" autoComplete="family-name" placeholder={t('signup.last_name_placeholder')} className={INPUT} value={form.last_name} onChange={set('last_name')} /></Field></div>

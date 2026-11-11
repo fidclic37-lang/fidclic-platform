@@ -4,6 +4,7 @@ import { settingsAPI } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { can } from '../../lib/perms';
 import { Card, Loading, Breadcrumb, nf } from '../crm/ui';
+import PlatformTab from './settings/PlatformTab';
 
 /* Super admin › Paramètres (user, 2026-11-11). Three tabs, built one PR at a
    time: Services (here), Plateforme, Mes paramètres.
@@ -97,7 +98,7 @@ function Services({ editable }) {
   );
 }
 
-const TABS = [['services', 'Services']];
+const TABS = [['services', 'Services'], ['plateforme', 'Plateforme']];
 
 export default function AdminSettingsPage() {
   const { user } = useAuth();
@@ -110,7 +111,7 @@ export default function AdminSettingsPage() {
         <Settings2 size={22} className="text-[#2F6BFF]" />
         <div>
           <h1 className="text-[22px] font-bold text-[#0B1C3F]">Paramètres</h1>
-          <p className="text-[13px] text-[#64748B]">Les services dont FidClic dépend, et leur état.</p>
+          <p className="text-[13px] text-[#64748B]">Les services dont FidClic dépend, et les réglages de toute la plateforme.</p>
         </div>
       </div>
       <nav className="mb-4 flex gap-1 border-b border-[#EDF1F7]" role="tablist">
@@ -120,6 +121,7 @@ export default function AdminSettingsPage() {
         ))}
       </nav>
       {tab === 'services' && <Services editable={editable} />}
+      {tab === 'plateforme' && <PlatformTab editable={editable} />}
     </div>
   );
 }

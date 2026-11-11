@@ -137,6 +137,9 @@ def _upsert_user(provider: str, sub: str, email: str, first_name: Optional[str],
         _db.users.update_one({"email": email}, {"$set": patch})
         user = _db.users.find_one({"email": email})
     else:
+        # a NEW business account: refused while sign-ups are closed (2026-11-11)
+        from features import platform_config as PC
+        PC.assert_signups_open()
         tenant_id = str(uuid.uuid4())
         display = " ".join(x for x in [first_name, last_name] if x).strip() or email.split("@")[0]
         tenant = core.Tenant(

@@ -11,6 +11,7 @@ import BottomNav from '../components/BottomNav';
 import { markPageOpened } from '../lib/chartAnimation';
 import { useBranch } from '../contexts/BranchContext';
 import BillingBanner from '../components/BillingBanner';
+import PlatformBanner from '../components/PlatformBanner';
 import { PlanAccessContext, usePlanAccess, usePlanAccessState, UpgradeModal, LockedSection, LimitBanner, openUpgrade } from '../components/PlanAccess';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../contexts/AuthContext';
@@ -781,6 +782,10 @@ const DashboardLayout = () => {
 
       </aside>
 
+      {/* FidClic's maintenance banner (Super admin › Paramètres › Plateforme),
+          every shop account — floating, outside <main>: the pages style
+          main's first child (index.css « main:has(…) > div:first-child »). */}
+      {!isTeam(user) && <PlatformBanner above={!!user?.view_as} />}
       {/* « Accéder au compte » from the super admin: full access (every change
           is audited under the admin's name), or read-only for a team member
           who may only look — said either way.
