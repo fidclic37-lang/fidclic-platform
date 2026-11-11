@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import {
@@ -33,7 +34,9 @@ export default function CrmSequencesPage() {
   const [selId, setSelId] = useState(null);
   const [d, setD] = useState(null);
   const [modal, setModal] = useState(null);
-  const [menu, setMenu] = useState(null);
+  const [menu, setMenu] = useState(null);          // the « Nouvelle séquence » and detail menus
+  // a line's ⋯ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
   const [running, setRunning] = useState(false);
   const [say, toast] = useToast();
 
@@ -73,11 +76,11 @@ export default function CrmSequencesPage() {
   const K = Object.fromEntries(sum.cards.map((c) => [c.key, c]));
   const seqMenu = (s, close) => (
     <>
-      {s.status !== 'active' && s.status !== 'terminee' && <button type="button" onClick={() => { close(); act(() => crmAPI.sequenceStatus(s.id, 'active'), 'Séquence activée.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Play size={13} /> Activer</button>}
-      {s.status === 'active' && <button type="button" onClick={() => { close(); act(() => crmAPI.sequenceStatus(s.id, 'pause'), 'Séquence en pause.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pause size={13} /> Mettre en pause</button>}
-      {s.status !== 'terminee' && s.status !== 'brouillon' && <button type="button" onClick={() => { close(); if (window.confirm('Terminer la séquence ? Plus aucun email ne partira.')) act(() => crmAPI.sequenceStatus(s.id, 'terminee'), 'Séquence terminée.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Square size={13} /> Terminer</button>}
-      <button type="button" onClick={() => { close(); act(async () => { const { data } = await crmAPI.duplicateSequence(s.id); setSelId(data.id); }, 'Séquence dupliquée.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Copy size={13} /> Dupliquer</button>
-      <button type="button" onClick={() => { close(); if (window.confirm(`Supprimer « ${s.name} » ?`)) act(() => crmAPI.deleteSequence(s.id), 'Séquence supprimée.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><Trash2 size={13} /> Supprimer</button>
+      {s.status !== 'active' && s.status !== 'terminee' && <button type="button" role="menuitem" onClick={() => { close(); act(() => crmAPI.sequenceStatus(s.id, 'active'), 'Séquence activée.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Play size={13} /> Activer</button>}
+      {s.status === 'active' && <button type="button" role="menuitem" onClick={() => { close(); act(() => crmAPI.sequenceStatus(s.id, 'pause'), 'Séquence en pause.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pause size={13} /> Mettre en pause</button>}
+      {s.status !== 'terminee' && s.status !== 'brouillon' && <button type="button" role="menuitem" onClick={() => { close(); if (window.confirm('Terminer la séquence ? Plus aucun email ne partira.')) act(() => crmAPI.sequenceStatus(s.id, 'terminee'), 'Séquence terminée.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Square size={13} /> Terminer</button>}
+      <button type="button" role="menuitem" onClick={() => { close(); act(async () => { const { data } = await crmAPI.duplicateSequence(s.id); setSelId(data.id); }, 'Séquence dupliquée.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Copy size={13} /> Dupliquer</button>
+      <button type="button" role="menuitem" onClick={() => { close(); if (window.confirm(`Supprimer « ${s.name} » ?`)) act(() => crmAPI.deleteSequence(s.id), 'Séquence supprimée.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><Trash2 size={13} /> Supprimer</button>
     </>
   );
   const dayLabel = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
@@ -147,8 +150,8 @@ export default function CrmSequencesPage() {
                       <td className="px-2 py-2.5 text-[#475569]">{short(s.last_activity_at)}</td>
                       <td className="px-2 py-2.5"><span title={s.created_by_name} className="text-[#475569]">{(s.created_by_name || '').split(' ').map((w) => w[0]).join('').slice(0, 3).toUpperCase()}</span></td>
                       <td className="relative px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" aria-label="Actions" onClick={() => setMenu(menu === s.id ? null : s.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
-                        {menu === s.id && <span className="absolute right-2 top-full z-20 flex w-48 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">{seqMenu(s, () => setMenu(null))}</span>}
+                        <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={rm.openId === s.id} onClick={(e) => { setMenu(null); rm.toggle(e, s.id); }} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                        {rm.openId === s.id && <span {...rm.menuProps} className="z-50 flex w-48 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">{seqMenu(s, () => rm.close())}</span>}
                       </td>
                     </tr>); })}
                   {!list.rows.length && <tr><td colSpan={11} className="py-12 text-center text-[#64748B]">Aucune séquence ici. Créez-en une depuis un modèle pour démarrer vite.</td></tr>}
