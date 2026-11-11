@@ -52,3 +52,45 @@ test('the cross hides it, and a refresh does not bring it back', async ({ page, 
   await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 20000 });
   await expect(banner, 'it stays away after a refresh').toHaveCount(0);
 });
+
+test('« essai terminé »: its cross closes it for good, and nothing is locked (2026-11-11)', async ({ page, request }) => {
+  const ENDED = { ...QUIET, is_in_trial: false, is_expired: true, days_left: -2, hours_left: -48, expired_banner_hidden: false };
+  let hidden = false;
+  const posts = [];
+  await page.route('**/api/owner/trial-status', (r) => r.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ ...ENDED, expired_banner_hidden: hidden }),
+  }));
+  await page.route('**/api/owner/trial-status/hide-expired-banner', (r) => {
+    posts.push(r.request().method());
+    hidden = true;
+    return r.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...ENDED, expired_banner_hidden: true }) });
+  });
+
+  const login = await (await request.post('/api/auth/login', { data: OWNER })).json();
+  await page.goto('/login');
+  await page.evaluate((t) => {
+    localStorage.setItem('fidelitour_access_token', t);
+    try { sessionStorage.removeItem('ft_pick_store'); } catch (_e) { /* ignore */ }
+  }, login.access_token);
+
+  await page.goto('/dashboard');
+  const banner = page.getByText("Votre période d'essai est terminée");
+  await expect(banner.first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByRole('button', { name: 'Débloquer maintenant' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Masquer' }).click();
+  await expect(banner).toHaveCount(0);
+  await expect.poll(() => posts.length, { message: 'the account is told' }).toBe(1);
+
+  await page.reload();
+  await expect(page.getByRole('heading').first()).toBeVisible({ timeout: 20000 });
+  await expect(banner, 'it stays closed after a refresh').toHaveCount(0);
+  // nothing locked: a page of the paid offer still opens
+  await page.goto('/dashboard/campaigns');
+  const pick = page.getByText('Choisissez votre établissement');
+  const title = page.getByRole('heading', { name: /Campagnes/ }).first();
+  await expect(pick.or(title).first()).toBeVisible({ timeout: 20000 });
+  if (await pick.isVisible()) await page.getByText(/Main$/).last().click();
+  await expect(page.getByRole('heading', { name: /Campagnes/ }).first()).toBeVisible({ timeout: 20000 });
+  await expect(page.getByRole('button', { name: "Plus d'actions" }).first()).toBeVisible({ timeout: 20000 });
+});

@@ -3455,6 +3455,18 @@ def _trial_banner_hidden(email: str, tenant: Dict[str, Any]) -> bool:
     return not (started and started > at)
 
 
+def _expired_banner_hidden(email: str, tenant: Dict[str, Any]) -> bool:
+    """The cross on the « essai terminé » banner (user, 2026-11-11: once the
+    owner closes it, it stays closed). Kept per account, apart from the quiet
+    pill's; a trial that ended AFTER it was closed is told again."""
+    u = db.users.find_one({"email": email}, {"_id": 0, "trial_expired_hidden_at": 1}) or {}
+    at = _as_aware(u.get("trial_expired_hidden_at"))
+    if not at:
+        return False
+    ended = _as_aware(tenant.get("trial_ends_at"))
+    return not (ended and ended > at)
+
+
 @app.get("/api/owner/trial-status")
 def owner_trial_status(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
     """Returns the current trial countdown for the logged-in owner's tenant.
@@ -3471,6 +3483,7 @@ def owner_trial_status(token_data: TokenData = Depends(require_role(["business_o
         raise HTTPException(status_code=404, detail="Tenant not found")
     state = _compute_trial_state(tenant)
     state["banner_hidden"] = _trial_banner_hidden(token_data.email, tenant)
+    state["expired_banner_hidden"] = _expired_banner_hidden(token_data.email, tenant)
     return state
 
 
@@ -3484,6 +3497,23 @@ def owner_hide_trial_banner(token_data: TokenData = Depends(require_role(["busin
                         {"$set": {"trial_banner_hidden_at": datetime.now(timezone.utc)}})
     state = _compute_trial_state(tenant)
     state["banner_hidden"] = True
+    state["expired_banner_hidden"] = _expired_banner_hidden(token_data.email, tenant)
+    return state
+
+
+@app.post("/api/owner/trial-status/hide-expired-banner")
+def owner_hide_expired_banner(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    """The cross on the « essai terminé » banner: closed on every device of this
+    account. It locks or unlocks nothing — a trial's end locks nothing (user,
+    2026-11-11)."""
+    tenant = db.tenants.find_one({"id": token_data.tenant_id})
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    db.users.update_one({"email": token_data.email},
+                        {"$set": {"trial_expired_hidden_at": datetime.now(timezone.utc)}})
+    state = _compute_trial_state(tenant)
+    state["banner_hidden"] = _trial_banner_hidden(token_data.email, tenant)
+    state["expired_banner_hidden"] = bool(state.get("is_expired"))
     return state
 
 
