@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAnchoredMenu } from '../lib/anchoredMenu';
 import { Link, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { chartAnimation } from '../lib/chartAnimation';
@@ -471,28 +472,24 @@ function CategoryModal({ category, palette, limits, onClose, onSaved }) {
 
 /* ----------------------------------------------------------- row menu -- */
 function RowMenu({ p, onAction }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const m = useAnchoredMenu();
+  const open = m.openId !== null;
   const item = (icon, label, key, danger) => (
-    <button type="button" key={key} onClick={() => { setOpen(false); onAction(key, p); }}
+    <button type="button" role="menuitem" key={key} onClick={() => { m.close(); onAction(key, p); }}
             className={`flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-[13px] hover:bg-[#F6F9FF] ${danger ? 'text-[#E11D48]' : 'text-[#0B1C3F]'}`}>
       {icon}{label}
     </button>
   );
   return (
-    <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-label={`Plus d'actions — ${p.name}`}
+    <div className="relative">
+      <button type="button" onClick={(e) => m.toggle(e, p.id || 'row')} aria-label={`Plus d'actions — ${p.name}`}
+              aria-haspopup="menu" aria-expanded={open}
               className="flex h-9 w-9 items-center justify-center rounded-lg text-[#0B1C3F] hover:bg-[#F4F7FC]">
         <MoreHorizontal size={20} />
       </button>
       {open && (
-        <div className="absolute right-0 top-10 z-20 w-56 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.45)]">
+        <div {...m.menuProps} className="z-50 w-56 overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_18px_40px_-20px_rgba(11,28,63,.45)]">
           {item(<Copy size={15} />, 'Dupliquer', 'duplicate')}
           {item(<ImagePlus size={15} />, p.image_url ? 'Changer la photo' : 'Ajouter une photo', 'photo')}
           {p.image_url && item(<ImageOff size={15} />, 'Retirer la photo', 'drop-photo')}
