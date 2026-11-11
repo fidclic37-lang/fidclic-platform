@@ -358,6 +358,15 @@ export const mySupportAPI = {
   file: (id, inline) => api.get(`/support/files/${id}`, { params: inline ? { inline: 1 } : {}, responseType: 'blob' }),
 };
 
+// Super admin › Notifications — FidClic writes to chosen businesses (features/admin_notices.py)
+export const noticesAPI = {
+  targets: () => api.get('/admin/notices/targets'),
+  list: () => api.get('/admin/notices'),
+  send: (body) => api.post('/admin/notices', body),
+  withdraw: (id) => api.delete(`/admin/notices/${encodeURIComponent(id)}`),
+  mine: () => api.get('/owner/notices'),
+};
+
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
   franchise: () => api.get('/admin/franchise'),

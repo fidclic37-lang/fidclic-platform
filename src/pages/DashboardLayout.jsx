@@ -20,7 +20,7 @@ import {
   Database, BrainCircuit, Megaphone, MapPin, Sparkles, Sparkle, CreditCard, Shield, History,
   Building2, ChevronsLeft, ChevronsRight, LifeBuoy, Headphones, PieChart, Share2, Zap, ShoppingBag,
   UserRound, UsersRound, Kanban, ListChecks, CalendarDays, Mail, MailOpen, Phone, ChevronDown, ClipboardCheck,
-  Receipt, Eye, ShieldCheck, Lock, Menu, Link2, X as XIcon,
+  Receipt, Eye, ShieldCheck, Lock, Menu, Link2, X as XIcon, BellRing,
 } from 'lucide-react';
 import { can, isTeam, moduleOfPath } from '../lib/perms';
 import { C, themeForRole } from '../components/PageShell';
@@ -733,6 +733,7 @@ const DashboardLayout = () => {
               {can(user, 'commerces') && <NavLink to="/admin/commerces" icon={Database} label="Commerces" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'analytics') && <NavLink to="/admin/analytics" icon={BarChart3} label="Analytics" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'insights') && <NavLink to="/admin/insights" icon={Sparkles} label="Insights" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'notifications') && <NavLink to="/admin/notifications" icon={BellRing} label="Notifications" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'plan_limits') && <NavLink to="/admin/plans" icon={Shield} label="Plan Limits" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'facturation') && <NavLink to="/admin/facturation" icon={Receipt} label="Facturation" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={rail} />}

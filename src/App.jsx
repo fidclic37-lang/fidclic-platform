@@ -120,6 +120,7 @@ const JournalPage = lazyPage(() => import('./pages/admin/securite/JournalPage'))
 const SecuritySettingsPage = lazyPage(() => import('./pages/admin/securite/SecuritySettingsPage'));
 const SupportCenterPage = lazyPage(() => import('./pages/admin/support/SupportCenterPage'));
 const SuiviEquipePage = lazyPage(() => import('./pages/admin/equipe/SuiviEquipePage'));
+const AdminNotificationsPage = lazyPage(() => import('./pages/admin/AdminNotificationsPage'));
 import { can, moduleOfPath, firstAllowed } from './lib/perms';
 // Rollback: the previous plan editor — import AdminPlansPage from './pages/AdminPlansPage';
 const PlanLimitsPage = lazyPage(() => import('./pages/admin/PlanLimitsPage'));
@@ -609,6 +610,8 @@ function App() {
             <Route path="support" element={<AdminGate><SupportCenterPage /></AdminGate>} />
             {/* Suivi d'équipe — FidClic's own team tasks (features/team_tasks.py) */}
             <Route path="equipe" element={<AdminGate><SuiviEquipePage /></AdminGate>} />
+            {/* Notifications — FidClic writes to chosen businesses (2026-11-11) */}
+            <Route path="notifications" element={<AdminGate><AdminNotificationsPage /></AdminGate>} />
           </Route>
         </Routes>
         </React.Suspense>
