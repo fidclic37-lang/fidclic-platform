@@ -103,6 +103,14 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("the other business is untouched", "t2" in {x["id"] for x in lst["rows"]}
           and not db.tenants.find_one({"id": "t2"}).get("deleted_at"))
 
+    print("\nNot in the other admin lists either (CI, 2026-11-11: the golden set listed it « off »)")
+    from features import golden_real as GR, franchise as FR
+    check("not in the golden set's shops", "t1" not in {x["id"] for x in GR.admin_list(token_data=ADMIN)["shops"]})
+    db.tenants.update_one({"id": "t1"}, {"$set": {"plan": "franchise"}})
+    fr = FR.franchise_overview(token_data=ADMIN)
+    check("not in the franchises", fr is None or "t1" not in {x["id"] for x in fr.get("franchises", [])})
+    db.tenants.update_one({"id": "t1"}, {"$set": {"plan": "gold"}})
+
     print("\nIts team and its customers")
     A.forget("t1")
     check("its team is signed out and refused", http("GET", "/api/auth/me", OWN).status_code in (401, 403))

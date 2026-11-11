@@ -34,10 +34,11 @@ test('a business deleted by the super admin moves to « Supprimés », its owner
   await go.click();
   await expect(page.getByTestId('commerce-deleted')).toBeVisible(SETTLE);
 
-  await page.goto('/admin/commerces');
-  await page.getByPlaceholder(/Rechercher/).first().fill(name);
-  await expect(page.getByText(name)).toHaveCount(0, SETTLE);
-  await page.getByRole('button', { name: /^Supprimés/ }).click();
+  // out of « Tous », in « Supprimés » (the list itself, then the tab on screen)
+  const all = await (await request.get(`/api/admin/commerces?q=${encodeURIComponent(name)}`, { headers: H })).json();
+  expect(all.rows.map((r) => r.id)).not.toContain(tid);
+  expect(all.counts.supprime).toBeGreaterThan(0);
+  await page.goto('/admin/commerces?tab=supprime');
   await expect(page.getByText(name).first()).toBeVisible(SETTLE);
 
   // its owner is shut out
