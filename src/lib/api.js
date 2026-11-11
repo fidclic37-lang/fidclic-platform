@@ -384,6 +384,8 @@ export const adminAPI = {
   reactivateCommerce: (id) => api.post(`/admin/commerces/${id}/reactivate`),
   resilierCommerce: (id, body) => api.post(`/admin/commerces/${id}/resilier`, body),
   annulerResiliation: (id) => api.post(`/admin/commerces/${id}/annuler-resiliation`),
+  // « Supprimer » a business: out of every list, its data kept (2026-11-11)
+  supprimerCommerce: (id, body) => api.post(`/admin/commerces/${id}/supprimer`, body),
   dashboardList: (key, params) => api.get(`/admin/dashboard/list/${key}`, { params }),
   dashboardToday: () => api.get('/admin/dashboard/today'),
   dashboardActivity: (params) => api.get('/admin/dashboard/activity', { params }),

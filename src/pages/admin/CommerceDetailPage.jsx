@@ -5,7 +5,7 @@ import {
   Users, UserCheck, UserX, Store, Target, Gift, RefreshCcw, ExternalLink, Mail, Pencil, MoreHorizontal, LayoutDashboard,
   Heart, Megaphone, Bell, Gauge, CreditCard, Settings, TrendingUp, PieChart as PieIcon, MapPinned, Award, Star, Crown,
   AlertTriangle, Send, Eye, MousePointerClick, ArrowRight, CalendarDays, BadgeCheck, Receipt, PauseCircle, PlayCircle,
-  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical, Power,
+  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical, Power, Trash2,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { downloadLabExport } from '../../lib/labExport';
@@ -14,7 +14,7 @@ import { protectNames } from '../../lib/translator';
 import { Card, Head, Kpi, Donut, Select, Loading, Breadcrumb, Pager, Modal, useToast, nf, BLUE, inputCls } from '../crm/ui';
 import { ComposeEmail } from '../crm/emailUi';
 import { FranchiseTermsModal } from '../../components/admin/FranchisePanel';
-import { StatusPill, PlanPill, CommerceLogo, SuspendModal, ResilierModal, openViewAs, weekly } from './CommercesPage';
+import { StatusPill, PlanPill, CommerceLogo, SuspendModal, ResilierModal, SupprimerModal, openViewAs, weekly } from './CommercesPage';
 
 /* Super admin › Commerces › one business — built to the approved « Café
    Lumière » mockup. Every figure is counted from the business's own data. */
@@ -134,6 +134,7 @@ export default function CommerceDetailPage() {
                 {d.resiliated
                   ? <button type="button" onClick={() => { setMenu(false); if (window.confirm(`Annuler la résiliation de ${d.name} ?`)) act(() => adminAPI.annulerResiliation(d.id), 'Résiliation annulée.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><Undo2 size={14} /> Annuler la résiliation</button>
                   : <button type="button" onClick={() => { setMenu(false); setModal({ type: 'resilier' }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0B1C3F] hover:bg-[#F4F7FC]"><Ban size={14} /> Résilier…</button>}
+                {!d.deleted && <button type="button" onClick={() => { setMenu(false); setModal({ type: 'supprimer' }); }} className="flex items-center gap-2 border-t border-[#F1F5F9] px-3 py-2 text-left text-[#9F1239] hover:bg-[#FEF2F2]"><Trash2 size={14} /> Supprimer définitivement…</button>}
               </span>
             )}
           </span>
@@ -149,6 +150,11 @@ export default function CommerceDetailPage() {
         <p className="mb-3 rounded-xl bg-[#F4F7FC] px-3 py-2 text-[12.5px] text-[#475569]">Cet onglet concerne tout le commerce (toutes les boutiques), pas seulement {d.store.name}.</p>
       )}
 
+      {d.deleted && (
+        <p data-testid="commerce-deleted" className="mb-4 rounded-xl border border-[#FBCFE8] bg-[#FDECEF] px-4 py-3 text-[13px] text-[#9F1239]">
+          <strong>Commerce supprimé</strong> le {dateFr(d.deleted_at, true)}{d.deleted_by ? ` par ${d.deleted_by}` : ''}{d.deletion_reason ? ` — ${d.deletion_reason}` : ''}. Ses données sont conservées ; il n'apparaît plus que dans « Supprimés ».
+        </p>
+      )}
       {tab === 'apercu' && <Overview d={d} setTab={setTab} setModal={setModal} />}
       {tab === 'boutiques' && multi && <BoutiquesTab id={id} current={store} onOpen={(s) => pickStore(s, 'apercu')} onView={(s) => openViewAs(d.id, say, s)} />}
       {tab === 'clients' && <ClientsTab id={id} store={store} />}
@@ -166,6 +172,7 @@ export default function CommerceDetailPage() {
       {modal?.type === 'edit' && <EditModal d={d} onClose={() => setModal(null)} onDone={() => { setModal(null); say('Commerce modifié.'); load(); }} />}
       {modal?.type === 'suspend' && <SuspendModal c={d} onClose={() => setModal(null)} onDone={(m) => { setModal(null); say(m); load(); }} />}
       {modal?.type === 'resilier' && <ResilierModal c={d} onClose={() => setModal(null)} onDone={(m) => { setModal(null); say(m); load(); }} />}
+      {modal?.type === 'supprimer' && <SupprimerModal c={d} onClose={() => setModal(null)} onDone={(m) => { setModal(null); say(m); load(); }} />}
       {modal?.type === 'franchise' && <FranchiseTermsModal tenant={{ id: d.id, name: d.name, stores: d.stores, terms: d.franchise_terms }} onClose={() => setModal(null)} onSaved={() => { setModal(null); say('Conditions Franchise enregistrées.'); load(); }} />}
       {modal?.type === 'plan' && (
         <Modal title={`Changer le plan — ${d.name}`} onClose={() => setModal(null)}>
