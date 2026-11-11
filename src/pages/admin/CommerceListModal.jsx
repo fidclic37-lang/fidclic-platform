@@ -20,6 +20,7 @@ function detailOf(key, r) {
   if (key === 'impaye') return r.suspended_at ? `Suspendu le ${dateFr(r.suspended_at)}${r.suspended_reason ? ` — ${r.suspended_reason}` : ''}` : `Paiement en retard · ${money(r.price)} / mois`;
   if (key === 'nouveaux') return `Inscrit le ${dateFr(r.created_at)}`;
   if (['actif', 'inactif', 'a_risque'].includes(key)) return weekly(r) || '—';
+  if (key === 'impact') return r.visits ? `${nf(r.visits)} visite${r.visits > 1 ? 's' : ''} grâce à FidClic` : 'Aucune visite grâce à FidClic';
   if (key === 'abonne' || key === 'commerces') return r.standing === 'essai' ? `Fin de l'essai : ${dateFr(r.trial_ends_at)}` : `${money(r.price)} / mois`;
   return '';
 }
@@ -44,11 +45,11 @@ export default function CommerceListModal({ listKey, range, onClose }) {
     const f = q.trim().toLowerCase();
     return (d?.rows || []).filter((r) => !f || `${r.name} ${r.city} ${r.sector} ${r.owner} ${r.email} ${r.phone}`.toLowerCase().includes(f));
   }, [d, q]);
-  const isMoney = d && ['ca', 'mrr'].includes(listKey);
+  const isMoney = d && ['ca', 'mrr', 'impact'].includes(listKey);
   const copy = (txt) => { navigator.clipboard?.writeText(txt).then(() => { setCopied(txt); setTimeout(() => setCopied(''), 1500); }).catch(() => {}); };
   const exportCsv = () => {
-    const head = ['Commerce', 'Secteur', 'Ville', 'Plan', 'Situation', 'Statut', 'Détail', d?.metric_label, 'Contact', 'Email', 'Téléphone'].filter((x) => x !== undefined && x !== null);
-    const lines = rows.map((r) => [r.name, r.sector, r.city, r.plan?.label, r.standing_label, r.status_label, detailOf(listKey, r),
+    const head = ['Commerce', 'Secteur', 'Ville', 'Plan', 'Situation', 'Supprimé', 'Statut', 'Détail', d?.metric_label, 'Contact', 'Email', 'Téléphone'].filter((x) => x !== undefined && x !== null);
+    const lines = rows.map((r) => [r.name, r.sector, r.city, r.plan?.label, r.standing_label, r.deleted ? 'oui' : '', r.status_label, detailOf(listKey, r),
       ...(d?.metric_label ? [r.metric] : []), r.owner, r.email, r.phone]);
     const csv = '﻿' + [head, ...lines].map((l) => l.map((x) => `"${String(x ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -62,7 +63,7 @@ export default function CommerceListModal({ listKey, range, onClose }) {
         <header className="flex flex-wrap items-center gap-3 border-b border-[#EDF1F7] px-5 py-4">
           <div className="min-w-0 flex-1">
             <h3 className="text-[17px] font-bold text-[#0B1C3F]">{d?.title || 'Commerces'} {d && <span className="ml-1 rounded-full bg-[#EAF1FF] px-2.5 py-0.5 text-[12.5px] font-semibold text-[#2F6BFF]">{nf(d.rows.length)}</span>}</h3>
-            {d && ['resilie', 'non_converti', 'ca'].includes(listKey) && <p className="text-[12px] text-[#64748B]">Période : {dateFr(d.period.from)} – {dateFr(d.period.to)}</p>}
+            {d && ['resilie', 'non_converti', 'ca', 'impact'].includes(listKey) && <p className="text-[12px] text-[#64748B]">Période : {dateFr(d.period.from)} – {dateFr(d.period.to)}</p>}
           </div>
           <label className="relative block w-full sm:w-64">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
@@ -96,6 +97,7 @@ export default function CommerceListModal({ listKey, range, onClose }) {
                     <td className="px-2 py-2.5">
                       <span className="flex flex-wrap items-center gap-1.5"><PlanPill p={r.plan} />
                         <span className="rounded-md px-2 py-0.5 text-[11.5px] font-medium" style={{ background: bg, color: fg }}>{r.standing_label}</span>
+                        {r.deleted && <span data-testid="deleted-pill" className="rounded-md bg-[#F1F5F9] px-2 py-0.5 text-[11.5px] font-medium text-[#64748B]">Supprimé</span>}
                         {r.status && !['resilie', 'non_converti'].includes(r.status) && <StatusPill s={r.status} label={r.status_label} />}</span>
                     </td>
                     <td className="max-w-[260px] px-2 py-2.5 text-[12.5px] text-[#475569]">{detailOf(listKey, r)}</td>

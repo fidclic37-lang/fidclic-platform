@@ -131,6 +131,26 @@ def _in_portfolio_at(t: Dict[str, Any], at: datetime, now: datetime) -> bool:
     return not (sus and sus < at)
 
 
+def _impact_by_tenant(ranges: List[Tuple[datetime, datetime]], at: datetime) -> Dict[str, List[Dict[str, Any]]]:
+    """Impact FidClic (user, 2026-11-11): each shop's CA FidClic over each
+    [a, b) — read from the shop's daily register exactly as its owner reads
+    it (features/visit_days.span_many). Every shop with a visit in the span,
+    deleted, suspended or résiliée too: the figure is what FidClic brought."""
+    from features import visit_days as VD
+    if not ranges:
+        return {}
+    lo, hi = min(a for a, _ in ranges), max(b for _, b in ranges)
+    tids = sorted(t for t in _db.visits.distinct("tenant_id", {"visit_time": {"$gte": lo, "$lt": hi}}) if t)
+    closed = [(a, b - timedelta(microseconds=1)) for a, b in ranges]      # [a, b) — the register's spans end inclusive
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for tid in tids:
+        try:
+            out[tid] = [t.impact() for t in VD.span_many(tid, None, closed, at=at)]
+        except Exception:                                   # noqa: BLE001 — one shop never breaks the page
+            out[tid] = [{"revenue": 0.0, "visits": 0} for _ in ranges]
+    return out
+
+
 def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
     """The Dashboard's figures (user, 2026-10-01): Commerces = en essai +
     abonnés only (a trial that ends without a subscription leaves it),
@@ -191,6 +211,12 @@ def _kpis(tenants, start, end) -> List[Dict[str, Any]]:
                for v in _db.visits.find({"visit_time": {"$gte": prev, "$lt": end}}, {"_id": 0, "visit_time": 1, "amount_paid": 1})]
     ca = lambda a, b: round(sum(x for at, x in amounts if at and a <= at < b), 2)     # noqa: E731
     out.append({"key": "ca", "value": ca(start, end), "delta": _delta(ca(start, end), ca(prev, start)), "series": [ca(a, b) for a, b in B]})
+
+    # Impact FidClic (user, 2026-11-11): what FidClic brought, every shop —
+    # the same CA FidClic each owner reads, added up.
+    per = _impact_by_tenant([(start, end), (prev, start)] + list(B), now)
+    tot = lambda i: round(sum(v[i]["revenue"] for v in per.values()), 2)      # noqa: E731
+    out.append({"key": "impact", "value": tot(0), "delta": _delta(tot(0), tot(1)), "series": [tot(2 + i) for i in range(len(B))]})
 
     paying = [t for t in tenants if (t.get("subscription_status") or "") == "active" and not t.get("suspended_at") and not t.get("resiliated_at")]
     mrr = round(sum(core.tenant_price(t) for t in paying))
@@ -515,7 +541,8 @@ def _build(start: datetime, end: datetime, months: int, now: datetime) -> Dict[s
         # « Évolution de la plateforme » and the sector donut moved to Analytics;
         # three of Analytics' sections are shown here too (user, 2026-10-01).
         "total": total, "plans": plan_rows, "statuses": _statuses(tenants, rows, now),
-        "cities": AN.cities(tenants), "revenue": AN.revenue_by_plan(tenants, start, end), "sources": AN.sources(start, end),
+        "cities": AN.cities(tenants), # every shop's visits, deleted ones too: the donut = the CA figure (2026-11-11)
+        "revenue": AN.revenue_by_plan(list(_db.tenants.find({}, {"_id": 0})), start, end), "sources": AN.sources(start, end),
         "status_cards": _status_cards(tenants, rows, hist, start, end, now, new_now, new_prev),
         "opportunities": _opportunities(tenants, rows),
         "top": [{"id": r["id"], "name": r["name"], "logo": r["logo"], "sector": r["sector"], "city": r["city"], "clients": r["clients"],
@@ -534,6 +561,7 @@ LISTS = {
     "inactif": "Commerces inactifs", "a_risque": "Commerces à risque", "resilie": "Commerces résiliés",
     "non_converti": "Essais non convertis", "clients": "Clients finaux par commerce", "cartes": "Cartes actives par commerce",
     "ca": "Chiffre d'affaires par commerce", "mrr": "MRR par commerce",
+    "impact": "Impact FidClic par commerce",
     "essai_7j": "Essais qui se terminent sous 7 jours", "limite": "Commerces à 90 % de leur limite",
     # the tile's « sur M inscrits » and the standing donut's slices (2026-11-09):
     # every business today, whenever its trial ended or it left
@@ -551,13 +579,17 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
         raise HTTPException(status_code=404, detail="Liste inconnue.")
     start, end = _period(date_from if isinstance(date_from, str) else None, date_to if isinstance(date_to, str) else None)
     now = _now()
-    tenants = {t["id"]: t for t in _db.tenants.find({"is_active": {"$ne": False}}, {"_id": 0})}
+    # CA and Impact FidClic count every shop's visits: their lists show every
+    # shop — deleted, suspended, résiliée, trial over (user, 2026-11-11)
+    every = key in ("ca", "impact")
+    tenants = {t["id"]: t for t in _db.tenants.find({} if every else {"is_active": {"$ne": False}}, {"_id": 0})}
     snap = {r["id"]: r for r in AC.snapshot(now)}
     owners = {u["tenant_id"]: u for u in _db.users.find({"role": "business_owner", "tenant_id": {"$in": list(tenants)}},
                                                         {"_id": 0, "tenant_id": 1, "email": 1, "first_name": 1, "last_name": 1, "phone": 1})}
     stand = {tid: AC.standing_of(t, now) for tid, t in tenants.items()}
     month0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     metric: Dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
     metric_label = None
     if key == "commerces":
         ids = [i for i, v in stand.items() if v in ("essai", "abonne")]
@@ -584,6 +616,18 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
     elif key == "non_converti":
         ids = [i for i, t in tenants.items() if stand[i] == "non_converti" and _aware(t.get("trial_ends_at"))
                and start <= _aware(t["trial_ends_at"]) < end]
+    elif every:
+        ids = list(tenants)
+        if key == "ca":
+            per: Dict[str, float] = defaultdict(float)
+            for v in _db.visits.find({"visit_time": {"$gte": start, "$lt": end}}, {"_id": 0, "tenant_id": 1, "amount_paid": 1}):
+                per[v.get("tenant_id")] += float(v.get("amount_paid") or 0)
+            metric, metric_label = {i: round(per.get(i, 0), 2) for i in ids}, "Chiffre d'affaires"
+        else:
+            imp = _impact_by_tenant([(start, end)], now)
+            metric = {i: (imp.get(i) or [{"revenue": 0.0}])[0]["revenue"] for i in ids}
+            extra = {i: (imp.get(i) or [{"visits": 0}])[0].get("visits", 0) for i in ids}
+            metric_label = "CA FidClic"
     else:
         ids = [i for i in tenants if stand[i] not in ("resilie", "non_converti")]
         if key == "clients":
@@ -591,11 +635,6 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
         elif key == "cartes":
             metric = AC._count_by_tenant("customers", {**LIVE, "pass_issued": True})
             metric_label = "Cartes actives"
-        elif key == "ca":
-            per: Dict[str, float] = defaultdict(float)
-            for v in _db.visits.find({"visit_time": {"$gte": start, "$lt": end}}, {"_id": 0, "tenant_id": 1, "amount_paid": 1}):
-                per[v.get("tenant_id")] += float(v.get("amount_paid") or 0)
-            metric, metric_label = {i: round(per.get(i, 0), 2) for i in ids}, "Chiffre d'affaires"
         elif key == "mrr":
             ids = [i for i in ids if (tenants[i].get("subscription_status") or "") == "active" and not tenants[i].get("suspended_at")]
             metric, metric_label = {i: core.tenant_price(tenants[i]) for i in ids}, "€ / mois"
@@ -613,6 +652,8 @@ def dashboard_list(key: str, date_from: Optional[str] = Query(None, alias="from"
             "suspended_at": _iso(t.get("suspended_at")), "suspended_reason": t.get("suspended_reason"),
             "resiliated_at": _iso(t.get("resiliated_at")), "resiliation_reason": t.get("resiliation_reason"),
             "metric": metric.get(i, 0) if metric_label else None,
+            "deleted": t.get("is_active") is False,
+            **({"visits": extra.get(i, 0)} if key == "impact" else {}),
         })
     if metric_label:
         rows.sort(key=lambda x: -(x["metric"] or 0))
