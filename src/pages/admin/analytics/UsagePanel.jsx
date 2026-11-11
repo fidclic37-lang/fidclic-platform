@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../../../lib/anchoredMenu';
 import { useNavigate } from 'react-router-dom';
 import {
   CreditCard, Bell, MapPin, ArrowUp, ArrowDown, Search, Download, Filter, Check, X, Info, MoreHorizontal, Eye, Mail, SlidersHorizontal,
@@ -124,20 +125,16 @@ function Pages({ d, what, onPage, onPerPage }) {
   );
 }
 
-function RowMenu({ c, onClose }) {
+// ⋯ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu):
+// the panel's useAnchoredMenu places it, closes it elsewhere, one at a time
+function RowMenu({ c, menuProps }) {
   const navigate = useNavigate();
-  const ref = useRef(null);
-  useEffect(() => {
-    const out = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
-    document.addEventListener('mousedown', out);
-    return () => document.removeEventListener('mousedown', out);
-  }, [onClose]);
   const item = 'flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]';
   return (
-    <div ref={ref} className="absolute right-2 top-9 z-30 w-56 overflow-hidden rounded-xl border border-[#EDF1F7] bg-white py-1 text-[13px] text-[#0B1C3F] shadow-lg">
-      <button type="button" className={item} onClick={() => navigate(`/admin/commerces/${c.id}`)}><Eye size={14} /> Voir le commerce</button>
-      <button type="button" className={item} onClick={() => navigate(`/admin/commerces/${c.id}?contact=1`)}><Mail size={14} /> Contacter</button>
-      <button type="button" className={item} onClick={() => navigate('/admin/plan-limits')}><SlidersHorizontal size={14} /> Limites du plan {c.plan.label}</button>
+    <div {...menuProps} className="z-50 w-56 overflow-hidden rounded-xl border border-[#EDF1F7] bg-white py-1 text-[13px] text-[#0B1C3F] shadow-lg">
+      <button type="button" role="menuitem" className={item} onClick={() => navigate(`/admin/commerces/${c.id}`)}><Eye size={14} /> Voir le commerce</button>
+      <button type="button" role="menuitem" className={item} onClick={() => navigate(`/admin/commerces/${c.id}?contact=1`)}><Mail size={14} /> Contacter</button>
+      <button type="button" role="menuitem" className={item} onClick={() => navigate('/admin/plan-limits')}><SlidersHorizontal size={14} /> Limites du plan {c.plan.label}</button>
     </div>
   );
 }
@@ -158,7 +155,7 @@ export default function UsagePanel() {
   const [within, setWithin] = useState('30');
   const [kind, setKind] = useState('');
   const [picked, setPicked] = useState(() => new Set());
-  const [menu, setMenu] = useState(null);
+  const rm = useAnchoredMenu();
   const [err, setErr] = useState('');
   const [say, toast] = useToast();
   const navigate = useNavigate();
@@ -224,7 +221,7 @@ export default function UsagePanel() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1" role="tablist">
           {TABS.map(([k, l]) => (
-            <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => { setTab(k); setPage(1); setMore(false); setMenu(null); }}
+            <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => { setTab(k); setPage(1); setMore(false); rm.close(); }}
                     className={`h-10 rounded-full px-5 text-[13.5px] font-medium ${tab === k ? 'bg-[#2F6BFF] text-white shadow-[0_2px_6px_rgba(47,107,255,.3)]' : 'text-[#0B1C3F] hover:bg-[#F4F7FC]'}`}>{l}</button>
           ))}
         </div>
@@ -293,8 +290,8 @@ export default function UsagePanel() {
                         {c.renewal && c.renewal.kind !== 'renouvellement' && <span className="block text-[11px] text-[#64748B]">{c.renewal.kind_label}</span>}
                       </td>
                       <td className="relative px-2 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" aria-label={`Actions pour ${c.name}`} onClick={() => setMenu(menu === c.id ? null : c.id)} className="rounded p-1 text-[#0B1C3F] hover:bg-[#F4F7FC]"><MoreHorizontal size={18} /></button>
-                        {menu === c.id && <RowMenu c={c} onClose={() => setMenu(null)} />}
+                        <button type="button" aria-label={`Actions pour ${c.name}`} aria-haspopup="menu" aria-expanded={rm.openId === c.id} onClick={(e) => rm.toggle(e, c.id)} className="rounded p-1 text-[#0B1C3F] hover:bg-[#F4F7FC]"><MoreHorizontal size={18} /></button>
+                        {rm.openId === c.id && <RowMenu c={c} menuProps={rm.menuProps} />}
                       </td>
                     </tr>
                   );
@@ -347,8 +344,8 @@ export default function UsagePanel() {
                       <td className="whitespace-nowrap px-2 py-2.5 text-right font-semibold text-[#0B1C3F]">{r.kind === 'fin_essai' ? <span className="font-normal text-[#64748B]">{eur(c.price)} si converti</span> : `${eur(c.price)} / mois`}</td>
                       <td className="whitespace-nowrap px-2 py-2.5 text-[#475569]">{c.payment?.last4 ? `${(c.payment.brand || 'Carte').toUpperCase()} •••• ${c.payment.last4}` : '—'}</td>
                       <td className="relative px-2 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" aria-label={`Actions pour ${c.name}`} onClick={() => setMenu(menu === c.id ? null : c.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={18} /></button>
-                        {menu === c.id && <RowMenu c={c} onClose={() => setMenu(null)} />}
+                        <button type="button" aria-label={`Actions pour ${c.name}`} aria-haspopup="menu" aria-expanded={rm.openId === c.id} onClick={(e) => rm.toggle(e, c.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={18} /></button>
+                        {rm.openId === c.id && <RowMenu c={c} menuProps={rm.menuProps} />}
                       </td>
                     </tr>
                   );
