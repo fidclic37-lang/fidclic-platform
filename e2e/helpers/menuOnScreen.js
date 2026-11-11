@@ -56,6 +56,14 @@ export async function checkMenus(page, dots, { min = 2 } = {}) {
   await dots.first().evaluate((el) => el.scrollIntoView({ block: 'center' }));
   await dots.first().click();
   await expect(page.getByRole('menu')).toBeVisible();
+  if (n > 1) {                                         // another row's ⋮: only one menu open
+    await dots.nth(1).click();
+    await expect(page.getByRole('menu')).toHaveCount(1);
+    await dots.nth(1).click();                         // its own button closes it
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await dots.first().click();
+    await expect(page.getByRole('menu')).toBeVisible();
+  }
   await page.mouse.click(5, 5);                        // elsewhere
   await expect(page.getByRole('menu')).toHaveCount(0);
 }
