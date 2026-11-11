@@ -25,7 +25,7 @@ import {
   AlertTriangle, BarChart3, Bell, CalendarClock, ChevronDown, ChevronRight, Check, Crown, FileText,
   Inbox, Info, ListChecks, MessageSquare, Send, Settings, ShieldAlert, Store, TrendingDown, TrendingUp, Users, X,
 } from 'lucide-react';
-import api, { ownerAPI, securityAPI, supportAPI, mySupportAPI, teamAPI } from '../lib/api';
+import api, { ownerAPI, securityAPI, supportAPI, mySupportAPI, teamAPI, noticesAPI } from '../lib/api';
 import { can } from '../lib/perms';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,6 +67,8 @@ export function lookOf(a) {
   if (k.startsWith('pushwallet')) return { Icon: Inbox, tone: 'blue' };
   if (k.startsWith('report')) return { Icon: FileText, tone: 'violet' };
   if (k.startsWith('sup-')) return { Icon: MessageSquare, tone: 'violet' };
+  // a message from FidClic's team (Super admin › Notifications)
+  if (k.startsWith('fidclic-')) return { Icon: a.severity === 'warning' ? AlertTriangle : Info, tone: a.severity === 'warning' ? 'orange' : 'blue' };
   if (/login|security|secu/i.test(k)) return { Icon: ShieldAlert, tone: a.severity === 'critical' ? 'red' : 'orange' };
   if (a.severity === 'critical') return { Icon: AlertTriangle, tone: 'red' };
   if (a.severity === 'warning') return { Icon: TrendingDown, tone: 'orange' };
@@ -142,10 +144,15 @@ export function useNotifications({ platformAdmin = false } = {}) {
           ]);
           support = { status: 'fulfilled', value: { data: { alerts: [...list(tasks), ...list(support)] } } };
         } else {
-          [main, support] = await Promise.allSettled([
+          let fidclic;
+          const merchant = ['business_owner', 'administrateur', 'manager'].includes(user?.role);
+          [main, support, fidclic] = await Promise.allSettled([
             api.get('/owner/insights/alerts/multi-store').catch(() => ownerAPI.getProactiveAlerts({})),
-            ['business_owner', 'administrateur', 'manager'].includes(user?.role) ? mySupportAPI.alerts() : Promise.reject(new Error('no support')),
+            merchant ? mySupportAPI.alerts() : Promise.reject(new Error('no support')),
+            // what FidClic's team wrote to this business (Super admin › Notifications)
+            merchant ? noticesAPI.mine() : Promise.reject(new Error('no notices')),
           ]);
+          support = { status: 'fulfilled', value: { data: { alerts: [...list(fidclic), ...list(support)] } } };
         }
         const merged = [...list(support), ...list(main)];
         if (cancelled) return;

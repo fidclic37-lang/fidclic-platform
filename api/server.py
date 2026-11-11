@@ -13176,6 +13176,10 @@ class AdminBroadcastRequest(BaseModel):
     filters: Optional[Dict[str, Any]] = None  # {tier, sector, department_code, acquisition, tenant_id}
 
 
+_BROADCAST_CLOSED = ("Envoi aux clients de tous les commerces fermé : écrivez aux commerces depuis Super admin › Notifications, "
+                     "ou à leurs clients depuis le compte du commerce (« Accéder au compte »).")
+
+
 @app.post("/api/admin/broadcast")
 def admin_broadcast(
     req: AdminBroadcastRequest,
@@ -13184,6 +13188,10 @@ def admin_broadcast(
     """Admin-authored broadcast to end-customers across tenants.
     Sends under the admin-chosen sender name.
     """
+    # Closed (user, 2026-11-11): with no filter this pushed to EVERY end customer
+    # of EVERY shop. FidClic writes to businesses (features/admin_notices); a
+    # business's customers are reached from its own account (view-as).
+    raise HTTPException(status_code=410, detail=_BROADCAST_CLOSED)
     if not req.subject.strip() or not req.body.strip():
         raise HTTPException(status_code=400, detail="subject and body required")
     filters = req.filters or {}
@@ -13258,6 +13266,10 @@ def admin_broadcast_preview(
 ):
     """Returns the number of end-customers that would match the given broadcast filters,
     without sending anything. Mirrors the filter logic of /api/admin/broadcast."""
+    # Closed (user, 2026-11-11): with no filter this pushed to EVERY end customer
+    # of EVERY shop. FidClic writes to businesses (features/admin_notices); a
+    # business's customers are reached from its own account (view-as).
+    raise HTTPException(status_code=410, detail=_BROADCAST_CLOSED)
     filters = req.filters or {}
     cust_q: Dict[str, Any] = {}
     if filters.get("tier"):

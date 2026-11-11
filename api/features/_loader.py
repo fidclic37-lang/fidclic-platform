@@ -45,6 +45,7 @@ MODULES = [
     "features.franchise",
     "features.admin_commerces",
     "features.admin_dashboard",
+    "features.admin_notices",            # Super admin › Notifications to chosen businesses (2026-11-11)
     "features.admin_insights",
     "features.admin_analytics",
     "features.analytics_usage",

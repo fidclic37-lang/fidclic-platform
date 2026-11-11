@@ -135,7 +135,8 @@ _PREFIX.sort(key=lambda x: -len(x[0]))
 # Reads every account of the shop needs whatever its pages (the menu, the plan,
 # its own security and preferences, help).
 _COMMON_READ = ("/api/owner/branches", "/api/owner/tenant", "/api/owner/plan-access", "/api/owner/trial-status",
-                "/api/owner/usage", "/api/owner/limit-alerts", "/api/onboarding/status")
+                "/api/owner/usage", "/api/owner/limit-alerts", "/api/onboarding/status",
+                "/api/owner/notices")   # what FidClic wrote to the business (features/admin_notices)
 # « Cet appareil est la caisse » marks the account's OWN session, like the rest
 # of /api/security — it only sits outside /sessions/ because that path ends in
 # a session id and swallowed « caisse » (features/security_page). Being common
