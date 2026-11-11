@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import {
@@ -46,7 +47,10 @@ export default function CrmCallsPage() {
   const [detail, setDetail] = useState(null);
   const [modal, setModal] = useState(null);
   const [menu, setMenu] = useState(false);
-  const [rowMenu, setRowMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const rowMenu = rm.openId;
+  const setRowMenu = () => rm.close();          // only ever asked to close
   const [say, toast] = useToast();
 
   const loadList = useCallback(() => {
@@ -138,13 +142,13 @@ export default function CrmCallsPage() {
                         <td className="max-w-[120px] px-2 py-2"><Avatar name={r.by_name} size={22} /></td>
                         <td className="px-2 py-2">{r.has_recording ? <span className="grid h-7 w-7 place-items-center rounded-full bg-[#EAF1FF] text-[#2F6BFF]"><Play size={12} /></span> : <span className="text-[#CBD5E1]">—</span>}</td>
                         <td className="relative px-2 py-2" onClick={(e) => e.stopPropagation()}>
-                          <button type="button" aria-label="Actions" onClick={() => setRowMenu(rowMenu === r.id ? null : r.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                          <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={rowMenu === r.id} onClick={(e) => rm.toggle(e, r.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
                           {rowMenu === r.id && (
-                            <span className="absolute right-2 top-full z-20 flex w-48 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">
-                              {r.status === 'planifie' && <button type="button" onClick={() => setModal({ type: 'call', mode: 'log', call: r })} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Noter le résultat</button>}
-                              {r.status !== 'planifie' && <button type="button" onClick={() => setModal({ type: 'edit', call: r })} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Modifier</button>}
-                              {r.phone && <a href={`tel:${r.phone}`} onClick={() => setModal({ type: 'call', mode: 'dial', prospect: { id: r.prospect_id, name: r.prospect, phone: r.phone } })} className="px-3 py-2 hover:bg-[#F4F7FC]">Rappeler</a>}
-                              <button type="button" onClick={() => { if (window.confirm('Supprimer cet appel ?')) act(() => crmAPI.deleteCall(r.id), 'Appel supprimé.'); }} className="px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]">Supprimer</button>
+                            <span {...rm.menuProps} className="z-50 flex w-48 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">
+                              {r.status === 'planifie' && <button type="button" role="menuitem" onClick={() => setModal({ type: 'call', mode: 'log', call: r })} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Noter le résultat</button>}
+                              {r.status !== 'planifie' && <button type="button" role="menuitem" onClick={() => setModal({ type: 'edit', call: r })} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Modifier</button>}
+                              {r.phone && <a role="menuitem" href={`tel:${r.phone}`} onClick={() => setModal({ type: 'call', mode: 'dial', prospect: { id: r.prospect_id, name: r.prospect, phone: r.phone } })} className="px-3 py-2 hover:bg-[#F4F7FC]">Rappeler</a>}
+                              <button type="button" role="menuitem" onClick={() => { if (window.confirm('Supprimer cet appel ?')) act(() => crmAPI.deleteCall(r.id), 'Appel supprimé.'); }} className="px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]">Supprimer</button>
                             </span>
                           )}
                         </td>
