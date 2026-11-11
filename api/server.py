@@ -5968,6 +5968,26 @@ def _next_visit_reward_of(tenant_id: str, customer_id: str) -> Optional[Dict[str
         return None
 
 
+@app.get("/api/owner/scan/wallet-link")
+def scan_wallet_link(barcode: str = "",
+                     token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
+    """The receipt asks again while the client adds the card to a Wallet
+    (user, 2026-11-11, Monicault Scott: scanned 20 s before Google saved the
+    card, the till kept saying « pas encore ajouté »). The link state only —
+    no name, no number; this shop's cards only."""
+    from features import wallet_passes as _WP
+    bc = barcode_from(barcode)
+    if not bc:
+        raise HTTPException(status_code=400, detail="Code de carte manquant.")
+    cust = db.customers.find_one({"tenant_id": token_data.tenant_id, "barcode_id": bc},
+                                 {**_WP.LINK_FIELDS, "deleted_at": 1})
+    if not cust:
+        raise HTTPException(status_code=404, detail="Aucun client trouvé avec ce code.")
+    if cust.get("deleted_at"):
+        raise HTTPException(status_code=410, detail=DELETED_CARD_MSG)
+    return _WP.link_state(cust)
+
+
 def _wallet_link_of(customer_id: str) -> Optional[Dict[str, Any]]:
     """Never fatal: the visit is written; a warning on the receipt must not undo that."""
     try:
