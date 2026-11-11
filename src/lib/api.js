@@ -384,6 +384,8 @@ export const adminAPI = {
   reactivateCommerce: (id) => api.post(`/admin/commerces/${id}/reactivate`),
   resilierCommerce: (id, body) => api.post(`/admin/commerces/${id}/resilier`, body),
   annulerResiliation: (id) => api.post(`/admin/commerces/${id}/annuler-resiliation`),
+  // « Supprimer » a business: out of every list, its data kept (2026-11-11)
+  supprimerCommerce: (id, body) => api.post(`/admin/commerces/${id}/supprimer`, body),
   dashboardList: (key, params) => api.get(`/admin/dashboard/list/${key}`, { params }),
   dashboardToday: () => api.get('/admin/dashboard/today'),
   dashboardActivity: (params) => api.get('/admin/dashboard/activity', { params }),
@@ -523,6 +525,7 @@ export const ownerAPI = {
   scanVisit: (data) => api.post('/owner/scan', data),
   // whose card, its stamps, and the paper-card stamps it can still take (2026-10-10)
   scanPreview: (barcode) => api.get('/owner/scan/preview', { params: { barcode } }),
+  scanWalletLink: (barcode) => api.get('/owner/scan/wallet-link', { params: { barcode } }),
   // « Enregistrer une visite » V2 — the whole card in one answer
   // (features/scan_page): balance, palier, offers and rewards, paper card.
   scanCard: (barcode) => api.get('/owner/scan/card', { params: { barcode } }),

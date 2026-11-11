@@ -13,6 +13,7 @@ import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 import DecimalInput from '../components/DecimalInput';
 import CardReaddModal from '../components/CardReaddModal';
+import { walletHelp, WALLET_NAMES } from '../lib/walletHelp';
 import { canSwitchStore } from '../lib/storeSwitch';
 import InstallPwaPrompt from '../components/InstallPwaPrompt';
 
@@ -84,11 +85,70 @@ export const codeFromBurst = (typed, physical) => {
 /* The scan reached the server, not the card in the client's Wallet (user,
    2026-11-07, Nathan: downloaded, never registered, stuck at 0 while the till said
    6). Why, in the counter's words — `wallet_link.reason` from the scan. */
-const WALLET_NOT_LINKED = {
-  downloaded_not_registered: "La carte de ce client n'est reliée à aucun téléphone : son Wallet ne se mettra pas à jour.",
-  never_added: "Ce client n'a pas encore ajouté sa carte à un Wallet.",
-  removed: "Ce client a retiré sa carte de son Wallet : elle ne se met plus à jour.",
-};
+/* 2026-11-11 (a client, scanned 20 s before Google saved his card):
+   « never added » is a soft note, not an error — a card added after the scan
+   already carries the visit — and the receipt turns green by itself once the
+   card lands in a Wallet. Red only when a Wallet holds the card but cannot be
+   reached, with the steps worth trying for THAT Wallet (`wallet_link.wallet`). */
+const WALLET_RECHECK_MS = 5000;
+const WALLET_RECHECK_TRIES = 24;          // two minutes: the time to add a card at the counter
+
+/** The receipt's Wallet line. Asks again (link state only) while the client
+    adds the card; turns green as soon as Apple or Google confirms it. */
+function WalletLinkNotice({ link, barcode, onQr }) {
+  const [now, setNow] = useState(null);
+  useEffect(() => {
+    setNow(null);
+    if (!link || link.linked !== false || !barcode) return undefined;
+    let tries = 0;
+    let stop = false;
+    const id = setInterval(async () => {
+      if (stop || document.hidden) return;
+      tries += 1;
+      if (tries > WALLET_RECHECK_TRIES) { clearInterval(id); return; }
+      try {
+        const { data } = await ownerAPI.scanWalletLink(barcode);
+        if (!stop && data && data.linked) { setNow(data); clearInterval(id); }
+      } catch (e) {
+        const s = e?.response?.status;
+        if (s && s !== 429 && s < 500) clearInterval(id);    // gone, not ours, logged out: stop asking
+      }
+    }, WALLET_RECHECK_MS);
+    return () => { stop = true; clearInterval(id); };
+  }, [link, barcode]);
+
+  if (now) {
+    return (
+      <p className="mt-3 flex items-start gap-2 rounded-xl border border-[#A7F3D0] bg-[#ECFDF3] px-3.5 py-3 text-[13.5px] font-semibold text-[#047857]"
+         data-testid="wallet-linked-now" data-wallet={now.where || ''}>
+        <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">Carte ajoutée à {WALLET_NAMES[now.where] || 'son Wallet'} : elle se met à jour à chaque visite.</span>
+      </p>
+    );
+  }
+  const help = walletHelp(link);
+  if (!help) return null;
+  const info = help.tone === 'info';
+  return (
+    <div className={`mt-3 rounded-xl border px-3.5 py-3 text-[13.5px] ${info ? 'border-[#BFDBFE] bg-[#EFF6FF] text-[#1E3A8A]' : 'border-[#FECACA] bg-[#FEF2F2] text-[#991B1B]'}`}
+         data-testid="wallet-not-linked" data-reason={link.reason} data-wallet={link.wallet || ''} data-tone={help.tone}>
+      <p className="flex items-start gap-2 font-semibold">
+        {info ? <Info size={17} className="mt-0.5 shrink-0" /> : <AlertCircle size={17} className="mt-0.5 shrink-0" />}
+        <span className="min-w-0 break-words">{help.title}</span>
+      </p>
+      <p className={`mt-1 pl-[25px] text-[12.5px] ${info ? 'text-[#1D4ED8]' : 'text-[#B42318]'}`}>{help.note}</p>
+      {help.steps.length > 0 && (
+        <ol className="mt-1.5 list-decimal space-y-1 pl-[42px] pr-1 text-[12.5px] leading-snug" data-testid="wallet-steps">
+          {help.steps.map((s) => <li key={s} className="break-words">{s}</li>)}
+        </ol>
+      )}
+      <button type="button" onClick={onQr}
+              className={`ml-[25px] mt-2.5 inline-flex min-h-10 items-center gap-2 rounded-xl px-4 py-2 text-left text-[13px] font-semibold ${info ? 'border border-[#93C5FD] bg-white text-[#1D4ED8]' : 'bg-[#B42318] text-white'}`}>
+        <QrCode size={15} className="shrink-0" /> {help.qr}
+      </button>
+    </div>
+  );
+}
 
 function NotificationEnablePrompt({ customerName, barcodeId, cardKey }) {
   const [showQR, setShowQR] = useState(false);
@@ -1393,18 +1453,8 @@ const ScanPage = () => {
                 </p>
               )}
               {recorded.data?.wallet_link && recorded.data.wallet_link.linked === false && (
-                <div className="mt-3 rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3.5 py-3 text-[13.5px] text-[#991B1B]"
-                     data-testid="wallet-not-linked" data-reason={recorded.data.wallet_link.reason}>
-                  <p className="flex items-start gap-2 font-semibold">
-                    <AlertCircle size={17} className="mt-0.5 shrink-0" />
-                    <span className="min-w-0 break-words">{WALLET_NOT_LINKED[recorded.data.wallet_link.reason] || WALLET_NOT_LINKED.downloaded_not_registered}</span>
-                  </p>
-                  <p className="mt-1 pl-[25px] text-[12.5px] text-[#B42318]">La visite est bien enregistrée : sa carte est à jour sur sa page, pas dans son Wallet.</p>
-                  <button type="button" onClick={() => setReaddFor(recorded.data.id)}
-                          className="ml-[25px] mt-2.5 inline-flex h-10 items-center gap-2 rounded-xl bg-[#B42318] px-4 text-[13px] font-semibold text-white">
-                    <QrCode size={15} /> Afficher le QR à scanner
-                  </button>
-                </div>
+                <WalletLinkNotice link={recorded.data.wallet_link} barcode={recorded.data.barcode_id}
+                                  onQr={() => setReaddFor(recorded.data.id)} />
               )}
               <dl className="mt-3 grid gap-x-6 gap-y-2 text-[13.5px] sm:grid-cols-2">
                 <div className="flex justify-between gap-3 border-b border-[#F1F5F9] pb-2"><dt className="text-[#64748B]">Montant payé</dt><dd className="font-semibold text-[#0B1C3F]">{money(recorded.amount)}</dd></div>

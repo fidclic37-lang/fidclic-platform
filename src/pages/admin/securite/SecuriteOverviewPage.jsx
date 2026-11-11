@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../../../lib/anchoredMenu';
 import { Link, useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Users, ShieldCheck, Globe2, AlertTriangle, ShieldAlert, Plus, MoreHorizontal, Search, KeyRound, UserX, UserCheck, Unlock, Pencil } from 'lucide-react';
@@ -18,7 +19,10 @@ export default function SecuriteOverviewPage() {
   const [users, setUsers] = useState(null);
   const [roles, setRoles] = useState([]);
   const [err, setErr] = useState('');
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const menu = rm.openId;
+  const setMenu = () => rm.close();          // only ever asked to close
   const [modal, setModal] = useState(null);
   const [jf, setJf] = useState({ q: '', user: '', category: '', status: '' });
   const [journal, setJournal] = useState([]);
@@ -122,15 +126,15 @@ export default function SecuriteOverviewPage() {
                     <td className="relative px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
                       {boss && (
                         <>
-                          <button type="button" aria-label="Actions" onClick={() => setMenu(menu === u.email ? null : u.email)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                          <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={menu === u.email} onClick={(e) => rm.toggle(e, u.email)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
                           {menu === u.email && (
-                            <span className="absolute right-2 top-full z-20 flex w-60 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">
-                              <button type="button" onClick={() => { setMenu(null); setModal({ type: 'user', u }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pencil size={14} /> Modifier / changer de rôle</button>
-                              <button type="button" onClick={async () => { setMenu(null); if (!window.confirm(`Réinitialiser le mot de passe de ${u.name} ? Ses sessions seront fermées.`)) return; const r = await act(() => securityAPI.resetPassword(u.email)); if (r) setModal({ type: 'pw', data: r.data, title: 'Nouveau mot de passe' }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><KeyRound size={14} /> Réinitialiser le mot de passe</button>
-                              {locked && <button type="button" onClick={() => { setMenu(null); act(() => securityAPI.unlock(u.email), 'Compte débloqué.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Unlock size={14} /> Débloquer</button>}
+                            <span {...rm.menuProps} className="z-50 flex w-60 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">
+                              <button type="button" role="menuitem" onClick={() => { setMenu(null); setModal({ type: 'user', u }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pencil size={14} /> Modifier / changer de rôle</button>
+                              <button type="button" role="menuitem" onClick={async () => { setMenu(null); if (!window.confirm(`Réinitialiser le mot de passe de ${u.name} ? Ses sessions seront fermées.`)) return; const r = await act(() => securityAPI.resetPassword(u.email)); if (r) setModal({ type: 'pw', data: r.data, title: 'Nouveau mot de passe' }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><KeyRound size={14} /> Réinitialiser le mot de passe</button>
+                              {locked && <button type="button" role="menuitem" onClick={() => { setMenu(null); act(() => securityAPI.unlock(u.email), 'Compte débloqué.'); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Unlock size={14} /> Débloquer</button>}
                               {u.email !== user?.email && (u.active
-                                ? <button type="button" onClick={() => { setMenu(null); if (window.confirm(`Désactiver ${u.name} ? Ses sessions seront fermées tout de suite.`)) act(() => securityAPI.editUser(u.email, { active: false }), 'Utilisateur désactivé.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><UserX size={14} /> Désactiver</button>
-                                : <button type="button" onClick={() => { setMenu(null); act(() => securityAPI.editUser(u.email, { active: true }), 'Utilisateur réactivé.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><UserCheck size={14} /> Réactiver</button>)}
+                                ? <button type="button" role="menuitem" onClick={() => { setMenu(null); if (window.confirm(`Désactiver ${u.name} ? Ses sessions seront fermées tout de suite.`)) act(() => securityAPI.editUser(u.email, { active: false }), 'Utilisateur désactivé.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><UserX size={14} /> Désactiver</button>
+                                : <button type="button" role="menuitem" onClick={() => { setMenu(null); act(() => securityAPI.editUser(u.email, { active: true }), 'Utilisateur réactivé.'); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><UserCheck size={14} /> Réactiver</button>)}
                             </span>
                           )}
                         </>

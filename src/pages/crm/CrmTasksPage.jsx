@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckSquare, Clock, Check, XCircle, FileText, Plus, ChevronDown, Search, SlidersHorizontal, Phone, Mail, Send, CalendarDays,
@@ -31,7 +32,10 @@ export default function CrmTasksPage() {
   const [sel, setSel] = useState(null);
   const [modal, setModal] = useState(null);
   const [menu, setMenu] = useState(false);
-  const [rowMenu, setRowMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const rowMenu = rm.openId;
+  const setRowMenu = () => rm.close();          // only ever asked to close
   const [say, toast] = useToast();
 
   const range = () => {
@@ -118,13 +122,13 @@ export default function CrmTasksPage() {
                         <td className={`px-2 py-2.5 ${r.status === 'en_retard' ? 'text-[#E11D48]' : 'text-[#475569]'}`}>{dayTime(r.due_at)}</td>
                         <td className="max-w-[120px] px-2 py-2.5"><Avatar name={r.assigned_name} size={22} /></td>
                         <td className="relative px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
-                          <button type="button" aria-label="Actions" onClick={() => setRowMenu(rowMenu === r.id ? null : r.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                          <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={rowMenu === r.id} onClick={(e) => rm.toggle(e, r.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
                           {rowMenu === r.id && (
-                            <span className="absolute right-2 top-full z-20 flex w-44 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">
-                              {r.status !== 'terminee' && <button type="button" onClick={() => act(() => crmAPI.editTask(r.id, { status: 'terminee' }), 'Tâche terminée.')} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Marquer terminée</button>}
-                              {r.status === 'a_faire' && <button type="button" onClick={() => act(() => crmAPI.editTask(r.id, { status: 'en_cours' }), 'Tâche en cours.')} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Passer en cours</button>}
-                              <button type="button" onClick={() => setModal({ type: 'task', task: r })} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Modifier</button>
-                              <button type="button" onClick={() => act(() => crmAPI.deleteTask(r.id), 'Tâche supprimée.')} className="px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]">Supprimer</button>
+                            <span {...rm.menuProps} className="z-50 flex w-44 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-lg">
+                              {r.status !== 'terminee' && <button type="button" role="menuitem" onClick={() => act(() => crmAPI.editTask(r.id, { status: 'terminee' }), 'Tâche terminée.')} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Marquer terminée</button>}
+                              {r.status === 'a_faire' && <button type="button" role="menuitem" onClick={() => act(() => crmAPI.editTask(r.id, { status: 'en_cours' }), 'Tâche en cours.')} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Passer en cours</button>}
+                              <button type="button" role="menuitem" onClick={() => setModal({ type: 'task', task: r })} className="px-3 py-2 text-left hover:bg-[#F4F7FC]">Modifier</button>
+                              <button type="button" role="menuitem" onClick={() => act(() => crmAPI.deleteTask(r.id), 'Tâche supprimée.')} className="px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]">Supprimer</button>
                             </span>
                           )}
                         </td>

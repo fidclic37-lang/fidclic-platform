@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { protectNames } from '../../lib/translator';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -15,7 +16,7 @@ import WalletIdentitiesBanner from './WalletIdentitiesBanner';
    editable, decided with the user 2026-10-01). */
 
 export const STATUS_TONE = { actif: ['#E7F7EE', '#0F8B58'], inactif: ['#FDECEF', '#E11D48'], a_risque: ['#FFF4DB', '#D97706'], suspendu: ['#F1F5F9', '#475569'],
-  resilie: ['#F1F5F9', '#0B1C3F'], non_converti: ['#F3EEFF', '#7C3AED'] };
+  resilie: ['#F1F5F9', '#0B1C3F'], non_converti: ['#F3EEFF', '#7C3AED'], supprime: ['#FDECEF', '#9F1239'] };
 export const weekly = (c) => (c.cards_week == null ? null : `${c.cards_week} cartes · ${c.scans_week} scans / semaine`);
 export const StatusPill = ({ s, label }) => { const [bg, fg] = STATUS_TONE[s] || STATUS_TONE.suspendu; return <span className="whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] font-medium" style={{ background: bg, color: fg }}>{label}</span>; };
 export const PLAN_TONE = { essai: ['#F1F5F9', '#475569'], silver: ['#FFF4DB', '#B45309'], gold: ['#EAF1FF', '#2F6BFF'], vip: ['#FDECEF', '#E11D48'], franchise: ['#F3EEFF', '#7C3AED'] };
@@ -37,7 +38,8 @@ const ago = (iso) => {
 };
 const TABS = [['', 'Tous', 'all', ['#2F6BFF', '#fff', '#EAF1FF']], ['actif', 'Actifs', 'actif', ['#E7F7EE', '#0F8B58', '#fff']], ['inactif', 'Inactifs', 'inactif', ['#FDECEF', '#E11D48', '#fff']],
   ['a_risque', 'À risque', 'a_risque', ['#FFF4DB', '#D97706', '#fff']], ['nouveaux', 'Nouveaux', 'nouveaux', ['#F3EEFF', '#7C3AED', '#fff']],
-  ['resilie', 'Résiliés', 'resilie', ['#F1F5F9', '#0B1C3F', '#fff']], ['non_converti', 'Essais non convertis', 'non_converti', ['#F3EEFF', '#7C3AED', '#fff']]];
+  ['resilie', 'Résiliés', 'resilie', ['#F1F5F9', '#0B1C3F', '#fff']], ['non_converti', 'Essais non convertis', 'non_converti', ['#F3EEFF', '#7C3AED', '#fff']],
+  ['supprime', 'Supprimés', 'supprime', ['#FDECEF', '#9F1239', '#fff']]];
 
 export async function openViewAs(id, say, store) {
   const w = window.open('about:blank', '_blank');
@@ -63,7 +65,10 @@ export default function CommercesPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(15);
   const [view, setView] = useState('list');
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const menu = rm.openId;
+  const setMenu = () => rm.close();          // only ever asked to close
   const [modal, setModal] = useState(null);
   const [picked, setPicked] = useState([]);
   const [say, toast] = useToast();
@@ -84,12 +89,12 @@ export default function CommercesPage() {
       {sort === `-${k}` ? <ChevronDown size={13} /> : sort === k ? <ChevronUp size={13} /> : <ChevronsUpDown size={13} className="text-[#CBD5E1]" />}</button></th>
   );
   const rowMenu = (c) => (
-    <span className="absolute right-2 top-full z-20 flex w-52 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 text-[13px] shadow-lg">
-      <button type="button" onClick={() => navigate(`/admin/commerces/${c.id}`)} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Eye size={14} /> Voir le commerce</button>
-      <button type="button" onClick={() => { setMenu(null); openViewAs(c.id, say); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><ExternalLink size={14} /> Accéder au compte</button>
+    <span {...rm.menuProps} className="z-50 flex w-52 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 text-[13px] shadow-lg">
+      <button type="button" role="menuitem" onClick={() => navigate(`/admin/commerces/${c.id}`)} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Eye size={14} /> Voir le commerce</button>
+      <button type="button" role="menuitem" onClick={() => { setMenu(null); openViewAs(c.id, say); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><ExternalLink size={14} /> Accéder au compte</button>
       {c.suspended
-        ? <button type="button" onClick={() => { setMenu(null); act(() => adminAPI.reactivateCommerce(c.id), `${c.name} réactivé.`); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><PlayCircle size={14} /> Réactiver</button>
-        : <button type="button" onClick={() => { setMenu(null); setModal({ type: 'suspend', c }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><PauseCircle size={14} /> Suspendre</button>}
+        ? <button type="button" role="menuitem" onClick={() => { setMenu(null); act(() => adminAPI.reactivateCommerce(c.id), `${c.name} réactivé.`); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><PlayCircle size={14} /> Réactiver</button>
+        : <button type="button" role="menuitem" onClick={() => { setMenu(null); setModal({ type: 'suspend', c }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><PauseCircle size={14} /> Suspendre</button>}
     </span>
   );
 
@@ -172,7 +177,7 @@ export default function CommercesPage() {
                     <td className="whitespace-nowrap px-2 py-2 text-[#475569]">{ago(c.last_activity)}</td>
                     <td className="px-2 py-2"><span title={weekly(c) || c.status_label}><StatusPill s={c.status} label={c.status_label} /></span></td>
                     <td className="relative px-2 py-2" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" aria-label="Actions" onClick={() => setMenu(menu === c.id ? null : c.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                      <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={menu === c.id} onClick={(e) => rm.toggle(e, c.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
                       {menu === c.id && rowMenu(c)}
                     </td>
                   </tr>
@@ -263,6 +268,41 @@ export function ResilierModal({ c, onClose, onDone }) {
         <input className={inputCls} value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="RÉSILIER" /></label>
       {err && <p className="mt-2 text-[13px] text-[#C0392B]">{String(err)}</p>}
       <button type="button" disabled={busy || !ok} onClick={go} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#0B1C3F] py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-40">{busy && <Loader2 size={15} className="animate-spin" />} Résilier le commerce</button>
+    </Modal>
+  );
+}
+
+/* « Supprimer » a business for good (user, 2026-11-11): gone from every list
+   and count, shown only under « Supprimés »; nothing is removed from the
+   database. The super admin types its name to confirm. */
+export function SupprimerModal({ c, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const norm = (x) => (x || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const ok = reason.trim().length >= 2 && norm(name) === norm(c.name);
+  const go = async () => {
+    setBusy(true);
+    try {
+      await adminAPI.supprimerCommerce(c.id, { confirm_name: name, reason: reason.trim() });
+      onDone(`${c.name} supprimé. Il reste visible dans « Supprimés », ses données sont conservées.`);
+    } catch (e) { setErr(e?.response?.data?.detail?.[0]?.msg || e?.response?.data?.detail || 'Suppression impossible.'); setBusy(false); }
+  };
+  return (
+    <Modal title={`Supprimer ${c.name} définitivement ?`} onClose={onClose}>
+      <ul className="mb-3 space-y-1.5 rounded-xl bg-[#FEF2F2] p-3 text-[13px] text-[#7F1D1D]">
+        <li>• Le commerce <strong>disparaît de toutes les listes</strong> et n'apparaît plus que dans « Supprimés ».</li>
+        <li>• Le propriétaire et l'équipe <strong>ne peuvent plus se connecter</strong>, tous les services sont coupés.</li>
+        <li>• Les <strong>cartes des clients cessent de fonctionner</strong> et les inscriptions sont fermées.</li>
+        <li>• <strong>Aucune donnée n'est effacée</strong> : tout reste dans la base.</li>
+      </ul>
+      <label className="block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Raison (obligatoire)</span>
+        <textarea rows={3} className={`${inputCls} h-auto py-2`} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex. commerce fermé, compte de test…" /></label>
+      <label className="mt-2 block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Tapez le nom du commerce pour confirmer : <strong translate="no" className="notranslate">{c.name}</strong></span>
+        <input aria-label="Nom du commerce" className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder={c.name} /></label>
+      {err && <p className="mt-2 text-[13px] text-[#C0392B]">{String(err)}</p>}
+      <button type="button" disabled={busy || !ok} onClick={go} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#9F1239] py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-40">{busy && <Loader2 size={15} className="animate-spin" />} Supprimer définitivement</button>
     </Modal>
   );
 }

@@ -63,7 +63,7 @@ def franchise_overview(token_data: TokenData = Depends(require_admin("abonnement
     for r in reqs:
         r["created_at"] = r["created_at"].isoformat() if isinstance(r.get("created_at"), datetime) else r.get("created_at")
     return {"requests": reqs,
-            "franchises": [_view(t) for t in _db.tenants.find({"plan": "franchise"}, {"_id": 0}).sort("name", 1)]}
+            "franchises": [_view(t) for t in _db.tenants.find({"plan": "franchise", "deleted_at": None}, {"_id": 0}).sort("name", 1)]}
 
 
 @router.put("/api/admin/tenants/{tid}/franchise")

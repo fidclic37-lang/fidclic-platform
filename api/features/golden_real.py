@@ -266,7 +266,9 @@ class SwitchIn(BaseModel):
 def admin_list(token_data=Depends(require_admin("ai"))):
     states = {s["tenant_id"]: s for s in _db.golden_real_state.find({}, {"_id": 0})}
     out = []
-    for t in _db.tenants.find({"demo": {"$ne": True}}, {"_id": 0, "id": 1, "name": 1, "golden_real_off": 1, "is_active": 1}):
+    # a business deleted by the super admin is in no list (2026-11-11)
+    for t in _db.tenants.find({"demo": {"$ne": True}, "deleted_at": None},
+                              {"_id": 0, "id": 1, "name": 1, "golden_real_off": 1, "is_active": 1}):
         s = states.get(t.get("id")) or {}
         out.append({"id": t.get("id"), "name": t.get("name") or "", "on": on(t),
                     "built_at": _aware(s.get("built_at")).isoformat() if s.get("built_at") else None,

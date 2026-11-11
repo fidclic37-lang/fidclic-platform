@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import {
@@ -46,7 +47,10 @@ export default function InsightsPage() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [picked, setPicked] = useState([]);
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const menu = rm.openId;
+  const setMenu = () => rm.close();          // only ever asked to close
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [say, toast] = useToast();
@@ -179,13 +183,12 @@ export default function InsightsPage() {
                     <td className="px-2 py-2 text-[#475569]">{r.recommendation}</td>
                     <td className="px-2 py-2"><span className="inline-block min-w-[70px] rounded-md px-2 py-1 text-center text-[12px] font-medium" style={{ background: pb, color: pf }}>{r.priority_label}</span></td>
                     <td className="relative px-2 py-2 text-center">
-                      <button type="button" aria-label={`Actions pour ${r.name}`} onClick={() => setMenu(menu === r.id ? null : r.id)} className="rounded-md p-1 text-[#2F6BFF] hover:bg-[#EAF1FF]"><MoreHorizontal size={16} /></button>
+                      <button type="button" aria-label={`Actions pour ${r.name}`} aria-haspopup="menu" aria-expanded={menu === r.id} onClick={(e) => rm.toggle(e, r.id)} className="rounded-md p-1 text-[#2F6BFF] hover:bg-[#EAF1FF]"><MoreHorizontal size={16} /></button>
                       {menu === r.id && (
                         <>
-                          <div className="fixed inset-0 z-10" onClick={() => setMenu(null)} />
-                          <div className="absolute right-2 top-9 z-20 w-52 overflow-hidden rounded-xl border border-[#DCE3EE] bg-white py-1 text-left text-[12.5px] shadow-lg">
-                            <button type="button" onClick={() => { setMenu(null); navigate(`/admin/commerces/${r.tenant_id}`); }} className="block w-full px-3 py-2 text-left hover:bg-[#F4F7FC]">Ouvrir la fiche du commerce</button>
-                            {can(user, 'commerces') && <button type="button" onClick={() => { setMenu(null); openViewAs(r.tenant_id, say); }} className="block w-full px-3 py-2 text-left hover:bg-[#F4F7FC]">Accéder au compte</button>}
+                          <div {...rm.menuProps} className="z-50 w-52 overflow-hidden rounded-xl border border-[#DCE3EE] bg-white py-1 text-left text-[12.5px] shadow-lg">
+                            <button type="button" role="menuitem" onClick={() => { setMenu(null); navigate(`/admin/commerces/${r.tenant_id}`); }} className="block w-full px-3 py-2 text-left hover:bg-[#F4F7FC]">Ouvrir la fiche du commerce</button>
+                            {can(user, 'commerces') && <button type="button" role="menuitem" onClick={() => { setMenu(null); openViewAs(r.tenant_id, say); }} className="block w-full px-3 py-2 text-left hover:bg-[#F4F7FC]">Accéder au compte</button>}
                           </div>
                         </>
                       )}
