@@ -5972,7 +5972,7 @@ def _next_visit_reward_of(tenant_id: str, customer_id: str) -> Optional[Dict[str
 def scan_wallet_link(barcode: str = "",
                      token_data: TokenData = Depends(require_role(["business_owner", "administrateur", "manager", "staff"]))):
     """The receipt asks again while the client adds the card to a Wallet
-    (user, 2026-11-11, Monicault Scott: scanned 20 s before Google saved the
+    (user, 2026-11-11, a client: scanned 20 s before Google saved the
     card, the till kept saying « pas encore ajouté »). The link state only —
     no name, no number; this shop's cards only."""
     from features import wallet_passes as _WP

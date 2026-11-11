@@ -85,7 +85,7 @@ export const codeFromBurst = (typed, physical) => {
 /* The scan reached the server, not the card in the client's Wallet (user,
    2026-11-07, Nathan: downloaded, never registered, stuck at 0 while the till said
    6). Why, in the counter's words — `wallet_link.reason` from the scan. */
-/* 2026-11-11 (Monicault Scott, scanned 20 s before Google saved his card):
+/* 2026-11-11 (a client, scanned 20 s before Google saved his card):
    « never added » is a soft note, not an error — a card added after the scan
    already carries the visit — and the receipt turns green by itself once the
    card lands in a Wallet. Red only when a Wallet holds the card but cannot be

@@ -1,6 +1,6 @@
 /**
  * « Card Google Wallet mein tha, till ne bola add nahi hai » (user, 2026-11-11,
- * Monicault Scott at Royal Trim Liberté: scanned 20 s before Google saved the
+ * a client at a live shop: scanned 20 s before Google saved the
  * card). The receipt now:
  *   • says « pas encore dans un Wallet » softly (not a red error) and turns
  *     green by itself once the client adds the card;

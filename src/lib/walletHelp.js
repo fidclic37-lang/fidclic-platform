@@ -1,6 +1,6 @@
 /* What the till says under a visit when the client's Wallet card can't be
    reached (`wallet_link` from the scan), and the steps worth trying for THAT
-   Wallet (user, 2026-11-11, Monicault Scott). Pure: unit-tested with
+   Wallet (user, 2026-11-11, a client). Pure: unit-tested with
    node --test src/lib/walletHelp.test.js. */
 export const APPLE_STEPS = [
   'Sur son iPhone : Cartes (Wallet) › sa carte › « … » › Détails de la carte › activer « Mises à jour automatiques ».',

@@ -269,7 +269,7 @@ def wallet_link(customer_id: str) -> Dict[str, Any]:
 
 def link_state(c: Dict[str, Any]) -> Dict[str, Any]:
     """wallet_link for a customer already read. `wallet` names the Wallet the
-    till's steps are about (user, 2026-11-11, Monicault Scott: the steps
+    till's steps are about (user, 2026-11-11, a client: the steps
     differ between an iPhone and Google Wallet) — None when never added."""
     serial = c.get("barcode_id")
     if serial and _db.pass_registrations.find_one({"serial": serial}, {"_id": 1}):
