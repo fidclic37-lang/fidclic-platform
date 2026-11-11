@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Users, Phone, Mail, CalendarDays, FileText, Handshake, Upload, Download, Plus, Search, RotateCcw, SlidersHorizontal,
@@ -164,7 +165,10 @@ export default function CrmProspectsPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [sel, setSel] = useState(params.get('open') || null);
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const menu = rm.openId;
+  const setMenu = () => rm.close();          // only ever asked to close
   const [modal, setModal] = useState(null);
   const [ver, setVer] = useState(0);
   const [say, toast] = useToast();
@@ -267,11 +271,11 @@ export default function CrmProspectsPage() {
                             <td className="px-2 py-2.5"><Avatar name={p.assigned_name} /></td>
                             <td className="px-2 py-2.5 text-[#475569]">{p.last_activity_at ? new Date(p.last_activity_at).toLocaleDateString('fr-FR') : '—'}</td>
                             <td className="relative px-2 py-2.5" onClick={(e) => e.stopPropagation()}>
-                              <button type="button" aria-label="Actions" onClick={() => setMenu(menu === p.id ? null : p.id)} className="rounded p-1 text-[#0B1C3F] hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                              <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={menu === p.id} onClick={(e) => rm.toggle(e, p.id)} className="rounded p-1 text-[#0B1C3F] hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
                               {menu === p.id && (
-                                <span className="absolute right-2 top-full z-20 flex w-44 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
-                                  <button type="button" onClick={() => { setMenu(null); setModal({ type: 'edit', prospect: p }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pencil size={13} /> Modifier</button>
-                                  {admin && !p.on_fidclic && <button type="button" onClick={async () => { setMenu(null); if (window.confirm(`Supprimer « ${p.name} » du CRM ?`)) { await crmAPI.deleteProspect(p.id); if (sel === p.id) setSel(null); refresh('Prospect supprimé.'); } }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><Trash2 size={13} /> Supprimer</button>}
+                                <span {...rm.menuProps} className="z-50 flex w-44 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
+                                  <button type="button" role="menuitem" onClick={() => { setMenu(null); setModal({ type: 'edit', prospect: p }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pencil size={13} /> Modifier</button>
+                                  {admin && !p.on_fidclic && <button type="button" role="menuitem" onClick={async () => { setMenu(null); if (window.confirm(`Supprimer « ${p.name} » du CRM ?`)) { await crmAPI.deleteProspect(p.id); if (sel === p.id) setSel(null); refresh('Prospect supprimé.'); } }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><Trash2 size={13} /> Supprimer</button>}
                                 </span>
                               )}
                             </td>
