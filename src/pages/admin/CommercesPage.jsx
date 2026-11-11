@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useAnchoredMenu } from '../../lib/anchoredMenu';
 import { protectNames } from '../../lib/translator';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -63,7 +64,10 @@ export default function CommercesPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(15);
   const [view, setView] = useState('list');
-  const [menu, setMenu] = useState(null);
+  // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
+  const rm = useAnchoredMenu();
+  const menu = rm.openId;
+  const setMenu = () => rm.close();          // only ever asked to close
   const [modal, setModal] = useState(null);
   const [picked, setPicked] = useState([]);
   const [say, toast] = useToast();
@@ -84,12 +88,12 @@ export default function CommercesPage() {
       {sort === `-${k}` ? <ChevronDown size={13} /> : sort === k ? <ChevronUp size={13} /> : <ChevronsUpDown size={13} className="text-[#CBD5E1]" />}</button></th>
   );
   const rowMenu = (c) => (
-    <span className="absolute right-2 top-full z-20 flex w-52 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 text-[13px] shadow-lg">
-      <button type="button" onClick={() => navigate(`/admin/commerces/${c.id}`)} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Eye size={14} /> Voir le commerce</button>
-      <button type="button" onClick={() => { setMenu(null); openViewAs(c.id, say); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><ExternalLink size={14} /> Accéder au compte</button>
+    <span {...rm.menuProps} className="z-50 flex w-52 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 text-[13px] shadow-lg">
+      <button type="button" role="menuitem" onClick={() => navigate(`/admin/commerces/${c.id}`)} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Eye size={14} /> Voir le commerce</button>
+      <button type="button" role="menuitem" onClick={() => { setMenu(null); openViewAs(c.id, say); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><ExternalLink size={14} /> Accéder au compte</button>
       {c.suspended
-        ? <button type="button" onClick={() => { setMenu(null); act(() => adminAPI.reactivateCommerce(c.id), `${c.name} réactivé.`); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><PlayCircle size={14} /> Réactiver</button>
-        : <button type="button" onClick={() => { setMenu(null); setModal({ type: 'suspend', c }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><PauseCircle size={14} /> Suspendre</button>}
+        ? <button type="button" role="menuitem" onClick={() => { setMenu(null); act(() => adminAPI.reactivateCommerce(c.id), `${c.name} réactivé.`); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#0F8B58] hover:bg-[#F0FDF4]"><PlayCircle size={14} /> Réactiver</button>
+        : <button type="button" role="menuitem" onClick={() => { setMenu(null); setModal({ type: 'suspend', c }); }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><PauseCircle size={14} /> Suspendre</button>}
     </span>
   );
 
@@ -172,7 +176,7 @@ export default function CommercesPage() {
                     <td className="whitespace-nowrap px-2 py-2 text-[#475569]">{ago(c.last_activity)}</td>
                     <td className="px-2 py-2"><span title={weekly(c) || c.status_label}><StatusPill s={c.status} label={c.status_label} /></span></td>
                     <td className="relative px-2 py-2" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" aria-label="Actions" onClick={() => setMenu(menu === c.id ? null : c.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
+                      <button type="button" aria-label="Actions" aria-haspopup="menu" aria-expanded={menu === c.id} onClick={(e) => rm.toggle(e, c.id)} className="rounded p-1 hover:bg-[#F4F7FC]"><MoreHorizontal size={16} /></button>
                       {menu === c.id && rowMenu(c)}
                     </td>
                   </tr>
