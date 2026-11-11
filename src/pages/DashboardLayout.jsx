@@ -739,6 +739,7 @@ const DashboardLayout = () => {
               {can(user, 'crm') && <CrmNav currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'ai') && <NavLink to="/admin/ai" icon={BrainCircuit} label="FIDCLIC AI" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'securite') && <NavLink to="/admin/securite" icon={ShieldCheck} label="Admin" currentPath={currentPath} role={role} collapsed={rail} />}
+              {can(user, 'parametres') && <NavLink to="/admin/parametres" icon={Settings2} label="Paramètres" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'support') && <NavLink to="/admin/support" icon={Headphones} label="Centre de support" currentPath={currentPath} role={role} collapsed={rail} badge={supportUnread || null} />}
               {can(user, 'equipe') && <NavLink to="/admin/equipe" icon={ClipboardCheck} label="Suivi d'équipe" currentPath={currentPath} role={role} collapsed={rail} />}
               <SignOutNavItem onClick={logout} collapsed={rail} />

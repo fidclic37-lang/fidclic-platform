@@ -367,6 +367,12 @@ export const noticesAPI = {
   mine: () => api.get('/owner/notices'),
 };
 
+// Super admin › Paramètres (features/platform_services.py)
+export const settingsAPI = {
+  services: () => api.get('/admin/settings/services'),
+  testService: (key) => api.post(`/admin/settings/services/${encodeURIComponent(key)}/test`),
+};
+
 export const adminAPI = {
   // Facturation — the issuer of FidClic's invoices, and every invoice issued.
   franchise: () => api.get('/admin/franchise'),
