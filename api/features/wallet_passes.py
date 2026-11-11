@@ -264,19 +264,32 @@ def wallet_link(customer_id: str) -> Dict[str, Any]:
     c = _db.customers.find_one({"id": customer_id}, {"_id": 0, "barcode_id": 1, "apple_downloaded_at": 1,
                                                      "wallet_removed_at": 1, "wallet_added_at": 1,
                                                      "google_added_at": 1, "google_removed_at": 1}) or {}
+    return link_state(c)
+
+
+def link_state(c: Dict[str, Any]) -> Dict[str, Any]:
+    """wallet_link for a customer already read. `wallet` names the Wallet the
+    till's steps are about (user, 2026-11-11, a client: the steps
+    differ between an iPhone and Google Wallet) — None when never added."""
     serial = c.get("barcode_id")
     if serial and _db.pass_registrations.find_one({"serial": serial}, {"_id": 1}):
-        return {"linked": True, "where": "apple", "reason": None}
+        return {"linked": True, "where": "apple", "reason": None, "wallet": "apple"}
     obj = _db.google_wallet_objects.find_one({"serial": serial}, {"_id": 0, "created_at": 1}) if serial else None
     if google_saved(c, obj):
-        return {"linked": True, "where": "google", "reason": None}
-    if c.get("wallet_removed_at") or c.get("google_removed_at"):
+        return {"linked": True, "where": "google", "reason": None, "wallet": "google"}
+    a_removed, g_removed = _aware_dt(c.get("wallet_removed_at")), _aware_dt(c.get("google_removed_at"))
+    if a_removed or g_removed:
         reason = "removed"
+        wallet = "google" if g_removed and (not a_removed or g_removed > a_removed) else "apple"
     elif c.get("apple_downloaded_at"):
-        reason = "downloaded_not_registered"
+        reason, wallet = "downloaded_not_registered", "apple"
     else:
-        reason = "never_added"
-    return {"linked": False, "where": None, "reason": reason}
+        reason, wallet = "never_added", None
+    return {"linked": False, "where": None, "reason": reason, "wallet": wallet}
+
+
+LINK_FIELDS = {"_id": 0, "barcode_id": 1, "apple_downloaded_at": 1, "wallet_removed_at": 1, "wallet_added_at": 1,
+               "google_added_at": 1, "google_removed_at": 1}
 
 
 def apple_state(c: Dict[str, Any], registered: set, google: set, now: Optional[datetime] = None) -> Dict[str, str]:
