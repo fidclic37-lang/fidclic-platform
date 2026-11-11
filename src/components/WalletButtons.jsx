@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { keyOf } from '../lib/myCards';
+import { phoneWallet as _phoneWallet, phoneWallets, walletOrder } from '../lib/phoneWallet';
 
 /**
  * WalletButtons — "Ajouter à Apple Wallet" / "Ajouter à Google Wallet" on the
@@ -11,18 +12,16 @@ import { keyOf } from '../lib/myCards';
  *            iOS opens the signed pass in Wallet's "Add" sheet.
  *   Google → GET /api/card/<id>/google-wallet returns the signed
  *            "Save to Google Wallet" URL (loyalty object created on demand).
+ *   Samsung → GET /api/card/<id>/samsung-wallet returns Samsung's Data Fetch
+ *            Link; Samsung then asks our server for the card
+ *            (features/samsung_wallet, 2026-11-11).
  *
  * Badge artwork follows Apple's / Google's guidelines (black pill, wallet
  * glyph, French label); swap in the official SVG assets from their brand
  * kits when the marketing site ships them.
  */
-// The phone's own Wallet (user, 2026-10-13): an iPhone gets Apple's, an
-// Android phone Google's; a computer or another phone, none.
-export function phoneWallet(ua = navigator.userAgent, touch = navigator.maxTouchPoints || 0) {
-  if (/iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && touch > 1)) return 'apple';
-  if (/Android/.test(ua)) return 'google';
-  return null;
-}
+// The phone's own Wallet(s): lib/phoneWallet (an Android phone may be a Galaxy).
+export const phoneWallet = _phoneWallet;
 
 /* phoneOnly: only the button of this phone's Wallet (the signup's
    « Félicitations », BUG-008). onShown(bool): told once the wallets are known
@@ -34,6 +33,7 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   const [cfg, setCfg] = useState(null);
   const [busy, setBusy] = useState(false);
   const [googleUrl, setGoogleUrl] = useState(null);
+  const [samsungBusy, setSamsungBusy] = useState(false);
 
   useEffect(() => {
     // The card's business plan decides too (Super admin › Plan Limits › Wallet).
@@ -43,8 +43,7 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   // Ready before the tap (user, 2026-10-12: « wallet khulne mein bahut time »):
   // the server builds and keeps the Apple pass and makes the Google link while
   // the customer reads the page, so the button opens the Wallet at once.
-  const mine = phoneWallet();
-  const wanted = phoneOnly ? (mine ? [mine] : []) : ['apple', 'google'];
+  const wanted = phoneOnly ? phoneWallets() : ['apple', 'google', 'samsung'];
   const shownCount = cfg ? wanted.filter((k) => cfg[k]).length : null;
   // Only the Wallet(s) of the buttons shown are prepared, and at once: on the
   // signup the button is above the card now (user, 2026-10-16), so the tap can
@@ -54,7 +53,8 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   useEffect(() => {
     if (!cfg || !shownCount) return undefined;          // no button here: nothing to get ready
     let alive = true;
-    const only = wanted.filter((k) => cfg[k]).join(',');
+    const only = wanted.filter((k) => cfg[k] && k !== 'samsung').join(',');
+    if (!only) return undefined;                         // Samsung needs nothing ready: its link is made on tap
     api.post(`/card/${barcodeId}/wallet-prepare`, null, { params: { only } }).then((r) => {
       if (alive && r.data?.google_url) setGoogleUrl(r.data.google_url);
     }).catch(() => {});
@@ -67,12 +67,11 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
 
   // the wallets are not known yet: hold the place of the button that is coming
   if (!cfg) return big && wanted.length ? <div className="mt-4 h-14 animate-pulse rounded-2xl bg-[#E8EDF5]" /> : null;
-  if (!cfg.apple && !cfg.google) return null;
+  if (!cfg.apple && !cfg.google && !cfg.samsung) return null;
 
   const isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
-  const isAndroid = /Android/.test(navigator.userAgent);
-  // Show the wallet that matches the phone first; both on desktop.
-  const order = isAndroid ? ['google', 'apple'] : ['apple', 'google'];
+  // Show the wallet(s) that match the phone first; all on desktop.
+  const order = walletOrder();
 
   const saveGoogle = async () => {
     if (googleUrl) { window.location.href = googleUrl; return; }     // prepared: no wait
@@ -84,6 +83,20 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
       onError?.(e?.response?.data?.detail || 'Google Wallet indisponible pour le moment.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Samsung's Data Fetch Link (a.swallet.link): Samsung Wallet opens and asks
+  // our server for the card. On a phone without Samsung Wallet, Samsung's page says so.
+  const saveSamsung = async () => {
+    setSamsungBusy(true);
+    try {
+      const r = await api.get(`/card/${barcodeId}/samsung-wallet`);
+      window.location.href = r.data.url;
+    } catch (e) {
+      onError?.(e?.response?.data?.detail || 'Samsung Wallet indisponible pour le moment.');
+    } finally {
+      setSamsungBusy(false);
     }
   };
 
@@ -118,6 +131,19 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
                 <path d="M3 12h18v2.5c0 2-1.5 3.5-3.5 3.5H3z" fill="#34A853" /><path d="M3 8v10h6V8z" fill="#4285F4" />
               </svg>
               {busy ? 'Ouverture…' : 'Ajouter à Google Wallet'}
+            </button>
+          );
+        }
+        if (k === 'samsung' && cfg.samsung) {
+          return (
+            <button key="samsung" type="button" onClick={saveSamsung} disabled={samsungBusy}
+                    className={`${pill} bg-[#1428A0] text-white`}>
+              <svg width={glyph.w} height={glyph.h} viewBox="0 0 24 20" aria-hidden="true">
+                <rect x="1" y="1" width="22" height="18" rx="4" fill="#fff" />
+                <rect x="4" y="5" width="16" height="4" rx="1.5" fill="#1428A0" />
+                <rect x="4" y="11" width="10" height="4" rx="1.5" fill="#5B8DEF" />
+              </svg>
+              {samsungBusy ? 'Ouverture…' : 'Ajouter à Samsung Wallet'}
             </button>
           );
         }
