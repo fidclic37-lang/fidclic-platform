@@ -79,6 +79,12 @@ def main():
     check("…10 hex characters", len(PA.ref(["p1"])) == 10 and all(ch in "0123456789abcdef" for ch in PA.ref(["p1"])))
     check("…and differs from another product's", PA.ref(["p1"]) != PA.ref(["p2"]))
 
+    check("audience reach: a 21-day window reads 122 days (one-shot needs 120)", PA.audience_days(21) == 122)
+    check("…window 0 or 1: still 122", PA.audience_days(0) == 122 and PA.audience_days(1) == 122)
+    check("…window 113 (+7 = 120): 122; 114: 123", PA.audience_days(113) == 122 and PA.audience_days(114) == 123)
+    check("…a year's window: 365 + 7 + 2", PA.audience_days(365) == 374)
+    check("…a window given as text still works", PA.audience_days("30") == 122)
+
     from features import reco_journal as RJ
     check("a « prc: » key names a client: never journaled as an idea", RJ.clean("prc:c12") is None)
     check("the product actions are one family in the super admin's table",
@@ -201,6 +207,58 @@ def main():
     check("new clients → the Aimant for their 2nd visit", r.status_code == 200 and set(r.json()["audience"]["ids"]) == set(new_ids)
           and "Coupe" in r.json()["message"], r.text[:300])
     check("an Aimant asked as a One-shot → 404", http("GET", URL + f"pr:os:{REF_COUPE}", O).status_code == 404)
+
+    # load finding 2026-10-31: « Créer » read two years of visits (~20 s on 25k
+    # clients). The audience only needs the last LAPSED_DAYS (one-shot) or the
+    # window + slack (new): that much is read, and the same people come out.
+    print("\n« Créer » ne lit que les jours utiles")
+    from features import warehouse as WH
+    seen, real_find = [], WH.find
+
+    def spy(stream, tid, field, cond, *a, **kw):
+        seen.append((stream, (cond or {}).get("$gte")))
+        return real_find(stream, tid, field, cond, *a, **kw)
+    WH.find = spy
+    try:
+        r_os = http("GET", URL + f"pr:os:{REF_SOIN}", O)
+        span_os = [(s, (NOW - g).days) for s, g in seen]
+        seen.clear()
+        r_new = http("GET", URL + f"pr:new:{REF_COUPE}", O)
+        span_new = [(s, (NOW - g).days) for s, g in seen]
+        seen.clear()
+        db.tenants.update_one({"id": "s"}, {"$set": {"product_return_window_days": 200}})
+        db.product_return.update_many({"tenant_id": "s"}, {"$set": {"window_days": 200}})
+        http("GET", URL + f"pr:new:{REF_COUPE}", O)
+        span_wide = [(s, (NOW - g).days) for s, g in seen]
+        db.tenants.update_one({"id": "s"}, {"$set": {"product_return_window_days": 21}})
+        db.product_return.update_many({"tenant_id": "s"}, {"$set": {"window_days": doc.get("window_days") or 21}})
+    finally:
+        WH.find = real_find
+    check("one-shot: visits read over 120 days (+ a day or two), not 730",
+          span_os and all(s == "visits" and 120 <= d_ <= 122 for s, d_ in span_os), span_os)
+    check("new clients: the same bounded read", span_new and all(s == "visits" and d_ <= 122 for s, d_ in span_new), span_new)
+    check("no promo days read for an audience (only the weekly analysis needs them)",
+          not any(s in ("offer_uses", "rewards_redeemed") for s, _ in span_os + span_new), span_os + span_new)
+    check("a window wider than 120 days reads window + a week (+ a day or two)",
+          span_wide and all(200 + 7 <= d_ <= 200 + 7 + 2 for _, d_ in span_wide), span_wide)
+    check("…and the people are the same as before (one-shot)", r_os.status_code == 200
+          and set(r_os.json()["audience"]["ids"]) == lapsed_soin, r_os.text[:200])
+    check("…and the same new clients", r_new.status_code == 200 and set(r_new.json()["audience"]["ids"]) == set(new_ids),
+          r_new.text[:200])
+    # a regular from long ago who came back once with Soin visage 30 days ago:
+    # the bounded read sees only that last visit — still lapsed, as before
+    db.customers.insert_one({"id": "lr", "tenant_id": "s", "name": "Revenant", "created_at": d(600), "deleted_at": None})
+    db.visits.insert_many([{"id": f"lr{k}", "tenant_id": "s", "customer_id": "lr", "visit_time": d(600 - 30 * k),
+                            "amount_paid": 20, "items": [{"item_id": "p1", "name": "Coupe"}]} for k in range(5)]
+                          + [{"id": "lr_last", "tenant_id": "s", "customer_id": "lr", "visit_time": d(30), "amount_paid": 20,
+                              "items": [{"item_id": "p2", "name": "Soin visage"}]}])
+    ids = set(http("GET", URL + f"pr:os:{REF_SOIN}", O).json()["audience"]["ids"])
+    check("an old regular whose last visit (30 days ago) was Soin visage is asked back", "lr" in ids and ids - {"lr"} == lapsed_soin,
+          sorted(ids - lapsed_soin))
+    check("…and never counted as a new client (a member for 600 days)",
+          "lr" not in set(http("GET", URL + f"pr:new:{REF_COUPE}", O).json()["audience"]["ids"]))
+    db.visits.delete_many({"customer_id": "lr"})
+    db.customers.delete_one({"id": "lr"})
     for bad in ("pr:os:zzzzzzzzzz", "pr:os:.*", "pr:os:", "pr:new:" + "a" * 40, "pr:xx:" + REF_SOIN):
         check(f"a made-up key ({bad[:16]}) → 404", http("GET", URL + bad, O).status_code == 404)
     some = sorted(lapsed_soin)[0]

@@ -253,9 +253,11 @@ class _Catalog:
         return k
 
 
-def _occasions(tid: str, now: datetime, cat: _Catalog):
-    """{client: [occasion]} sorted by day, the promo days, the coverage."""
-    start = now - timedelta(days=HISTORY_DAYS)
+def _occasions(tid: str, now: datetime, cat: _Catalog, days: int = HISTORY_DAYS, promo_days: bool = True):
+    """{client: [occasion]} sorted by day, the promo days, the coverage — over
+    the last `days` (the weekly analysis: two years; a composer audience: only
+    what it looks at, product_actions._live). No promo read when not asked."""
+    start = now - timedelta(days=days)
     per: Dict[str, Dict[date, Dict[str, Any]]] = defaultdict(dict)
     cov: Dict[str, List[int]] = defaultdict(lambda: [0, 0])
     cov_from = now - timedelta(days=COVERAGE_DAYS)
@@ -288,7 +290,7 @@ def _occasions(tid: str, now: datetime, cat: _Catalog):
             occ["items"] |= keys
             occ["amount"] += float(v.get("amount_paid") or 0)
     promo: Set[Tuple[str, date]] = set()
-    for coll, field in (("offer_uses", "used_at"), ("rewards_redeemed", "redeemed_at")):
+    for coll, field in (("offer_uses", "used_at"), ("rewards_redeemed", "redeemed_at")) if promo_days else ():
         for r in WH.find(coll, tid, field, {"$gte": start}, {"_id": 0, "customer_id": 1, field: 1}, now=now):
             at = _aware(r.get(field))
             if at and r.get("customer_id"):

@@ -106,6 +106,14 @@ def audiences(timelines: Dict[str, List[Dict[str, Any]]], today: date, window: i
     return out
 
 
+def audience_days(window: int) -> int:
+    """How far back an audience must read (load finding 2026-10-31: « Créer »
+    read two years). A one-shot buyer is judged on their LAST visit, at most
+    LAPSED_DAYS old; a new client joined within window + NEW_JOIN_SLACK days, so
+    all their visits are inside it. Two days more: Paris days vs UTC hours."""
+    return max(LAPSED_DAYS, int(window) + NEW_JOIN_SLACK) + 2
+
+
 def _alive(tid: str) -> Set[str]:
     return set(_db.customers.distinct("id", {"tenant_id": tid, "deleted_at": None}))
 
@@ -260,9 +268,10 @@ def _live(tid: str, doc: Dict[str, Any], scope, groups: Dict[str, Set[str]]) -> 
     from features import store_scope as S
     now = _now()
     cat = PR._Catalog((_db.tenant_catalog.find_one({"tenant_id": tid}, {"_id": 0, "items": 1}) or {}).get("items") or [])
-    timelines, _promo, _cov = PR._occasions(tid, now, cat)
+    window = int(doc.get("window_days") or 21)
+    timelines, _promo, _cov = PR._occasions(tid, now, cat, days=audience_days(window), promo_days=False)
     key = store_key(scope)
-    a = audiences(timelines, PR.paris_day(now), int(doc.get("window_days") or 21), PR._joined(tid), now, groups,
+    a = audiences(timelines, PR.paris_day(now), window, PR._joined(tid), now, groups,
                   None if key == PR.ALL else key)
     keep = _alive(tid)
     mine = S.home_customer_ids(scope) if scope is not None else None
