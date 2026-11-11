@@ -33,7 +33,7 @@ export function usePlanAccessState(role) {
   const lockOf = (path) => {
     const s = sectionOf(path);
     if (!access || !s || !(s in (access.sections || {})) || access.sections[s]) return null;
-    const key = { analytics: 'advanced_analytics', insights: 'advanced_analytics', map: 'geo_proximity', 'ai-assistant': 'ai', history: 'crm_advanced' }[s] || s;
+    const key = { analytics: 'advanced_analytics', insights: 'advanced_analytics', map: 'geo_proximity', 'ai-assistant': 'ai', history: 'crm_advanced', scan: 'cards' }[s] || s;
     return access.locked?.[key] || { code: 'PLAN_FEATURE_DISABLED', feature: key, message: "Cette fonctionnalité n'est pas incluse dans votre offre." };
   };
   const has = (key) => (access ? access.features?.[key] !== false : true);
@@ -46,6 +46,8 @@ export const openUpgrade = (detail) => window.dispatchEvent(new CustomEvent('fid
 function UpgradeBody({ detail, onGo }) {
   const up = detail?.upgrade;
   const quota = detail?.code === 'PLAN_QUOTA_REACHED';
+  // switched off by the super admin (2026-11-11): no offer unlocks it — the support does
+  if (detail?.code === 'SERVICE_DISABLED') return <DisabledBody detail={detail} />;
   return (
     <div className="text-center">
       <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-[#EAF1FF] text-[#2F6BFF]">{quota ? <AlertTriangle size={26} /> : <Lock size={26} />}</span>
@@ -59,14 +61,31 @@ function UpgradeBody({ detail, onGo }) {
   );
 }
 
+function DisabledBody({ detail }) {
+  const navigate = useNavigate();
+  return (
+    <div className="text-center" data-testid="service-disabled">
+      <span className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-[#FEF2F2] text-[#E11D48]"><Lock size={26} /></span>
+      <h2 className="text-[20px] font-bold text-[#0B1C3F]">{detail?.label || 'Ce service'} — désactivé</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-[14px] text-[#475569]">{detail?.message || 'Ce service a été désactivé par FidClic. Contactez le support.'}</p>
+      <button type="button" onClick={() => { window.dispatchEvent(new CustomEvent('fidclic:plan-locked-close')); navigate('/dashboard/aide'); }}
+              className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#2F6BFF] px-5 py-2.5 text-[14px] font-semibold text-white hover:bg-[#2559DB]">
+        Contacter le support <ArrowRight size={16} />
+      </button>
+    </div>
+  );
+}
+
 /* The upgrade prompt, mounted once in the dashboard layout. */
 export function UpgradeModal() {
   const [detail, setDetail] = useState(null);
   const navigate = useNavigate();
   useEffect(() => {
     const on = (e) => setDetail(e.detail || {});
+    const off = () => setDetail(null);
     window.addEventListener('fidclic:plan-locked', on);
-    return () => window.removeEventListener('fidclic:plan-locked', on);
+    window.addEventListener('fidclic:plan-locked-close', off);
+    return () => { window.removeEventListener('fidclic:plan-locked', on); window.removeEventListener('fidclic:plan-locked-close', off); };
   }, []);
   if (!detail) return null;
   return (

@@ -3222,6 +3222,16 @@ def features_for(tenant: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             if terms.get(k) is not None:
                 f[k] = terms[k]
         f["on_quote"] = True
+    # Services the super admin switched off for this business (user,
+    # 2026-11-11 — features/plan_limits.SERVICES): locked whatever the plan.
+    off = [k for k in (tenant.get("services_off") or []) if isinstance(k, str)]
+    if off:
+        for k in off:
+            if k == "ai":
+                f["ai_level"] = "none"
+            else:
+                f[k] = False
+        f["services_off"] = off
     return f
 
 
@@ -6886,6 +6896,9 @@ def get_join_info(slug: str, store: Optional[str] = None):
         if _st:
             _SC.set_store(t["id"], _st["id"])
     t.pop("_id", None)
+    # « Cartes » switched off by the super admin: the page says it is closed
+    from features import plan_limits as _pl
+    t["signups_closed"] = not _pl.allows_tenant(t.get("id"), "cards")
     # The shop's own consent sentence, privacy policy and cookie notice
     # (Paramètres › Données & confidentialité) — naming the establishment
     # the customer joins, not the account (2026-10-14: « ROYAL TRIM LIBÉRTÉ »
@@ -7002,6 +7015,12 @@ def _card_in_another_store(tid: str, home: str, phone_key: str, email: str) -> O
 
 @app.post("/api/join/{slug}")
 def join_program(slug: str, req: JoinRequest, request: Request = None):
+    # « Cartes » switched off by the super admin (2026-11-11): closed, before
+    # anything typed is even read
+    from features import plan_limits as _pl
+    _t0 = _tenant_by_slug(slug)
+    if _t0 and not _pl.allows_tenant(_t0["id"], "cards"):
+        raise HTTPException(status_code=403, detail=_pl.locked(_pl.tenant_features(_t0["id"]), "cards"))
     # Only in-process callers (the merchant API) come without a request: the
     # public page always has one, so it can never skip the profile fields.
     _check_join_fields(req, profile_optional=request is None, by_field=request is not None)

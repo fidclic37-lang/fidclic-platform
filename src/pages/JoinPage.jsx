@@ -373,6 +373,8 @@ const JoinPage = () => {
   };
 
   if (closed) return <div className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8"><p className="mb-2 font-semibold text-[#0B1C3F]">{urlStore?.card_off ? 'Bientôt disponible' : 'Programme terminé'}</p><p className="text-sm text-[#64748B]">{closed}</p></div></div>;
+  // « Cartes » switched off for this business by FidClic (2026-11-11)
+  if (tenant?.signups_closed) return <div data-testid="signups-closed" className="flex min-h-screen items-center justify-center p-8 text-center"><div className="max-w-md rounded-2xl border border-[#E2E8F0] bg-white p-8"><p className="mb-2 font-semibold text-[#0B1C3F]">Inscriptions fermées</p><p className="text-sm text-[#64748B]">Les inscriptions au programme de fidélité sont fermées pour le moment.</p></div></div>;
   if (!tenant) return <div className="p-8 text-center text-[#64748B]">Chargement…</div>;
 
   const logo = page?.logo_url;
