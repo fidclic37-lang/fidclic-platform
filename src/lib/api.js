@@ -512,6 +512,7 @@ export const ownerAPI = {
   sendSignupAgentLinks: (agentIds) => api.post('/owner/signup-agents/send', { agent_ids: agentIds }),
   getTrialStatus: () => api.get('/owner/trial-status'),
   hideTrialBanner: () => api.post('/owner/trial-status/hide-banner'),
+  hideExpiredTrialBanner: () => api.post('/owner/trial-status/hide-expired-banner'),
   // Self-serve plan switcher (no-Stripe fallback path). Pass plan='silver'|'gold'|'vip'.
   upgradePlan: (plan) => api.post('/owner/upgrade-plan', { plan }),
   getCustomers: (params) => api.get('/owner/customers', { params }),

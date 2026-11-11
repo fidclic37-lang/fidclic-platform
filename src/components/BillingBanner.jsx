@@ -61,10 +61,20 @@ export default function BillingBanner() {
   const isExpired = !!trial.is_expired;
   const isQuiet = trial.is_in_trial && !isReminder;
   if (isQuiet && (dismissed || trial.banner_hidden)) return null;
+  // « essai terminé » closed by this account: closed for good (2026-11-11) —
+  // nothing is locked when a trial ends, the banner only says so
+  if (isExpired && trial.expired_banner_hidden) return null;
 
   const hideForGood = () => {
     setDismissed(true);
     ownerAPI.hideTrialBanner()
+      .then((res) => setTrial(res.data))
+      .catch(() => { /* kept hidden here; the account keeps it next time */ });
+  };
+
+  const hideExpired = () => {
+    setTrial((t) => ({ ...t, expired_banner_hidden: true }));
+    ownerAPI.hideExpiredTrialBanner()
       .then((res) => setTrial(res.data))
       .catch(() => { /* kept hidden here; the account keeps it next time */ });
   };
@@ -150,10 +160,10 @@ export default function BillingBanner() {
           {isExpired ? 'Débloquer maintenant' : isReminder ? 'Choisir une offre' : 'Voir les offres'}
         </button>
 
-        {/* Quiet mode can be hidden — reminder & expired cannot. */}
-        {isQuiet && (
+        {/* The quiet pill and the « essai terminé » banner can be closed; the reminder cannot. */}
+        {(isQuiet || isExpired) && (
           <button
-            onClick={hideForGood}
+            onClick={isExpired ? hideExpired : hideForGood}
             aria-label="Masquer"
             className="text-current opacity-60 hover:opacity-100 shrink-0"
             type="button"
