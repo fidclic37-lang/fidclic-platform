@@ -16,7 +16,7 @@ import WalletIdentitiesBanner from './WalletIdentitiesBanner';
    editable, decided with the user 2026-10-01). */
 
 export const STATUS_TONE = { actif: ['#E7F7EE', '#0F8B58'], inactif: ['#FDECEF', '#E11D48'], a_risque: ['#FFF4DB', '#D97706'], suspendu: ['#F1F5F9', '#475569'],
-  resilie: ['#F1F5F9', '#0B1C3F'], non_converti: ['#F3EEFF', '#7C3AED'] };
+  resilie: ['#F1F5F9', '#0B1C3F'], non_converti: ['#F3EEFF', '#7C3AED'], supprime: ['#FDECEF', '#9F1239'] };
 export const weekly = (c) => (c.cards_week == null ? null : `${c.cards_week} cartes · ${c.scans_week} scans / semaine`);
 export const StatusPill = ({ s, label }) => { const [bg, fg] = STATUS_TONE[s] || STATUS_TONE.suspendu; return <span className="whitespace-nowrap rounded-md px-2.5 py-1 text-[12px] font-medium" style={{ background: bg, color: fg }}>{label}</span>; };
 export const PLAN_TONE = { essai: ['#F1F5F9', '#475569'], silver: ['#FFF4DB', '#B45309'], gold: ['#EAF1FF', '#2F6BFF'], vip: ['#FDECEF', '#E11D48'], franchise: ['#F3EEFF', '#7C3AED'] };
@@ -38,7 +38,8 @@ const ago = (iso) => {
 };
 const TABS = [['', 'Tous', 'all', ['#2F6BFF', '#fff', '#EAF1FF']], ['actif', 'Actifs', 'actif', ['#E7F7EE', '#0F8B58', '#fff']], ['inactif', 'Inactifs', 'inactif', ['#FDECEF', '#E11D48', '#fff']],
   ['a_risque', 'À risque', 'a_risque', ['#FFF4DB', '#D97706', '#fff']], ['nouveaux', 'Nouveaux', 'nouveaux', ['#F3EEFF', '#7C3AED', '#fff']],
-  ['resilie', 'Résiliés', 'resilie', ['#F1F5F9', '#0B1C3F', '#fff']], ['non_converti', 'Essais non convertis', 'non_converti', ['#F3EEFF', '#7C3AED', '#fff']]];
+  ['resilie', 'Résiliés', 'resilie', ['#F1F5F9', '#0B1C3F', '#fff']], ['non_converti', 'Essais non convertis', 'non_converti', ['#F3EEFF', '#7C3AED', '#fff']],
+  ['supprime', 'Supprimés', 'supprime', ['#FDECEF', '#9F1239', '#fff']]];
 
 export async function openViewAs(id, say, store) {
   const w = window.open('about:blank', '_blank');
@@ -267,6 +268,41 @@ export function ResilierModal({ c, onClose, onDone }) {
         <input className={inputCls} value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="RÉSILIER" /></label>
       {err && <p className="mt-2 text-[13px] text-[#C0392B]">{String(err)}</p>}
       <button type="button" disabled={busy || !ok} onClick={go} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#0B1C3F] py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-40">{busy && <Loader2 size={15} className="animate-spin" />} Résilier le commerce</button>
+    </Modal>
+  );
+}
+
+/* « Supprimer » a business for good (user, 2026-11-11): gone from every list
+   and count, shown only under « Supprimés »; nothing is removed from the
+   database. The super admin types its name to confirm. */
+export function SupprimerModal({ c, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const norm = (x) => (x || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const ok = reason.trim().length >= 2 && norm(name) === norm(c.name);
+  const go = async () => {
+    setBusy(true);
+    try {
+      await adminAPI.supprimerCommerce(c.id, { confirm_name: name, reason: reason.trim() });
+      onDone(`${c.name} supprimé. Il reste visible dans « Supprimés », ses données sont conservées.`);
+    } catch (e) { setErr(e?.response?.data?.detail?.[0]?.msg || e?.response?.data?.detail || 'Suppression impossible.'); setBusy(false); }
+  };
+  return (
+    <Modal title={`Supprimer ${c.name} définitivement ?`} onClose={onClose}>
+      <ul className="mb-3 space-y-1.5 rounded-xl bg-[#FEF2F2] p-3 text-[13px] text-[#7F1D1D]">
+        <li>• Le commerce <strong>disparaît de toutes les listes</strong> et n'apparaît plus que dans « Supprimés ».</li>
+        <li>• Le propriétaire et l'équipe <strong>ne peuvent plus se connecter</strong>, tous les services sont coupés.</li>
+        <li>• Les <strong>cartes des clients cessent de fonctionner</strong> et les inscriptions sont fermées.</li>
+        <li>• <strong>Aucune donnée n'est effacée</strong> : tout reste dans la base.</li>
+      </ul>
+      <label className="block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Raison (obligatoire)</span>
+        <textarea rows={3} className={`${inputCls} h-auto py-2`} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex. commerce fermé, compte de test…" /></label>
+      <label className="mt-2 block"><span className="mb-1 block text-[11.5px] text-[#64748B]">Tapez le nom du commerce pour confirmer : <strong translate="no" className="notranslate">{c.name}</strong></span>
+        <input aria-label="Nom du commerce" className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder={c.name} /></label>
+      {err && <p className="mt-2 text-[13px] text-[#C0392B]">{String(err)}</p>}
+      <button type="button" disabled={busy || !ok} onClick={go} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-[#9F1239] py-2.5 text-[13.5px] font-semibold text-white disabled:opacity-40">{busy && <Loader2 size={15} className="animate-spin" />} Supprimer définitivement</button>
     </Modal>
   );
 }

@@ -56,7 +56,7 @@ ADMIN = ["super_admin"]
 RULES_KEY = "commerce_status_rules_v2"
 DEFAULT_RULES = {"actif_min": 25, "inactif_max": 15, "window_days": 7}
 STATUS_LABELS = {"actif": "Actif", "a_risque": "À risque", "inactif": "Inactif", "suspendu": "Suspendu",
-                 "resilie": "Résilié", "non_converti": "Essai non converti"}
+                 "resilie": "Résilié", "non_converti": "Essai non converti", "supprime": "Supprimé"}
 STANDING_LABELS = {"essai": "En essai", "abonne": "Abonné", "impaye": "Impayé", "resilie": "Résilié", "non_converti": "Essai non converti"}
 TEAM = ["business_owner", "administrateur", "manager", "staff"]
 VIEW_MINUTES = 30
@@ -237,8 +237,25 @@ def put_rules(body: RulesIn, token_data: TokenData = Depends(require_admin("comm
 
 # ---------------------------------------------------------------------------
 # List
+def deleted_rows() -> List[Dict[str, Any]]:
+    """The businesses deleted by the super admin (user, 2026-11-11): out of
+    every list and count (is_active False), shown only under « Supprimés »."""
+    rows = []
+    for t in _db.tenants.find({"deleted_at": {"$ne": None}}, {"_id": 0}):
+        rows.append({"id": t["id"], "name": t.get("name") or "—", "sector": _sector(t.get("sector")),
+                     "city": t.get("city") or "", "postal_code": t.get("postal_code") or "", "plan": _plan_label(t),
+                     "logo": None, "clients": _db.customers.count_documents({"tenant_id": t["id"]}), "visits": 0,
+                     "cards_window": 0, "cards_week": None, "scans_week": None, "last_activity": None,
+                     "standing": "supprime", "standing_label": "Supprimé", "status": "supprime",
+                     "status_label": STATUS_LABELS["supprime"], "created_at": _iso(t.get("created_at")),
+                     "new_this_month": False, "subscription_status": t.get("subscription_status"), "suspended": True,
+                     "deleted_at": _iso(t.get("deleted_at")), "deleted_by": t.get("deleted_by"),
+                     "deletion_reason": t.get("deletion_reason")})
+    return rows
+
+
 # ---------------------------------------------------------------------------
-TABS = ("actif", "inactif", "a_risque", "nouveaux", "suspendu", "resilie", "non_converti")
+TABS = ("actif", "inactif", "a_risque", "nouveaux", "suspendu", "resilie", "non_converti", "supprime")
 SORTS = {"name": lambda r: (r["name"] or "").lower(), "clients": lambda r: r["clients"], "visits": lambda r: r["visits"],
          "last_activity": lambda r: r["last_activity"] or "", "status": lambda r: r["status"], "created_at": lambda r: r["created_at"] or ""}
 
@@ -305,8 +322,9 @@ def list_commerces(tab: str = "", q: str = "", sector: str = "", city: str = "",
     # section mein, usme bhi dikhne chahiye »): a store's name finds its business
     shops = _open_stores_by_tenant()
     base = _filtered(rows, "", q, sector, city, plan, status, shops)
-    counts = {"all": len(base), **{k: len(_filtered(base, k)) for k in TABS}}
-    out = _filtered(base, tab)
+    gone = _filtered(deleted_rows(), "", q, sector, city, plan, "", shops)
+    counts = {"all": len(base), **{k: len(_filtered(base, k)) for k in TABS}, "supprime": len(gone)}
+    out = gone if tab == "supprime" else _filtered(base, tab)
     key = sort.lstrip("-")
     out.sort(key=SORTS.get(key, SORTS["clients"]), reverse=sort.startswith("-"))
     total = len(out)
@@ -557,6 +575,47 @@ def resilier(tid: str, body: ResilierIn, token_data: TokenData = Depends(require
     return {"resiliated": True, "sessions_ended": ended, "stripe": stripe_note}
 
 
+class SupprimerIn(BaseModel):
+    confirm_name: str = Field(..., min_length=1, max_length=200)     # the business's name, typed to confirm
+    reason: str = Field(..., min_length=2, max_length=500)
+
+
+@router.post("/api/admin/commerces/{tid}/supprimer")
+def supprimer(tid: str, body: SupprimerIn, token_data: TokenData = Depends(require_admin("commerces"))):
+    """« Supprimer » a business for good (user, 2026-11-11): gone from every
+    list, count and cron (is_active False), its team signed out and refused,
+    its customers' cards and signup closed, every service off — shown only
+    under « Supprimés ». NOTHING is removed from the database."""
+    import server as core
+    from features import plan_limits as PL
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    if t.get("deleted_at"):
+        raise HTTPException(status_code=409, detail="Ce commerce est déjà supprimé.")
+    norm = lambda x: " ".join((x or "").split()).casefold()      # noqa: E731
+    if norm(body.confirm_name) != norm(t.get("name")):
+        raise HTTPException(status_code=400, detail="Tapez le nom exact du commerce pour confirmer.")
+    stripe_note = None
+    if t.get("stripe_subscription_id"):
+        try:
+            from features import billing as BL
+            if BL.is_configured():
+                BL.stripe.Subscription.cancel(t["stripe_subscription_id"])
+                stripe_note = "abonnement Stripe annulé"
+        except Exception as exc:                          # noqa: BLE001
+            stripe_note = f"Stripe : {str(exc)[:120]}"
+    _db.tenants.update_one({"id": tid}, {"$set": {
+        "deleted_at": _now(), "deleted_by": token_data.email, "deletion_reason": body.reason.strip(),
+        "is_active": False, "services_off": list(PL.SERVICE_KEYS),
+        "was_active": t.get("is_active", True)}})
+    ended = _end_sessions(tid)
+    core.log_audit("admin.commerce_delete", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid,
+                   meta={"name": t.get("name"), "reason": body.reason.strip(), "sessions_ended": ended, "stripe": stripe_note})
+    forget(tid)
+    return {"deleted": True, "sessions_ended": ended, "stripe": stripe_note}
+
+
 @router.post("/api/admin/commerces/{tid}/annuler-resiliation")
 def annuler_resiliation(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
     import server as core
@@ -588,8 +647,9 @@ def is_suspended(tenant_id: Optional[str]):
     hit = _suspended_cache.get(tenant_id)
     if hit and hit[1] > _now():
         return hit[0]
-    t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "suspended_at": 1, "resiliated_at": 1}) or {}
-    val = ("Ce compte a été résilié. Contactez FidClic." if t.get("resiliated_at")
+    t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "suspended_at": 1, "resiliated_at": 1, "deleted_at": 1}) or {}
+    val = ("Ce compte a été supprimé. Contactez FidClic." if t.get("deleted_at")
+           else "Ce compte a été résilié. Contactez FidClic." if t.get("resiliated_at")
            else "Ce compte est suspendu. Contactez FidClic." if t.get("suspended_at") else None)
     _suspended_cache[tenant_id] = (val, _now() + timedelta(seconds=30))
     return val
@@ -601,7 +661,8 @@ def closed_programs() -> Dict[str, Any]:
     if _db is None:
         return {"ids": set(), "slugs": set()}
     if not _closed["at"] or _closed["at"] < _now():
-        rows = list(_db.tenants.find({"resiliated_at": {"$ne": None}}, {"_id": 0, "id": 1, "slug": 1}))
+        rows = list(_db.tenants.find({"$or": [{"resiliated_at": {"$ne": None}}, {"deleted_at": {"$ne": None}}]},
+                                     {"_id": 0, "id": 1, "slug": 1}))
         _closed.update(at=_now() + timedelta(seconds=30), ids={r["id"] for r in rows}, slugs={r.get("slug") for r in rows if r.get("slug")})
     return _closed
 
@@ -839,6 +900,8 @@ def get_commerce(tid: str, store: Optional[str] = None, token_data: TokenData = 
         "website": t.get("website") or "", "status": row.get("status"), "status_label": row.get("status_label"),
         "cards_week": row.get("cards_week"), "scans_week": row.get("scans_week"), "standing": row.get("standing"),
         "standing_label": row.get("standing_label"), "resiliated": bool(t.get("resiliated_at")), "resiliated_at": _iso(t.get("resiliated_at")),
+        "deleted": bool(t.get("deleted_at")), "deleted_at": _iso(t.get("deleted_at")), "deleted_by": t.get("deleted_by"),
+        "deletion_reason": t.get("deletion_reason"),
         "resiliation_reason": t.get("resiliation_reason"), "plan": row.get("plan"), "plan_key": core._canonical_plan(t.get("plan")),
         "created_at": _iso(t.get("created_at")), "renews_on": _iso(t.get("subscription_period_end") or t.get("trial_ends_at")),
         "subscription_status": t.get("subscription_status"), "suspended": bool(t.get("suspended_at")),
