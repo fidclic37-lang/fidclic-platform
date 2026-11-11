@@ -229,13 +229,16 @@ def out_cap(feature: Optional[str]) -> int:
 
 def _tenant(tid: str) -> Dict[str, Any]:
     return _memo(("tenant", tid), lambda: _db.tenants.find_one(
-        {"id": tid}, {"_id": 0, "plan": 1, "ai_budget_eur": 1, "subscription_status": 1, "name": 1}) or {})
+        {"id": tid}, {"_id": 0, "plan": 1, "ai_budget_eur": 1, "subscription_status": 1, "name": 1,
+                      "services_off": 1}) or {})
 
 
 def limit_for(tid: Optional[str]) -> float:
     if not tid or _db is None:
         return math.inf
     t = _tenant(tid)
+    if "ai" in (t.get("services_off") or []):      # IA switched off by the super admin: nothing spent
+        return 0.0
     if t.get("ai_budget_eur") is not None:
         return float(t["ai_budget_eur"])
     s = settings()
@@ -763,6 +766,8 @@ def _aware(v: datetime) -> datetime:
 def owner_alert(tid: Optional[str]) -> Optional[Dict[str, Any]]:
     if not tid or _db is None:
         return None
+    if "ai" in (_tenant(tid).get("services_off") or []):
+        return None          # IA switched off by FidClic: its page says so, no « limite atteinte »
     st = state(tid)
     if st["blocked"] == "budget":
         return {"key": "ai_budget", "what": "FidClic IA", "pct": 100, "upgrade": None,

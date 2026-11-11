@@ -5,7 +5,7 @@ import {
   Users, UserCheck, UserX, Store, Target, Gift, RefreshCcw, ExternalLink, Mail, Pencil, MoreHorizontal, LayoutDashboard,
   Heart, Megaphone, Bell, Gauge, CreditCard, Settings, TrendingUp, PieChart as PieIcon, MapPinned, Award, Star, Crown,
   AlertTriangle, Send, Eye, MousePointerClick, ArrowRight, CalendarDays, BadgeCheck, Receipt, PauseCircle, PlayCircle,
-  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical,
+  Building2, Search, Loader2, Repeat, Clock, Ban, Undo2, FlaskConical, Power,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { downloadLabExport } from '../../lib/labExport';
@@ -21,7 +21,7 @@ import { StatusPill, PlanPill, CommerceLogo, SuspendModal, ResilierModal, openVi
 
 const TABS = [['apercu', "Vue d'ensemble", LayoutDashboard], ['boutiques', 'Boutiques', Store], ['clients', 'Clients', Users], ['fidelite', 'Fidélité', Heart],
   ['campagnes', 'Campagnes', Megaphone], ['notifications', 'Notifications', Bell], ['utilisation', 'Utilisation', Gauge],
-  ['abonnement', 'Abonnement', CreditCard], ['parametres', 'Paramètres', Settings]];
+  ['abonnement', 'Abonnement', CreditCard], ['services', 'Services', Power], ['parametres', 'Paramètres', Settings]];
 const MONTHS = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
 const mLabel = (ym) => MONTHS[Number(ym.slice(5, 7)) - 1];
 const dateFr = (iso, long) => (iso ? new Date(iso).toLocaleDateString('fr-FR', long ? { day: 'numeric', month: 'short', year: 'numeric' } : undefined) : '—');
@@ -152,13 +152,14 @@ export default function CommerceDetailPage() {
       {tab === 'apercu' && <Overview d={d} setTab={setTab} setModal={setModal} />}
       {tab === 'boutiques' && multi && <BoutiquesTab id={id} current={store} onOpen={(s) => pickStore(s, 'apercu')} onView={(s) => openViewAs(d.id, say, s)} />}
       {tab === 'clients' && <ClientsTab id={id} store={store} />}
-      {!['apercu', 'clients', 'boutiques', 'utilisation'].includes(tab) && !x && <Loading />}
+      {!['apercu', 'clients', 'boutiques', 'utilisation', 'services'].includes(tab) && !x && <Loading />}
       {tab === 'fidelite' && x && <FideliteTab d={d} x={x.fidelite} />}
       {tab === 'campagnes' && x && <CampagnesTab rows={x.campagnes} />}
       {tab === 'notifications' && x && <NotificationsTab n={x.notifications} />}
       {tab === 'utilisation' && <UsageCard d={d} big />}
       {tab === 'abonnement' && x && <AbonnementTab d={d} a={x.abonnement} setModal={setModal} />}
       {tab === 'parametres' && x && <ParametresTab p={x.parametres} />}
+      {tab === 'services' && <ServicesTab id={id} name={d.name} say={say} />}
 
       {toast}
       {modal?.type === 'email' && <ComposeEmail prospect={{ id: d.crm_prospect_id, name: d.name, email: d.owner.email }} initial={modal.preset} onClose={() => setModal(null)} onSent={(m) => { setModal(null); say(m); }} />}
@@ -318,6 +319,60 @@ function Overview({ d, setTab, setModal }) {
         </Card>
       </div>
     </>
+  );
+}
+
+/* Services, one by one (user, 2026-11-11: « super admin se ek ek service hataa
+   sake business ki »). A service switched off is off everywhere for this
+   business — its pages, its automatic sends, the signup page, the till — and
+   its owner reads « désactivé par FidClic ». « Tout couper »: all of them, the
+   owner can still sign in (« Suspendre » closes the door). */
+function ServicesTab({ id, name, say }) {
+  const [v, setV] = useState(null);
+  const [busy, setBusy] = useState('');
+  useEffect(() => { adminAPI.commerceServices(id).then(({ data }) => setV(data)).catch(() => say('Services illisibles.')); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async (body, key, msg) => {
+    setBusy(key);
+    try { const { data } = await adminAPI.setCommerceServices(id, body); setV(data); say(msg); }
+    catch (e) { say(e?.response?.data?.detail || 'Action impossible.'); }
+    finally { setBusy(''); }
+  };
+  if (!v) return <Loading />;
+  const off = new Set(v.off);
+  const flip = (s) => {
+    const next = new Set(off);
+    if (s.on) next.add(s.key); else next.delete(s.key);
+    save({ off: [...next] }, s.key, `${s.label} ${s.on ? 'désactivé' : 'réactivé'} pour ${name}.`);
+  };
+  return (
+    <Card className="max-w-3xl">
+      <Head icon={Power} title="Services du commerce" sub="Un service désactivé est coupé partout pour ce commerce : pages, envois automatiques, inscriptions, caisse."
+            right={(
+              <span className="flex gap-2">
+                {v.off.length > 0 && <button type="button" disabled={!!busy} onClick={() => save({ off: [] }, 'all', `Tous les services rétablis pour ${name}.`)}
+                        className="rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[12.5px] font-medium text-[#0B1C3F] disabled:opacity-50">Tout rétablir</button>}
+                {!v.all_off && <button type="button" disabled={!!busy} onClick={() => { if (window.confirm(`Couper tous les services de ${name} ? Le commerçant pourra toujours se connecter, mais plus rien ne fonctionnera.`)) save({ all_off: true }, 'all', `Tous les services coupés pour ${name}.`); }}
+                        className="rounded-lg bg-[#E11D48] px-3 py-1.5 text-[12.5px] font-medium text-white disabled:opacity-50">Tout couper</button>}
+              </span>
+            )} />
+      {v.all_off && <p className="mb-3 rounded-xl bg-[#FEF2F2] px-3 py-2 text-[12.5px] text-[#B91C1C]">Tous les services sont coupés. Le commerçant peut se connecter et voir ses données, rien d'autre.</p>}
+      <ul className="divide-y divide-[#EDF1F7]">
+        {v.services.map((s) => (
+          <li key={s.key} className="flex items-center gap-3 py-3">
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13.5px] font-medium text-[#0B1C3F]">{s.label}</span>
+              <span className="block text-[12px] text-[#64748B]">{s.help}</span>
+            </span>
+            <span className={`text-[12px] font-medium ${s.on ? 'text-[#0F8B58]' : 'text-[#E11D48]'}`}>{s.on ? 'Actif' : 'Désactivé'}</span>
+            <button type="button" role="switch" aria-checked={s.on} aria-label={s.label} disabled={!!busy} onClick={() => flip(s)}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-60 ${s.on ? 'bg-[#10B981]' : 'bg-[#CBD5E1]'}`}>
+              {busy === s.key ? <Loader2 size={14} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-white" />
+                : <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${s.on ? 'left-[22px]' : 'left-0.5'}`} />}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

@@ -431,6 +431,58 @@ def change_plan(tid: str, body: PlanIn, token_data: TokenData = Depends(require_
 
 
 # ---------------------------------------------------------------------------
+# Services, one by one (user, 2026-11-11: « super admin se ek ek service hataa
+# sake business ki ») — kept on the business (tenant.services_off) and read by
+# the one gate of the plan's features (server.features_for → plan_limits), so
+# a service switched off is off everywhere: pages, calls, automatic sends, the
+# signup page and the till's API. « Tout couper » = all of them; the owner can
+# still sign in (« Suspendre » is what closes the door).
+# ---------------------------------------------------------------------------
+class ServicesIn(BaseModel):
+    off: Optional[List[str]] = None
+    all_off: bool = False
+
+
+def _services_view(t: Dict[str, Any]) -> Dict[str, Any]:
+    from features import plan_limits as PL
+    off = [k for k in (t.get("services_off") or []) if k in PL.SERVICE_KEYS]
+    return {"services": [{**s, "on": s["key"] not in off} for s in PL.SERVICES],
+            "off": off, "all_off": bool(off) and set(off) == set(PL.SERVICE_KEYS)}
+
+
+@router.get("/api/admin/commerces/{tid}/services")
+def get_services(tid: str, token_data: TokenData = Depends(require_admin("commerces"))):
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "services_off": 1})
+    if t is None:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    return _services_view(t)
+
+
+@router.put("/api/admin/commerces/{tid}/services")
+def set_services(tid: str, body: ServicesIn, token_data: TokenData = Depends(require_admin("commerces"))):
+    import server as core
+    from features import plan_limits as PL
+    t = _db.tenants.find_one({"id": tid}, {"_id": 0, "services_off": 1})
+    if t is None:
+        raise HTTPException(status_code=404, detail="Commerce introuvable")
+    if body.all_off:
+        off = list(PL.SERVICE_KEYS)
+    else:
+        wanted = [k for k in (body.off or []) if isinstance(k, str)]
+        unknown = [k for k in wanted if k not in PL.SERVICE_KEYS]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Service inconnu : {', '.join(unknown)}.")
+        off = [k for k in PL.SERVICE_KEYS if k in wanted]          # one order, no doubles
+    before = [k for k in (t.get("services_off") or [])]
+    _db.tenants.update_one({"id": tid}, {"$set": {"services_off": off, "services_changed_at": _now(),
+                                                  "services_changed_by": token_data.email}})
+    core.log_audit("admin.services", actor=token_data.email, actor_type="user", target=tid, tenant_id=tid,
+                   meta={"off": sorted(off), "before": sorted(before), "all_off": bool(body.all_off)})
+    forget(tid)
+    return _services_view({"services_off": off})
+
+
+# ---------------------------------------------------------------------------
 # Suspend / view as
 # ---------------------------------------------------------------------------
 class SuspendIn(BaseModel):

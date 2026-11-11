@@ -95,6 +95,29 @@ ROW_KEYS = [r["key"] for r in ROWS]
 FEATURE_LABEL = {r["key"]: r["label"] for r in ROWS}
 FEATURE_LABEL.update({"ai": "FIDCLIC AI", "advanced_analytics": "Analytics avancés", "campaigns": "Campagnes ciblées",
                       "crm_advanced": "CRM avancé", "geo_proximity": "Géolocalisation", "csv_export": "l'export des données"})
+# SERVICES a super admin switches off, business by business (user, 2026-11-11:
+# « ek ek service hataa sake »). Each is a key of this gate: switched off, it
+# is locked like a feature the plan lacks — pages, calls, automatic sends —
+# but the owner reads « désactivé par FidClic », never an upgrade offer.
+# « cards » has no plan row: new cards AND everything on the old ones (scan,
+# tampons, points, rewards, the till's API).
+SERVICES = [
+    {"key": "cards", "label": "Cartes de fidélité", "help": "Nouvelles inscriptions, scan en caisse, tampons, points, récompenses et API de caisse."},
+    {"key": "campaigns", "label": "Campagnes", "help": "Page Campagnes et envois de campagnes (programmés compris)."},
+    {"key": "automations", "label": "Automatisations", "help": "Page Automatisations et tous leurs envois automatiques."},
+    {"key": "ai", "label": "FidClic IA", "help": "Copilote, FidClic IA, rédaction et analyses par l'IA (aucun coût IA)."},
+    {"key": "geo_proximity", "label": "Géolocalisation", "help": "Carte des clients et notifications de proximité."},
+    {"key": "wallet", "label": "Wallet (Apple/Google)", "help": "Ajout et mise à jour des cartes dans Apple Wallet et Google Wallet."},
+    {"key": "referral", "label": "Parrainage", "help": "Programme de parrainage et ses récompenses."},
+    {"key": "segmentation", "label": "Segmentation", "help": "Page Segmentation."},
+    {"key": "advanced_analytics", "label": "Analyses & Insights", "help": "Pages Analyses et Insights."},
+    {"key": "crm_advanced", "label": "CRM avancé", "help": "Segments, filtres avancés et page Historique."},
+    {"key": "csv_export", "label": "Export des données", "help": "Boutons « Exporter »."},
+    {"key": "api_access", "label": "API & Intégrations", "help": "Clés API et intégrations."},
+]
+SERVICE_KEYS = [s["key"] for s in SERVICES]
+SERVICE_LABEL = {s["key"]: s["label"] for s in SERVICES}
+DISABLED_MESSAGE = "Ce service a été désactivé par FidClic. Contactez le support."
 TONES = {"silver": "#2F6BFF", "gold": "#10B981", "vip": "#8B5CF6", "franchise": "#F59E0B"}
 
 
@@ -184,6 +207,10 @@ def upgrade_for(features: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
 
 
 def locked(features: Dict[str, Any], key: str) -> Dict[str, Any]:
+    if key in (features.get("services_off") or []):
+        # switched off by the super admin: no offer would unlock it
+        return {"code": "SERVICE_DISABLED", "feature": key, "label": SERVICE_LABEL.get(key) or FEATURE_LABEL.get(key, key),
+                "plan": features.get("label"), "message": DISABLED_MESSAGE, "upgrade": None, "by_fidclic": True}
     up = upgrade_for(features, key)
     label = FEATURE_LABEL.get(key, key)
     return {"code": "PLAN_FEATURE_DISABLED", "feature": key, "label": label, "plan": features.get("label"),
@@ -203,6 +230,14 @@ def require_feature(token_data: TokenData, key: str) -> Dict[str, Any]:
 
 # Owner API paths and the feature each needs. The first match wins.
 PATH_RULES = [
+    # « Cartes » (switched off by the super admin only — no plan lacks it)
+    (re.compile(r"^/api/owner/scan(/|$)"), "cards"),
+    (re.compile(r"^/api/owner/rewards/redeem$"), "cards"),
+    (re.compile(r"^/api/owner/defis/rewards/[^/]+/redeem$"), "cards"),
+    (re.compile(r"^/api/owner/clients/[^/]+/(ajustement|purchases)$"), "cards"),
+    (re.compile(r"^/api/owner/clients/import(/|$)"), "cards"),             # each imported client is a new card
+    (re.compile(r"^/api/owner/clients/invitations(/|$)"), "cards"),        # « Ajoutez votre carte » emails
+    (re.compile(r"^/api/owner/clients/[^/]+/card/readd$"), "cards"),
     (re.compile(r"^/api/owner/campaigns/ai-draft"), "ai"),
     (re.compile(r"^/api/owner/campaigns/[^/]+/ai-analyze"), "ai"),
     (re.compile(r"^/api/owner/(copilot|ai/|ai-query)"), "ai"),
@@ -351,19 +386,20 @@ def plan_bullets(f: Dict[str, Any]) -> List[str]:
 # ---------------------------------------------------------------------------
 SECTIONS = {"analytics": "advanced_analytics", "insights": "advanced_analytics", "segmentation": "segmentation",
             "campaigns": "campaigns", "automations": "automations", "referral": "referral", "map": "geo_proximity",
-            "ai-assistant": "ai", "history": "crm_advanced"}
+            "ai-assistant": "ai", "history": "crm_advanced", "scan": "cards"}
 
 
 @router.get("/api/owner/plan-access")
 def plan_access(token_data: TokenData = Depends(require_role(OWNER))):
     import models
     f = tenant_features(token_data.tenant_id)
-    keys = set(SECTIONS.values()) | {"csv_export", "wallet", "multi_branch", "priority_support", "api_access", "crm_advanced"}
+    keys = set(SECTIONS.values()) | {"csv_export", "wallet", "multi_branch", "priority_support", "api_access", "crm_advanced",
+                                     "cards"}
     return {"plan": f.get("label"), "features": {k: allows(f, k) for k in sorted(keys)},
             "locked": {k: locked(f, k) for k in sorted(keys) if not allows(f, k)},
             "sections": {s: allows(f, k) for s, k in SECTIONS.items()},
             "ai_level": f.get("ai_level") or "none", "ai_limits": models.AI_LEVEL_LIMITS.get(f.get("ai_level") or "none"),
-            "ai_queries_per_day": f.get("ai_queries_per_day")}
+            "ai_queries_per_day": f.get("ai_queries_per_day"), "services_off": f.get("services_off") or []}
 
 
 def _invites_this_month(tid: str, now: datetime) -> int:

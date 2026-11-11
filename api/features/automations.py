@@ -1073,6 +1073,15 @@ def _deliver(tid: str, row: Dict[str, Any], cust: Dict[str, Any], ctx: Dict[str,
     """One client, one message. Returns what was said, or None."""
     scenario = row["scenario"]
     meta = SCENARIOS[scenario]
+    # a proximity message with « Géolocalisation » switched off for this
+    # business (super admin, 2026-11-11) — or not in its plan: nothing goes
+    if scenario == "geo" or (row.get("trigger") or {}).get("type") == "geo":
+        try:
+            from features import plan_limits
+            if not plan_limits.allows_tenant(tid, "geo_proximity"):
+                return None
+        except Exception:
+            pass
     tenant = _db.tenants.find_one({"id": tid}) or {}
     tpl = _db.card_templates.find_one({"tenant_id": tid}, {"_id": 0}) or {}
     until = birthday_until(row, cust, at) if scenario == "birthday" else None

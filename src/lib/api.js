@@ -377,6 +377,9 @@ export const adminAPI = {
   commerceDetails: (id, params) => api.get(`/admin/commerces/${id}/details`, { params }),
   commerceZone: (id, params) => api.get(`/admin/commerces/${id}/zone`, { params }),
   commercePlan: (id, plan) => api.post(`/admin/commerces/${id}/plan`, { plan }),
+  // a business's services, one by one (2026-11-11)
+  commerceServices: (id) => api.get(`/admin/commerces/${id}/services`),
+  setCommerceServices: (id, body) => api.put(`/admin/commerces/${id}/services`, body),
   suspendCommerce: (id, reason) => api.post(`/admin/commerces/${id}/suspend`, { reason }),
   reactivateCommerce: (id) => api.post(`/admin/commerces/${id}/reactivate`),
   resilierCommerce: (id, body) => api.post(`/admin/commerces/${id}/resilier`, body),

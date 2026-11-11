@@ -239,6 +239,9 @@ def api_caller(request: Request) -> ApiCaller:
 def writer(c: ApiCaller = Depends(api_caller)) -> ApiCaller:
     if "write" not in c.scopes:
         raise HTTPException(status_code=403, detail={"code": "read_only_key", "message": "Cette clé est en lecture seule."})
+    from features import plan_limits
+    if not plan_limits.allows_tenant(c.tenant_id, "cards"):    # « Cartes » off: nothing on the cards
+        raise HTTPException(status_code=403, detail=plan_limits.locked(plan_limits.tenant_features(c.tenant_id), "cards"))
     return c
 
 

@@ -142,6 +142,9 @@ def claim_welcome_bonus(req: WelcomeBonusClaim):
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
     tenant_id = tenant["id"]
+    from features import plan_limits as _pl
+    if not _pl.allows_tenant(tenant_id, "cards"):      # « Cartes » off (super admin)
+        raise HTTPException(status_code=403, detail=_pl.locked(_pl.tenant_features(tenant_id), "cards"))
 
     rules_doc = _db.earn_rules.find_one({"tenant_id": tenant_id}) or {}
     if not rules_doc.get("enabled", True):
