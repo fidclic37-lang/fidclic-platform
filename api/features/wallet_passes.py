@@ -380,9 +380,10 @@ def _wallet_in_plan(barcode_id: str) -> bool:
 @router.get("/api/wallet/config")
 def wallet_config(barcode: str = ""):
     on = _wallet_in_plan(barcode) if barcode else True
-    from features import samsung_wallet as _SW
+    from features import samsung_wallet as _SW            # the test switch: only some shops (samsung_wallet.enabled_for)
+    c = _db.customers.find_one({"barcode_id": barcode}, {"_id": 0, "tenant_id": 1}) if barcode else None
     return {"apple": on and apple_configured(), "google": on and google_configured(),
-            "samsung": on and _SW.configured(), "in_plan": on}
+            "samsung": on and _SW.enabled_for((c or {}).get("tenant_id")), "in_plan": on}
 
 
 @router.get("/api/owner/wallet/google-status")
@@ -4454,8 +4455,8 @@ def samsung_wallet_link(barcode_id: str, request: Request = None):
     cust = core._card_customer(barcode_id, request)
     if not _wallet_in_plan(cust.get("barcode_id")):
         raise HTTPException(status_code=403, detail="Samsung Wallet n'est pas inclus dans l'offre de ce commerce.")
-    if not _SW.configured():
-        raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore configuré")
+    if not _SW.enabled_for(cust.get("tenant_id")):
+        raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore disponible pour ce commerce")
     return {"url": _SW.add_link(cust)}
 
 

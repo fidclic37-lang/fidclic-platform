@@ -41,8 +41,23 @@ async function signUp(page) {
   await expect(page.getByText('Félicitations !')).toBeVisible();
 }
 
+// Test switch (SAMSUNG_WALLET_TENANTS): a shop not on the list never sees the button.
+const SHOPS = (process.env.SAMSUNG_WALLET_TENANTS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const ON_HERE = !SHOPS.length || SHOPS.includes(SLUG);
+
+test.describe('a Galaxy phone, shop not on the test list', () => {
+  test.use({ userAgent: UA.galaxy, viewport: { width: 375, height: 812 } });
+  test.skip(ON_HERE, 'run with SAMSUNG_WALLET_TENANTS=another-shop');
+  test('no Samsung button, Google still there', async ({ page }) => {
+    await signUp(page);
+    await expect(page.getByText(/Ajouter à Google Wallet/)).toBeVisible();
+    await expect(page.getByText(/Samsung Wallet/)).toHaveCount(0);
+  });
+});
+
 test.describe('a Galaxy phone (Chrome)', () => {
   test.use({ userAgent: UA.galaxy, viewport: { width: 375, height: 812 } });
+  test.skip(!ON_HERE, 'this shop is not on the test list');
 
   test('Google and Samsung buttons; Samsung opens its link and gets the card', async ({ page, request }) => {
     test.setTimeout(90_000);

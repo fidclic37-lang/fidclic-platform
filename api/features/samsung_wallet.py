@@ -41,6 +41,10 @@ out of git — website_antiG/.secrets/samsung-wallet):
                                   for when Samsung's own calls get verified
     SAMSUNG_WALLET_AUTH_PATH_CC2  "0" to sign the path without its /{cc2}
                                   (Samsung's docs show both; default with)
+    SAMSUNG_WALLET_TENANTS        test switch (user, 2026-11-11): while the card
+                                  is in Samsung's testing mode, only these shops
+                                  (ids or slugs, comma-separated) get the button,
+                                  the card data and the updates. Empty = every shop.
 
 Samsung documents no way to check that the two calls above come from
 Samsung: the refId is the lock, a callback host is only kept when it is
@@ -115,8 +119,29 @@ def cert_id() -> str:
 
 
 def configured() -> bool:
-    """The button shows once the portal's three ids are set."""
+    """The portal's three ids are set."""
     return bool(partner_id() and card_id() and cert_id())
+
+
+def _test_shops() -> List[str]:
+    return [x.strip() for x in _env("SAMSUNG_WALLET_TENANTS").split(",") if x.strip()]
+
+
+def enabled_for(tenant_id: Optional[str]) -> bool:
+    """Samsung Wallet for this shop: configured, and — while the test switch
+    lists shops — one of them (by id or slug). No shop known: only when the
+    switch is off."""
+    if not configured():
+        return False
+    shops = _test_shops()
+    if not shops:
+        return True
+    if not tenant_id:
+        return False
+    if tenant_id in shops:
+        return True
+    t = _database().tenants.find_one({"id": tenant_id}, {"_id": 0, "slug": 1}) or {}
+    return bool(t.get("slug")) and t["slug"] in shops
 
 
 def _pem(name: str) -> Optional[str]:
@@ -330,7 +355,8 @@ def get_card_data(cid: str, ref: str, request: Request, fields: Optional[str] = 
     if not configured() or cid != card_id():
         return Response(status_code=204)
     cust = _customer_by_ref(ref)
-    if not cust or cust.get("deleted_at") or not W._wallet_in_plan(cust.get("barcode_id")):
+    if not cust or cust.get("deleted_at") or not enabled_for(cust.get("tenant_id")) \
+            or not W._wallet_in_plan(cust.get("barcode_id")):
         return Response(status_code=204)
     _note(cust, "fetched", request)
     payload = W._card_payload(cust["barcode_id"])
@@ -458,11 +484,11 @@ def notify(serials: Iterable[str]) -> Dict[str, Any]:
         return {"sent": 0}
     db = _database()
     rows = list(db.customers.find({"barcode_id": {"$in": serials}, "samsung_ref": {"$exists": True}},
-                                  {"_id": 0, "id": 1, "samsung_ref": 1, "samsung_added_at": 1, "samsung_removed_at": 1,
+                                  {"_id": 0, "id": 1, "tenant_id": 1, "samsung_ref": 1, "samsung_added_at": 1, "samsung_removed_at": 1,
                                    "samsung_cc2": 1, "samsung_callback": 1}))
     sent, errors = 0, []
     for c in rows:
-        if not held(c):
+        if not held(c) or not enabled_for(c.get("tenant_id")):
             continue
         cc2 = c.get("samsung_cc2") if _CC2_OK.match(c.get("samsung_cc2") or "") else "fr"
         host = c.get("samsung_callback") if _samsung_host(c.get("samsung_callback")) else PUBLIC_HOST
@@ -493,4 +519,4 @@ def stats(tenant_id: str) -> Dict[str, Any]:
     """For the owner's Wallet page: how many cards Samsung Wallet holds."""
     rows = _database().customers.find({"tenant_id": tenant_id, "samsung_added_at": {"$exists": True}},
                                       {"_id": 0, "samsung_added_at": 1, "samsung_removed_at": 1})
-    return {"configured": configured(), "cards": sum(1 for c in rows if held(c))}
+    return {"configured": enabled_for(tenant_id), "cards": sum(1 for c in rows if held(c))}

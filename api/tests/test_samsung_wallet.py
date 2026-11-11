@@ -312,6 +312,30 @@ def main():
     check("a new key in the environment is read again", SW._signing_key() is not k1)
     os.environ["SAMSUNG_WALLET_PRIVATE_KEY"] = pem
 
+    print("\n7c. Test switch: while the card is in Samsung's testing mode, only the test shops (user, 2026-11-11)")
+    os.environ["SAMSUNG_WALLET_TENANTS"] = "t2"                  # by id
+    c2 = client("tess", tenant="t2")
+    check("a test shop: button", http("GET", "/api/wallet/config", params={"barcode": c2}).json()["samsung"] is True)
+    check("…and its link", http("GET", f"/api/card/{c2}/samsung-wallet", mine(c2)).status_code == 200)
+    check("any other shop: no button", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is False)
+    r = http("GET", f"/api/card/{a}/samsung-wallet", mine(a))
+    check(f"…and no link ({r.status_code})", r.status_code == 503)
+    r = http("GET", CD(ref), SAM)
+    check(f"…and Samsung gets no card for it ({r.status_code})", r.status_code == 204)
+    sent.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check("…and no update notification for it", not sent)
+    check("no card given: the page asks with no shop → no button", http("GET", "/api/wallet/config").json()["samsung"] is False)
+    os.environ["SAMSUNG_WALLET_TENANTS"] = " t2-slug-unknown , t1 "  # by slug or id, spaces ignored
+    check("a list, spaces ignored: t1 back on", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is True)
+    db.tenants.update_one({"id": "t2"}, {"$set": {"slug": "test-shop"}})
+    os.environ["SAMSUNG_WALLET_TENANTS"] = "test-shop"
+    check("by the shop's slug too", http("GET", "/api/wallet/config", params={"barcode": c2}).json()["samsung"] is True
+          and http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is False)
+    os.environ["SAMSUNG_WALLET_TENANTS"] = ""
+    check("switch empty (after Samsung's approval): every shop", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is True)
+    os.environ.pop("SAMSUNG_WALLET_TENANTS", None)
+
     print("\n8. Samsung's history does not grow forever")
     SW.init(db)
     ttl = [i for i in db.samsung_wallet_log.index_information().values() if i.get("expireAfterSeconds")]
