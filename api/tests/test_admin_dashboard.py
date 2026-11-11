@@ -83,7 +83,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     d = D.dashboard(token_data=ADMIN)
     print("\nFigures")
     k = {x["key"]: x for x in d["kpis"]}
-    check("figures: Commerces, Impayé, clients, cartes, CA, MRR", list(k) == ["commerces", "impaye", "clients", "cartes", "ca", "mrr"])
+    # Impact FidClic beside the CA (user, 2026-11-11)
+    check("figures: Commerces, Impayé, clients, cartes, CA, Impact FidClic, MRR",
+          list(k) == ["commerces", "impaye", "clients", "cartes", "ca", "impact", "mrr"])
     check("commerces = en essai + abonnés", k["commerces"]["value"] == 4 and k["clients"]["value"] == 319)
     check("…1 in trial, 3 signed", k["commerces"]["breakdown"] == {"essai": 1, "abonne": 3})
     check("no impayé yet", k["impaye"]["value"] == 0)

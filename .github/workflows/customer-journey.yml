@@ -73,20 +73,27 @@ jobs:
       # A stuck download or apt mirror once held the job until it was cancelled
       # at 35 min, without a single test run (#361, 2026-10-23). Each attempt
       # now has 7 min, and a stuck one is retried — up to 3 times.
+      # 2026-11-11 (#489): the runner could not resolve archive.ubuntu.com for
+      # 20 minutes — apt hung three times and no test ran. The browser itself
+      # comes from Playwright's own CDN (no apt); the system libraries are
+      # asked of apt but no longer required: GitHub's image already carries
+      # Chrome's. What decides is whether Chromium actually starts.
       - if: steps.pw-cache.outputs.cache-hit != 'true'
         run: |
           for i in 1 2 3; do
-            timeout 420 npx playwright install --with-deps chromium && exit 0
-            echo "::warning::browser install attempt $i failed or hung — retrying"; sleep 15
+            timeout 300 npx playwright install chromium && exit 0
+            echo "::warning::browser download attempt $i failed or hung — retrying"; sleep 15
           done
           exit 1
-      - if: steps.pw-cache.outputs.cache-hit == 'true'
+      - name: System libraries (best effort)
         run: |
-          for i in 1 2 3; do
-            timeout 420 npx playwright install-deps chromium && exit 0
-            echo "::warning::system libraries attempt $i failed or hung — retrying"; sleep 15
+          for i in 1 2; do
+            timeout 180 npx playwright install-deps chromium && exit 0
+            echo "::warning::apt attempt $i failed or hung (Ubuntu mirrors) — retrying"; sleep 10
           done
-          exit 1
+          echo "::warning::apt unreachable — going on with the libraries already on the runner"
+      - name: Chromium starts
+        run: node -e "require('@playwright/test').chromium.launch().then(b => b.close()).then(() => console.log('chromium OK'))"
 
       - name: Walk the customer journey
         run: npx playwright test

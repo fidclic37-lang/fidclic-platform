@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Store, Users, CreditCard, Megaphone, Euro, CalendarDays, ChevronDown, PieChart as PieIcon, Sparkles, ChevronRight, TrendingDown, Rocket, Clock, Building2, Trophy, ArrowUp, ArrowDown, CircleAlert,
+  HandCoins,
 } from 'lucide-react';
 import { adminAPI } from '../../lib/api';
 import { Card, Head, Kpi, Donut, Loading, Modal, nf, BLUE } from '../crm/ui';
@@ -50,9 +51,12 @@ export default function AdminDashboardPage() {
   const kpis = [
     ['commerces', 'Commerces', Store, '#2F6BFF', '#EAF1FF'], ['impaye', 'Impayé', CircleAlert, '#E11D48', '#FDECEF'],
     ['clients', 'Clients finaux', Users, '#10B981', '#E7F7EE'], ['cartes', 'Cartes actives', CreditCard, '#2F6BFF', '#EAF1FF'],
-    ['ca', "Chiffre d'affaires total", Euro, '#F59E0B', '#FFF4DB'], ['mrr', 'MRR', Euro, '#10B981', '#E7F7EE'],
+    ['ca', "Chiffre d'affaires total", Euro, '#F59E0B', '#FFF4DB'],
+    // what FidClic brought, every shop (user, 2026-11-11) — the owners' CA FidClic added up
+    ...(K.impact ? [['impact', 'Impact FidClic', HandCoins, '#E11D48', '#FDECEF']] : []),
+    ['mrr', 'MRR', Euro, '#10B981', '#E7F7EE'],
   ];
-  const money = (k) => k === 'mrr' || k === 'ca';
+  const money = (k) => ['mrr', 'ca', 'impact'].includes(k);
   const split = K.commerces.breakdown || {};
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
   const feet = {
@@ -113,7 +117,7 @@ export default function AdminDashboardPage() {
         </span>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {kpis.map(([k, l, I, c, bg]) => (
           <div key={k} role="button" tabIndex={0} title="Voir les commerces" onClick={() => setList(k)} onKeyDown={(e) => { if (e.key === 'Enter') setList(k); }}
                className="cursor-pointer rounded-2xl transition hover:ring-2 hover:ring-[#BFD3FF]">
