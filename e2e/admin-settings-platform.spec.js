@@ -44,12 +44,14 @@ test('sign-ups closed and the maintenance banner, end to end', async ({ page, re
     await v.close();
 
     // a shop's dashboard shows the banner
-    const owner = await (await request.post('/api/auth/login', { data: OWNER })).json();
+    // the owner signs in from its OWN context: a login on `request` would leave
+    // its cookie there, and the admin's clean-up below would go out as the owner
+    const o = await browser.newContext({ baseURL: info.project.use.baseURL, viewport: { width: 1536, height: 960 } });
+    const owner = await (await o.request.post('/api/auth/login', { data: OWNER })).json();
     expect(owner.access_token).toBeTruthy();                  // sign-in still works with sign-ups closed
     const OH = { Authorization: `Bearer ${owner.access_token}` };
-    const br = await (await request.get('/api/owner/branches', { headers: OH })).json();
+    const br = await (await o.request.get('/api/owner/branches', { headers: OH })).json();
     const store = ((br && br.branches) || br || []).find((b) => b.status !== 'closed')?.id || '';
-    const o = await browser.newContext({ baseURL: info.project.use.baseURL, viewport: { width: 1536, height: 960 } });
     const op = await o.newPage();
     op.on('pageerror', (e) => errors.push(e.message));
     await op.goto('/login');
@@ -61,7 +63,12 @@ test('sign-ups closed and the maintenance banner, end to end', async ({ page, re
     await expect(op.getByTestId('platform-banner')).toHaveCount(0);
     await o.close();
   } finally {
-    await request.put('/api/admin/settings/platform', { headers: A, data: { signups_open: true, banner: null, signups_message: null } });
+    // put everything back for the other specs (same server): sign-ups open, no banner
+    const back = await request.put('/api/admin/settings/platform', { headers: A, data: { signups_open: true, banner: null, signups_message: null } });
+    expect(back.status(), await back.text()).toBe(200);
+    const st = await (await request.get('/api/platform/status')).json();
+    expect(st.signups_open).toBe(true);
+    expect(st.banner).toBeNull();
   }
   expect(errors).toEqual([]);
 });
