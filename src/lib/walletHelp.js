@@ -12,14 +12,19 @@ export const GOOGLE_STEPS = [
   'Carte plus dans Google Wallet ? Scanner le QR ci-dessous avec son téléphone, puis « Ajouter à Google Wallet ».',
   'Internet allumé (Wi-Fi ou données mobiles) : la carte se met à jour en quelques secondes.',
 ];
-export const WALLET_NAMES = { apple: 'Apple Wallet', google: 'Google Wallet' };
+export const SAMSUNG_STEPS = [
+  'Ouvrir Samsung Wallet sur son Galaxy, connecté au même compte Samsung que lors de l’ajout.',
+  'Carte plus dans Samsung Wallet ? Scanner le QR ci-dessous avec son téléphone, puis « Ajouter à Samsung Wallet ».',
+  'Internet allumé (Wi-Fi ou données mobiles) : la carte se met à jour en quelques secondes.',
+];
+export const WALLET_NAMES = { apple: 'Apple Wallet', google: 'Google Wallet', samsung: 'Samsung Wallet' };
 export function walletHelp(link) {
   if (!link || link.linked !== false) return null;
   if (link.reason === 'never_added') {
     return {
       tone: 'info', steps: [],
       title: 'Carte pas encore dans un Wallet.',
-      note: 'La visite est enregistrée : s’il ajoute sa carte maintenant (« Ajouter à Apple Wallet / Google Wallet » sur sa page), elle aura déjà cette visite.',
+      note: 'La visite est enregistrée : s’il ajoute sa carte maintenant (« Ajouter à Apple Wallet / Google Wallet / Samsung Wallet » sur sa page), elle aura déjà cette visite.',
       qr: 'Afficher le QR de sa carte',
     };
   }
@@ -27,6 +32,13 @@ export function walletHelp(link) {
     return {
       tone: 'error', steps: GOOGLE_STEPS, qr: 'Afficher le QR à scanner',
       title: 'Sa carte a été retirée de son Google Wallet : elle ne se met plus à jour.',
+      note: 'La visite est bien enregistrée (sur sa page, pas dans son Wallet). À essayer, dans l’ordre :',
+    };
+  }
+  if (link.reason === 'removed' && link.wallet === 'samsung') {
+    return {
+      tone: 'error', steps: SAMSUNG_STEPS, qr: 'Afficher le QR à scanner',
+      title: 'Sa carte a été retirée de son Samsung Wallet : elle ne se met plus à jour.',
       note: 'La visite est bien enregistrée (sur sa page, pas dans son Wallet). À essayer, dans l’ordre :',
     };
   }

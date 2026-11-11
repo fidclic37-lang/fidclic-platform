@@ -55,6 +55,7 @@ MODULES = [
     "features.customer_edit",
     "features.card_status",          # card active / deleted, and getting it back
     "features.google_wallet_callbacks",  # Google Wallet tells us of saves and deletions
+    "features.samsung_wallet",       # Samsung Wallet: card data, card state, update notifications
     # Super admin › Suivi d'équipe — FidClic's own team tasks (week board,
     # history, repeats, comments, bell). Rights: the « equipe » module.
     "features.team_tasks",

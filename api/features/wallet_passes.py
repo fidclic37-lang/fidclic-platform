@@ -263,21 +263,28 @@ def wallet_link(customer_id: str) -> Dict[str, Any]:
     `reason` when not: removed, downloaded_not_registered, never_added."""
     c = _db.customers.find_one({"id": customer_id}, {"_id": 0, "barcode_id": 1, "apple_downloaded_at": 1,
                                                      "wallet_removed_at": 1, "wallet_added_at": 1,
-                                                     "google_added_at": 1, "google_removed_at": 1}) or {}
+                                                     "google_added_at": 1, "google_removed_at": 1,
+                                                     "samsung_added_at": 1, "samsung_removed_at": 1}) or {}
     return link_state(c)
 
 
 def link_state(c: Dict[str, Any]) -> Dict[str, Any]:
     """wallet_link for a customer already read. `wallet` names the Wallet the
     till's steps are about (user, 2026-11-11, a client: the steps
-    differ between an iPhone and Google Wallet) — None when never added."""
+    differ between an iPhone, Google Wallet and Samsung Wallet) — None when never added."""
     serial = c.get("barcode_id")
     if serial and _db.pass_registrations.find_one({"serial": serial}, {"_id": 1}):
         return {"linked": True, "where": "apple", "reason": None, "wallet": "apple"}
     obj = _db.google_wallet_objects.find_one({"serial": serial}, {"_id": 0, "created_at": 1}) if serial else None
     if google_saved(c, obj):
         return {"linked": True, "where": "google", "reason": None, "wallet": "google"}
+    from features import samsung_wallet as _SW            # Samsung said ADDED, no DELETED since
+    if _SW.held(c):
+        return {"linked": True, "where": "samsung", "reason": None, "wallet": "samsung"}
     a_removed, g_removed = _aware_dt(c.get("wallet_removed_at")), _aware_dt(c.get("google_removed_at"))
+    s_removed = _aware_dt(c.get("samsung_removed_at"))
+    if s_removed and not ((a_removed and a_removed > s_removed) or (g_removed and g_removed > s_removed)):
+        return {"linked": False, "where": None, "reason": "removed", "wallet": "samsung"}
     if a_removed or g_removed:
         reason = "removed"
         wallet = "google" if g_removed and (not a_removed or g_removed > a_removed) else "apple"
@@ -289,7 +296,7 @@ def link_state(c: Dict[str, Any]) -> Dict[str, Any]:
 
 
 LINK_FIELDS = {"_id": 0, "barcode_id": 1, "apple_downloaded_at": 1, "wallet_removed_at": 1, "wallet_added_at": 1,
-               "google_added_at": 1, "google_removed_at": 1}
+               "google_added_at": 1, "google_removed_at": 1, "samsung_added_at": 1, "samsung_removed_at": 1}
 
 
 def apple_state(c: Dict[str, Any], registered: set, google: set, now: Optional[datetime] = None) -> Dict[str, str]:
@@ -389,7 +396,10 @@ def _wallet_in_plan(barcode_id: str) -> bool:
 @router.get("/api/wallet/config")
 def wallet_config(barcode: str = ""):
     on = _wallet_in_plan(barcode) if barcode else True
-    return {"apple": on and apple_configured(), "google": on and google_configured(), "in_plan": on}
+    from features import samsung_wallet as _SW            # the test switch: only some shops (samsung_wallet.enabled_for)
+    c = _db.customers.find_one({"barcode_id": barcode}, {"_id": 0, "tenant_id": 1}) if barcode else None
+    return {"apple": on and apple_configured(), "google": on and google_configured(),
+            "samsung": on and _SW.enabled_for((c or {}).get("tenant_id")), "in_plan": on}
 
 
 @router.get("/api/owner/wallet/google-status")
@@ -2982,6 +2992,11 @@ def notify_passes(serials: Iterable[str], google_notify: Any = None,
         res["google"].pop("done", None)
     except Exception as exc:                       # noqa: BLE001
         res["google"] = {"errors": [str(exc)[:160]]}
+    try:                                           # Samsung fetches the card again (features/samsung_wallet)
+        from features import samsung_wallet as _SW
+        res["samsung"] = _SW.notify(serials)
+    except Exception as exc:                       # noqa: BLE001
+        res["samsung"] = {"errors": [str(exc)[:160]]}
     return res
 
 
@@ -3243,6 +3258,7 @@ def owner_wallet_stats(token_data: TokenData = Depends(require_role(["business_o
         # every client once, by where the card is (2026-10-30): « pas inscrit »
         # apart from Android, never added and removed
         "apple_states": apple_states,
+        "samsung": _samsung_stats(tid),
         "last_registration_at": last.isoformat() if last else None,
         # The update chain, newest device first: we push → the iPhone asks
         # what changed → it fetches the pass. A gap shows where it breaks.
@@ -4436,6 +4452,28 @@ def wallet_prepare(barcode_id: str, request: Request = None, only: str = ""):
         except Exception as exc:
             print(f"wallet prepare: google ({exc})")
     return out
+
+
+def _samsung_stats(tid: str) -> Dict[str, Any]:
+    try:
+        from features import samsung_wallet as _SW
+        return _SW.stats(tid)
+    except Exception as exc:                       # noqa: BLE001
+        return {"configured": False, "cards": 0, "error": str(exc)[:120]}
+
+
+@router.get("/api/card/{barcode_id}/samsung-wallet")
+def samsung_wallet_link(barcode_id: str, request: Request = None):
+    """« Ajouter à Samsung Wallet »: Samsung's Data Fetch Link for this card
+    (features/samsung_wallet). The card's own phone, or the shop."""
+    import server as core
+    from features import samsung_wallet as _SW
+    cust = core._card_customer(barcode_id, request)
+    if not _wallet_in_plan(cust.get("barcode_id")):
+        raise HTTPException(status_code=403, detail="Samsung Wallet n'est pas inclus dans l'offre de ce commerce.")
+    if not _SW.enabled_for(cust.get("tenant_id")):
+        raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore disponible pour ce commerce")
+    return {"url": _SW.add_link(cust)}
 
 
 @router.get("/api/card/{barcode_id}/google-wallet")

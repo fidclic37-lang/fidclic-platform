@@ -172,6 +172,24 @@ def main():
     from features import role_perms as RP
     check("the page it belongs to is the till's (role rights apply)", RP.page_of(URL) == "scan")
 
+    print("\n5. Samsung Wallet on the till (features/samsung_wallet)")
+    sg = client("sgal")
+    w = http("GET", URL, H, params={"barcode": sg}).json()
+    check("not in Samsung yet: never added", w["linked"] is False and w["reason"] == "never_added")
+    db.customers.update_one({"id": "sgal"}, {"$set": {"samsung_added_at": now}})
+    w = http("GET", URL, H, params={"barcode": sg}).json()
+    check("Samsung said ADDED: the re-check sees it — linked, Samsung", w["linked"] is True and w["where"] == "samsung"
+          and w["wallet"] == "samsung")
+    check("the scan says it too", scan(sg)["where"] == "samsung")
+    db.customers.update_one({"id": "sgal"}, {"$set": {"samsung_removed_at": now + dt.timedelta(minutes=1)}})
+    w = scan(sg)
+    check("Samsung said DELETED: removed, Samsung's steps", w["linked"] is False and w["reason"] == "removed"
+          and w["wallet"] == "samsung")
+    db.customers.update_one({"id": "sgal"}, {"$set": {"google_added_at": now - dt.timedelta(days=5),
+                                                      "google_removed_at": now + dt.timedelta(minutes=2)}})
+    check("removed from Google after Samsung: Google's steps", scan(sg)["wallet"] == "google")
+    check("still only the link state", set(scan(sg)) == keys)
+
     print(f"\n{passed} passed, {failed} failed")
     sys.exit(1 if failed else 0)
 

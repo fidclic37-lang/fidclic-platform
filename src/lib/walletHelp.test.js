@@ -56,3 +56,18 @@ test('Wallet names for the green line', () => {
   assert.equal(WALLET_NAMES.apple, 'Apple Wallet');
   assert.equal(WALLET_NAMES.google, 'Google Wallet');
 });
+
+test('removed from Samsung Wallet: Samsung steps (Samsung account, re-add), never the iPhone or Google ones', () => {
+  const h = walletHelp({ linked: false, reason: 'removed', wallet: 'samsung' });
+  assert.equal(h.tone, 'error');
+  assert.match(h.title, /Samsung Wallet/);
+  const all = h.steps.join(' ');
+  assert.match(all, /compte Samsung/);
+  assert.match(all, /Ajouter à Samsung Wallet/);
+  assert.doesNotMatch(all, /Mises à jour automatiques|Google/);
+  assert.equal(WALLET_NAMES.samsung, 'Samsung Wallet');
+});
+
+test('never added: the note names the three Wallets', () => {
+  assert.match(walletHelp({ linked: false, reason: 'never_added' }).note, /Samsung Wallet/);
+});
