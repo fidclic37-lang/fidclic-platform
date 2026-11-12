@@ -159,6 +159,25 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           and db.push_notifications.count_documents({"tenant_id": "t1", "automation_id": "g1"}) == 0)
     check("its page is refused", disabled(http("GET", "/api/owner/geo/overview", OWN)))
 
+    print("\nCartes off, Automatisations on: no point added by a birthday run (pentest, 2026-11-11)")
+    from features import auto_campaigns as AC, automations as AU2
+    saved = (AU2.scenario_on, AU2.reach_test, AC._dispatch_message)
+    AU2.scenario_on = lambda *a, **k: True
+    AU2.reach_test = lambda *a, **k: (lambda c: True)
+    AC._dispatch_message = lambda *a, **k: None
+    db.customers.update_one({"id": "c1"}, {"$set": {"birthday": AU2.paris_mmdd(dt.datetime.now(dt.timezone.utc))}})
+    OWNER_TD = TokenData(email="o@t1.fr", role="business_owner", tenant_id="t1")
+    A.set_services("t1", A.ServicesIn(off=["cards"]), token_data=ADMIN)
+    before_pts = db.customers.find_one({"id": "c1"})["points"]
+    r = AC.run_birthdays(token_data=OWNER_TD)
+    check("the birthday message still goes (automations on)", r.get("sent") == 1)
+    check("… but no bonus point lands on a card that does nothing", db.customers.find_one({"id": "c1"})["points"] == before_pts)
+    A.set_services("t1", A.ServicesIn(off=[]), token_data=ADMIN)
+    db.auto_campaign_log.delete_many({"tenant_id": "t1"})
+    AC.run_birthdays(token_data=OWNER_TD)
+    check("with the cards on, the bonus is given as before", db.customers.find_one({"id": "c1"})["points"] == before_pts + 50)
+    AU2.scenario_on, AU2.reach_test, AC._dispatch_message = saved
+
     print("\nTout couper")
     r = A.set_services("t1", A.ServicesIn(all_off=True), token_data=ADMIN)
     check("every service off", set(r["off"]) == set(keys))

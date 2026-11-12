@@ -358,13 +358,17 @@ def run_birthdays(
         run_id = _prepare_run(token_data.tenant_id, "birthday", title_template, cfg.birthday_message, eligible)
         return {"prepared": True, "run_id": run_id, "recipient_count": len(eligible)}
 
+    # « Cartes » switched off by the super admin (2026-11-11): nothing lands on
+    # the cards — the message may go (Automatisations), the points may not
+    from features import plan_limits
+    cards_on = plan_limits.allows_tenant(token_data.tenant_id, "cards")
     sent = 0
     for c in eligible:
         ctx = _build_ctx(c, tenant)
         body = _substitute(cfg.birthday_message, ctx)
         title = _substitute(cfg.birthday_title, ctx)
         _dispatch_message(token_data.tenant_id, c, "birthday", title, body)
-        if cfg.birthday_bonus_points > 0:
+        if cfg.birthday_bonus_points > 0 and cards_on:
             _db.customers.update_one({"id": c["id"]}, {"$inc": {"points": cfg.birthday_bonus_points}})
         sent += 1
     return {"found": len(customers), "sent": sent, "dry_run": False}
