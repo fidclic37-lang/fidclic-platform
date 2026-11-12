@@ -370,10 +370,13 @@ def _event(task_id: str, actor: Optional[str], kind: str, text: str) -> None:
 
 
 def _alert(to: Iterable[str], kind: str, task: Dict[str, Any], text: str, skip: Optional[str] = None) -> None:
-    for email in set(to):
-        if email and email != skip:
-            _db.team_task_alerts.insert_one({"id": str(uuid.uuid4()), "to": email, "kind": kind,
-                                             "task_id": task["id"], "text": text, "at": _now()})
+    people = sorted({e for e in to if e and e != skip})
+    for email in people:
+        _db.team_task_alerts.insert_one({"id": str(uuid.uuid4()), "to": email, "kind": kind,
+                                         "task_id": task["id"], "text": text, "at": _now()})
+    # by e-mail too, to each person concerned who asked for it (Mes alertes, 2026-11-11)
+    from features import team_alerts as TA
+    TA.notify("equipe", text, "Suivi d'équipe", f"/admin/equipe?tache={task['id']}", only=people)
 
 
 def _due_text(due: datetime) -> str:

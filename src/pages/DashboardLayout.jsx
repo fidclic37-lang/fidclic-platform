@@ -743,6 +743,8 @@ const DashboardLayout = () => {
               {can(user, 'parametres') && <NavLink to="/admin/parametres" icon={Settings2} label="Paramètres" currentPath={currentPath} role={role} collapsed={rail} />}
               {can(user, 'support') && <NavLink to="/admin/support" icon={Headphones} label="Centre de support" currentPath={currentPath} role={role} collapsed={rail} badge={supportUnread || null} />}
               {can(user, 'equipe') && <NavLink to="/admin/equipe" icon={ClipboardCheck} label="Suivi d'équipe" currentPath={currentPath} role={role} collapsed={rail} />}
+              {/* every team member, whatever their role opens */}
+              <NavLink to="/admin/moi" icon={UserRound} label="Mes paramètres" currentPath={currentPath} role={role} collapsed={rail} />
               <SignOutNavItem onClick={logout} collapsed={rail} />
             </>
           )}

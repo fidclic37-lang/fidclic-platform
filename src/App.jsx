@@ -122,6 +122,7 @@ const SupportCenterPage = lazyPage(() => import('./pages/admin/support/SupportCe
 const SuiviEquipePage = lazyPage(() => import('./pages/admin/equipe/SuiviEquipePage'));
 const AdminNotificationsPage = lazyPage(() => import('./pages/admin/AdminNotificationsPage'));
 const AdminSettingsPage = lazyPage(() => import('./pages/admin/AdminSettingsPage'));
+const MyAccountPage = lazyPage(() => import('./pages/admin/MyAccountPage'));
 import { can, moduleOfPath, firstAllowed } from './lib/perms';
 // Rollback: the previous plan editor — import AdminPlansPage from './pages/AdminPlansPage';
 const PlanLimitsPage = lazyPage(() => import('./pages/admin/PlanLimitsPage'));
@@ -615,6 +616,8 @@ function App() {
             <Route path="notifications" element={<AdminGate><AdminNotificationsPage /></AdminGate>} />
             {/* Paramètres — services, plateforme, mes paramètres (2026-11-11) */}
             <Route path="parametres" element={<AdminGate><AdminSettingsPage /></AdminGate>} />
+            {/* Mes paramètres — every team member, whatever their role opens */}
+            <Route path="moi" element={<AdminGate><MyAccountPage /></AdminGate>} />
           </Route>
         </Routes>
         </React.Suspense>

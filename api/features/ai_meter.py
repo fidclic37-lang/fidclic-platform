@@ -480,12 +480,10 @@ def _alert_once(key: str, stamp: str, kind: str, text: str, tid: Optional[str]) 
     _db.platform_alerts.insert_one({"id": uuid.uuid4().hex, "kind": kind, "email": None, "tenant_id": tid,
                                     "text": text, "at": now, "read_by": []})
     try:
-        from services import mailer
-        for u in _db.users.find({"role": "super_admin", "active": {"$ne": False}}, {"_id": 0, "email": 1}):
-            if u.get("email"):
-                mailer.send(u["email"], f"FidClic — {text.split(' : ')[0]}",
-                            f"<div style='font-family:Arial,sans-serif;font-size:14px;color:#0B1C3F'><p>{html.escape(text)}</p>"
-                            f"<p><a href='https://app.fidclic.com/admin/ai/couts'>Voir Coûts IA</a></p></div>")
+        # the team members who asked for it — by default the super admins, as
+        # before (Paramètres › Mes paramètres › Mes alertes, 2026-11-11)
+        from features import team_alerts as TA
+        TA.notify("ai", text.split(" : ")[0], text, "/admin/ai/couts")
     except Exception as exc:                 # noqa: BLE001 — the alert row is written either way
         print(f"ai_meter: alert email failed ({exc})")
 
