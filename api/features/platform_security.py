@@ -165,6 +165,8 @@ def record_success(user: Dict[str, Any], request: Optional[Request], method: str
 def _alert(kind: str, email: str, text: str, request: Optional[Request]) -> None:
     _db.platform_alerts.insert_one({"id": uuid.uuid4().hex, "kind": kind, "email": email, "text": text, "at": _now(),
                                     "ip": _where(request)["ip"], "read_by": []})
+    from features import team_alerts as TA
+    TA.notify("security", f"Sécurité — {email}", text, "/admin/securite/journal")
 
 
 COUNTRY_FR = {"FR": "France", "DZ": "Algérie", "MA": "Maroc", "TN": "Tunisie", "BE": "Belgique", "CH": "Suisse", "LU": "Luxembourg",
@@ -472,7 +474,21 @@ def alerts(token_data: TokenData = Depends(require_super())):
     rows = list(_db.platform_alerts.find({"at": {"$gte": _now() - timedelta(days=30)}}, {"_id": 0}).sort("at", -1).limit(30))
     people = _people()
     title = {"suspicious": "Connexion suspecte", "blocked": "Connexion bloquée", "locked": "Compte bloqué"}
-    return {"alerts": [{"id": f"sec-{a['id']}", "severity": "critical" if a["kind"] in ("blocked", "locked") else "warning",
-                        "title": f"{title.get(a['kind'], 'Sécurité')} — {people.get(a['email'], a['email'])}", "body": a["text"],
-                        "created_at": _iso(a["at"]), "action": {"label": "Voir les connexions", "href": "/admin/securite/connexions"}}
-                       for a in rows]}
+
+    def one(a):
+        k = a.get("kind") or ""
+        # the platform's other alerts share this bell (Mes alertes, 2026-11-11):
+        # a new business, a failed payment, FidClic IA's caps — said as such
+        if k == "signup":
+            return {"title": a["text"], "body": "Nouveau commerce", "severity": "info",
+                    "action": {"label": "Voir le commerce", "href": f"/admin/commerces/{a.get('tenant_id')}"}}
+        if k == "impaye":
+            return {"title": a["text"], "body": "Paiement refusé", "severity": "warning",
+                    "action": {"label": "Voir le commerce", "href": f"/admin/commerces/{a.get('tenant_id')}"}}
+        if k.startswith("ai_"):
+            return {"title": a["text"], "body": "FidClic IA", "severity": "warning",
+                    "action": {"label": "Voir Coûts IA", "href": "/admin/ai/couts"}}
+        return {"title": f"{title.get(k, 'Sécurité')} — {people.get(a.get('email'), a.get('email'))}", "body": a["text"],
+                "severity": "critical" if k in ("blocked", "locked") else "warning",
+                "action": {"label": "Voir les connexions", "href": "/admin/securite/connexions"}}
+    return {"alerts": [{"id": f"sec-{a['id']}", "created_at": _iso(a["at"]), **one(a)} for a in rows]}

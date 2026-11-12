@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { can } from '../../lib/perms';
 import { Card, Loading, Breadcrumb, nf } from '../crm/ui';
 import PlatformTab from './settings/PlatformTab';
+import MyAccount from './settings/MyAccount';
 
 /* Super admin › Paramètres (user, 2026-11-11). Three tabs, built one PR at a
    time: Services (here), Plateforme, Mes paramètres.
@@ -98,7 +99,7 @@ function Services({ editable }) {
   );
 }
 
-const TABS = [['services', 'Services'], ['plateforme', 'Plateforme']];
+const TABS = [['services', 'Services'], ['plateforme', 'Plateforme'], ['moi', 'Mes paramètres']];
 
 export default function AdminSettingsPage() {
   const { user } = useAuth();
@@ -122,6 +123,7 @@ export default function AdminSettingsPage() {
       </nav>
       {tab === 'services' && <Services editable={editable} />}
       {tab === 'plateforme' && <PlatformTab editable={editable} />}
+      {tab === 'moi' && <MyAccount />}
     </div>
   );
 }

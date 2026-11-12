@@ -241,6 +241,15 @@ def _email_merchant(ticket: Dict[str, Any], title: str, body: str) -> Dict[str, 
         return {"sent": False, "reason": str(exc)[:120]}
 
 
+def _notify_team_by_email(ticket: Dict[str, Any], body: str) -> None:
+    """The team members who asked for support alerts by e-mail (Mes alertes,
+    2026-11-11) — on top of the support inbox, which keeps receiving."""
+    from features import team_alerts as TA
+    shop = _tenant(ticket.get("tenant_id")).get("name") or ""
+    TA.notify("support", f"Nouvelle demande{(' — ' + shop) if shop else ''} : {ticket.get('subject') or ''}",
+              (body or "")[:400], f"/admin/support?ticket={ticket['id']}")
+
+
 def _notify_inbox(ticket: Dict[str, Any], body: str) -> None:
     """A new ticket from a merchant also reaches FidClic's support mailbox,
     as the form always did (SMTP → Resend → Formsubmit, server.py). In the
@@ -328,6 +337,7 @@ def new_ticket(*, tenant_id: Optional[str], subject: str, body: str, author_type
     else:
         _alert("new", f"Nouvelle demande — {t.get('name') or from_email or 'contact'} : {subject}", ticket)
         _notify_inbox(ticket, body)
+        _notify_team_by_email(ticket, body)
     return ticket
 
 

@@ -151,6 +151,20 @@ def send_signup_emails(tenant: Dict[str, Any], user: Dict[str, Any]) -> Dict[str
                                    html=admin_html(tenant, user, verified))
     except Exception as exc:                       # noqa: BLE001
         out["admin"] = {"sent": False, "reason": str(exc)[:120]}
+    # the team: a bell row, and an e-mail to who asked (Mes alertes, 2026-11-11)
+    try:
+        from features import team_alerts as TA
+        if TA._db is not None:
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+            TA._db.platform_alerts.insert_one({"id": _uuid.uuid4().hex, "kind": "signup", "email": user.get("email"),
+                                               "tenant_id": tenant.get("id"), "text": f"Nouveau commerce inscrit : {tenant.get('name') or '—'}",
+                                               "at": _dt.now(_tz.utc), "read_by": []})
+        TA.notify("signup", f"Nouveau commerce inscrit : {tenant.get('name') or '—'}",
+                  f"{tenant.get('name') or '—'} vient de créer son compte ({user.get('email') or ''}).",
+                  f"/admin/commerces/{tenant.get('id')}", skip=[_admin_to()])
+    except Exception:                              # noqa: BLE001
+        pass
     try:
         out["welcome"] = mailer.send(
             to=user["email"],

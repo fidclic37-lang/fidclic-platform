@@ -52,6 +52,8 @@ router = APIRouter(tags=["security"])
 _db = None
 
 READERS = ["business_owner", "administrateur", "manager"]
+# FidClic's own team: their password, 2FA and devices here too (Mes paramètres, 2026-11-11)
+PLATFORM_TEAM = ["super_admin", "fidclic_team", "commercial"]
 DELETION_DAYS = 30
 TOUCH_EVERY = timedelta(minutes=5)
 COUNTRIES = {"FR": "France", "BE": "Belgique", "CH": "Suisse", "LU": "Luxembourg", "MC": "Monaco", "DE": "Allemagne",
@@ -373,7 +375,7 @@ class PasswordIn(BaseModel):
 
 @router.post("/api/security/password")
 def change_password(body: PasswordIn, request: Request = None,
-                    token_data: TokenData = Depends(require_role(READERS + ["staff"], partial_ok=True))):
+                    token_data: TokenData = Depends(require_role(READERS + ["staff"] + PLATFORM_TEAM, partial_ok=True))):
     me = _me(token_data)
     if me.get("hashed_password") and not verify_password(body.current or "", me["hashed_password"]):
         raise HTTPException(status_code=400, detail="Le mot de passe actuel est incorrect.")
@@ -391,7 +393,7 @@ def change_password(body: PasswordIn, request: Request = None,
 # 2FA
 # ---------------------------------------------------------------------------
 @router.post("/api/security/2fa/setup")
-def totp_setup(token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def totp_setup(token_data: TokenData = Depends(require_role(READERS + PLATFORM_TEAM, partial_ok=True))):
     me = _me(token_data)
     if me.get("totp_enabled"):
         raise HTTPException(status_code=409, detail="La double authentification est déjà activée.")
@@ -406,7 +408,7 @@ class CodeIn(BaseModel):
 
 
 @router.post("/api/security/2fa/enable")
-def totp_enable(body: CodeIn, request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def totp_enable(body: CodeIn, request: Request = None, token_data: TokenData = Depends(require_role(READERS + PLATFORM_TEAM, partial_ok=True))):
     me = _me(token_data)
     secret = me.get("totp_pending")
     if not secret:
@@ -427,7 +429,7 @@ class DisableIn(BaseModel):
 
 
 @router.post("/api/security/2fa/disable")
-def totp_disable(body: DisableIn, request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def totp_disable(body: DisableIn, request: Request = None, token_data: TokenData = Depends(require_role(READERS + PLATFORM_TEAM, partial_ok=True))):
     me = _me(token_data)
     if not me.get("totp_enabled"):
         return {"enabled": False}
@@ -445,7 +447,7 @@ def totp_disable(body: DisableIn, request: Request = None, token_data: TokenData
 # Devices
 # ---------------------------------------------------------------------------
 @router.delete("/api/security/sessions/{sid}")
-def end_session(sid: str, request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def end_session(sid: str, request: Request = None, token_data: TokenData = Depends(require_role(READERS + PLATFORM_TEAM, partial_ok=True))):
     if sid == getattr(token_data, "sid", None):
         raise HTTPException(status_code=400, detail="Pour cet appareil, utilisez « Se déconnecter ».")
     if not revoke({"email": token_data.email, "sid": sid}):
@@ -593,7 +595,7 @@ def unlock_till(body: UnlockIn, request: Request = None,
 
 
 @router.post("/api/security/sessions/revoke-others")
-def end_others(request: Request = None, token_data: TokenData = Depends(require_role(READERS, partial_ok=True))):
+def end_others(request: Request = None, token_data: TokenData = Depends(require_role(READERS + PLATFORM_TEAM, partial_ok=True))):
     n = revoke({"email": token_data.email, "sid": {"$ne": getattr(token_data, "sid", None)}})
     _audit("security.sessions_revoked", token_data, request, meta={"count": n})
     return {"closed": n}

@@ -98,6 +98,26 @@ def _db():
     return db
 
 
+def _payment_failed(tenant: dict) -> None:
+    """A business's payment was refused: past due (Stripe will already have
+    moved the subscription there via subscription.updated — flagged here too),
+    a row in the super admin's bell, an e-mail to the team members who asked
+    (Paramètres › Mes paramètres › Mes alertes, 2026-11-11)."""
+    import uuid as _uuid
+    db = _db()
+    now = datetime.now(timezone.utc)
+    db.tenants.update_one({"id": tenant["id"]}, {"$set": {"subscription_status": "past_due", "last_payment_failed_at": now}})
+    text = f"Paiement refusé : {tenant.get('name') or tenant['id']}"
+    try:
+        db.platform_alerts.insert_one({"id": _uuid.uuid4().hex, "kind": "impaye", "email": None, "tenant_id": tenant["id"],
+                                       "text": text, "at": now, "read_by": []})
+        from features import team_alerts as TA
+        TA.notify("impaye", text, f"Le paiement de l'abonnement de {tenant.get('name') or 'ce commerce'} a été refusé par la banque.",
+                  f"/admin/commerces/{tenant['id']}")
+    except Exception:                                    # noqa: BLE001 — the webhook answers Stripe whatever happens
+        pass
+
+
 def is_configured() -> bool:
     """True if Stripe is fully wired (keys present + SDK installed)."""
     return bool(STRIPE_SECRET_KEY and stripe is not None)
@@ -322,12 +342,7 @@ async def stripe_webhook(request: Request):
         cust_id = obj.get("customer")
         tenant = _find_tenant_for_customer(cust_id)
         if tenant:
-            # Stripe will already have moved the subscription to 'past_due'
-            # via subscription.updated, but flag it here too for redundancy.
-            db.tenants.update_one(
-                {"id": tenant["id"]},
-                {"$set": {"subscription_status": "past_due", "last_payment_failed_at": datetime.now(timezone.utc)}},
-            )
+            _payment_failed(tenant)
 
     elif etype == "invoice.paid":
         cust_id = obj.get("customer")

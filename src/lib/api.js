@@ -375,6 +375,13 @@ export const settingsAPI = {
   savePlatform: (body) => api.put('/admin/settings/platform', body),
 };
 
+// Super admin › Mes paramètres — every team member, about themselves (features/team_me.py)
+export const meAPI = {
+  get: () => api.get('/admin/me'),
+  saveProfile: (body) => api.put('/admin/me/profile', body),
+  saveAlerts: (body) => api.put('/admin/me/alerts', body),
+};
+
 // public: are sign-ups open, the live maintenance banner (features/platform_config.py)
 export const platformAPI = {
   status: () => api.get('/platform/status'),
