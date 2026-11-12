@@ -343,7 +343,7 @@ def email(tid: str, report: Dict[str, Any]) -> Dict[str, Any]:
             + f"<p><a href=\"{base}/dashboard/campaigns/reports?month={d['month']}\">Voir le rapport complet</a> — "
               "le PDF est joint.</p><p>— FidClic</p>")
     try:
-        mailer._post({"sender": {"email": mailer.SENDER_EMAIL, "name": "FidClic"},
+        mailer._post({"sender": {"email": mailer.sender()[0], "name": mailer.sender()[1]},
                       "to": [{"email": e} for e in owners],
                       "subject": f"Rapport de vos campagnes — {d['label']}",
                       "htmlContent": body,

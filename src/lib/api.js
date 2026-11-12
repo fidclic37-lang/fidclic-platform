@@ -371,6 +371,13 @@ export const noticesAPI = {
 export const settingsAPI = {
   services: () => api.get('/admin/settings/services'),
   testService: (key) => api.post(`/admin/settings/services/${encodeURIComponent(key)}/test`),
+  platform: () => api.get('/admin/settings/platform'),
+  savePlatform: (body) => api.put('/admin/settings/platform', body),
+};
+
+// public: are sign-ups open, the live maintenance banner (features/platform_config.py)
+export const platformAPI = {
+  status: () => api.get('/platform/status'),
 };
 
 export const adminAPI = {

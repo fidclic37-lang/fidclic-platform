@@ -83,9 +83,9 @@ def backup_weekly(authorization: str = Header(default="")):
     key = mailer._api_key()
     if not key:
         return {"ok": False, "reason": "mailer_disabled"}
-    to = os.getenv("BACKUP_EMAIL", mailer.SENDER_EMAIL)
+    to = os.getenv("BACKUP_EMAIL", mailer.sender()[0])
     res = mailer._post({
-        "sender": {"email": mailer.SENDER_EMAIL, "name": "FidClic Backup"},
+        "sender": {"email": mailer.sender()[0], "name": "FidClic Backup"},
         "to": [{"email": to}],
         "subject": f"[FidClic] Sauvegarde hebdomadaire {stamp}",
         "htmlContent": f"<p>Sauvegarde du {stamp} — {sum(len(v) for v in dump.values())} "

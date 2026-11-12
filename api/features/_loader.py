@@ -46,7 +46,8 @@ MODULES = [
     "features.admin_commerces",
     "features.admin_dashboard",
     "features.admin_notices",            # Super admin › Notifications to chosen businesses (2026-11-11)
-    "features.platform_services",        # Super admin › Paramètres › Services (2026-11-11)
+    "features.platform_services",
+    "features.platform_config",          # Super admin › Paramètres › Plateforme (2026-11-11)        # Super admin › Paramètres › Services (2026-11-11)
     "features.admin_insights",
     "features.admin_analytics",
     "features.analytics_usage",

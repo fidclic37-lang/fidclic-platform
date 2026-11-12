@@ -25,6 +25,16 @@ SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL", "akshanshshukla963@gmail.com")
 SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "FidClic")
 
 
+def sender() -> tuple:
+    """(email, name) of FidClic's e-mails: Super admin › Paramètres ›
+    Plateforme first, then BREVO_SENDER_* (2026-11-11)."""
+    try:
+        from features import platform_config as PC
+        return PC.sender()
+    except Exception:                                    # noqa: BLE001
+        return SENDER_EMAIL, SENDER_NAME
+
+
 def _api_key() -> Optional[str]:
     return os.getenv("BREVO_API_KEY") or None
 
@@ -52,7 +62,7 @@ def send(to: str, subject: str, html: str,
     if not key:
         return {"sent": False, "reason": "mailer_disabled"}
     payload = {
-        "sender": {"email": SENDER_EMAIL, "name": SENDER_NAME},
+        "sender": {"email": sender()[0], "name": sender()[1]},
         "to": [{"email": to, **({"name": to_name} if to_name else {})}],
         "subject": subject,
         "htmlContent": html,
@@ -90,7 +100,7 @@ def send_batch(messages: List[Dict[str, Any]], sender_name: Optional[str] = None
         chunk = messages[i:i + BATCH_SIZE]
         first = chunk[0]
         payload = {
-            "sender": {"email": SENDER_EMAIL, "name": (sender_name or SENDER_NAME)[:70]},
+            "sender": {"email": sender()[0], "name": (sender_name or sender()[1])[:70]},
             "subject": first["subject"],
             "htmlContent": first["html"],
             "messageVersions": [{
