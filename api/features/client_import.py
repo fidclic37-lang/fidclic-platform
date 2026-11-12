@@ -223,8 +223,8 @@ def _problem(r: Dict[str, Any]) -> Optional[str]:
         if not verdict["ok"]:
             return verdict["reason"] or "Email invalide"
     if r["postal_code"]:
-        from services.fr_postcodes import CODES
-        if r["postal_code"] not in CODES:
+        from services.customer_fields import is_french_postcode
+        if not is_french_postcode(r["postal_code"]):        # the signup's own rule
             return "Code postal inconnu en France"
     if r["phone"] and not (8 <= len(r["phone"].lstrip("+")) <= 15):
         return "Téléphone invalide"

@@ -71,14 +71,28 @@ def phone(v: Optional[str]) -> str:
     return digits
 
 
+# A French postal code starts with its département (user, 2026-11-12: « pin
+# code pure France ka accept krna chahiye » — 37001, 37002… Tours CEDEX were
+# refused): 01–95 (Corse 20xxx), the DROM 971–976, the COM 984–988.
+_FR_POSTCODE = re.compile(r"(?:0[1-9]|[1-8]\d|9[0-5])\d{3}|97[1-6]\d{2}|98[4-8]\d{2}")
+
+
+def is_french_postcode(s: str) -> bool:
+    """La Poste's list (Monaco's 98000 too), or any code of a real
+    département — the CEDEX codes of companies and offices are not in the
+    list of communes but are French postal codes all the same."""
+    from services.fr_postcodes import CODES
+    return s in CODES or bool(_FR_POSTCODE.fullmatch(s))
+
+
 def postal_code(v: Optional[str]) -> str:
     """A real French postal code (user, 2026-10-11: « france ka valid pincodes
-    hi allowed »), not any five digits — La Poste's list, services/fr_postcodes."""
-    from services.fr_postcodes import CODES
+    hi allowed »; 2026-11-12: every one of them, CEDEX included), not any five
+    digits."""
     s = (v or "").strip()
     if not re.fullmatch(r"\d{5}", s):
         raise _bad("Code postal invalide : 5 chiffres (par exemple 37000).")
-    if s not in CODES:
+    if not is_french_postcode(s):
         raise _bad("Code postal inconnu en France : vérifiez-le (par exemple 37000).")
     return s
 
