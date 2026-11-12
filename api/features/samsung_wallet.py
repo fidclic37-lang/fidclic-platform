@@ -37,8 +37,15 @@ out of git — website_antiG/.secrets/samsung-wallet):
     SAMSUNG_WALLET_CARD_ID        3jina31gjvr00
     SAMSUNG_WALLET_CERT_ID        XVli
     SAMSUNG_WALLET_PRIVATE_KEY    our RSA key (PEM, or the PEM base64-encoded)
-    SAMSUNG_WALLET_SAMSUNG_CERT   Samsung's certificate (PEM or base64) — kept
-                                  for when Samsung's own calls get verified
+    SAMSUNG_WALLET_SAMSUNG_CERT   Samsung's certificate (PEM or base64): its public
+                                  key encrypts the card data of the cdata link
+    SAMSUNG_WALLET_LINK_MODE      "cdata" (default, 2026-11-12) — Data Transmit
+                                  Link, the card data inside the link (JWE
+                                  RSA1_5/A128GCM with Samsung's key, then JWS
+                                  RS256 with ours, cty CARD, ver 3); "pdata" —
+                                  the Data Fetch Link (Samsung asks our server;
+                                  it answered WLT1N2131 and never called us
+                                  while the card is Draft / testing)
     SAMSUNG_WALLET_AUTH_PATH_CC2  "0" to sign the path without its /{cc2}
                                   (Samsung's docs show both; default with)
     SAMSUNG_WALLET_TENANTS        test switch (user, 2026-11-11): while the card
@@ -177,8 +184,70 @@ def ref_for(cust: Dict[str, Any]) -> str:
     raise HTTPException(status_code=500, detail="Samsung Wallet : identifiant de carte indisponible.")
 
 
+def link_mode() -> str:
+    return "pdata" if _env("SAMSUNG_WALLET_LINK_MODE").lower() == "pdata" else "cdata"
+
+
+_CERT_CACHE: Dict[str, Any] = {}
+
+
+def _samsung_public_key():
+    """Samsung's public key, from its certificate (read once per value)."""
+    from cryptography import x509
+    pem = _pem("SAMSUNG_WALLET_SAMSUNG_CERT")
+    if not pem:
+        return None
+    if pem not in _CERT_CACHE:
+        try:
+            key = x509.load_pem_x509_certificate(pem.encode()).public_key()
+        except Exception as exc:                   # noqa: BLE001
+            print(f"samsung_wallet: Samsung certificate unreadable ({exc})")
+            return None
+        _CERT_CACHE.clear()
+        _CERT_CACHE[pem] = key
+    return _CERT_CACHE[pem]
+
+
+def link_ready() -> bool:
+    """Can we make the add link now? pdata needs only the ids; cdata also
+    Samsung's certificate (to encrypt) and our key (to sign)."""
+    if not configured():
+        return False
+    return link_mode() == "pdata" or (_samsung_public_key() is not None and _signing_key() is not None)
+
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def cdata_token(card: Dict[str, Any]) -> str:
+    """Samsung's Card Data Token: the card JSON encrypted for Samsung (JWE,
+    RSA1_5 + A128GCM, compact), signed by us (JWS RS256, cty CARD, ver 3,
+    certificateId, partnerId, utc). Lives 30 s: made at the tap."""
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    pub, key = _samsung_public_key(), _signing_key()
+    if pub is None or key is None:
+        raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore configuré")
+    protected = _b64u(json.dumps({"alg": "RSA1_5", "enc": "A128GCM"}, separators=(",", ":")).encode())
+    cek, iv = os.urandom(16), os.urandom(12)
+    sealed = AESGCM(cek).encrypt(iv, json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode(),
+                                 protected.encode())
+    jwe = ".".join([protected, _b64u(pub.encrypt(cek, padding.PKCS1v15())), _b64u(iv),
+                    _b64u(sealed[:-16]), _b64u(sealed[-16:])])
+    headers = {"typ": None, "cty": "CARD", "ver": "3", "certificateId": cert_id(), "partnerId": partner_id(),
+               "utc": int(time.time() * 1000)}
+    return jwt.api_jws.PyJWS().encode(jwe.encode(), key, algorithm="RS256", headers=headers)
+
+
 def add_link(cust: Dict[str, Any]) -> str:
-    return f"https://a.swallet.link/atw/v3/{cert_id()}/{card_id()}#Clip?pdata={ref_for(cust)}"
+    ref = ref_for(cust)
+    if link_mode() == "pdata":
+        return f"https://a.swallet.link/atw/v3/{cert_id()}/{card_id()}#Clip?pdata={ref}"
+    from features import wallet_passes as W
+    card = card_data(W._card_payload(cust["barcode_id"]), ref, notice_limit=2500)
+    return f"https://a.swallet.link/atw/v3/{card_id()}#Clip?cdata={cdata_token(card)}"
 
 
 def held(c: Dict[str, Any]) -> bool:
@@ -271,7 +340,18 @@ def _https(u: str) -> str:
     return u if u.startswith("https://") else ""
 
 
-def card_data(payload: Dict[str, Any], ref: str) -> Dict[str, Any]:
+def _font_for(bg_hex: Optional[str]) -> str:
+    """Samsung's fontColor: « light » text on a dark card, « dark » on a light one."""
+    h = (bg_hex or "").lstrip("#")
+    if len(h) != 6:
+        return "dark"
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    lin = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+    lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    return "light" if lum < 0.4 else "dark"
+
+
+def card_data(payload: Dict[str, Any], ref: str, notice_limit: int = 5000) -> Dict[str, Any]:
     """{"card": …} for Samsung, read off the pass Apple gets."""
     from features import wallet_passes as W
     from features import store_cards as _SC
@@ -288,8 +368,6 @@ def card_data(payload: Dict[str, Any], ref: str) -> Dict[str, Any]:
         serial = cust["barcode_id"]
         org = pj.get("organizationName") or tenant.get("name") or "FidClic"
         colors = W.derive_colors(card)
-        fg = colors.get("foregroundColor", "")
-        light = "255, 255, 255" in fg or fg.lower() in ("#ffffff", "rgb(255,255,255)")
         progress = fields.get("stamps") or fields.get("reward") or fields.get("points")
         balance = progress.get("value") if progress else None
         if fields.get("stamps") and not re.search(r"\d+\s*/\s*\d+", str(balance or "")):
@@ -302,7 +380,7 @@ def card_data(payload: Dict[str, Any], ref: str) -> Dict[str, Any]:
         logo = _https(W._gw_image_url(tenant["id"], "logo", card))
         strip = (f"{W._site_url()}/api/card/{serial}/wallet-strip.png"
                  f"?v={int(cust.get('visits') or 0)}-{int(time.time()) // 3600}"
-                 f"-{(card.get('campaign_offer') or {}).get('id') or 0}")
+                 f"-{(card.get('campaign_offer') or {}).get('id') or 0}&fmt=samsung")
         attrs: Dict[str, Any] = {
             "title": _cut(org, 32),
             "providerName": _cut(org, 32),
@@ -314,7 +392,7 @@ def card_data(payload: Dict[str, Any], ref: str) -> Dict[str, Any]:
             "appLinkData": _cut(page, 256),
             "summaryUrl": _cut(page, 256),
             "bgColor": colors.get("surface_hex"),
-            "fontColor": "light" if light else "dark",
+            "fontColor": _font_for(colors.get("surface_hex")),
             "blinkColor": colors.get("brand_hex"),
             "bgImage": _https(strip),
             "balance": _cut(balance, 32) if balance not in (None, "") else None,
@@ -324,7 +402,7 @@ def card_data(payload: Dict[str, Any], ref: str) -> Dict[str, Any]:
             "barcode.ptFormat": "QRCODESERIAL",
             "barcode.ptSubFormat": "QR_CODE",
             "barcode.errorCorrectionLevel": "M",
-            "noticeDesc": notice_html(back),
+            "noticeDesc": notice_html(back, limit=notice_limit),
             "locations": locations_for(pj, tenant),
         }
         cs = {k: v for k, v in (("call", tenant.get("phone")), ("website", tenant.get("website"))) if v}
@@ -335,7 +413,7 @@ def card_data(payload: Dict[str, Any], ref: str) -> Dict[str, Any]:
         attrs = {k: v for k, v in attrs.items() if v not in (None, "")}
         return {"card": {"type": CARD_TYPE, "subType": CARD_SUBTYPE, "data": [{
             "refId": ref, "createdAt": _ms(cust.get("created_at")),
-            "updatedAt": max(_ms(cust.get("updated_at")), _ms(None)), "language": "fr", "attributes": attrs}]}}
+            "updatedAt": max(_ms(cust.get("updated_at")), _ms(None)), "language": "en", "attributes": attrs}]}}
 
     return build(payload)
 

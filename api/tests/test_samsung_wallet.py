@@ -30,7 +30,8 @@ pymongo.MongoClient = mongomock.MongoClient
 os.environ.setdefault("JWT_SECRET", "test-secret-samsung")
 os.environ.setdefault("DISABLE_SEED", "1")
 for k in ("SAMSUNG_WALLET_PARTNER_ID", "SAMSUNG_WALLET_CARD_ID", "SAMSUNG_WALLET_CERT_ID",
-          "SAMSUNG_WALLET_PRIVATE_KEY", "SAMSUNG_WALLET_SAMSUNG_CERT"):
+          "SAMSUNG_WALLET_PRIVATE_KEY", "SAMSUNG_WALLET_SAMSUNG_CERT", "SAMSUNG_WALLET_LINK_MODE",
+          "SAMSUNG_WALLET_TENANTS"):
     os.environ.pop(k, None)
 passed = failed = 0
 
@@ -104,7 +105,8 @@ def main():
     CARD = "3jina31gjvr00"
 
     # ------------------------------------------------------------------
-    print("\n2. The card page's « Ajouter à Samsung Wallet » link")
+    print("\n2. The card page's « Ajouter à Samsung Wallet » link (Data Fetch Link, mode pdata)")
+    os.environ["SAMSUNG_WALLET_LINK_MODE"] = "pdata"
     cfg = http("GET", "/api/wallet/config", params={"barcode": a}).json()
     check("config says samsung: true", cfg.get("samsung") is True)
     r = http("GET", f"/api/card/{a}/samsung-wallet", mine(a))
@@ -147,7 +149,7 @@ def main():
     check("refId echoed", item.get("refId") == ref)
     check("createdAt / updatedAt in epoch ms", isinstance(item.get("createdAt"), int) and item["createdAt"] > 10**12
           and isinstance(item.get("updatedAt"), int) and item["updatedAt"] >= item["createdAt"])
-    check("language fr", item.get("language") == "fr")
+    check("language en — the card's only language in the portal (English default)", item.get("language") == "en")
     for f in ("title", "providerName", "appLinkLogo", "appLinkName", "appLinkData"):
         check(f"required « {f} » present", bool(at.get(f)))
     check("title = the shop's name, ≤ 32", at.get("title") == "Royal Trim")
@@ -335,6 +337,96 @@ def main():
     os.environ["SAMSUNG_WALLET_TENANTS"] = ""
     check("switch empty (after Samsung's approval): every shop", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is True)
     os.environ.pop("SAMSUNG_WALLET_TENANTS", None)
+
+    print("\n9. Data Transmit Link (cdata) — the default (2026-11-12: the pdata link failed WLT1N2131)")
+    import base64 as _b64
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    sam_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)       # « Samsung's » key, for the test
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "partner.wallet.samsung.com")])
+    sam_cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(sam_key.public_key())
+                .serial_number(1).not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=9))
+                .sign(sam_key, hashes.SHA256()))
+    os.environ.pop("SAMSUNG_WALLET_LINK_MODE", None)
+    os.environ.pop("SAMSUNG_WALLET_SAMSUNG_CERT", None)
+    r = http("GET", f"/api/card/{a}/samsung-wallet", mine(a))
+    check(f"cdata without Samsung's certificate: no link, said ({r.status_code})", r.status_code == 503)
+    check("…and no button", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is False)
+    os.environ["SAMSUNG_WALLET_SAMSUNG_CERT"] = _b64.b64encode(sam_cert.public_bytes(serialization.Encoding.PEM)).decode()
+    check("with it: button", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is True)
+    r = http("GET", f"/api/card/{a}/samsung-wallet", mine(a))
+    url = r.json().get("url", "")
+    check(f"cdata link: a.swallet.link/atw/v3/{{card}}#Clip?cdata= ({r.status_code})",
+          url.startswith("https://a.swallet.link/atw/v3/3jina31gjvr00#Clip?cdata="))
+    token = url.split("cdata=", 1)[1] if "cdata=" in url else ""
+    check(f"the link fits a phone's URL ({len(url)} chars < 8000)", 0 < len(url) < 8000)
+    hdr = jwt.get_unverified_header(token) if token.count(".") == 2 else {}
+    check("JWS header: RS256, cty CARD, ver 3, certificate XVli, partner, utc ms, no typ",
+          hdr.get("alg") == "RS256" and hdr.get("cty") == "CARD" and str(hdr.get("ver")) == "3"
+          and hdr.get("certificateId") == "XVli" and hdr.get("partnerId") == "4164397867037138496"
+          and isinstance(hdr.get("utc"), int) and abs(hdr["utc"] - int(_t.time() * 1000)) < 60_000 and "typ" not in hdr)
+    try:
+        jwe = jwt.api_jws.PyJWS().decode(token, pub, algorithms=["RS256"]).decode()
+        sig_ok = True
+    except Exception as e:  # noqa: BLE001
+        print("    ", e); jwe, sig_ok = "", False
+    check("signed with OUR key", sig_ok)
+    parts = jwe.split(".")
+    check("the payload is a compact JWE (5 parts)", len(parts) == 5)
+    pad = lambda x: _b64.urlsafe_b64decode(x + "=" * (-len(x) % 4))  # noqa: E731
+    card_json = {}
+    try:
+        jh = json.loads(pad(parts[0]))
+        cek = sam_key.decrypt(pad(parts[1]), padding.PKCS1v15())
+        plain = AESGCM(cek).decrypt(pad(parts[2]), pad(parts[3]) + pad(parts[4]), parts[0].encode())
+        card_json = json.loads(plain)
+    except Exception as e:  # noqa: BLE001
+        print("    ", e); jh = {}
+    check("JWE header: RSA1_5 + A128GCM", jh == {"alg": "RSA1_5", "enc": "A128GCM"})
+    check("only Samsung's key opens it: the card inside, loyalty/others",
+          card_json.get("card", {}).get("type") == "loyalty" and card_json["card"].get("subType") == "others")
+    item9 = (card_json.get("card", {}).get("data") or [{}])[0]
+    check("its refId is the card's (state callbacks + updates still work)",
+          item9.get("refId") and db.customers.find_one({"id": "anna"}).get("samsung_ref") == item9.get("refId"))
+    check("the same card data Get Card Data gives (QR, title)",
+          item9.get("attributes", {}).get("barcode.value") == W.barcode_message("PKBarcodeFormatQR", a)
+          and item9["attributes"].get("title") == "Royal Trim")
+    other = http("GET", f"/api/card/{a}/samsung-wallet", mine(a)).json()["url"]
+    check("a fresh token each tap (30 s life)", other != url)
+    check("a stranger with the card number only: still refused",
+          http("GET", f"/api/card/{a}/samsung-wallet").status_code in (401, 403))
+    os.environ["SAMSUNG_WALLET_PRIVATE_KEY"] = ""
+    r = http("GET", f"/api/card/{a}/samsung-wallet", mine(a))
+    check(f"no private key: no link, no crash ({r.status_code})", r.status_code == 503)
+    os.environ["SAMSUNG_WALLET_PRIVATE_KEY"] = pem
+    os.environ["SAMSUNG_WALLET_LINK_MODE"] = "pdata"
+    check("switch back to pdata: the Data Fetch Link again",
+          "#Clip?pdata=" in http("GET", f"/api/card/{a}/samsung-wallet", mine(a)).json()["url"])
+    os.environ.pop("SAMSUNG_WALLET_LINK_MODE", None)
+
+    print("\n10. Text colour and banner for Samsung (BBC test card: dark text on dark purple, banner 436 KB)")
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"surface_color": "#8F2874"}})
+    at10 = http("GET", CD(ref), SAM).json()["card"]["data"][0]["attributes"]
+    check(f"dark background → light text ({at10.get('bgColor')} → {at10.get('fontColor')})", at10.get("fontColor") == "light")
+    db.card_templates.update_one({"tenant_id": "t1"}, {"$set": {"surface_color": "#F5F1E8"}})
+    at10 = http("GET", CD(ref), SAM).json()["card"]["data"][0]["attributes"]
+    check(f"light background → dark text ({at10.get('bgColor')} → {at10.get('fontColor')})", at10.get("fontColor") == "dark")
+    check("the banner asks for Samsung's size", "fmt=samsung" in at10.get("bgImage", ""))
+    path = at10.get("bgImage", "").split("app.fidclic.com", 1)[-1].replace(W._site_url(), "")
+    r = http("GET", path if path.startswith("/") else "/" + path.split("/", 3)[-1])
+    if r.status_code == 200:
+        from PIL import Image
+        import io as _io
+        im = Image.open(_io.BytesIO(r.content))
+        check(f"a JPEG 888×555 under 256 KB ({im.format} {im.size} {len(r.content)//1024} KB)",
+              im.format == "JPEG" and im.size == (888, 555) and len(r.content) < 256 * 1024)
+    else:
+        check(f"the banner answers ({r.status_code})", r.status_code == 404)
+    r = http("GET", f"/api/card/{a}/wallet-strip.png")
+    check("Google's banner unchanged (PNG)", r.status_code == 404 or r.headers.get("content-type") == "image/png")
 
     print("\n8. Samsung's history does not grow forever")
     SW.init(db)
