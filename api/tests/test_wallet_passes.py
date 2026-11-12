@@ -310,7 +310,10 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     res = WP.notify_customer("c1")
     check("push sent to every device holding the pass", res["devices"] == 2 and res["sent"] == 2)
     check("dead token dropped from the registrations", db.pass_registrations.count_documents({"push_token": "dead-token"}) == 0)
+    # a pass is pushed only when it changed (2026-11-12): give it a change first
+    db.customers.update_one({"id": "c1"}, {"$inc": {"visits": 1}})
     check("notify_tenant covers the whole customer base", WP.notify_tenant("t1")["devices"] == 1)
+    db.customers.update_one({"id": "c1"}, {"$inc": {"visits": 1}})
     server.refresh_wallet_pass("c1")          # must never raise
     check("refresh_wallet_pass is fire-and-forget", calls["tokens"] == ["tok9"])
 
