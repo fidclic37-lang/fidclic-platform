@@ -77,12 +77,21 @@ def main():
     check("a date already on file is still read (max_age off)", CF.birth(born(90), max_age=False)["birth_date"])
     check("day and month only (no year): no age to judge", CF.birth("25/12")["birthday"] == "12-25")
 
-    print("\nPostal code: La Poste's list")
-    for good in ("37000", "75001", "20000", "97400", "98000"):
+    # every French postal code (user, 2026-11-12: « 37001, 37002… nhi le rha…
+    # pin code pure France ka accept krna chahiye »): La Poste's list, and any
+    # code of a real département — CEDEX codes (37001 Tours CEDEX…) included
+    print("\nPostal code: all of France")
+    for good in ("37000", "75001", "20000", "97400", "98000",          # La Poste's list
+                 "37001", "37002", "37009", "37010", "37999", "75000", "75380", "13080",
+                 "01000", "95999", "20090", "97100", "97600", "98800"):
         check(f"{good} accepted", CF.postal_code(good) == good)
-    for bad in ("99999", "00000", "37999", "75000"):
+    for bad in ("99999", "00000", "00123", "96000", "97700", "97900", "98300"):
         msg = refused(CF.postal_code, bad)
         check(f"{bad} refused ({msg})", msg and "inconnu en France" in msg)
+    from features import client_import as CI
+    check("the client import reads the same rule (37001 kept, 99999 refused)",
+          CI._problem({"name": "A", "email": "", "postal_code": "37001", "phone": "0612345678"}) is None
+          and "inconnu" in (CI._problem({"name": "A", "email": "", "postal_code": "99999", "phone": "0612345678"}) or ""))
     check("not five digits: the old message", "5 chiffres" in (refused(CF.postal_code, "3700A") or ""))
 
     print("\nE-mail: a real address")
@@ -135,7 +144,7 @@ def main():
         "birthday": f"04/03/{today.year - 90}"})
     check(f"a client on file before the rules: still editable ({r.status_code})", r.status_code == 200
           and db.customers.find_one({"id": "old"})["name"] == "Jean Ancien-Martin")
-    r = http("PUT", "/api/owner/clients/old/fiche", headers=OWNER, json={"postal_code": "37999"})
+    r = http("PUT", "/api/owner/clients/old/fiche", headers=OWNER, json={"postal_code": "00000"})
     check(f"a new postal code: must be French ({r.status_code})", r.status_code == 400 and "inconnu" in r.json()["detail"])
     r = http("PUT", "/api/owner/clients/old/fiche", headers=OWNER, json={"birthday": born(95)})
     check(f"a new date of birth: 85 at most ({r.status_code})", r.status_code == 400 and "85 ans" in r.json()["detail"])
