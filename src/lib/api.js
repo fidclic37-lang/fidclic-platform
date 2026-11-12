@@ -59,10 +59,9 @@ const settingsSaved = (r) => {
   try {
     const m = String(r?.config?.method || '').toLowerCase();
     if (m && m !== 'get' && SETTINGS_SAVE.test(r?.config?.url || '')) window.dispatchEvent(new Event('fidclic:settings-saved'));
-    // any owner change may have queued Wallet cards: the layout sends them
-    // (lib/walletRefresh) — never the follow-up call itself
-    const u = String(r?.config?.url || '');
-    if (m && m !== 'get' && /^\/?owner\//.test(u) && !/wallet\/refresh/.test(u)) window.dispatchEvent(new Event('fidclic:wallet-kick'));
+    // Wallet cards a save left queued are sent by the SERVER (the save's own
+    // seconds, then the cron's tick) — never by the browser any more
+    // (2026-11-12: a leftover tab's follow-up calls pushed 682 passes on a loop).
   } catch (_e) { /* never in the way of a response */ }
   return r;
 };

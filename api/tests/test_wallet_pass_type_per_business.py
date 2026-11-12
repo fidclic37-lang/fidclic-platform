@@ -354,6 +354,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
                 "results": [{"token": t, "status": 200, "reason": "", "apns_id": "x"} for t in tokens]}
     real_push, real_conf = AP.push_to_tokens, AP.is_configured
     AP.push_to_tokens, AP.is_configured = fake_push, (lambda: True)
+    # a pass is pushed only when it changed (2026-11-12): give both a change first
+    db.customers.update_one({"barcode_id": "FT-OLD00001"}, {"$inc": {"visits": 1}})
+    db.customers.update_one({"barcode_id": "FT-NEW00001"}, {"$inc": {"visits": 1}})
     try:
         WP._notify_apple(["FT-OLD00001", "FT-NEW00001"])
     finally:

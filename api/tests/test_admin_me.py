@@ -150,9 +150,10 @@ def main():
     # ------------------------------------------------------------------ alerts
     print("\nMes alertes")
     a = {x["key"]: x for x in http("GET", "/api/admin/me", headers=BOSS).json()["alerts"]}
-    check("the super admin sees every alert type", set(a) == {"signup", "support", "security", "ai", "impaye", "equipe"}, list(a))
-    check("defaults keep today: FidClic IA by e-mail, the rest in the bell",
-          a["ai"]["value"] == "email" and all(a[k]["value"] == "bell" for k in ("signup", "support", "security", "impaye", "equipe")), a)
+    check("the super admin sees every alert type", set(a) == {"signup", "support", "security", "ai", "impaye", "equipe", "sante"}, list(a))
+    check("defaults keep today: FidClic IA and platform health by e-mail, the rest in the bell",
+          a["ai"]["value"] == "email" and a["sante"]["value"] == "email"
+          and all(a[k]["value"] == "bell" for k in ("signup", "support", "security", "impaye", "equipe")), a)
     s = {x["key"] for x in http("GET", "/api/admin/me", headers=SUP).json()["alerts"]}
     check("a support member sees only what their role opens (support, team tasks)", s == {"support", "equipe"}, s)
     for body, label in [({"nope": "email"}, "an unknown type"), ({"support": "sms"}, "a channel that is not email/bell")]:

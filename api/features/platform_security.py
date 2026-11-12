@@ -485,6 +485,9 @@ def alerts(token_data: TokenData = Depends(require_super())):
         if k == "impaye":
             return {"title": a["text"], "body": "Paiement refusé", "severity": "warning",
                     "action": {"label": "Voir le commerce", "href": f"/admin/commerces/{a.get('tenant_id')}"}}
+        if k == "wallet_storm":
+            return {"title": a["text"], "body": a.get("detail") or "Tempête Wallet", "severity": "critical",
+                    "action": {"label": "Voir Paramètres › Services", "href": "/admin/parametres"}}
         if k.startswith("ai_"):
             return {"title": a["text"], "body": "FidClic IA", "severity": "warning",
                     "action": {"label": "Voir Coûts IA", "href": "/admin/ai/couts"}}

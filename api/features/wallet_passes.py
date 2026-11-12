@@ -2965,8 +2965,40 @@ def signed_pass(barcode_id: str, payload: Optional[Dict[str, Any]] = None,
     return data
 
 
+def _http_date(d: datetime) -> str:
+    return d.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+
+def _parse_http_date(v: Optional[str]) -> Optional[datetime]:
+    if not v:
+        return None
+    try:
+        from email.utils import parsedate_to_datetime
+        d = parsedate_to_datetime(v.strip())
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:                              # noqa: BLE001 — a garbage date: the pass, as before
+        return None
+
+
+def pass_state(serial: str, key: Optional[str]) -> datetime:
+    """When this pass's content last changed, to the second (HTTP dates carry
+    no less): kept per serial with its fingerprint; a new fingerprint = now."""
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    if _db is None or not key:
+        return now
+    try:
+        row = _db.pass_state.find_one({"_id": serial}, {"_id": 0, "key": 1, "at": 1})
+        if row and row.get("key") == key and isinstance(row.get("at"), datetime):
+            at = row["at"]
+            return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+        _db.pass_state.update_one({"_id": serial}, {"$set": {"key": key, "at": now}}, upsert=True)
+    except Exception:                              # noqa: BLE001
+        pass
+    return now
+
+
 def _pkpass_response(barcode_id: str, pass_type: Optional[str] = None, make: bool = False,
-                     payload: Optional[Dict[str, Any]] = None) -> Response:
+                     payload: Optional[Dict[str, Any]] = None, last_modified: Optional[datetime] = None) -> Response:
     if not apple_configured():
         raise HTTPException(status_code=503, detail="Apple Wallet n'est pas encore configuré")
     data = signed_pass(barcode_id, payload=payload, pass_type=pass_type, make=make)
@@ -2976,7 +3008,7 @@ def _pkpass_response(barcode_id: str, pass_type: Optional[str] = None, make: boo
     # ~6 000 tiny writes, 3,6 s on production for a pass ready in 27 ms
     return Response(content=data, media_type="application/vnd.apple.pkpass",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"',
-                             "Last-Modified": datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                             "Last-Modified": _http_date(last_modified or datetime.now(timezone.utc)),
                              "Cache-Control": "no-store"})
 
 
@@ -3000,31 +3032,141 @@ def notify_passes(serials: Iterable[str], google_notify: Any = None,
     return res
 
 
+def pass_key_of(serial: str, cust: Optional[Dict[str, Any]] = None, pass_type: Optional[str] = None) -> Optional[str]:
+    """The pass's fingerprint today — its pass.json, its card, its store
+    (_pkpass_key): what the iPhone would get if it fetched now. None when
+    the card cannot be read (treated as changed: better one push too many
+    than a card left behind). `cust` and `pass_type` spare the reads when
+    the caller already has them (a drain of hundreds of cards)."""
+    try:
+        if cust is None or not pass_type:
+            return _pkpass_key(_card_payload(serial, pass_type=pass_type))
+        import server as core
+        payload = _card_payload_of(core, cust)
+        payload["_pass_type"] = pass_type
+        return _pkpass_key(payload)
+    except Exception:                              # noqa: BLE001
+        return None
+
+
+# The storm breaker (2026-11-12). Whatever calls the pushes — a loop in a
+# page, a bug in a save, a cron gone wrong — a shop's devices are never
+# pushed more than STORM_FACTOR times each within STORM_WINDOW: past that,
+# pushes are refused, the super admin is told (bell + e-mail) with the cause
+# and what to do, and the cards wait for the next window. A real change is
+# never lost: the next push carries it.
+SMALL_CHECK = 5                 # up to this many passes, each is compared with what its device holds
+STORM_WINDOW = timedelta(minutes=15)
+STORM_FACTOR = 3
+STORM_MIN = 300                 # below this many pushes a window, never a storm (small shops, campaigns)
+STORM_ALERT_EVERY = timedelta(hours=1)
+
+
+def _storm(tenant_id: Optional[str], about_to: int) -> Optional[int]:
+    """How many pushes this shop already got in the window when `about_to`
+    more would cross the line — None when the push may go."""
+    if not tenant_id:
+        return None
+    try:
+        since = datetime.now(timezone.utc) - STORM_WINDOW
+        done = _db.pass_push_log.count_documents({"tenant_id": tenant_id, "sent_at": {"$gte": since}})
+        devices = _db.pass_registrations.count_documents({"tenant_id": tenant_id})
+        line = max(STORM_MIN, STORM_FACTOR * devices)
+        return done if done + about_to > line else None
+    except Exception:                              # noqa: BLE001 — the breaker never breaks a push
+        return None
+
+
+def _storm_alert(tenant_id: str, done: int, refused: int) -> None:
+    try:
+        import uuid as _uuid
+        now = datetime.now(timezone.utc)
+        if _db.platform_alerts.find_one({"kind": "wallet_storm", "tenant_id": tenant_id, "at": {"$gte": now - STORM_ALERT_EVERY}}, {"_id": 1}):
+            return
+        t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "name": 1}) or {}
+        name = t.get("name") or tenant_id
+        devices = _db.pass_registrations.count_documents({"tenant_id": tenant_id})
+        text = f"Tempête Wallet arrêtée : {name} — {done} pushes en 15 min pour {devices} appareils, {refused} refusés"
+        detail = ("Cause probable : quelque chose demande la mise à jour des cartes en boucle (une sauvegarde répétée, "
+                  "une page qui relance la file, une automatisation). Chaque push fait recharger la carte par l'iPhone. "
+                  "À faire : 1) Paramètres › Services › Base de données › Tester ; 2) Commerces › ce commerce › Carte Wallet : "
+                  "qui a enregistré ces dernières minutes ; 3) attendre 15 min, les pushes repartent seuls. "
+                  "Les cartes ne perdent rien : le prochain push porte le vrai changement.")
+        _db.platform_alerts.insert_one({"id": _uuid.uuid4().hex, "kind": "wallet_storm", "email": None, "tenant_id": tenant_id,
+                                        "text": text, "detail": detail, "at": now, "read_by": []})
+        from features import team_alerts as TA
+        TA.notify("sante", text, detail, f"/admin/commerces/{tenant_id}")
+    except Exception as exc:                       # noqa: BLE001
+        print(f"wallet: storm alert failed ({exc})")
+
+
 def _notify_apple(serials: List[str]) -> Dict[str, Any]:
+    """Push the devices holding these passes — only those whose pass really
+    changed since what they were last told or last fetched (2026-11-12: Royal
+    Trim's 682 passes were pushed again and again with nothing changed; every
+    iPhone fetched the whole pass each time and MongoDB hit its connection
+    limit). A registration without a fingerprint yet is pushed once."""
     from services import apns_passes
 
     if not serials or not apns_passes.is_configured():
         return {"devices": 0, "sent": 0, "skipped": "not configured" if serials else "no serials"}
+    all_regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
+                                                {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1,
+                                                 "pass_type_id": 1, "pass_key": 1}))
+    if not all_regs:
+        return {"devices": 0, "sent": 0, "unchanged": 0}
+    keys: Dict[str, Optional[str]] = {}
+    if len(all_regs) <= SMALL_CHECK:
+        # a scan, one card: cheap to compare with what the device holds, and
+        # the same card is never pushed to the same device twice. A drain of
+        # hundreds (a design change) does not read every card again: the
+        # shop's design key (notify_tenant), the queue's at-most-once and the
+        # breaker hold it.
+        custs = {c["barcode_id"]: c for c in _db.customers.find({"barcode_id": {"$in": sorted({r["serial"] for r in all_regs})}})}
+        for r in all_regs:
+            if r["serial"] not in keys:
+                keys[r["serial"]] = pass_key_of(r["serial"], custs.get(r["serial"]), r.get("pass_type_id") or _env("APPLE_PASS_TYPE_ID"))
+    regs = [r for r in all_regs if not (keys.get(r["serial"]) and r.get("pass_key") == keys[r["serial"]])]
+    unchanged = len(all_regs) - len(regs)
+    if not regs:
+        return {"devices": 0, "sent": 0, "unchanged": unchanged}
+    by_tenant: Dict[Any, List[Dict[str, Any]]] = {}
+    for r in regs:
+        by_tenant.setdefault(r.get("tenant_id"), []).append(r)
+    kept: List[Dict[str, Any]] = []
+    throttled = 0
+    for tid, rows in by_tenant.items():
+        done = _storm(tid, len(rows))
+        if done is None:
+            kept += rows
+        else:
+            throttled += len(rows)
+            _storm_alert(tid, done, len(rows))
+    regs = kept
+    if not regs:
+        return {"devices": 0, "sent": 0, "unchanged": unchanged, "throttled": throttled}
+    now = datetime.now(timezone.utc)
     # Stamp the change BEFORE the push: the device answers the push by asking
     # which passes changed since its last fetch (serials_for_device). Without
     # this a campaign or a design change left the customer record untouched,
     # the answer was « nothing changed » (204), and the pass — and its
-    # lock-screen notification — never came.
-    _db.pass_registrations.update_many({"serial": {"$in": serials}},
-                                       {"$set": {"pass_changed_at": datetime.now(timezone.utc)}})
-    regs = list(_db.pass_registrations.find({"serial": {"$in": serials}},
-                                            {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1,
-                                             "pass_type_id": 1}))
-    if not regs:
-        return {"devices": 0, "sent": 0}
+    # lock-screen notification — never came. The fingerprint told is kept, so
+    # the same card is never pushed to the same device twice.
+    _db.pass_registrations.update_many({"_id": {"$in": [r["_id"] for r in regs]}}, {"$set": {"pass_changed_at": now}})
     sent_at = datetime.now(timezone.utc)
     res = _apns_send(regs)
     _log_pushes(regs, res.get("results") or [], sent_at)
     # What Apple answered, kept on the registrations: the owner's Wallet stats
     # show it, so « no notification » can be traced without server logs.
     outcome = "ok" if res.get("sent") else ("; ".join(res.get("errors", [])[:2]) or "not sent")
-    _db.pass_registrations.update_many({"serial": {"$in": serials}}, {"$set": {
+    _db.pass_registrations.update_many({"_id": {"$in": [r["_id"] for r in regs]}}, {"$set": {
         "last_push_at": datetime.now(timezone.utc), "last_push_result": outcome[:200]}})
+    # what each device was told — written AFTER the push went out: a push that
+    # failed is tried again at the next drain
+    if keys and res.get("sent"):
+        for r in regs:
+            if keys.get(r["serial"]):
+                _db.pass_registrations.update_one({"_id": r["_id"]}, {"$set": {"pass_key": keys[r["serial"]]}})
     why = {r.get("token"): r.get("reason") or str(r.get("status")) for r in res.get("results") or []}
     for dead in res.get("gone", []):
         for reg in regs:
@@ -3034,7 +3176,7 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
             _db.pass_registrations.delete_many({"push_token": dead})
         except Exception:
             pass
-    return {"devices": len(regs), "sent": res.get("sent", 0),
+    return {"devices": len(regs), "sent": res.get("sent", 0), "unchanged": unchanged, "throttled": throttled,
             "dropped": len(res.get("gone", [])), "failed": res.get("failed", 0),
             "errors": res.get("errors", [])[:3]}
 
@@ -3079,15 +3221,50 @@ def notify_customer(customer_id: str, message: Optional[str] = None,
             if cust.get("barcode_id") else {"devices": 0, "sent": 0})
 
 
-def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+# What a shop's cards share: the card (every establishment's), the shop's
+# name, addresses and branches, its défis — everything a design push carries
+# that is not one client's own. Hashed in 3 reads, not 23 per card.
+_TENANT_CARD_FIELDS = ("name", "branches", "address", "street", "postal_code", "city", "phone", "website", "logo_url",
+                       "sector", "campaign_sender_name", "latitude", "longitude", "geo", "card_off", "is_active")
+
+
+def tenant_design_key(tenant_id: str) -> str:
+    """The design the establishment in context pushes (store_cards picks its
+    card_templates document), with the shop's own card fields and défis."""
+    import json as _json
+    tpls = dict(_db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0, "updated_at": 0}) or {})
+    t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, **{f: 1 for f in _TENANT_CARD_FIELDS}}) or {}
+    try:
+        defis = list(_db.defi_rewards.find({"tenant_id": tenant_id}, {"_id": 0}).sort("id", 1))
+    except Exception:                              # noqa: BLE001
+        defis = []
+    return hashlib.sha1(_json.dumps([tpls, t, defis], sort_keys=True, default=str).encode()).hexdigest()
+
+
+def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None, force: bool = False) -> Dict[str, Any]:
     """Every registered pass of a tenant (or just the given customers) — used
     when the card design or an offer changes. Queued, then worked for a few
-    seconds: a save never waits for every card (see queue_refresh)."""
+    seconds: a save never waits for every card (see queue_refresh).
+
+    A whole-shop push goes out once per design: the shop keeps the key of
+    the design its cards were last sent, per establishment (2026-11-12: the
+    same, unchanged design was pushed to Royal Trim's 682 passes again and
+    again). A save that changes nothing on the cards is answered
+    « unchanged »; `force` (the owner's « Actualiser les cartes ») pushes
+    anyway — the breaker still holds it."""
     q: Dict[str, Any] = {"tenant_id": tenant_id}
     if customer_ids:
         q["id"] = {"$in": list(customer_ids)}
-    else:                      # one establishment's card changed: only its members' cards
+    else:
         sid = _SC.store_for(tenant_id)
+        slot = f"wallet_design_keys.{sid or '_'}"
+        key = tenant_design_key(tenant_id)
+        t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "wallet_design_keys": 1}) or {}
+        if not force and (t.get("wallet_design_keys") or {}).get(sid or "_") == key and not refresh_left(tenant_id):
+            return {"devices": 0, "sent": 0, "unchanged": _db.pass_registrations.count_documents({"tenant_id": tenant_id}),
+                    "google": {"cards": 0, "synced": 0, "errors": []}, "left": 0, "design_unchanged": True}
+        _db.tenants.update_one({"id": tenant_id}, {"$set": {slot: key}})
+        # one establishment's card changed: only its members' cards
         if sid:
             # the main store's members include the clients never given a store
             q["branch_id"] = {"$in": [sid, None, ""]} if sid == _SC.main_store(tenant_id) else sid
@@ -3107,6 +3284,7 @@ def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> D
 # ---------------------------------------------------------------------------
 REFRESH_BUDGET_S = 6.0
 APPLE_CHUNK = 100
+DRAIN_LEASE_S = 30.0          # one worker per shop's queue at a time (2026-11-12: two drains pushed the same cards)
 # what is left of this request's budget: a save that changes the card twice
 # (its name, then its sector's reward) still waits REFRESH_BUDGET_S at most
 import contextvars as _cv
@@ -3135,9 +3313,8 @@ def drain_refresh(tenant_id: str, budget: Optional[float] = None) -> Dict[str, A
     """Send queued cards until `budget` seconds are spent (default: what this
     request has left of REFRESH_BUDGET_S); returns what was done and how many
     cards are still waiting (`left`)."""
-    out: Dict[str, Any] = {"devices": 0, "sent": 0, "google": {"cards": 0, "synced": 0, "errors": []}, "left": 0}
-    doc = _db.wallet_refresh.find_one({"tenant_id": tenant_id}, {"_id": 0})
-    if not doc:
+    out: Dict[str, Any] = {"devices": 0, "sent": 0, "unchanged": 0, "google": {"cards": 0, "synced": 0, "errors": []}, "left": 0}
+    if not _db.wallet_refresh.find_one({"tenant_id": tenant_id}, {"_id": 1}):
         return out
     shared = budget is None
     if shared:
@@ -3145,38 +3322,63 @@ def drain_refresh(tenant_id: str, budget: Optional[float] = None) -> Dict[str, A
         if budget <= 0:                            # this request already spent its share
             out["left"] = refresh_left(tenant_id)
             return out
+    now = datetime.now(timezone.utc)
+    # the lease: a second worker (another page, the cron, a leftover tab)
+    # answers « busy » instead of pushing the same cards at the same time
+    doc = _db.wallet_refresh.find_one_and_update(
+        {"tenant_id": tenant_id, "$or": [{"draining_until": None}, {"draining_until": {"$exists": False}},
+                                         {"draining_until": {"$lt": now}}]},
+        {"$set": {"draining_until": now + timedelta(seconds=DRAIN_LEASE_S)}})
+    if not doc:
+        out["busy"] = True
+        out["left"] = refresh_left(tenant_id)
+        return out
     started = time.monotonic()
     deadline = started + max(0.5, budget)
     apple, google = list(doc.get("apple") or []), list(doc.get("google") or [])
     done_apple: List[str] = []
-    for i in range(0, len(apple), APPLE_CHUNK):
-        if done_apple and time.monotonic() > deadline:
-            break
-        chunk = apple[i:i + APPLE_CHUNK]
-        try:
-            r = _notify_apple(chunk)
-            out["devices"] += int(r.get("devices") or 0)
-            out["sent"] += int(r.get("sent") or 0)
-        except Exception as exc:                   # noqa: BLE001 — a push never breaks the queue
-            print(f"wallet refresh: apple failed ({exc})")
-        done_apple += chunk
     done_google: List[str] = []
-    if google and time.monotonic() < deadline:
+    try:
+        for i in range(0, len(apple), APPLE_CHUNK):
+            if done_apple and time.monotonic() > deadline:
+                break
+            chunk = apple[i:i + APPLE_CHUNK]
+            # out of the queue BEFORE the push: whatever happens next (a
+            # saturated database, a cut request), this chunk is pushed at most
+            # once per drain. A push that fails puts its cards back in line.
+            _db.wallet_refresh.update_one({"tenant_id": tenant_id}, {"$pull": {"apple": {"$in": chunk}}})
+            try:
+                r = _notify_apple(chunk)
+                out["devices"] += int(r.get("devices") or 0)
+                out["sent"] += int(r.get("sent") or 0)
+                out["unchanged"] += int(r.get("unchanged") or 0)
+            except Exception as exc:                   # noqa: BLE001 — a push never breaks the queue
+                print(f"wallet refresh: apple failed ({exc})")
+                try:
+                    _db.wallet_refresh.update_one({"tenant_id": tenant_id}, {"$addToSet": {"apple": {"$each": chunk}}})
+                except Exception:                      # noqa: BLE001 — the next real change carries these cards
+                    pass
+            done_apple += chunk
+        if google and time.monotonic() < deadline:
+            try:
+                g = google_sync(google, update_class=bool(doc.get("design")), deadline=deadline)
+                done_google = g.pop("done", [])
+                out["google"] = g
+            except Exception as exc:                   # noqa: BLE001
+                out["google"]["errors"].append(str(exc)[:160])
+        if done_google:
+            _db.wallet_refresh.update_one({"tenant_id": tenant_id}, {"$pull": {"google": {"$in": done_google}}})
+    finally:
         try:
-            g = google_sync(google, update_class=bool(doc.get("design")), deadline=deadline)
-            done_google = g.pop("done", [])
-            out["google"] = g
-        except Exception as exc:                   # noqa: BLE001
-            out["google"]["errors"].append(str(exc)[:160])
-    if done_apple or done_google:
-        _db.wallet_refresh.update_one({"tenant_id": tenant_id},
-                                      {"$pull": {"apple": {"$in": done_apple}, "google": {"$in": done_google}}})
+            _db.wallet_refresh.update_one({"tenant_id": tenant_id}, {"$unset": {"draining_until": ""}})
+        except Exception:                              # noqa: BLE001 — the lease expires by itself
+            pass
+        if shared:
+            _SPENT.set(_SPENT.get() + (time.monotonic() - started))
     left = refresh_left(tenant_id)
     if not left:
         _db.wallet_refresh.delete_one({"tenant_id": tenant_id, "apple": {"$size": 0}, "google": {"$size": 0}})
     out["left"] = left
-    if shared:
-        _SPENT.set(_SPENT.get() + (time.monotonic() - started))
     return out
 
 
@@ -3200,7 +3402,10 @@ def owner_wallet_refresh(token_data: TokenData = Depends(require_role(["business
     if not _db.wallet_refresh.find_one({"tenant_id": tid}, {"_id": 1}):
         return {"left": 0}
     r = drain_refresh(tid, budget=20.0)
-    return {"left": r["left"], "sent": r["sent"], "google_synced": (r.get("google") or {}).get("synced", 0)}
+    out = {"left": r["left"], "sent": r["sent"], "google_synced": (r.get("google") or {}).get("synced", 0)}
+    if r.get("busy"):
+        out["busy"] = True                       # another worker has it: the page stops asking
+    return out
 
 
 def _iso_or_none(d: Any) -> Optional[str]:
@@ -3569,8 +3774,10 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
 
 @router.post("/api/owner/wallet/notify")
 def owner_notify(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    """Manual "refresh my customers' passes" — handy after a design change."""
-    return notify_tenant(token_data.tenant_id)
+    """Manual "refresh my customers' passes" — handy after a design change.
+    Asked on purpose: pushed even when the design did not change (the storm
+    breaker still bounds it)."""
+    return notify_tenant(token_data.tenant_id, force=True)
 
 
 def _owner_only(barcode_id: str, request: Optional[Request]) -> None:
@@ -3769,7 +3976,12 @@ def _log_card(serial: str, text: str, at: datetime) -> None:
 # HEAD too: Wallet may ask before it downloads; a 405 there left some
 # devices on the pass they already had.
 @router.api_route("/api/passes/v1/passes/{pass_type_id}/{serial}", methods=["GET", "HEAD"])
-def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None)):
+def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = Header(default=None),
+                if_modified_since: Optional[str] = Header(default=None)):
+    """The pass — or 304 when the device already holds this version (its
+    If-Modified-Since is not before the pass's last real change, 2026-11-12:
+    Apple logged « server ignored the if-modified-since header » on every
+    fetch, and every push meant a full pass built and sent to every iPhone)."""
     _check_pass_auth(authorization, serial)
     # Wallet asks under the id the card has; a card never changes id. The
     # common id, or this card's own business's id — nothing else.
@@ -3778,15 +3990,22 @@ def latest_pass(pass_type_id: str, serial: str, authorization: Optional[str] = H
         cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "tenant_id": 1}) or {}
         if not cust or _WI.tenant_of_type(pass_type_id) != cust.get("tenant_id"):
             raise HTTPException(status_code=404)
+    payload = _card_payload(serial, pass_type=pass_type_id)
+    key = _pkpass_key(payload)
+    changed_at = pass_state(serial, key)
+    # what this device now holds (or is about to): the same card is never pushed to it again
     if not _db.pass_registrations.update_many({"serial": serial},
-                                              {"$set": {"last_fetch_at": datetime.now(timezone.utc)}}).matched_count:
+                                              {"$set": {"last_fetch_at": datetime.now(timezone.utc), "pass_key": key}}).matched_count:
         _seen_unregistered(serial)
+    since = _parse_http_date(if_modified_since)
+    if since is not None and changed_at <= since:
+        return Response(status_code=304, headers={"Last-Modified": _http_date(changed_at), "Cache-Control": "no-store"})
     try:        # push history: downloaded by the devices that asked (the GET carries no device id)
         _db.pass_push_log.update_many({"serial": serial, "checked_at": {"$ne": None}, "fetched_at": None},
                                       {"$set": {"fetched_at": datetime.now(timezone.utc)}})
     except Exception:
         pass
-    return _pkpass_response(serial, pass_type=pass_type_id)
+    return _pkpass_response(serial, pass_type=pass_type_id, payload=payload, last_modified=changed_at)
 
 
 @router.get("/api/card/{serial}/action/{identifier}")

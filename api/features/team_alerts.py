@@ -29,10 +29,11 @@ KINDS = [
     ("ai", "FidClic IA : plafonds et budgets", "ai"),
     ("impaye", "Paiement d'un commerce refusé", "abonnements"),
     ("equipe", "Mes tâches (Suivi d'équipe)", "equipe"),
+    ("sante", "Santé de la plateforme : tempête Wallet, base saturée", None),       # super admin only
 ]
 LABELS = {k: l for k, l, _ in KINDS}
 MODULE = {k: m for k, _, m in KINDS}
-DEFAULT_EMAIL = {"ai": {"super_admin"}}          # kind → roles e-mailed when they never chose
+DEFAULT_EMAIL = {"ai": {"super_admin"}, "sante": {"super_admin"}}          # kind → roles e-mailed when they never chose
 TEAM = ("super_admin", "fidclic_team", "commercial")
 CHANNELS = ("email", "bell")
 
