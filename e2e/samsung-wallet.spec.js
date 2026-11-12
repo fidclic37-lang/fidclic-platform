@@ -76,14 +76,14 @@ test.describe('a Galaxy phone (Chrome)', () => {
     await page.waitForURL(/a\.swallet\.link/);
     const url = page.url();
     if (MODE === 'cdata') {
-      // Data Transmit Link: the card inside the link — a JWS (RS256, cty CARD, ver 3) around a JWE
-      expect(url).toMatch(new RegExp(`^https://a\\.swallet\\.link/atw/v3/${CARD}#Clip\\?cdata=[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$`));
+      // Data Transmit Link: the card inside the link — a JWS (RS256, cty PASS, ver 3) around a JWE, as Samsung's own test tool makes it
+      expect(url).toMatch(new RegExp(`^https://a\\.swallet\\.link/atw/v1/${CARD}#Clip\\?cdata=[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$`));
       const token = url.split('cdata=')[1];
       const hdr = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
-      expect(hdr).toMatchObject({ alg: 'RS256', cty: 'CARD', ver: '3', certificateId: 'XVli' });
+      expect(hdr).toMatchObject({ alg: 'RS256', cty: 'PASS', ver: 3, certificateId: 'XVli' });
       const jwe = Buffer.from(token.split('.')[1], 'base64url').toString();
       expect(jwe.split('.')).toHaveLength(5);
-      expect(JSON.parse(Buffer.from(jwe.split('.')[0], 'base64url').toString())).toEqual({ alg: 'RSA1_5', enc: 'A128GCM' });
+      expect(JSON.parse(Buffer.from(jwe.split('.')[0], 'base64url').toString())).toEqual({ alg: 'RSA-OAEP-256', enc: 'A256GCM', kid: 'WLT.PUBKEY' });
       expect(url.length).toBeLessThan(8000);
       return;
     }

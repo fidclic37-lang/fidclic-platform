@@ -40,9 +40,12 @@ out of git — website_antiG/.secrets/samsung-wallet):
     SAMSUNG_WALLET_SAMSUNG_CERT   Samsung's certificate (PEM or base64): its public
                                   key encrypts the card data of the cdata link
     SAMSUNG_WALLET_LINK_MODE      "cdata" (default, 2026-11-12) — Data Transmit
-                                  Link, the card data inside the link (JWE
-                                  RSA1_5/A128GCM with Samsung's key, then JWS
-                                  RS256 with ours, cty CARD, ver 3); "pdata" —
+                                  Link, the card data inside the link, made
+                                  exactly as Samsung's own « Add to Wallet »
+                                  test tool makes it (JWE RSA-OAEP-256/A256GCM
+                                  kid WLT.PUBKEY with Samsung's key, then JWS
+                                  RS256 with ours, cty PASS, ver 3, link
+                                  atw/v1/{cardId}); "pdata" —
                                   the Data Fetch Link (Samsung asks our server;
                                   it answered WLT1N2131 and never called us
                                   while the card is Draft / testing)
@@ -222,21 +225,28 @@ def _b64u(b: bytes) -> str:
 
 def cdata_token(card: Dict[str, Any]) -> str:
     """Samsung's Card Data Token: the card JSON encrypted for Samsung (JWE,
-    RSA1_5 + A128GCM, compact), signed by us (JWS RS256, cty CARD, ver 3,
-    certificateId, partnerId, utc). Lives 30 s: made at the tap."""
+    compact), signed by us (JWS RS256). Lives 30 s: made at the tap.
+
+    Built byte-for-byte like Samsung's own « Add to Wallet » test tool
+    (partner.walletsvc.samsung.com/addToWalletTest, 2026-11-12): JWE
+    RSA-OAEP-256 + A256GCM, kid WLT.PUBKEY; JWS cty PASS, ver 3 (a number),
+    certificateId, partnerId, utc ms. The docs' table (RSA1_5/A128GCM, cty
+    CARD, ver "3") is what we sent first, and the phone refused it WLT1N2131."""
     import jwt
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     pub, key = _samsung_public_key(), _signing_key()
     if pub is None or key is None:
         raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore configuré")
-    protected = _b64u(json.dumps({"alg": "RSA1_5", "enc": "A128GCM"}, separators=(",", ":")).encode())
-    cek, iv = os.urandom(16), os.urandom(12)
+    protected = _b64u(json.dumps({"alg": "RSA-OAEP-256", "enc": "A256GCM", "kid": "WLT.PUBKEY"},
+                                 separators=(",", ":")).encode())
+    cek, iv = os.urandom(32), os.urandom(12)
     sealed = AESGCM(cek).encrypt(iv, json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode(),
                                  protected.encode())
-    jwe = ".".join([protected, _b64u(pub.encrypt(cek, padding.PKCS1v15())), _b64u(iv),
+    jwe = ".".join([protected, _b64u(pub.encrypt(cek, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))), _b64u(iv),
                     _b64u(sealed[:-16]), _b64u(sealed[-16:])])
-    headers = {"typ": None, "cty": "CARD", "ver": "3", "certificateId": cert_id(), "partnerId": partner_id(),
+    headers = {"typ": None, "cty": "PASS", "ver": 3, "certificateId": cert_id(), "partnerId": partner_id(),
                "utc": int(time.time() * 1000)}
     return jwt.api_jws.PyJWS().encode(jwe.encode(), key, algorithm="RS256", headers=headers)
 
@@ -247,7 +257,8 @@ def add_link(cust: Dict[str, Any]) -> str:
         return f"https://a.swallet.link/atw/v3/{cert_id()}/{card_id()}#Clip?pdata={ref}"
     from features import wallet_passes as W
     card = card_data(W._card_payload(cust["barcode_id"]), ref, notice_limit=2500)
-    return f"https://a.swallet.link/atw/v3/{card_id()}#Clip?cdata={cdata_token(card)}"
+    # Samsung's wallet-card.js: cdata without certificateId → ADD_TO_WALLET_LINK (v1)
+    return f"https://a.swallet.link/atw/v1/{card_id()}#Clip?cdata={cdata_token(card)}"
 
 
 def held(c: Dict[str, Any]) -> bool:

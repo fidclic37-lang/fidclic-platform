@@ -359,13 +359,16 @@ def main():
     check("with it: button", http("GET", "/api/wallet/config", params={"barcode": a}).json()["samsung"] is True)
     r = http("GET", f"/api/card/{a}/samsung-wallet", mine(a))
     url = r.json().get("url", "")
-    check(f"cdata link: a.swallet.link/atw/v3/{{card}}#Clip?cdata= ({r.status_code})",
-          url.startswith("https://a.swallet.link/atw/v3/3jina31gjvr00#Clip?cdata="))
+    # 2026-11-12: Samsung's own « Add to Wallet » test tool (Wallet Studio +
+    # wallet-card.js) is the reference — a cdata link without certificateId is
+    # ADD_TO_WALLET_LINK v1: a.swallet.link/atw/v1/{cardId}#Clip?cdata=
+    check(f"cdata link: a.swallet.link/atw/v1/{{card}}#Clip?cdata= (Samsung's own button) ({r.status_code})",
+          url.startswith("https://a.swallet.link/atw/v1/3jina31gjvr00#Clip?cdata="))
     token = url.split("cdata=", 1)[1] if "cdata=" in url else ""
     check(f"the link fits a phone's URL ({len(url)} chars < 8000)", 0 < len(url) < 8000)
     hdr = jwt.get_unverified_header(token) if token.count(".") == 2 else {}
-    check("JWS header: RS256, cty CARD, ver 3, certificate XVli, partner, utc ms, no typ",
-          hdr.get("alg") == "RS256" and hdr.get("cty") == "CARD" and str(hdr.get("ver")) == "3"
+    check("JWS header as Samsung's tool: RS256, cty PASS, ver 3 (number), certificate XVli, partner, utc ms, no typ",
+          hdr.get("alg") == "RS256" and hdr.get("cty") == "PASS" and hdr.get("ver") == 3
           and hdr.get("certificateId") == "XVli" and hdr.get("partnerId") == "4164397867037138496"
           and isinstance(hdr.get("utc"), int) and abs(hdr["utc"] - int(_t.time() * 1000)) < 60_000 and "typ" not in hdr)
     try:
@@ -377,15 +380,18 @@ def main():
     parts = jwe.split(".")
     check("the payload is a compact JWE (5 parts)", len(parts) == 5)
     pad = lambda x: _b64.urlsafe_b64decode(x + "=" * (-len(x) % 4))  # noqa: E731
-    card_json = {}
+    card_json, cek = {}, b""
     try:
         jh = json.loads(pad(parts[0]))
-        cek = sam_key.decrypt(pad(parts[1]), padding.PKCS1v15())
+        cek = sam_key.decrypt(pad(parts[1]), padding.OAEP(mgf=padding.MGF1(hashes.SHA256()),
+                                                         algorithm=hashes.SHA256(), label=None))
         plain = AESGCM(cek).decrypt(pad(parts[2]), pad(parts[3]) + pad(parts[4]), parts[0].encode())
         card_json = json.loads(plain)
     except Exception as e:  # noqa: BLE001
         print("    ", e); jh = {}
-    check("JWE header: RSA1_5 + A128GCM", jh == {"alg": "RSA1_5", "enc": "A128GCM"})
+    check("JWE header as Samsung's tool: RSA-OAEP-256 + A256GCM, kid WLT.PUBKEY",
+          jh == {"alg": "RSA-OAEP-256", "enc": "A256GCM", "kid": "WLT.PUBKEY"})
+    check("…a 256-bit content key", len(cek) == 32)
     check("only Samsung's key opens it: the card inside, loyalty/others",
           card_json.get("card", {}).get("type") == "loyalty" and card_json["card"].get("subType") == "others")
     item9 = (card_json.get("card", {}).get("data") or [{}])[0]
