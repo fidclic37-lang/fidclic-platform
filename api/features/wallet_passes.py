@@ -399,7 +399,7 @@ def wallet_config(barcode: str = ""):
     from features import samsung_wallet as _SW            # the test switch: only some shops (samsung_wallet.enabled_for)
     c = _db.customers.find_one({"barcode_id": barcode}, {"_id": 0, "tenant_id": 1}) if barcode else None
     return {"apple": on and apple_configured(), "google": on and google_configured(),
-            "samsung": on and _SW.enabled_for((c or {}).get("tenant_id")), "in_plan": on}
+            "samsung": on and _SW.enabled_for((c or {}).get("tenant_id")) and _SW.link_ready(), "in_plan": on}
 
 
 @router.get("/api/owner/wallet/google-status")
@@ -3597,7 +3597,7 @@ def download_apple_pass(barcode_id: str, request: Request = None):
 
 
 @router.get("/api/card/{barcode_id}/wallet-strip.png")
-def wallet_strip(barcode_id: str):
+def wallet_strip(barcode_id: str, fmt: Optional[str] = None):
     """The card's banner with the meter painted on it.
 
     Google Wallet fetches its hero image over HTTP — it cannot take the bytes
@@ -3609,6 +3609,15 @@ def wallet_strip(barcode_id: str):
     png = strip_png(_card_payload(barcode_id))
     if not png:
         raise HTTPException(status_code=404, detail="No strip for this card")
+    if fmt == "samsung":
+        # Samsung Wallet's bgImage: 888 × 555 recommended, and its images are
+        # capped at 256 KB (the PNG was 436 KB on a test card, 2026-11-12)
+        from PIL import Image, ImageOps
+        im = ImageOps.fit(Image.open(io.BytesIO(png)).convert("RGB"), (888, 555), Image.LANCZOS)
+        out = io.BytesIO()
+        im.save(out, "JPEG", quality=82, optimize=True, progressive=True)
+        return Response(content=out.getvalue(), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=3600"})
     return Response(content=png, media_type="image/png",
                     # Google re-fetches when the ?v= changes, so a long cache is
                     # safe and keeps their crawler off the database.
@@ -4473,6 +4482,8 @@ def samsung_wallet_link(barcode_id: str, request: Request = None):
         raise HTTPException(status_code=403, detail="Samsung Wallet n'est pas inclus dans l'offre de ce commerce.")
     if not _SW.enabled_for(cust.get("tenant_id")):
         raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore disponible pour ce commerce")
+    if not _SW.link_ready():
+        raise HTTPException(status_code=503, detail="Samsung Wallet n'est pas encore configuré")
     return {"url": _SW.add_link(cust)}
 
 

@@ -1,7 +1,8 @@
 // « Ajouter à Samsung Wallet » (user, 2026-11-11), in a real browser, against
 // the local server only (scripts/dev_local.py) — run with the portal's ids:
 //   SAMSUNG_WALLET_PARTNER_ID=4164397867037138496 SAMSUNG_WALLET_CARD_ID=3jina31gjvr00 \
-//   SAMSUNG_WALLET_CERT_ID=XVli npx playwright test e2e/samsung-wallet.spec.js
+//   SAMSUNG_WALLET_CERT_ID=XVli SAMSUNG_WALLET_PRIVATE_KEY=<test key> SAMSUNG_WALLET_SAMSUNG_CERT=<test cert> \
+//   npx playwright test e2e/samsung-wallet.spec.js   (cdata by default; SAMSUNG_WALLET_LINK_MODE=pdata for the old link)
 //   • an Android phone gets Google's AND Samsung's button (Chrome on a Galaxy
 //     hides the model), an iPhone never Samsung's;
 //   • the button opens Samsung's Data Fetch Link for this card, and Samsung
@@ -11,6 +12,7 @@
 import { test, expect } from '@playwright/test';
 
 const SLUG = 'cafe-lumiere';
+const MODE = (process.env.SAMSUNG_WALLET_LINK_MODE || 'cdata').toLowerCase() === 'pdata' ? 'pdata' : 'cdata';
 const CARD = '3jina31gjvr00';
 const UA = {
   iphone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
@@ -73,6 +75,18 @@ test.describe('a Galaxy phone (Chrome)', () => {
     await samsung.click();
     await page.waitForURL(/a\.swallet\.link/);
     const url = page.url();
+    if (MODE === 'cdata') {
+      // Data Transmit Link: the card inside the link — a JWS (RS256, cty CARD, ver 3) around a JWE
+      expect(url).toMatch(new RegExp(`^https://a\\.swallet\\.link/atw/v3/${CARD}#Clip\\?cdata=[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$`));
+      const token = url.split('cdata=')[1];
+      const hdr = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
+      expect(hdr).toMatchObject({ alg: 'RS256', cty: 'CARD', ver: '3', certificateId: 'XVli' });
+      const jwe = Buffer.from(token.split('.')[1], 'base64url').toString();
+      expect(jwe.split('.')).toHaveLength(5);
+      expect(JSON.parse(Buffer.from(jwe.split('.')[0], 'base64url').toString())).toEqual({ alg: 'RSA1_5', enc: 'A128GCM' });
+      expect(url.length).toBeLessThan(8000);
+      return;
+    }
     expect(url).toMatch(new RegExp(`^https://a\\.swallet\\.link/atw/v3/XVli/${CARD}#Clip\\?pdata=[A-Za-z0-9_-]{16,32}$`));
     const ref = url.split('pdata=')[1];
 
