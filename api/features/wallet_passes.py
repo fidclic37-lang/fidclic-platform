@@ -3229,9 +3229,10 @@ _TENANT_CARD_FIELDS = ("name", "branches", "address", "street", "postal_code", "
 
 
 def tenant_design_key(tenant_id: str) -> str:
-    from services.media import _raw
+    """The design the establishment in context pushes (store_cards picks its
+    card_templates document), with the shop's own card fields and défis."""
     import json as _json
-    tpls = list(_raw(_db.card_templates).find({"tenant_id": tenant_id}, {"_id": 0, "updated_at": 0}).sort("store_id", 1))
+    tpls = dict(_db.card_templates.find_one({"tenant_id": tenant_id}, {"_id": 0, "updated_at": 0}) or {})
     t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, **{f: 1 for f in _TENANT_CARD_FIELDS}}) or {}
     try:
         defis = list(_db.defi_rewards.find({"tenant_id": tenant_id}, {"_id": 0}).sort("id", 1))
@@ -3240,27 +3241,30 @@ def tenant_design_key(tenant_id: str) -> str:
     return hashlib.sha1(_json.dumps([tpls, t, defis], sort_keys=True, default=str).encode()).hexdigest()
 
 
-def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+def notify_tenant(tenant_id: str, customer_ids: Optional[List[str]] = None, force: bool = False) -> Dict[str, Any]:
     """Every registered pass of a tenant (or just the given customers) — used
     when the card design or an offer changes. Queued, then worked for a few
     seconds: a save never waits for every card (see queue_refresh).
 
     A whole-shop push goes out once per design: the shop keeps the key of
-    the design its cards were last sent (2026-11-12: the same, unchanged
-    design was pushed to Royal Trim's 682 passes again and again). A save
-    that changes nothing on the cards is answered « unchanged »."""
+    the design its cards were last sent, per establishment (2026-11-12: the
+    same, unchanged design was pushed to Royal Trim's 682 passes again and
+    again). A save that changes nothing on the cards is answered
+    « unchanged »; `force` (the owner's « Actualiser les cartes ») pushes
+    anyway — the breaker still holds it."""
     q: Dict[str, Any] = {"tenant_id": tenant_id}
     if customer_ids:
         q["id"] = {"$in": list(customer_ids)}
     else:
+        sid = _SC.store_for(tenant_id)
+        slot = f"wallet_design_keys.{sid or '_'}"
         key = tenant_design_key(tenant_id)
-        t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "wallet_design_key": 1}) or {}
-        if t.get("wallet_design_key") == key and not refresh_left(tenant_id):
+        t = _db.tenants.find_one({"id": tenant_id}, {"_id": 0, "wallet_design_keys": 1}) or {}
+        if not force and (t.get("wallet_design_keys") or {}).get(sid or "_") == key and not refresh_left(tenant_id):
             return {"devices": 0, "sent": 0, "unchanged": _db.pass_registrations.count_documents({"tenant_id": tenant_id}),
                     "google": {"cards": 0, "synced": 0, "errors": []}, "left": 0, "design_unchanged": True}
-        _db.tenants.update_one({"id": tenant_id}, {"$set": {"wallet_design_key": key}})
+        _db.tenants.update_one({"id": tenant_id}, {"$set": {slot: key}})
         # one establishment's card changed: only its members' cards
-        sid = _SC.store_for(tenant_id)
         if sid:
             # the main store's members include the clients never given a store
             q["branch_id"] = {"$in": [sid, None, ""]} if sid == _SC.main_store(tenant_id) else sid
@@ -3770,8 +3774,10 @@ def _poster_preview(pj: Dict[str, Any], payload: Dict[str, Any], logo2x: Optiona
 
 @router.post("/api/owner/wallet/notify")
 def owner_notify(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    """Manual "refresh my customers' passes" — handy after a design change."""
-    return notify_tenant(token_data.tenant_id)
+    """Manual "refresh my customers' passes" — handy after a design change.
+    Asked on purpose: pushed even when the design did not change (the storm
+    breaker still bounds it)."""
+    return notify_tenant(token_data.tenant_id, force=True)
 
 
 def _owner_only(barcode_id: str, request: Optional[Request]) -> None:

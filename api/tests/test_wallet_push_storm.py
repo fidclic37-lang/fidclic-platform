@@ -141,6 +141,13 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check(f"a design change → every pass once ({pushed() - before})", pushed() - before == N, r)
     r = WP.notify_tenant("t1")
     check("…then nobody again", pushed() == before + N, r)
+    before = pushed()
+    r = WP.notify_tenant("t1", force=True)
+    check("« Actualiser les cartes » (asked on purpose) looks at every card again, finds them up to date: 0 pushes, said",
+          pushed() == before and not r.get("design_unchanged") and r.get("unchanged") == N, r)
+    db.customers.update_one({"id": "c3"}, {"$inc": {"visits": 1}})
+    r = WP.notify_tenant("t1", force=True)
+    check("…and pushes the one card that differs", pushed() == before + 1 and pushes[-1] == ["tok3"], r)
     r = WP._notify_apple(["FT-NOBODY00"])
     check("a serial with no registration: 0 devices, no crash", r.get("devices") == 0, r)
 
