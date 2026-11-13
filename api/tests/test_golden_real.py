@@ -48,6 +48,10 @@ def main():
     db = server.db
     UTC = dt.timezone.utc
     night = dt.datetime(2026, 11, 9, 2, 30, tzinfo=UTC)            # 03:30 in Paris
+    # the manifest only lists snapshots younger than FRESH against the real
+    # clock — frozen beside the fixed night, or the test dies of old age
+    # (calendar time bomb: it went red on 2026-11-13, FRESH being 3 days)
+    GR._now = lambda: night + dt.timedelta(hours=3)
 
     store = {}
     BP.configured = lambda: True
