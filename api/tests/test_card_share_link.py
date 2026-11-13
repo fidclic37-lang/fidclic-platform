@@ -48,8 +48,15 @@ def main():
     back = WP.build_pass_json(pay())["storeCard"]["backFields"]
     f = next((x for x in back if x["key"] == "share_link"), None)
     check("a « Partager ma carte » row (no parrainage set up)", f and f["label"] == "Partager ma carte")
-    check("…its link opens the share page", f and f["value"] == "https://app.fidclic.com/card/FT-SHARE001/partager"
-          and '>🎁 Partagez la carte</a>' in f["attributedValue"])
+    # an iPhone on iOS 15 or older never made the <a> of attributedValue a link
+    # (user, 2026-11-13: « link neela nahi / tap hi nahi hota » on an iPhone X):
+    # the address itself is written, and Wallet's link detector — every iOS —
+    # makes it tappable, like « Ma carte en ligne »
+    check("…its text says it and shows the share page's address",
+          f and f["value"].startswith("🎁 Partagez la carte")
+          and "https://app.fidclic.com/card/FT-SHARE001/partager" in f["value"])
+    check("…no hidden <a> link (old iOS shows it as plain text)", f and "attributedValue" not in f)
+    check("…the link detector is asked for", f and f.get("dataDetectorTypes") == ["PKDataDetectorTypeLink"])
     check("…never with the owner key", f and "secretkey123" not in json.dumps(f) and "k=" not in f["value"])
     keys = [x["key"] for x in back]
     check("…right after « Ma carte en ligne »", keys.index("share_link") == keys.index("card") + 1)

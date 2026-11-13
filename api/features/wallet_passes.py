@@ -1311,8 +1311,12 @@ def _share_field(tenant: Dict[str, Any], serial: str) -> Dict[str, Any]:
     except Exception:
         pass
     url = share_url(serial)
+    # The address is written out, no attributedValue: an iPhone on iOS 15 or
+    # older showed « 🎁 Partagez la carte » as plain text, not a link (user,
+    # 2026-11-13, an iPhone X). Wallet's link detector makes the address
+    # tappable on every iOS, like « Ma carte en ligne ».
     return {"key": "share_link", "label": "Programme de parrainage" if on else "Partager ma carte",
-            "value": url, "attributedValue": f'<a href="{url}">🎁 Partagez la carte</a>'}
+            "value": f"🎁 Partagez la carte :\n{url}", "dataDetectorTypes": ["PKDataDetectorTypeLink"]}
 
 
 def build_barcodes(fmt: str, fallback: Optional[str], serial: str, alt: Optional[str]) -> List[Dict[str, str]]:
