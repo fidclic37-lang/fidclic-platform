@@ -363,7 +363,8 @@ export default function CampaignsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await ownerAPI.getCustomers({});
+        // One customer is all the preview needs — never the whole list.
+        const r = await ownerAPI.getCustomers({ limit: 1 });
         const rows = Array.isArray(r?.data) ? r.data : (r?.data?.customers || []);
         if (!cancelled && rows.length) setPreviewCustomer(rows[0]);
       } catch (_e) { /* no customers yet -> labelled sample stays */ }

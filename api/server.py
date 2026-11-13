@@ -4135,9 +4135,28 @@ def update_tenant(req: Tenant, token_data: TokenData = Depends(require_role(["bu
     db.tenants.update_one({"id": token_data.tenant_id}, {"$set": req.model_dump()})
     return req.model_dump()
 
+# The fields the customer-list pages actually read (Clients legacy table, CSV
+# export, campaign composer, analytics). Everything else on the document —
+# notes, brain profile, wallet keys, AI fields — stays server-side: on
+# 2026-11-12 this endpoint shipped 1.4 MB (828 full docs) per call in
+# production, on every composer keystroke.
+CUSTOMER_LIST_FIELDS = (
+    "id", "barcode_id", "name", "email", "phone", "tier", "visits", "points",
+    "total_amount_paid", "acquisition_source", "postal_code", "city",
+    "created_at", "join_date", "member_since", "last_visit_date",
+    "pass_issued", "branch_id", "birthday",
+)
+
 @app.get("/api/owner/customers")
 def list_customers(
+    response: Response,
     token_data: TokenData = Depends(require_role(["business_owner", "manager"])),
+    # Pagination — applied AFTER every filter below, newest customer first.
+    # X-Total-Count on the response says how many matched in all. Without
+    # `limit` the whole (slim) list still comes, so saved segments, the CSV
+    # export and the legacy analytics keep working unchanged.
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     tier: Optional[str] = Query(None),
     tiers: Optional[str] = Query(None),       # CSV of tiers: "silver,gold,vip"
     min_visits: Optional[int] = Query(None),
@@ -4266,7 +4285,9 @@ def list_customers(
             lv["$gte"] = now_utc - timedelta(days=inactive_days_max)
         query["last_visit_date"] = lv
 
-    customers = list(db.customers.find(query))
+    projection = {f: 1 for f in CUSTOMER_LIST_FIELDS}
+    projection["_id"] = 0
+    customers = list(db.customers.find(query, projection))
 
     # "Cards filled" filter: a customer has filled at least one card (visits >= reward threshold)
     if cards_filled is True:
@@ -4353,8 +4374,25 @@ def list_customers(
         search_lower = search.lower()
         customers = [c for c in customers if search_lower in c.get("name", "").lower() or search_lower in c.get("email", "").lower()]
 
-    for c in customers:
-        c.pop("_id", None)
+    # Newest first — a stable order, so pages never repeat or skip a customer.
+    def _created_ts(c):
+        v = c.get("created_at")
+        if isinstance(v, datetime):
+            return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).timestamp()
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return 0.0
+        return 0.0
+    customers.sort(key=lambda c: (_created_ts(c), c.get("id") or ""), reverse=True)
+
+    total = len(customers)
+    response.headers["X-Total-Count"] = str(total)
+    if offset:
+        customers = customers[offset:]
+    if limit is not None:
+        customers = customers[:limit]
     return customers
 
 def _campaign_performance_rollup(t_id: str, c: Dict[str, Any]) -> Dict[str, Any]:
