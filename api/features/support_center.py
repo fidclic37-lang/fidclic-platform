@@ -87,6 +87,9 @@ def init(db):
             _db[coll].create_index(keys)
         except Exception:  # noqa: BLE001
             pass
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return
     try:
         _migrate()
     except Exception as exc:  # noqa: BLE001

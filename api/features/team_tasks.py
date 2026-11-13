@@ -82,6 +82,9 @@ def init(db):
         db.team_board_members.create_index("email", unique=True)
     except Exception:
         pass
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return
     if not db.team_task_types.count_documents({}):
         for i, (tid, name, color) in enumerate(DEFAULT_TYPES):
             db.team_task_types.insert_one({"id": tid, "name": name, "color": color, "order": i,

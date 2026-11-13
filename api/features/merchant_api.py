@@ -134,7 +134,9 @@ def init(db):
     # every write of a client's phone also writes its 9 last digits (services/phone_tail)
     from services import doc_cache, phone_tail
     doc_cache.on_write("customers", phone_tail.hear)
-    backfill_phone_tails()
+    from services import boot_marker
+    if not boot_marker.seeded(db):
+        backfill_phone_tails()
 
 
 def backfill_phone_tails(batch: int = 2000, cap: int = 50000) -> int:

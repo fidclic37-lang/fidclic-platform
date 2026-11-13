@@ -70,6 +70,9 @@ def init(db):
         db.signup_images.create_index([("tenant_id", 1), ("store_id", 1)], unique=True)
     except Exception:
         pass
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return
     try:
         move_inline_images()
     except Exception as exc:                       # never in the way of a start
