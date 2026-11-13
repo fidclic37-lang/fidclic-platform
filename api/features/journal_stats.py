@@ -52,6 +52,9 @@ def init(db):
         db[STATS].create_index([("build", 1), ("model", 1), ("source", 1), ("sector", 1)])
         db[SIDE].create_index([("owner", 1), ("current", 1)])
         db[SIDE].create_index([("run", 1), ("chunk", 1)])
+        from services import boot_marker
+        if boot_marker.seeded(db):
+            return
         # a journal that starts now is tallied from its first row
         if not db.platform_settings.find_one({"key": KEY}) and not db.brain_predictions.find_one({}, {"_id": 1}):
             db.platform_settings.update_one({"key": KEY}, {"$set": {"key": KEY, "ready": True,

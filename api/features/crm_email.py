@@ -135,6 +135,9 @@ def init(db):
         db.crm_email_sends.create_index("message_id")
     except Exception:
         pass
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return
     if not db.platform_settings.find_one({"key": "crm_templates_seeded"}):
         for t in DEFAULT_TEMPLATES:
             if not db.crm_email_templates.find_one({"id": t["id"]}):

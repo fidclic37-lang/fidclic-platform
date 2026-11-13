@@ -321,6 +321,9 @@ def register_all(app, db) -> None:
         Collection.create_index = original
     if not on_vercel or not captured:
         return                                   # local runs and tests: created as they were asked
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return                                   # this deployment's first instance handled the indexes
     spec = _index_spec(captured)
     if failed or _indexes_done(db, spec):
         return

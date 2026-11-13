@@ -110,7 +110,10 @@ _ST.install_listener()
 # closed, so five or six warm instances filled the free cluster on their own.
 MONGO_CLIENT_OPTIONS = dict(
     serverSelectionTimeoutMS=5000,
-    maxPoolSize=10,           # per instance: 50 instances before M0's 500
+    maxPoolSize=3,            # per instance (2026-11-12: a Wallet push storm scaled
+                              # Vercel past 50 instances × 10 = M0's 500 connections;
+                              # one Python worker rarely holds 3 queries at once, so
+                              # 3 is room enough and ~166 instances fit before 500)
     minPoolSize=0,
     maxIdleTimeMS=30_000,     # idle sockets are handed back to Atlas
     waitQueueTimeoutMS=10_000,  # a full pool fails fast instead of hanging
@@ -122,6 +125,7 @@ MONGO_CLIENT_OPTIONS = dict(
 
 from services import mongo_pool as _mongo_pool  # noqa: E402
 _mongo_pool.install()
+from services import boot_marker as _boot_marker  # noqa: E402
 
 
 def make_client(uri):
@@ -13440,6 +13444,8 @@ def get_media(mid: str, raw: int = 0):
 def _media_migrate_once() -> None:
     """The pictures stored inline before 2026-10-13 move to `media`, once:
     the first start after the deploy does it, the next ones see the marker."""
+    if _boot_marker.seeded(db):
+        return
     try:
         done = db.platform_settings.find_one({"key": "media_migrated"}, {"_id": 0, "value": 1}) or {}
         if done.get("value") == "v1":
@@ -13456,6 +13462,8 @@ _media_migrate_once()
 
 
 def _points_split_once() -> None:
+    if _boot_marker.seeded(db):
+        return
     """Points become a balance that a reward can spend (2026-10-14), so the
     palier had to stop reading it. Two fields are filled once, for everyone
     already on the platform:
@@ -13495,6 +13503,8 @@ _points_split_once()
 
 
 def _drop_student_flag_once() -> None:
+    if _boot_marker.seeded(db):
+        return
     """The « étudiant » category is gone (user, 2026-10-30: « purana data mein
     se etudiant waala info bas hatao, baaki ka data intact rkho »). Only the
     old `is_student` field leaves each client, in every shop; nothing else is
@@ -13517,6 +13527,8 @@ _drop_student_flag_once()
 
 
 def _cache_purge_once() -> None:
+    if _boot_marker.seeded(db):
+        return
     """The image caches kept in MongoDB (img_cache, pkpass_cache) made the free
     cluster slower, not faster (2026-10-13): they are no longer used, and what
     they hold — rebuildable images and passes, no customer data — is removed
@@ -13539,6 +13551,10 @@ def _cache_purge_once() -> None:
 
 
 _cache_purge_once()
+
+# Everything above ran (idempotent): the other instances of THIS deployment
+# skip the seeds and migrations after one marker read (services/boot_marker).
+_boot_marker.mark(db)
 
 
 if __name__ == "__main__":

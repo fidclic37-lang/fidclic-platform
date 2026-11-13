@@ -3131,6 +3131,9 @@ def set_switch(token: TokenData, scenario: str, on: bool, store: Optional[str] =
 
 def honour_at_start() -> None:
     """Never fatal: a start that fails here must not lose this module's routes."""
+    from services import boot_marker
+    if boot_marker.seeded(_db):
+        return
     try:
         honour_old_birthday_off()
     except Exception as exc:                       # noqa: BLE001

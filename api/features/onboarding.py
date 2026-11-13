@@ -66,7 +66,10 @@ def init(db):
     except Exception:
         pass
     # Shops still on the old one-size placeholder (« Un café gratuit » on a
-    # gym's card) get their sector's reward — once per process, cheap.
+    # gym's card) get their sector's reward — once per DEPLOYMENT (boot_marker).
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return
     from services import sector_rewards
     sector_rewards.sync_all(_db)
 

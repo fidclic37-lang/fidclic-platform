@@ -158,9 +158,11 @@ def init(db):
     # to all its clients on the 1st of each month without having chosen that
     # offer. Switched off once, everywhere (and any establishment's own switch
     # with it); a merchant may turn it back on — the marker keeps this from
-    # running again.
+    # running again. Once per deployment (services/boot_marker).
+    from services import boot_marker
+    _skip = boot_marker.seeded(db)
     try:
-        ids = [r["id"] for r in db.push_scenarios.find(
+        ids = [] if _skip else [r["id"] for r in db.push_scenarios.find(
             {"builtin": "special_offer", "offer_default_off": {"$exists": False}}, {"_id": 0, "id": 1})]
         if ids:
             db.push_scenarios.update_many({"id": {"$in": ids}},

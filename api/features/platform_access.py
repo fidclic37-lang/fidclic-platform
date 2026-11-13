@@ -78,6 +78,9 @@ def init(db):
         db.platform_roles.create_index("id", unique=True)
     except Exception:
         pass
+    from services import boot_marker
+    if boot_marker.seeded(db):
+        return
     for r in PRESETS:
         if not db.platform_roles.find_one({"id": r["id"]}):
             db.platform_roles.insert_one({**r, "system": True, "created_at": _now()})
