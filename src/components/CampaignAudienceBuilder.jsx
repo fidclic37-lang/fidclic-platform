@@ -78,7 +78,9 @@ const CampaignAudienceBuilder = ({
     }
     const run = async () => {
       try {
-        const res = await ownerAPI.getCustomers({ search: debouncedSearch });
+        // Only the 25 rows the picker shows — the full list came back on every
+        // keystroke before (1.4 MB with 828 clients, 2026-11-12).
+        const res = await ownerAPI.getCustomers({ search: debouncedSearch, limit: 25 });
         if (cancelled) return;
         const rows = Array.isArray(res.data) ? res.data : (res.data?.customers || []);
         setSearchResults(rows.slice(0, 25));
