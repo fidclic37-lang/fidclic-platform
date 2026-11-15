@@ -115,8 +115,8 @@ export function ImportModal({ meta, onClose, onDone }) {
 export function ProspectModal({ meta, prospect, onClose, onSaved }) {
   const [f, setF] = useState(() => ({
     name: '', sector: '', city: '', postal_code: '', address: '', contact_name: '', contact_role: '', phone: '', email: '',
-    website: '', instagram: '', facebook: '', siret: '', source: 'google', assigned_to: '', stage: 'nouveau',
-    ...(prospect || {}), assigned_to: prospect?.assigned_to || '',
+    website: '', instagram: '', facebook: '', social_activity: '', siret: '', source: 'google', assigned_to: '', stage: 'nouveau',
+    ...(prospect || {}), assigned_to: prospect?.assigned_to || '', social_activity: prospect?.social_activity || '',
   }));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -148,7 +148,12 @@ export function ProspectModal({ meta, prospect, onClose, onSaved }) {
         <div className="grid grid-cols-[1fr_1.4fr] gap-2">{field('postal_code', 'Code postal')}{field('city', 'Ville')}</div>
         {field('contact_name', 'Contact')}{field('contact_role', 'Fonction')}
         {field('phone', 'Téléphone')}{field('email', 'Email', { type: 'email' })}
-        {field('website', 'Site web')}{field('instagram', 'Instagram')}
+        {field('website', 'Site web')}{field('instagram', 'Instagram')}{field('facebook', 'Facebook')}
+        {/* how active it is on social media (user, 2026-11-15) */}
+        <Select label="Activité sur les réseaux" value={f.social_activity} onChange={(v) => setF({ ...f, social_activity: v })}>
+          <option value="">— Non renseigné</option>
+          {(meta?.social_activities || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+        </Select>
         <Select label="Source" value={f.source} onChange={(v) => setF({ ...f, source: v })}>
           {(meta?.sources || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
         </Select>

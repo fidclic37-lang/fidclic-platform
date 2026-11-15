@@ -88,6 +88,8 @@ function Detail({ id, ver, meta, onChanged, onEdit, admin, say }) {
               {p.instagram ? <a href={p.instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="text-[#E1306C]"><Instagram size={17} /></a> : null}
               {p.facebook ? <a href={p.facebook} target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="text-[#1877F2]"><Facebook size={17} /></a> : null}
               {!p.instagram && !p.facebook && '—'}</span></p>
+            <p className="grid grid-cols-[110px_1fr] gap-2 py-0.5"><span className="text-[#64748B]">Activité réseaux</span>
+              <span data-testid="social-activity">{p.social_activity_label || '—'}</span></p>
           </div>
           <div>
             <p className="mb-2 font-semibold text-[#0B1C3F]">Statut & suivi</p>
@@ -161,7 +163,7 @@ export default function CrmProspectsPage() {
   const [meta, setMeta] = useState(null);
   const [o, setO] = useState(null);
   const [list, setList] = useState(null);
-  const [f, setF] = useState(() => ({ q: params.get('q') || '', sector: '', city: '', stage: params.get('stage') || '', assigned: params.get('assigned') || '', source: '' }));
+  const [f, setF] = useState(() => ({ q: params.get('q') || '', sector: '', city: '', stage: params.get('stage') || '', assigned: params.get('assigned') || '', source: '', social: '' }));
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [sel, setSel] = useState(params.get('open') || null);
@@ -247,10 +249,11 @@ export default function CrmProspectsPage() {
                     <Select value={f.stage} onChange={setFilter('stage')}><option value="">Tous les statuts</option>{(meta?.stages || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</Select>
                     <Select value={f.assigned} onChange={setFilter('assigned')}><option value="">Tous les assignés</option><option value="none">Personne</option>{(meta?.users || []).map((u) => <option key={u.email} value={u.email}>{u.name}</option>)}</Select>
                     <Select value={f.source} onChange={setFilter('source')}><option value="">Toutes les sources</option>{(meta?.sources || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</Select>
+                    <Select value={f.social} onChange={setFilter('social')} aria-label="Activité réseaux"><option value="">Toute activité réseaux</option>{(meta?.social_activities || []).map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}<option value="none">Non renseigné</option></Select>
                   </div>
                   <div className="mb-2 flex items-center justify-between text-[12.5px] text-[#64748B]">
                     <span>{nf(list?.total || 0)} prospect{list?.total > 1 ? 's' : ''} trouvé{list?.total > 1 ? 's' : ''}</span>
-                    <button type="button" onClick={() => { setPage(1); setParams({}); setF({ q: '', sector: '', city: '', stage: '', assigned: '', source: '' }); }} className="inline-flex items-center gap-1.5 rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[#2F6BFF]"><RotateCcw size={13} /> Réinitialiser</button>
+                    <button type="button" onClick={() => { setPage(1); setParams({}); setF({ q: '', sector: '', city: '', stage: '', assigned: '', source: '', social: '' }); }} className="inline-flex items-center gap-1.5 rounded-lg border border-[#DCE3EE] px-3 py-1.5 text-[#2F6BFF]"><RotateCcw size={13} /> Réinitialiser</button>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[1000px] text-[12.5px]">
