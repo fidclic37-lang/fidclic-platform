@@ -54,6 +54,10 @@ STAGES = [
 ]
 STAGE_KEYS = [k for k, _ in STAGES]
 FUNNEL = [k for k in STAGE_KEYS if k != "perdu"]
+# How active a business is on social media (user, 2026-11-15) — set by hand
+# next to its links, filtered in the list.
+SOCIAL_ACTIVITY = [("tres_actif", "Très actif"), ("moyen", "Moyennement actif"),
+                   ("peu_actif", "Peu actif"), ("inactif", "Inactif")]
 SOURCES = [("google", "Recherche Google"), ("import", "Fichiers / Import"), ("social", "Réseaux sociaux"),
            ("recommandation", "Recommandations"), ("evenement", "Événements"), ("inscription", "Inscription FidClic"),
            ("autre", "Autres")]
@@ -325,6 +329,8 @@ def _row(p: Dict[str, Any], users: Dict[str, Dict[str, Any]], last: Optional[Dic
         "contact_name": p.get("contact_name") or "", "contact_role": p.get("contact_role") or "",
         "phone": p.get("phone") or "", "email": p.get("email") or "", "website": p.get("website") or "",
         "instagram": p.get("instagram") or "", "facebook": p.get("facebook") or "", "siret": p.get("siret") or "",
+        "social_activity": p.get("social_activity") or None,
+        "social_activity_label": dict(SOCIAL_ACTIVITY).get(p.get("social_activity") or "", ""),
         "size": p.get("size") or 1, "stage": p.get("stage") or "nouveau",
         "stage_label": dict(STAGES).get(p.get("stage") or "nouveau"), "lost_reason": p.get("lost_reason"),
         "source": p.get("source") or "autre", "source_label": dict(SOURCES).get(p.get("source") or "autre", "Autres"),
@@ -337,7 +343,7 @@ def _row(p: Dict[str, Any], users: Dict[str, Dict[str, Any]], last: Optional[Dic
 
 
 def _filter(q: str = "", sector: str = "", city: str = "", stage: str = "", assigned: str = "",
-            source: str = "") -> Dict[str, Any]:
+            source: str = "", social: str = "") -> Dict[str, Any]:
     f: Dict[str, Any] = {}
     if q:
         rx = {"$regex": re.escape(q.strip()), "$options": "i"}
@@ -352,15 +358,17 @@ def _filter(q: str = "", sector: str = "", city: str = "", stage: str = "", assi
         f["assigned_to"] = None if assigned == "none" else assigned
     if source:
         f["source"] = source
+    if social:
+        f["social_activity"] = None if social == "none" else social
     return f
 
 
 @router.get("/api/crm/prospects")
 def list_prospects(q: str = "", sector: str = "", city: str = "", stage: str = "", assigned: str = "", source: str = "",
-                   sort: str = "-last_activity_at", page: int = 1, per_page: int = 10,
+                   social: str = "", sort: str = "-last_activity_at", page: int = 1, per_page: int = 10,
                    token_data: TokenData = Depends(require_admin("crm"))):
     page, per_page = max(1, int(page)), max(1, min(200, int(per_page)))
-    f = _filter(q, sector, city, stage, assigned, source)
+    f = _filter(q, sector, city, stage, assigned, source, social)
     key, direction = (sort[1:], -1) if sort.startswith("-") else (sort, 1)
     if key not in ("name", "city", "sector", "stage", "last_activity_at", "created_at"):
         key = "last_activity_at"
@@ -373,7 +381,7 @@ def list_prospects(q: str = "", sector: str = "", city: str = "", stage: str = "
         lasts.setdefault(a["prospect_id"], a)
     # The stage bar above the list: how many prospects each stage holds with
     # the other filters as they are, so one click moves from stage to stage.
-    base = _filter(q, sector, city, "", assigned, source)
+    base = _filter(q, sector, city, "", assigned, source, social)
     stage_counts = {"all": _db.crm_prospects.count_documents(base),
                     **{k: _db.crm_prospects.count_documents({**base, "stage": k}) for k in STAGE_KEYS}}
     return {"rows": [_row(r, users, lasts.get(r["id"])) for r in rows], "total": total, "page": page,
@@ -386,6 +394,7 @@ def meta(token_data: TokenData = Depends(require_admin("crm"))):
     return {
         "stages": [{"key": k, "label": v} for k, v in STAGES],
         "sources": [{"key": k, "label": v} for k, v in SOURCES],
+        "social_activities": [{"key": k, "label": v} for k, v in SOCIAL_ACTIVITY],
         "lost_reasons": LOST_REASONS,
         "task_types": [{"key": k, "label": v} for k, v in TASK_TYPES],
         "priorities": list(PRIORITIES),
@@ -431,6 +440,7 @@ class ProspectIn(BaseModel):
     website: Optional[str] = Field(None, max_length=200)
     instagram: Optional[str] = Field(None, max_length=200)
     facebook: Optional[str] = Field(None, max_length=200)
+    social_activity: Optional[str] = Field(None, max_length=20)      # SOCIAL_ACTIVITY key, "" = clear
     siret: Optional[str] = Field(None, max_length=20)
     size: Optional[int] = Field(None, ge=1, le=10000)
     source: Optional[str] = None
@@ -447,6 +457,11 @@ def _clean(body: ProspectIn) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
     if "siret" in d:
         d["siret"] = re.sub(r"\D", "", d["siret"])
+    if "social_activity" in d:
+        if not d["social_activity"]:
+            d["social_activity"] = None                       # « — »: cleared
+        elif d["social_activity"] not in dict(SOCIAL_ACTIVITY):
+            raise HTTPException(status_code=400, detail="Activité sur les réseaux inconnue.")
     if "source" in d and d["source"] not in dict(SOURCES):
         raise HTTPException(status_code=400, detail="Source inconnue.")
     if "stage" in d and d["stage"] not in STAGE_KEYS:
@@ -877,19 +892,20 @@ def import_commit(body: ImportIn, token_data: TokenData = Depends(require_admin(
 
 @router.get("/api/crm/export")
 def export(q: str = "", sector: str = "", city: str = "", stage: str = "", assigned: str = "", source: str = "",
-           ids: str = "", token_data: TokenData = Depends(require_admin("crm"))):
+           ids: str = "", social: str = "", token_data: TokenData = Depends(require_admin("crm"))):
     # « ids » = the rows ticked in a list: export just those (comma-separated).
-    f = {"id": {"$in": [i for i in ids.split(",") if i]}} if ids.strip() else _filter(q, sector, city, stage, assigned, source)
+    f = {"id": {"$in": [i for i in ids.split(",") if i]}} if ids.strip() else _filter(q, sector, city, stage, assigned, source, social)
     rows = list(_db.crm_prospects.find(f, {"_id": 0}).sort("name", 1))
     users = _users()
     buf = io.StringIO()
     w = safe_csv.writer(buf)
     w.writerow(["Réf", "Nom du commerce", "Secteur", "Ville", "Code postal", "Adresse", "Contact", "Téléphone", "Email",
-                "Site web", "SIRET", "Statut", "Motif de perte", "Source", "Assigné à", "Sur FidClic", "Dernière activité"])
+                "Site web", "Instagram", "Facebook", "Activité réseaux", "SIRET", "Statut", "Motif de perte", "Source", "Assigné à", "Sur FidClic", "Dernière activité"])
     for p in rows:
         r = _row(p, users)
         w.writerow([r["ref"] or "", r["name"], r["sector"], r["city"], r["postal_code"], r["address"], r["contact_name"],
-                    r["phone"], r["email"], r["website"], r["siret"], r["stage_label"], r["lost_reason"] or "",
+                    r["phone"], r["email"], r["website"], r["instagram"], r["facebook"],
+                    r["social_activity_label"], r["siret"], r["stage_label"], r["lost_reason"] or "",
                     r["source_label"], r["assigned_name"] or "", "oui" if r["on_fidclic"] else "non",
                     (r["last_activity_at"] or "")[:10]])
     return Response(content=("﻿" + buf.getvalue()).encode("utf-8"), media_type="text/csv; charset=utf-8",
@@ -947,12 +963,12 @@ def calendar(date_from: str = Query(..., alias="from"), date_to: str = Query(...
 # Pipeline — the board
 # ---------------------------------------------------------------------------
 @router.get("/api/crm/pipeline")
-def pipeline(q: str = "", sector: str = "", city: str = "", assigned: str = "", source: str = "",
+def pipeline(q: str = "", sector: str = "", city: str = "", assigned: str = "", source: str = "", social: str = "",
              token_data: TokenData = Depends(require_admin("crm"))):
     users = _users()
     cols = []
     for key, label in STAGES:
-        f = {**_filter(q, sector, city, key, assigned, source)}
+        f = {**_filter(q, sector, city, key, assigned, source, social)}
         count = _db.crm_prospects.count_documents(f)
         rows = list(_db.crm_prospects.find(f, {"_id": 0}).sort("last_activity_at", -1).limit(60))
         cols.append({"key": key, "label": label, "count": count, "rows": [_row(r, users) for r in rows]})
