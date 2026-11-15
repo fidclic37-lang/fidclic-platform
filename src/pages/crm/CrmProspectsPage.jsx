@@ -275,7 +275,14 @@ export default function CrmProspectsPage() {
                               {menu === p.id && (
                                 <span {...rm.menuProps} className="z-50 flex w-44 flex-col overflow-hidden rounded-xl border border-[#E6EEFB] bg-white py-1 shadow-[0_24px_60px_-28px_rgba(11,28,63,.5)]">
                                   <button type="button" role="menuitem" onClick={() => { setMenu(null); setModal({ type: 'edit', prospect: p }); }} className="flex items-center gap-2 px-3 py-2 text-left hover:bg-[#F4F7FC]"><Pencil size={13} /> Modifier</button>
-                                  {admin && !p.on_fidclic && <button type="button" role="menuitem" onClick={async () => { setMenu(null); if (window.confirm(`Supprimer « ${p.name} » du CRM ?`)) { await crmAPI.deleteProspect(p.id); if (sel === p.id) setSel(null); refresh('Prospect supprimé.'); } }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><Trash2 size={13} /> Supprimer</button>}
+                                  {/* a business on FidClic leaves the CRM only (user, 2026-11-15) — Commerces, its plan and its data stay */}
+                                  {admin && <button type="button" role="menuitem" onClick={async () => {
+                                    setMenu(null);
+                                    const msg = p.on_fidclic
+                                      ? `Supprimer « ${p.name} » du CRM ?\n\nLe commerce reste sur FidClic (Commerces, abonnement, clients) : il disparaît seulement du CRM et n'y reviendra pas.`
+                                      : `Supprimer « ${p.name} » du CRM ?`;
+                                    if (window.confirm(msg)) { await crmAPI.deleteProspect(p.id); if (sel === p.id) setSel(null); refresh(p.on_fidclic ? 'Commerce retiré du CRM.' : 'Prospect supprimé.'); }
+                                  }} className="flex items-center gap-2 px-3 py-2 text-left text-[#E11D48] hover:bg-[#FEF2F2]"><Trash2 size={13} /> {p.on_fidclic ? 'Supprimer du CRM' : 'Supprimer'}</button>}
                                 </span>
                               )}
                             </td>
