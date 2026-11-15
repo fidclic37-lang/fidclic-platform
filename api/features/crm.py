@@ -202,14 +202,24 @@ def _link_tenant(pid: str, t: Dict[str, Any], by: Optional[str], at: Optional[da
              frm=p.get("stage"), to=stage, auto=True, at=at)
 
 
+def _removed_tenants() -> set:
+    """Businesses the super admin took out of the CRM (« Supprimer du CRM »,
+    user 2026-11-15): they stay on FidClic, the CRM never shows them again."""
+    try:
+        return {r["tenant_id"] for r in _db.crm_removed_tenants.find({}, {"_id": 0, "tenant_id": 1}) if r.get("tenant_id")}
+    except Exception:
+        return set()
+
+
 def sync_tenants() -> Dict[str, int]:
     """Every business on FidClic has its prospect, at the stage its account
-    says. Idempotent."""
+    says — except those taken out of the CRM. Idempotent."""
     out = {"created": 0, "updated": 0}
+    removed = _removed_tenants()
     linked = {p["tenant_id"]: p["id"] for p in _db.crm_prospects.find({"tenant_id": {"$ne": None}}, {"tenant_id": 1, "id": 1})}
     # A sign-up still in onboarding is a hidden draft, not a business yet.
     for t in _db.tenants.find({"onboarding_status": {"$nin": ["verify", "company", "plan"]}, "deleted_at": None}, {"_id": 0}):
-        if not t.get("id"):
+        if not t.get("id") or t["id"] in removed:
             continue
         pid = linked.get(t["id"]) or (_match({**_tenant_fields(t)}) or {}).get("id")
         if pid:
@@ -263,6 +273,12 @@ def _match(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _match_tenant(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    removed = _removed_tenants()          # taken out of the CRM: never linked again
+    t = _match_tenant_any(row)
+    return None if t and t.get("id") in removed else t
+
+
+def _match_tenant_any(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if row.get("siret"):
         t = _db.tenants.find_one({"siret": re.sub(r"\D", "", row["siret"])}, {"_id": 0})
         if t:
@@ -539,7 +555,15 @@ def delete_prospect(pid: str, token_data: TokenData = Depends(require_super())):
     if not p:
         raise HTTPException(status_code=404, detail="Prospect introuvable")
     if p.get("tenant_id"):
-        raise HTTPException(status_code=409, detail="Un commerce inscrit sur FidClic ne se supprime pas du CRM.")
+        # A business on FidClic leaves the CRM only (user, 2026-11-15): the
+        # business itself is not touched, and the sync never brings it back.
+        import server as core
+        _db.crm_removed_tenants.update_one(
+            {"tenant_id": p["tenant_id"]},
+            {"$set": {"tenant_id": p["tenant_id"], "name": p.get("name"), "at": _now(), "by": token_data.email}},
+            upsert=True)
+        core.log_audit("crm.prospect_removed", actor=token_data.email, actor_type="user", target=pid,
+                       tenant_id=p["tenant_id"], meta={"name": p.get("name")})
     _db.crm_prospects.delete_one({"id": pid})
     _db.crm_activities.delete_many({"prospect_id": pid})
     _db.crm_tasks.delete_many({"prospect_id": pid})
