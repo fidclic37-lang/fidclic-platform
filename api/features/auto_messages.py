@@ -206,7 +206,8 @@ def review_link(barcode_id: str, b: Optional[str] = None):
         if not b:
             from features import automations as AU
             b = AU._last_branch(cust["tenant_id"], cust)
-        url = next((x.get("google_review_url") for x in branches if x["id"] == b), None)
+        from features import automations as AU
+        url = AU._branch_link(tenant, next((x for x in branches if x["id"] == b), None)) or None
     url = url or tenant.get("google_review_url") or next((x.get("google_review_url") for x in branches
                                                           if x.get("google_review_url")), None)
     if not url:

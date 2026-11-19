@@ -301,6 +301,8 @@ export default function AutomationEditorPage() {
   useEffect(() => { ownerAPI.temoinSettings().then(({ data }) => setTemoinOn(data.enabled !== false)).catch(() => {}); }, []);
   const [zone, setZone] = useState(null);             // géolocalisation: detections + weather now
   const [links, setLinks] = useState({});             // Avis Google: the shop's (or each établissement's) link
+  const [googleOn, setGoogleOn] = useState({});       // Avis Google: each établissement's switch (the others')
+  const [rowStore, setRowStore] = useState(null);     // the établissement the edited automation is for
   const [menuOpen, setMenuOpen] = useState(false);    // the header's « ••• » (Client inactif mockups)
   const [pvTab, setPvTab] = useState('mobile');       // Bienvenue: « Aperçu sur mobile » / « Aperçu Wallet »
   const [refSide, setRefSide] = useState('parrain');  // Parrainage: the message being written
@@ -324,11 +326,13 @@ export default function AutomationEditorPage() {
     ownerAPI.automations().then(({ data }) => {
       setPage(data);
       setLinks(data.google?.links || {});
+      setGoogleOn(data.google?.on || {});
       if (data.referral) setRefCfg({ ...data.referral });
       const meta = Object.fromEntries(data.scenarios.map((x) => [x.key, x]));
       if (editing) {
         const row = data.rows.find((r) => r.id === id);
         if (!row) { setError('Automatisation introuvable.'); return; }
+        setRowStore((row.store_ids || []).length === 1 ? row.store_ids[0] : null);
         const d = defaults(row.scenario, meta[row.scenario]);
         const rf = row.targeting?.filters || {};
         const trig = { ...d.trigger, ...row.trigger };
@@ -444,6 +448,12 @@ export default function AutomationEditorPage() {
   const lastStep = welcomeOn || s.scenario === 'referral' ? 3 : 6;
   const googleStores = page.google?.stores || [];
   const googleKeys = googleStores.length > 1 ? googleStores.map((b) => b.id) : ['main'];
+  // 1 établissement or many, one rule (user, 2026-11-19): only the one this automation is for
+  // needs its link; the others' may wait, each with its own « Activer »
+  const ownGoogle = googleStores.length > 1
+    ? ([rowStore, page.google?.open].find((k) => googleKeys.includes(k)) || googleKeys[0]) : 'main';
+  const googleOrder = [ownGoogle, ...googleKeys.filter((k) => k !== ownGoogle)];
+  const storeName = (k) => (googleStores.find((b) => b.id === k) || {}).name;
   const msg = s.message;
   const btn = msg.button;
   const tg = s.targeting;
@@ -529,10 +539,12 @@ export default function AutomationEditorPage() {
     if (n === 1 && !s.scenario) return 'Choisissez un scénario.';
     if (n === 1 && s.scenario === 'google_review') {
       if (!s.name.trim()) return "Donnez un nom à l'automatisation.";
-      const miss = googleKeys.find((k) => !String(links[k] || '').trim());
-      if (miss) return miss === 'main' ? 'Ajoutez le lien vers votre fiche Google Avis.' : `Ajoutez le lien Google de « ${(googleStores.find((b) => b.id === miss) || {}).name} ».`;
-      const bad = googleKeys.find((k) => !LINK_RE.test(fullLink(links[k])));
-      if (bad) return 'Lien Google invalide : collez l\'adresse de votre fiche, par exemple https://g.page/r/…/review.';
+      const filled = (k) => String(links[k] || '').trim();
+      if (!filled(ownGoogle)) return ownGoogle === 'main' ? 'Ajoutez le lien vers votre fiche Google Avis.' : `Ajoutez le lien Google de « ${storeName(ownGoogle)} ».`;
+      const bad = googleKeys.find((k) => filled(k) && !LINK_RE.test(fullLink(links[k])));
+      if (bad) return bad === 'main' || bad === ownGoogle ? 'Lien Google invalide : collez l\'adresse de votre fiche, par exemple https://g.page/r/…/review.' : `Lien Google de « ${storeName(bad)} » invalide.`;
+      const offLink = googleOrder.slice(1).find((k) => googleOn[k] && !filled(k));
+      if (offLink) return `Ajoutez le lien Google de « ${storeName(offLink)} » pour l'activer.`;
     }
     if (n === 2) {
       const num = (v, lo, hi, l) => (!Number.isInteger(Number(v)) || Number(v) < lo || Number(v) > hi ? `${l} : entre ${lo} et ${hi}.` : '');
@@ -683,7 +695,8 @@ export default function AutomationEditorPage() {
       valid_from: sc.valid_from || null, valid_to: sc.valid_to || null, daily_limit: null },
   } : {
     scenario: s.scenario, name: s.name, status, description: s.scenario === 'google_review' ? '' : (s.description || ''),
-    ...(s.scenario === 'google_review' ? { google_links: Object.fromEntries(Object.entries(links).map(([k, v]) => [k, fullLink(v)])) } : {}),
+    ...(s.scenario === 'google_review' ? { google_links: Object.fromEntries(googleKeys.map((k) => [k, fullLink(links[k])])),
+      ...(googleStores.length > 1 ? { google_on: Object.fromEntries(googleOrder.slice(1).map((k) => [k, !!googleOn[k]])) } : {}) } : {}),
     trigger: s.scenario === 'near_reward' ? { threshold: Number(tr.threshold) } : { ...tr, offset_days: Number(tr.offset_days || 0),
       ...(s.scenario === 'birthday' ? { offer_days: Number(tr.offer_days ?? 7) || 7 } : {}),
       ...(s.scenario === 'tier_up' ? { threshold: Number(tr.threshold) || 0, min_days: Number(tr.min_days) || 7,
@@ -788,15 +801,29 @@ export default function AutomationEditorPage() {
         <div className="mt-3">
           {googleStores.length > 1 ? (
             <>
-              <Label>Liens vers les fiches Google Avis *</Label>
+              <Label>Liens vers les fiches Google Avis</Label>
               <div className="space-y-2">
-                {googleStores.map((b) => (
-                  <label key={b.id} className="block"><span className="mb-1 block text-[12px] font-semibold text-[#475569]">{b.name}</span>
-                    <span className={`${field} flex items-center gap-2 !py-0`}><Link2 size={16} className="shrink-0 text-[#64748B]" />
-                      <input className="min-w-0 flex-1 !border-0 bg-transparent py-2.5 !text-[14px] !shadow-none !outline-none !ring-0" inputMode="url"
-                             aria-label={`Lien Google Avis de ${b.name}`} placeholder="https://g.page/votre-entreprise/review"
-                             value={links[b.id] || ''} onChange={(e) => setLinks({ ...links, [b.id]: e.target.value })} /></span></label>
-                ))}
+                {googleOrder.map((k) => {
+                  const own = k === ownGoogle;
+                  const filled = !!String(links[k] || '').trim();
+                  return (
+                    <div key={k} data-testid={`google-store-${k}`}>
+                      <label className="block"><span className="mb-1 block text-[12px] font-semibold text-[#475569]">
+                        {storeName(k)}{own ? ' — établissement ouvert *' : ' (facultatif)'}</span>
+                        <span className={`${field} flex items-center gap-2 !py-0`}><Link2 size={16} className="shrink-0 text-[#64748B]" />
+                          <input className="min-w-0 flex-1 !border-0 bg-transparent py-2.5 !text-[14px] !shadow-none !outline-none !ring-0" inputMode="url"
+                                 aria-label={`Lien Google Avis de ${storeName(k)}`} placeholder="https://g.page/votre-entreprise/review"
+                                 value={links[k] || ''} onChange={(e) => setLinks({ ...links, [k]: e.target.value })} /></span></label>
+                      {!own && (
+                        <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-[12px] text-[#475569]">
+                          <span>{googleOn[k] ? `Avis Google activé pour « ${storeName(k)} »` : `Activer aussi l'avis Google pour « ${storeName(k)} »`}</span>
+                          <Toggle on={!!googleOn[k]} disabled={!filled && !googleOn[k]} label={`Activer l'avis Google pour ${storeName(k)}`}
+                                  onChange={(v) => setGoogleOn({ ...googleOn, [k]: v })} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           ) : (
@@ -808,7 +835,7 @@ export default function AutomationEditorPage() {
           )}
           <p className="mt-2 flex items-start gap-2 rounded-xl bg-[#F1F6FF] px-3 py-2.5 text-[12px] leading-snug text-[#334155]"><Info size={16} className="mt-0.5 shrink-0 text-[#1463FF]" />
             <span><b className="block text-[#0B1C3F]">Où trouver ce lien ?</b>Rendez-vous sur votre fiche Google Business, cliquez sur « Obtenir plus d'avis » puis sur « Copier le lien ». Collez ce lien ici pour que vos clients puissent laisser un avis directement.
-              {googleStores.length > 1 ? " Chaque établissement a sa fiche : le client reçoit le lien de l'établissement où il est venu." : ' Le même lien est utilisé dans Insights › Avis Google.'}</span></p>
+              {googleStores.length > 1 ? " Chaque établissement a sa fiche : le client reçoit le lien de l'établissement où il est venu. Seul le lien de l'établissement ouvert est obligatoire ; ajoutez les autres maintenant ou plus tard." : ' Le même lien est utilisé dans Insights › Avis Google.'}</span></p>
         </div>
       )}
     </Card>

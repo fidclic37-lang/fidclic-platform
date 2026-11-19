@@ -1465,8 +1465,20 @@ def review_link(tid: str, branch_id: Optional[str] = None) -> Optional[str]:
     branches = [b for b in t.get("branches") or [] if b.get("id") and b.get("status") != "closed"]
     if len(branches) > 1:
         b = next((x for x in branches if x["id"] == branch_id), None)
-        return (b or {}).get("google_review_url") or None
+        return _branch_link(t, b) or None
     return t.get("google_review_url") or (branches[0].get("google_review_url") if branches else None) or None
+
+
+MAIN_STORE = "main"     # the account's own établissement (team_access.MAIN): the shop's link is its link
+
+
+def _branch_link(t: Dict[str, Any], b: Optional[Dict[str, Any]]) -> str:
+    """An établissement's Google link. The main store's is its own, else the
+    shop's (Insights › Avis Google) — user, 2026-11-19: BBC's link went to the
+    shop and BBC never had one."""
+    if not b:
+        return ""
+    return b.get("google_review_url") or (t.get("google_review_url") if b.get("id") == MAIN_STORE else "") or ""
 
 
 def _last_branch(tid: str, cust: Dict[str, Any]) -> Optional[str]:
@@ -2379,6 +2391,9 @@ def _list(tid: str, token: TokenData, request: Any = None) -> Dict[str, Any]:
         "has_position": CP._has_position(tid),
         "google_review_ready": bool(tenant.get("google_reviews_enabled") and any(current_links(tid).values())),
         "google": {"links": current_links(tid), "enabled": bool(tenant.get("google_reviews_enabled")),
+                   "open": own_store(tid, menu),
+                   "on": {k: scenario_on(tid, "google_review", None if k == MAIN_STORE and len(_branches(tid)) < 2 else k)
+                          for k in current_links(tid)},
                    "stores": [{"id": b["id"], "name": b.get("name") or "Établissement"} for b in _branches(tid)]
                    if len(_branches(tid)) > 1 else []},
         "geo_ready": bool(tenant.get("geo_enabled")),
@@ -2522,6 +2537,7 @@ class AutomationIn(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     google_links: Optional[Dict[str, Any]] = None   # Avis Google: {"main": url} or {branch_id: url}
+    google_on: Optional[Dict[str, Any]] = None      # Avis Google: the OTHER établissements switched on / off here
     status: str = "active"
     trigger: Dict[str, Any] = {}
     message: MessageIn
@@ -2593,8 +2609,11 @@ def _clean_message(m: "MessageIn", sc: str, tid: str, required: bool) -> Dict[st
     return {"title": title, "body": text, "image_url": img, "button": button}
 
 
-def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
-    """Everything the wizard sends, checked again. French errors."""
+def clean(body: AutomationIn, tid: str, store: Optional[str] = None,
+          may_write: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Everything the wizard sends, checked again. French errors. `store`: the
+    établissement the automation is for (its menu's), `may_write`: the ones the
+    account may write (None = all)."""
     sc = body.scenario
     if sc not in SCENARIOS:
         raise HTTPException(status_code=400, detail="Scénario inconnu.")
@@ -2915,7 +2934,8 @@ def clean(body: AutomationIn, tid: str) -> Dict[str, Any]:
     desc = "" if sc == "google_review" else re.sub(r"[ \t]+", " ", body.description or "").strip()
     if len(desc) > DESC_MAX:
         raise HTTPException(status_code=400, detail=f"Description : {DESC_MAX} caractères au maximum.")
-    links = _clean_links(tid, body.google_links, draft) if sc == "google_review" else None
+    links = _clean_links(tid, body.google_links, draft, store, body.google_on, may_write) \
+        if sc == "google_review" else None
     out = {
         "scenario": sc, "name": name, "description": desc, "status": body.status, "trigger": tr,
         "message": message,
@@ -2981,28 +3001,63 @@ def current_links(tid: str) -> Dict[str, str]:
     t = _db.tenants.find_one({"id": tid}, {"_id": 0, "google_review_url": 1, "branches": 1}) or {}
     branches = _branches(tid)
     if len(branches) > 1:
-        return {b["id"]: b.get("google_review_url") or "" for b in branches}
+        return {b["id"]: _branch_link(t, b) for b in branches}
     return {"main": t.get("google_review_url") or (branches[0].get("google_review_url") if branches else "") or ""}
 
 
-def _clean_links(tid: str, raw: Any, draft: bool) -> Dict[str, str]:
-    """1 établissement: the shop's link (the one in Insights › Avis Google).
-    2+: each établissement's own link, all required (user, 2026-10-11)."""
-    raw = raw if isinstance(raw, dict) else current_links(tid)
+def own_store(tid: str, store: Optional[str] = None) -> str:
+    """The établissement an Avis Google speaks for: the one open in the menu
+    (2+), « main » for a shop with one."""
+    ids = [b["id"] for b in _branches(tid)]
+    if len(ids) < 2:
+        return MAIN_STORE
+    return store if store in ids else ids[0]
+
+
+def store_link(tid: str, store: Optional[str] = None) -> str:
+    """The Google link of the open établissement (Insights › Avis Google)."""
+    return current_links(tid).get(own_store(tid, store)) or ""
+
+
+def _row_store(row: Dict[str, Any]) -> Optional[str]:
+    ids = row.get("store_ids") or []
+    return ids[0] if len(ids) == 1 else None
+
+
+def _clean_links(tid: str, raw: Any, draft: bool, store: Optional[str] = None,
+                 turn_on: Any = None, allowed: Optional[List[str]] = None) -> Dict[str, str]:
+    """1 établissement or many, one rule (user, 2026-11-19): the link of the
+    établissement this automation is for is required; the others' may be
+    given now or later. Each given one must be a link; one switched on
+    (`turn_on`) needs its link; an établissement whose Avis Google runs keeps
+    its link. Returns the links given (an emptied one as "")."""
+    current = current_links(tid)
+    raw = raw if isinstance(raw, dict) else current
+    turn_on = turn_on if isinstance(turn_on, dict) else {}
     branches = _branches(tid)
-    spots = [(b["id"], b.get("name") or "Établissement") for b in branches] if len(branches) > 1 else [("main", None)]
+    spots = [(b["id"], b.get("name") or "Établissement") for b in branches] if len(branches) > 1 else [(MAIN_STORE, None)]
+    own = own_store(tid, store)
     out: Dict[str, str] = {}
     for key, label in spots:
-        v = str(raw.get(key) or "").strip()
+        if allowed is not None and key != own and key not in allowed:
+            continue                               # not this account's établissement: never written from here
+        given = key in raw
+        v = str(raw.get(key) or "").strip() if given else (current.get(key) or "")
         u = safe_url(v) if v else None
         if v and not u:
             raise HTTPException(status_code=400, detail=(f"Lien Google de « {label} » invalide." if label else
                                                          "Lien Google invalide : collez l'adresse de votre fiche, par exemple https://g.page/r/…/review."))
-        if not u and not draft:
+        if not u and key == own and not draft:
             raise HTTPException(status_code=400, detail=(f"Ajoutez le lien Google de « {label} »." if label else
                                                          "Ajoutez le lien vers votre fiche Google Avis."))
-        if u:
-            out[key] = u
+        if not u and key != own and turn_on.get(key) is True:
+            raise HTTPException(status_code=400, detail=f"Ajoutez le lien Google de « {label} » pour l'activer.")
+        if not u and key != own and current.get(key) and turn_on.get(key) is not False \
+                and scenario_on(tid, "google_review", key):
+            raise HTTPException(status_code=400, detail=f"L'avis Google de « {label} » est activé : gardez son lien "
+                                                        "ou désactivez-le.")
+        if given:
+            out[key] = u or ""
     return out
 
 
@@ -3012,11 +3067,49 @@ def _save_links(tid: str, links: Optional[Dict[str, str]]) -> None:
     if not links:
         return
     for key, url in links.items():
-        if key == "main":
-            _db.tenants.update_one({"id": tid}, {"$set": {"google_review_url": url}})
-        else:
-            _db.tenants.update_one({"id": tid, "branches.id": key}, {"$set": {"branches.$.google_review_url": url}})
-    _db.tenants.update_one({"id": tid}, {"$set": {"google_reviews_enabled": True}})
+        write_link(tid, key, url)
+    if any(links.values()):
+        _db.tenants.update_one({"id": tid}, {"$set": {"google_reviews_enabled": True}})
+
+
+def write_link(tid: str, key: str, url: str) -> None:
+    """One établissement's Google link. « main » is the shop's — and the id of
+    the account's own établissement when there are several: both get it."""
+    if key == MAIN_STORE:
+        _db.tenants.update_one({"id": tid}, {"$set": {"google_review_url": url}})
+    _db.tenants.update_one({"id": tid, "branches.id": key}, {"$set": {"branches.$.google_review_url": url}})
+
+
+def apply_google_on(tid: str, turn_on: Any, own: str, template: Dict[str, Any],
+                    allowed: Optional[List[str]] = None) -> None:
+    """« Activer » ticked for another établissement in the Avis Google editor:
+    its own Avis Google goes on (made from this one if it has none); unticked:
+    it goes off. Its link was checked and saved just before."""
+    if not isinstance(turn_on, dict):
+        return
+    stores = _open_store_ids(tid)
+    at = _now()
+    for sid, on in turn_on.items():
+        if sid == own or sid not in stores or (allowed is not None and sid not in allowed):
+            continue
+        rows = list(_db.automations.find({"tenant_id": tid, "scenario": "google_review", "store_ids": [sid]}, {"_id": 0}))
+        if on is True:
+            if any(running(r, at) for r in rows):
+                continue
+            ready = sorted((r for r in rows if not ended(r, at)), key=lambda r: r.get("status") != "paused")
+            if ready:
+                _db.automations.update_one({"id": ready[0]["id"]}, {"$set": {"status": "active", "updated_at": at}})
+            else:
+                copy = {k: v for k, v in template.items() if k != "_id"}
+                copy.update({"id": str(uuid.uuid4()), "store_ids": [sid], "status": "active", "created_at": at,
+                             "updated_at": at, "last_run_at": None,
+                             "order": _db.automations.count_documents({"tenant_id": tid})})
+                _db.automations.insert_one(copy)
+        elif on is False:
+            for r in rows:
+                if r.get("status") == "active":
+                    _db.automations.update_one({"id": r["id"]}, {"$set": {"status": "paused", "updated_at": at}})
+                    _cancel_waiting(r["id"])
 
 
 def _own(tid: str, aid: str) -> Dict[str, Any]:
@@ -3119,7 +3212,8 @@ def set_switch(token: TokenData, scenario: str, on: bool, store: Optional[str] =
     mine = sorted((r for r in rows if r["scenario"] == scenario and not ended(r)),
                   key=lambda r: r.get("status") != "paused")   # a draft may be unfinished
     if mine:
-        clean(AutomationIn(**{**mine[0], "status": "active", "google_links": current_links(tid)}), tid)
+        clean(AutomationIn(**{**mine[0], "status": "active", "google_links": current_links(tid)}), tid,
+              store=_row_store(mine[0]) or store)
         _db.automations.update_one({"id": mine[0]["id"]}, {"$set": {"status": "active", "updated_at": at}})
         return True
     trade = trade_meta(_db.tenants.find_one({"id": tid}, {"_id": 0, "sector": 1, "activity_key": 1}))
@@ -3238,18 +3332,21 @@ def create_automation(body: AutomationIn, request: Request = None,
     tid = token_data.tenant_id
     _guard(token_data)
     migrate(tid)
-    data = clean(body, tid)
+    # the establishment chosen in the menu (multi-store PR5); else, as before
+    menu = _menu_store(tid, token_data, request)
+    allowed = _own_stores(token_data)
+    data = clean(body, tid, store=menu, may_write=allowed)
     if data["scenario"] == "geo":
         _geo_saved(tid, data)
     _save_links(tid, data.pop("google_links", None))
     doc = new_doc(tid, data["scenario"])
     doc.update(data)
-    # the establishment chosen in the menu (multi-store PR5); else, as before
-    menu = _menu_store(tid, token_data, request)
-    doc["store_ids"] = [menu] if menu else _own_stores(token_data)
+    doc["store_ids"] = [menu] if menu else allowed
     doc["order"] = _db.automations.count_documents({"tenant_id": tid})
     doc["created_by"] = token_data.email
     _db.automations.insert_one(dict(doc))
+    if doc["scenario"] == "google_review":
+        apply_google_on(tid, body.google_on, own_store(tid, menu), doc, allowed)
     _learned(tid, body, doc["id"])
     if doc["scenario"] == "geo":
         _wake_geo(tid)
@@ -3272,7 +3369,8 @@ def update_automation(aid: str, body: AutomationIn,
     _guard(token_data, row)
     if body.scenario != row["scenario"]:
         raise HTTPException(status_code=400, detail="Le scénario d'une automatisation ne change pas : créez-en une nouvelle.")
-    data = clean(body, tid)
+    allowed = _own_stores(token_data)
+    data = clean(body, tid, store=_row_store(row), may_write=allowed)
     _save_links(tid, data.pop("google_links", None))
     if data["scenario"] == "geo":
         r = (data.get("trigger") or {}).pop("radius_m", None)
@@ -3280,6 +3378,8 @@ def update_automation(aid: str, body: AutomationIn,
             _db.tenants.update_one({"id": tid}, {"$set": {"geo_radius_meters": int(r)}})
     data["updated_at"] = _now()
     _db.automations.update_one({"id": aid}, {"$set": data})
+    if data["scenario"] == "google_review":
+        apply_google_on(tid, body.google_on, own_store(tid, _row_store(row)), _own(tid, aid), allowed)
     _learned(tid, body, aid)
     if data["status"] != "active":
         _cancel_waiting(aid)
@@ -3303,7 +3403,8 @@ def set_status(aid: str, body: StatusIn, token_data: TokenData = Depends(require
         if ended(row):
             raise HTTPException(status_code=400, detail="Sa période de validité est terminée : modifiez la date de fin pour la réactiver.")
         # a draft is checked as a whole before it may run
-        clean(AutomationIn(**{**row, "status": "active", "google_links": current_links(tid)}), tid)
+        clean(AutomationIn(**{**row, "status": "active", "google_links": current_links(tid)}), tid,
+              store=_row_store(row))
     _db.automations.update_one({"id": aid}, {"$set": {"status": body.status, "updated_at": _now()}})
     if body.status != "active":
         _cancel_waiting(aid)

@@ -11587,7 +11587,7 @@ def submit_review(req: ReviewSubmit, request: Request = None):
     google_review_url = None
     try:
         from features.insights_page import google_invite_for
-        google_review_url = google_invite_for(review.get("tenant_id"), review.get("rating"))
+        google_review_url = google_invite_for(review.get("tenant_id"), review.get("rating"), review.get("customer_id"))
     except Exception as _e:
         print(f"review: google invite lookup failed (non-fatal): {_e}")
     return {"status": "ok", "review": review, "google_review_url": google_review_url}
