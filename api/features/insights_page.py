@@ -551,6 +551,13 @@ def _google_on(tenant: Dict[str, Any]) -> bool:
     return bool(tenant.get("google_reviews_enabled") and tenant.get("google_review_url"))
 
 
+def _store_google(tenant: Dict[str, Any], scope: Optional["S.Scope"] = None) -> Dict[str, Any]:
+    """The open établissement's Google link (user, 2026-11-19: every
+    établissement its own, one shop or many alike)."""
+    url = _automations().store_link(tenant.get("id") or "", getattr(scope, "single", None) if scope else None)
+    return {"url": url, "enabled": bool(tenant.get("google_reviews_enabled") and url)}
+
+
 def _referral_on(tid: str) -> bool:
     return bool((_db.referral_config.find_one({"tenant_id": tid}) or {}).get("enabled"))
 
@@ -913,7 +920,7 @@ def _actions(shop: Shop) -> List[Dict[str, Any]]:
         "benefit": "Meilleure visibilité locale", "image": "google", "icon": "star",
         "impact": impact, "setup": "5 minutes",
         "cta": {"label": "Activer", "kind": "google_review", "done_label": "Activé"},
-        "score": m * 0.06 + happy, "done": _google_on(shop.tenant),
+        "score": m * 0.06 + happy, "done": _store_google(shop.tenant, shop.scope)["enabled"],
     })
 
     out.append({
@@ -1115,8 +1122,7 @@ def _payload(tid: str, at: Optional[datetime] = None, scope: Optional["S.Scope"]
         "ideas": _idea_shelf(_mark_used(_learned(tid, _ideas(shop), by, shop.at), shop.used)),
         "tips": {"shown": _tips(shop)[:4], "all": _tips(shop),
                  "more": max(0, len(_tips(shop)) - 4)},
-        "google_review": {"url": shop.tenant.get("google_review_url") or "",
-                          "enabled": _google_on(shop.tenant)},
+        "google_review": _store_google(shop.tenant, shop.scope),
         "impact_note": ("Les impacts sont en euros. Ceux « calculés sur vos clients » : le panier "
                         "moyen de chaque client multiplié par sa probabilité de retour selon sa "
                         "dernière visite (25–35 % ce mois-ci, 15–20 % entre 30 et 60 jours, 10–15 % "
@@ -1323,20 +1329,22 @@ _GOOGLE_HOSTS = re.compile(
 
 
 @router.put("/api/owner/insights/google-review")
-def set_google_review(body: GoogleReview,
+def set_google_review(body: GoogleReview, request: Request = None,
                       token_data: TokenData = Depends(require_role(["business_owner"]))):
     url = (body.url or "").strip()
     if body.enabled and not _GOOGLE_HOSTS.match(url):
         raise HTTPException(status_code=400,
                             detail="Collez le lien d'avis de votre fiche Google "
                                    "(il commence par https://g.page/ ou https://www.google…).")
+    # the open établissement's link (« main »: the shop's, as before)
+    AU = _automations()
+    AU.write_link(token_data.tenant_id, AU.own_store(token_data.tenant_id, S.resolve(token_data, request).single), url)
     _db.tenants.update_one({"id": token_data.tenant_id},
-                           {"$set": {"google_review_url": url,
-                                     "google_reviews_enabled": bool(body.enabled and url)}})
+                           {"$set": {"google_reviews_enabled": bool(body.enabled and url)}})
     return {"url": url, "enabled": bool(body.enabled and url)}
 
 
-def google_invite_for(tenant_id: str, rating: Any) -> Optional[str]:
+def google_invite_for(tenant_id: str, rating: Any, customer_id: Optional[str] = None) -> Optional[str]:
     """The link to hand a customer who just rated the shop — or None.
 
     Called by the review endpoint. Only a satisfied customer is invited:
@@ -1345,6 +1353,11 @@ def google_invite_for(tenant_id: str, rating: Any) -> Optional[str]:
     """
     if _num(rating) < SATISFIED_AT:
         return None
+    if customer_id:                      # the client's own établissement (its last visit)
+        cust = _db.customers.find_one({"tenant_id": tenant_id, "id": customer_id}, {"_id": 0, "id": 1, "branch_id": 1})
+        if cust:
+            AU = _automations()
+            return AU.review_link(tenant_id, AU._last_branch(tenant_id, cust))
     tenant = _db.tenants.find_one({"id": tenant_id}) or {}
     return tenant.get("google_review_url") if _google_on(tenant) else None
 

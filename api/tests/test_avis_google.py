@@ -112,7 +112,9 @@ def main():
          "trigger": {"type": "loyal", "visits": 0}}, "client fidèle at 0 visit")
     bad({**base, "google_links": {"main": "https://g.page/r/solo/review"},
          "message": {**base["message"], "image_url": "/autre/image.png"}}, "an image that is not ours nor uploaded")
-    bad({**base, "google_links": {"b1": "https://g.page/r/centre/review"}}, "Duo: the Gare link missing (2 établissements)", H2)
+    # 2026-11-19: only the établissement open in the menu needs its link (Centre open, Gare's missing)
+    bad({**base, "google_links": {"b2": "https://g.page/r/gare/review"}}, "Duo: Centre open, Centre's link missing",
+        {**H2, "X-FidClic-Store": "b1"})
     check("…nothing saved, no link stored", db.automations.count_documents({}) == n0
           and not db.tenants.find_one({"id": "t1"}).get("google_review_url"))
     r = http("POST", "/api/owner/automations", json={**base, "google_links": {"main": "g.page/r/solo/review"},
