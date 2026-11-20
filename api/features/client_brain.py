@@ -147,6 +147,11 @@ def init(db):
         db.brain_shop.create_index("tenant_id", unique=True)
     except Exception:
         pass
+    try:                       # the shop's rhythm of each Paris day (day_prior); kept a month
+        db.brain_shop_days.create_index([("tenant_id", 1), ("day", 1)], unique=True)
+        db.brain_shop_days.create_index("at", expireAfterSeconds=31 * 86400)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -243,8 +248,50 @@ def current(b: Optional[Dict[str, Any]]) -> bool:
 
 def prior_for(tid: str, model: int) -> Tuple[float, str]:
     """The usual rhythm a client is pulled to (usual_gap). Both brains start
-    from the same place since 2026-11-04: they differ by their window."""
-    return usual_gap(tid)
+    from the same place since 2026-11-04: they differ by their window.
+
+    Fixed once per Paris day (user, 2026-11-20 « aadat din mein 1 baar »):
+    every scan moved usual_gap a little, so the Tableau de bord's register
+    (judged when a day was summed) and the « Impact FidClic » detail (judged
+    now) set different visits apart as « attendus » — the card said 15,43 €,
+    its detail 9,07 €. All day long, every page judges with the same one."""
+    return day_prior(tid)
+
+
+_day_cache: Dict[str, Tuple[str, Tuple[float, str]]] = {}
+
+
+def _today() -> str:
+    """Today in Paris, as the day the shop's rhythm is kept for."""
+    return datetime.now(PARIS).date().isoformat()
+
+
+def day_prior(tid: str) -> Tuple[float, str]:
+    """The shop's usual rhythm for today (Paris): learned at the day's first
+    read, stored, so every server instance judges with the same one. The
+    store unreachable: the live figure (never an error on a page)."""
+    day = _today()
+    hit = _day_cache.get(tid)
+    if hit and hit[0] == day:
+        return hit[1]
+    try:
+        doc = _db.brain_shop_days.find_one({"tenant_id": tid, "day": day}, {"_id": 0, "gap": 1, "source": 1})
+        if not doc:
+            gap, source = usual_gap(tid, fresh=True)
+            try:                                   # the first instance to learn it wins
+                _db.brain_shop_days.update_one(
+                    {"tenant_id": tid, "day": day},
+                    {"$setOnInsert": {"gap": gap, "source": source, "at": datetime.now(timezone.utc)}},
+                    upsert=True)
+            except Exception:                      # noqa: BLE001 — another instance's insert
+                pass
+            doc = _db.brain_shop_days.find_one({"tenant_id": tid, "day": day}, {"_id": 0, "gap": 1, "source": 1}) \
+                or {"gap": gap, "source": source}
+        out = (float(doc["gap"]), str(doc["source"]))
+    except Exception:                              # noqa: BLE001
+        return usual_gap(tid)
+    _day_cache[tid] = (day, out)
+    return out
 
 
 _usual_cache: Dict[str, Tuple[float, Tuple[float, str]]] = {}

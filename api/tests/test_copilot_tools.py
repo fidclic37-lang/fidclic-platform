@@ -222,8 +222,9 @@ def main():
     check("an unknown tool → an error, no crash", not run("supprimer_tout", {})["ok"])
     after = {c: db[c].count_documents({}) for c in db.list_collection_names()}
     # the daily register (« roz ka hisaab », features/visit_days) is a cache the
-    # Analyses page fills the same way when it reads a past day — no shop data
-    CACHES = {"visit_days", "visit_days_stamps"}
+    # Analyses page fills the same way when it reads a past day — no shop data;
+    # so is the shop's rhythm of the day (client_brain.day_prior, 2026-11-20)
+    CACHES = {"visit_days", "visit_days_stamps", "brain_shop_days"}
     changed = {c: (before.get(c, 0), after.get(c)) for c in after if before.get(c, 0) != after.get(c)}
     check("no tool writes anything (but the daily register cache Analyses also fills)", set(changed) <= CACHES, changed)
 
