@@ -43,6 +43,10 @@ const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
  */
 // the open till pings the server this often, so a scan never meets a cold one
 const WARM_EVERY_MS = 4 * 60 * 1000;
+// a phone that reads QR itself: its reader alone this long, then jsQR now and
+// then (every JSQR_EVERY of its frames), light, as a backup
+const NATIVE_ALONE_MS = 2500;
+const JSQR_EVERY = 10;
 
 const barcodeFrom = (scanned) => {
   const raw = String(scanned ?? '').trim();
@@ -783,7 +787,8 @@ const ScanPage = () => {
     // the QR had to be held very close)
     let frame = 0;
     let native = 0;
-    const jsqrPass = (video) => {
+    let firstFrame = 0;               // when the camera gave its first picture
+    const jsqrPass = (video, light = false) => {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
       frame += 1;
@@ -799,7 +804,7 @@ const ScanPage = () => {
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       return window.jsQR(img.data, img.width, img.height,
-                         { inversionAttempts: frame % 8 === 0 ? 'attemptBoth' : 'dontInvert' });
+                         { inversionAttempts: !light && frame % 8 === 0 ? 'attemptBoth' : 'dontInvert' });
     };
 
     const detect = async () => {
@@ -810,6 +815,7 @@ const ScanPage = () => {
       const ready = video.readyState >= 2 && video.videoWidth > 0;
 
       if (ready) {
+        if (!firstFrame) firstFrame = performance.now();
         // The browser's own reader first where it reads QR (fast, far)
         if (nativeQrRef.current && detectorRef.current) {
           try {
@@ -818,11 +824,14 @@ const ScanPage = () => {
           } catch (e) {
             console.debug('BarcodeDetector error:', e);
           }
-          // …and jsQR now and then, should the browser's reader miss it
+          // …and jsQR now and then, should the browser's reader miss it — not
+          // in the first seconds: a jsQR pass holds a phone's screen 100–300 ms,
+          // and most cards are read by the phone's own reader at once (user,
+          // 2026-11-20: « ekdm sataak se », slower once jsQR was there from the start)
           native += 1;
-          if (window.jsQR && native % 6 === 0) {
+          if (window.jsQR && performance.now() - firstFrame > NATIVE_ALONE_MS && native % JSQR_EVERY === 0) {
             try {
-              const result = jsqrPass(video);
+              const result = jsqrPass(video, true);
               if (result?.data && onHit(result.data)) return;
             } catch (_e) { /* next frame */ }
           }
