@@ -550,7 +550,9 @@ def auth_token(method: str, path: str, ref: Optional[str] = None) -> Optional[st
     key = _signing_key()
     if key is None:
         return None
-    headers = {"alg": "RS256", "cty": "AUTH", "ver": "3", "certificateId": cert_id(),
+    # "ver": 3 a number, as in Samsung's own example header (security guide);
+    # the string "3" is what its tool refused on the cdata token (#494)
+    headers = {"alg": "RS256", "cty": "AUTH", "ver": 3, "certificateId": cert_id(),
                "partnerId": partner_id(), "utc": int(time.time() * 1000)}
     claims: Dict[str, Any] = {"API": {"method": method, "path": path}}
     if ref:
@@ -563,6 +565,38 @@ def _post(url: str, headers: Dict[str, str], body: Dict[str, Any]) -> int:
     import httpx
     r = httpx.post(url, headers=headers, json=body, timeout=4.0)
     return r.status_code
+
+
+# Which path the Update Notification token signs: Samsung's guide shows it
+# without /{cc2}, the URL has it. The one Samsung accepts is remembered (here
+# and in platform_settings, for every server instance); a 401 tries the other
+# once (user, 2026-11-20: the card changed only after a manual refresh).
+_auth_path_cache: Dict[str, bool] = {}
+
+
+def _signs_cc2() -> bool:
+    forced = os.getenv("SAMSUNG_WALLET_AUTH_PATH_CC2")
+    if forced in ("0", "1"):
+        return forced == "1"
+    if "cc2" in _auth_path_cache:
+        return _auth_path_cache["cc2"]
+    try:
+        doc = _database().platform_settings.find_one({"key": "samsung_auth_path"}, {"_id": 0, "cc2": 1}) or {}
+        val = bool(doc.get("cc2", True))
+    except Exception:                              # noqa: BLE001
+        val = True
+    _auth_path_cache["cc2"] = val
+    return val
+
+
+def _remember_cc2(val: bool) -> None:
+    _auth_path_cache["cc2"] = val
+    try:
+        _database().platform_settings.update_one({"key": "samsung_auth_path"},
+                                                 {"$set": {"key": "samsung_auth_path", "cc2": val,
+                                                           "at": datetime.now(timezone.utc)}}, upsert=True)
+    except Exception:                              # noqa: BLE001
+        pass
 
 
 def notify(serials: Iterable[str]) -> Dict[str, Any]:
@@ -582,16 +616,25 @@ def notify(serials: Iterable[str]) -> Dict[str, Any]:
         cc2 = c.get("samsung_cc2") if _CC2_OK.match(c.get("samsung_cc2") or "") else "fr"
         host = c.get("samsung_callback") if _samsung_host(c.get("samsung_callback")) else PUBLIC_HOST
         path = f"/{cc2}/wltex/cards/{card_id()}/updates"
-        signed = path if os.getenv("SAMSUNG_WALLET_AUTH_PATH_CC2", "1") != "0" else f"/wltex/cards/{card_id()}/updates"
+        bare = f"/wltex/cards/{card_id()}/updates"
         result: Dict[str, Any] = {"at": datetime.now(timezone.utc)}
         try:
-            tok = auth_token("POST", signed, c["samsung_ref"])
-            if not tok:
-                raise RuntimeError("clé privée Samsung absente")
-            status = _post(host + path, {"Authorization": f"Bearer {tok}", "x-smcs-partner-id": partner_id(),
-                                         "x-smcs-cc2": cc2, "x-request-id": uuid.uuid4().hex,
-                                         "Content-Type": "application/json"},
-                           {"card": {"type": CARD_TYPE, "data": [{"refId": c["samsung_ref"], "state": "UPDATED"}]}})
+            first = _signs_cc2()
+            forced = os.getenv("SAMSUNG_WALLET_AUTH_PATH_CC2") in ("0", "1")
+            status = None
+            for with_cc2 in ([first] if forced else [first, not first]):
+                tok = auth_token("POST", path if with_cc2 else bare, c["samsung_ref"])
+                if not tok:
+                    raise RuntimeError("clé privée Samsung absente")
+                status = _post(host + path, {"Authorization": f"Bearer {tok}", "x-smcs-partner-id": partner_id(),
+                                             "x-smcs-cc2": cc2, "x-request-id": uuid.uuid4().hex,
+                                             "Content-Type": "application/json"},
+                               {"card": {"type": CARD_TYPE, "data": [{"refId": c["samsung_ref"], "state": "UPDATED"}]}})
+                if int(status) != 401:
+                    if 200 <= int(status) < 300 and with_cc2 != first and not forced:
+                        _remember_cc2(with_cc2)
+                    break
+            print(f"samsung_wallet: update {c.get('id')} → {status}")
             result["status"] = status
             sent += 1 if 200 <= int(status) < 300 else 0
         except Exception as exc:                   # noqa: BLE001
