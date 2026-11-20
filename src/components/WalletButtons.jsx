@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { keyOf } from '../lib/myCards';
 import { phoneWallet as _phoneWallet, phoneWallets, walletOrder } from '../lib/phoneWallet';
+import { here as walletPlace, safariLink } from '../lib/iosSafari';
 
 /**
  * WalletButtons — "Ajouter à Apple Wallet" / "Ajouter à Google Wallet" on the
@@ -34,6 +35,21 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   const [busy, setBusy] = useState(false);
   const [googleUrl, setGoogleUrl] = useState(null);
   const [samsungBusy, setSamsungBusy] = useState(false);
+  // « Ajouter à Apple Wallet » from any app (user, 2026-11-20): outside Safari
+  // on an iPhone the button opens this card in Safari; if Safari did not open,
+  // the steps (`help`); arrived in Safari from there, the button is pointed out
+  const [help, setHelp] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [pointed] = useState(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get('wallet') !== 'apple') return false;
+      q.delete('wallet');
+      const rest = q.toString();
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
+      return true;
+    } catch (_e) { return false; }
+  });
 
   useEffect(() => {
     // The card's business plan decides too (Super admin › Plan Limits › Wallet).
@@ -70,6 +86,23 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
   if (!cfg.apple && !cfg.google && !cfg.samsung) return null;
 
   const isApple = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
+  const key = keyOf(barcodeId);
+  const place = walletPlace();
+  // this card's page, in Safari, ready to add (its key goes along: Safari does
+  // not share this app's memory)
+  const cardInSafari = `${window.location.origin}/card/${barcodeId}?${new URLSearchParams({ ...(key ? { k: key } : {}), wallet: 'apple' })}`;
+  const appleHref = place === 'other'
+    ? safariLink(cardInSafari)
+    : `/api/card/${barcodeId}/apple-wallet.pkpass${key ? `?k=${encodeURIComponent(key)}` : ''}`;
+  const toSafari = () => {
+    if (place !== 'other') return;
+    setCopied(false);
+    // Safari opened: this page is hidden. Still here after a moment: the steps.
+    window.setTimeout(() => { if (!document.hidden) setHelp(true); }, 1500);
+  };
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(cardInSafari); setCopied(true); } catch (_e) { setCopied(false); }
+  };
   // Show the wallet(s) that match the phone first; all on desktop.
   const order = walletOrder();
 
@@ -110,8 +143,8 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
         if (!wanted.includes(k)) return null;
         if (k === 'apple' && cfg.apple) {
           return (
-            <a key="apple" href={`/api/card/${barcodeId}/apple-wallet.pkpass${keyOf(barcodeId) ? `?k=${encodeURIComponent(keyOf(barcodeId))}` : ''}`}
-               className={`${pill} bg-black text-white`} style={{ order: isApple ? 0 : 1 }}>
+            <a key="apple" href={appleHref} onClick={toSafari}
+               className={`${pill} bg-black text-white ${pointed ? 'ring-4 ring-[#3B82F6]/40' : ''}`} style={{ order: isApple ? 0 : 1 }}>
               <svg width={glyph.w} height={glyph.h} viewBox="0 0 24 20" aria-hidden="true">
                 <rect x="1" y="1" width="22" height="18" rx="3" fill="#fff" />
                 <rect x="1" y="4" width="22" height="4" fill="#F59E0B" /><rect x="1" y="8" width="22" height="4" fill="#22C55E" />
@@ -149,6 +182,26 @@ export default function WalletButtons({ barcodeId, onError, phoneOnly = false, o
         }
         return null;
       })}
+      {pointed && cfg.apple && place === 'safari' && (
+        <p data-testid="apple-wallet-here" role="status"
+           className="order-first text-center text-[13.5px] font-semibold text-[#1D4ED8] sm:col-span-2">
+          Touchez « Ajouter à Apple Wallet » pour enregistrer votre carte.
+        </p>
+      )}
+      {help && place === 'other' && (
+        <div data-testid="apple-wallet-safari-help" role="status"
+             className="rounded-xl border border-[#BFD3FF] bg-[#EEF4FF] px-4 py-3 text-[13.5px] leading-relaxed text-[#0B1C3F] sm:col-span-2">
+          <p className="font-semibold">Ouvrez cette page dans Safari pour l'ajouter à Apple Wallet.</p>
+          <ol className="mt-1.5 list-decimal space-y-0.5 pl-5 text-[#334155]">
+            <li>Touchez <b>⋯</b> ou le bouton de partage de cette application.</li>
+            <li>Choisissez <b>« Ouvrir dans Safari »</b>, puis « Ajouter à Apple Wallet ».</li>
+          </ol>
+          <button type="button" onClick={copyLink}
+                  className="mt-2.5 inline-flex items-center rounded-lg bg-white px-3 py-2 text-[13px] font-semibold text-[#1D4ED8] shadow-sm">
+            {copied ? 'Lien copié : collez-le dans Safari' : 'Copier le lien'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
