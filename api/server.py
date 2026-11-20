@@ -8068,18 +8068,9 @@ def update_card_prefs(barcode_id: str, req: CardPrefsRequest, request: Request =
 
 def log_card_event(cust: Dict[str, Any], text: str, by: Optional[str] = None,
                    at: Optional[datetime] = None) -> None:
-    """One line in Historique when a card is lost or found again (user,
-    2026-10-23). It lands in `customer_changes`, like the other per-client
-    events, so it shows both in the shop's feed and in that client's own."""
-    try:
-        db.customer_changes.insert_one({
-            "id": str(uuid.uuid4()), "tenant_id": cust.get("tenant_id"),
-            "customer_id": cust.get("id"), "customer_name": cust.get("name") or "Client",
-            "kind": "card_state", "at": at or datetime.now(timezone.utc),
-            "text": text, "by": by,
-        })
-    except Exception as exc:                 # noqa: BLE001 — a log never breaks the action
-        print(f"card event not logged (non-fatal): {exc}")
+    """One line in Historique when a card is lost or found again (services/card_events)."""
+    from services import card_events as _CE
+    _CE.log(db, cust, text, by=by, at=at)
 
 
 @app.delete("/api/card/{barcode_id}")
@@ -12818,6 +12809,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["copilot_memory"] = _CM.learn_due(now)
     except Exception as e:
         out["failures"].append({"step": "copilot_memory", "error": str(e)[:120]})
+    try:                         # « Bienvenue » the iPhone's lane handed over and nobody sent yet
+        from features.wallet_passes import run_welcome_due as _wallet_welcome
+        out["wallet_welcome"] = _wallet_welcome()
+    except Exception as e:
+        out["failures"].append({"step": "wallet_welcome", "error": str(e)[:120]})
     try:                         # Apple Wallet: a push its iPhone never came back for goes out once more
         from features.wallet_passes import retry_unfetched as _wallet_retry
         out["wallet_retry"] = _wallet_retry(now)
