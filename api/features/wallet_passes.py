@@ -65,7 +65,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from services import card_owner as CO
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -109,7 +109,8 @@ def _short(v: Optional[str], head: int = 6, tail: int = 4) -> Optional[str]:
     return v if len(v) <= head + tail + 1 else f"{v[:head]}…{v[-tail:]}"
 
 
-def _log_pushes(regs: List[Dict[str, Any]], results: List[Dict[str, Any]], at: datetime) -> None:
+def _log_pushes(regs: List[Dict[str, Any]], results: List[Dict[str, Any]], at: datetime,
+                extra: Optional[Dict[str, Any]] = None) -> None:
     by_token = {r.get("token"): r for r in results or []}
     rows = []
     for reg in regs:
@@ -117,7 +118,7 @@ def _log_pushes(regs: List[Dict[str, Any]], results: List[Dict[str, Any]], at: d
         rows.append({"tenant_id": reg.get("tenant_id"), "serial": reg.get("serial"), "device_id": reg.get("device_id"),
                      "token": _short(reg.get("push_token")), "sent_at": at,
                      "status": res.get("status"), "reason": res.get("reason") or None, "apns_id": res.get("apns_id"),
-                     "checked_at": None, "fetched_at": None})
+                     "checked_at": None, "fetched_at": None, **(extra or {})})
     try:
         if rows:
             _db.pass_push_log.insert_many(rows)
@@ -230,7 +231,7 @@ def _catch_up(device_id: str, serial: str, token: str, tenant_id: Optional[str])
         reg = {"device_id": device_id, "serial": serial, "push_token": token, "tenant_id": tenant_id,
                "pass_type_id": row.get("pass_type_id")}
         res = _apns_send([reg])
-        _log_pushes([reg], res.get("results") or [], now)
+        _log_pushes([reg], res.get("results") or [], now, extra={"one_card": True})
         _db.pass_registrations.update_one({"device_id": device_id, "serial": serial}, {"$set": {
             "last_push_at": now, "last_push_result": ("ok" if res.get("sent") else
                                                       ("; ".join(res.get("errors", [])[:2]) or "not sent"))[:200]}})
@@ -3159,7 +3160,10 @@ def _notify_apple(serials: List[str]) -> Dict[str, Any]:
     _db.pass_registrations.update_many({"_id": {"$in": [r["_id"] for r in regs]}}, {"$set": {"pass_changed_at": now}})
     sent_at = datetime.now(timezone.utc)
     res = _apns_send(regs)
-    _log_pushes(regs, res.get("results") or [], sent_at)
+    # one client's change (a scan, a redemption): retried if its iPhone does
+    # not come back (retry_unfetched); a whole-shop push never is
+    _log_pushes(regs, res.get("results") or [], sent_at,
+                extra={"one_card": True} if len(all_regs) <= SMALL_CHECK else None)
     # What Apple answered, kept on the registrations: the owner's Wallet stats
     # show it, so « no notification » can be traced without server logs.
     outcome = "ok" if res.get("sent") else ("; ".join(res.get("errors", [])[:2]) or "not sent")
@@ -3383,6 +3387,59 @@ def drain_refresh(tenant_id: str, budget: Optional[float] = None) -> Dict[str, A
     if not left:
         _db.wallet_refresh.delete_one({"tenant_id": tenant_id, "apple": {"$size": 0}, "google": {"$size": 0}})
     out["left"] = left
+    return out
+
+
+# A push Apple took (200) whose iPhone never came back for the card (user,
+# 2026-11-20: 1 iPhone in 94 over three days — off, out of signal, in Low
+# Power Mode). Apple keeps only the last push for a phone it cannot reach;
+# the 15-minute tick sends such a push once more, RETRY_AFTER after it went
+# out and before RETRY_UNTIL, never twice, never past the breaker.
+RETRY_AFTER = timedelta(minutes=10)
+RETRY_UNTIL = timedelta(hours=2)
+RETRY_MAX = 300                 # pushes looked at per tick
+
+
+def retry_unfetched(now: Optional[datetime] = None) -> Dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
+    out: Dict[str, Any] = {"retried": 0, "held": 0, "gone": 0}
+    rows = list(_db.pass_push_log.find(
+        {"sent_at": {"$lte": now - RETRY_AFTER, "$gte": now - RETRY_UNTIL}, "status": 200, "one_card": True,
+         "fetched_at": None, "retried_at": None, "retry_of": None},
+        {"_id": 1, "serial": 1, "device_id": 1, "tenant_id": 1}).limit(RETRY_MAX))
+    if not rows:
+        return out
+    from services import apns_passes
+    if not apns_passes.is_configured():
+        return out
+    regs_by_key = {(r["device_id"], r["serial"]): r for r in _db.pass_registrations.find(
+        {"serial": {"$in": sorted({r["serial"] for r in rows if r.get("serial")})}},
+        {"push_token": 1, "device_id": 1, "serial": 1, "tenant_id": 1, "pass_type_id": 1})}
+    by_tenant: Dict[Any, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+    for row in rows:
+        reg = regs_by_key.get((row.get("device_id"), row.get("serial")))
+        if not reg:                              # the iPhone left: nothing to send, never looked at again
+            _db.pass_push_log.update_one({"_id": row["_id"]}, {"$set": {"retried_at": now, "retry_result": "gone"}})
+            out["gone"] += 1
+            continue
+        by_tenant.setdefault(reg.get("tenant_id") or row.get("tenant_id"), []).append((row, reg))
+    for tid, pairs in by_tenant.items():
+        if _storm(tid, len(pairs)) is not None:  # past the breaker: the next tick, while still in time
+            out["held"] += len(pairs)
+            continue
+        regs = [reg for _, reg in pairs]
+        at = datetime.now(timezone.utc)
+        # listed by the iPhone's « what changed since my pass » when it wakes
+        _db.pass_registrations.update_many({"_id": {"$in": [r["_id"] for r in regs]}}, {"$set": {"pass_changed_at": at}})
+        res = _apns_send(regs)
+        _log_pushes(regs, res.get("results") or [], at, extra={"retry_of": True, "one_card": True})
+        _db.pass_push_log.update_many({"_id": {"$in": [row["_id"] for row, _ in pairs]}}, {"$set": {"retried_at": at}})
+        for dead in res.get("gone", []):
+            for reg in regs:
+                if reg.get("push_token") == dead:
+                    _reg_event(reg.get("serial"), "token_dropped", reg.get("device_id"), "renvoi refusé", reg.get("tenant_id"))
+            _db.pass_registrations.delete_many({"push_token": dead})
+        out["retried"] += len(regs)
     return out
 
 
@@ -3860,9 +3917,35 @@ class Registration(BaseModel):
     pushToken: str
 
 
+# The link between a card and its iPhone (user, 2026-11-20: a card added to
+# Apple Wallet at the counter, scanned 35 s later, stayed on 0 in Wallet while
+# the card page said 2/10 — its iPhone's registration never reached the
+# database, so no push could ever reach the card). The iPhone asks once, at
+# the moment it adds the card, on a counter's Wi-Fi or mobile data, while the
+# card page fires its own requests on the same instance: the link is written
+# FIRST, a busy database is tried again for a moment, and everything that
+# follows (history, « Bienvenue », the catch-up push) runs after the answer.
+REGISTER_TRIES = 3
+REGISTER_PAUSE_S = 0.3
+
+
+def _db_try(fn, tries: int = REGISTER_TRIES, pause: float = REGISTER_PAUSE_S):
+    """`fn()` again when the database was busy for a moment (a full pool, a
+    reconnect) — a few times, never forever: a database really down still
+    answers 503, and the iPhone asks again later."""
+    from pymongo import errors as _me
+    for i in range(tries):
+        try:
+            return fn()
+        except _me.ConnectionFailure:
+            if i == tries - 1:
+                raise
+            time.sleep(pause * (i + 1))
+
+
 @router.post("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}/{serial}")
 def register_device(device_id: str, pass_type_id: str, serial: str, body: Registration,
-                    authorization: Optional[str] = Header(default=None)):
+                    authorization: Optional[str] = Header(default=None), background: BackgroundTasks = None):
     try:
         _check_pass_auth(authorization, serial)
     except HTTPException:
@@ -3872,10 +3955,13 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
         except Exception:                      # noqa: BLE001
             recent = None
         if not recent:
-            _reg_event(serial, "register_refused", device_id, "clé de la carte invalide")
+            try:
+                _reg_event(serial, "register_refused", device_id, "clé de la carte invalide")
+            except Exception:                  # noqa: BLE001 — a refusal is answered either way
+                pass
         raise
-    cust = _db.customers.find_one({"barcode_id": serial}, {"tenant_id": 1, "last_visit_date": 1, "updated_at": 1,
-                                                           "apple_downloaded_at": 1})
+    cust = _db_try(lambda: _db.customers.find_one({"barcode_id": serial}, {"tenant_id": 1, "last_visit_date": 1, "updated_at": 1,
+                                                                           "apple_downloaded_at": 1}))
     if not cust:
         raise HTTPException(status_code=404)
     if pass_type_id != _env("APPLE_PASS_TYPE_ID"):
@@ -3885,20 +3971,39 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
         owner = _WI.tenant_of_type(pass_type_id)
         if owner and owner != cust.get("tenant_id"):
             raise HTTPException(status_code=404)
-    existing = _db.pass_registrations.find_one({"device_id": device_id, "serial": serial})
-    if not existing:
-        _reg_event(serial, "added", device_id, tenant_id=cust.get("tenant_id"))
-    elif existing.get("push_token") != body.pushToken:
-        _reg_event(serial, "renewed", device_id, tenant_id=cust.get("tenant_id"))
-    _db.pass_registrations.update_one(
+    now = datetime.now(timezone.utc)
+    # one write, the link itself: what the row held before tells new / renewed
+    existing = _db_try(lambda: _db.pass_registrations.find_one_and_update(
         {"device_id": device_id, "serial": serial},
         {"$set": {"push_token": body.pushToken, "pass_type_id": pass_type_id, "tenant_id": cust.get("tenant_id"),
-                  "updated_at": datetime.now(timezone.utc)},
-         "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
-        upsert=True)
+                  "updated_at": now},
+         "$setOnInsert": {"created_at": now}},
+        upsert=True))
+    args = (device_id, serial, body.pushToken, cust, existing)
+    if background is not None:
+        background.add_task(_after_register, *args)
+    else:
+        _after_register(*args)
+    return Response(status_code=200 if existing else 201)
+
+
+def _after_register(device_id: str, serial: str, token: str, cust: Dict[str, Any],
+                    existing: Optional[Dict[str, Any]]) -> None:
+    """What follows a registration, once the iPhone has its answer. Each step
+    on its own: none of them can undo the link."""
+    tid = cust.get("tenant_id")
+    try:
+        if not existing:
+            _reg_event(serial, "added", device_id, tenant_id=tid)
+        elif existing.get("push_token") != token:
+            _reg_event(serial, "renewed", device_id, tenant_id=tid)
+    except Exception as exc:                     # noqa: BLE001
+        print(f"wallet: registration event not kept ({exc})")
     if not existing:
-        # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
-        _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
+        try:                                     # the pass is in an Apple Wallet (again): Clients › Carte reads « Active »
+            _db.customers.update_one({"barcode_id": serial}, {"$set": {"wallet_added_at": datetime.now(timezone.utc)}})
+        except Exception as exc:                 # noqa: BLE001
+            print(f"wallet: added date not kept ({exc})")
         try:                                     # Bienvenue (once per client, features/automations)
             from features import automations as AU
             full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
@@ -3907,9 +4012,11 @@ def register_device(device_id: str, pass_type_id: str, serial: str, body: Regist
         except Exception as exc:
             print(f"wallet: welcome not sent (non-fatal): {exc}")
     # scanned before this iPhone registered: the scan had no device to push
-    if (not existing or existing.get("push_token") != body.pushToken) and changed_since_pass(cust):
-        _catch_up(device_id, serial, body.pushToken, cust.get("tenant_id"))
-    return Response(status_code=200 if existing else 201)
+    try:
+        if (not existing or existing.get("push_token") != token) and changed_since_pass(cust):
+            _catch_up(device_id, serial, token, tid)
+    except Exception as exc:                     # noqa: BLE001
+        print(f"wallet: catch-up push not sent ({exc})")
 
 
 @router.api_route("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}", methods=["GET", "HEAD"])
