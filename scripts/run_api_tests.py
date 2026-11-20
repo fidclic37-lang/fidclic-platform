@@ -7,6 +7,13 @@ and on a laptop:
 
     python3 scripts/run_api_tests.py            # everything
     python3 scripts/run_api_tests.py security   # only files whose name matches
+    API_TEST_JOBS=1 python3 scripts/run_api_tests.py   # one after the other
+
+The files run several at a time — the machine's processors, 4 at most, or
+API_TEST_JOBS (2026-11-20: the CI job was cut at its 30 minutes on PR #504
+with every file green; 24 min on #503). Each file is its own process on its
+own in-memory database, so they do not share anything; the results are still
+printed in the files' order.
 
 Every file runs OFFLINE (api/tests/_offline, PR #454): a lookup of any host but
 this machine is refused at once, so the CI — which has the internet — reads
@@ -22,6 +29,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import tempfile
 import time
@@ -71,6 +79,33 @@ def _why(r: subprocess.CompletedProcess) -> str:
     return lines[-1].strip() if lines else "no output"
 
 
+MAX_JOBS = 16
+
+
+def jobs() -> int:
+    """How many files run at a time: API_TEST_JOBS, else the processors (4 at
+    most). Anything that is not a number from 1 up → 1, one after the other."""
+    raw = os.environ.get("API_TEST_JOBS")
+    if raw is None:
+        return max(1, min(os.cpu_count() or 1, 4))
+    try:
+        n = int(raw)
+    except ValueError:
+        return 1
+    return min(n, MAX_JOBS) if n >= 1 else 1
+
+
+def run_files(names: List[str], env: Dict[str, str], cwd: str, jobs: int = 1,
+              args: Optional[Dict[str, List[str]]] = None) -> List[Tuple[str, subprocess.CompletedProcess]]:
+    """Run each tests/<name> in `cwd`, `jobs` at a time; the answers in the
+    order of `names`, whatever finishes first."""
+    def one(name: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, os.path.join("tests", name), *((args or {}).get(name, []))],
+                              cwd=cwd, env=env, capture_output=True, text=True)
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        return list(zip(names, pool.map(one, names)))
+
+
 def main() -> int:
     pattern = sys.argv[1] if len(sys.argv) > 1 else ""
     names = sorted(f for f in os.listdir(TESTS)
@@ -83,10 +118,9 @@ def main() -> int:
     log = os.path.join(tempfile.mkdtemp(prefix="fidclic-offline-"), "net.tsv")
     env = offline_env(log)
     t0 = time.time()
-    for name in names:
-        r = subprocess.run([sys.executable, os.path.join("tests", name)],
-                           cwd=os.path.join(HERE, "api"), env=env,
-                           capture_output=True, text=True)
+    n = jobs()
+    print(f"{len(names)} files, {n} at a time")
+    for name, r in run_files(names, env, cwd=os.path.join(HERE, "api"), jobs=n):
         ok = r.returncode == 0
         known = name in KNOWN_RED
         mark = "ok  " if ok else "FAIL"
