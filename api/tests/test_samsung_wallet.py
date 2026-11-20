@@ -431,6 +431,39 @@ def main():
               im.format == "JPEG" and im.size == (888, 555) and len(r.content) < 256 * 1024)
     else:
         check(f"the banner answers ({r.status_code})", r.status_code == 404)
+    print("\n11. Samsung shows the WHOLE banner (user, 2026-11-20: 6 tampons on the card, only 5 seen —"
+          " the 1125×432 strip was cut to 888×555, its sides and the meter's ends gone)")
+    from PIL import Image
+    import io as _io
+    strip = Image.new("RGB", (1125, 432), (0, 160, 0))
+    strip.paste((220, 0, 0), (0, 0, 40, 432))              # the meter's first tampon side
+    strip.paste((0, 0, 220), (1085, 0, 1125, 432))         # …and its last one
+    strip.paste((220, 0, 220), (40, 402, 1085, 432))       # the meter row at the bottom
+    buf = _io.BytesIO()
+    strip.save(buf, "PNG")
+    real_strip = W.strip_png
+    W.strip_png = lambda payload: buf.getvalue()
+    try:
+        r = http("GET", f"/api/card/{a}/wallet-strip.png?fmt=samsung")
+    finally:
+        W.strip_png = real_strip
+    check(f"the Samsung banner answers ({r.status_code})", r.status_code == 200)
+    if r.status_code == 200:
+        im = Image.open(_io.BytesIO(r.content)).convert("RGB")
+        mid = im.height // 2
+
+        def near(px, want):
+            return all(abs(p - q) < 60 for p, q in zip(px, want))
+        check(f"still 888×555 JPEG ({im.size})", im.size == (888, 555))
+        check(f"the strip's left edge is kept ({im.getpixel((8, mid))})", near(im.getpixel((8, mid)), (220, 0, 0)))
+        check(f"the strip's right edge is kept ({im.getpixel((879, mid))})", near(im.getpixel((879, mid)), (0, 0, 220)))
+        band_h = round(432 * 888 / 1125)
+        bottom = (555 - band_h) // 2 + band_h - 8
+        check(f"the meter row is kept ({im.getpixel((444, bottom))} at y={bottom})",
+              near(im.getpixel((444, bottom)), (220, 0, 220)))
+        check(f"the strip sits in the middle, not stretched (centre {im.getpixel((444, mid))})",
+              near(im.getpixel((444, mid)), (0, 160, 0)))
+
     r = http("GET", f"/api/card/{a}/wallet-strip.png")
     check("Google's banner unchanged (PNG)", r.status_code == 404 or r.headers.get("content-type") == "image/png")
 

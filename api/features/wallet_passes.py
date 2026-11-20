@@ -3822,9 +3822,21 @@ def wallet_strip(barcode_id: str, fmt: Optional[str] = None):
         raise HTTPException(status_code=404, detail="No strip for this card")
     if fmt == "samsung":
         # Samsung Wallet's bgImage: 888 × 555 recommended, and its images are
-        # capped at 256 KB (the PNG was 436 KB on a test card, 2026-11-12)
-        from PIL import Image, ImageOps
-        im = ImageOps.fit(Image.open(io.BytesIO(png)).convert("RGB"), (888, 555), Image.LANCZOS)
+        # capped at 256 KB (the PNG was 436 KB on a test card, 2026-11-12).
+        # The whole strip, never cropped: cutting the 1125×432 strip (2.6:1)
+        # to 1.6:1 lost its sides and the meter's ends (6 tampons, 5 seen,
+        # user 2026-11-20). It sits full-width in the middle, over a blurred,
+        # darker copy of itself so the frame has no flat bands.
+        from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+        W_, H_ = 888, 555
+        src = Image.open(io.BytesIO(png)).convert("RGB")
+        band_h = round(src.height * W_ / src.width)
+        if band_h >= H_:
+            im = ImageOps.fit(src, (W_, H_), Image.LANCZOS)
+        else:
+            im = ImageOps.fit(src, (W_, H_), Image.LANCZOS).filter(ImageFilter.GaussianBlur(28))
+            im = ImageEnhance.Brightness(im).enhance(0.7)
+            im.paste(src.resize((W_, band_h), Image.LANCZOS), (0, (H_ - band_h) // 2))
         out = io.BytesIO()
         im.save(out, "JPEG", quality=82, optimize=True, progressive=True)
         return Response(content=out.getvalue(), media_type="image/jpeg",
