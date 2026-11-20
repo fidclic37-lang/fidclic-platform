@@ -12818,6 +12818,11 @@ def tick_pass(now: Optional[datetime] = None) -> Dict[str, Any]:
         out["copilot_memory"] = _CM.learn_due(now)
     except Exception as e:
         out["failures"].append({"step": "copilot_memory", "error": str(e)[:120]})
+    try:                         # Apple Wallet: a push its iPhone never came back for goes out once more
+        from features.wallet_passes import retry_unfetched as _wallet_retry
+        out["wallet_retry"] = _wallet_retry(now)
+    except Exception as e:
+        out["failures"].append({"step": "wallet_retry", "error": str(e)[:120]})
     try:                         # API & Intégrations: a webhook that failed gets its next try within 15 min
         from features.merchant_api import retry_failed as _retry_hooks
         out["webhooks"] = _retry_hooks(now)
