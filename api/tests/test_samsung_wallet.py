@@ -295,6 +295,75 @@ def main():
           sent and sent[0][0] == "https://tsapi-card.walletsvc.samsung.com/fr/wltex/cards/3jina31gjvr00/updates")
 
     # ------------------------------------------------------------------
+    print("\n6b. The card updates by itself (user, 2026-11-20: tampons only after a manual refresh)")
+    # Samsung's own example token header: "ver":3, a number (the string "3" is
+    # what the cdata tool refused too); the path it signs is not said with or
+    # without /{cc2}: a 401 tries the other once, and the one that works stays.
+    db.platform_settings.delete_many({"key": "samsung_auth_path"})
+    SW._auth_path_cache.clear()
+    calls = []
+
+    def samsung(accept):
+        def post(url, headers, body):
+            tok = headers["Authorization"].removeprefix("Bearer ")
+            calls.append((jwt.get_unverified_header(tok), jwt.decode(tok, pub, algorithms=["RS256"])["API"]["path"]))
+            return 200 if accept(calls[-1][1]) else 401
+        return post
+    with_cc2 = "/fr/wltex/cards/3jina31gjvr00/updates"
+    without = "/wltex/cards/3jina31gjvr00/updates"
+    SW._post = samsung(lambda path: path == without)
+    r = http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check(f"the scan: 200 ({r.status_code})", r.status_code == 200)
+    check(f"ver is the number 3, as in Samsung's example ({calls[0][0].get('ver')!r})",
+          calls and calls[0][0].get("ver") == 3 and isinstance(calls[0][0].get("ver"), int))
+    check(f"refused (401) with /fr signed → once more without it ({[p for _, p in calls]})",
+          [p for _, p in calls] == [with_cc2, without])
+    c = db.customers.find_one({"id": "anna"})
+    check(f"…and the card is told: 200 kept ({c.get('samsung_last_update', {}).get('status')})",
+          c.get("samsung_last_update", {}).get("status") == 200)
+    calls.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check(f"the next scan signs the way that worked, never the refused one first ({[p for _, p in calls]})",
+          calls and all(p == without for _, p in calls))
+    SW._auth_path_cache.clear()                       # another server instance
+    calls.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check(f"another server instance knows it too ({[p for _, p in calls]})", [p for _, p in calls] == [without])
+
+    # Samsung moves back to /fr: found again, by itself
+    SW._post = samsung(lambda path: path == with_cc2)
+    calls.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check(f"the other way works again: found by itself ({[p for _, p in calls]})", [p for _, p in calls] == [without, with_cc2])
+    calls.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check("…and kept", [p for _, p in calls] == [with_cc2])
+
+    # a refusal that is not about the token: no second try
+    SW._post = lambda url, headers, body: calls.append(("x", "x")) or 500
+    calls.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check(f"Samsung 500: one call, no retry ({len(calls)})", len(calls) == 1)
+    # both refused: two calls at most, the 401 kept for the owner's page
+    SW._post = samsung(lambda path: False)
+    calls.clear()
+    r = http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    c = db.customers.find_one({"id": "anna"})
+    check(f"both refused: 2 calls at most, the scan still 200, 401 kept ({len(calls)}, {r.status_code})",
+          len(calls) == 2 and r.status_code == 200 and c.get("samsung_last_update", {}).get("status") == 401)
+    os.environ["SAMSUNG_WALLET_AUTH_PATH_CC2"] = "0"     # the owner of the deploy forces it
+    SW._auth_path_cache.clear()
+    SW._post = samsung(lambda path: True)
+    calls.clear()
+    http("POST", "/api/owner/scan", H, json={"barcode_id": a, "amount_paid": 5})
+    check(f"SAMSUNG_WALLET_AUTH_PATH_CC2=0 still forces the path without /fr ({[p for _, p in calls]})",
+          [p for _, p in calls] == [without])
+    os.environ.pop("SAMSUNG_WALLET_AUTH_PATH_CC2", None)
+    db.platform_settings.delete_many({"key": "samsung_auth_path"})
+    SW._auth_path_cache.clear()
+    SW._post = lambda url, headers, body: sent.append((url, headers, body)) or 200
+
+    # ------------------------------------------------------------------
     print("\n7. Owner Wallet stats count Samsung")
     st = http("GET", "/api/owner/wallet/stats", H).json()
     check("samsung count in stats", st.get("samsung", {}).get("cards") == 1)
