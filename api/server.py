@@ -2118,6 +2118,14 @@ async def startup_event():
         import traceback
         traceback.print_exc()
 
+# The open till keeps the server awake (user, 2026-11-20: the page after a
+# scan was sometimes slow — a cold server takes 1–3 s). Nothing read, nothing
+# answered, never the database (Atlas M0: 500 connections at most).
+@app.get("/api/warm", status_code=204)
+def warm():
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
 # Health check endpoint for debugging
 @app.get("/api/health")
 def health_check():

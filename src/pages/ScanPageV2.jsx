@@ -41,6 +41,9 @@ const BRANCH_STORAGE_KEY = 'fidelitour_scan_branch_id';
  * the very same QR, so it pulls the id back out. A hand-typed "ft-ab12cd34"
  * still works, and so does an older card that still carries the bare id.
  */
+// the open till pings the server this often, so a scan never meets a cold one
+const WARM_EVERY_MS = 4 * 60 * 1000;
+
 const barcodeFrom = (scanned) => {
   const raw = String(scanned ?? '').trim();
   if (!raw) return '';
@@ -379,6 +382,10 @@ const ScanPage = () => {
   const [paperStamps, setPaperStamps] = useState('');
   const [threshold, setThreshold] = useState(10);
   const [barcode, setBarcode] = useState('');
+  // a code that arrived whole (camera, douchette, photo), not typed by hand:
+  // its client is asked for at once (user, 2026-11-20 « ekdm fast »)
+  const wholeCode = useRef(false);
+  const scanned = (code) => { wholeCode.current = true; setBarcode(code); };
   const [amountPaid, setAmountPaid] = useState('');
   // an amount the till can't record — « -1 », … — is said under the field and
   // stops « Suivant », not only the final save (QA R7, 2026-10-18)
@@ -524,15 +531,17 @@ const ScanPage = () => {
   const ensureJsQR = () => new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return reject(new Error('no window'));
     if (window.jsQR) return resolve(window.jsQR);
-    const SRC = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
-    let s = document.querySelector('script[data-jsqr]');
-    if (!s) {
-      s = document.createElement('script');
-      s.src = SRC;
-      s.async = true;
-      s.dataset.jsqr = '1';
-      document.head.appendChild(s);
-    }
+    // our own copy (public/vendor, same site, cached a year): no wait on a
+    // CDN at the first scan (user, 2026-11-20); the CDN only if ours fails
+    const add = (src, tag) => {
+      const el = document.createElement('script');
+      el.src = src;
+      el.async = true;
+      el.dataset.jsqr = tag;
+      if (tag === 'own') el.onerror = () => { if (!window.jsQR) add('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js', 'cdn'); };
+      document.head.appendChild(el);
+    };
+    if (!document.querySelector('script[data-jsqr]')) add('/vendor/jsqr-1.4.0.js', 'own');
     const t0 = Date.now();
     (function tick() {
       if (window.jsQR) return resolve(window.jsQR);
@@ -547,6 +556,21 @@ const ScanPage = () => {
       stopCamera();
     };
   }, []);
+
+  // The QR reader ready before the camera opens, and the server kept awake
+  // while the till is on screen (user, 2026-11-20: a cold server took 1–3 s
+  // after a scan) — a light ping, no database, never while hidden.
+  useEffect(() => {
+    ensureJsQR().catch(() => { /* the camera tab will try again */ });
+    const ping = () => {
+      if (document.hidden) return;
+      fetch('/api/warm', { cache: 'no-store', credentials: 'omit' }).catch(() => { /* offline: nothing to do */ });
+    };
+    const id = setInterval(ping, WARM_EVERY_MS);
+    const back = () => { if (!document.hidden) ping(); };   // the screen on again: wake it now
+    document.addEventListener('visibilitychange', back);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', back); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the <video> appears a render after the camera tab is chosen
   const waitVideo = () => new Promise((resolve) => {
@@ -660,7 +684,7 @@ const ScanPage = () => {
       if (result?.data) {
         const cleaned = barcodeFrom(result.data);
         if (cleaned) {
-          setBarcode(cleaned);
+          scanned(cleaned);
           setPhotoMsg({ type: 'success', text: `Code trouvé : ${cleaned}` });
           setMode('manual');
           return;
@@ -673,7 +697,7 @@ const ScanPage = () => {
           const found = await det.detect(canvas);
           if (found?.length && found[0].rawValue) {
             const cleaned = barcodeFrom(found[0].rawValue);
-            setBarcode(cleaned);
+            scanned(cleaned);
             setPhotoMsg({ type: 'success', text: `Code trouvé : ${cleaned}` });
             setMode('manual');
             return;
@@ -746,7 +770,7 @@ const ScanPage = () => {
       if (!raw) return false;
       const cleaned = barcodeFrom(raw);
       if (!cleaned) return false;
-      setBarcode(cleaned);
+      scanned(cleaned);
       setStatus({ type: 'success', message: t('scan.code_detected') });
       pauseCamera();                 // open for the next client (no new permission prompt)
       setMode('manual');
@@ -1035,6 +1059,7 @@ const ScanPage = () => {
   // palier, everything applicable, the paper card — the till's one answer.
   const [card, setCard] = useState(null);
   const [cardErr, setCardErr] = useState('');
+  const [lookingUp, setLookingUp] = useState('');      // the code whose client is on its way
   const [picked, setPicked] = useState({});        // { catalogue item id: qty }
   const [apply, setApply] = useState('');          // ONE offer or reward, never several
   const [manual, setManual] = useState(false);     // the counter typed the final amount
@@ -1066,18 +1091,23 @@ const ScanPage = () => {
   // not one per keystroke.
   useEffect(() => {
     const bc = barcodeFrom(barcode);
-    if (!bc || bc.length < 4) { setCard(null); setCardErr(''); return undefined; }
+    const whole = wholeCode.current;
+    wholeCode.current = false;
+    if (!bc || bc.length < 4) { setCard(null); setCardErr(''); setLookingUp(''); return undefined; }
     let alive = true;
+    if (whole) setLookingUp(bc);
+    // a whole code (camera, douchette, photo): at once; typed by hand: once the typing stops
     const t = setTimeout(() => {
       ownerAPI.scanCard(bc)
         .then(({ data }) => {
           if (!alive) return;
+          setLookingUp('');
           setCard(data); setCardErr('');
           // the client is found: the camera's complaint from before is old news
           setStatus((st) => (st && st.type === 'error' && /cam[ée]ra/i.test(st.message || '') ? null : st));
         })
-        .catch((e) => { if (!alive) return; setCard(null); setCardErr(e?.response?.data?.detail || ''); });
-    }, 250);
+        .catch((e) => { if (!alive) return; setLookingUp(''); setCard(null); setCardErr(e?.response?.data?.detail || ''); });
+    }, whole ? 0 : 250);
     return () => { alive = false; clearTimeout(t); };
   }, [barcode]);
 
@@ -1180,9 +1210,9 @@ const ScanPage = () => {
       if (st.mode === 'camera') { pauseCamera(); setMode('manual'); }
       if (st.card) {
         scanAnother();                         // a new client, or the same one again: a new visit
-        setTimeout(() => setBarcode(bc), 0);
+        setTimeout(() => scanned(bc), 0);
       } else {
-        setBarcode(bc);
+        scanned(bc);
       }
       return true;
     };
@@ -1277,6 +1307,19 @@ const ScanPage = () => {
             </p>
           </div>
 
+          {/* a code read whole: its client is on its way — said, not the empty form */}
+          {lookingUp && (
+            <div data-testid="scan-loading" role="status" aria-live="polite"
+                 className="mx-auto flex max-w-[520px] items-center gap-3 rounded-2xl border border-[#E2E8F0] bg-white px-5 py-4 shadow-sm">
+              <span aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-[#BFD3FF] border-t-[#1463FF]" />
+              <div className="min-w-0">
+                <p className="text-[15px] font-semibold text-[#0B1C3F]">Chargement du client…</p>
+                <p translate="no" className="notranslate text-[13px] text-[#64748B]">{lookingUp}</p>
+              </div>
+            </div>
+          )}
+
+          {!lookingUp && (
           <div className="mx-auto flex w-fit gap-1 rounded-xl bg-[#F1F5F9] p-1">
             {[['camera', 'Caméra', Camera], ['manual', 'Saisir le code', Keyboard]].map(([k, l, I]) => (
               <button key={k} type="button" onClick={() => switchMode(k)}
@@ -1286,8 +1329,9 @@ const ScanPage = () => {
               </button>
             ))}
           </div>
+          )}
 
-          {mode === 'camera' && (
+          {!lookingUp && mode === 'camera' && (
             <div className="relative mx-auto aspect-[3/4] w-full max-w-[760px] overflow-hidden rounded-[28px] bg-[#0B1220] shadow-[0_24px_60px_-30px_rgba(15,23,42,.7)] sm:aspect-video sm:min-h-[300px]">
               <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
               <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-[52%] w-[72%] -translate-x-1/2 -translate-y-1/2 sm:h-[62%] sm:w-[min(46%,340px)]">
@@ -1328,7 +1372,7 @@ const ScanPage = () => {
           {mode !== 'manual' && cardErr && (
             <p role="alert" className="mx-auto max-w-[520px] rounded-xl bg-[#FEF2F2] px-3.5 py-2.5 text-[13px] text-[#B91C1C]">{cardErr}</p>
           )}
-          {mode === 'manual' && (
+          {!lookingUp && mode === 'manual' && (
           <div className="mx-auto max-w-[520px]">
             <label className="block text-[13px] font-medium text-[#334155]">Code de la carte
               <input id="scan-card-id" value={barcode} onChange={(e) => setBarcode(e.target.value)} placeholder="FT-A1B2C3D4"
