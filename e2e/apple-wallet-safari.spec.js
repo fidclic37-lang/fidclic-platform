@@ -36,8 +36,10 @@ function phone(ua) {
 async function signUp(page) {
   // no Apple keys locally: the config says Apple is on, the pass is never built
   await page.route('**/api/wallet/config**', async (r) => {
-    const real = await (await r.fetch()).json();
-    await r.fulfill({ json: { ...real, apple: true, google: true } });
+    try {
+      const real = await (await r.fetch()).json();
+      await r.fulfill({ json: { ...real, apple: true, google: true } });
+    } catch (_e) { /* the page closed while it was on its way */ }
   });
   await page.route('**/wallet-prepare**', (r) => r.fulfill({ json: { apple: true, google_url: null } }));
   await page.goto(`/join/${SLUG}`);
@@ -115,6 +117,7 @@ test.describe('Android', () => {
   test.use(phone(UA.android));
   test('nothing changes: no Safari link anywhere', async ({ page }) => {
     await signUp(page);
+    await expect(page.getByRole('button', { name: /Ajouter à Google Wallet/ })).toBeVisible();   // the buttons are there
     const links = await page.locator('a[href^="x-safari"]').count();
     expect(links).toBe(0);
   });
