@@ -306,7 +306,9 @@ const CardView = () => {
   // Runs whenever the wallet card loads. Tells us if the customer needs
   // a re-enable banner (subscribed=false AND missed_count>0).
   useEffect(() => {
-    if (!barcodeId) return;
+    // once the card is here: asked before it too, the status went out twice
+    // per page load (2026-11-21 — every request counts on a busy server)
+    if (!barcodeId || !data?.customer?.id) return;
     let alive = true;
     fetch(`/api/card/${encodeURIComponent(barcodeId)}/notification-status`,
           { headers: keyOf(barcodeId) ? { 'X-Card-Key': keyOf(barcodeId) } : {} })

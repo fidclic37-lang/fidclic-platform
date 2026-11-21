@@ -6,6 +6,14 @@
   ],
   "rewrites": [
     {
+      "source": "/api/passes/v1/devices/:path*",
+      "destination": "/api/wallet_lane.py"
+    },
+    {
+      "source": "/api/passes/v1/log",
+      "destination": "/api/wallet_lane.py"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/index.py"
     },
@@ -86,6 +94,9 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 360
+    },
+    "api/wallet_lane.py": {
+      "maxDuration": 30
     }
   },
   "crons": [

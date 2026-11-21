@@ -4005,10 +4005,10 @@ def _after_register(device_id: str, serial: str, token: str, cust: Dict[str, Any
         except Exception as exc:                 # noqa: BLE001
             print(f"wallet: added date not kept ({exc})")
         try:                                     # Bienvenue (once per client, features/automations)
-            from features import automations as AU
-            full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
-            if full:
-                AU.wallet_added(full.get("tenant_id"), full, "apple")
+            if LANE:                             # the lane never loads the server: handed over
+                queue_welcome(serial, tid)
+            else:
+                _send_welcome(serial)
         except Exception as exc:
             print(f"wallet: welcome not sent (non-fatal): {exc}")
     # scanned before this iPhone registered: the scan had no device to push
@@ -4017,6 +4017,63 @@ def _after_register(device_id: str, serial: str, token: str, cust: Dict[str, Any
             _catch_up(device_id, serial, token, tid)
     except Exception as exc:                     # noqa: BLE001
         print(f"wallet: catch-up push not sent ({exc})")
+
+
+# « Bienvenue » from the iPhone's lane (api/wallet_lane.py, 2026-11-21): the
+# automation needs the whole server, the lane never loads it. The lane queues
+# the card and wakes the server at once; the 15-minute tick sweeps the rest.
+LANE = False                    # True inside api/wallet_lane.py
+WELCOME_PING_TIMEOUT_S = 3.0
+WELCOME_BATCH = 50
+
+
+def _send_welcome(serial: str) -> bool:
+    from features import automations as AU
+    full = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
+    if not full:
+        return False
+    AU.wallet_added(full.get("tenant_id"), full, "apple")
+    return True
+
+
+def queue_welcome(serial: str, tenant_id: Optional[str]) -> None:
+    _db.wallet_welcome_due.update_one({"serial": serial},
+                                      {"$setOnInsert": {"serial": serial, "tenant_id": tenant_id,
+                                                        "at": datetime.now(timezone.utc)}}, upsert=True)
+    try:
+        _ping_main()
+    except Exception as exc:                     # noqa: BLE001 — the tick sends it
+        print(f"wallet lane: server not woken ({exc})")
+
+
+def _ping_main() -> None:
+    req = urllib.request.Request(f"{_site_url()}/api/wallet/welcome-due", data=b"", method="POST")
+    urllib.request.urlopen(req, timeout=WELCOME_PING_TIMEOUT_S).read()
+
+
+def run_welcome_due(limit: int = WELCOME_BATCH) -> Dict[str, int]:
+    """Send the queued « Bienvenue »: each card taken off the queue first (two
+    wakes never send it twice), then sent — features/automations sends it once
+    per client anyway."""
+    out = {"sent": 0, "left": 0}
+    for _ in range(max(0, limit)):
+        row = _db.wallet_welcome_due.find_one_and_delete({}, sort=[("at", 1)])
+        if not row:
+            break
+        try:
+            if _send_welcome(row.get("serial")):
+                out["sent"] += 1
+        except Exception as exc:                 # noqa: BLE001 — one card never stops the others
+            print(f"wallet: welcome not sent (non-fatal): {exc}")
+    out["left"] = _db.wallet_welcome_due.count_documents({})
+    return out
+
+
+@router.post("/api/wallet/welcome-due")
+def welcome_due():
+    """The lane's wake-up call. Public on purpose: it only sends what is
+    already queued, each once, and says how many."""
+    return run_welcome_due()
 
 
 @router.api_route("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}", methods=["GET", "HEAD"])
@@ -4088,10 +4145,10 @@ def _seen_unregistered(serial: str) -> None:
 
 def _log_card(serial: str, text: str, at: datetime) -> None:
     try:
-        import server as core
-        cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0})
+        from services import card_events as _CE     # never server.py: the iPhone's lane calls this
+        cust = _db.customers.find_one({"barcode_id": serial}, {"_id": 0, "id": 1, "tenant_id": 1, "name": 1})
         if cust:
-            core.log_card_event(cust, text, by="le client", at=at)
+            _CE.log(_db, cust, text, by="le client", at=at)
     except Exception as exc:                 # noqa: BLE001 — a log never breaks a callback
         print(f"wallet: card event not logged ({exc})")
 
@@ -4175,6 +4232,15 @@ async def passkit_log(request: Request):
     except Exception:
         pass
     return Response(status_code=200)
+
+
+# The iPhone's four calls, served by api/wallet_lane.py too (same paths).
+LANE_ROUTES = [
+    ("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}/{serial}", register_device, ["POST"]),
+    ("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}", serials_for_device, ["GET", "HEAD"]),
+    ("/api/passes/v1/devices/{device_id}/registrations/{pass_type_id}/{serial}", unregister_device, ["DELETE"]),
+    ("/api/passes/v1/log", passkit_log, ["POST"]),
+]
 
 
 # ---------------------------------------------------------------------------
