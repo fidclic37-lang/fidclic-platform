@@ -296,9 +296,11 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("every picker on the page reads the same value",
           src.count("RangePicker value={period} onChange={setDays}") == 3)
     menu = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "lib", "period.js")).read()
+    # 2026-11-21: the menu has tabs; « Personnalisé » became the
+    # « Les derniers … » row of the Rapide tab (number + jours/mois).
+    pm = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "components", "PeriodMenu.jsx")).read()
     check("the menu offers « Aujourd'hui » and a period of one's own",
-          "label: \"Aujourd'hui\"" in menu and "Personnalisé" in open(os.path.join(
-              os.path.dirname(__file__), "..", "..", "src", "components", "PeriodMenu.jsx")).read())
+          "label: \"Aujourd'hui\"" in menu and "Les derniers …" in pm and 'aria-label="Nombre"' in pm)
     check("a typed period is capped at two years, as the API is",
           "MAX_DAYS = 730" in menu and "MAX_MONTHS = 24" in menu)
 

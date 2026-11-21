@@ -3,6 +3,8 @@
  * « Ce mois-ci » by default and again on the 1st of every month, a whole
  * month (1 → 28/29/30/31), one date, a from–to range — and ONE period for
  * both pages: chosen on one, the other opens on it. The presets stay.
+ * Simpler menu (user, 2026-11-21): three tabs — Rapide, Mois, Calendrier —
+ * one month grid, one calendar (one click = a day, two = du → au).
  * Local server only.
  */
 import { test, expect } from '@playwright/test';
@@ -43,7 +45,16 @@ const nextCall = (page, path) => page.waitForRequest((r) => r.url().includes(pat
   .then((r) => Object.fromEntries(new URL(r.url()).searchParams));
 
 const button = (page) => page.getByRole('button', { name: 'Période analysée' }).first();
-const openMenu = async (page) => { await button(page).click(); await expect(page.getByRole('listbox')).toBeVisible(); };
+const menu = (page) => page.getByRole('dialog', { name: 'Choisir la période' });
+const openMenu = async (page) => { await button(page).click(); await expect(menu(page)).toBeVisible(); };
+const tab = (page, name) => menu(page).getByRole('tab', { name, exact: true });
+const dayBtn = (page, iso) => menu(page).getByRole('button',
+  { name: `${Number(iso.slice(8, 10))} ${MOIS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`, exact: true });
+// the calendar on last month
+async function calendarOnLastMonth(page) {
+  await tab(page, 'Calendrier').click();
+  await menu(page).getByRole('button', { name: 'Mois précédent' }).click();
+}
 
 test('first visit: « Ce mois-ci », the 1st of this month until today', async ({ page, request }) => {
   await signIn(page, request);
@@ -56,63 +67,130 @@ test('first visit: « Ce mois-ci », the 1st of this month until today', async (
   await expect(button(page)).toContainText('Ce mois-ci');
 });
 
-test('a whole month on Analyses — and the Tableau de bord opens on it', async ({ page, request }) => {
+test('three tabs, only one shown at a time — Rapide first', async ({ page, request }) => {
+  await signIn(page, request);
+  await page.goto('/dashboard');
+  await openMenu(page);
+  for (const t of ['Rapide', 'Mois', 'Calendrier']) await expect(tab(page, t)).toBeVisible();
+  await expect(tab(page, 'Rapide')).toHaveAttribute('aria-selected', 'true');
+  await expect(menu(page).getByRole('button', { name: '7 derniers jours' })).toBeVisible();
+  await expect(menu(page).getByRole('button', { name: 'Mois précédent' })).toHaveCount(0);
+  await tab(page, 'Calendrier').click();
+  await expect(menu(page).getByRole('button', { name: '7 derniers jours' })).toHaveCount(0);
+  await expect(menu(page).getByRole('button', { name: 'Mois précédent' })).toBeVisible();
+});
+
+test('a whole month on Analyses, one click — and the Tableau de bord opens on it', async ({ page, request }) => {
   await signIn(page, request);
   await page.goto('/dashboard/analytics');
   await openMenu(page);
   const lm = lastMonth();
+  await tab(page, 'Mois').click();
   const call = nextCall(page, '/api/owner/analyses');
-  await page.getByLabel('Un mois').selectOption(`m${lm.y}-${pad(lm.m)}`);
+  await menu(page).getByRole('button', { name: lm.label, exact: true }).click();
   const q = await call;
   expect([q.date_from, q.date_to]).toEqual([lm.from, lm.to]);
   await expect(button(page)).toContainText(lm.label);
+  await expect(menu(page)).toHaveCount(0);
   // the same period on the other page
   const call2 = nextCall(page, '/api/owner/home/overview');
   await page.goto('/dashboard');
   const q2 = await call2;
   expect([q2.date_from, q2.date_to]).toEqual([lm.from, lm.to]);
   await expect(button(page)).toContainText(lm.label);
+  // reopened, the menu shows the Mois tab with that month picked
+  await openMenu(page);
+  await expect(tab(page, 'Mois')).toHaveAttribute('aria-selected', 'true');
+  await expect(menu(page).getByRole('button', { name: lm.label, exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('one date', async ({ page, request }) => {
+test('one date: one click on the calendar, then Appliquer', async ({ page, request }) => {
   await signIn(page, request);
   await page.goto('/dashboard');
   await openMenu(page);
   const lm = lastMonth();
   const day = `${lm.y}-${pad(lm.m)}-15`;
-  await page.getByLabel('Une date').fill(day);
+  await calendarOnLastMonth(page);
+  await dayBtn(page, day).click();
   const call = nextCall(page, '/api/owner/home/overview');
-  await page.getByRole('button', { name: 'Voir ce jour' }).click();
+  await menu(page).getByRole('button', { name: 'Appliquer' }).click();
   const q = await call;
   expect([q.date_from, q.date_to]).toEqual([day, day]);
   await expect(button(page)).toContainText(`15 ${MOIS[lm.m - 1]} ${lm.y}`);
 });
 
-test('a from–to range', async ({ page, request }) => {
+test('a from–to range: two clicks', async ({ page, request }) => {
   await signIn(page, request);
   await page.goto('/dashboard/analytics');
   await openMenu(page);
   const lm = lastMonth();
   const a = `${lm.y}-${pad(lm.m)}-05`;
   const b = `${lm.y}-${pad(lm.m)}-20`;
-  await page.getByLabel('Du', { exact: true }).fill(a);
-  await page.getByLabel('Au', { exact: true }).fill(b);
+  await calendarOnLastMonth(page);
+  await dayBtn(page, a).click();
+  await dayBtn(page, b).click();
+  await expect(menu(page)).toContainText(`5 → 20 ${MOIS[lm.m - 1]} ${lm.y}`);
   const call = nextCall(page, '/api/owner/analyses');
-  await page.getByRole('button', { name: 'Voir la période' }).click();
+  await menu(page).getByRole('button', { name: 'Appliquer' }).click();
   const q = await call;
   expect([q.date_from, q.date_to]).toEqual([a, b]);
   await expect(button(page)).toContainText(`5 → 20 ${MOIS[lm.m - 1]} ${lm.y}`);
+  // reopened: Calendrier tab, the range still marked
+  await openMenu(page);
+  await expect(tab(page, 'Calendrier')).toHaveAttribute('aria-selected', 'true');
+  await expect(dayBtn(page, a)).toHaveAttribute('aria-pressed', 'true');
+  await expect(dayBtn(page, b)).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('a range the wrong way round is explained, not sent', async ({ page, request }) => {
+test('a range clicked the wrong way round is put right, not refused', async ({ page, request }) => {
   await signIn(page, request);
   await page.goto('/dashboard');
   await openMenu(page);
   const lm = lastMonth();
-  await page.getByLabel('Du', { exact: true }).fill(`${lm.y}-${pad(lm.m)}-20`);
-  await page.getByLabel('Au', { exact: true }).fill(`${lm.y}-${pad(lm.m)}-05`);
-  await page.getByRole('button', { name: 'Voir la période' }).click();
-  await expect(page.getByText('La date de début est après la date de fin.')).toBeVisible();
+  const a = `${lm.y}-${pad(lm.m)}-05`;
+  const b = `${lm.y}-${pad(lm.m)}-20`;
+  await calendarOnLastMonth(page);
+  await dayBtn(page, b).click();
+  await dayBtn(page, a).click();
+  const call = nextCall(page, '/api/owner/home/overview');
+  await menu(page).getByRole('button', { name: 'Appliquer' }).click();
+  const q = await call;
+  expect([q.date_from, q.date_to]).toEqual([a, b]);
+});
+
+test('Appliquer with no day picked explains itself and sends nothing', async ({ page, request }) => {
+  await signIn(page, request);
+  await page.goto('/dashboard');
+  await openMenu(page);
+  await tab(page, 'Calendrier').click();
+  await menu(page).getByRole('button', { name: 'Appliquer' }).click();
+  await expect(menu(page).getByText('Choisissez un jour, ou deux pour une période.')).toBeVisible();
+  await expect(button(page)).toContainText('Ce mois-ci');
+});
+
+test('the future cannot be picked: no next month, tomorrow greyed', async ({ page, request }) => {
+  await signIn(page, request);
+  await page.goto('/dashboard');
+  await openMenu(page);
+  await tab(page, 'Calendrier').click();
+  await expect(menu(page).getByRole('button', { name: 'Mois suivant' })).toBeDisabled();
+  const t = parisToday();
+  await expect(dayBtn(page, t)).toBeEnabled();
+  const [y, m, d] = t.split('-').map(Number);
+  if (d < lastDay(y, m)) await expect(dayBtn(page, `${y}-${pad(m)}-${pad(d + 1)}`)).toBeDisabled();
+});
+
+test('two years back in one go with the month list of the calendar', async ({ page, request }) => {
+  await signIn(page, request);
+  await page.goto('/dashboard');
+  await openMenu(page);
+  await tab(page, 'Calendrier').click();
+  const pick = menu(page).getByLabel('Mois affiché');
+  const opts = await pick.locator('option').count();
+  expect(opts).toBeGreaterThanOrEqual(24);
+  const oldestKey = await pick.locator('option').last().getAttribute('value');
+  await pick.selectOption(oldestKey);
+  await expect(menu(page).getByRole('button', { name: 'Mois précédent' })).toBeDisabled();
 });
 
 test('the presets stay: « 7 derniers jours » still reads 7 days', async ({ page, request }) => {
@@ -120,10 +198,20 @@ test('the presets stay: « 7 derniers jours » still reads 7 days', async ({ pag
   await page.goto('/dashboard');
   await openMenu(page);
   const call = nextCall(page, '/api/owner/home/overview');
-  await page.getByRole('option', { name: '7 derniers jours' }).click();
+  await menu(page).getByRole('button', { name: '7 derniers jours' }).click();
   const q = await call;
   expect(q.days).toBe('7');
   expect(q.date_from).toBeUndefined();
+});
+
+test('« les derniers N jours / mois » stays on the Rapide tab', async ({ page, request }) => {
+  await signIn(page, request);
+  await page.goto('/dashboard');
+  await openMenu(page);
+  await menu(page).getByLabel('Nombre').fill('3');
+  await menu(page).getByLabel('Unité').selectOption('m');
+  await menu(page).getByRole('button', { name: 'Appliquer' }).click();
+  await expect(button(page)).toContainText('3 derniers mois');
 });
 
 test('a period chosen last month gives way to « Ce mois-ci » on the 1st', async ({ page, request }) => {
@@ -153,8 +241,22 @@ test('a month in the future is not offered', async ({ page, request }) => {
   await signIn(page, request);
   await page.goto('/dashboard');
   await openMenu(page);
+  await tab(page, 'Mois').click();
   const [y, m] = parisToday().split('-').map(Number);
-  const next = m === 12 ? `m${y + 1}-01` : `m${y}-${pad(m + 1)}`;
-  await expect(page.getByLabel('Un mois').locator(`option[value="${next}"]`)).toHaveCount(0);
-  await expect(page.getByLabel('Un mois').locator(`option[value="m${y}-${pad(m)}"]`)).toHaveCount(1);
+  const cur = `${MOIS[m - 1][0].toUpperCase()}${MOIS[m - 1].slice(1)} ${y}`;
+  await expect(menu(page).getByRole('button', { name: cur, exact: true })).toBeEnabled();
+  if (m < 12) {
+    const nxt = `${MOIS[m][0].toUpperCase()}${MOIS[m].slice(1)} ${y}`;
+    await expect(menu(page).getByRole('button', { name: nxt, exact: true })).toBeDisabled();
+  }
+});
+
+test('Échap closes the menu without changing the period', async ({ page, request }) => {
+  await signIn(page, request);
+  await page.goto('/dashboard');
+  await openMenu(page);
+  await tab(page, 'Calendrier').click();
+  await page.keyboard.press('Escape');
+  await expect(menu(page)).toHaveCount(0);
+  await expect(button(page)).toContainText('Ce mois-ci');
 });
