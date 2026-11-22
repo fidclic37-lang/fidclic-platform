@@ -4,6 +4,7 @@
  * pinned to the button's right edge while the button sits on the left. It
  * now opens wherever it fits, and its custom row (number + unit + Appliquer)
  * stays inside the menu at the phone's 16 px field size. Local server only.
+ * 2026-11-21: the menu is now a dialog with tabs; the calendar must fit too.
  */
 import { test, expect } from '@playwright/test';
 
@@ -24,12 +25,12 @@ async function signIn(page, request) {
 }
 
 const inside = async (page, w) => {
-  const menu = page.getByRole('listbox');
+  const menu = page.getByRole('dialog', { name: 'Choisir la période' });
   await expect(menu).toBeVisible();
   const m = await menu.boundingBox();
   expect(m.x, 'menu left edge on screen').toBeGreaterThanOrEqual(0);
   expect(m.x + m.width, 'menu right edge on screen').toBeLessThanOrEqual(w);
-  for (const el of [page.getByLabel('Nombre'), page.getByLabel('Unité'), page.getByRole('button', { name: 'Appliquer' })]) {
+  for (const el of [page.getByRole('tab', { name: 'Calendrier' }), page.getByLabel('Nombre'), page.getByLabel('Unité'), page.getByRole('button', { name: 'Appliquer' })]) {
     const b = await el.boundingBox();
     expect(b.x, 'inside the menu (left)').toBeGreaterThanOrEqual(m.x);
     expect(b.x + b.width, 'inside the menu (right)').toBeLessThanOrEqual(m.x + m.width + 0.5);
@@ -61,13 +62,18 @@ test.describe('phone 390 px — Analyses', () => {
   test('Analyses: the period menu stays on screen', async ({ page, request }) => {
     await open(page, request, '/dashboard/analytics');
     await inside(page, 390);
+    // the calendar's seven columns fit on a phone too
+    await page.getByRole('tab', { name: 'Calendrier' }).click();
+    const m = await page.getByRole('dialog', { name: 'Choisir la période' }).boundingBox();
+    const next = await page.getByRole('button', { name: 'Mois suivant' }).boundingBox();
+    expect(next.x + next.width).toBeLessThanOrEqual(m.x + m.width + 0.5);
   });
 });
 
 test('computer: the menu stays on screen too', async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, request, '/dashboard');
-  const m = await page.getByRole('listbox').boundingBox();
+  const m = await page.getByRole('dialog', { name: 'Choisir la période' }).boundingBox();
   expect(m.x).toBeGreaterThanOrEqual(0);
   expect(m.x + m.width).toBeLessThanOrEqual(1440);
 });
