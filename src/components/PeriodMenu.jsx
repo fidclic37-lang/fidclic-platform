@@ -7,6 +7,7 @@ import {
   monthGrid, clickDay, selectionToken, selectionFromToken, tabFor, monthGroups,
   shiftMonth, canShift, startMonth, dayLabel, calendarMonths,
 } from '../lib/periodCalendar';
+import SafeBoundary from './SafeBoundary';
 
 /**
  * The period menu of the Tableau de bord and Analyses, made simpler
@@ -35,7 +36,7 @@ const NO_DAY = 'Choisissez un jour, ou deux pour une période.';
 const go = 'rounded-lg bg-[#2F6BFF] px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition hover:bg-[#2559DB] disabled:opacity-50';
 const arrow = 'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#475569] transition hover:bg-[#F1F5FB] disabled:cursor-not-allowed disabled:opacity-30';
 
-export default function PeriodMenu({ value, onChange, busy = false, lead = false }) {
+function PeriodMenuInner({ value, onChange, busy = false, lead = false }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(tabFor(value));
   const cur = lastParts(value);
@@ -238,5 +239,21 @@ export default function PeriodMenu({ value, onChange, busy = false, lead = false
         </div>
       )}
     </div>
+  );
+}
+
+/* 2026-11-23: if the menu itself ever fails, the button stays and a click
+   tries again — the page around it is never taken down (SafeBoundary). */
+export default function PeriodMenu(props) {
+  return (
+    <SafeBoundary name="PeriodMenu" resetKey={props.value}
+                  fallback={(retry) => (
+                    <button type="button" onClick={retry} aria-label="Période analysée"
+                            className="inline-flex items-center gap-2 rounded-xl border border-[#E6EEFB] bg-white py-2 pl-3 pr-3 text-[12.5px] font-medium text-[#334155]">
+                      {periodLabel(props.value)} · Réessayer
+                    </button>
+                  )}>
+      <PeriodMenuInner {...props} />
+    </SafeBoundary>
   );
 }

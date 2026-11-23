@@ -1,6 +1,8 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { eur } from '../lib/money';
+import { activeIndex, cleanSeries } from '../lib/chartPoint';
+import SafeBoundary from './SafeBoundary';
 
 /**
  * The « Évolution du chiffre d'affaires » / « Nouveaux clients » chart, shared
@@ -15,6 +17,10 @@ import { eur } from '../lib/money';
  *
  * The chart is SVG in a viewBox, so the card is placed in percentages of the
  * box — no measuring, correct at every width.
+ *
+ * 2026-11-23: the point shown is read through lib/chartPoint (an index left
+ * from the previous period is never read), and the chart sits in a
+ * SafeBoundary — if it ever fails, the card says so and the page stays.
  */
 const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
@@ -47,12 +53,12 @@ function storyOf(point, series, isMoney, unit) {
   return rows;
 }
 
-const TrendChart = ({
+const TrendChartInner = ({
   series, kind = 'line', money: isMoney = false, height = 200,
   unit = 'Total', openLabel, onOpen, empty = 'Aucune donnée sur la période.',
 }) => {
   const gid = useId().replace(/[^a-zA-Z0-9]/g, '');
-  const pts = useMemo(() => series || [], [series]);
+  const pts = useMemo(() => cleanSeries(series), [series]);
   const [hover, setHover] = useState(null);           // index under the cursor
   const [pinned, setPinned] = useState(null);         // index clicked
   const box = useRef(null);
@@ -92,7 +98,8 @@ const TrendChart = ({
 
   if (!pts.length) return <p className="py-12 text-center text-[13px] text-[#94A3B8]">{empty}</p>;
 
-  const active = pinned !== null ? pinned : hover;
+  // never an index of the previous series: see lib/chartPoint
+  const active = activeIndex(pts.length, pinned, hover);
   const point = active === null ? null : pts[active];
   // The card sits above the point, and flips to the other side near an edge.
   const leftPct = active === null ? 0 : (x(active) / W) * 100;
@@ -217,5 +224,21 @@ const TrendChart = ({
     </div>
   );
 };
+
+const TrendChart = (props) => (
+  <SafeBoundary name="TrendChart" resetKey={props.series}
+                fallback={(retry) => (
+                  <div role="alert" className="flex flex-col items-center justify-center gap-2 text-center"
+                       style={{ height: props.height || 200 }} data-testid="trend-chart-error">
+                    <p className="text-[13px] text-[#64748B]">Ce graphique n'a pas pu s'afficher.</p>
+                    <button type="button" onClick={retry}
+                            className="rounded-lg border border-[#E6EEFB] px-3 py-1.5 text-[12.5px] font-semibold text-[#2F6BFF] hover:bg-[#F5F8FE]">
+                      Réessayer
+                    </button>
+                  </div>
+                )}>
+    <TrendChartInner {...props} />
+  </SafeBoundary>
+);
 
 export default TrendChart;
