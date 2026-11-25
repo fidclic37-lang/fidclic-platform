@@ -230,20 +230,22 @@ with mongomock.patch(servers=(("localhost", 27017),)):
           "a bar's busiest hour must not vanish", night["outside"] == 1)
 
     # ---- who the clients are --------------------------------------------------------------------
-    print("\nStatut des clients")
+    print("\nStatut des clients — the Statut column, slice by slice (user, 2026-11-25)")
     mix = {s["key"]: s for s in d["status_mix"]["slices"]}
-    check("four slices, in the design's order",
-          [s["key"] for s in d["status_mix"]["slices"]]
-          == ["loyal", "new", "occasional", "inactive"])
+    keys = [s["key"] for s in d["status_mix"]["slices"]]
+    check("one slice per status that has clients, in the Règles clients order (Actif first, the away ones after)",
+          keys[0] == "actif" and mix["actif"]["count"] == 4
+          and set(keys[1:]) <= {"bientot_perdu", "dormant"} and keys == sorted(keys, key=["actif", "bientot_perdu", "dormant"].index))
     check("everyone is in exactly one",
           sum(s["count"] for s in d["status_mix"]["slices"]) == 6)
-    check("inactif first: gone ninety days or never came", mix["inactive"]["count"] == 2)
-    seg = lambda k: CP.list_page(segment=k, per_page=100, token_data=TD())["total"]       # noqa: E731
-    check("each slice opens exactly its clients on the Clients page",
-          all(mix[k]["count"] == seg(mix[k]["segment"]) for k in mix))
-    check("a client who joined this week is nouveau", mix["new"]["count"] == 1)
-    check("shares add up to about 100 %",
-          99 <= sum(s["pct"] for s in d["status_mix"]["slices"]) <= 101)
+    check("the two who are gone (90 days, or never came in 400 days) are away, not Actif",
+          sum(mix[k]["count"] for k in keys[1:]) == 2
+          and "Hugo" in [r["name"] for r in CP.list_page(status="dormant", per_page=100, token_data=TD())["rows"]])
+    stat = lambda k: CP.list_page(status=k, per_page=100, token_data=TD())["total"]       # noqa: E731
+    check("each slice opens exactly its clients on the Clients page (Statut filter)",
+          all(mix[k]["count"] == stat(k) and mix[k]["to"] == f"/dashboard/customers?statut={k}" for k in mix))
+    check("shares add up to 100 %",
+          sum(s["pct"] for s in d["status_mix"]["slices"]) == 100)
 
     # ---- recommendations ------------------------------------------------------------------------
     print("\nRecommandations — only advice the figures support")

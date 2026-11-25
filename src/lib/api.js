@@ -54,7 +54,7 @@ api.interceptors.request.use((config) => {
 // opens the upgrade prompt (components/PlanAccess.jsx). The caller still gets
 // the error, so its own « chargement impossible » stays quiet or short.
 // A settings tab saved: Paramètres' « Réinitialiser » refreshes what it can undo.
-const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules|join-link\/(slug|page)|team-access\/(users|stores|roles)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
+const SETTINGS_SAVE = /^\/?(owner\/(etablissement|settings\/hours|customer-rules(?!\/preview)|join-link\/(slug|page)|team-access\/(users|stores|roles)|privacy|notifications\/rules|integrations\/webhooks)|me\/preferences)/;
 const settingsSaved = (r) => {
   try {
     const m = String(r?.config?.method || '').toLowerCase();
@@ -820,6 +820,8 @@ export const ownerAPI = {
   customerRules: () => api.get('/owner/customer-rules'),
   saveCustomerRules: (body) => api.put('/owner/customer-rules', body),
   restoreCustomerRules: () => api.post('/owner/customer-rules/restore'),
+  // what a change would do, before it is saved (« 23 clients passent de … à … »)
+  previewCustomerRules: (body) => api.post('/owner/customer-rules/preview', body),
   settingsVersion: (section) => api.get(`/owner/settings-versions/${section}`),
   revertSettings: (section) => api.post(`/owner/settings-versions/${section}/revert`),
   teamAccess: () => api.get('/owner/team-access'),

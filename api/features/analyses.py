@@ -329,7 +329,7 @@ def _tab_vue(r: Reader) -> Dict[str, Any]:
         "hours": _hours_grid(tot),
         "moments": _moments(tot),
         "products": tot.top_products(5),
-        "status_mix": CP.status_mix(people, r.at, rules),
+        "status_mix": CP.statut_mix(people, r.at, rules),
         "avg_visits": {"lifetime": life["avg_visits"], "period": period_visits},
         "basket_bands": _basket_bands(people),
     }
@@ -454,7 +454,7 @@ def _tab_fidelisation(r: Reader) -> Dict[str, Any]:
         "tiers": [{"key": k, "label": TIER_LABELS.get(k, k.title()),
                    "count": tiers.get(k, 0), "pct": _pct(tiers.get(k, 0), len(people))}
                   for k in ("bronze", "silver", "gold", "vip")],
-        "status_mix": CP.status_mix(people, r.at, rules),
+        "status_mix": CP.statut_mix(people, r.at, rules),
     }
 
 
