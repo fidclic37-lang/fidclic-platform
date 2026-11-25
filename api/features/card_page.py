@@ -355,12 +355,36 @@ def campaign_offer_for_photo(cust: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "wallet_photo": bool(newest.get("wallet_photo"))}
 
 
+def last_visit(cust: Optional[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    """This client's newest visit at this shop, for « Donner mon avis » (open
+    14 days after it, one review per visit): {last_visit_date: ISO Z, last_visit_id}.
+    Only the client's own row, one indexed read (tenant, customer, visit_time);
+    a cancelled visit has left `visits`. Old data with no row → the customer's
+    own last_visit_date, no id."""
+    out: Dict[str, Optional[str]] = {"last_visit_date": None, "last_visit_id": None}
+    if not isinstance(cust, dict) or not cust.get("id") or not cust.get("tenant_id"):
+        return out
+    row = None
+    try:
+        row = _db.visits.find_one({"tenant_id": cust["tenant_id"], "customer_id": cust["id"]},
+                                  {"_id": 0, "id": 1, "visit_time": 1}, sort=[("visit_time", -1)])
+    except Exception as exc:  # noqa: BLE001 — the card must open even if this read fails
+        print(f"card page: last visit lookup failed (non-fatal): {exc}")
+    if row and iso(row.get("visit_time")):
+        out["last_visit_date"] = iso(row.get("visit_time"))
+        out["last_visit_id"] = str(row["id"]) if row.get("id") else None
+    else:
+        out["last_visit_date"] = iso(cust.get("last_visit_date"))
+    return out
+
+
 def enrich(payload: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
-    """The three fields GET /api/card/{bc} adds for the page."""
+    """The fields GET /api/card/{bc} adds for the page."""
     if not isinstance(payload, dict):
         return payload
     if isinstance(payload.get("customer"), dict):
         payload["customer"]["first_name"] = first_name(cust.get("name"))
+        payload["customer"].update(last_visit(cust))
     card = payload.get("card")
     if isinstance(card, dict):
         card["socials"] = socials(card.get("details"))

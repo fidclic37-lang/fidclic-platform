@@ -9,7 +9,8 @@
 //   • the button opens the phone's own Wallet (user, 2026-11-25): Google's
 //     is a plain link to Google Wallet as soon as it is ready; Apple's adds the
 //     card, and once the iPhone has told the server the card is in its Wallet,
-//     the page opens the Wallet app — and offers « Ouvrir Apple Wallet ».
+//     the page says « Carte ajoutée » and points to the card's « Bienvenue »
+//     notification, which opens that card (shoebox:// opened the other cards).
 // The local server has no Apple / Google keys: /api/wallet/config is answered
 // here as on production. Runs against the local server only (scripts/dev_local.py).
 import { test, expect } from '@playwright/test';
@@ -140,12 +141,13 @@ test.describe('iPhone: Apple Wallet', () => {
     return asked;
   }
 
-  test('added: « Carte ajoutée » and « Ouvrir Apple Wallet » (the Wallet app)', async ({ page }) => {
+  test('added: « Carte ajoutée » and the « Bienvenue » notification to touch — never shoebox://', async ({ page }) => {
     const asked = await tapApple(page, [false, false, true]);
     await expect(page.getByText(/Carte ajoutée à Apple Wallet/)).toBeVisible({ timeout: 15_000 });
-    const open = page.getByRole('link', { name: /Ouvrir Apple Wallet/ });
-    await expect(open).toBeVisible();
-    await expect(open).toHaveAttribute('href', 'shoebox://');
+    await expect(page.getByText(/notification/i)).toBeVisible();
+    // shoebox:// opened Wallet on the other cards (user, 2026-11-25)
+    expect(await page.locator('a[href^="shoebox:"]').count()).toBe(0);
+    await expect(page.getByRole('link', { name: /Ouvrir Apple Wallet/ })).toHaveCount(0);
     await expect(page.getByRole('link', { name: /Ajouter à Apple Wallet/ }), 'already added: no second « Ajouter »').toHaveCount(0);
     expect(asked.length, 'asked until added, then stopped').toBe(3);
     expect(asked.every(Boolean), 'each question carries the card\'s own key').toBe(true);
@@ -157,7 +159,6 @@ test.describe('iPhone: Apple Wallet', () => {
     await tapApple(page, Array(200).fill(false));
     await page.waitForTimeout(5000);
     await expect(page.getByRole('link', { name: /Ajouter à Apple Wallet/ })).toBeVisible();
-    await expect(page.getByRole('link', { name: /Ouvrir Apple Wallet/ })).toHaveCount(0);
     await expect(page.getByText(/Carte ajoutée/)).toHaveCount(0);
   });
 

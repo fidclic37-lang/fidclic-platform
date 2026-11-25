@@ -257,3 +257,18 @@ export function appleAddHref({ search, barcodeId, key, place, appleOn } = {}) {
   if (!bc) return null;
   return `/api/card/${encodeURIComponent(bc)}/apple-wallet.pkpass${key ? `?k=${encodeURIComponent(key)}` : ''}`;
 }
+
+/** « Donner mon avis » opens for this many days after the client's last visit. */
+export const REVIEW_WINDOW_DAYS = 14;
+
+/**
+ * Is « Donner mon avis » open? `lastVisit` = customer.last_visit_date from
+ * GET /card/{bc} (ISO UTC). Counted in real time, so a DST change moves nothing;
+ * a phone clock a little behind the server still opens it.
+ */
+export function reviewOpen(lastVisit, now = Date.now()) {
+  if (typeof lastVisit !== 'string' || !lastVisit.trim()) return false;
+  const t = Date.parse(lastVisit);
+  if (Number.isNaN(t)) return false;
+  return now - t <= REVIEW_WINDOW_DAYS * 864e5;
+}

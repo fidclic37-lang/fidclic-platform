@@ -7,13 +7,13 @@ import api, { publicAPI } from '../lib/api';
 import { ensureSubscribed, unsubscribe as unsubscribePush, isSupported as isPushSupported } from '../lib/webpush';
 import { programmeOf, earningRule, balanceText } from '../lib/programme';
 import { here as walletPlace } from '../lib/iosSafari';
-import { APPLE_WALLET_APP, waitForAppleAdd } from '../lib/walletOpen';
+import { waitForAppleAdd } from '../lib/walletOpen';
 import { cycleVisits, rewardsPending } from '../lib/cardCycle';
 import { protectNames } from '../lib/translator';
 import { liveOffers } from '../lib/cardOffers';
 import { themeFromCard, themeVars } from '../lib/cardTheme';
 import { photoPalette } from '../lib/photoPalette';
-import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, followNetworks, ctaOf, appleAddHref, rewardsHref, navActive } from '../lib/cardPage';
+import { activityTime, activityRow, pointsBox, tabFromSearch, searchForTab, followNetworks, ctaOf, appleAddHref, rewardsHref, navActive, reviewOpen } from '../lib/cardPage';
 import './MyWalletCardPage.css';
 
 /*
@@ -602,9 +602,9 @@ const CardView = () => {
         hidden: () => document.hidden,
         cancelled: () => gone,
       }).then((added) => {
+        // #521 dropped the jump to the Wallet app (lib/walletOpen): the card is in Wallet
         if (!added || gone) return;
         setAppleAdd(null);
-        try { window.location.href = APPLE_WALLET_APP; } catch (_e) { /* the card is in Wallet anyway */ }
       });
     }).catch(() => {});
     return () => { gone = true; };
@@ -753,10 +753,8 @@ const CardView = () => {
 
 
 
-  const recentVisit = (() => {
-    const last = customer.last_visit_date ? new Date(customer.last_visit_date) : null;
-    return !!last && (Date.now() - last.getTime()) / 86400000 <= 14;
-  })();
+  // « Donner mon avis »: 14 days after the last visit — GET /card/{bc} sends it
+  const recentVisit = reviewOpen(customer.last_visit_date);
   const pending = rewardsPending(customer);
   // the shop's view (?vue=commerce, from the dashboard) stays on through « Mes
   // offres » and back — without it the page took the browser's own card for
