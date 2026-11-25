@@ -17,10 +17,17 @@ is a name, an icon, a colour, one to three conditions (all must hold), a
 description and an on/off switch.
 
 A client can satisfy several rules at once — a VIP is also active. Where the
-product needs ONE word for a client (the Statut column of the Clients page),
-`primary()` picks it: losing a client is said first (dormant, bientôt perdu),
-then the owner's own rules, then the strongest frequency rule, then nouveau,
-then actif. A client who matches nothing but has been in reads "Inactif".
+product needs ONE word for a client (the Statut column, the « Statut des
+clients » donut), `primary()` picks it from two ladders (user, 2026-11-25:
+an owner's « 45 jours » rule never reached anybody, Bientôt perdu and Dormant
+were asked first):
+  1. absence — the time line: Bientôt perdu, Dormant and the owner's own steps
+     « N'a pas visité depuis N jours ». Each step says only where it starts;
+     it ends where the next one starts, so two steps can never hide each other.
+  2. the owner's other rules (several conditions mixed), in their order.
+  3. frequency — Régulier, Fidèle, Très actif and the owner's steps « N visites
+     par mois », the highest first; then Nouveau, then Actif.
+A client who matches nothing but has been in reads "Inactif".
 """
 from __future__ import annotations
 
@@ -29,7 +36,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from collections import Counter
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import require_role, TokenData
@@ -107,11 +116,6 @@ BUILTINS: List[Dict[str, Any]] = [
      "description": "Vient très souvent. À ne pas confondre avec le palier VIP de la carte de fidélité."},
 ]
 BUILTIN_KEYS = [b["key"] for b in BUILTINS]
-
-# The word the Clients page shows, in the order it is looked for. Custom rules
-# slot in after the two "losing them" rules.
-PRIMARY_BEFORE_CUSTOM = ["dormant", "bientot_perdu"]
-PRIMARY_AFTER_CUSTOM = ["vip", "fidele", "regulier", "nouveau", "actif"]
 
 FALLBACK_INACTIVE = {"key": "inactif", "name": "Inactif", "tone": "rose"}
 FALLBACK_NONE = {"key": "aucun", "name": "Sans statut", "tone": "slate"}
@@ -318,18 +322,128 @@ def matches(rule: Dict[str, Any], cust: Dict[str, Any], at: datetime,
     return all(_holds(c, cust, at, ctx) for c in conds)
 
 
+# ---------------------------------------------------------------------------
+# the two ladders (user, 2026-11-25)
+# ---------------------------------------------------------------------------
+def _clean_num(x: Any) -> Any:
+    x = float(x)
+    return int(x) if x.is_integer() else x
+
+
+def group_of(rule: Dict[str, Any]) -> str:
+    """« absence » (the time line), « frequency », or « custom » — an owner's
+    rule mixing conditions, read between the two ladders. An owner rule with
+    one single time or frequency condition IS a step of that ladder."""
+    key = rule.get("key")
+    if key in ("actif", "bientot_perdu", "dormant"):
+        return "absence"
+    if key in ("nouveau", "regulier", "fidele", "vip"):
+        return "frequency"
+    conds = rule.get("conditions") or []
+    if len(conds) == 1 and conds[0].get("type") == "not_visited_since":
+        return "absence"
+    if len(conds) == 1 and conds[0].get("type") == "visits_per_month":
+        return "frequency"
+    return "custom"
+
+
+def _start(rule: Dict[str, Any]) -> Optional[float]:
+    """Where a step starts: days away (absence) or visits a month (frequency).
+    None for Actif and Nouveau, which are not steps."""
+    key, conds = rule.get("key"), rule.get("conditions") or []
+    if key in ("actif", "nouveau"):
+        return None
+    try:
+        return _num(conds[1 if key == "regulier" else 0]["value"])
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def _steps(rules: List[Dict[str, Any]], group: str, enabled_only: bool = True):
+    out = [(_start(r), r) for r in rules if group_of(r) == group
+           and (r.get("enabled", True) or not enabled_only)]
+    return [(s, r) for s, r in out if s is not None]
+
+
+def _absence_steps(rules: List[Dict[str, Any]]):
+    return sorted(_steps(rules, "absence"), key=lambda x: x[0])
+
+
+def _frequency_steps(rules: List[Dict[str, Any]]):
+    return sorted(_steps(rules, "frequency"), key=lambda x: -x[0])
+
+
+def _absent(cust: Dict[str, Any], at: datetime, rules: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The time-line step the client stands on, if they are away. A client
+    who never came reaches only Dormant and the steps after it — before that
+    they are a sign-up, not a client slipping away (as Bientôt perdu always
+    read)."""
+    days = _days_since(cust, at)
+    if days is None:
+        return None
+    steps = _absence_steps(rules)
+    dormant = next((s for s, r in steps if r.get("key") == "dormant"), None)
+    visited = int(cust.get("visits") or 0) > 0
+    best = None
+    for start, r in steps:
+        if days < start:
+            break
+        if not visited and (r.get("key") == "bientot_perdu" or (dormant is not None and start < dormant)):
+            continue
+        best = r
+    return best
+
+
 def primary(cust: Dict[str, Any], at: datetime, rules: List[Dict[str, Any]],
             ctx: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The one kind a client is shown as. Returns the rule, or a fallback."""
     ctx = ctx if ctx is not None else _context(rules)
-    by_key = {r.get("key"): r for r in rules if r.get("key")}
-    custom = [r for r in rules if not r.get("key")]
-    ordered = ([by_key[k] for k in PRIMARY_BEFORE_CUSTOM if k in by_key] + custom
-               + [by_key[k] for k in PRIMARY_AFTER_CUSTOM if k in by_key])
-    for r in ordered:
+    gone = _absent(cust, at, rules)
+    if gone:
+        return gone
+    for r in rules:                                   # the owner's mixed rules, in their order
+        if group_of(r) == "custom" and matches(r, cust, at, ctx):
+            return r
+    for _start_at, r in _frequency_steps(rules):      # the highest first
         if matches(r, cust, at, ctx):
             return r
+    for key in ("nouveau", "actif"):
+        r = rule(rules, key)
+        if r and matches(r, cust, at, ctx):
+            return r
     return FALLBACK_INACTIVE if int(cust.get("visits") or 0) > 0 else FALLBACK_NONE
+
+
+def reading_order(rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """How the page lists them: the time line from Actif down, then frequency
+    from Nouveau up, then the owner's mixed rules in their own order."""
+    def rank(r):
+        g, key = group_of(r), r.get("key")
+        if g == "absence":
+            return (0, -1 if key == "actif" else (_start(r) or 0))
+        if g == "frequency":
+            return (1, -1 if key == "nouveau" else (_start(r) or 0))
+        return (2, 0)
+    return sorted(rules, key=rank)
+
+
+def ranges(rules: List[Dict[str, Any]]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Each switched-on step's range, as the page shows it: an absence step
+    runs from its start to the day before the next one."""
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    steps = _absence_steps(rules)
+    for i, (start, r) in enumerate(steps):
+        nxt = steps[i + 1][0] if i + 1 < len(steps) else None
+        out[r["id"]] = {"from": int(start), "to": int(nxt) - 1 if nxt is not None else None}
+    a = rule(rules, "actif")
+    if a and a.get("enabled", True):
+        out[a["id"]] = {"from": 0, "to": active_days(rules)}
+    for start, r in _frequency_steps(rules):
+        out[r["id"]] = {"from": _clean_num(start)}
+    n = rule(rules, "nouveau")
+    if n and n.get("enabled", True):
+        out[n["id"]] = {"max": _clean_num(n["conditions"][0]["value"])}
+    return out
 
 
 def status_key(rule: Dict[str, Any]) -> str:
@@ -339,7 +453,7 @@ def status_key(rule: Dict[str, Any]) -> str:
 def statuses(rules: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     """Everything the Statut filter can offer, in display order."""
     out = [{"key": status_key(r), "label": r["name"], "tone": r.get("tone") or "blue"}
-           for r in rules if r.get("enabled", True)]
+           for r in reading_order(rules) if r.get("enabled", True)]
     out.append({"key": FALLBACK_INACTIVE["key"], "label": FALLBACK_INACTIVE["name"],
                 "tone": FALLBACK_INACTIVE["tone"]})
     out.append({"key": FALLBACK_NONE["key"], "label": FALLBACK_NONE["name"],
@@ -472,16 +586,81 @@ def _check_ladders(rules: List[Dict[str, Any]]) -> None:
             raise HTTPException(status_code=400,
                                 detail=f"« {names[k2]} » doit demander plus de visites par mois que "
                                        f"« {names[k1]} » ({x1:g}).")
+    _check_steps(rules, active)
+
+
+def _check_steps(rules: List[Dict[str, Any]], active: Optional[float]) -> None:
+    """An owner's step must start on a day (or a frequency) of its own: two
+    steps starting together would leave one of them with nobody, for ever —
+    the « 45 jours » rule of 2026-11-25. Switched-off steps count too, so
+    switching one back on never needs a fix first."""
+    for group, unit in (("absence", "jours"), ("frequency", "visites par mois")):
+        seen: Dict[float, Dict[str, Any]] = {}
+        for start, r in sorted(_steps(rules, group, enabled_only=False),
+                               key=lambda x: (x[0], bool(not x[1].get("key")))):
+            own = not r.get("key")
+            if own and group == "absence" and active is not None and start <= active:
+                raise HTTPException(status_code=400,
+                                    detail=f"« {r['name']} » doit commencer après les {active:g} jours "
+                                           f"de « Client actif ».")
+            other = seen.get(start)
+            if other is not None:
+                if other.get("key"):
+                    detail = (f"« {r['name']} » commence au même endroit que « {other['name']} » "
+                              f"({start:g} {unit}) : choisissez un autre chiffre.")
+                else:
+                    detail = (f"Deux étapes commencent à {start:g} {unit} : « {other['name']} » "
+                              f"et « {r['name']} ».")
+                raise HTTPException(status_code=400, detail=detail)
+            seen[start] = r
 
 
 # ---------------------------------------------------------------------------
 # endpoints
 # ---------------------------------------------------------------------------
-def _payload(tid: str) -> Dict[str, Any]:
+def _people(tid: str, scope: Any = None) -> List[Dict[str, Any]]:
+    """The live clients the counts are made of — the establishments the
+    reader may see (features/store_scope), deleted clients left out, the
+    same list as the Clients page."""
+    from features import clients_page as CP
+    return CP._load(tid, scope)
+
+
+def _counts(rules: List[Dict[str, Any]], people: List[Dict[str, Any]], at: datetime) -> Counter:
+    ctx = _context(rules)
+    return Counter(status_key(primary(c, at, rules, ctx)) for c in people)
+
+
+def _moves(old: List[Dict[str, Any]], new: List[Dict[str, Any]], people: List[Dict[str, Any]],
+           at: datetime) -> Dict[str, Any]:
+    """Who changes status between two versions of the rules — said before a
+    save (preview) and after it (« N clients ont changé de statut »)."""
+    labels_old = {s["key"]: s["label"] for s in statuses(old)}
+    labels_new = {s["key"]: s["label"] for s in statuses(new)}
+    c_old, c_new = _context(old), _context(new)
+    moved: Counter = Counter()
+    for p in people:
+        a = status_key(primary(p, at, old, c_old))
+        b = status_key(primary(p, at, new, c_new))
+        if a != b:
+            moved[(a, b)] += 1
+    return {"changed": sum(moved.values()),
+            "moves": [{"from": a, "from_label": labels_old.get(a, a), "to": b,
+                       "to_label": labels_new.get(b, b), "count": n}
+                      for (a, b), n in moved.most_common(12)]}
+
+
+def _payload(tid: str, scope: Any = None, people: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     tenant = _db.tenants.find_one({"id": tid}, {"_id": 0, "name": 1}) or {}
+    rules = reading_order(load(tid))
+    spans = ranges(rules)
+    counts = _counts(rules, _people(tid, scope) if people is None else people, _now())
     return {
         "shop": tenant.get("name") or "",
-        "rules": load(tid),
+        "rules": [{**r, "group": group_of(r), "range": spans.get(r["id"]),
+                   "count": counts.get(status_key(r), 0) if r.get("enabled", True) else 0}
+                  for r in rules],
+        "fallback_counts": {k: counts.get(k, 0) for k in (FALLBACK_INACTIVE["key"], FALLBACK_NONE["key"])},
         "deleted_builtins": [{"key": k, "name": _builtin(k)["name"]} for k in deleted_builtins(tid)],
         "criteria": [{"type": k, "label": v["label"], "unit": v["unit"], "min": v["min"],
                       "max": v["max"], "builtin_only": bool(v.get("builtin_only"))}
@@ -492,17 +671,44 @@ def _payload(tid: str) -> Dict[str, Any]:
     }
 
 
+def _scope(token_data: TokenData, request: Optional[Request]):
+    from features import store_scope as S
+    return S.resolve(token_data, request)
+
+
 @router.get("/api/owner/customer-rules")
-def get_rules(token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
-    return _payload(token_data.tenant_id)
+def get_rules(request: Request = None,
+              token_data: TokenData = Depends(require_role(["business_owner", "manager"]))):
+    try:
+        scope = _scope(token_data, request)
+    except HTTPException:
+        # a manager given no establishment still reads the rules — with no
+        # client counted, never the whole shop's
+        return _payload(token_data.tenant_id, people=[])
+    return _payload(token_data.tenant_id, scope)
+
+
+@router.post("/api/owner/customer-rules/preview")
+def preview_rules(body: RulesIn, request: Request = None,
+                  token_data: TokenData = Depends(require_role(["business_owner"]))):
+    """What a change would do, before it is saved: how many clients change
+    status, from what to what. Checked like a save, saves nothing."""
+    tid = token_data.tenant_id
+    new = _clean(body)
+    return _moves(load(tid), new, _people(tid, _scope(token_data, request)), _now())
 
 
 @router.put("/api/owner/customer-rules")
 @SV.records("regles-clients")
-def put_rules(body: RulesIn, token_data: TokenData = Depends(require_role(["business_owner"]))):
+def put_rules(body: RulesIn, request: Request = None,
+              token_data: TokenData = Depends(require_role(["business_owner"]))):
     tid = token_data.tenant_id
-    _save(tid, _clean(body))
-    return _payload(tid)
+    scope = _scope(token_data, request)
+    new = _clean(body)
+    before = load(tid)
+    _save(tid, new)
+    moved = _moves(before, load(tid), _people(tid, scope), _now())
+    return {**_payload(tid, scope), "changed": moved["changed"], "moves": moved["moves"]}
 
 
 @router.post("/api/owner/customer-rules/restore")
@@ -528,4 +734,4 @@ def restore_builtins(token_data: TokenData = Depends(require_role(["business_own
             if r.get("key") in ("actif", "bientot_perdu", "dormant", "regulier", "fidele", "vip"):
                 r["conditions"] = _builtin(r["key"])["conditions"]
     _save(tid, rules)
-    return _payload(tid)
+    return _payload(tid, _scope(token_data, None))

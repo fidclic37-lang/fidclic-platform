@@ -350,6 +350,36 @@ def status_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = 
                         "pct": round(buckets[k] / whole * 100)} for k, l, t, seg in labels]}
 
 
+def _shares(counts: List[int]) -> List[int]:
+    """Whole percentages that add up to exactly 100 (largest remainder):
+    six slices of one client each read 17 % + … = 102 % otherwise."""
+    total = sum(counts)
+    if not total:
+        return [0 for _ in counts]
+    raw = [n * 100 / total for n in counts]
+    out = [int(x) for x in raw]
+    for i in sorted(range(len(raw)), key=lambda i: raw[i] - out[i], reverse=True)[:100 - sum(out)]:
+        out[i] += 1
+    return out
+
+
+def statut_mix(customers, at: datetime, rules: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """« Statut des clients » (Tableau de bord, Analyses): the Statut column,
+    slice by slice — one per status that has clients, in the rules page's
+    order, each opening the Clients page on that Statut (user, 2026-11-25:
+    one name per client, the same everywhere)."""
+    rules = rules if rules is not None else R.defaults()
+    from collections import Counter
+    counts = Counter(status_of(c, at, rules) for c in customers)
+    present = [s for s in R.statuses(rules) if counts.get(s["key"])]
+    pcts = _shares([counts[s["key"]] for s in present])
+    return {"total": sum(counts.values()),
+            "slices": [{"key": s["key"], "label": s["label"], "tone": s["tone"],
+                        "count": counts[s["key"]], "pct": pct,
+                        "to": f"/dashboard/customers?statut={s['key']}"}
+                       for s, pct in zip(present, pcts)]}
+
+
 FIELDS = {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "tier": 1, "visits": 1,
           "points": 1, "total_amount_paid": 1, "created_at": 1, "last_visit_date": 1,
           "birthday": 1, "birth_date": 1, "postal_code": 1, "city": 1, "barcode_id": 1,

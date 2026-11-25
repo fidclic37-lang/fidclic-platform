@@ -86,7 +86,7 @@ P_RANGE: List[Tuple[Optional[int], Tuple[float, float]]] = [
 SATISFIED_AT = 8        # a review at or above this, out of ten, is a happy client
 LOCAL_KM = 2.0          # "à moins de 2 km"
 NEW_DAYS = 30
-INACTIVE_DAYS = 30
+# « inactif »: the shop's own « Client actif » window (_active_days), no constant
 
 CATEGORIES = {
     "ventes":        {"label": "Ventes",        "tone": "green"},
@@ -399,12 +399,22 @@ def _goal(shop: Shop) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Groups the advice reasons over
 # ---------------------------------------------------------------------------
+def _active_days(shop: Shop) -> int:
+    """The shop's own « Client actif » window (Règles clients) — what the
+    Clients page and Segmentation call inactive (user, 2026-11-25: Insights
+    said 30 days whatever the shop had set)."""
+    from features import customer_rules as R
+    if not hasattr(shop, "_rules"):
+        shop._rules = R.load(shop.tid)
+    return R.active_days(shop._rules)
+
+
 def _inactive(shop: Shop) -> List[Dict[str, Any]]:
     # Since the last visit — or the sign-up, for a client who hasn't come yet:
     # a client who joined yesterday is not « inactif » (clients_page.last_contact).
     from features import clients_page as CP
-    cut = shop.at - timedelta(days=INACTIVE_DAYS)
-    return [c for c in shop.people if not (d := CP.last_contact(c)) or d < cut]
+    days = _active_days(shop)
+    return [c for c in shop.people if CP.lapsed(CP.last_contact(c), shop.at, days)]
 
 
 def _one_timers(shop: Shop) -> List[Dict[str, Any]]:
@@ -684,7 +694,7 @@ def _opportunities(shop: Shop) -> List[Dict[str, Any]]:
             "key": "inactifs", "category": _category("fidelisation"),
             "title": "Réactivez vos clients inactifs",
             "body": f"{len(dormant)} client{'s' if len(dormant) > 1 else ''} n'ont pas acheté "
-                    "depuis plus de 30 jours. Une campagne ciblée peut les faire revenir rapidement.",
+                    f"depuis plus de {_active_days(shop)} jours. Une campagne ciblée peut les faire revenir rapidement.",
             "image": "inactifs", "icon": "bell",
             "impact": _computed(lo, hi, m, f"calculé sur vos {len(dormant)} clients inactifs")
                       or _figure(shop, "inactifs"),

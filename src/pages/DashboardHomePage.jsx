@@ -41,6 +41,8 @@ const TONES = {
   violet: { bg: '#F3EEFF', fg: '#6D28D9', dot: '#8B5CF6' },
   slate:  { bg: '#EEF2F8', fg: '#475569', dot: '#94A3B8' },
   rose:   { bg: '#FDECEF', fg: '#E11D48', dot: '#F43F5E' },
+  // « Client bientôt perdu » (Règles clients tones: customer_rules.TONES)
+  orange: { bg: '#FFF3E8', fg: '#C2410C', dot: '#F97316' },
 };
 
 const nf = (n) => (n ?? 0).toLocaleString('fr-FR');
@@ -153,7 +155,7 @@ const Donut = ({ mix, onOpen }) => {
       <ul className="min-w-[190px] flex-1 space-y-2.5">
         {(mix?.slices || []).map((s) => (
           <li key={s.key}>
-            <button type="button" onClick={() => onOpen(`/dashboard/customers?segment=${s.segment}`)} title={`Voir ces ${nf(s.count)} clients`}
+            <button type="button" onClick={() => onOpen(s.to || `/dashboard/customers?segment=${s.segment}`)} title={`Voir ces ${nf(s.count)} clients`}
                     className="flex w-full items-center gap-2.5 rounded-lg px-1 py-0.5 text-left text-[12.5px] hover:bg-[#F4F7FC]">
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
               <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>

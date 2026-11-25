@@ -41,6 +41,8 @@ const TONES = {
   violet: { bg: '#F3EEFF', fg: '#6D28D9', dot: '#8B5CF6' },
   slate:  { bg: '#EEF2F8', fg: '#475569', dot: '#94A3B8' },
   rose:   { bg: '#FFF1F3', fg: '#E11D48', dot: '#F43F5E' },
+  // « Client bientôt perdu » (Règles clients tones: customer_rules.TONES)
+  orange: { bg: '#FFF3E8', fg: '#C2410C', dot: '#F97316' },
 };
 const TONE_ORDER = ['blue', 'green', 'amber', 'violet', 'rose', 'slate'];
 
@@ -283,20 +285,22 @@ const Donut = ({ mix, unit = 'Clients' }) => {
       </div>
       <ul className="min-w-[180px] flex-1 space-y-2.5">
         {mix.slices.map((s) => {
+          // the Statut column's own slices open that Statut (user, 2026-11-25)
+          const to = s.to || (s.segment ? `/dashboard/customers?segment=${s.segment}` : '');
           const row = (
             <>
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: TONES[s.tone]?.dot }} />
               <span className="min-w-0 flex-1 truncate text-[#334155]">{s.label}</span>
-              {s.segment && <span className="shrink-0 text-[#94A3B8] tabular-nums">{nf(s.count)}</span>}
+              {to && <span className="shrink-0 text-[#94A3B8] tabular-nums">{nf(s.count)}</span>}
               <span className="w-10 shrink-0 text-right font-bold text-[#0B1C3F] tabular-nums">{s.pct}%</span>
-              {s.segment && <ChevronRight size={14} className="shrink-0 text-[#94A3B8]" />}
+              {to && <ChevronRight size={14} className="shrink-0 text-[#94A3B8]" />}
             </>
           );
           // A slice of the clients donut opens those very clients.
           return (
             <li key={s.key}>
-              {s.segment ? (
-                <button type="button" onClick={() => open({ to: `/dashboard/customers?segment=${s.segment}` })}
+              {to ? (
+                <button type="button" onClick={() => open({ to })}
                         className="flex w-full items-center gap-2.5 rounded-lg px-1 py-0.5 text-left text-[12.5px] transition hover:bg-[#F5F8FE]">
                   {row}
                 </button>

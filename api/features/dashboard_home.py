@@ -368,12 +368,13 @@ def overview(request: Request = None, days: int = Query(30, ge=1, le=P.MAX_DAYS)
              "covers": f"{HOURS[0][0]}h – {HOURS[-1][1]}h"}
 
     # ---- who the clients are ------------------------------------------------------
-    # One slice per client, the Clients page's definitions in this order:
-    # inactif, then fidèle, then nouveau, else occasionnel — each slice opens
-    # the same people on the Clients page (segments *_active / occasional).
-    status_mix = CP.status_mix(customers, at, rules)
+    # The donut is the Statut column, slice by slice (user, 2026-11-25). The
+    # advice still reasons over the four groups (inactif, fidèle, nouveau,
+    # occasionnel) its texts are written for.
+    status_mix = CP.statut_mix(customers, at, rules)
+    groups = CP.status_mix(customers, at, rules)
 
-    recos = _recommendations({x["key"]: x["count"] for x in status_mix["slices"]},
+    recos = _recommendations({x["key"]: x["count"] for x in groups["slices"]},
                              campaigns, products, goal, PB.of(tenant), limit=None)
     # the ranking that learns (2026-10-30): the figures' order × what was learned, then three
     from features import reco_ranking as RR

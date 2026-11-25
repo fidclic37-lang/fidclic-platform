@@ -386,7 +386,16 @@ export default function ClientsPage() {
       setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
     }
   }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [status, setStatus] = useState('');
+  // « Statut des clients » (Tableau de bord, Analyses) opens a slice here with
+  // ?statut=<key>: the Statut filter, set (user, 2026-11-25).
+  const [status, setStatus] = useState(() => urlParams.get('statut') || '');
+  useEffect(() => {
+    const k = urlParams.get('statut');
+    if (k && k !== status) {
+      setStatus(k); setPage(1);
+      setTimeout(() => document.getElementById('clients-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    }
+  }, [urlParams]); // eslint-disable-line react-hooks/exhaustive-deps
   // « Source » (lib/sources): Analyses' and the dashboard's source bars open
   // their clients here with ?source=instagram (user, 2026-10-08)
   const [source, setSource] = useState(() => urlParams.get('source') || '');
