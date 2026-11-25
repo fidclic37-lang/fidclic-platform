@@ -58,6 +58,7 @@ from pydantic import BaseModel
 from auth import require_role
 from models import TokenData
 from services import customer_fields as CF
+from services.paris_clock import days_between   # « N jours » on the Paris clock
 from features import store_scope as S
 from features import client_brain as CB
 
@@ -310,8 +311,9 @@ def _aware(value: Any) -> Optional[datetime]:
 
 
 def _days_since(value: Any, at: datetime) -> Optional[float]:
+    """Days on the Paris clock (user, 2026-11-25), as the Clients page counts."""
     d = _aware(value)
-    return None if not d else (at - d).total_seconds() / 86400.0
+    return None if not d else days_between(d, at)
 
 
 def _eur(n: float) -> str:

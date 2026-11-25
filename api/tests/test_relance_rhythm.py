@@ -11,6 +11,7 @@ Run: cd api && /usr/local/bin/python3 tests/test_relance_rhythm.py
 """
 import asyncio
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -83,7 +84,9 @@ def main():
     days35 = dt.timedelta(days=35)
     check("35 days exactly → not yet lapsed", not CP.lapsed(now - days35, now, 35))
     check("35 days 23 h → not yet", not CP.lapsed(now - days35 - dt.timedelta(hours=23), now, 35))
-    check("36 full days → lapsed", CP.lapsed(now - dt.timedelta(days=36), now, 35))
+    # 36 days on the Paris clock (user, 2026-11-25), not 36 × 24 h
+    check("36 full days → lapsed",
+          CP.lapsed(now.astimezone(ZoneInfo("Europe/Paris")) - dt.timedelta(days=36), now, 35))
     check("a future date → not lapsed", not CP.lapsed(now + dt.timedelta(days=2), now, 35))
     check("no date → lapsed", CP.lapsed(None, now, 35))
     person("edge35", 35)

@@ -11,6 +11,7 @@ against a client built to sit exactly on its edge.
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -115,7 +116,9 @@ with mongomock.patch(servers=(("localhost", 27017),)):
     check("forty visits but gone three months reads dormant, not VIP — that is "
           "a problem, not a success",
           CP.status_of({"visits": 40, "created_at": joined(100),
-                        "last_visit_date": now - dt.timedelta(days=90)}, now) == "dormant")
+                        # 90 days on the Paris clock (user, 2026-11-25), not 90 × 24 h
+                        "last_visit_date": now.astimezone(ZoneInfo("Europe/Paris")) - dt.timedelta(days=90)},
+                       now) == "dormant")
     check("a client who signed up and has not come yet reads nouveau",
           CP.status_of({"visits": 0, "created_at": joined(3)}, now) == "nouveau")
     check("thirty days ago is still inside 'Client actif'",

@@ -132,8 +132,11 @@ def last_contact(cust: Dict[str, Any]) -> Optional[datetime]:
 
 def lapsed(last: Optional[datetime], at: datetime, days: int) -> bool:
     """« Inactif après N jours », one boundary for the chip and the relance
-    (user, 2026-11-04): N full days are still inside, from N + 1 it has lapsed."""
-    return not last or (at - last).total_seconds() / 86400.0 >= days + 1
+    (user, 2026-11-04): N full days are still inside, from N + 1 it has lapsed.
+    Days on the Paris clock (user, 2026-11-25): a client lapses at the time of
+    their last visit, never an hour early or late across a clock change."""
+    from services.paris_clock import days_between
+    return not last or days_between(last, at) >= days + 1
 
 
 def is_inactive(cust: Dict[str, Any], at: datetime,

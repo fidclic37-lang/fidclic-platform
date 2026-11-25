@@ -34,6 +34,7 @@ from pydantic import BaseModel
 
 from auth import require_role, TokenData
 from features import settings_versions as SV   # « Réinitialiser » (Paramètres)
+from services.paris_clock import days_between   # « N jours » on the Paris clock
 
 router = APIRouter(tags=["customer-rules"])
 _db = None
@@ -266,7 +267,7 @@ def _days_since(cust: Dict[str, Any], at: datetime) -> Optional[float]:
     """Days since the last visit — or since signing up for a client who has
     never come, so a card taken a year ago and never used reads as dormant."""
     ref = _aware(cust.get("last_visit_date")) or _aware(cust.get("created_at"))
-    return (at - ref).total_seconds() / 86400.0 if ref else None
+    return days_between(ref, at) if ref else None
 
 
 def _context(rules: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -279,7 +280,7 @@ def _holds(cond: Dict[str, Any], cust: Dict[str, Any], at: datetime, ctx: Dict[s
     visits = int(cust.get("visits") or 0)
     if kind == "visited_within":
         last = _aware(cust.get("last_visit_date"))
-        return bool(visits > 0 and last and (at - last).total_seconds() / 86400.0 < value + 1)
+        return bool(visits > 0 and last and days_between(last, at) < value + 1)
     if kind in ("not_visited_since", "at_risk_since"):
         days = _days_since(cust, at)
         if days is None or days < value:
