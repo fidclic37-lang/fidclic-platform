@@ -662,17 +662,21 @@ def _rules_of(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
     return _clean_rules(doc.get("rules") or [])
 
 
-def _adopted(tid: str) -> set:
-    """Model keys the merchant has already saved as their own segment — by the
+def _adopted_ids(tid: str) -> Dict[str, str]:
+    """Model key → the id of the segment the merchant saved from it — by the
     key recorded since, or by name for segments saved before it was."""
     names = {m["name"]: m["key"] for m in MODELS}
-    out = set()
+    out: Dict[str, str] = {}
     for d in _stored(tid):
-        if d.get("model"):
-            out.add(d["model"])
-        elif d.get("name") in names:
-            out.add(names[d["name"]])
+        key = d.get("model") or names.get(d.get("name"))
+        if key and key not in out:
+            out[key] = d.get("id") or ""
     return out
+
+
+def _adopted(tid: str) -> set:
+    """Model keys the merchant has already saved as their own segment."""
+    return set(_adopted_ids(tid))
 
 
 def _model_rows(tid: str) -> List[Dict[str, Any]]:
@@ -786,6 +790,7 @@ def page(request: Request = None, token_data: TokenData = Depends(require_role(R
     return {
         "strip": strip,
         "models": _recommended_models(tid, people, at, distances),
+        "all_models": _all_models(tid, people, at, distances),
         "segments": sized,
         "fields": fields(tid),
         "tips": _tips(sized, total, tid, at, scope),
@@ -820,6 +825,17 @@ def _recommended_models(tid, people, at, distances) -> List[Dict[str, Any]]:
         if len(out) >= SHOWN_MODELS:
             break
     return out
+
+
+def _all_models(tid, people, at, distances) -> List[Dict[str, Any]]:
+    """« Voir tous les modèles » (user, 2026-11-25): every model, in the
+    catalogue's order — used or not, empty or not — with its count. One used
+    already carries the id of the segment it became, so the page can open it
+    instead of offering to create it a second time."""
+    adopted = _adopted_ids(tid)
+    return [{**m, "count": len(evaluate(tid, m["rules"], people, at, distances)),
+             "adopted": m["key"] in adopted, "segment_id": adopted.get(m["key"]) or None}
+            for m in _models(tid)]
 
 
 def _goal(tid: str, at: datetime, scope: Optional["S.Scope"] = None) -> Dict[str, Any]:

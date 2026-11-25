@@ -192,7 +192,8 @@ const Builder = ({ fields, total, onClose, onCreated }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B1C3F]/40 p-4 py-10">
-      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-[0_40px_90px_-40px_rgba(11,28,63,.6)]">
+      <div role="dialog" aria-modal="true" aria-label="Créer un segment"
+           className="w-full max-w-4xl rounded-2xl bg-white shadow-[0_40px_90px_-40px_rgba(11,28,63,.6)]">
         <header className="flex items-start justify-between gap-3 p-6 pb-4">
           <div className="flex items-start gap-3.5">
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#EAF1FF] text-[#2F6BFF]">
@@ -352,7 +353,8 @@ const Select = ({ value, onChange, options, className = '' }) => (
 const MembersModal = ({ segment, onClose, onCampaign }) => (
   <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#0B1C3F]/40 p-4 py-10"
        onClick={onClose}>
-    <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-[0_40px_90px_-40px_rgba(11,28,63,.6)]"
+    <div role="dialog" aria-modal="true" aria-label={segment.name}
+         className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-[0_40px_90px_-40px_rgba(11,28,63,.6)]"
          onClick={(e) => e.stopPropagation()}>
       <header className="mb-3 flex items-start justify-between gap-3">
         <div>
@@ -420,6 +422,9 @@ export default function SegmentationPage() {
   const [flash, setFlash] = useState('');
   const [typed, setTyped] = useState('');
   const [builder, setBuilder] = useState(false);
+  // « Voir tous les modèles » unfolds every model here (user, 2026-11-25) —
+  // it used to open the builder, which « Créer un segment » already does.
+  const [allModels, setAllModels] = useState(false);
   // ⋮ opens whole on screen, never cut by the table (user, 2026-11-10 — lib/anchoredMenu)
   const menu = useAnchoredMenu();
   const menuFor = menu.openId;
@@ -523,17 +528,18 @@ export default function SegmentationPage() {
         <PanelHead icon={Star} title="Segments recommandés pour vous"
                    sub="Des segments prêts à l'emploi, basés sur les performances de commerces similaires."
                    action={(
-                     <button type="button" onClick={() => setBuilder(true)}
+                     <button type="button" onClick={() => setAllModels((v) => !v)} aria-expanded={allModels}
                              className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[#2F6BFF] hover:underline">
-                       Voir tous les modèles <ArrowRight size={13} />
+                       {allModels ? 'Voir moins' : 'Voir tous les modèles'}
+                       <ArrowRight size={13} className={`transition ${allModels ? '-rotate-90' : ''}`} />
                      </button>
                    )} />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {(d?.models || []).map((m) => {
+        <div data-testid="segment-models" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {((allModels && d?.all_models) || d?.models || []).map((m) => {
             const Icon = ICONS[m.icon] || Target;
             const t = TONES[m.tone] || TONES.blue;
             return (
-              <div key={m.key} className="flex flex-col rounded-2xl p-4" style={{ background: `${t.bg}80` }}>
+              <div key={m.key} data-testid="segment-model" className="flex flex-col rounded-2xl p-4" style={{ background: `${t.bg}80` }}>
                 <span className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white"
                       style={{ color: t.fg }}>
                   <Icon size={17} />
@@ -543,11 +549,23 @@ export default function SegmentationPage() {
                 <p className="mt-2 text-[12px] font-semibold text-[#334155]">
                   {nf(m.count)} client{m.count > 1 ? 's' : ''}
                 </p>
-                <button type="button" onClick={() => useModel(m)}
-                        className="mt-2.5 rounded-xl border bg-white px-3 py-2 text-[12.5px] font-semibold transition hover:opacity-80"
-                        style={{ borderColor: t.fg, color: t.fg }}>
-                  Utiliser ce segment
-                </button>
+                {m.adopted ? (
+                  <>
+                    <p className="mt-2 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#0F8B58]">
+                      <Check size={13} /> Déjà dans vos segments
+                    </p>
+                    <button type="button" onClick={() => m.segment_id && open({ id: m.segment_id })}
+                            className="mt-1.5 rounded-xl border border-[#E6EEFB] bg-white px-3 py-2 text-[12.5px] font-semibold text-[#334155] transition hover:border-[#BFD3FF]">
+                      Voir le segment
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => useModel(m)}
+                          className="mt-2.5 rounded-xl border bg-white px-3 py-2 text-[12.5px] font-semibold transition hover:opacity-80"
+                          style={{ borderColor: t.fg, color: t.fg }}>
+                    Utiliser ce segment
+                  </button>
+                )}
               </div>
             );
           })}
