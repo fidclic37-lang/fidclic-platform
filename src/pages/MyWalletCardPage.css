@@ -97,8 +97,9 @@
 .wcp .btn{display:inline-flex;align-items:center;gap:4px;min-height:44px;background:var(--cta-bg);color:var(--cta-ink);
   padding:0 14px;border-radius:999px;font-size:13.5px;font-weight:700}
 .wcp .so{display:flex;flex-wrap:wrap;gap:0}
-.wcp .so a{width:44px;height:44px;display:grid;place-items:center;border-radius:12px}
-.wcp .so a > span{width:34px;height:34px;border-radius:10px;display:grid;place-items:center}
+/* a network not added yet is a button (« Lien pas encore ajouté »), drawn the same */
+.wcp .so a,.wcp .so button{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;padding:0}
+.wcp .so a > span,.wcp .so button > span{width:34px;height:34px;border-radius:10px;display:grid;place-items:center}
 .wcp .so .ig{background:radial-gradient(circle at 30% 107%,#FDD56E 0%,#F6733A 30%,#D92E7F 60%,#7B3AC2 90%);color:#fff}
 .wcp .so .tt,.wcp .so .x{background:#000;color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.18)}
 .wcp .so .sc{background:#FFFC00;color:#000}
@@ -194,6 +195,8 @@
 .wcp-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--nav-h) + 18px + env(safe-area-inset-bottom,0px));z-index:60;
   max-width:90vw;border-radius:16px;background:var(--ink);color:var(--sheet);padding:10px 18px;font-size:13.5px;text-align:center;
   box-shadow:0 12px 30px -12px rgba(0,0,0,.45)}
+.wcp-toast.wcp-apple{bottom:calc(var(--nav-h) + 70px + env(safe-area-inset-bottom,0px))}
+.wcp-apple .u{color:inherit;font-weight:700;text-decoration:underline;margin-left:6px;display:inline-block;min-height:24px}
 
 @media (prefers-reduced-motion:reduce){
   .wcp *,.wcp *::before,.wcp *::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}

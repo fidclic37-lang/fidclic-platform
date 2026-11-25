@@ -10,8 +10,10 @@
  *     the pass file there, so nothing downloads
  *   · Safari did not open: « Ouvrez dans Safari » with the steps and a
  *     « Copier le lien »
- *   · arrived in Safari from there: the Apple button is pointed out, and the
- *     address bar forgets ?wallet= (and the key, as before)
+ *   · arrived in Safari from there (/card/<id>?k=…&wallet=apple): the card
+ *     page has no « Ma carte » tab any more (user, 2026-11-25), so it starts
+ *     the add itself — the same pass link the old button was — says so, and
+ *     the address bar forgets ?wallet= (and the key, as before)
  *   · Android and computers: nothing changes
  *
  * The real Wallet sheet only exists on a real iPhone: here the phones are
@@ -70,14 +72,34 @@ test.describe('Safari on an iPhone', () => {
     await expect(apple(page)).toHaveAttribute('href', /^\/api\/card\/FT-[A-Z0-9]+\/apple-wallet\.pkpass(\?k=.+)?$/);
   });
 
-  test('arrived from another app: the Apple button is pointed out, ?wallet= forgotten', async ({ page }) => {
+  test('arrived from another app: the card page starts the Apple add itself, ?wallet= forgotten', async ({ page }) => {
     await signUp(page);
-    const card = (await page.url()).match(/FT-[A-Z0-9]+/)?.[0]
-      || (await apple(page).getAttribute('href')).match(/FT-[A-Z0-9]+/)[0];
+    const href = await apple(page).getAttribute('href');
+    const card = href.match(/FT-[A-Z0-9]+/)[0];
+    const passes = [];
+    // the real pass needs Apple's keys: a stand-in file (a desktop browser saves
+    // it; an iPhone opens Wallet's sheet over the page), and count
+    await page.route('**/apple-wallet.pkpass**', (r) => {
+      passes.push(r.request().url());
+      return r.fulfill({ status: 200, contentType: 'application/vnd.apple.pkpass',
+        headers: { 'Content-Disposition': 'attachment; filename="carte.pkpass"' }, body: 'stand-in' });
+    });
+    await page.route('**/apple-wallet/added', (r) => r.fulfill({ json: { added: false } }));
     await page.goto(`/card/${card}?wallet=apple`);
-    await expect(page.getByTestId('apple-wallet-here')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('apple-wallet-here')).toContainText('Touchez');
+    await expect.poll(() => passes.length, { timeout: 30_000 }).toBe(1);
+    await expect(page.getByTestId('apple-wallet-opening')).toBeVisible({ timeout: 30_000 });
+    const u = new URL(passes[0]);
+    expect(u.pathname).toBe(`/api/card/${card}/apple-wallet.pkpass`);
+    expect(u.searchParams.get('k'), 'the card\'s own key, as the old button had it').toBeTruthy();
     await expect.poll(() => page.url()).not.toContain('wallet=');
+    // a way to try again by hand: the same pass link
+    await expect(page.getByTestId('apple-wallet-opening').getByRole('link', { name: /Réessayer/ }))
+      .toHaveAttribute('href', new RegExp(`^/api/card/${card}/apple-wallet\\.pkpass`));
+    // nothing else of the old « Ma carte »
+    await expect(page.getByRole('tab', { name: 'Ma carte' })).toHaveCount(0);
+    await page.reload();
+    await page.waitForTimeout(1500);
+    expect(passes.length, 'only once: a reload no longer carries ?wallet=').toBe(1);
   });
 });
 
@@ -96,6 +118,19 @@ for (const [name, ua] of [['Instagram', UA.instagram], ['Chrome on an iPhone', U
       expect(u.origin).toBe(new URL(page.url()).origin);                   // our own site, nowhere else
       await apple(page).click();
       expect(passes, 'nothing downloads').toEqual([]);
+    });
+
+    test('a ?wallet=apple link opened here (not Safari) never starts the pass (it would download)', async ({ page }) => {
+      await signUp(page);
+      const card = (await apple(page).getAttribute('href')).match(/FT-[A-Z0-9]+/)[0];
+      const passes = [];
+      page.on('request', (r) => { if (r.url().includes('apple-wallet.pkpass')) passes.push(r.url()); });
+      await page.goto(`/card/${card}?wallet=apple`);
+      await expect(page.getByRole('heading', { name: /Bonjour/ })).toBeVisible({ timeout: 15_000 });
+      await page.waitForTimeout(1500);
+      expect(passes).toEqual([]);
+      await expect(page.getByTestId('apple-wallet-opening')).toHaveCount(0);
+      await expect.poll(() => page.url()).not.toContain('wallet=');
     });
 
     test('Safari did not open: « Ouvrez dans Safari », the steps and « Copier le lien »', async ({ page }) => {

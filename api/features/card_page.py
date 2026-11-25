@@ -184,6 +184,99 @@ def socials(details: Any) -> List[Dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# the store's button — the home's 3rd tile (user, 2026-11-25)
+#
+# « Prendre rendez-vous » by default; its name and link are set ONLY by the
+# FidClic super admin, per établissement (admin_commerces: GET / PUT
+# /api/admin/commerces/{tid}/card-cta[/{store_id}]), kept on the tenant as
+# card_cta = {store_id: {label, url}} — top level, never inside `branches`
+# (the owner rewrites those) nor in the card template (the owner's designer).
+# A value stored against the rules (an old row, a hand edit) is never served.
+# ---------------------------------------------------------------------------
+CTA_DEFAULT_LABEL = "Prendre rendez-vous"
+CTA_MAX_LABEL = 28
+CTA_MAX_URL = 500
+_CTA_BAD_LABEL = re.compile(r"[\x00-\x1f\x7f<>]")
+_CTA_HOST = re.compile(r"(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}", _A)
+_CTA_URL_CHARS = re.compile(r"[!-~]+", _A)          # printable ASCII, no space
+
+
+def clean_cta_label(v: Any) -> str:
+    """The button's name: plain text, trimmed, 1–28 characters. ValueError
+    (French, for the super admin) otherwise."""
+    if not isinstance(v, str) or not v.strip():
+        raise ValueError("Le nom du bouton est obligatoire.")
+    s = v.strip()
+    if len(s) > CTA_MAX_LABEL:
+        raise ValueError(f"Le nom du bouton fait {CTA_MAX_LABEL} caractères au plus.")
+    if _CTA_BAD_LABEL.search(s):
+        raise ValueError("Le nom du bouton est du texte simple (pas de < >, pas de retour à la ligne).")
+    return s
+
+
+def clean_cta_url(v: Any) -> Optional[str]:
+    """The button's link: None when empty, else an https:// link to a public
+    host (« www.planity.com/x » gets its https://). ValueError otherwise —
+    no other scheme (javascript:, data:, http:…), no spaces, no login part
+    (« https://planity.com@evil.com »), no port, ≤ 500 characters."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("Le lien doit être une adresse https://.")
+    s = v.strip()
+    if not s:
+        return None
+    if not _CTA_URL_CHARS.fullmatch(s) or "\\" in s:
+        raise ValueError("Le lien ne peut contenir ni espace ni caractère spécial : copiez-le depuis la barre d'adresse.")
+    if _SCHEME.match(s) and not s.lower().startswith("https://"):
+        raise ValueError("Le lien doit commencer par https://.")
+    if s.startswith("//"):
+        raise ValueError("Le lien doit commencer par https://.")
+    url = s if s.lower().startswith("https://") else "https://" + s
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        raise ValueError("Ce lien n'est pas une adresse valide.")
+    host = (parts.hostname or "").lower()
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        raise ValueError("Le lien ne peut pas contenir d'identifiant (« …@… »).")
+    if port is not None:
+        raise ValueError("Le lien ne peut pas contenir de port (« :8080 »).")
+    if not _CTA_HOST.fullmatch(host):
+        raise ValueError("Ce lien n'est pas une adresse de site valide.")
+    out = f"https://{host}{url[len('https://') + len(parts.netloc):]}"
+    if len(out) > CTA_MAX_URL:
+        raise ValueError(f"Le lien fait {CTA_MAX_URL} caractères au plus.")
+    return out
+
+
+def _main_store_id(t: Dict[str, Any]) -> str:
+    """The store a client with no store belongs to: the main branch, the only
+    open one, else « main » (a one-shop account)."""
+    open_ = [b for b in (t.get("branches") or []) if isinstance(b, dict) and b.get("id") and b.get("status") != "closed"]
+    main = next((b["id"] for b in open_ if b.get("is_main") or b["id"] == "main"), None)
+    return main or (open_[0]["id"] if open_ else "main")
+
+
+def cta_for(t: Any, store_id: Optional[str]) -> Dict[str, Any]:
+    """{label, url} of `store_id`'s button (no store: the main one), the
+    default when not set or when what is stored breaks the rules."""
+    default = {"label": CTA_DEFAULT_LABEL, "url": None}
+    if not isinstance(t, dict):
+        return default
+    sid = store_id or _main_store_id(t)
+    m = t.get("card_cta")
+    row = m.get(sid) if isinstance(m, dict) else None
+    if not isinstance(row, dict):
+        return default
+    try:
+        return {"label": clean_cta_label(row.get("label")), "url": clean_cta_url(row.get("url"))}
+    except ValueError:
+        return default
+
+
+# ---------------------------------------------------------------------------
 # first name
 # ---------------------------------------------------------------------------
 def first_name(name: Any) -> str:
@@ -271,6 +364,16 @@ def enrich(payload: Dict[str, Any], cust: Dict[str, Any]) -> Dict[str, Any]:
     card = payload.get("card")
     if isinstance(card, dict):
         card["socials"] = socials(card.get("details"))
+        # the store's button: the card's own store, one small read (always
+        # written here, so nothing the owner's designer saved can stand in)
+        try:
+            t = _db.tenants.find_one({"id": cust.get("tenant_id")}, {"_id": 0, "card_cta": 1, "branches": 1}) or {}
+            # the card's OWN store (its home store, else the main one) — never the
+            # request's store header, which the payload's store_id may follow
+            card["cta"] = cta_for(t, cust.get("branch_id"))
+        except Exception as exc:  # noqa: BLE001 — a button must never cost the card
+            print(f"card page: store button failed (non-fatal): {exc}")
+            card["cta"] = {"label": CTA_DEFAULT_LABEL, "url": None}
         probe = dict(card)
         # a paused card carries no campaign (wallet_passes); an offer the
         # payload already carries is reused, else one small read
