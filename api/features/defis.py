@@ -41,16 +41,43 @@ def init(db):
         db.defi_rewards.create_index([("customer_id", 1), ("status", 1)])
     except Exception:
         pass
+    try:   # the card's défi read: this client's défis not over yet. Partial: only
+           # défi campaigns are in it, never the shop's other (long-list) sends.
+        db.campaigns.create_index([("tenant_id", 1), ("recipient_ids", 1), ("defi.end_date", 1)],
+                                  name="defi_running", partialFilterExpression={"kind": "defi"})
+    except Exception:
+        pass
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# What a running défi needs, never its recipients list (thousands of ids on a
+# shop-wide send: the card open used to move all of them, load review 2026-11-25)
+DEFI_FIELDS = {"_id": 0, "id": 1, "tenant_id": 1, "name": 1, "content": 1, "kind": 1, "status": 1,
+               "sent_at": 1, "defi": 1, "visible_until": 1, "image_url": 1}
+
+
+def first_live_day(at: datetime) -> str:
+    """The first day (Paris, ISO) whose end is still ahead of `at`: a défi
+    ending that day or later is not over (K.window: until = end_of(end_date))."""
+    d = at.astimezone(K.PARIS).date()
+    if K.end_of(d) < at:                        # 23:59:59.x: that day has ended
+        d += timedelta(days=1)
+    return d.isoformat()
+
+
 def _running(customer: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
-    """The défis this customer takes part in that are on right now."""
-    rows = _db.campaigns.find({"tenant_id": customer.get("tenant_id"), "kind": "defi", "status": "sent",
-                               "recipient_ids": customer.get("id")}, {"_id": 0})
+    """The défis this customer takes part in that are on right now.
+
+    The read only returns défis not over (end date today or later, through
+    the `defi_running` index) and the rare one without an end date; the exact
+    window check stays below, so the result is the same as reading them all."""
+    base = {"tenant_id": customer.get("tenant_id"), "recipient_ids": customer.get("id"), "kind": "defi",
+            "status": "sent"}
+    rows = _db.campaigns.find({"$or": [dict(base, **{"defi.end_date": {"$gte": first_live_day(at)}}),
+                                       dict(base, **{"defi.end_date": {"$in": [None, ""]}})]}, DEFI_FIELDS)
     out = []
     for c in rows:
         sent = K.aware(c.get("sent_at"))
@@ -58,6 +85,16 @@ def _running(customer: Dict[str, Any], at: datetime) -> List[Dict[str, Any]]:
         if sent and until and sent <= at <= until:
             out.append(c)
     return out
+
+
+def _counted(c: Dict[str, Any], times: List[datetime], at: datetime) -> int:
+    sent = K.aware(c.get("sent_at"))
+    _, until = K.window(c)
+    end = min(at, until) if until else at
+    mine = [t for t in times if sent <= t <= end]
+    if (c.get("defi") or {}).get("count_mode") == "per_scan":
+        return len(mine)
+    return len({t.astimezone(K.PARIS).date() for t in mine})
 
 
 def progress(c: Dict[str, Any], customer_id: str, at: Optional[datetime] = None) -> int:
@@ -74,6 +111,31 @@ def progress(c: Dict[str, Any], customer_id: str, at: Optional[datetime] = None)
     if (c.get("defi") or {}).get("count_mode") == "per_scan":
         return len(times)
     return len({t.astimezone(K.PARIS).date() for t in times})
+
+
+def progress_many(cs: List[Dict[str, Any]], customer_id: str, at: Optional[datetime] = None) -> Dict[str, int]:
+    """progress() for several défis with one visits read per shop (the card
+    used to read the visits once per running défi)."""
+    at = at or _now()
+    out: Dict[str, int] = {}
+    by_tenant: Dict[Any, List[Dict[str, Any]]] = {}
+    for c in cs:
+        if K.aware(c.get("sent_at")):
+            by_tenant.setdefault(c.get("tenant_id"), []).append(c)
+        else:
+            out[c["id"]] = 0
+    for tid, group in by_tenant.items():
+        ends = []
+        for c in group:
+            _, until = K.window(c)
+            ends.append(min(at, until) if until else at)
+        rows = _db.visits.find({"tenant_id": tid, "customer_id": customer_id,
+                                "visit_time": {"$gte": min(K.aware(c.get("sent_at")) for c in group),
+                                               "$lte": max(ends)}}, {"_id": 0, "visit_time": 1})
+        times = [t for r in rows if (t := K.aware(r.get("visit_time")))]
+        for c in group:
+            out[c["id"]] = _counted(c, times, at)
+    return out
 
 
 def after_scan(tenant_id: str, customer: Dict[str, Any], at: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -116,6 +178,10 @@ def _public(r: Dict[str, Any], at: datetime) -> Dict[str, Any]:
 def pending_rewards(customer_id: str, at: Optional[datetime] = None) -> List[Dict[str, Any]]:
     at = at or _now()
     rows = _db.defi_rewards.find({"customer_id": customer_id, "status": "pending"}, {"_id": 0})
+    return _pending_public(list(rows), at)
+
+
+def _pending_public(rows: List[Dict[str, Any]], at: datetime) -> List[Dict[str, Any]]:
     # a parrainage offer (features/referrals, 2026-10-13) waits here too, with no end date
     return [_public(r, at) for r in rows
             if (e := K.aware(r.get("expires_at"))) is None and r.get("kind") == "parrainage" or (e and e >= at)]
@@ -123,24 +189,37 @@ def pending_rewards(customer_id: str, at: Optional[datetime] = None) -> List[Dic
 
 def card_view(customer: Dict[str, Any], at: Optional[datetime] = None) -> Dict[str, Any]:
     """What the customer's card and « Vos offres » show: the défis running
-    (soonest end first) and the rewards won, still to collect."""
+    (soonest end first) and the rewards won, still to collect.
+
+    Three reads whatever the number of défis: the running ones, then one
+    rewards read (the pending ones + those of the running défis, which hides
+    a défi already won), then one visits read for every défi's progress."""
     at = at or _now()
-    won_ids = {r["campaign_id"] for r in _db.defi_rewards.find({"customer_id": customer.get("id")},
-                                                                 {"_id": 0, "campaign_id": 1})}
+    cid = customer.get("id")
+    live = _running(customer, at)
+    ids = [c["id"] for c in live]
+    q: Dict[str, Any] = {"customer_id": cid, "status": "pending"}
+    if ids:
+        q = {"customer_id": cid, "$or": [{"status": "pending"}, {"campaign_id": {"$in": ids}}]}
+    # in insertion order, as the pending read returns them (sorted here: a
+    # Mongo sort on _id could walk the whole collection's _id index instead)
+    rows = sorted(_db.defi_rewards.find(q), key=lambda r: str(r.get("_id")))
+    won_ids = {r.get("campaign_id") for r in rows}
+    live = [c for c in live if c["id"] not in won_ids]
+    counts = progress_many(live, cid, at)
     running = []
-    for c in _running(customer, at):
-        if c["id"] in won_ids:
-            continue
+    for c in live:
         d = c.get("defi") or {}
         _, until = K.window(c)
         days_left = max(0, (until.astimezone(K.PARIS).date() - at.astimezone(K.PARIS).date()).days + 1) if until else None
         running.append({"id": c["id"], "title": c.get("name") or "Défi", "message": c.get("content") or "",
-                        "target": int(d.get("target") or 0), "progress": progress(c, customer["id"], at),
+                        "target": int(d.get("target") or 0), "progress": counts.get(c["id"], 0),
                         "count_mode": d.get("count_mode"), "reward": d.get("reward"),
                         "end_date": d.get("end_date"), "days_left": days_left,
                         "image_url": c.get("image_url")})
     running.sort(key=lambda x: x.get("end_date") or "9999")
-    return {"running": running, "won": pending_rewards(customer.get("id"), at)}
+    pending = [{k: v for k, v in r.items() if k != "_id"} for r in rows if r.get("status") == "pending"]
+    return {"running": running, "won": _pending_public(pending, at)}
 
 
 @router.post("/api/owner/defis/rewards/{reward_id}/redeem")
